@@ -54,6 +54,8 @@ def fetch_from_gcs(
     
     try:
         from google.oauth2 import service_account
+        from google.auth import credentials as auth_credentials
+        import google.auth.transport.requests
     except ImportError:
         pass  # Will use default credentials if service account not available
     
@@ -61,6 +63,7 @@ def fetch_from_gcs(
         # Resolve credentials
         credentials = None
         service_account_info = None
+        oauth_user_info = None
         
         if credential:
             try:
@@ -71,13 +74,20 @@ def fetch_from_gcs(
                     if 'type' in credential_data and credential_data.get('type') == 'service_account':
                         service_account_info = credential_data
                         logger.debug(f"Using service account credentials from '{credential}'")
+                    # OAuth authorized_user credentials
+                    elif 'type' in credential_data and credential_data.get('type') == 'authorized_user':
+                        oauth_user_info = credential_data
+                        logger.debug(f"Using OAuth user credentials from '{credential}'")
                     # Nested data structure (credential wrapped in 'data' field)
                     elif 'data' in credential_data and isinstance(credential_data['data'], dict):
                         if credential_data['data'].get('type') == 'service_account':
                             service_account_info = credential_data['data']
                             logger.debug(f"Using service account credentials (nested) from '{credential}'")
+                        elif credential_data['data'].get('type') == 'authorized_user':
+                            oauth_user_info = credential_data['data']
+                            logger.debug(f"Using OAuth user credentials (nested) from '{credential}'")
                     else:
-                        logger.warning(f"GCS credential '{credential}' does not contain service account data")
+                        logger.warning(f"GCS credential '{credential}' does not contain service account or OAuth user data")
                 else:
                     logger.warning(f"GCS credential '{credential}' not found or empty")
             except Exception as e:
@@ -89,6 +99,20 @@ def fetch_from_gcs(
         if service_account_info:
             credentials = service_account.Credentials.from_service_account_info(service_account_info)
             client = storage.Client(credentials=credentials, project=service_account_info.get('project_id'))
+        elif oauth_user_info:
+            # Use OAuth user credentials (authorized_user)
+            from google.oauth2.credentials import Credentials as OAuthCredentials
+            credentials = OAuthCredentials(
+                token=None,  # Will be refreshed automatically
+                refresh_token=oauth_user_info.get('refresh_token'),
+                token_uri='https://oauth2.googleapis.com/token',
+                client_id=oauth_user_info.get('client_id'),
+                client_secret=oauth_user_info.get('client_secret')
+            )
+            # Refresh the token before use
+            request = google.auth.transport.requests.Request()
+            credentials.refresh(request)
+            client = storage.Client(credentials=credentials)
         else:
             # Use application default credentials
             client = storage.Client(credentials=credentials)
