@@ -112,7 +112,8 @@ def fetch_from_gcs(
             # Refresh the token before use
             request = google.auth.transport.requests.Request()
             credentials.refresh(request)
-            client = storage.Client(credentials=credentials)
+            # Use anonymous project parameter to avoid ADC lookup
+            client = storage.Client(credentials=credentials, project='_')
         else:
             # Use application default credentials
             client = storage.Client(credentials=credentials)
