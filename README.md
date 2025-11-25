@@ -259,7 +259,7 @@ NoETL uses a declarative YAML-based Domain Specific Language (DSL) for defining 
 - **Workload**: Input data and parameters for the workflow (Jinja2 templated)
 - **Workflow**: A list of steps that make up the workflow, where each step is defined with `step: step_name`, including:
   - **Step**: Individual operations with unique names
-  - **Tool**: Action types performed at each step (http, postgres, duckdb, python)
+  - **Tool**: Action types performed at each step (http, python, workbook, playbook, script, postgres, duckdb, snowflake, clickhouse)
   - **Next**: Conditional routing to subsequent steps with `when` clauses
   - **Args**: Parameters passed to the next step using templating (Jinja2)
 - **Workbook** (optional): Reusable task definitions that can be called from workflow steps via `tool: workbook` and `name: task_name`
