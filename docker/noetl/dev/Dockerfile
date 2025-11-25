@@ -34,6 +34,9 @@ RUN uv pip install -e .
 
 FROM python:3.12-slim AS production
 
+LABEL org.opencontainers.image.source=https://github.com/noetl/noetl
+LABEL org.opencontainers.image.licenses=MIT
+
 RUN apt-get update && apt-get --no-install-recommends install -y \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
