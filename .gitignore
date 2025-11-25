@@ -25,6 +25,8 @@ data/noetldb/
 .env.tradetrend
 examples/tradetrend
 .*
+!.github
+!.github/workflows
 !.gitignore
 !.dockerignore
 # Virtual environments
