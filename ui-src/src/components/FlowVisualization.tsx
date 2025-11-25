@@ -81,6 +81,7 @@ const FlowVisualizationInner: React.FC<FlowVisualizationProps> = ({
   const [messageApi, contextHolder] = message.useMessage();
   const [tasks, setTasks] = useState<EditableTaskNode[]>([]);
   const [hasChanges, setHasChanges] = useState(false);
+  const [isDraggingOver, setIsDraggingOver] = useState(false);
   const { screenToFlowPosition } = useReactFlow();
   const [type] = useDnD();
 
@@ -89,15 +90,22 @@ const FlowVisualizationInner: React.FC<FlowVisualizationProps> = ({
     [setEdges]
   );
 
-  // Drag and drop handlers
+  // Drag and drop handlers with visual feedback
   const onDragOver = useCallback((event: React.DragEvent) => {
     event.preventDefault();
     event.dataTransfer.dropEffect = 'move';
+    setIsDraggingOver(true);
+  }, []);
+
+  const onDragLeave = useCallback((event: React.DragEvent) => {
+    event.preventDefault();
+    setIsDraggingOver(false);
   }, []);
 
   const onDrop = useCallback(
     (event: React.DragEvent) => {
       event.preventDefault();
+      setIsDraggingOver(false);
 
       if (!type || readOnly) {
         return;
@@ -563,12 +571,14 @@ const FlowVisualizationInner: React.FC<FlowVisualizationProps> = ({
                 onConnect={onConnect}
                 onDrop={onDrop}
                 onDragOver={onDragOver}
+                onDragLeave={onDragLeave}
                 nodeTypes={nodeTypes}
                 defaultEdgeOptions={defaultEdgeOptions}
                 connectionLineStyle={{ stroke: "#cbd5e1", strokeWidth: 2 }}
                 fitView
                 fitViewOptions={{ padding: 0.18 }}
                 attributionPosition="bottom-left"
+                className={isDraggingOver ? 'dragging-over' : ''}
                 key={`flow-${tasks.length}-${tasks.map((t) => `${t.id}-${t.type}`).join("-")}-${readOnly ? 'ro' : 'rw'}`}
               >
                 <Controls />
