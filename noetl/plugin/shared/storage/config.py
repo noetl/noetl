@@ -139,6 +139,13 @@ def extract_sink_config(
                   get_config_value('chunksize', tool_value, payload))
     concurrency = get_config_value('concurrency', tool_value, payload)
     
+    # Extract HTTP-specific fields
+    endpoint = (get_config_value('endpoint', tool_value, payload) or
+                get_config_value('url', tool_value, payload))
+    method = get_config_value('method', tool_value, payload)
+    headers = get_config_value('headers', tool_value, payload)
+    payload_data = get_config_value('payload', tool_value, payload)
+    
     # Get auth configuration
     auth_config = get_config_value('auth', tool_value, payload)
     credential_ref = None
@@ -154,6 +161,34 @@ def extract_sink_config(
     
     # Get spec configuration
     spec = get_config_value('spec', tool_value, payload, {})
+    
+    # Populate tool_config with extracted fields (for flat tool: "string" format)
+    # When tool is already a dict, tool_config already has these fields
+    if not isinstance(tool_value, dict):
+        tool_config.update({
+            k: v for k, v in {
+                'endpoint': endpoint,
+                'url': endpoint,  # Alias
+                'method': method,
+                'headers': headers,
+                'payload': payload_data,
+                'statement': statement,
+                'commands': statement,  # Alias
+                'sql': statement,  # Alias
+                'params': params,
+                'mode': mode,
+                'key': key_cols,
+                'keys': key_cols,  # Alias
+                'format': fmt,
+                'table': table,
+                'batch': batch,
+                'chunk_size': chunk_size,
+                'chunksize': chunk_size,  # Alias
+                'concurrency': concurrency,
+                'auth': auth_config,
+                'spec': spec,
+            }.items() if v is not None
+        })
     
     return {
         'kind': kind,
@@ -171,4 +206,9 @@ def extract_sink_config(
         'auth_config': auth_config,
         'credential_ref': credential_ref,
         'spec': spec,
+        # HTTP-specific fields
+        'endpoint': endpoint,
+        'method': method,
+        'headers': headers,
+        'payload': payload_data,
     }
