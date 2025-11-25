@@ -118,8 +118,8 @@ workbook:
     ATTACH '{{ workload.pg_conn }}' AS pgdb (TYPE POSTGRES);
     CREATE TABLE IF NOT EXISTS metrics AS
     SELECT * FROM pgdb.public.source_metrics;
-  save:
-    storage: duckdb
+  sink:
+    tool: duckdb
     path: "{{ workload.output_db }}"
   next:
     - step: end
@@ -150,7 +150,7 @@ To persist results, attach a `save` block. It dispatches the step output to anot
 ### New Structure (Recommended)
 
 ```yaml
-save:
+sink:
   type: postgres
   data:
     id: "{{ execution_id }}:{{ city.name }}:{{ http_loop.result_index }}"
@@ -166,8 +166,8 @@ save:
 ### Legacy Structure (Still Supported)
 
 ```yaml
-save:
-  storage: postgres
+sink:
+  tool: postgres
   auth: pg_local
   table: public.weather_http_raw
   mode: upsert

@@ -117,16 +117,16 @@ Or access explicitly in templates:
 
 **Before:**
 ```yaml
-save:
-  storage: postgres  # Legacy nested structure converted
+sink:
+  tool: postgres  # Legacy nested structure converted
   auth: {pg: {type: postgres, key: pg_local}}  # Use dictionary format consistently
   table: results
 ```
 
 **After:**
 ```yaml
-save:
-  storage: postgres
+sink:
+  tool: postgres
   auth:
     pg:
       type: postgres

@@ -72,6 +72,25 @@ tasks:
           echo "✗ .venv directory not found"
           echo "  Run: task bootstrap:venv"
         fi
+        
+        echo ""
+        echo "=== Verifying Observability Services ==="
+        if kubectl get namespace clickhouse >/dev/null 2>&1; then
+          echo "✓ ClickHouse namespace exists"
+        else
+          echo "✗ ClickHouse not deployed"
+        fi
+        if kubectl get namespace qdrant >/dev/null 2>&1; then
+          echo "✓ Qdrant namespace exists"
+        else
+          echo "✗ Qdrant not deployed"
+        fi
+        if kubectl get namespace nats >/dev/null 2>&1; then
+          echo "✓ NATS namespace exists"
+        else
+          echo "✗ NATS not deployed"
+        fi
+        echo "  Run: task observability:activate-all"
 
   bootstrap:venv:
     desc: Create Python venv with project + noetl dependencies
@@ -119,12 +138,19 @@ tasks:
     cmds:
       - task: noetl:kind:local:cluster-create
       - task: noetl:postgres:k8s:deploy
+      - task: noetl:observability:activate-all
       - task: noetl:monitoring:k8s:deploy
       - task: noetl:noetl:k8s:deploy
       - echo ""
       - echo "NoETL started!"
       - echo "  UI: http://localhost:8083"
       - echo "  Grafana: kubectl port-forward -n vmstack svc/vmstack-grafana 3000:80"
+      - echo "  ClickHouse HTTP: localhost:30123 (NodePort)"
+      - echo "  ClickHouse Native: localhost:30900 (NodePort)"
+      - echo "  Qdrant HTTP: localhost:30633 (NodePort)"
+      - echo "  Qdrant gRPC: localhost:30634 (NodePort)"
+      - echo "  NATS Client: localhost:30422 (NodePort)"
+      - echo "  NATS Monitoring: localhost:30822 (NodePort)"
   
   dev:stop:
     desc: Stop NoETL infrastructure

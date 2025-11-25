@@ -13,7 +13,7 @@ Required keys
 
 Common optional keys
 - assert: Validate inputs/outputs
-- save: Capture driver response or query results (engine-dependent)
+- sink: Capture driver response or query results (engine-dependent)
 
 Templating and JSON
 - Use templating for values from context (e.g., `{{ execution_id }}`, `{{ city.name }}`).
@@ -64,7 +64,7 @@ Usage patterns (fragments)
       on conflict (id) do update set
         name = excluded.name,
         content = excluded.content;
-    save:
+    sink:
       - name: write_result
         data: "{{ this.data }}"
   ```

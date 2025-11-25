@@ -479,7 +479,7 @@ collect:
     {
       "label": "fix:save->sink",
       "type": "shell",
-      "command": "fd -e yaml | xargs sd '\\n\\s+save:\\s*\\n' '\\n  tool:\\n    result:\\n      sink:\\n        - postgres:\\n'",
+      "command": "fd -e yaml | xargs sd '\\n\\s+sink:\\s*\\n' '\\n  tool:\\n    result:\\n      sink:\\n        - postgres:\\n'",
       "problemMatcher": [],
       "presentation": {
         "echo": true,

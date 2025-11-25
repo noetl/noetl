@@ -34,6 +34,30 @@ from noetl.server.api.run.queries import OrchestratorQueries
 logger = setup_logger(__name__, include_location=True)
 
 
+def _render_with_params(params: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Render with_params (args from next transitions) with Jinja2 templates.
+
+    Args:
+        params: Parameters dict that may contain Jinja2 templates
+        context: Execution context with step results for rendering
+
+    Returns:
+        Rendered parameters dict
+    """
+    try:
+        from noetl.core.dsl.render import render_template
+        from jinja2 import BaseLoader, Environment
+        
+        env = Environment(loader=BaseLoader())
+        rendered = render_template(env, params, context, rules=None, strict_keys=False)
+        logger.debug(f"Rendered with_params: {params} -> {rendered}")
+        return rendered if isinstance(rendered, dict) else params
+    except Exception as e:
+        logger.warning(f"Failed to render with_params: {e}, using original params")
+        return params
+
+
 def _evaluate_jinja_condition(condition: str, context: Dict[str, Any]) -> bool:
     """
     Evaluate a Jinja2 condition expression.
@@ -1020,6 +1044,32 @@ async def _process_transitions(execution_id: int) -> None:
                                 router_step_config, catalog_id
                             )
 
+                            # CRITICAL: Preserve blocks that should not be rendered server-side
+                            # - sink block: contains {{ result }} templates
+                            # - loop block: contains {{ item }} templates and collection config
+                            sink_block = router_step_config.pop("sink", None)
+                            if sink_block is not None:
+                                logger.critical(f"ORCHESTRATOR-ROUTER: Extracted sink block for step '{router_next_step}'")
+                            
+                            loop_block = router_step_config.pop("loop", None)
+                            if loop_block is not None:
+                                logger.critical(f"ORCHESTRATOR-ROUTER: Extracted loop block for step '{router_next_step}'")
+
+                            # Render router step's existing args with current execution context
+                            if "args" in router_step_config and router_step_config["args"]:
+                                router_step_config["args"] = _render_with_params(
+                                    router_step_config["args"], eval_ctx
+                                )
+
+                            # Restore preserved blocks (worker will render them with proper context)
+                            if loop_block is not None:
+                                router_step_config["loop"] = loop_block
+                                logger.critical(f"ORCHESTRATOR-ROUTER: Restored loop block for step '{router_next_step}'")
+                            
+                            if sink_block is not None:
+                                router_step_config["sink"] = sink_block
+                                logger.critical(f"ORCHESTRATOR-ROUTER: Restored sink block for step '{router_next_step}'")
+
                             # Build context for router next step
                             router_context_data = {"workload": workload}
                             router_context_data.update(
@@ -1046,6 +1096,11 @@ async def _process_transitions(execution_id: int) -> None:
                     try:
                         # Use the step definition directly as the config
                         step_config = dict(next_step_def)
+                        
+                        logger.critical(f"ORCHESTRATOR_DEBUG: step '{to_step}' step_config keys BEFORE processing: {list(step_config.keys())}")
+                        logger.critical(f"ORCHESTRATOR_DEBUG: step '{to_step}' has 'loop': {'loop' in step_config}")
+                        if 'loop' in step_config:
+                            logger.critical(f"ORCHESTRATOR_DEBUG: loop value: {step_config['loop']}")
 
                         # Expand workbook references - resolve the workbook action definition
                         # so the worker doesn't need to fetch from catalog
@@ -1057,11 +1112,44 @@ async def _process_transitions(execution_id: int) -> None:
                             step_config, catalog_id
                         )
 
-                        # Merge with_params into step config data field
+                        # CRITICAL: Preserve blocks that should not be rendered server-side
+                        # - sink block: contains {{ result }} templates
+                        # - loop block: contains {{ item }} templates and collection config
+                        sink_block = step_config.pop("sink", None)
+                        if sink_block is not None:
+                            try:
+                                import json
+                                sink_str = json.dumps(sink_block)
+                            except Exception:
+                                sink_str = str(sink_block)
+                            logger.critical(f"ORCHESTRATOR: Extracted sink block for step '{to_step}': {sink_str}")
+                        
+                        loop_block = step_config.pop("loop", None)
+                        if loop_block is not None:
+                            logger.critical(f"ORCHESTRATOR: Extracted loop block for step '{to_step}'")
+
+                        # Render step's existing args with current execution context
+                        if "args" in step_config and step_config["args"]:
+                            logger.info(f"RENDER_DEBUG: Rendering args for step '{to_step}', before: {step_config['args']}, eval_ctx keys: {list(eval_ctx.keys())}")
+                            step_config["args"] = _render_with_params(step_config["args"], eval_ctx)
+                            logger.info(f"RENDER_DEBUG: After rendering: {step_config['args']}")
+                        
+                        # Render with_params (args from next) with current execution context
+                        # This ensures templates like {{ process_data.data.temp_table }} are resolved
                         if with_params:
-                            if "data" not in step_config:
-                                step_config["data"] = {}
-                            step_config["data"].update(with_params)
+                            with_params = _render_with_params(with_params, eval_ctx)
+                            if "args" not in step_config:
+                                step_config["args"] = {}
+                            step_config["args"].update(with_params)
+
+                        # Restore preserved blocks (worker will render them with proper context)
+                        if loop_block is not None:
+                            step_config["loop"] = loop_block
+                            logger.critical(f"ORCHESTRATOR: Restored loop block for step '{to_step}'")
+                        
+                        if sink_block is not None:
+                            step_config["sink"] = sink_block
+                            logger.critical(f"ORCHESTRATOR: Restored sink block for step '{to_step}'")
 
                         # Build context for next step
                         context_data = {"workload": workload}

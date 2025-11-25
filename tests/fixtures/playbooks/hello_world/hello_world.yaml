@@ -32,7 +32,7 @@ workflow:
   - step: end
     desc: "End hello world test"
     tool: end
-    save:
+    sink:
       tool: event_log
       args:
         status: "success"

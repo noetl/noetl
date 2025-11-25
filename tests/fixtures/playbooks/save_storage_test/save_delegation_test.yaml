@@ -29,9 +29,9 @@ workflow:
                   "message": "Event storage delegation working"
               }
           }
-    save:
-      storage: event
-      args: "{{ result.data }}"
+    sink:
+      tool: event
+      args: "{{ result }}"
     next:
       - step: postgres_test
 
@@ -49,15 +49,14 @@ workflow:
                   "value": 123
               }
           }
-    save:
-      storage:
-        tool: postgres
-        table: simple_test_flat
-        auth: "{{ workload.pg_auth }}"
+    sink:
+      tool: postgres
+      table: simple_test_flat
+      auth: "{{ workload.pg_auth }}"
       args:
         test_id: "delegation_test"
-        test_name: "{{ result.data.test }}"
-        test_value: "{{ result.data.value }}"
+        test_name: "{{ result.test }}"
+        test_value: "{{ result.value }}"
     next:
       - step: duckdb_test
 
@@ -74,14 +73,12 @@ workflow:
                   "message": "DuckDB storage delegation working"
               }
           }
-    save:
-      storage:
-        tool: duckdb
-        commands: |
-          CREATE OR REPLACE TABLE test_duckdb AS 
-          SELECT 'delegation_test' as test_type, 'duckdb_working' as status;
-          SELECT * FROM test_duckdb;
-      args: "{{ result.data }}"
+    sink:
+      tool: duckdb
+      commands: |
+        CREATE OR REPLACE TABLE test_duckdb AS 
+        SELECT 'delegation_test' as test_type, 'duckdb_working' as status;
+        SELECT * FROM test_duckdb;
     next:
       - step: http_test
 
@@ -98,11 +95,12 @@ workflow:
                   "message": "HTTP storage delegation working"
               }
           }
-    save:
-      storage:
-        tool: http
-        url: "https://httpbin.org/post"
-        method: POST
-        headers:
-          Content-Type: "application/json"
-      args: "{{ result.data }}"
+    sink:
+      tool: http
+      endpoint: "https://httpbin.org/post"
+      method: POST
+      headers:
+        Content-Type: "application/json"
+      payload:
+        test: "{{ result.test }}"
+        message: "{{ result.message }}"

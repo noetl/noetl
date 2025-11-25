@@ -278,7 +278,7 @@ def execute_transfer_action(
     Execute data transfer between source and target systems.
     
     This is the main entry point for the generic transfer action type.
-    Direction is automatically inferred from source.type and target.type.
+    Direction is automatically inferred from source.tool and target.tool.
     
     Args:
         task_config: Task configuration with source, target, chunk_size
@@ -315,7 +315,7 @@ def execute_transfer_action(
         if not source_config:
             raise ValueError("'source' configuration is required")
         
-        source_type = source_config.get('type', '').lower()
+        source_type = source_config.get('tool', source_config.get('type', '')).lower()
         source_query = source_config.get('query')
         source_auth = source_config.get('auth')
         source_url = source_config.get('url')
@@ -324,7 +324,7 @@ def execute_transfer_action(
         source_data_path = source_config.get('data_path')
         
         if not source_type:
-            raise ValueError("source.type is required")
+            raise ValueError("source.tool is required")
         if source_type not in SUPPORTED_TYPES:
             raise ValueError(f"Unsupported source type: {source_type}. Supported: {SUPPORTED_TYPES}")
         
@@ -345,14 +345,14 @@ def execute_transfer_action(
         if not target_config:
             raise ValueError("'target' configuration is required")
         
-        target_type = target_config.get('type', '').lower()
+        target_type = target_config.get('tool', target_config.get('type', '')).lower()
         target_table = target_config.get('table')
         target_query = target_config.get('query')
         target_auth = target_config.get('auth')
         target_mapping = target_config.get('mapping', {})
         
         if not target_type:
-            raise ValueError("target.type is required")
+            raise ValueError("target.tool is required")
         if target_type not in SUPPORTED_TYPES:
             raise ValueError(f"Unsupported target type: {target_type}. Supported: {SUPPORTED_TYPES}")
         if not target_table and not target_query:

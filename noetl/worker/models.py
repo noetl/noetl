@@ -12,7 +12,7 @@ class ActionConfig(BaseModel):
     tool: str
     name: Optional[str] = None
     args: Dict[str, Any] = Field(default_factory=dict)
-    save: Optional[Dict[str, Any]] = None
+    sink: Optional[Dict[str, Any]] = None
     retry: Optional[Any] = None
 
     model_config = ConfigDict(extra="allow", validate_assignment=True)

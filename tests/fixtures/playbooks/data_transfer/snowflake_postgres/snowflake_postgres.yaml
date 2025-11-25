@@ -80,14 +80,14 @@ workflow:
     desc: Transfer data from Snowflake to PostgreSQL using generic transfer action
     tool: transfer
     source:
-      type: snowflake
+      tool: snowflake
       auth:
         source: credential
         tool: snowflake
         key: "{{ workload.sf_auth }}"
       query: "SELECT * FROM TEST_DATA ORDER BY id"
     target:
-      type: postgres
+      tool: postgres
       auth:
         source: credential
         tool: postgres
@@ -160,14 +160,14 @@ workflow:
     desc: Transfer data from PostgreSQL to Snowflake using generic transfer action
     tool: transfer
     source:
-      type: postgres
+      tool: postgres
       auth:
         source: credential
         tool: postgres
         key: "{{ workload.pg_auth }}"
       query: "SELECT * FROM public.test_pg_source ORDER BY id"
     target:
-      type: snowflake
+      tool: snowflake
       auth:
         source: credential
         tool: snowflake
