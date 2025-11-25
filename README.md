@@ -96,6 +96,9 @@ task dev-fast
 # Deploy all components
 task deploy-all              # Executes: task postgres:k8s:deploy → task monitoring:k8s:deploy → task noetl:k8s:deploy
 
+# Register test credentials and playbooks (one-time setup after deployment)
+task test:k8s:setup-environment   # Register all credentials and playbooks for testing
+
 # Check cluster health
 task test-cluster-health
 ```
@@ -132,13 +135,17 @@ After bootstrap completes, all NoETL infrastructure tasks are available with `no
 
 ```bash
 # Use NoETL tasks from your project root
-task noetl:postgres:k8s:deploy      # Deploy PostgreSQL
-task noetl:noetl:k8s:deploy         # Deploy NoETL server and workers
-task noetl:test:k8s:cluster-health  # Check cluster health
+task noetl:postgres:k8s:deploy         # Deploy PostgreSQL
+task noetl:noetl:k8s:deploy            # Deploy NoETL server and workers
+task noetl:test:k8s:cluster-health     # Check cluster health
+
+# Register test credentials and playbooks for Kind environment
+task noetl:test:k8s:setup-environment  # Complete setup (credentials + playbooks)
+task noetl:test:k8s:register-credentials   # Register credentials only
+task noetl:test:k8s:register-playbooks     # Register playbooks only
 
 # Your project-specific tasks (defined in Taskfile.yml)
-task dev:run                         # Run your application
-task credentials:register            # Register your credentials
+task dev:run                           # Run your application
 ```
 
 **Cleanup:**
@@ -181,7 +188,13 @@ NoETL is primarily deployed as a Kubernetes-based service. After running `make b
 ### Working with Playbooks
 
 ```bash
-# Register a playbook to the catalog
+# Register credentials and playbooks for Kind environment (one-time setup)
+task test:k8s:setup-environment     # Register all test credentials and playbooks
+# Or individually:
+task test:k8s:register-credentials  # Register test credentials only
+task test:k8s:register-playbooks    # Register test playbooks only
+
+# Register a single playbook to the catalog
 noetl register tests/fixtures/playbooks/hello_world/hello_world.yaml --host localhost --port 8082
 
 # List registered playbooks
@@ -453,6 +466,41 @@ noetl register tests/fixtures/playbooks/hello_world/hello_world.yaml --host loca
 
 # Execute a registered playbook
 noetl execute playbook "tests/fixtures/playbooks/hello_world" --host localhost --port 8082
+```
+
+### Register Credentials and Playbooks for Kubernetes Environment
+
+When running NoETL in Kind Kubernetes (after `make bootstrap` or `task bootstrap`), use these commands:
+
+```bash
+# Register test credentials for Kind environment
+task test:k8s:register-credentials
+# Aliases: task rtc, task register-test-credentials
+
+# Register all test playbooks
+task test:k8s:register-playbooks
+# Aliases: task rtp, task register-test-playbooks
+
+# Complete setup (register credentials + playbooks)
+task test:k8s:setup-environment
+# Alias: task ste, task setup-test-environment
+```
+
+**What gets registered:**
+- **Credentials**: `pg_k8s` (Postgres in cluster), `pg_local`, `gcs_hmac_local`, `sf_test`
+- **Playbooks**: All fixtures from `tests/fixtures/playbooks/`
+
+**Verify registration:**
+```bash
+# List registered credentials
+curl http://localhost:8082/api/credentials | jq
+
+# List registered playbooks
+curl http://localhost:8082/api/catalog/playbook | jq
+
+# Or using CLI
+noetl catalog list credential --host localhost --port 8082
+noetl catalog list playbook --host localhost --port 8082
 ```
 
 ### Cleanup
