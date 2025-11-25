@@ -9,6 +9,7 @@ on:
 permissions:
   id-token: write
   contents: read
+  packages: write
 
 jobs:
   build_deploy:
@@ -26,19 +27,19 @@ jobs:
         with:
           ref: ${{ github.event.release.tag_name }}  
 
-      - name: Get token
-        id: app-token
-        uses: actions/create-github-app-token@v2
-        with:
-          app-id: ${{ secrets.SEMANTIC_RELEASE_APP_ID }}
-          private-key: ${{ secrets.SEMANTIC_RELEASE_PRIVATE_KEY }}
+      # - name: Get token
+      #   id: app-token
+      #   uses: actions/create-github-app-token@v2
+      #   with:
+      #     app-id: ${{ secrets.SEMANTIC_RELEASE_APP_ID }}
+      #     private-key: ${{ secrets.SEMANTIC_RELEASE_PRIVATE_KEY }}
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
-          username: ${{ steps.app-token.outputs.app-slug }}
-          password: ${{ steps.app-token.outputs.token }}
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -49,7 +50,7 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
-          file: docker/noetl/dev/Dockerfile
+          file: docker/noetl/ci/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |
