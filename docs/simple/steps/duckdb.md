@@ -14,7 +14,7 @@ Required keys
 Common optional keys
 - auth: mapping of credential aliases (e.g., postgres, hmac) to use inside DuckDB
 - assert: Validate inputs/outputs (expects/returns)
-- save: Persist selected results for later steps
+- sink: Persist selected results for later steps
 - retry: Bounded re-attempt policy for transient failures (see `retry.md`)
 
 Auth and attachments

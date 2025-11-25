@@ -50,8 +50,9 @@ make bootstrap
 # 2. Creates Kind Kubernetes cluster
 # 3. Builds NoETL Docker image
 # 4. Deploys PostgreSQL database
-# 5. Deploys monitoring stack (VictoriaMetrics, Grafana, VictoriaLogs)
-# 6. Deploys NoETL server and workers
+# 5. Deploys observability stack (ClickHouse, Qdrant, NATS JetStream)
+# 6. Deploys monitoring stack (VictoriaMetrics, Grafana, VictoriaLogs)
+# 7. Deploys NoETL server and workers
 
 # After bootstrap, you can use task commands directly:
 task --list                  # Show all available tasks
@@ -66,6 +67,12 @@ task monitoring:k8s:deploy   # Deploy monitoring stack
 - **VictoriaMetrics**: http://localhost:9428/ 
 - **VictoriaLogs**: http://localhost:9428/select/vmui/
 - **Postgres**: `jdbc:postgresql://localhost:54321/demo_noetl` (user: demo, password: demo, database: demo_noetl)
+- **ClickHouse HTTP**: http://localhost:30123 (OLAP database for logs/metrics/traces)
+- **ClickHouse Native**: localhost:30900 (native protocol)
+- **Qdrant HTTP**: http://localhost:30633 (vector database REST API)
+- **Qdrant gRPC**: localhost:30634 (vector database gRPC)
+- **NATS Client**: localhost:30422 (messaging)
+- **NATS Monitoring**: http://localhost:30822 (dashboard)
 
 **Cleanup:**
 ```bash
@@ -88,6 +95,9 @@ task dev-fast
 
 # Deploy all components
 task deploy-all              # Executes: task postgres:k8s:deploy → task monitoring:k8s:deploy → task noetl:k8s:deploy
+
+# Register test credentials and playbooks (one-time setup after deployment)
+task test:k8s:setup-environment   # Register all credentials and playbooks for testing
 
 # Check cluster health
 task test-cluster-health
@@ -115,7 +125,7 @@ The bootstrap automatically:
 - Installs all required tools (Docker, kubectl, helm, kind, **task**, psql, pyenv, tfenv, uv, Python 3.12+)
 - Sets up Python virtual environment with your project + NoETL dependencies
 - Creates project Taskfile.yml that imports all NoETL tasks
-- Deploys Kind cluster with PostgreSQL and monitoring stack
+- Deploys Kind cluster with PostgreSQL, observability (ClickHouse, Qdrant, NATS), and monitoring stack
 - Copies template files (.env.local, pyproject.toml, .gitignore, credentials/)
 - Creates project directories (credentials/, playbooks/, data/, logs/, secrets/)
 
@@ -125,13 +135,17 @@ After bootstrap completes, all NoETL infrastructure tasks are available with `no
 
 ```bash
 # Use NoETL tasks from your project root
-task noetl:postgres:k8s:deploy      # Deploy PostgreSQL
-task noetl:noetl:k8s:deploy         # Deploy NoETL server and workers
-task noetl:test:k8s:cluster-health  # Check cluster health
+task noetl:postgres:k8s:deploy         # Deploy PostgreSQL
+task noetl:noetl:k8s:deploy            # Deploy NoETL server and workers
+task noetl:test:k8s:cluster-health     # Check cluster health
+
+# Register test credentials and playbooks for Kind environment
+task noetl:test:k8s:setup-environment  # Complete setup (credentials + playbooks)
+task noetl:test:k8s:register-credentials   # Register credentials only
+task noetl:test:k8s:register-playbooks     # Register playbooks only
 
 # Your project-specific tasks (defined in Taskfile.yml)
-task dev:run                         # Run your application
-task credentials:register            # Register your credentials
+task dev:run                           # Run your application
 ```
 
 **Cleanup:**
@@ -174,7 +188,13 @@ NoETL is primarily deployed as a Kubernetes-based service. After running `make b
 ### Working with Playbooks
 
 ```bash
-# Register a playbook to the catalog
+# Register credentials and playbooks for Kind environment (one-time setup)
+task test:k8s:setup-environment     # Register all test credentials and playbooks
+# Or individually:
+task test:k8s:register-credentials  # Register test credentials only
+task test:k8s:register-playbooks    # Register test playbooks only
+
+# Register a single playbook to the catalog
 noetl register tests/fixtures/playbooks/hello_world/hello_world.yaml --host localhost --port 8082
 
 # List registered playbooks
@@ -233,13 +253,13 @@ For distributed execution patterns and worker pool management, see [Multiple Wor
 
 ## Workflow DSL Structure
 
-NoETL uses a declarative YAML-based Domain Specific Language (DSL) for defining workflows. The key components of a NoETL playbook include:
+NoETL uses a declarative YAML-based Domain Specific Language (DSL) for defining workflows. The key parts of a NoETL playbook include:
 
 - **Metadata**: Version, path, and description of the playbook
 - **Workload**: Input data and parameters for the workflow (Jinja2 templated)
 - **Workflow**: A list of steps that make up the workflow, where each step is defined with `step: step_name`, including:
   - **Step**: Individual operations with unique names
-  - **Tool**: Action types performed at each step (http, postgres, duckdb, python)
+  - **Tool**: Action types performed at each step (http, python, workbook, playbook, script, postgres, duckdb, snowflake, clickhouse)
   - **Next**: Conditional routing to subsequent steps with `when` clauses
   - **Args**: Parameters passed to the next step using templating (Jinja2)
 - **Workbook** (optional): Reusable task definitions that can be called from workflow steps via `tool: workbook` and `name: task_name`
@@ -363,6 +383,10 @@ For more detailed information, please refer to the following documentation:
 - [Environment Configuration](https://github.com/noetl/noetl/blob/master/docs/environment_variables.md) - Setting up environment variables
 - [Credential Management](docs/concepts/credentials.md) - auth vs credentials vs secret
 
+### Infrastructure & Operations
+- [CI/CD Setup](documentation/docs/operations/ci-setup.md) - Kind cluster, PostgreSQL, NoETL deployment
+- [Observability Services](documentation/docs/operations/observability.md) - ClickHouse, Qdrant, NATS JetStream
+
 
 ### Examples
 
@@ -413,6 +437,12 @@ make bootstrap
 # Or manually:
 task tools:local:verify           # Verify required tools
 task noetl:k8s:bootstrap          # Deploy complete K8s environment
+
+# Observability services (automatically deployed with bootstrap)
+task observability:activate-all   # Deploy ClickHouse, Qdrant, NATS
+task observability:deactivate-all # Remove observability services
+task observability:status-all     # Check all services status
+task observability:health-all     # Health check all services
 ```
 
 ### UI Development
@@ -436,6 +466,41 @@ noetl register tests/fixtures/playbooks/hello_world/hello_world.yaml --host loca
 
 # Execute a registered playbook
 noetl execute playbook "tests/fixtures/playbooks/hello_world" --host localhost --port 8082
+```
+
+### Register Credentials and Playbooks for Kubernetes Environment
+
+When running NoETL in Kind Kubernetes (after `make bootstrap` or `task bootstrap`), use these commands:
+
+```bash
+# Register test credentials for Kind environment
+task test:k8s:register-credentials
+# Aliases: task rtc, task register-test-credentials
+
+# Register all test playbooks
+task test:k8s:register-playbooks
+# Aliases: task rtp, task register-test-playbooks
+
+# Complete setup (register credentials + playbooks)
+task test:k8s:setup-environment
+# Alias: task ste, task setup-test-environment
+```
+
+**What gets registered:**
+- **Credentials**: `pg_k8s` (Postgres in cluster), `pg_local`, `gcs_hmac_local`, `sf_test`
+- **Playbooks**: All fixtures from `tests/fixtures/playbooks/`
+
+**Verify registration:**
+```bash
+# List registered credentials
+curl http://localhost:8082/api/credentials | jq
+
+# List registered playbooks
+curl http://localhost:8082/api/catalog/playbook | jq
+
+# Or using CLI
+noetl catalog list credential --host localhost --port 8082
+noetl catalog list playbook --host localhost --port 8082
 ```
 
 ### Cleanup

@@ -204,9 +204,18 @@ async def execute_python_task_async(
         logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Args keys: {args}")
         logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Context keys: {list((context or {}).keys())}")
 
-        # Get and decode the code
+        # Get and decode the code (priority: script > code_b64 > code)
         code = None
-        if 'code_b64' in task_config:
+        
+        # Priority 1: External script
+        if 'script' in task_config:
+            from noetl.plugin.shared.script import resolve_script
+            logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Resolving external script")
+            code = resolve_script(task_config['script'], context, jinja_env)
+            logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Resolved script from {task_config['script']['source']['type']}, length={len(code)} chars")
+        
+        # Priority 2: Base64 encoded code
+        elif 'code_b64' in task_config:
             import base64
             code = base64.b64decode(task_config['code_b64']).decode('utf-8')
             logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Decoded base64 code, length={len(code)} chars")
@@ -214,6 +223,8 @@ async def execute_python_task_async(
             import base64
             code = base64.b64decode(task_config['code_base64']).decode('utf-8')
             logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Decoded base64 code, length={len(code)} chars")
+        
+        # Priority 3: Inline code
         elif 'code' in task_config:
             code = task_config['code']
             logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Using inline code, length={len(code)} chars")
@@ -222,7 +233,7 @@ async def execute_python_task_async(
             if 'code' in task_config:
                 raise ValueError("Empty code provided.")
             else:
-                raise ValueError("No code provided. Expected 'code_b64', 'code_base64', or inline 'code' string in task configuration")
+                raise ValueError("No code provided. Expected 'script', 'code_b64', 'code_base64', or inline 'code' string in task configuration")
 
         logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Python code length={len(code)} chars")
 
@@ -237,13 +248,29 @@ async def execute_python_task_async(
             logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Task start event_id={event_id}")
 
         logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Setting up execution globals")
+        
+        # Import commonly used utilities from noetl.core.common
+        from noetl.core.common import (
+            get_val,
+            make_serializable,
+            now_utc,
+            format_iso8601,
+            deep_merge,
+        )
+        
         exec_globals = {
             '__builtins__': __builtins__,
             'context': context,
             'os': os,
             'json': json,
             'datetime': datetime,
-            'uuid': uuid
+            'uuid': uuid,
+            # Add noetl.core.common utilities
+            'get_val': get_val,
+            'make_serializable': make_serializable,
+            'now_utc': now_utc,
+            'format_iso8601': format_iso8601,
+            'deep_merge': deep_merge,
         }
         logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Execution globals keys: {list(exec_globals.keys())}")
 

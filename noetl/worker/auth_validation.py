@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 PLUGIN_AUTH_ARITY = {
     "postgres": "single",
     "http": "single",
-    "save": "single",
+    "sink": "single",
     "duckdb": "multi",
 }
 
@@ -305,13 +305,13 @@ def validate_step_auth(step: Dict[str, Any]) -> List[str]:
 
     auth_config = step.get("auth")
 
-    # Handle nested auth (e.g., in save.storage.auth)
-    if auth_config is None and step_type == "save":
-        save_config = step.get("save", {})
-        if isinstance(save_config, dict):
-            storage_config = save_config.get("storage", {})
-            if isinstance(storage_config, dict):
-                auth_config = storage_config.get("auth")
+    # Handle nested auth (e.g., in sink.tool.auth)
+    if auth_config is None and step_type == "sink":
+        sink_config = step.get("sink", {})
+        if isinstance(sink_config, dict):
+            tool_config = sink_config.get("tool", {})
+            if isinstance(tool_config, dict):
+                auth_config = tool_config.get("auth")
 
     # Handle nested auth in task (for iterator steps)
     task = step.get("task")
@@ -333,18 +333,18 @@ def validate_step_auth(step: Dict[str, Any]) -> List[str]:
                     validate_auth_for_plugin(task_type, task_auth, task_context)
                 )
 
-            # Check nested save auth
-            if task_type != "save":
-                task_save = task.get("save", {})
-                if isinstance(task_save, dict):
-                    task_storage = task_save.get("storage", {})
-                    if isinstance(task_storage, dict):
-                        task_save_auth = task_storage.get("auth")
-                        if task_save_auth is not None:
-                            save_context = f"step '{step_name}' task save"
+            # Check nested sink auth
+            if task_type != "sink":
+                task_sink = task.get("sink", {})
+                if isinstance(task_sink, dict):
+                    task_tool = task_sink.get("tool", {})
+                    if isinstance(task_tool, dict):
+                        task_sink_auth = task_tool.get("auth")
+                        if task_sink_auth is not None:
+                            sink_context = f"step '{step_name}' task sink"
                             errors.extend(
                                 validate_auth_for_plugin(
-                                    "save", task_save_auth, save_context
+                                    "sink", task_sink_auth, sink_context
                                 )
                             )
 

@@ -161,8 +161,8 @@ async def _execute_postgres_task_async(
         # Step 3: Escape special characters in task_with for SQL compatibility
         processed_task_with = escape_task_with_params(task_with)
 
-        # Step 4: Decode base64 commands
-        commands_str = decode_base64_commands(task_config)
+        # Step 4: Decode commands (with script support)
+        commands_str = decode_base64_commands(task_config, context, jinja_env)
 
         # Step 5: Render and split commands into individual statements
         commands = render_and_split_commands(commands_str, jinja_env, context, processed_task_with)

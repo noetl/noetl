@@ -1,0 +1,54 @@
+apiVersion: noetl.io/v1
+kind: Playbook
+metadata:
+  name: python_http_script_example
+  path: tests/script_execution/python_http
+
+workload:
+  # Using GitHub raw URL as example HTTP source
+  script_url: https://raw.githubusercontent.com/noetl/noetl/v1.2.0/tests/fixtures/playbooks/script_execution/scripts/hello_world.py
+  greeting_name: HTTP-Fetched
+
+workflow:
+  - step: start
+    desc: Start workflow
+    next:
+      - step: run_python_from_http
+
+  - step: run_python_from_http
+    desc: Fetch and execute Python script from HTTP
+    tool: python
+    script:
+      uri: hello_world.py  # Fallback if endpoint not specified
+      source:
+        type: http
+        endpoint: "{{ workload.script_url }}"
+        method: GET
+        timeout: 30
+    args:
+      name: "{{ workload.greeting_name }}"
+      count: 2
+    next:
+      - step: verify_result
+
+  - step: verify_result
+    desc: Verify HTTP-fetched script executed correctly
+    tool: python
+    code: |
+      def main(result):
+          assert result['status'] == 'success', f"Expected success, got {result['status']}"
+          assert result['script_source'] == 'file', f"Script should identify as file source"
+          assert result['total_greetings'] == 2, f"Expected 2 greetings, got {result['total_greetings']}"
+          
+          return {
+              "status": "verified",
+              "source_type": "http",
+              "result": result
+          }
+    args:
+      result: "{{ run_python_from_http.data }}"
+    next:
+      - step: end
+
+  - step: end
+    desc: End workflow

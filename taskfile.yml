@@ -36,6 +36,18 @@ includes:
   cache:
     taskfile: ci/taskfile/cache.yml
     flatten: true
+  clickhouse:
+    taskfile: ci/taskfile/clickhouse.yml
+    dir: .
+  qdrant:
+    taskfile: ci/taskfile/qdrant.yml
+    dir: .
+  nats:
+    taskfile: ci/taskfile/nats.yml
+    dir: .
+  observability:
+    taskfile: ci/taskfile/observability.yml
+    dir: .
 
 tasks:
   default:
@@ -56,6 +68,8 @@ tasks:
       - task: kind:local:cluster-create
       - task: kind:local:image-load
       - task: postgres:k8s:deploy
+      - task: observability:activate-all
+        ignore_error: true
       - task: monitoring:k8s:deploy
         ignore_error: true
       - task: noetl:k8s:deploy

@@ -19,7 +19,7 @@ Common optional keys
 - assert: Validate inputs/outputs
   - expects: list of inputs to check before call
   - returns: list of fields to check after call (e.g., `data.url`, `data.elapsed`, `data.payload`)
-- save: Persist all or a projection of the response to a variable or storage
+- sink: Persist all or a projection of the response to a variable or storage
 
 Inputs and templating
 - Reference earlier context: `{{ workload.base_url }}`, `{{ previous.data.id }}`.
@@ -37,7 +37,7 @@ Usage patterns
 - POST with JSON body and selective save
   - method: POST
   - data: becomes JSON body
-  - save: pick only needed fields (e.g., `this.data.id`)
+  - sink: pick only needed fields (e.g., `this.data.id`)
 - Iterator per-item call with upsert
   - Put the http step inside an iterator `task`
   - Use `http_loop.result_index` to build stable ids with `execution_id`
@@ -68,7 +68,7 @@ Examples (fragments)
   data:
     name: "{{ previous.data.name }}"
     tags: "{{ previous.data.tags }}"
-  save: { name: created_id, data: "{{ this.data.id }}" }
+  sink: { name: created_id, data: "{{ this.data.id }}" }
 
 - Inside iterator: guarded per-item upsert
   # ...existing code...
@@ -78,11 +78,11 @@ Examples (fragments)
   task:
     type: http
     endpoint: "https://api.example.com/{{ item.id }}"
-    save:
+    sink:
       data:
         id: "{{ execution_id }}:{{ item.id }}:{{ fetch_each.result_index }}"
         payload: "{{ (this.data | tojson) if this is defined and this.data is defined else '' }}"
-      storage: postgres
+      tool: postgres
       auth: pg_local
       table: public.items_http
       mode: upsert

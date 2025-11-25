@@ -247,10 +247,13 @@ class ExecutionPlanner:
         step_name = step.get("step", "").lower()
 
         # Special control steps handling
-        # - start: router if no explicit type; otherwise use explicit type (actionable)
+        # - start: router if no explicit tool; otherwise use explicit tool (actionable)
         # - end: remains a terminal control step
         if step_name == "start":
-            return "router"
+            tool = step.get("tool")
+            if tool:
+                return tool  # Actionable start with explicit tool
+            return "router"  # Router start without tool
         if step_name == "end":
             return "end"
 

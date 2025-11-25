@@ -1,0 +1,154 @@
+version: '3.45'
+
+# Unified observability tasks for activating/deactivating services
+
+tasks:
+  activate-all:
+    desc: Activate all observability services (ClickHouse, Qdrant, NATS)
+    cmds:
+      - task: activate-clickhouse
+      - task: activate-qdrant
+      - task: activate-nats
+      - echo ""
+      - echo "✓ All observability services activated"
+      - task: status-all
+
+  deactivate-all:
+    desc: Deactivate all observability services
+    cmds:
+      - task: deactivate-clickhouse
+      - task: deactivate-qdrant
+      - task: deactivate-nats
+      - echo "✓ All observability services deactivated"
+
+  activate-clickhouse:
+    desc: Activate ClickHouse observability stack
+    cmds:
+      - echo "=== Activating ClickHouse ==="
+      - kubectl apply -f ci/manifests/clickhouse/namespace.yaml
+      - kubectl apply -f ci/manifests/clickhouse/crds.yaml
+      - kubectl apply -f ci/manifests/clickhouse/operator.yaml
+      - kubectl apply -f ci/manifests/clickhouse/clickhouse-cluster.yaml
+      - kubectl apply -f ci/manifests/clickhouse/observability-schema.yaml
+      - kubectl apply -f ci/manifests/clickhouse/mcp-server.yaml
+      - echo "✓ ClickHouse activated"
+
+  deactivate-clickhouse:
+    desc: Deactivate ClickHouse observability stack
+    cmds:
+      - echo "=== Deactivating ClickHouse ==="
+      - kubectl delete -f ci/manifests/clickhouse/mcp-server.yaml --ignore-not-found=true
+      - kubectl delete -f ci/manifests/clickhouse/clickhouse-cluster.yaml --ignore-not-found=true
+      - kubectl delete -f ci/manifests/clickhouse/observability-schema.yaml --ignore-not-found=true
+      - kubectl delete -f ci/manifests/clickhouse/operator.yaml --ignore-not-found=true
+      - kubectl delete -f ci/manifests/clickhouse/crds.yaml --ignore-not-found=true
+      - kubectl delete -f ci/manifests/clickhouse/namespace.yaml --ignore-not-found=true
+      - echo "✓ ClickHouse deactivated"
+
+  activate-qdrant:
+    desc: Activate Qdrant vector database
+    cmds:
+      - echo "=== Activating Qdrant ==="
+      - kubectl apply -f ci/manifests/qdrant/namespace.yaml
+      - kubectl apply -f ci/manifests/qdrant/qdrant.yaml
+      - echo "✓ Qdrant activated"
+
+  deactivate-qdrant:
+    desc: Deactivate Qdrant vector database
+    cmds:
+      - echo "=== Deactivating Qdrant ==="
+      - kubectl delete -f ci/manifests/qdrant/qdrant.yaml --ignore-not-found=true
+      - kubectl delete -f ci/manifests/qdrant/namespace.yaml --ignore-not-found=true
+      - echo "✓ Qdrant deactivated"
+
+  activate-nats:
+    desc: Activate NATS JetStream
+    cmds:
+      - echo "=== Activating NATS ==="
+      - kubectl apply -f ci/manifests/nats/namespace.yaml
+      - kubectl apply -f ci/manifests/nats/nats.yaml
+      - echo "✓ NATS activated"
+
+  deactivate-nats:
+    desc: Deactivate NATS JetStream
+    cmds:
+      - echo "=== Deactivating NATS ==="
+      - kubectl delete -f ci/manifests/nats/nats.yaml --ignore-not-found=true
+      - kubectl delete -f ci/manifests/nats/namespace.yaml --ignore-not-found=true
+      - echo "✓ NATS deactivated"
+
+  status-all:
+    desc: Show status of all observability services
+    cmds:
+      - echo "=== ClickHouse Status ==="
+      - kubectl get namespace clickhouse 2>/dev/null || echo "Not deployed"
+      - kubectl get pods -n clickhouse 2>/dev/null || true
+      - echo ""
+      - echo "=== Qdrant Status ==="
+      - kubectl get namespace qdrant 2>/dev/null || echo "Not deployed"
+      - kubectl get pods -n qdrant 2>/dev/null || true
+      - echo ""
+      - echo "=== NATS Status ==="
+      - kubectl get namespace nats 2>/dev/null || echo "Not deployed"
+      - kubectl get pods -n nats 2>/dev/null || true
+
+  logs-all:
+    desc: Show logs from all services
+    cmds:
+      - echo "Use individual log commands - clickhouse:logs, qdrant:logs, nats:logs"
+
+  health-all:
+    desc: Health check all observability services
+    cmds:
+      - echo "=== ClickHouse Health ==="
+      - |
+        POD=$(kubectl get pods -n clickhouse -l clickhouse.altinity.com/chi=noetl-clickhouse -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+        if [ -n "$POD" ]; then
+          if kubectl exec -n clickhouse $POD -- clickhouse-client --query="SELECT 1" 2>/dev/null >/dev/null; then
+            echo "✓ Healthy"
+          else
+            echo "✗ Unhealthy"
+          fi
+        else
+          echo "✗ Not deployed"
+        fi
+      - echo ""
+      - echo "=== Qdrant Health ==="
+      - |
+        POD=$(kubectl get pods -n qdrant -l app=qdrant -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+        if [ -n "$POD" ]; then
+          if kubectl exec -n qdrant $POD -- wget -qO- http://localhost:6333/healthz 2>/dev/null >/dev/null; then
+            echo "✓ Healthy"
+          else
+            echo "✗ Unhealthy"
+          fi
+        else
+          echo "✗ Not deployed"
+        fi
+      - echo ""
+      - echo "=== NATS Health ==="
+      - |
+        POD=$(kubectl get pods -n nats -l app=nats -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+        if [ -n "$POD" ]; then
+          if kubectl exec -n nats $POD -- wget -qO- http://localhost:8222/healthz 2>/dev/null >/dev/null; then
+            echo "✓ Healthy"
+          else
+            echo "✗ Unhealthy"
+          fi
+        else
+          echo "✗ Not deployed"
+        fi
+
+  restart-all:
+    desc: Restart all observability services
+    cmds:
+      - echo "=== Restarting ClickHouse ==="
+      - kubectl rollout restart statefulset -n clickhouse -l clickhouse.altinity.com/chi=noetl-clickhouse 2>/dev/null || echo "Not deployed"
+      - echo ""
+      - echo "=== Restarting Qdrant ==="
+      - kubectl rollout restart statefulset/qdrant -n qdrant 2>/dev/null || echo "Not deployed"
+      - echo ""
+      - echo "=== Restarting NATS ==="
+      - kubectl rollout restart statefulset/nats -n nats 2>/dev/null || echo "Not deployed"
+      - echo ""
+      - echo "✓ All services restarted"

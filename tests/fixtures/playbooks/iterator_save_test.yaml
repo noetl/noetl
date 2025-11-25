@@ -37,30 +37,30 @@ workflow:
   - step: process_items
 
 - step: process_items
-  desc: Process items with save
-  tool: iterator
-  collection: "{{ workload.items }}"
-  element: item
-  mode: sequential
-  task:
-    tool: python
-    code: |
-      def main(input_data):
-          return {
-              'item_name': input_data.get('name'),
-              'item_value': input_data.get('value')
-          }
-    save:
-      storage: postgres
-      args:
-        id: "{{ execution_id }}:{{ item.name }}"
-        execution_id: "{{ execution_id }}"
-        item_name: "{{ item.name }}"
-        item_value: "{{ item.value }}"
-      auth: "{{ workload.pg_auth }}"
-      table: public.iterator_save_test
-      mode: upsert
-      key: id
+  desc: Process items with save (NEW loop format)
+  tool: python
+  loop:
+    collection: "{{ workload.items }}"
+    element: item
+    mode: sequential
+  code: |
+    def main(context):
+        item = context.get('item', {})
+        return {
+            'item_name': get_val(item, ['name'], 'unknown'),
+            'item_value': get_val(item, ['value'], 0)
+        }
+  sink:
+    tool: postgres
+    args:
+      id: "{{ execution_id }}:{{ data.item_name }}"
+      execution_id: "{{ execution_id }}"
+      item_name: "{{ data.item_name }}"
+      item_value: "{{ data.item_value }}"
+    auth: "{{ workload.pg_auth }}"
+    table: public.iterator_save_test
+    mode: upsert
+    key: id
   next:
   - step: end
     
