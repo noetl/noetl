@@ -253,7 +253,7 @@ For distributed execution patterns and worker pool management, see [Multiple Wor
 
 ## Workflow DSL Structure
 
-NoETL uses a declarative YAML-based Domain Specific Language (DSL) for defining workflows. The key components of a NoETL playbook include:
+NoETL uses a declarative YAML-based Domain Specific Language (DSL) for defining workflows. The key parts of a NoETL playbook include:
 
 - **Metadata**: Version, path, and description of the playbook
 - **Workload**: Input data and parameters for the workflow (Jinja2 templated)
