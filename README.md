@@ -524,6 +524,6 @@ cd documentation
 npm install
 npm run start                     # Local dev server
 npm run build                     # Production build
-```
+```  
 
-
+[Semantic Release](ci/documents/semantic-release.md) is enabled for this repository. Please **do not** push tags manually.  
