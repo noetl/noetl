@@ -1,10 +1,8 @@
 name: "Build image on Release ⚙️"
 
-# on:
-#   release:
-#     types: [published]
 on:
-  workflow_dispatch:
+  release:
+    types: [published]
 
 permissions:
   id-token: write
@@ -18,8 +16,7 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      # IMAGE_TAG: ${{ github.event.release.tag_name }}
-      IMAGE_TAG: v0.0.0-ci
+      IMAGE_TAG: ${{ github.event.release.tag_name }}
 
     steps:
       - name: Checkout source code
@@ -45,10 +42,9 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
-          file: docker/noetl/ci/Dockerfile
+          file: docker/noetl/dev/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |
             ghcr.io/noetl/noetl:${{ env.IMAGE_TAG }}
-
-# $REGISTRY/$IMAGE_NAME:latest
+            ghcr.io/noetl/noetl:latest
