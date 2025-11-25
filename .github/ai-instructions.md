@@ -9,28 +9,33 @@ NoETL is a workflow automation framework for data processing and MLOps orchestra
 - **Worker** (`noetl/worker/`): Polling workers that lease jobs from PostgreSQL queue and execute tasks
 - **CLI** (`noetl/cli/ctl.py`): Typer-based command interface managing server/worker lifecycle
 - **Plugins** (`noetl/plugin/`): Extensible action executors (http, postgres, duckdb, python, secrets, etc.)
+- **Observability** (`ci/manifests/clickhouse/`): ClickHouse-based observability stack with OpenTelemetry schema for logs, metrics, and traces
 
 **Data Flow:**
 1. Playbooks (YAML) → Catalog registration → Event-driven execution
 2. Server evaluates next steps → Enqueues jobs → Workers execute → Report back via events
 3. All state persisted in PostgreSQL event log for reconstruction and coordination
+4. Observability data flows to ClickHouse for analytics and AI agent access via MCP server
 
 ## Development Workflows
 
 **Setup & Testing:**
 ```bash
-task bring-all            # Complete K8s dev environment (build + deploy all components)
-task deploy-postgres      # Deploy PostgreSQL to kind cluster
-task deploy-noetl         # Deploy NoETL server and workers
-task test-*-full         # Integration tests (register credentials, playbook, execute)
+task bring-all                    # Complete K8s dev environment (build + deploy all components)
+task deploy-postgres              # Deploy PostgreSQL to kind cluster
+task deploy-noetl                 # Deploy NoETL server and workers
+task observability:activate-all   # Deploy ClickHouse, Qdrant, NATS
+task test-*-full                  # Integration tests (register credentials, playbook, execute)
 ```
 
 **Local Development:**
 ```bash
-task docker-build-noetl   # Build NoETL container image
-task kind-create-cluster  # Create kind Kubernetes cluster
-task test-cluster-health  # Check cluster health and endpoints
-task clear-all-cache     # Clear local file cache
+task docker-build-noetl          # Build NoETL container image
+task kind-create-cluster         # Create kind Kubernetes cluster
+task test-cluster-health         # Check cluster health and endpoints
+task clear-all-cache             # Clear local file cache
+task observability:status-all    # Check all observability services
+task observability:health-all    # Health check all services
 ```
 
 ## Project-Specific Patterns
@@ -201,7 +206,22 @@ See `tests/fixtures/playbooks/script_execution/` and `docs/script_attribute_desi
 **Deployment Modes:**
 - Local: Direct Python execution with file-based logs
 - Docker: Containerized with environment-based configuration
-- Kubernetes: Helm charts with unified observability stack (Grafana, VictoriaMetrics)
+- Kubernetes: Helm charts with unified observability stack (Grafana, VictoriaMetrics, ClickHouse)
+
+**Observability Stack:**
+- **ClickHouse**: Column-oriented database for logs, metrics, and traces (OpenTelemetry format)
+  - Access: HTTP (NodePort 30123), Native (NodePort 30900), MCP (port 8124)
+  - Tables: `observability.logs`, `observability.metrics`, `observability.traces`, `observability.noetl_events`
+- **Qdrant**: Vector database for embeddings and semantic search
+  - Access: HTTP (NodePort 30633), gRPC (NodePort 30634)
+  - Features: Vector similarity search, extended filtering, 5GB storage
+- **NATS JetStream**: Messaging and key-value store for event-driven workflows
+  - Access: Client (NodePort 30422), Monitoring (NodePort 30822)
+  - Features: Stream persistence, KV store, credentials (noetl/noetl)
+- **Commands**: 
+  - `task observability:activate-all` / `task observability:deactivate-all`
+  - Individual: `task clickhouse:deploy`, `task qdrant:deploy`, `task nats:deploy`
+- **Documentation**: See `docs/observability_services.md` for complete guide
 
 **Timezone Configuration** (CRITICAL):
 - **Default**: UTC for all components (Postgres, server, worker)

@@ -1,0 +1,113 @@
+# ClickHouse Cluster for NoETL Observability
+# Single-node cluster for local development
+---
+apiVersion: clickhouse.altinity.com/v1
+kind: ClickHouseInstallation
+metadata:
+  name: noetl-clickhouse
+  namespace: clickhouse
+  labels:
+    app: noetl-clickhouse
+    component: observability
+spec:
+  configuration:
+    users:
+      # Default user with no password for local dev
+      default/password: ""
+      default/networks/ip: "::/0"
+      default/profile: default
+      default/quota: default
+      default/access_management: "1"
+      # Admin user for management
+      admin/password: "admin"
+      admin/networks/ip: "::/0"
+      admin/profile: default
+      admin/access_management: "1"
+      # Operator user (created by Altinity operator)
+      clickhouse_operator/password: ""
+      clickhouse_operator/networks/ip: "::/0"
+      clickhouse_operator/profile: clickhouse_operator
+      clickhouse_operator/access_management: "1"
+    profiles:
+      default/max_memory_usage: "10000000000"
+      default/use_uncompressed_cache: "0"
+      default/load_balancing: random
+      default/log_queries: "1"
+      default/log_query_threads: "1"
+      # Profile for operator user
+      clickhouse_operator/max_memory_usage: "10000000000"
+      clickhouse_operator/use_uncompressed_cache: "0"
+    settings:
+      compression/case/method: zstd
+      # Optimize for local dev
+      max_concurrent_queries: "100"
+      background_pool_size: "16"
+    clusters:
+      - name: noetl
+        layout:
+          shardsCount: 1
+          replicasCount: 1
+  defaults:
+    templates:
+      podTemplate: pod-template
+      dataVolumeClaimTemplate: data-volume
+      logVolumeClaimTemplate: log-volume
+  templates:
+    podTemplates:
+      - name: pod-template
+        spec:
+          containers:
+            - name: clickhouse
+              image: clickhouse/clickhouse-server:latest
+              ports:
+                - name: http
+                  containerPort: 8123
+                - name: native
+                  containerPort: 9000
+                - name: interserver
+                  containerPort: 9009
+              resources:
+                requests:
+                  memory: "512Mi"
+                  cpu: "500m"
+                limits:
+                  memory: "2Gi"
+                  cpu: "2000m"
+    volumeClaimTemplates:
+      - name: data-volume
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 5Gi
+      - name: log-volume
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: clickhouse
+  namespace: clickhouse
+  labels:
+    app: noetl-clickhouse
+spec:
+  type: NodePort
+  ports:
+    - port: 8123
+      targetPort: 8123
+      nodePort: 30123
+      protocol: TCP
+      name: http
+    - port: 9000
+      targetPort: 9000
+      nodePort: 30900
+      protocol: TCP
+      name: native
+  selector:
+    clickhouse.altinity.com/chi: noetl-clickhouse

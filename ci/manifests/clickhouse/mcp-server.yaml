@@ -1,0 +1,115 @@
+# ClickHouse MCP Server
+# Model Context Protocol server for ClickHouse integration
+# https://github.com/ClickHouse/mcp-clickhouse
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: clickhouse-mcp-config
+  namespace: clickhouse
+data:
+  config.json: |
+    {
+      "clickhouse": {
+        "host": "clickhouse.clickhouse.svc.cluster.local",
+        "port": 8123,
+        "username": "default",
+        "password": "",
+        "database": "default",
+        "protocol": "http"
+      },
+      "server": {
+        "host": "0.0.0.0",
+        "port": 8124,
+        "log_level": "info"
+      }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: clickhouse-mcp-server
+  namespace: clickhouse
+  labels:
+    app: clickhouse-mcp-server
+    component: mcp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: clickhouse-mcp-server
+  template:
+    metadata:
+      labels:
+        app: clickhouse-mcp-server
+    spec:
+      containers:
+        - name: mcp-server
+          # MCP server using ClickHouse MCP from GitHub
+          # https://github.com/ClickHouse/mcp-clickhouse
+          image: ghcr.io/clickhouse/mcp-clickhouse:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: mcp
+              containerPort: 8124
+              protocol: TCP
+          env:
+            - name: CLICKHOUSE_HOST
+              value: "clickhouse.clickhouse.svc.cluster.local"
+            - name: CLICKHOUSE_PORT
+              value: "8123"
+            - name: CLICKHOUSE_USER
+              value: "default"
+            - name: CLICKHOUSE_PASSWORD
+              value: ""
+            - name: CLICKHOUSE_DATABASE
+              value: "default"
+            - name: MCP_HOST
+              value: "0.0.0.0"
+            - name: MCP_PORT
+              value: "8124"
+            - name: LOG_LEVEL
+              value: "info"
+          volumeMounts:
+            - name: config
+              mountPath: /app/config
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8124
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8124
+            initialDelaySeconds: 10
+            periodSeconds: 5
+      volumes:
+        - name: config
+          configMap:
+            name: clickhouse-mcp-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: clickhouse-mcp
+  namespace: clickhouse
+  labels:
+    app: clickhouse-mcp-server
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8124
+      targetPort: 8124
+      protocol: TCP
+      name: mcp
+  selector:
+    app: clickhouse-mcp-server
