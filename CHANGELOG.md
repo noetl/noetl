@@ -1,5 +1,16 @@
 # Changelog
 
+All notable changes to this project will be documented in this file.
+
+## [1.2.3](https://github.com/noetl/noetl/compare/v1.2.2...v1.2.3) (2025-11-25)
+
+### Bug Fixes
+
+* CI/CD test build ([0f994c3](https://github.com/noetl/noetl/commit/0f994c3fd0dae8eb9a43ae7449e29d2d9fabec84))
+* Update Release GitHub workflow ([68b34f2](https://github.com/noetl/noetl/commit/68b34f2e4e234f122c80261b3c55e79fd23dfa11))
+
+# Changelog
+
 ## [Unreleased] - Unified Kubernetes Deployment
 
 ### Fixed
