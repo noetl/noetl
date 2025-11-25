@@ -53,6 +53,6 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |
-            ghcr.io/noetl/noetl:$IMAGE_TAG
+            ghcr.io/noetl/noetl:${{ env.IMAGE_TAG }}
 
 # $REGISTRY/$IMAGE_NAME:latest
