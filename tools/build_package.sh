@@ -23,6 +23,6 @@ if command -v uv >/dev/null 2>&1; then
 fi
 
 echo "[build_package] Building package"
-python -m build
+python3 -m build
 
 echo "[build_package] Done. Artifacts in dist/"
