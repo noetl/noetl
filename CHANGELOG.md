@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.4](https://github.com/noetl/noetl/compare/v1.2.3...v1.2.4) (2025-11-25)
+
+### Bug Fixes
+
+* Fix Release label ([5abe9b8](https://github.com/noetl/noetl/commit/5abe9b87e0c71c97406c4b9162d16a20dc0cf584))
+
 ## [1.2.3](https://github.com/noetl/noetl/compare/v1.2.2...v1.2.3) (2025-11-25)
 
 ### Bug Fixes
