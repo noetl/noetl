@@ -11,7 +11,7 @@ tasks:
       - task: deploy-operator
       - task: deploy-cluster
       - task: deploy-schema
-      - task: deploy-mcp-server
+      - task: deploy-grafana-datasource
       - echo "✓ ClickHouse observability stack deployed"
       - task: status
 
@@ -67,6 +67,13 @@ tasks:
       - kubectl apply -f ci/manifests/clickhouse/mcp-server.yaml
       - echo "✓ ClickHouse MCP server deployed"
       - kubectl wait --for=condition=available --timeout=60s deployment/clickhouse-mcp-server -n clickhouse || true
+
+  deploy-grafana-datasource:
+    desc: Deploy ClickHouse datasource for Grafana
+    cmds:
+      - kubectl apply -f ci/manifests/clickhouse/grafana-datasource.yaml
+      - echo "✓ ClickHouse datasource configured in Grafana"
+      - echo "Access ClickHouse data via Grafana at http://localhost:3000"
 
   undeploy:
     desc: Remove ClickHouse observability stack

@@ -566,6 +566,7 @@ setup_cluster() {
     echo ""
     log_info "Monitoring:"
     log_info "  - Grafana: kubectl port-forward -n vmstack svc/vmstack-grafana 3000:80"
+    log_info "    (includes ClickHouse datasource for querying observability data)"
     log_info "  - Postgres: kubectl port-forward -n postgres svc/postgres 5432:5432"
 }
 
