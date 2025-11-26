@@ -148,9 +148,9 @@ Together, these principles give NoETL a clear stance:
 - Use **AI and domain-specific analytics** over past executions to continuously improve how the system schedules, routes, and scales workflows across data mesh / lakehouse, analytical, and MLOps domains.
 
 
-## Quick Start
+## Quick Start 
 
-- [Playbook notes](docs/concepts/playbook_notes.md)
+[_Playbook notes_](docs/concepts/playbook_notes.md)
 
 ### Installation
 
