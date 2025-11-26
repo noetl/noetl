@@ -3,6 +3,7 @@ WORKDIR /ui
 COPY ui-src/package.json ui-src/package-lock.json ./ui-src/
 RUN cd ui-src && npm ci
 COPY ui-src ./ui-src
+ENV VITE_API_BASE_URL=/api
 RUN cd ui-src && npm run build
 
 FROM python:3.12-slim AS builder
