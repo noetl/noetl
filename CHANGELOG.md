@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.5](https://github.com/noetl/noetl/compare/v1.2.4...v1.2.5) (2025-11-26)
+
+### Bug Fixes
+
+* Preserve loop variables from server-side rendering ([d7c5b41](https://github.com/noetl/noetl/commit/d7c5b41bdc6ecdde5e39a4d05f9da21f389763af))
+* version loop ([0b8c664](https://github.com/noetl/noetl/commit/0b8c664a984df7a5a1e50980b2e8416cee0f363a))
+
 ## [1.2.4](https://github.com/noetl/noetl/compare/v1.2.3...v1.2.4) (2025-11-25)
 
 ### Bug Fixes
