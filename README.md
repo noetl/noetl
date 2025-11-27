@@ -658,3 +658,17 @@ npm run build                     # Production build
 ```  
 
 [Semantic Release](ci/documents/semantic-release.md) is enabled for this repository. Please **do not** push tags manually.  
+
+## Troubleshooting
+
+### WSL2 bootstrap fails installing pyenv/tfenv
+
+If `make bootstrap` (or `.noetl/ci/bootstrap/bootstrap.sh`) runs under WSL2 with `$HOME` mapped to a Windows path (for example `/mnt/c/Users/<name>`), installers such as `pyenv` and `tfenv` cannot create their shims because NTFS permissions block symlink creation. Move your repository (and preferably your WSL home directory) onto the native ext4 filesystem under `/home/<user>` before running bootstrap, or temporarily override `HOME` while invoking the script:
+
+```bash
+export HOME=/home/$USER
+mkdir -p "$HOME"
+HOME=$HOME make -C .noetl bootstrap
+```
+
+After the bootstrap completes, start a new WSL shell so the `.bashrc` updates for `PYENV_ROOT`, `.tfenv`, and PATH take effect.
