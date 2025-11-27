@@ -155,11 +155,11 @@ workflow:
 - Result of task execution is passed to the storage action type
 
 ```yaml
-save:
+sink:
   data:
     id: "{{ execution_id }}:{{ user.name }}"
     result: "{{ this.data | tojson }}"  # 'this' references current task result
-  storage: postgres
+  tool: postgres
   auth: pg_local
   table: public.results
   mode: upsert  # append, overwrite, update, upsert
@@ -311,8 +311,8 @@ workflow:
     code: |
       def main():
           return {"message": "Threshold passed"}
-    save:
-      storage: postgres
+    sink:
+      tool: postgres
       auth: pg_local
       table: results
       mode: append

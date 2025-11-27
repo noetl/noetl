@@ -42,20 +42,19 @@ workflow:
 
   - step: insert_posts
     desc: Insert posts into PostgreSQL
-    tool: iterator
-    collection: "{{ fetch_http_data.data }}"
-    element: item
-    task:
-      tool: postgres
-      auth: "{{ workload.pg_auth }}"
-      command: |
-        INSERT INTO public.http_to_postgres_iterator (post_id, user_id, title, body)
-        VALUES (
-          {{ item.id }},
-          {{ item.userId }},
-          $${{ item.title }}$$,
-          $${{ item.body }}$$
-        );
+    tool: postgres
+    auth: "{{ workload.pg_auth }}"
+    loop:
+      collection: "{{ fetch_http_data.data }}"
+      element: item
+    command: |
+      INSERT INTO public.http_to_postgres_iterator (post_id, user_id, title, body)
+      VALUES (
+        {{ item.id }},
+        {{ item.userId }},
+        $${{ item.title }}$$,
+        $${{ item.body }}$$
+      );
     next:
       - step: show_count
 

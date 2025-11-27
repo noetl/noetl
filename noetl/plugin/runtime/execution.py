@@ -123,7 +123,7 @@ def execute_task(
     from noetl.plugin.controller.playbook import execute_playbook_task
     from noetl.plugin.controller.workbook import execute_workbook_task
     from noetl.plugin.shared.secrets import execute_secrets_task
-    from noetl.plugin.shared.storage import execute_save_task
+    from noetl.plugin.shared.storage import execute_sink_task
     from noetl.plugin.tools.duckdb import execute_duckdb_task
     from noetl.plugin.tools.http import execute_http_task
     from noetl.plugin.tools.postgres import execute_postgres_task
@@ -134,6 +134,19 @@ def execute_task(
         execute_snowflake_transfer_action,
     )
 
+    # Check if this step has loop configuration (iterator pattern)
+    # If so, delegate to iterator executor regardless of tool type
+    logger.critical(f"EXECUTION.execute_task: task='{task_name}', checking for loop attribute")
+    logger.critical(f"EXECUTION.execute_task: task_config keys = {list(task_config.keys())}")
+    if 'loop' in task_config:
+        logger.critical(f"EXECUTION.execute_task: LOOP DETECTED! loop={task_config.get('loop')}")
+        logger.critical(f"EXECUTION.execute_task: Routing to iterator executor")
+        logger.debug(f"Executing task '{task_name}' with loop configuration")
+        wrapped_context = _wrap_context_results(context)
+        return execute_iterator_task(
+            task_config, wrapped_context, jinja_env, args or {}, log_event_callback
+        )
+    
     task_type, raw_type = _resolve_task_type(task_config)
 
     logger.debug(f"Executing task '{task_name}' of tool '{task_type}'")
@@ -191,18 +204,15 @@ def execute_task(
             args,
             log_event_callback,
         )
-    elif task_type == "save":
-        return execute_save_task(
-            task_config, wrapped_context, jinja_env, args or {}, log_event_callback
-        )
-    elif task_type == "iterator":
-        return execute_iterator_task(
+    elif task_type == 'sink':
+        return execute_sink_task(
             task_config, wrapped_context, jinja_env, args or {}, log_event_callback
         )
     else:
         raise ValueError(
             f"Unknown task tool '{raw_type}'. "
-            f"Available tools: http, python, duckdb, postgres, snowflake, snowflake_transfer, transfer, secrets, playbook, workbook, iterator, save"
+            f"Available tools: http, python, duckdb, postgres, snowflake, snowflake_transfer, transfer, secrets, playbook, workbook, save. "
+            f"Note: Use 'loop:' attribute to iterate over collections, not 'tool: iterator'."
         )
 
 

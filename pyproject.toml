@@ -1,6 +1,6 @@
 [project]
 name = "noetl"
-version = "1.0.3"
+version = "1.2.5"
 description = "A framework to build and run data pipelines and workflows."
 authors = [
     { name = "Kadyapam", email = "182583029+kadyapam@users.noreply.github.com" }
@@ -31,6 +31,8 @@ dependencies = [
     "PyYAML>=6.0.1",
     "Jinja2>=3.1.6",
     "pycryptodome>=3.21",
+    "cryptography>=44.0.0",
+    "PyJWT>=2.8.0",
     "urllib3>=2.3",
     "Authlib>=1.6.5",
     "typer>=0.15.3",

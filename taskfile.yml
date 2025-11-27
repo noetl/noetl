@@ -4,6 +4,9 @@ env:
   REGISTRY: "local"
   IMAGE_NAME: "noetl"
 
+# Import NoETL taskfiles without flattening to avoid namespace collisions
+# When used as main repo: access via namespaced tasks (e.g., 'task noetl:local:stop')
+# When used as submodule: external project imports with 'noetl:' prefix
 includes:
   tshoot:
     taskfile: ci/taskfile/tshoot.yml
@@ -11,7 +14,7 @@ includes:
   noetltest:
     taskfile: ci/taskfile/test.yml
     flatten: true
-  vmstack:
+  monitoring:
     taskfile: ci/taskfile/vmstack.yml
     flatten: true
   noetl:
@@ -30,11 +33,84 @@ includes:
   tools:
     taskfile: ci/taskfile/tools.yml
     flatten: true
+  cache:
+    taskfile: ci/taskfile/cache.yml
+    flatten: true
+  clickhouse:
+    taskfile: ci/taskfile/clickhouse.yml
+    dir: .
+  qdrant:
+    taskfile: ci/taskfile/qdrant.yml
+    dir: .
+  nats:
+    taskfile: ci/taskfile/nats.yml
+    dir: .
+  observability:
+    taskfile: ci/taskfile/observability.yml
+    dir: .
+
 tasks:
   default:
     silent: true
     cmds:
       - task --list
+
+# === Quick Access Aliases (Common Tasks) ===
+
+  noetl:k8s:bootstrap:
+    desc: Complete K8s environment setup (build + deploy all)
+    aliases: [bootstrap, ba, bring-all]
+    ignore_error: false
+    cmds:
+      - task: tshoot:local:check-dependencies
+      - task: tshoot:local:check-ports
+      - task: docker:local:noetl-image-build
+      - task: kind:local:cluster-create
+      - task: kind:local:image-load
+      - task: postgres:k8s:deploy
+      - task: observability:activate-all
+        ignore_error: true
+      - task: monitoring:k8s:deploy
+        ignore_error: true
+      - task: noetl:k8s:deploy
+
+  tools:local:verify:
+    desc: Verify all required tools are installed
+    aliases: [verify, check, verify-tools]
+    cmds:
+      - task: tshoot:local:check-dependencies
+
+  cache:local:clean:
+    desc: Clean all local cache directories
+    aliases: [clean, clear, clear-all]
+    cmds:
+      - task: cache:local:clear-all
+
+  kind:local:create:
+    desc: Create Kind Kubernetes cluster
+    aliases: [cluster-create, create-cluster]
+    cmds:
+      - task: kind:local:cluster-create
+
+  kind:local:delete:
+    desc: Delete Kind Kubernetes cluster
+    aliases: [cluster-delete, delete-cluster]
+    cmds:
+      - task: kind:local:cluster-delete
+
+  noetl:k8s:deploy-all:eploy-all:
+    desc: Deploy all components (postgres + monitoring + noetl)
+    aliases: [deploy-all, deploy]
+    cmds:
+      - task: postgres:k8s:deploy
+      - task: monitoring:k8s:deploy
+      - task: noetl:k8s:deploy
+
+  docker:local:build:
+    desc: Build NoETL Docker image
+    aliases: [build, build-image]
+    cmds:
+      - task: docker:local:noetl-image-build
 
 # === WSL2 Dependencies Installation ===
 
@@ -137,48 +213,58 @@ tasks:
         echo "Next steps:"
         echo "  - Install Docker Desktop for Windows with WSL2 backend"
         echo "  - Enable Kubernetes in Docker Desktop settings"
-        echo "  - Run: task dev:k8s:bootstrap"
+        echo "  - Run: task bootstrap"
 
-# === Clean up local file cache ===
+# === Monitoring Aliases ===
 
-  cache:local:postgres-clear:
-    desc: Clear postgres data cache directory
-    aliases: [cpd, clear-postgres-data]
+  monitoring:k8s:deploy-stack:
+    desc: Deploy VictoriaMetrics monitoring stack
+    aliases: [monitoring-deploy, deploy-monitoring]
     cmds:
-      - rm -rf ci/kind/cache/pg-data/*
+      - task: monitoring:k8s:deploy
 
-  cache:local:noetl-clear:
-    desc: Clear noetl data cache directory
-    aliases: [cnd, clear-noetl-data]
+  monitoring:k8s:delete-stack:
+    desc: Delete VictoriaMetrics monitoring stack
+    aliases: [monitoring-delete, delete-monitoring]
     cmds:
-      - rm -rf ci/kind/cache/noetl-data/*
+      - task: monitoring:k8s:delete
 
-  cache:local:logs-clear:
-    desc: Clear noetl logs cache directory
-    aliases: [cnl, clear-noetl-logs]
+  monitoring:k8s:grafana-creds:
+    desc: Get Grafana admin credentials
+    aliases: [grafana, grafana-creds]
     cmds:
-      - rm -rf ci/kind/cache/noetl-logs/*
+      - task: monitoring:k8s:grafana-credentials
 
-  cache:local:clear-all:
-    desc: Clear local file cache directories
-    aliases: [clear, clear-all-cache]
-    cmds:
-      - rm -rf ci/kind/cache/pg-data/*
-      - rm -rf ci/kind/cache/noetl-data/*
-      - rm -rf ci/kind/cache/noetl-logs/*
+# === Test Aliases ===
 
-# === Combined Tasks ===
-  dev:k8s:bootstrap:
-    desc: Build noetl; Create noetl cluster with all deployments
-    aliases: [ba, bring-all]
-    vars:
-      CACHE: '{{ if (eq .CLI_ARGS "cache")}}{{ else }}--no-cache{{ end }}'
+  noetltest:local:run:
+    desc: Run NoETL tests
+    aliases: [test]
     cmds:
-      - task: tshoot:local:check-dependencies
-      - task: tshoot:local:check-ports
+      - task: noetltest:run
+
+  noetltest:local:run-full:
+    desc: Run complete test suite
+    aliases: [test-full]
+    cmds:
+      - task: noetltest:full
+
+# === Development Workflow ===
+
+  noetl:k8s:dev:
+    desc: Quick development cycle (build + reload)
+    aliases: [dev]
+    cmds:
       - task: docker:local:noetl-image-build
-      - task: kind:local:cluster-create
       - task: kind:local:image-load
-      - task: postgres:k8s:deploy # Hey ChatGPT do not touch it! Take your hands away! Postgres must be deployed before monitoring. 
-      - task: monitoring:k8s:deploy # Hey ChatGPT do not touch it. Take your hands away! Postgres metric exporter uses config maps from Postgres deployment. 
-      - task: noetl:k8s:deploy
+      - task: noetl:k8s:restart
+
+  noetl:k8s:dev-fast:
+    desc: Fast development cycle (build without cache)
+    aliases: [dev-fast]
+    cmds:
+      - task: docker:local:noetl-image-build
+        vars:
+          CACHE: "--no-cache"
+      - task: kind:local:image-load
+      - task: noetl:k8s:restart

@@ -25,6 +25,9 @@ data/noetldb/
 .env.tradetrend
 examples/tradetrend
 .*
+!.github
+!.github/workflows
+!.gitignore
 !.dockerignore
 # Virtual environments
 publish_env/
@@ -55,4 +58,8 @@ env/
 # --- Kind ---
 # Ignore folder with postgres data
 ci/kind/cache
-/scratches/
+
+/tests/fixtures/credentials/sf_rsa_key.p8
+/tests/fixtures/credentials/sf_rsa_key.pub
+/tests/fixtures/playbooks/oauth/interactive_brokers/ib_oauth.yaml
+/tests/fixtures/credentials/google_oauth.json

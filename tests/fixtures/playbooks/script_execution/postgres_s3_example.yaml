@@ -1,0 +1,52 @@
+apiVersion: noetl.io/v1
+kind: Playbook
+metadata:
+  name: postgres_s3_script_example
+  path: tests/script_execution/postgres_s3
+
+workload:
+  s3_script_uri: s3://noetl-sql-scripts/migrations/create_test_table.sql  # Full S3 URI
+  s3_region: us-east-1
+  aws_credential: aws_credentials  # Credential registered in NoETL
+  pg_auth: pg_local
+
+workflow:
+  - step: start
+    desc: Start workflow
+    next:
+      - step: run_postgres_from_s3
+
+  - step: run_postgres_from_s3
+    desc: Execute SQL script from AWS S3 using full URI
+    tool: postgres
+    auth: "{{ workload.pg_auth }}"
+    script:
+      uri: "{{ workload.s3_script_uri }}"  # Full s3://bucket/path URI
+      source:
+        type: s3
+        region: "{{ workload.s3_region }}"
+        auth: "{{ workload.aws_credential }}"
+    next:
+      - step: verify_table
+
+  - step: verify_table
+    desc: Verify table was created from S3 script
+    tool: postgres
+    auth: "{{ workload.pg_auth }}"
+    command: |
+      SELECT COUNT(*) as record_count, 'from_s3_script' as verification
+      FROM public.script_test;
+    next:
+      - step: cleanup
+
+  - step: cleanup
+    desc: Clean up test table
+    tool: postgres
+    auth: "{{ workload.pg_auth }}"
+    command: |
+      DROP TABLE IF EXISTS public.script_test;
+    next:
+      - step: end
+
+  - step: end
+    desc: End workflow

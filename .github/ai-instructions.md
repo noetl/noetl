@@ -9,28 +9,33 @@ NoETL is a workflow automation framework for data processing and MLOps orchestra
 - **Worker** (`noetl/worker/`): Polling workers that lease jobs from PostgreSQL queue and execute tasks
 - **CLI** (`noetl/cli/ctl.py`): Typer-based command interface managing server/worker lifecycle
 - **Plugins** (`noetl/plugin/`): Extensible action executors (http, postgres, duckdb, python, secrets, etc.)
+- **Observability** (`ci/manifests/clickhouse/`): ClickHouse-based observability stack with OpenTelemetry schema for logs, metrics, and traces
 
 **Data Flow:**
 1. Playbooks (YAML) → Catalog registration → Event-driven execution
 2. Server evaluates next steps → Enqueues jobs → Workers execute → Report back via events
 3. All state persisted in PostgreSQL event log for reconstruction and coordination
+4. Observability data flows to ClickHouse for analytics and AI agent access via MCP server
 
 ## Development Workflows
 
 **Setup & Testing:**
 ```bash
-task bring-all            # Complete K8s dev environment (build + deploy all components)
-task deploy-postgres      # Deploy PostgreSQL to kind cluster
-task deploy-noetl         # Deploy NoETL server and workers
-task test-*-full         # Integration tests (register credentials, playbook, execute)
+task bring-all                    # Complete K8s dev environment (build + deploy all components)
+task deploy-postgres              # Deploy PostgreSQL to kind cluster
+task deploy-noetl                 # Deploy NoETL server and workers
+task observability:activate-all   # Deploy ClickHouse, Qdrant, NATS
+task test-*-full                  # Integration tests (register credentials, playbook, execute)
 ```
 
 **Local Development:**
 ```bash
-task docker-build-noetl   # Build NoETL container image
-task kind-create-cluster  # Create kind Kubernetes cluster
-task test-cluster-health  # Check cluster health and endpoints
-task clear-all-cache     # Clear local file cache
+task docker-build-noetl          # Build NoETL container image
+task kind-create-cluster         # Create kind Kubernetes cluster
+task test-cluster-health         # Check cluster health and endpoints
+task clear-all-cache             # Clear local file cache
+task observability:status-all    # Check all observability services
+task observability:health-all    # Health check all services
 ```
 
 ## Project-Specific Patterns
@@ -50,8 +55,8 @@ workbook:                 # Named reusable tasks (optional)
     code: |               # Type-specific configuration
       def main(input_data):
         return result
-    save:                 # Optional: save task result to storage
-      storage: postgres
+    sink:                 # Optional: save task result to storage
+      tool: postgres
       table: table_name
 workflow:                 # Execution flow (required, must have 'start' step)
   - step: start           # Required entry point
@@ -88,6 +93,76 @@ workflow:                 # Execution flow (required, must have 'start' step)
 - `auth: {type: postgres, credential: key}` - Single credential lookup
 - `credentials: {alias: {key: credential_name}}` - Multiple credential binding
 - `secret: "{{ secret.NAME }}"` - External secret manager resolution
+
+**Script Attribute** (External Code Execution - ADF-aligned):
+All action tools support loading code from external sources (GCS, S3, file, HTTP) similar to Azure Data Factory's linked services:
+```yaml
+script:
+  uri: gs://bucket-name/scripts/transform.py  # Full URI with scheme
+  source:
+    type: file|gcs|s3|http           # Source type
+    # Source-specific fields:
+    region: aws-region                # For s3 (optional)
+    auth: credential-reference        # For gcs/s3 authentication
+    endpoint: https://url             # For http (base URL)
+    method: GET                       # For http (default: GET)
+    headers: {}                       # For http
+    timeout: 30                       # For http (seconds)
+```
+
+**Priority Order**: `script` > `code_b64`/`command_b64` > `code`/`command`
+
+**Supported Plugins**: python, postgres, duckdb, snowflake, http
+
+**URI Formats**:
+- GCS: `gs://bucket-name/path/to/script.py` (required format)
+- S3: `s3://bucket-name/path/to/script.sql` (required format)
+- File: `./scripts/transform.py` or `/abs/path/script.py`
+- HTTP: Relative path with `source.endpoint` or full URL
+
+**Examples**:
+```yaml
+# Python with GCS
+- step: transform
+  tool: python
+  script:
+    uri: gs://data-pipelines/scripts/transform.py
+    source:
+      type: gcs
+      auth: gcp_service_account
+
+# Postgres with S3
+- step: migration
+  tool: postgres
+  auth: pg_prod
+  script:
+    uri: s3://sql-scripts/migrations/v2.5/upgrade.sql
+    source:
+      type: s3
+      region: us-west-2
+      auth: aws_credentials
+
+# Python with file source
+- step: local_script
+  tool: python
+  script:
+    uri: ./scripts/transform.py
+    source:
+      type: file
+
+# Python with HTTP source
+- step: fetch_script
+  tool: python
+  script:
+    uri: transform.py
+    source:
+      type: http
+      endpoint: https://api.example.com/scripts
+      headers:
+        Authorization: "Bearer {{ secret.api_token }}"
+```
+
+See `tests/fixtures/playbooks/script_execution/` and `docs/script_attribute_design.md` for complete details.
 
 **Plugin Development** (`noetl/plugin/`):
 - Inherit from base classes in `base.py`
@@ -131,7 +206,22 @@ workflow:                 # Execution flow (required, must have 'start' step)
 **Deployment Modes:**
 - Local: Direct Python execution with file-based logs
 - Docker: Containerized with environment-based configuration
-- Kubernetes: Helm charts with unified observability stack (Grafana, VictoriaMetrics)
+- Kubernetes: Helm charts with unified observability stack (Grafana, VictoriaMetrics, ClickHouse)
+
+**Observability Stack:**
+- **ClickHouse**: Column-oriented database for logs, metrics, and traces (OpenTelemetry format)
+  - Access: HTTP (NodePort 30123), Native (NodePort 30900), MCP (port 8124)
+  - Tables: `observability.logs`, `observability.metrics`, `observability.traces`, `observability.noetl_events`
+- **Qdrant**: Vector database for embeddings and semantic search
+  - Access: HTTP (NodePort 30633), gRPC (NodePort 30634)
+  - Features: Vector similarity search, extended filtering, 5GB storage
+- **NATS JetStream**: Messaging and key-value store for event-driven workflows
+  - Access: Client (NodePort 30422), Monitoring (NodePort 30822)
+  - Features: Stream persistence, KV store, credentials (noetl/noetl)
+- **Commands**: 
+  - `task observability:activate-all` / `task observability:deactivate-all`
+  - Individual: `task clickhouse:deploy`, `task qdrant:deploy`, `task nats:deploy`
+- **Documentation**: See `docs/observability_services.md` for complete guide
 
 **Timezone Configuration** (CRITICAL):
 - **Default**: UTC for all components (Postgres, server, worker)
@@ -159,3 +249,16 @@ workflow:                 # Execution flow (required, must have 'start' step)
 - ✅ "Deploy complete monitoring stack"
 
 When working with this codebase, prioritize understanding the event-driven execution model and the playbook → events → worker execution flow. The architecture is designed for distributed execution with careful state management through Postgres system state storage.
+
+## Current Development Focus
+
+**Active Task: Token-Based Authentication Implementation**
+
+See `docs/token_auth_implementation.md` for detailed requirements and implementation plan. Key focus areas:
+
+1. **Snowflake MFA/TOTP Issue**: Tests failing due to MFA requirement - need OAuth token-based auth
+2. **Google OAuth Integration**: Replace gcloud CLI token fetching with Python SDK (`google.auth.transport.requests`, `google.oauth2.id_token`)
+3. **HTTP Plugin Token Injection**: Support dynamic Bearer token resolution in HTTP actions
+4. **Credential Schema Extension**: Add token-based credential types alongside existing password-based auth
+
+When working on authentication, credentials, or plugin improvements, refer to the token auth implementation document for context and requirements.

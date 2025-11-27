@@ -46,8 +46,13 @@ workflow:
     code: |
       def main(input_data):
           """Transform JSON posts and insert into PostgreSQL."""
-          # Get posts - input_data is the posts array directly
-          posts = input_data if isinstance(input_data, list) else []
+          # Get posts - input_data should be the HTTP response dict with 'data' key
+          if isinstance(input_data, dict):
+              posts = input_data.get('data', [])
+          elif isinstance(input_data, list):
+              posts = input_data
+          else:
+              posts = []
 
           if not posts:
               return {'status': 'error', 'message': 'No posts found', 'count': 0}

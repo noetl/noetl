@@ -1,0 +1,277 @@
+apiVersion: noetl.io/v1
+kind: Playbook
+
+metadata:
+  name: interactive_brokers_gateway_test
+  path: tests/fixtures/playbooks/interactive_brokers/gateway_test
+
+workload:
+  ib_credential: ib_paper
+  gateway_url: https://localhost:5000
+  message: Test Interactive Brokers Client Portal API via Gateway
+
+workflow:
+  - step: start
+    desc: Start IB Gateway test
+    next:
+      - step: check_gateway_status
+
+  - step: check_gateway_status
+    desc: Check if IB Gateway is running and authenticated
+    tool: http
+    method: GET
+    url: "{{ workload.gateway_url }}/v1/api/iserver/auth/status"
+    headers:
+      Content-Type: application/json
+      User-Agent: NoETL/1.0
+    verify_ssl: false
+    next:
+      - step: parse_auth_status
+
+  - step: parse_auth_status
+    desc: Parse authentication status
+    tool: python
+    code: |
+      def main(api_response):
+          """
+          Parse IB Gateway auth status.
+          
+          Expected response:
+          {
+            "authenticated": true,
+            "competing": false,
+            "connected": true,
+            "MAC": "...",
+            "serverInfo": {...}
+          }
+          """
+          if not isinstance(api_response, dict):
+              return {
+                  'status': 'error',
+                  'message': 'Invalid response format',
+                  'note': 'Is IB Gateway running? Visit https://localhost:5000'
+              }
+          
+          data = api_response.get('data', {})
+          status_code = api_response.get('status_code', 0)
+          
+          if status_code != 200:
+              return {
+                  'status': 'error',
+                  'status_code': status_code,
+                  'message': 'Gateway not accessible',
+                  'troubleshooting': [
+                      '1. Start IB Gateway: ./bin/run.sh root/conf.yaml',
+                      '2. Open https://localhost:5000 and login',
+                      '3. Accept security certificate warnings',
+                      '4. Retry this test'
+                  ]
+              }
+          
+          authenticated = data.get('authenticated', False)
+          connected = data.get('connected', False)
+          
+          if not authenticated or not connected:
+              return {
+                  'status': 'error',
+                  'authenticated': authenticated,
+                  'connected': connected,
+                  'message': 'Gateway not authenticated',
+                  'action_required': 'Login via https://localhost:5000'
+              }
+          
+          return {
+              'status': 'success',
+              'authenticated': authenticated,
+              'connected': connected,
+              'message': 'Gateway authenticated and ready',
+              'server_info': data.get('serverInfo', {})
+          }
+    args:
+      api_response: "{{ check_gateway_status }}"
+    next:
+      - when: "{{ parse_auth_status.status == 'success' }}"
+        then:
+          - step: get_accounts
+      - when: "{{ parse_auth_status.status == 'error' }}"
+        then:
+          - step: gateway_error
+
+  - step: get_accounts
+    desc: Get account information
+    tool: http
+    method: GET
+    url: "{{ workload.gateway_url }}/v1/api/portfolio/accounts"
+    headers:
+      Content-Type: application/json
+    verify_ssl: false
+    next:
+      - step: parse_accounts
+
+  - step: parse_accounts
+    desc: Parse account information
+    tool: python
+    code: |
+      def main(api_response):
+          """Parse IB accounts."""
+          if not isinstance(api_response, dict):
+              return {'status': 'error', 'message': 'Invalid response'}
+          
+          data = api_response.get('data', [])
+          status_code = api_response.get('status_code', 0)
+          
+          if status_code != 200:
+              return {
+                  'status': 'error',
+                  'status_code': status_code,
+                  'message': 'Failed to get accounts'
+              }
+          
+          # IB returns list of account objects
+          if isinstance(data, list) and len(data) > 0:
+              accounts = [acc.get('accountId', 'unknown') for acc in data]
+              return {
+                  'status': 'success',
+                  'account_count': len(accounts),
+                  'accounts': accounts,
+                  'message': f'Found {len(accounts)} account(s)'
+              }
+          
+          return {
+              'status': 'error',
+              'message': 'No accounts found in response'
+          }
+    args:
+      api_response: "{{ get_accounts }}"
+    next:
+      - step: get_portfolio_summary
+
+  - step: get_portfolio_summary
+    desc: Get portfolio summary for first account
+    tool: python
+    code: |
+      def main(accounts_data):
+          """Extract first account ID."""
+          if not isinstance(accounts_data, dict):
+              return {'status': 'error', 'message': 'Invalid accounts data'}
+          
+          accounts = accounts_data.get('accounts', [])
+          if not accounts:
+              return {'status': 'error', 'message': 'No accounts available'}
+          
+          return {
+              'status': 'success',
+              'account_id': accounts[0],
+              'message': f'Using account {accounts[0]}'
+          }
+    args:
+      accounts_data: "{{ parse_accounts }}"
+    next:
+      - step: get_account_ledger
+
+  - step: get_account_ledger
+    desc: Get account ledger (balances)
+    tool: http
+    method: GET
+    url: "{{ workload.gateway_url }}/v1/api/portfolio/{{ get_portfolio_summary.account_id }}/ledger"
+    headers:
+      Content-Type: application/json
+    verify_ssl: false
+    next:
+      - step: parse_ledger
+
+  - step: parse_ledger
+    desc: Parse account ledger
+    tool: python
+    code: |
+      def main(api_response):
+          """Parse IB account ledger."""
+          if not isinstance(api_response, dict):
+              return {'status': 'error', 'message': 'Invalid response'}
+          
+          data = api_response.get('data', {})
+          status_code = api_response.get('status_code', 0)
+          
+          if status_code != 200:
+              return {
+                  'status': 'error',
+                  'status_code': status_code,
+                  'message': 'Failed to get ledger'
+              }
+          
+          # Extract key balance fields
+          ledger = {}
+          if isinstance(data, dict):
+              for key in data.keys():
+                  ledger[key] = data[key]
+          
+          return {
+              'status': 'success',
+              'ledger_fields': list(ledger.keys()),
+              'sample_data': {k: ledger[k] for k in list(ledger.keys())[:5]} if ledger else {},
+              'message': 'Account ledger retrieved successfully'
+          }
+    args:
+      api_response: "{{ get_account_ledger }}"
+    next:
+      - step: verify_test
+
+  - step: verify_test
+    desc: Verify IB Gateway test completed
+    tool: python
+    code: |
+      def main(auth_status, accounts, ledger):
+          """Verify complete IB Gateway flow."""
+          
+          auth_ok = auth_status.get('status') == 'success'
+          accounts_ok = accounts.get('status') == 'success'
+          ledger_ok = ledger.get('status') == 'success'
+          
+          if auth_ok and accounts_ok and ledger_ok:
+              return {
+                  'status': 'success',
+                  'message': 'IB Gateway authentication fully verified!',
+                  'gateway_status': 'CONNECTED',
+                  'accounts_found': accounts.get('account_count', 0),
+                  'ledger_accessed': 'SUCCESS',
+                  'validation': 'Gateway session active, API calls succeeded'
+              }
+          else:
+              return {
+                  'status': 'error',
+                  'message': 'IB Gateway test failed',
+                  'auth_status': auth_status.get('status'),
+                  'accounts_status': accounts.get('status'),
+                  'ledger_status': ledger.get('status')
+              }
+    args:
+      auth_status: "{{ parse_auth_status }}"
+      accounts: "{{ parse_accounts }}"
+      ledger: "{{ parse_ledger }}"
+    next:
+      - step: end
+
+  - step: gateway_error
+    desc: Gateway not available
+    tool: python
+    code: |
+      def main(error_info):
+          """Report gateway error."""
+          return {
+              'status': 'error',
+              'message': 'IB Gateway is not running or not authenticated',
+              'error_details': error_info,
+              'next_steps': [
+                  '1. Download IB Gateway from https://www.interactivebrokers.com',
+                  '2. Configure gateway with your credentials',
+                  '3. Start gateway and login via web UI',
+                  '4. Retry this test'
+              ]
+          }
+    args:
+      error_info: "{{ parse_auth_status }}"
+    next:
+      - step: end
+
+  - step: end
+    desc: IB Gateway test completed

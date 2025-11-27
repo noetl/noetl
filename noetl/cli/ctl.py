@@ -628,7 +628,7 @@ def manage_catalog(
             url = f"http://{host}:{port}/api/catalog/register"
             headers = {"Content-Type": "application/json"}
             data = {
-                "content_base64": content_base64,
+                "content": content_base64,
                 "resource_type": "Playbook"
             }
 
@@ -1096,7 +1096,7 @@ def register_playbook(
         url = f"http://{host}:{port}/api/catalog/register"
         headers = {"Content-Type": "application/json"}
         data = {
-            "content_base64": content_base64,
+            "content": content_base64,
             "resource_type": "Playbook"
         }
         logger.info(f"Registering playbook {playbook_file} with NoETL server at {url}")

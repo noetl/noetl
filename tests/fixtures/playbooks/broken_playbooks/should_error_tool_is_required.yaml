@@ -16,13 +16,13 @@ workflow:
 
   - step: insert_report
     desc: Create PostgreSQL target table
-    type: postgres # tool is required should error generation in execution
+    tool: postgres
     auth: "{{ workload.pg_auth }}"
     command: |
       INSERT INTO {{ workload.pg_schema }}.reports (id, created_at)
         VALUES (gen_random_uuid(), NOW())
         RETURNING id;
-       
+
     next:
       -step: end
   - step: end

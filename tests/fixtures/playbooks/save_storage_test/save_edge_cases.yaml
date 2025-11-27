@@ -14,8 +14,41 @@ workload:
     - "empty_data"
 
 workflow:
-  # Test mixed data types
+  # Setup: Create tables
   - step: start
+    desc: "Create test tables for edge cases"
+    tool: postgres
+    auth: "{{ workload.pg_auth }}"
+    command: |
+      -- Create table for mixed data types test
+      CREATE TABLE IF NOT EXISTS test_mixed_types (
+        execution_id VARCHAR,
+        string_field VARCHAR,
+        integer_field INTEGER,
+        float_field DOUBLE PRECISION,
+        boolean_field BOOLEAN,
+        null_field VARCHAR,
+        datetime_field VARCHAR,
+        list_field TEXT,
+        dict_field TEXT,
+        decimal_field DOUBLE PRECISION
+      );
+      
+      -- Create table for special characters test
+      CREATE TABLE IF NOT EXISTS test_special_chars (
+        execution_id VARCHAR,
+        quotes VARCHAR,
+        unicode TEXT,
+        sql_injection TEXT,
+        newlines TEXT,
+        backslashes TEXT,
+        json_string TEXT
+      );
+    next:
+      - step: test_mixed_types
+
+  # Test mixed data types
+  - step: test_mixed_types
     desc: "Test save with mixed data types"
     tool: python
     code: |
@@ -35,15 +68,25 @@ workflow:
             "decimal_field": float(decimal.Decimal("99.99"))
           }
           
-          return {"status": "success", "data": mixed_data}
+          return mixed_data
     args:
       input_data: {}
-    save:
-      storage:
-        tool: postgres
-        args: "{{ result.data }}"
-        table: test_mixed_types
-        auth: "{{ workload.pg_auth }}"
+    sink:
+      tool: postgres
+      table: test_mixed_types
+      auth: "{{ workload.pg_auth }}"
+      mode: insert
+      args:
+        execution_id: "{{ execution_id }}"
+        string_field: "{{ data.string_field }}"
+        integer_field: "{{ data.integer_field }}"
+        float_field: "{{ data.float_field }}"
+        boolean_field: "{{ data.boolean_field }}"
+        null_field: "{{ data.null_field }}"
+        datetime_field: "{{ data.datetime_field }}"
+        list_field: "{{ data.list_field | tojson }}"
+        dict_field: "{{ data.dict_field | tojson }}"
+        decimal_field: "{{ data.decimal_field }}"
     next:
       - step: test_special_characters
 
@@ -62,16 +105,22 @@ workflow:
               "json_string": '{"embedded": "json", "value": 123}'
           }
           
-          return {"status": "success", "data": special_data}
+          return special_data
     args:
-      input_data: "{{ start }}"
-    save:
-      storage:
-        tool: postgres
-        args: "{{ result.data }}"
-        table: test_special_chars
-        mode: insert
-        auth: "{{ workload.pg_auth }}"
+      input_data: "{{ test_mixed_types }}"
+    sink:
+      tool: postgres
+      table: test_special_chars
+      mode: insert
+      auth: "{{ workload.pg_auth }}"
+      args:
+        execution_id: "{{ execution_id }}"
+        quotes: "{{ data.quotes }}"
+        unicode: "{{ data.unicode }}"
+        sql_injection: "{{ data.sql_injection }}"
+        newlines: "{{ data.newlines }}"
+        backslashes: "{{ data.backslashes }}"
+        json_string: "{{ data.json_string }}"
     next:
       - step: test_empty_data
 
@@ -90,19 +139,18 @@ workflow:
               "none_value": None
           }
           
-          return {"status": "success", "data": empty_scenarios}
+          return empty_scenarios
     args:
       input_data: "{{ test_special_characters }}"
-    save:
-      storage:
-        tool: python
-        code: |
-          def main(data):
-              import json
-              
-              # Handle empty/null data gracefully
-              processed = {}
-              for key, value in data.items():
+    sink:
+      tool: python
+      code: |
+        def main(data):
+            import json
+            
+            # Handle empty/null data gracefully
+            processed = {}
+            for key, value in data.items():
                   if value is None:
                       processed[key] = "NULL_VALUE"
                   elif value == "":
@@ -121,7 +169,7 @@ workflow:
               }
               
               print(f"Empty data processing: {json.dumps(result, indent=2)}")
-              return {"status": "success", "data": result}
+              return result
     next:
       - step: test_large_payload
 
@@ -150,26 +198,26 @@ workflow:
               }
               large_data["records"].append(record)
           
-          return {"status": "success", "data": large_data}
+          return large_data
     args:
       input_data: "{{ test_empty_data }}"
-    save:
-      storage:
-        tool: duckdb
-        commands: |
-          -- Create table for large dataset
-          CREATE OR REPLACE TABLE test_large_payload AS
-          SELECT 
-            'large_payload_test' as test_type,
-            {{ result.data.metadata.record_count }} as record_count,
-            '{{ execution_id }}' as execution_id,
-            NOW() as created_at;
-          
-          -- Simulate processing large data
-          INSERT INTO test_large_payload 
-          VALUES ('large_data_processed', 100, '{{ execution_id }}', NOW());
-          
-          SELECT * FROM test_large_payload WHERE execution_id = '{{ execution_id }}';
+    sink:
+      tool: duckdb
+      commands: |
+        -- Create table for large dataset
+        CREATE OR REPLACE TABLE test_large_payload (
+          test_type VARCHAR,
+          record_count INTEGER,
+          execution_id VARCHAR,
+          created_at TIMESTAMP
+        );
+        
+        -- Insert test record
+        INSERT INTO test_large_payload 
+        VALUES ('large_payload_test', {{ data.metadata.record_count }}, '{{ execution_id }}', NOW());
+        
+        -- Query results
+        SELECT * FROM test_large_payload WHERE execution_id = '{{ execution_id }}';
     next:
       - step: test_error_recovery
 
@@ -186,18 +234,21 @@ workflow:
               "recovery_test": True
           }
           
-          return {"status": "success", "data": potentially_problematic}
+          return potentially_problematic
     args:
-      input_data: "{{ test_large_payload }}"
-    save:
-      storage:
-        tool: http
-        endpoint: "https://httpbin.org/status/200"  # This should succeed
-        method: POST
-        headers:
-          Content-Type: "application/json"
-          X-Test-Type: "error-recovery"
-        args: "{{ result.data }}"
+      input_data: "{{ test_error_recovery }}"
+    sink:
+      tool: http
+      endpoint: "https://httpbin.org/status/200"
+      method: POST
+      headers:
+        Content-Type: "application/json"
+        X-Test-Type: "error-recovery"
+      payload:
+        test_execution: "{{ data.test_execution }}"
+        valid_field: "{{ data.valid_field }}"
+        recovery_test: "{{ data.recovery_test }}"
+        execution_id: "{{ execution_id }}"
     next:
       - step: test_completion_summary
 
@@ -225,12 +276,22 @@ workflow:
               "execution_id": input_data.get("execution_id", "unknown")
           }
           
-          return {"status": "success", "data": summary}
+          return summary
     args:
       input_data: "{{ test_error_recovery }}"
-    save:
-      storage: event_log
-      args: "{{ result.data }}"
+    sink:
+      tool: python
+      code: |
+        def main(data):
+            import json
+            summary = {
+                "edge_case_tests": data.get("edge_case_tests_completed", []),
+                "storage_types": data.get("storage_types_tested", []),
+                "status": data.get("test_status"),
+                "execution_id": data.get("execution_id")
+            }
+            print(f"Test Summary: {json.dumps(summary, indent=2)}")
+            return summary
     next:
       - step: end
 

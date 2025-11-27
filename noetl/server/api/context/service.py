@@ -291,86 +291,128 @@ def render_template_object(
 
     env = Environment(loader=BaseLoader(), undefined=StrictUndefined)
 
-    # Handle dict templates with work/task keys specially
+    # Handle dict templates specially
     if isinstance(template, dict):
+        logger.critical(
+            f"RENDER_DEBUG: Template is dict with keys: {list(template.keys())}"
+        )
         logger.info(
             f"RENDER_DEBUG: Template is dict with keys: {list(template.keys())}"
         )
-        out: Dict[str, Any] = {}
-
-        # Render 'work' with relaxed error handling
-        if "work" in template:
-            try:
-                out["work"] = render_template(
-                    env, template.get("work"), context, rules=None, strict_keys=False
-                )
-            except Exception as e:
-                logger.warning(f"Failed to render work section: {e}")
-                out["work"] = template.get("work")
-
-        # Render 'task' with strict mode
-        if "task" in template:
-            task_tpl = template.get("task")
-            logger.debug(f"RENDER_TASK_DEBUG: Preparing to render task template")
-            logger.debug(
-                f"RENDER_TASK_DEBUG: Context keys available: {list(context.keys())}"
+        
+        # Make a copy to avoid mutating the original
+        template = dict(template)
+        
+        # Determine if this is an iterator step (OLD format) or has loop (NEW format)
+        is_iterator = (template.get("tool") or "").lower() == "iterator"
+        has_loop = "loop" in template
+        
+        # Also check for loop inside template['task'] (when wrapped by worker)
+        task_dict = template.get('task') if isinstance(template.get('task'), dict) else None
+        if task_dict and "loop" in task_dict:
+            has_loop = True
+        
+        # Extract blocks that should not be rendered server-side:
+        # 1. For iterator steps (OLD format): the nested 'task' block (contains {{ item }} templates)
+        # 2. For loop steps (NEW format): the 'loop' block (contains {{ item }} templates)
+        # 3. For all steps: the 'sink' block (contains {{ result }} templates)
+        task_block = None
+        loop_block = None
+        sink_block = None
+        
+        logger.critical(f"RENDER_DEBUG: Template keys before extraction: {list(template.keys())}")
+        logger.critical(f"RENDER_DEBUG: has_loop={has_loop}, task_dict exists={task_dict is not None}")
+        if task_dict:
+            logger.critical(f"RENDER_DEBUG: template['task'] keys: {list(task_dict.keys())}")
+            # Extract sink from inside the task dict
+            if 'sink' in task_dict:
+                sink_block = task_dict.pop('sink')
+                logger.critical(f"RENDER_DEBUG: Extracted sink from template['task']: {sink_block}")
+        
+        if is_iterator and "task" in template:
+            task_block = template.pop("task")
+            logger.debug(f"RENDER_DEBUG: Extracted iterator task block to preserve unrendered")
+        
+        # Extract loop from task dict OR top level
+        if has_loop:
+            if task_dict and "loop" in task_dict:
+                loop_block = task_dict.pop("loop")
+                logger.critical(f"RENDER_DEBUG: Extracted loop block from template['task']")
+            elif "loop" in template:
+                loop_block = template.pop("loop")
+                logger.critical(f"RENDER_DEBUG: Extracted loop block from top level")
+        
+        # Also check for top-level sink (legacy support)
+        if "sink" in template:
+            top_level_sink = template.pop("sink")
+            if sink_block is None:
+                sink_block = top_level_sink
+            logger.critical(f"RENDER_DEBUG: Extracted top-level sink block: {top_level_sink}")
+            logger.debug(f"RENDER_DEBUG: Extracted sink block to preserve unrendered")
+        
+        # NEW: For loop steps, preserve fields that may reference loop variables
+        # These fields should only be rendered worker-side after loop context is available
+        preserved_fields = {}
+        if has_loop:
+            logger.critical(f"RENDER_DEBUG: Loop detected, preserving loop-sensitive fields")
+            # Fields that commonly reference loop variables ({{ patient_id }}, {{ item }}, etc.)
+            loop_sensitive_fields = ['url', 'endpoint', 'data', 'params', 'payload', 'code', 'command', 'commands', 'query', 'sql']
+            # Check both task dict and top-level template
+            for field in loop_sensitive_fields:
+                if task_dict and field in task_dict:
+                    preserved_fields[field] = task_dict.pop(field)
+                    logger.critical(f"RENDER_DEBUG: Preserved loop-sensitive field '{field}' from template['task']")
+                elif field in template:
+                    preserved_fields[field] = template.pop(field)
+                    logger.critical(f"RENDER_DEBUG: Preserved loop-sensitive field '{field}' from top-level template")
+        
+        # Render the template (everything except extracted blocks and preserved fields)
+        try:
+            out = render_template(
+                env, template, context, rules=None, strict_keys=False
             )
-            logger.debug(
-                f"RENDER_TASK_DEBUG: Workload in context: {'workload' in context}"
-            )
-            try:
-                # Extract and preserve 'save' block for worker-side rendering
-                # The save block may reference 'result' which doesn't exist until after execution
-                task_tpl_copy = (
-                    dict(task_tpl) if isinstance(task_tpl, dict) else task_tpl
-                )
-                save_block = None
-                if isinstance(task_tpl_copy, dict) and "save" in task_tpl_copy:
-                    save_block = task_tpl_copy.pop("save")
-                    logger.debug(
-                        f"RENDER_TASK_DEBUG: Extracted save block: {save_block}"
-                    )
-                    logger.debug(
-                        f"RENDER_TASK_DEBUG: Remaining keys in task_tpl_copy: {list(task_tpl_copy.keys())}"
-                    )
-
-                # Strict rendering keeps unresolved variables for worker-side rendering
-                task_rendered = render_template(
-                    env, task_tpl_copy, context, rules=None, strict_keys=False
-                )
-
-                # Re-attach the save block after rendering (unrendered for worker-side processing)
-                if save_block is not None and isinstance(task_rendered, dict):
-                    task_rendered["save"] = save_block
-                    logger.debug(
-                        "RENDER_TASK_DEBUG: Re-attached save block to rendered task"
-                    )
-
-                logger.info(
-                    f"RENDER_TASK_DEBUG: Task rendered successfully: {task_rendered}"
-                )
-            except Exception as e:
-                logger.warning(f"Failed to render task section: {e}")
-                logger.warning(f"RENDER_TASK_DEBUG: Exception type: {type(e).__name__}")
-                task_rendered = task_tpl
-
-            # Parse JSON strings for convenience
-            if isinstance(task_rendered, str):
-                try:
-                    import json
-
-                    out["task"] = json.loads(task_rendered)
-                except (json.JSONDecodeError, TypeError, ValueError) as e:
-                    logger.debug(f"Could not parse task as JSON: {e}")
-                    out["task"] = task_rendered
+            if not isinstance(out, dict):
+                out = {"rendered": out}
+        except Exception as e:
+            logger.warning(f"Failed to render template: {e}")
+            out = dict(template)
+        
+        # Restore preserved fields (unrendered) to the correct location
+        # If they came from task_dict, restore to out['task']
+        # Otherwise restore to top level
+        for field, value in preserved_fields.items():
+            if task_dict is not None and isinstance(out.get('task'), dict):
+                out['task'][field] = value
+                logger.critical(f"RENDER_DEBUG: Restored preserved field '{field}' unrendered to out['task']")
             else:
-                out["task"] = task_rendered
-
-        # Pass through other keys unchanged
-        for k, v in template.items():
-            if k not in out:
-                out[k] = v
-
+                out[field] = value
+                logger.critical(f"RENDER_DEBUG: Restored preserved field '{field}' unrendered to top level")
+        
+        # Restore the unrendered blocks
+        if task_block is not None:
+            out['task'] = task_block
+            logger.debug("RENDER_DEBUG: Restored unrendered iterator task block")
+        
+        if loop_block is not None:
+            # Restore loop block to the same location it was extracted from
+            if task_dict is not None and isinstance(out.get('task'), dict):
+                out['task']['loop'] = loop_block
+                logger.critical(f"RENDER_DEBUG: Restored loop block to out['task']")
+            else:
+                out['loop'] = loop_block
+                logger.critical(f"RENDER_DEBUG: Restored loop block to top level")
+        
+        if sink_block is not None:
+            # Restore sink into the task dict where it came from
+            if isinstance(out.get('task'), dict):
+                out['task']['sink'] = sink_block
+                logger.critical(f"RENDER_DEBUG: Restored sink into out['task']: {sink_block}")
+            else:
+                # Fallback: restore to top level if task dict not found
+                out['sink'] = sink_block
+                logger.critical(f"RENDER_DEBUG: Restored sink to top level: {sink_block}")
+            logger.debug("RENDER_DEBUG: Restored unrendered sink block")
+        
         return out
     else:
         # Render single value

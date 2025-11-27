@@ -1,0 +1,202 @@
+# NoETL Environment Configuration Template
+# Copy this file to .env.local in your project root and customize as needed
+# The bootstrap script will use these values when setting up your environment
+
+# ============================================================================
+# DATABASE CONFIGURATION
+# ============================================================================
+
+# PostgreSQL connection settings
+POSTGRES_HOST=localhost
+POSTGRES_PORT=5432
+POSTGRES_DB=noetl
+POSTGRES_USER=noetl
+POSTGRES_PASSWORD=noetl
+
+# Connection string (auto-generated from above if not set)
+# POSTGRES_CONNSTR=postgresql://noetl:noetl@localhost:5432/noetl
+
+# ============================================================================
+# NOETL SERVER CONFIGURATION
+# ============================================================================
+
+# Server host and port
+NOETL_SERVER_HOST=0.0.0.0
+NOETL_SERVER_PORT=8082
+
+# Server run mode: server-start, server-stop, worker
+NOETL_RUN_MODE=server-start
+
+# Log level: DEBUG, INFO, WARNING, ERROR, CRITICAL
+NOETL_LOG_LEVEL=INFO
+
+# Server base URL (for API calls)
+NOETL_SERVER_URL=http://localhost:8082
+
+# ============================================================================
+# NOETL WORKER CONFIGURATION
+# ============================================================================
+
+# Worker pool size (number of concurrent workers)
+NOETL_WORKER_POOL_SIZE=4
+
+# Worker polling interval (seconds)
+NOETL_WORKER_POLL_INTERVAL=5
+
+# Worker job lease duration (seconds)
+NOETL_WORKER_JOB_LEASE_DURATION=300
+
+# Worker heartbeat interval (seconds)
+NOETL_WORKER_HEARTBEAT_INTERVAL=30
+
+# ============================================================================
+# TIMEZONE CONFIGURATION (CRITICAL)
+# ============================================================================
+
+# IMPORTANT: TZ must match across all components (Postgres, server, worker)
+# Default: UTC (recommended for production)
+# All datetime operations use timezone-aware timestamps
+TZ=UTC
+
+# ============================================================================
+# KUBERNETES CONFIGURATION
+# ============================================================================
+
+# Kind cluster name
+KIND_CLUSTER_NAME=noetl-cluster
+
+# Kubernetes namespace
+NOETL_NAMESPACE=noetl
+
+# ============================================================================
+# DOCKER CONFIGURATION
+# ============================================================================
+
+# Docker image registry (leave empty for local builds)
+DOCKER_REGISTRY=
+
+# Docker image tag
+DOCKER_TAG=latest
+
+# NoETL image name
+NOETL_IMAGE=noetl/noetl
+
+# PostgreSQL image name
+POSTGRES_IMAGE=noetl/postgres
+
+# ============================================================================
+# DATA DIRECTORIES
+# ============================================================================
+
+# Local data directories (relative to project root)
+NOETL_DATA_DIR=data
+NOETL_LOGS_DIR=logs
+NOETL_SECRETS_DIR=secrets
+NOETL_CREDENTIALS_DIR=credentials
+
+# ============================================================================
+# OBSERVABILITY CONFIGURATION
+# ============================================================================
+
+# Grafana credentials
+GRAFANA_ADMIN_USER=admin
+GRAFANA_ADMIN_PASSWORD=admin
+
+# VictoriaMetrics URL
+VICTORIAMETRICS_URL=http://localhost:8428
+
+# VictoriaLogs URL
+VICTORIALOGS_URL=http://localhost:9428
+
+# Enable metrics collection
+NOETL_METRICS_ENABLED=true
+
+# Metrics port
+NOETL_METRICS_PORT=9090
+
+# ============================================================================
+# DEVELOPMENT CONFIGURATION
+# ============================================================================
+
+# Python version (for virtual environment)
+PYTHON_VERSION=3.12
+
+# Virtual environment directory
+VENV_DIR=.venv
+
+# Enable debug mode
+NOETL_DEBUG=false
+
+# Enable verbose logging
+NOETL_VERBOSE=false
+
+# ============================================================================
+# EXTERNAL SERVICES CONFIGURATION
+# ============================================================================
+
+# Google Cloud Platform
+# GCP_PROJECT_ID=your-project-id
+# GCP_SERVICE_ACCOUNT_KEY_PATH=secrets/gcp-sa-key.json
+# GOOGLE_APPLICATION_CREDENTIALS=secrets/gcp-sa-key.json
+
+# AWS
+# AWS_REGION=us-east-1
+# AWS_ACCESS_KEY_ID=your-access-key
+# AWS_SECRET_ACCESS_KEY=your-secret-key
+# AWS_PROFILE=default
+
+# Azure
+# AZURE_SUBSCRIPTION_ID=your-subscription-id
+# AZURE_TENANT_ID=your-tenant-id
+# AZURE_CLIENT_ID=your-client-id
+# AZURE_CLIENT_SECRET=your-client-secret
+
+# Interactive Brokers (for paper trading)
+# IB_USERNAME=your-username
+# IB_PASSWORD=your-password
+# IB_CLIENT_ID=your-client-id
+# IB_PRIVATE_KEY_PATH=secrets/ib-private-key.pem
+
+# Snowflake
+# SNOWFLAKE_ACCOUNT=your-account
+# SNOWFLAKE_USER=your-user
+# SNOWFLAKE_PASSWORD=your-password
+# SNOWFLAKE_WAREHOUSE=your-warehouse
+# SNOWFLAKE_DATABASE=your-database
+# SNOWFLAKE_SCHEMA=your-schema
+
+# ============================================================================
+# TESTING CONFIGURATION
+# ============================================================================
+
+# Test database (use separate DB for tests)
+TEST_POSTGRES_DB=noetl_test
+TEST_POSTGRES_USER=noetl_test
+TEST_POSTGRES_PASSWORD=noetl_test
+
+# Test mode (skip certain validations)
+NOETL_TEST_MODE=false
+
+# ============================================================================
+# SECURITY CONFIGURATION
+# ============================================================================
+
+# Secret encryption key (generate with: openssl rand -hex 32)
+# NOETL_SECRET_KEY=your-secret-key-here
+
+# API authentication token (if enabled)
+# NOETL_API_TOKEN=your-api-token-here
+
+# Enable HTTPS
+# NOETL_ENABLE_HTTPS=false
+# NOETL_SSL_CERT_PATH=secrets/cert.pem
+# NOETL_SSL_KEY_PATH=secrets/key.pem
+
+# ============================================================================
+# PROJECT-SPECIFIC CONFIGURATION
+# ============================================================================
+
+# Add your project-specific environment variables below
+# Example:
+# MY_PROJECT_API_KEY=your-api-key
+# MY_PROJECT_ENV=development

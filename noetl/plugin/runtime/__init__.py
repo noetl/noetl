@@ -13,7 +13,7 @@ functionality and reliable communication with the NoETL server.
 """
 
 from noetl.plugin.runtime.execution import execute_task, execute_task_resolved
-from noetl.plugin.runtime.events import report_event
+from noetl.plugin.runtime.events import report_event, report_event_async
 from noetl.plugin.runtime.retry import RetryPolicy
 from noetl.plugin.runtime.sql import sql_split
 
@@ -21,6 +21,7 @@ __all__ = [
     'execute_task',
     'execute_task_resolved',
     'report_event',
+    'report_event_async',
     'RetryPolicy',
     'sql_split',
 ]

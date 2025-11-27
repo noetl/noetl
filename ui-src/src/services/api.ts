@@ -5,6 +5,7 @@ import {
   PlaybookData,
   ServerStatus,
 } from "../types";
+import { CreatePlaybookResponse } from "./api.types";
 const getApiBaseUrl = () => {
   if (import.meta.env.VITE_API_BASE_URL) {
     return import.meta.env.VITE_API_BASE_URL;
@@ -137,8 +138,9 @@ class APIService {
     return response.data;
   }
 
-  async createPlaybook(data: Partial<PlaybookData>): Promise<PlaybookData> {
-    const response = await apiClient.post("/catalog/register", data);
+  async createPlaybook(yaml: string): Promise<CreatePlaybookResponse> {
+    // const base64Content = btoa(unescape(encodeURIComponent(yaml)));
+    const response = await apiClient.post("/catalog/register", { content: yaml, resource_type: "Playbook" });
     return response.data;
   }
 

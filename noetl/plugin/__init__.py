@@ -32,10 +32,11 @@ from noetl.plugin.runtime import (
     execute_task,
     execute_task_resolved,
     report_event,
+    report_event_async,
     sql_split,
 )
 from noetl.plugin.shared.secrets import execute_secrets_task
-from noetl.plugin.shared.storage import execute_save_task
+from noetl.plugin.shared.storage import execute_sink_task
 
 # Import module references for registry
 from noetl.plugin.tools import duckdb, http, postgres, python, snowflake
@@ -67,11 +68,12 @@ __all__ = [
     "execute_secrets_task",
     "execute_playbook_task",
     "execute_workbook_task",
-    "execute_save_task",
+    "execute_sink_task",
     "execute_iterator_task",
     "process_loop_aggregation_job",
     "get_duckdb_connection",
     "report_event",
+    "report_event_async",
     "sql_split",
     "RetryPolicy",
     "REGISTRY",

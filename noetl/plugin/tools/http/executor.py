@@ -66,7 +66,11 @@ def execute_http_task(
 
         # Support both 'endpoint' (preferred) and legacy 'url' key for backward compatibility
         raw_endpoint_template = task_config.get('endpoint') or task_config.get('url', '')
+        logger.critical(f"HTTP.EXECUTE: raw_endpoint_template={raw_endpoint_template}")
+        logger.critical(f"HTTP.EXECUTE: context keys={list(context.keys())}")
+        logger.critical(f"HTTP.EXECUTE: patient_id in context={'patient_id' in context}, value={context.get('patient_id')}")
         endpoint = render_template(jinja_env, raw_endpoint_template, context)
+        logger.critical(f"HTTP.EXECUTE: Rendered endpoint={endpoint}")
         logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Rendered endpoint={endpoint}")
 
         # Unified data model: render step.data and allow explicit data.query/data.body

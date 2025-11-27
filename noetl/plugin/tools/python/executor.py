@@ -2,6 +2,7 @@
 Python action executor for NoETL jobs.
 """
 
+import asyncio
 import uuid
 import datetime
 import os
@@ -38,26 +39,142 @@ def _coerce_param(value: Any) -> Any:
         return value
 
 
-def execute_python_task(
+def _build_call_kwargs(
+    func_signature: inspect.Signature,
+    provided_args: Dict[str, Any],
+    context: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Resolve function arguments from rendered args and context."""
+    context = context or {}
+    if not isinstance(context, dict):
+        context = {}
+
+    context_input = context.get("input")
+    if not isinstance(context_input, dict):
+        context_input = {}
+    context_data = context.get("data")
+    if not isinstance(context_data, dict):
+        context_data = {}
+
+    used_keys = set()
+    call_kwargs: Dict[str, Any] = {}
+
+    def _lookup(name: str) -> Any:
+        if name in provided_args:
+            used_keys.add(name)
+            return provided_args[name]
+        if name in context_input:
+            used_keys.add(name)
+            return context_input[name]
+        if name in context_data:
+            used_keys.add(name)
+            return context_data[name]
+        if name in context:
+            used_keys.add(name)
+            return context[name]
+        raise TypeError(
+            f"Missing required argument '{name}' for python task. Provide it via args or context."
+        )
+
+    for param in func_signature.parameters.values():
+        if param.kind == inspect.Parameter.VAR_POSITIONAL:
+            raise TypeError("*args are not supported in python tasks")
+        if param.kind == inspect.Parameter.VAR_KEYWORD:
+            continue  # handled later
+        if param.name == "context":
+            call_kwargs["context"] = context
+            continue
+        if param.kind == inspect.Parameter.KEYWORD_ONLY or param.kind == inspect.Parameter.POSITIONAL_OR_KEYWORD:
+            if param.default != inspect.Parameter.empty:
+                try:
+                    call_kwargs[param.name] = _lookup(param.name)
+                except TypeError:
+                    call_kwargs[param.name] = param.default
+            else:
+                call_kwargs[param.name] = _lookup(param.name)
+
+    # Handle **kwargs by merging remaining entries
+    if any(
+        param.kind == inspect.Parameter.VAR_KEYWORD
+        for param in func_signature.parameters.values()
+    ):
+        merged_kwargs: Dict[str, Any] = {}
+        for source in (context_input, context_data, provided_args, context):
+            if isinstance(source, dict):
+                for key, value in source.items():
+                    if key not in call_kwargs and key not in merged_kwargs:
+                        merged_kwargs[key] = value
+        call_kwargs.update(merged_kwargs)
+
+    return call_kwargs
+
+
+def _build_call_kwargs(
+    signature: inspect.Signature, provided_args: Dict[str, Any], context: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Resolve function arguments from provided args and execution context."""
+    if context is None:
+        context = {}
+
+    context_input = context.get("input") if isinstance(context, dict) else {}
+    if not isinstance(context_input, dict):
+        context_input = {}
+    context_data = context.get("data") if isinstance(context, dict) else {}
+    if not isinstance(context_data, dict):
+        context_data = {}
+
+    call_kwargs: Dict[str, Any] = {}
+    var_kwargs = False
+
+    def _resolve(name: str) -> Any:
+        if name in provided_args:
+            return provided_args[name]
+        if name in context_input:
+            return context_input[name]
+        if name in context_data:
+            return context_data[name]
+        if isinstance(context, dict) and name in context:
+            return context[name]
+        raise TypeError(
+            f"Missing required argument '{name}' for Python task. Provide it via args or context."
+        )
+
+    for param in signature.parameters.values():
+        if param.kind == inspect.Parameter.VAR_POSITIONAL:
+            raise TypeError("*args are not supported in python tasks")
+        if param.kind == inspect.Parameter.VAR_KEYWORD:
+            var_kwargs = True
+            continue
+        if param.name == "context":
+            call_kwargs["context"] = context
+            continue
+        try:
+            value = _resolve(param.name)
+            call_kwargs[param.name] = value
+        except TypeError as err:
+            if param.default != inspect.Parameter.empty:
+                continue
+            raise err
+
+    if var_kwargs:
+        merged_kwargs: Dict[str, Any] = {}
+        for source in (context_input, context_data, provided_args):
+            for key, value in source.items():
+                if key not in call_kwargs and key not in merged_kwargs:
+                    merged_kwargs[key] = value
+        call_kwargs.update(merged_kwargs)
+
+    return call_kwargs
+
+
+async def execute_python_task_async(
     task_config: Dict[str, Any],
     context: Dict[str, Any],
     jinja_env: Environment,
     args: Optional[Dict[str, Any]] = None,
-    log_event_callback: Optional[Callable] = None
+    log_event_callback: Optional[Callable] = None,
 ) -> Dict[str, Any]:
-    """
-    Execute a Python task.
-
-    Args:
-        task_config: Task configuration
-        context: Execution context
-        jinja_env: Jinja2 environment for template rendering
-        args: Task arguments/parameters
-        log_event_callback: Optional callback for logging events
-
-    Returns:
-        Dict containing execution result
-    """
+    """Execute a Python task asynchronously."""
     logger.debug("=== PYTHON.EXECUTE_PYTHON_TASK: Function entry ===")
     start_time = datetime.datetime.now()
     logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Start time={start_time}")
@@ -70,7 +187,7 @@ def execute_python_task(
     # This allows 'args' field in YAML to be used
     if not args:
         args = task_config.get('args', {})
-        logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Extracted args from task_config: {list(args.keys())}")
+        logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Extracted args from task_config: {args}")
     else:
         # Merge task_config args with provided args (provided args take precedence)
         config_args = task_config.get('args', {})
@@ -84,12 +201,21 @@ def execute_python_task(
 
     try:
         logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Task config keys: {list(task_config.keys())}")
-        logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Args keys: {list(args.keys())}")
+        logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Args keys: {args}")
         logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Context keys: {list((context or {}).keys())}")
 
-        # Get and decode the code
+        # Get and decode the code (priority: script > code_b64 > code)
         code = None
-        if 'code_b64' in task_config:
+        
+        # Priority 1: External script
+        if 'script' in task_config:
+            from noetl.plugin.shared.script import resolve_script
+            logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Resolving external script")
+            code = resolve_script(task_config['script'], context, jinja_env)
+            logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Resolved script from {task_config['script']['source']['type']}, length={len(code)} chars")
+        
+        # Priority 2: Base64 encoded code
+        elif 'code_b64' in task_config:
             import base64
             code = base64.b64decode(task_config['code_b64']).decode('utf-8')
             logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Decoded base64 code, length={len(code)} chars")
@@ -97,6 +223,8 @@ def execute_python_task(
             import base64
             code = base64.b64decode(task_config['code_base64']).decode('utf-8')
             logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Decoded base64 code, length={len(code)} chars")
+        
+        # Priority 3: Inline code
         elif 'code' in task_config:
             code = task_config['code']
             logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Using inline code, length={len(code)} chars")
@@ -105,7 +233,7 @@ def execute_python_task(
             if 'code' in task_config:
                 raise ValueError("Empty code provided.")
             else:
-                raise ValueError("No code provided. Expected 'code_b64', 'code_base64', or inline 'code' string in task configuration")
+                raise ValueError("No code provided. Expected 'script', 'code_b64', 'code_base64', or inline 'code' string in task configuration")
 
         logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Python code length={len(code)} chars")
 
@@ -120,13 +248,29 @@ def execute_python_task(
             logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Task start event_id={event_id}")
 
         logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Setting up execution globals")
+        
+        # Import commonly used utilities from noetl.core.common
+        from noetl.core.common import (
+            get_val,
+            make_serializable,
+            now_utc,
+            format_iso8601,
+            deep_merge,
+        )
+        
         exec_globals = {
             '__builtins__': __builtins__,
             'context': context,
             'os': os,
             'json': json,
             'datetime': datetime,
-            'uuid': uuid
+            'uuid': uuid,
+            # Add noetl.core.common utilities
+            'get_val': get_val,
+            'make_serializable': make_serializable,
+            'now_utc': now_utc,
+            'format_iso8601': format_iso8601,
+            'deep_merge': deep_merge,
         }
         logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Execution globals keys: {list(exec_globals.keys())}")
 
@@ -175,57 +319,14 @@ def execute_python_task(
                 logger.exception(f"PYTHON.COERCE: Exception: {coerce_ex}")
                 coerced_args = rendered_args
 
-            # Call main function based on its signature
-            main_func = exec_locals['main']
+            # Call main function as async coroutine
+            main_func = exec_locals["main"]
             func_signature = inspect.signature(main_func)
-            params = list(func_signature.parameters.keys())
-            
-            logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Function signature: {func_signature}")
-            logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Function parameters: {params}")
-            logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Available args: {list(coerced_args.keys())}")
-            
-            result_data = None
-            
-            if len(params) == 0:
-                # Function takes no parameters: def main():
-                logger.debug("PYTHON.CALL: Calling function with no parameters")
-                result_data = main_func()
-                
-            elif len(params) == 1 and 'input_data' in params:
-                # Legacy function signature: def main(input_data):
-                logger.debug("PYTHON.CALL: Calling function with input_data parameter")
-                input_data_value = coerced_args.get('input_data')
-                logger.info(f"PYTHON.CALL: Passing input_data value type={type(input_data_value).__name__}, value={str(input_data_value)[:200]}")
-                result_data = main_func(input_data_value)
-                
-            elif any(param.kind == inspect.Parameter.VAR_KEYWORD for param in func_signature.parameters.values()):
-                # Function accepts **kwargs: def main(**kwargs):
-                logger.debug("PYTHON.CALL: Calling function with **kwargs")
-                call_kwargs = {'context': context, **coerced_args}
-                logger.info(f"PYTHON.CALL: Passing kwargs: {list(call_kwargs.keys())}")
-                result_data = main_func(**call_kwargs)
-                
-            else:
-                # Function has specific named parameters: def main(param1, param2, ...):
-                logger.debug("PYTHON.CALL: Calling function with specific named parameters")
-                call_kwargs = {}
-                
-                # Map args to function parameters by name
-                for param_name in params:
-                    if param_name in coerced_args:
-                        call_kwargs[param_name] = coerced_args[param_name]
-                        logger.info(f"PYTHON.CALL: Mapped arg '{param_name}' = {str(coerced_args[param_name])[:100]}")
-                    elif param_name == 'context':
-                        call_kwargs['context'] = context
-                        logger.info(f"PYTHON.CALL: Mapped 'context'")
-                    else:
-                        # Check if parameter has a default value
-                        param_obj = func_signature.parameters[param_name]
-                        if param_obj.default == inspect.Parameter.empty:
-                            raise TypeError(f"Missing required argument: '{param_name}'")
-                
-                logger.info(f"PYTHON.CALL: Final kwargs: {list(call_kwargs.keys())}")
-                result_data = main_func(**call_kwargs)
+            call_kwargs = _build_call_kwargs(func_signature, coerced_args, context)
+            logger.info(
+                f"PYTHON.CALL: Executing main with kwargs: {list(call_kwargs.keys())}"
+            )
+            result_data = await _invoke_main(main_func, call_kwargs)
 
             end_time = datetime.datetime.now()
             duration = (end_time - start_time).total_seconds()
@@ -243,22 +344,7 @@ def execute_python_task(
                 'data': result_data
             }
         else:
-            error_msg = "Main function must be defined in Python task."
-            end_time = datetime.datetime.now()
-            duration = (end_time - start_time).total_seconds()
-
-            if log_event_callback:
-                log_event_callback(
-                    'task_error', task_id, task_name, 'python',
-                    'error', duration, context, None,
-                    {'error': error_msg, 'args': args}, event_id
-                )
-
-            return {
-                'id': task_id,
-                'status': 'error',
-                'error': error_msg
-            }
+            raise RuntimeError("Main function must be defined in Python task.")
 
     except Exception as e:
         error_msg = str(e)
@@ -266,24 +352,42 @@ def execute_python_task(
 
         end_time = datetime.datetime.now()
         duration = (end_time - start_time).total_seconds()
-        logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Task duration={duration} seconds (error path)")
 
         if log_event_callback:
-            logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Writing task_error event log")
             log_event_callback(
                 'task_error', task_id, task_name, 'python',
                 'error', duration, context, None,
-                {'error': error_msg, 'args': args}, event_id
+                {'error': error_msg, 'args': args}, None
             )
 
-        result = {
+        return {
             'id': task_id,
             'status': 'error',
             'error': error_msg
         }
-        logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Returning error result={result}")
-        logger.debug("=== PYTHON.EXECUTE_PYTHON_TASK: Function exit (error) ===")
-        return result
 
 
-__all__ = ['execute_python_task']
+def execute_python_task(
+    task_config: Dict[str, Any],
+    context: Dict[str, Any],
+    jinja_env: Environment,
+    args: Optional[Dict[str, Any]] = None,
+    log_event_callback: Optional[Callable] = None,
+) -> Dict[str, Any]:
+    """Backward-compatible synchronous entry point."""
+    return asyncio.run(
+        execute_python_task_async(
+            task_config, context, jinja_env, args, log_event_callback
+        )
+    )
+__all__ = ['execute_python_task', 'execute_python_task_async']
+
+
+async def _invoke_main(main_func: Callable, kwargs: Dict[str, Any]) -> Any:
+    """Execute user-provided main function, supporting both async and sync."""
+    if inspect.iscoroutinefunction(main_func):
+        return await main_func(**kwargs)
+
+    logger.debug("PYTHON.CALL: main is synchronous; running in default executor")
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, lambda: main_func(**kwargs))

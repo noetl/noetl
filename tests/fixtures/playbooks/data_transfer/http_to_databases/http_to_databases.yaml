@@ -101,10 +101,10 @@ workflow:
       def main(fetch_http_data):
           """Transform HTTP API response and prepare for database insertion."""
 
-          # fetch_http_data is the full result object
+          # fetch_http_data is the full result object with structure: {'url': ..., 'data': [...], ...}
           # Extract the actual data array
           if isinstance(fetch_http_data, dict):
-              users = fetch_http_data.get('data', {}).get('data', [])
+              users = fetch_http_data.get('data', [])
           elif isinstance(fetch_http_data, list):
               users = fetch_http_data
           else:
@@ -138,34 +138,33 @@ workflow:
       - step: insert_to_postgres
 
   - step: insert_to_postgres
-    desc: Insert transformed data into PostgreSQL using iterator
-    tool: iterator
-    collection: "{{ transform_http_to_pg.rows }}"
-    element: user
-    mode: sequential
-    task:
-      tool: postgres
-      auth: "{{ workload.pg_auth }}"
-      command: |
-        INSERT INTO public.http_users_pg (id, name, username, email, phone, website, company_name, city)
-        VALUES (
-          {{ user.id }},
-          '{{ user.name }}',
-          '{{ user.username }}',
-          '{{ user.email }}',
-          '{{ user.phone }}',
-          '{{ user.website }}',
-          '{{ user.company_name }}',
-          '{{ user.city }}'
-        )
-        ON CONFLICT (id) DO UPDATE SET
-          name = EXCLUDED.name,
-          username = EXCLUDED.username,
-          email = EXCLUDED.email,
-          phone = EXCLUDED.phone,
-          website = EXCLUDED.website,
-          company_name = EXCLUDED.company_name,
-          city = EXCLUDED.city;
+    desc: Insert transformed data into PostgreSQL using loop
+    tool: postgres
+    loop:
+      collection: "{{ transform_http_to_pg.rows }}"
+      element: user
+      mode: sequential
+    auth: "{{ workload.pg_auth }}"
+    command: |
+      INSERT INTO public.http_users_pg (id, name, username, email, phone, website, company_name, city)
+      VALUES (
+        {{ user.id }},
+        '{{ user.name }}',
+        '{{ user.username }}',
+        '{{ user.email }}',
+        '{{ user.phone }}',
+        '{{ user.website }}',
+        '{{ user.company_name }}',
+        '{{ user.city }}'
+      )
+      ON CONFLICT (id) DO UPDATE SET
+        name = EXCLUDED.name,
+        username = EXCLUDED.username,
+        email = EXCLUDED.email,
+        phone = EXCLUDED.phone,
+        website = EXCLUDED.website,
+        company_name = EXCLUDED.company_name,
+        city = EXCLUDED.city;
     next:
       - step: verify_pg_data
 
@@ -184,38 +183,37 @@ workflow:
 
   - step: insert_to_snowflake
     desc: Insert transformed data into Snowflake using iterator
-    tool: iterator
-    collection: "{{ transform_http_to_pg.rows }}"
-    element: user
-    mode: sequential
-    task:
-      tool: snowflake
-      auth: "{{ workload.sf_auth }}"
-      command: |
-        MERGE INTO HTTP_USERS_SF AS target
-        USING (SELECT
-          {{ user.id }} AS id,
-          '{{ user.name }}' AS name,
-          '{{ user.username }}' AS username,
-          '{{ user.email }}' AS email,
-          '{{ user.phone }}' AS phone,
-          '{{ user.website }}' AS website,
-          '{{ user.company_name }}' AS company_name,
-          '{{ user.city }}' AS city
-        ) AS source
-        ON target.id = source.id
-        WHEN MATCHED THEN
-          UPDATE SET
-            name = source.name,
-            username = source.username,
-            email = source.email,
-            phone = source.phone,
-            website = source.website,
-            company_name = source.company_name,
-            city = source.city
-        WHEN NOT MATCHED THEN
-          INSERT (id, name, username, email, phone, website, company_name, city)
-          VALUES (source.id, source.name, source.username, source.email, source.phone, source.website, source.company_name, source.city);
+    tool: snowflake
+    auth: "{{ workload.sf_auth }}"
+    loop:
+      collection: "{{ transform_http_to_pg.rows }}"
+      element: user
+      mode: sequential
+    command: |
+      MERGE INTO HTTP_USERS_SF AS target
+      USING (SELECT
+        {{ user.id }} AS id,
+        '{{ user.name }}' AS name,
+        '{{ user.username }}' AS username,
+        '{{ user.email }}' AS email,
+        '{{ user.phone }}' AS phone,
+        '{{ user.website }}' AS website,
+        '{{ user.company_name }}' AS company_name,
+        '{{ user.city }}' AS city
+      ) AS source
+      ON target.id = source.id
+      WHEN MATCHED THEN
+        UPDATE SET
+          name = source.name,
+          username = source.username,
+          email = source.email,
+          phone = source.phone,
+          website = source.website,
+          company_name = source.company_name,
+          city = source.city
+      WHEN NOT MATCHED THEN
+        INSERT (id, name, username, email, phone, website, company_name, city)
+        VALUES (source.id, source.name, source.username, source.email, source.phone, source.website, source.company_name, source.city);
     next:
       - step: verify_sf_data
 
@@ -234,32 +232,31 @@ workflow:
 
   - step: insert_to_duckdb
     desc: Insert transformed data into DuckDB using iterator
-    tool: iterator
-    collection: "{{ transform_http_to_pg.rows }}"
-    element: user
-    mode: sequential
-    task:
-      tool: duckdb
-      command: |
-        INSERT INTO http_users_duckdb (id, name, username, email, phone, website, company_name, city)
-        VALUES (
-          {{ user.id }},
-          '{{ user.name }}',
-          '{{ user.username }}',
-          '{{ user.email }}',
-          '{{ user.phone }}',
-          '{{ user.website }}',
-          '{{ user.company_name }}',
-          '{{ user.city }}'
-        )
-        ON CONFLICT (id) DO UPDATE SET
-          name = EXCLUDED.name,
-          username = EXCLUDED.username,
-          email = EXCLUDED.email,
-          phone = EXCLUDED.phone,
-          website = EXCLUDED.website,
-          company_name = EXCLUDED.company_name,
-          city = EXCLUDED.city;
+    tool: duckdb
+    loop:
+      collection: "{{ transform_http_to_pg.rows }}"
+      element: user
+      mode: sequential
+    command: |
+      INSERT INTO http_users_duckdb (id, name, username, email, phone, website, company_name, city)
+      VALUES (
+        {{ user.id }},
+        '{{ user.name }}',
+        '{{ user.username }}',
+        '{{ user.email }}',
+        '{{ user.phone }}',
+        '{{ user.website }}',
+        '{{ user.company_name }}',
+        '{{ user.city }}'
+      )
+      ON CONFLICT (id) DO UPDATE SET
+        name = EXCLUDED.name,
+        username = EXCLUDED.username,
+        email = EXCLUDED.email,
+        phone = EXCLUDED.phone,
+        website = EXCLUDED.website,
+        company_name = EXCLUDED.company_name,
+        city = EXCLUDED.city;
     next:
       - step: verify_duckdb_data
 

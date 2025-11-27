@@ -103,7 +103,7 @@ def execute_snowflake_task(
         task_config, task_with = resolve_snowflake_auth(task_config, task_with, jinja_env, context)
 
         # Step 2: Validate and render connection parameters
-        account, user, password, warehouse, database, schema, role, authenticator = validate_and_render_connection_params(
+        account, user, password, private_key, private_key_passphrase, warehouse, database, schema, role, authenticator = validate_and_render_connection_params(
             task_with, jinja_env, context
         )
 
@@ -130,6 +130,8 @@ def execute_snowflake_task(
             account=account,
             user=user,
             password=password,
+            private_key=private_key,
+            private_key_passphrase=private_key_passphrase,
             warehouse=warehouse,
             database=database,
             schema=schema,

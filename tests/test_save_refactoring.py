@@ -1,21 +1,21 @@
 """
-Test cases for save structure functionality (new flattened structure only).
+Test cases for sink structure functionality (new flattened structure only).
 """
 import pytest
 from jinja2 import Environment
 
-from noetl.plugin.save import execute_save_task
+from noetl.plugin.shared.storage import execute_sink_task
 
 
-class TestSaveStructure:
-    """Test cases for save structure functionality."""
+class TestSinkStructure:
+    """Test cases for sink structure functionality."""
 
-    def test_execute_save_task_event_log(self):
-        """Test execute_save_task with event_log storage."""
+    def test_execute_sink_task_event_log(self):
+        """Test execute_sink_task with event_log tool."""
         task_config = {
-            'type': 'save',
-            'save': {
-                'storage': 'event_log',
+            'type': 'sink',
+            'sink': {
+                'tool': 'event_log',
                 'data': {
                     'message': 'test message'
                 }
@@ -25,18 +25,18 @@ class TestSaveStructure:
         context = {'execution_id': 'test_123'}
         jinja_env = Environment()
         
-        result = execute_save_task(task_config, context, jinja_env)
+        result = execute_sink_task(task_config, context, jinja_env)
         
         assert result['status'] == 'success'
         assert result['data']['saved'] == 'event'
         assert result['data']['data']['message'] == 'test message'
 
-    def test_execute_save_task_event_storage(self):
-        """Test execute_save_task with 'event' storage (alternative name)."""
+    def test_execute_sink_task_event_tool(self):
+        """Test execute_sink_task with 'event' tool (alternative name)."""
         task_config = {
-            'type': 'save',
-            'save': {
-                'storage': 'event',
+            'type': 'sink',
+            'sink': {
+                'tool': 'event',
                 'data': {
                     'message': 'test message event'
                 }
@@ -46,18 +46,18 @@ class TestSaveStructure:
         context = {'execution_id': 'test_456'}
         jinja_env = Environment()
         
-        result = execute_save_task(task_config, context, jinja_env)
+        result = execute_sink_task(task_config, context, jinja_env)
         
         assert result['status'] == 'success'
         assert result['data']['saved'] == 'event'
         assert result['data']['data']['message'] == 'test message event'
 
-    def test_execute_save_task_with_auth_string(self):
-        """Test execute_save_task with string auth reference."""
+    def test_execute_sink_task_with_auth_string(self):
+        """Test execute_sink_task with string auth reference."""
         task_config = {
-            'type': 'save',
-            'save': {
-                'storage': 'postgres',
+            'type': 'sink',
+            'sink': {
+                'tool': 'postgres',
                 'auth': 'pg_local',
                 'table': 'test_table',
                 'mode': 'upsert',
@@ -74,7 +74,7 @@ class TestSaveStructure:
         
         # This will fail at postgres execution but should pass validation
         try:
-            result = execute_save_task(task_config, context, jinja_env)
+            result = execute_sink_task(task_config, context, jinja_env)
             # If postgres is not configured, we expect an error but the validation should work
             if result['status'] == 'error':
                 # This is expected if postgres is not available
@@ -86,12 +86,12 @@ class TestSaveStructure:
             # Postgres plugin might not be available in test environment
             assert 'postgres' in str(e).lower() or 'save' in str(e).lower()
 
-    def test_execute_save_task_with_auth_dict(self):
-        """Test execute_save_task with unified auth dictionary."""
+    def test_execute_sink_task_with_auth_dict(self):
+        """Test execute_sink_task with unified auth dictionary."""
         task_config = {
-            'type': 'save',
-            'save': {
-                'storage': 'postgres',
+            'type': 'sink',
+            'sink': {
+                'tool': 'postgres',
                 'auth': {
                     'pg': {
                         'type': 'postgres',
@@ -111,7 +111,7 @@ class TestSaveStructure:
         
         # This will fail at postgres execution but should pass validation
         try:
-            result = execute_save_task(task_config, context, jinja_env)
+            result = execute_sink_task(task_config, context, jinja_env)
             if result['status'] == 'error':
                 assert 'postgres' in str(result.get('error', '')).lower() or 'save failed' in str(result.get('error', '')).lower()
             else:
@@ -119,12 +119,12 @@ class TestSaveStructure:
         except Exception as e:
             assert 'postgres' in str(e).lower() or 'save' in str(e).lower()
 
-    def test_execute_save_task_invalid_storage_structure(self):
+    def test_execute_sink_task_invalid_storage_structure(self):
         """Test that legacy storage structure raises an error."""
         task_config = {
-            'type': 'save',
-            'save': {
-                'storage': {  # This should fail - only string allowed
+            'type': 'sink',
+            'sink': {
+                'tool': {  # This should fail - only string allowed
                     'kind': 'postgres',
                     'auth': 'pg_local'
                 },
@@ -136,16 +136,16 @@ class TestSaveStructure:
         jinja_env = Environment()
         
         with pytest.raises(ValueError) as exc_info:
-            execute_save_task(task_config, context, jinja_env)
+            execute_sink_task(task_config, context, jinja_env)
         
         assert "save.storage must be a string enum" in str(exc_info.value)
         assert "Legacy save.storage.kind structure is no longer supported" in str(exc_info.value)
 
-    def test_execute_save_task_default_event_storage(self):
+    def test_execute_sink_task_default_event_storage(self):
         """Test that missing storage defaults to 'event'."""
         task_config = {
-            'type': 'save',
-            'save': {
+            'type': 'sink',
+            'sink': {
                 'data': {
                     'message': 'default storage test'
                 }
@@ -155,18 +155,18 @@ class TestSaveStructure:
         context = {'execution_id': 'test_default'}
         jinja_env = Environment()
         
-        result = execute_save_task(task_config, context, jinja_env)
+        result = execute_sink_task(task_config, context, jinja_env)
         
         assert result['status'] == 'success'
         assert result['data']['saved'] == 'event'
         assert result['data']['data']['message'] == 'default storage test'
 
-    def test_execute_save_task_with_statement_mode(self):
-        """Test execute_save_task with statement mode."""
+    def test_execute_sink_task_with_statement_mode(self):
+        """Test execute_sink_task with statement mode."""
         task_config = {
-            'type': 'save',
-            'save': {
-                'storage': 'postgres',
+            'type': 'sink',
+            'sink': {
+                'tool': 'postgres',
                 'auth': 'pg_local',
                 'statement': 'INSERT INTO test_table (id, name) VALUES (:id, :name)',
                 'params': {
@@ -181,7 +181,7 @@ class TestSaveStructure:
         
         # This will fail at postgres execution but should pass validation  
         try:
-            result = execute_save_task(task_config, context, jinja_env)
+            result = execute_sink_task(task_config, context, jinja_env)
             if result['status'] == 'error':
                 assert 'postgres' in str(result.get('error', '')).lower() or 'save failed' in str(result.get('error', '')).lower()
             else:

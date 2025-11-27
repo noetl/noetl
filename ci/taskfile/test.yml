@@ -14,28 +14,6 @@ env:
 
 tasks:
   # === Test Tasks ===
-  playbook:k8s:register-control-flow-workbook:
-    desc: Register control flow workbook playbook
-    aliases: [trcfw, test-register-control-flow-workbook]
-    cmds:
-      - task: kubectl:local:context-set-kind
-      - .venv/bin/noetl register tests/fixtures/playbooks/control_flow_workbook/control_flow_workbook.yaml --host {{ .NOETL_HOST }} --port {{ .NOETL_PORT }}
-
-  playbook:k8s:execute-control-flow-workbook:
-    desc: Execute control flow workbook test
-    aliases: [tecfw, test-execute-control-flow-workbook]
-    cmds:
-      - task: kubectl:local:context-set-kind
-      - .venv/bin/noetl execute playbook "tests/fixtures/playbooks/control_flow_workbook" --host {{ .NOETL_HOST }} --port {{ .NOETL_PORT }} --json
-
-  playbook:k8s:full-control-flow-workbook:
-    desc: Full control flow workbook test
-    aliases: [tcfwf, test-control-flow-workbook-full]
-    cmds:
-      - task: test:k8s:setup-environment
-      - sleep 2
-      - task: playbook:k8s:execute:control-flow-workbook
-
   test:k8s:cluster-health:
     desc: Check cluster health and endpoints
     aliases: [tch, test-cluster-health]
@@ -164,6 +142,17 @@ tasks:
             -H 'Content-Type: application/json' \
             --data-binary @tests/fixtures/credentials/sf_test.json
         fi
+      - echo "\n=== Registering google_oauth credential ==="
+      - |
+        if command -v jq >/dev/null 2>&1; then
+          curl -sS -X POST "http://localhost:8082/api/credentials" \
+            -H 'Content-Type: application/json' \
+            --data-binary @tests/fixtures/credentials/google_oauth.json | jq -C .
+        else
+          curl -sS -X POST "http://localhost:8082/api/credentials" \
+            -H 'Content-Type: application/json' \
+            --data-binary @tests/fixtures/credentials/google_oauth.json
+        fi
       - echo "\n=== Test credentials registered successfully ==="
 
   test:k8s:register-playbooks:
@@ -214,48 +203,12 @@ tasks:
       - echo "=== Save Storage Test Validation Completed ==="
 
   # === Retry Test Tasks ===
-  
-  playbook:local:register-retry-tests:
-    desc: Register all retry test playbooks
-    aliases: [trrt, test-register-retry-tests]
-    cmds:
-      - |
-        set -e
-        echo "=== Registering retry test playbooks ==="
-        
-        if [ -x ".venv/bin/noetl" ]; then
-          cli=".venv/bin/noetl"
-        else
-          cli="noetl"
-        fi
-        
-        # Register each retry test playbook
-        echo "Registering HTTP retry status code test..."
-        $cli register tests/fixtures/playbooks/retry_test/http_retry_status_code.yaml --host localhost --port 8083
-        
-        echo "Registering HTTP retry with stop condition test..."
-        $cli register tests/fixtures/playbooks/retry_test/http_retry_with_stop.yaml --host localhost --port 8083
-        
-        echo "Registering Python exception retry test..."
-        $cli register tests/fixtures/playbooks/retry_test/python_retry_exception.yaml --host localhost --port 8083
-        
-        echo "Registering DuckDB query retry test..."
-        $cli register tests/fixtures/playbooks/retry_test/duckdb_retry_query.yaml --host localhost --port 8083
-        
-        echo "Registering simple retry config test..."
-        $cli register tests/fixtures/playbooks/retry_test/retry_simple_config.yaml --host localhost --port 8083
-        
-        echo "✓ All retry test playbooks registered successfully"
-
-
-
 
   test:local:retry-all:
     desc: Run all retry tests
     aliases: [tra, test-retry-all]
     cmds:
       - task: noetl:local:reset
-      - task: playbook:local:register-retry-tests
       - echo "\n=== Running HTTP status code retry test ==="
       - task: playbook:local:execute:retry-http-status
       - echo "\n=== Running HTTP stop condition retry test ==="
