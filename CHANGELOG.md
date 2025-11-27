@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.3.0](https://github.com/noetl/noetl/compare/v1.2.5...v1.3.0) (2025-11-27)
+
+### Features
+
+* **container:** add container tool executor ([2a0010e](https://github.com/noetl/noetl/commit/2a0010ef2ed134216c7de4103976c102164af5a8))
+
 ## [1.2.5](https://github.com/noetl/noetl/compare/v1.2.4...v1.2.5) (2025-11-26)
 
 ### Bug Fixes
