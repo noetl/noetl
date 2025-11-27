@@ -2,29 +2,41 @@ import { memo, useState } from 'react';
 import { Handle, Position, useReactFlow, type NodeProps, type Node } from '@xyflow/react';
 import './PlaybooksNode.less';
 import { Modal, Input, Button, Tooltip } from 'antd';
-import { EditOutlined } from '@ant-design/icons';
+import { EditOutlined, DeleteOutlined } from '@ant-design/icons';
 
 interface PlaybooksData {
     name?: string;
     path?: string;
+    entry_step?: string;
+    return_step?: string;
+    onDelete?: (taskId: string) => void;
+    readOnly?: boolean;
     [key: string]: unknown;
 }
 
 function PlaybooksNodeInternal({ id, data = {} }: NodeProps<Node<PlaybooksData>>) {
     const { updateNodeData } = useReactFlow();
     const [modalOpen, setModalOpen] = useState(false);
-    const [draft, setDraft] = useState({ path: '' });
+    const [draft, setDraft] = useState({
+        path: '',
+        entry_step: '',
+        return_step: ''
+    });
 
     const openEditor = () => {
         setDraft({
-            path: data.path || ''
+            path: data.path || '',
+            entry_step: data.entry_step || '',
+            return_step: data.return_step || ''
         });
         setModalOpen(true);
     };
 
     const commit = () => {
         updateNodeData(id, {
-            path: draft.path
+            path: draft.path,
+            entry_step: draft.entry_step,
+            return_step: draft.return_step
         });
         setModalOpen(false);
     };
@@ -46,17 +58,33 @@ function PlaybooksNodeInternal({ id, data = {} }: NodeProps<Node<PlaybooksData>>
             <Handle type="source" position={Position.Right} />
             <div className="PlaybooksNode__header">
                 <span className="PlaybooksNode__header-text">� {data.name || 'playbooks'}</span>
-                <Tooltip title="Edit Playbook path">
-                    <Button
-                        className="playbooks-edit-btn"
-                        size="small"
-                        type="text"
-                        icon={<EditOutlined />}
-                        onPointerDown={preventNodeDrag}
-                        onMouseDown={preventNodeDrag}
-                        onClick={(e) => { preventNodeDrag(e); openEditor(); }}
-                    />
-                </Tooltip>
+                <div className="PlaybooksNode__header-buttons">
+                    <Tooltip title="Edit Playbook path">
+                        <Button
+                            className="playbooks-edit-btn"
+                            size="small"
+                            type="text"
+                            icon={<EditOutlined />}
+                            onPointerDown={preventNodeDrag}
+                            onMouseDown={preventNodeDrag}
+                            onClick={(e) => { preventNodeDrag(e); openEditor(); }}
+                        />
+                    </Tooltip>
+                    {!data.readOnly && data.onDelete && (
+                        <Tooltip title="Delete node">
+                            <Button
+                                className="playbooks-delete-btn"
+                                size="small"
+                                type="text"
+                                danger
+                                icon={<DeleteOutlined />}
+                                onPointerDown={preventNodeDrag}
+                                onMouseDown={preventNodeDrag}
+                                onClick={(e) => { preventNodeDrag(e); data.onDelete?.(id); }}
+                            />
+                        </Tooltip>
+                    )}
+                </div>
             </div>
             <div className="PlaybooksNode__summary">
                 {summaryPath || <span className="PlaybooksNode__empty-path">(no path)</span>}
@@ -74,13 +102,31 @@ function PlaybooksNodeInternal({ id, data = {} }: NodeProps<Node<PlaybooksData>>
                 ]}
             >
                 <div className="PlaybooksNodeModal__container">
-                    <div className="PlaybooksNodeModal__section-title">Catalog Path</div>
-                    <Input
-                        className="PlaybooksNodeModal__path"
-                        value={draft.path}
-                        placeholder='catalog/example/playbook'
-                        onChange={e => setDraft(d => ({ ...d, path: e.target.value }))}
-                    />
+                    <div>
+                        <div className="PlaybooksNodeModal__section-title">Catalog Path</div>
+                        <Input
+                            className="PlaybooksNodeModal__path"
+                            value={draft.path}
+                            placeholder='playbooks/user_scorer'
+                            onChange={e => setDraft(d => ({ ...d, path: e.target.value }))}
+                        />
+                    </div>
+                    <div>
+                        <div className="PlaybooksNodeModal__section-title">Entry Step (Optional)</div>
+                        <Input
+                            value={draft.entry_step}
+                            placeholder='start'
+                            onChange={e => setDraft(d => ({ ...d, entry_step: e.target.value }))}
+                        />
+                    </div>
+                    <div>
+                        <div className="PlaybooksNodeModal__section-title">Return Step (Optional)</div>
+                        <Input
+                            value={draft.return_step}
+                            placeholder='finalize'
+                            onChange={e => setDraft(d => ({ ...d, return_step: e.target.value }))}
+                        />
+                    </div>
                 </div>
             </Modal>
         </div>

@@ -2,7 +2,8 @@ import { memo, useState } from 'react';
 import { Handle, Position, useReactFlow, type NodeProps, type Node } from '@xyflow/react';
 import './HttpNode.less';
 import { Modal, Input, Select, Button, Tooltip } from 'antd';
-import { EditOutlined } from '@ant-design/icons';
+import { EditOutlined, DeleteOutlined } from '@ant-design/icons';
+import { CodeEditor } from '../../CodeEditor';
 
 interface HttpData {
     name?: string;
@@ -11,6 +12,8 @@ interface HttpData {
     headers?: Record<string, any>;
     params?: Record<string, any>;
     payload?: Record<string, any>;
+    onDelete?: (taskId: string) => void;
+    readOnly?: boolean;
     [key: string]: unknown;
 }
 
@@ -119,17 +122,33 @@ function HttpNodeInternal({ id, data = {} }: NodeProps<Node<HttpData>>) {
             <Handle type="source" position={Position.Right} />
             <div className="HttpNode__header">
                 <span className="HttpNode__header-text">🌐 {data.name || 'http'}</span>
-                <Tooltip title="Edit HTTP config">
-                    <Button
-                        className="http-edit-btn"
-                        size="small"
-                        type="text"
-                        icon={<EditOutlined />}
-                        onPointerDown={preventNodeDrag}
-                        onMouseDown={preventNodeDrag}
-                        onClick={(e) => { preventNodeDrag(e); openEditor(); }}
-                    />
-                </Tooltip>
+                <div className="HttpNode__header-buttons">
+                    <Tooltip title="Edit HTTP config">
+                        <Button
+                            className="http-edit-btn"
+                            size="small"
+                            type="text"
+                            icon={<EditOutlined />}
+                            onPointerDown={preventNodeDrag}
+                            onMouseDown={preventNodeDrag}
+                            onClick={(e) => { preventNodeDrag(e); openEditor(); }}
+                        />
+                    </Tooltip>
+                    {!data.readOnly && data.onDelete && (
+                        <Tooltip title="Delete node">
+                            <Button
+                                className="http-delete-btn"
+                                size="small"
+                                type="text"
+                                danger
+                                icon={<DeleteOutlined />}
+                                onPointerDown={preventNodeDrag}
+                                onMouseDown={preventNodeDrag}
+                                onClick={(e) => { preventNodeDrag(e); data.onDelete?.(id); }}
+                            />
+                        </Tooltip>
+                    )}
+                </div>
             </div>
             <div className="HttpNode__summary">
                 {summaryEndpoint || <span className="HttpNode__empty-url">(no endpoint)</span>}
@@ -163,34 +182,34 @@ function HttpNodeInternal({ id, data = {} }: NodeProps<Node<HttpData>>) {
                     </div>
                     <div>
                         <div className="HttpNodeModal__section-title">Headers (JSON object)</div>
-                        <Input.TextArea
-                            className="HttpNodeModal__headers"
+                        <CodeEditor
                             value={headerInput}
-                            rows={4}
+                            onChange={val => handleJSONChange(val, 'headers')}
+                            language="json"
+                            height={120}
                             placeholder='{"Authorization": "Bearer {{ token }}"}'
-                            onChange={e => handleJSONChange(e.target.value, 'headers')}
                         />
                         {headerError && <div className="HttpNodeModal__error">{headerError}</div>}
                     </div>
                     <div>
                         <div className="HttpNodeModal__section-title">Params (JSON object)</div>
-                        <Input.TextArea
-                            className="HttpNodeModal__params"
+                        <CodeEditor
                             value={paramsInput}
-                            rows={3}
+                            onChange={val => handleJSONChange(val, 'params')}
+                            language="json"
+                            height={100}
                             placeholder='{"limit": 10}'
-                            onChange={e => handleJSONChange(e.target.value, 'params')}
                         />
                         {paramsError && <div className="HttpNodeModal__error">{paramsError}</div>}
                     </div>
                     <div>
                         <div className="HttpNodeModal__section-title">Payload (JSON object)</div>
-                        <Input.TextArea
-                            className="HttpNodeModal__payload"
+                        <CodeEditor
                             value={payloadInput}
-                            rows={4}
+                            onChange={val => handleJSONChange(val, 'payload')}
+                            language="json"
+                            height={120}
                             placeholder='{"query": "{{ search_term }}"}'
-                            onChange={e => handleJSONChange(e.target.value, 'payload')}
                         />
                         {payloadError && <div className="HttpNodeModal__error">{payloadError}</div>}
                     </div>
