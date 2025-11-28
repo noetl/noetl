@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.3.0](https://github.com/noetl/noetl/compare/v1.2.5...v1.3.0) (2025-11-28)
+
+### Features
+
+* **container:** add container tool with authenticated remote file downloads ([fa8c1db](https://github.com/noetl/noetl/commit/fa8c1db48b21db7ff87c1126e99cc8ba36d67449))
+
 ## [1.4.0](https://github.com/noetl/noetl/compare/v1.3.0...v1.4.0) (2025-11-28)
 
 ### Features
