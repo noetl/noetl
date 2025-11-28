@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.4.0](https://github.com/noetl/noetl/compare/v1.3.0...v1.4.0) (2025-11-28)
+
+### Features
+
+* **container:** enhance job creation with remote file downloads and optional ConfigMap ([4104fbb](https://github.com/noetl/noetl/commit/4104fbb7e42445f5916f1043232f171b96d1c155))
+
 ## [1.3.0](https://github.com/noetl/noetl/compare/v1.2.5...v1.3.0) (2025-11-27)
 
 ### Features
