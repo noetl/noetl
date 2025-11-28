@@ -124,6 +124,7 @@ def execute_task(
     from noetl.plugin.controller.workbook import execute_workbook_task
     from noetl.plugin.shared.secrets import execute_secrets_task
     from noetl.plugin.shared.storage import execute_sink_task
+    from noetl.plugin.tools.container import execute_container_task
     from noetl.plugin.tools.duckdb import execute_duckdb_task
     from noetl.plugin.tools.http import execute_http_task
     from noetl.plugin.tools.postgres import execute_postgres_task
@@ -165,6 +166,10 @@ def execute_task(
         )
     elif task_type == "duckdb":
         return execute_duckdb_task(
+            task_config, wrapped_context, jinja_env, args or {}, log_event_callback
+        )
+    elif task_type == "container":
+        return execute_container_task(
             task_config, wrapped_context, jinja_env, args or {}, log_event_callback
         )
     elif task_type == "postgres":
