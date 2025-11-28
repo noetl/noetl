@@ -188,7 +188,7 @@ def _create_job(
                     auth_env_vars.append(client.V1EnvVar(name=env_var_name, value=access_token))
                     # Use curl for better OAuth support (install curl first)
                     download_commands.append(
-                        f"apk add --no-cache curl > /dev/null 2>&1 && curl -f -H 'Authorization: Bearer ${env_var_name}' -o {SCRIPT_MOUNT_PATH}/{path} '{url}' && chmod {mode} {SCRIPT_MOUNT_PATH}/{path}"
+                        f'apk add --no-cache curl > /dev/null 2>&1 && curl -f -H "Authorization: Bearer ${env_var_name}" -o {SCRIPT_MOUNT_PATH}/{path} \'{url}\' && chmod {mode} {SCRIPT_MOUNT_PATH}/{path}'
                     )
                 except Exception as e:
                     logger.warning("Failed to generate token for credential '%s': %s", auth_cred, e)
