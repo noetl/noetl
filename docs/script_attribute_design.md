@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document defines the `script` attribute for NoETL playbooks, enabling standardized external script execution from various sources (GCS, S3, local files, HTTP). The design aligns with Azure Data Factory's linked service and dataset patterns for enterprise-grade data pipeline orchestration.
+This document defines the `script` attribute for NoETL playbooks, enabling standardized external script execution from various sources (GCS, S3, local files, HTTP). The design aligns with Azure Data Factory's linked service and dataset patterns for enterprise-grade data pipeline orchestration. For containerized shell execution details, see `docs/tools/container.md`.
 
 ## Azure Data Factory Alignment
 
@@ -53,6 +53,7 @@ For plugins supporting both inline and external scripts:
 | `duckdb` | SQL (.sql) | `query`, `query_b64` | script > query_b64 > query |
 | `snowflake` | SQL (.sql) | `command`, `command_b64` | script > command_b64 > command |
 | `http` | Template | `body`, `payload` | script > body > payload |
+| `container` | Shell / entrypoint | `command` | script > command |
 
 ## Source Type Specifications
 
