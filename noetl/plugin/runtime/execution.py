@@ -124,7 +124,7 @@ def execute_task(
     from noetl.plugin.controller.workbook import execute_workbook_task
     from noetl.plugin.shared.secrets import execute_secrets_task
     from noetl.plugin.shared.storage import execute_sink_task
-    from noetl.plugin.tools.container import execute_container_task
+    # Note: container tool is imported lazily below only if needed to avoid optional deps
     from noetl.plugin.tools.duckdb import execute_duckdb_task
     from noetl.plugin.tools.http import execute_http_task
     from noetl.plugin.tools.postgres import execute_postgres_task
@@ -169,6 +169,8 @@ def execute_task(
             task_config, wrapped_context, jinja_env, args or {}, log_event_callback
         )
     elif task_type == "container":
+        # Lazy import to avoid optional deps unless needed
+        from noetl.plugin.tools.container import execute_container_task
         return execute_container_task(
             task_config, wrapped_context, jinja_env, args or {}, log_event_callback
         )

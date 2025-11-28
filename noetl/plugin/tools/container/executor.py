@@ -10,9 +10,15 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Optional, Tuple
 
 from jinja2 import Environment
-from kubernetes import client, config
-from kubernetes.client import ApiException
-from kubernetes.config.config_exception import ConfigException
+try:
+    from kubernetes import client, config
+    from kubernetes.client import ApiException
+    from kubernetes.config.config_exception import ConfigException
+except ModuleNotFoundError:  # Optional dependency; only required for container (K8s) tool
+    client = None  # type: ignore
+    config = None  # type: ignore
+    ApiException = None  # type: ignore
+    ConfigException = None  # type: ignore
 
 from noetl.core.dsl.render import render_template
 from noetl.core.logger import setup_logger

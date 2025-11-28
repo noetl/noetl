@@ -49,8 +49,11 @@ def resolve_token(credential_name: str, audience: Optional[str] = None) -> str:
         # Get appropriate token provider
         provider = get_token_provider(credential_type, credential_data)
         
+        # Determine audience: prefer explicit argument; otherwise use credential's target_audience if present
+        effective_audience = audience or credential_data.get('target_audience')
+        
         # Fetch token
-        token = provider.fetch_token(audience)
+        token = provider.fetch_token(effective_audience)
         
         logger.info(f"Token resolved successfully for credential: {credential_name}")
         return token
