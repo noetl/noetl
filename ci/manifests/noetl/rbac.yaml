@@ -1,0 +1,36 @@
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: noetl-worker
+  namespace: noetl
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: noetl-worker-role
+  namespace: noetl
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "get", "list", "watch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: noetl-worker-rolebinding
+  namespace: noetl
+subjects:
+  - kind: ServiceAccount
+    name: noetl-worker
+    namespace: noetl
+roleRef:
+  kind: Role
+  name: noetl-worker-role
+  apiGroup: rbac.authorization.k8s.io

@@ -22,6 +22,7 @@ spec:
         runtime: cpu
         worker-pool: worker-cpu-01
     spec:
+      serviceAccountName: noetl-worker
       initContainers:
         - name: wait-for-api
           image: curlimages/curl:8.7.1

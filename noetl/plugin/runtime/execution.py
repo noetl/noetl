@@ -171,6 +171,12 @@ def execute_task(
         return execute_postgres_task(
             task_config, wrapped_context, jinja_env, args or {}, log_event_callback
         )
+    elif task_type == "container":
+        # Lazy import to avoid optional deps unless needed
+        from noetl.plugin.tools.container import execute_container_task
+        return execute_container_task(
+            task_config, wrapped_context, jinja_env, args or {}, log_event_callback
+        )
     elif task_type == "snowflake":
         return execute_snowflake_task(
             task_config, wrapped_context, jinja_env, args or {}, log_event_callback
@@ -211,7 +217,7 @@ def execute_task(
     else:
         raise ValueError(
             f"Unknown task tool '{raw_type}'. "
-            f"Available tools: http, python, duckdb, postgres, snowflake, snowflake_transfer, transfer, secrets, playbook, workbook, save. "
+            f"Available tools: http, python, duckdb, postgres, container, snowflake, snowflake_transfer, transfer, secrets, playbook, workbook, save. "
             f"Note: Use 'loop:' attribute to iterate over collections, not 'tool: iterator'."
         )
 
