@@ -40,11 +40,51 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
     };
 
     return (
-        <div style={{
-            border: '1px solid #d9d9d9',
-            borderRadius: '4px',
-            overflow: 'hidden'
-        }}>
+        <div
+            className="code-editor-wrapper"
+            style={{
+                border: '1px solid #e1e4e8',
+                borderRadius: '8px',
+                overflow: 'hidden',
+                boxShadow: '0 1px 3px rgba(0, 0, 0, 0.05)',
+                background: '#fafbfc',
+                transition: 'all 0.2s ease'
+            }}
+        >
+            <style>{`
+                .code-editor-wrapper {
+                    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+                }
+                .code-editor-wrapper:hover {
+                    border-color: #d1d5db !important;
+                    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08) !important;
+                }
+                .code-editor-wrapper:focus-within {
+                    border-color: #677eea !important;
+                    box-shadow: 0 0 0 3px rgba(103, 126, 234, 0.1), 0 2px 8px rgba(0, 0, 0, 0.08) !important;
+                }
+                .code-editor-wrapper .margin-view-overlays {
+                    width: 20px !important;
+                }
+                .code-editor-wrapper .monaco-editor .line-numbers {
+                    width: 20px !important;
+                    color: #9ca3af !important;
+                    font-size: 11px !important;
+                }
+                .code-editor-wrapper .monaco-editor .line-numbers.active-line-number {
+                    color: #677eea !important;
+                }
+                .code-editor-wrapper .monaco-editor {
+                    background: #ffffff !important;
+                }
+                .code-editor-wrapper .monaco-editor .margin {
+                    background: #fafbfc !important;
+                }
+                .code-editor-wrapper .monaco-editor .current-line {
+                    border: none !important;
+                    background: rgba(103, 126, 234, 0.03) !important;
+                }
+            `}</style>
             <MonacoEditor
                 height={height}
                 language={getMonacoLanguage(language)}
@@ -56,7 +96,12 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
                     minimap: { enabled: minimap },
                     wordWrap: 'on',
                     lineNumbers: 'on',
+                    lineNumbersMinChars: 1,
+                    glyphMargin: false,
                     folding: true,
+                    lineDecorationsWidth: 8,
+                    renderLineHighlight: 'all',
+                    renderLineHighlightOnlyWhenFocus: true,
                     matchBrackets: 'always',
                     autoIndent: 'full',
                     tabSize: 2,
@@ -64,8 +109,15 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
                     automaticLayout: true,
                     scrollBeyondLastLine: false,
                     fontSize: 13,
-                    lineHeight: 20,
-                    padding: { top: 8, bottom: 8 },
+                    fontFamily: "'JetBrains Mono', 'Fira Code', 'SF Mono', Monaco, Menlo, Consolas, monospace",
+                    fontLigatures: true,
+                    lineHeight: 22,
+                    letterSpacing: 0.5,
+                    padding: { top: 12, bottom: 12 },
+                    smoothScrolling: true,
+                    cursorBlinking: 'smooth',
+                    cursorSmoothCaretAnimation: 'on',
+                    roundedSelection: true,
                     suggest: {
                         showKeywords: true,
                         showSnippets: true,
