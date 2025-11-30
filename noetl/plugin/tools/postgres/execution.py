@@ -3,7 +3,7 @@ PostgreSQL SQL execution with direct connections and transaction handling.
 
 This module provides the core execution logic for PostgreSQL operations with:
 - Direct connection per execution (no pooling on worker side)
-- Sync execution model (avoids asyncio.run() issues in thread pool context)
+- Async execution model using psycopg AsyncConnection
 - Transaction management with automatic rollback on error
 - CALL statement special handling (autocommit mode)
 - Result data extraction and formatting
@@ -13,13 +13,13 @@ This module provides the core execution logic for PostgreSQL operations with:
 from typing import Dict, List, Optional
 from decimal import Decimal
 from datetime import datetime, date, time
-from psycopg import Connection
+from psycopg import AsyncConnection
 from noetl.core.logger import setup_logger
 
 logger = setup_logger(__name__, include_location=True)
 
 
-def execute_sql_with_connection(
+async def execute_sql_with_connection(
     connection_string: str,
     commands: List[str],
     host: str = "unknown",
@@ -27,14 +27,13 @@ def execute_sql_with_connection(
     database: str = "unknown"
 ) -> Dict[str, Dict]:
     """
-    Execute SQL statements using a direct synchronous connection.
+    Execute SQL statements using a direct async connection.
     
     Opens a fresh connection for each execution, executes commands,
     and properly closes the connection afterward. This ensures clean
     state and proper error handling.
     
-    Uses SYNC psycopg to avoid asyncio.run() issues when called from
-    thread pool executor in worker context.
+    Uses ASYNC psycopg AsyncConnection for proper async execution.
     
     Args:
         connection_string: PostgreSQL connection string
@@ -49,137 +48,38 @@ def execute_sql_with_connection(
     Raises:
         Exception: If connection or execution fails
     """
-    from psycopg import Connection
     from psycopg.rows import dict_row
     
     logger.debug(f"Executing {len(commands)} SQL commands on {host}:{port}/{database}")
     
-    # Use sync connection (avoids asyncio.run() issues in thread pool context)
-    with Connection.connect(
+    # Use async connection for proper async execution
+    async with await AsyncConnection.connect(
         connection_string,
         autocommit=False,
         row_factory=dict_row
     ) as conn:
         try:
             # Execute commands
-            results = execute_sql_statements_sync(conn, commands)
+            results = await execute_sql_statements_async(conn, commands)
             logger.debug(f"Closed connection to {host}:{port}/{database}")
             return results
         except Exception as e:
             # Log and rollback on error
             logger.exception(f"Failed to execute SQL: {e}")
             try:
-                conn.rollback()
+                await conn.rollback()
                 logger.debug("Rolled back transaction after error")
             except Exception as rollback_error:
                 logger.error(f"Failed to rollback: {rollback_error}")
             raise
 
 
-def execute_sql_statements_sync(
-    conn: Connection,
-    commands: List[str]
-) -> Dict[str, Dict]:
-    """
-    Execute multiple SQL statements synchronously and collect results.
-    
-    This function handles:
-    - SELECT statements and statements with RETURNING clause
-    - CALL statements (using autocommit mode)
-    - DML statements (INSERT, UPDATE, DELETE)
-    - DDL statements (CREATE, ALTER, DROP)
-    
-    Args:
-        conn: Sync PostgreSQL connection object
-        commands: List of SQL statement strings to execute
-        
-    Returns:
-        Dictionary mapping command indices to result dictionaries containing:
-        - status: 'success' or 'error'
-        - rows: List of row dictionaries (for SELECT/RETURNING)
-        - row_count: Number of rows affected
-        - columns: List of column names
-        - message: Status message
-    """
-    results = {}
-    
-    for i, cmd in enumerate(commands):
-        logger.info(f"Executing Postgres command: {cmd[:100]}{'...' if len(cmd) > 100 else ''}")
-        is_select = cmd.strip().upper().startswith("SELECT")
-        is_call = cmd.strip().upper().startswith("CALL")
-        returns_data = is_select or "RETURNING" in cmd.upper()
-        original_autocommit = conn.autocommit
-        
-        try:
-            if is_call:
-                # CALL statements require autocommit mode
-                conn.autocommit = True
-                with conn.cursor() as cursor:
-                    cursor.execute(cmd)
-                    has_results = cursor.description is not None
-
-                    if has_results:
-                        result_data = _fetch_result_rows_sync(cursor)
-                        column_names = [desc[0] for desc in cursor.description]
-                        
-                        results[f"command_{i}"] = {
-                            "status": "success",
-                            "rows": result_data,
-                            "row_count": len(result_data),
-                            "columns": column_names
-                        }
-                    else:
-                        results[f"command_{i}"] = {
-                            "status": "success",
-                            "message": "Procedure executed successfully."
-                        }
-            else:
-                # Regular statements use transaction
-                with conn.transaction():
-                    with conn.cursor() as cursor:
-                        cursor.execute(cmd)
-                        has_results = cursor.description is not None
-
-                        if has_results:
-                            result_data = _fetch_result_rows_sync(cursor)
-                            column_names = [desc[0] for desc in cursor.description]
-                            
-                            results[f"command_{i}"] = {
-                                "status": "success",
-                                "rows": result_data,
-                                "row_count": len(result_data),
-                                "columns": column_names
-                            }
-                        else:
-                            results[f"command_{i}"] = {
-                                "status": "success",
-                                "row_count": cursor.rowcount,
-                                "message": f"Command executed. {cursor.rowcount} rows affected."
-                            }
-
-        except Exception as cmd_error:
-            logger.error(f"Error executing Postgres command {i}: {cmd_error}")
-            results[f"command_{i}"] = {
-                "status": "error",
-                "message": str(cmd_error)
-            }
-            # Continue to next command - don't break
-        finally:
-            conn.autocommit = original_autocommit
-
-    return results
-
-
-# Keep async version for backward compatibility
 async def execute_sql_statements_async(
-    conn,
+    conn: AsyncConnection,
     commands: List[str]
 ) -> Dict[str, Dict]:
     """
     Execute multiple SQL statements asynchronously and collect results.
-    
-    DEPRECATED: Use execute_sql_statements_sync instead when called from thread pool.
-    This function is kept for backward compatibility only.
     
     This function handles:
     - SELECT statements and statements with RETURNING clause
@@ -268,9 +168,9 @@ async def execute_sql_statements_async(
     return results
 
 
-def _fetch_result_rows_sync(cursor) -> List[Dict]:
+async def _fetch_result_rows_async(cursor) -> List[Dict]:
     """
-    Fetch and format result rows from sync cursor.
+    Fetch and format result rows from async cursor.
     
     Handles special data types:
     - Decimal -> float
@@ -279,12 +179,12 @@ def _fetch_result_rows_sync(cursor) -> List[Dict]:
     - Other types -> preserve as-is
     
     Args:
-        cursor: Sync PostgreSQL cursor object with executed query
+        cursor: Async PostgreSQL cursor object with executed query
         
     Returns:
         List of row dictionaries with column name keys
     """
-    rows = cursor.fetchall()
+    rows = await cursor.fetchall()
     logger.debug(f"Fetched {len(rows)} rows")
     result_data = []
     

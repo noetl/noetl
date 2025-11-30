@@ -1,14 +1,15 @@
 """
-PostgreSQL task execution orchestration with sync connections.
+PostgreSQL task execution orchestration with async connections.
 
 Main entry point for executing PostgreSQL tasks with:
 - Authentication resolution
 - Command parsing and rendering
-- Sync SQL execution (avoids asyncio.run() issues in thread pool context)
+- Async SQL execution using psycopg AsyncConnection
 - Result processing
 - Event logging
 """
 
+import asyncio
 import uuid
 import datetime
 from typing import Dict
@@ -78,11 +79,11 @@ def execute_postgres_task(task_config: Dict, context: Dict, jinja_env: Environme
         >>> result['status']
         'success'
     """
-    # Execute directly (sync) - no asyncio.run() needed since we're in thread pool context
-    return _execute_postgres_task_sync(task_config, context, jinja_env, task_with, log_event_callback)
+    # Execute directly (async) - use asyncio.run() to bridge sync/async boundary
+    return asyncio.run(_execute_postgres_task_async(task_config, context, jinja_env, task_with, log_event_callback))
 
 
-def _execute_postgres_task_sync(
+async def _execute_postgres_task_async(
     task_config: Dict,
     context: Dict,
     jinja_env: Environment,
@@ -175,10 +176,10 @@ def _execute_postgres_task_sync(
                 {'with_params': task_with}, None
             )
 
-        # Step 7: Execute SQL statements using sync connection (no async/await)
+        # Step 7: Execute SQL statements using async connection
         results = {}
         if commands:
-            results = execute_sql_with_connection(pg_conn_string, commands, pg_host, pg_port, pg_db)
+            results = await execute_sql_with_connection(pg_conn_string, commands, pg_host, pg_port, pg_db)
         # Connection automatically closed via context manager
 
         # Step 8: Process results
