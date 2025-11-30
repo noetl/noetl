@@ -19,7 +19,6 @@ import {
   CloseOutlined,
   FullscreenOutlined,
   PlusOutlined,
-  SaveOutlined,
 } from "@ant-design/icons";
 import "@xyflow/react/dist/style.css";
 import "../styles/FlowVisualization.css";
@@ -285,6 +284,14 @@ const FlowVisualizationInner: React.FC<FlowVisualizationProps> = ({
     messageApi.success('New component added');
   }, [tasks, messageApi, readOnly]);
 
+  // Auto-update YAML content when tasks change
+  useEffect(() => {
+    if (tasks.length > 0 && hasChanges && onUpdateContent) {
+      const updatedYaml = updateWorkflowInYaml(content || '', tasks);
+      onUpdateContent(updatedYaml);
+    }
+  }, [tasks, hasChanges]);
+
   // Re-enable automatic flow recreation for major changes
   useEffect(() => {
     if (tasks.length > 0) {
@@ -361,33 +368,6 @@ const FlowVisualizationInner: React.FC<FlowVisualizationProps> = ({
       return original;
     }
   };
-
-  const handleSaveWorkflow = useCallback(async () => {
-    try {
-      setLoading(true);
-      const updatedYaml = updateWorkflowInYaml(content || '', tasks);
-      if (onUpdateContent) onUpdateContent(updatedYaml);
-
-      if (playbookId && playbookId !== 'new') {
-        try {
-          await apiService.savePlaybookContent(playbookId, updatedYaml);
-          messageApi.success('Workflow saved to backend');
-        } catch (persistErr) {
-          console.error('Backend persistence failed:', persistErr);
-          messageApi.warning('YAML updated locally, backend save failed');
-        }
-      } else {
-        messageApi.info('YAML updated. Create & save playbook from main editor to persist');
-      }
-
-      setHasChanges(false);
-    } catch (error) {
-      console.error(error);
-      messageApi.error('Failed to save workflow');
-    } finally {
-      setLoading(false);
-    }
-  }, [tasks, content, onUpdateContent, messageApi, playbookId]);
 
   const loadPlaybookFlow = async () => {
     setLoading(true);
@@ -535,18 +515,6 @@ const FlowVisualizationInner: React.FC<FlowVisualizationProps> = ({
           <div className="react-flow-wrapper" ref={reactFlowWrapper} style={{ flex: 1, position: 'relative' }}>
             {/* Control buttons moved to top right */}
             <div className="flow-controls" style={{ position: 'absolute', top: 10, right: 10, zIndex: 10, display: 'flex', gap: 8 }}>
-              {!readOnly && hasChanges && (
-                <Button
-                  type="primary"
-                  icon={<SaveOutlined />}
-                  onClick={handleSaveWorkflow}
-                  loading={loading}
-                  size="small"
-                  title="Save Workflow"
-                >
-                  Save
-                </Button>
-              )}
               <Button
                 type="default"
                 icon={<FullscreenOutlined />}
