@@ -189,11 +189,11 @@ const FlowVisualizationInner: React.FC<FlowVisualizationProps> = ({
     messageApi.success("Component deleted");
   }, [messageApi, readOnly]);
 
-  // Layout constants for auto positioning (breathe like the examples)
+  // Layout constants for centered grid layout
   const GRID_COLUMNS = 3;
-  const H_SPACING = 420; // was 380
-  const V_SPACING = 260; // was 240
-  const X_OFFSET = 96;
+  const H_SPACING = 360;
+  const V_SPACING = 200;
+  const X_OFFSET = 300; // Increased to center the grid
   const Y_OFFSET = 96;
 
   // Create flow nodes/edges from tasks - must be defined before recreateFlow
@@ -202,7 +202,7 @@ const FlowVisualizationInner: React.FC<FlowVisualizationProps> = ({
       const flowNodes: Node[] = [];
       const flowEdges: Edge[] = [];
 
-      // Create nodes
+      // Create nodes in centered grid layout
       tasks.forEach((task, index) => {
         const x =
           task.position?.x ??

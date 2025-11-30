@@ -57,7 +57,7 @@ function PlaybooksNodeInternal({ id, data = {} }: NodeProps<Node<PlaybooksData>>
             <Handle type="target" position={Position.Left} />
             <Handle type="source" position={Position.Right} />
             <div className="PlaybooksNode__header">
-                <span className="PlaybooksNode__header-text">� {data.name || 'playbooks'}</span>
+                <span className="PlaybooksNode__header-text">📘 {data.name || 'playbooks'}</span>
                 <div className="PlaybooksNode__header-buttons">
                     <Tooltip title="Edit Playbook path">
                         <Button

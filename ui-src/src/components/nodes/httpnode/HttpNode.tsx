@@ -153,7 +153,6 @@ function HttpNodeInternal({ id, data = {} }: NodeProps<Node<HttpData>>) {
             <div className="HttpNode__summary">
                 {summaryEndpoint || <span className="HttpNode__empty-url">(no endpoint)</span>}
             </div>
-            <div className="HttpNode__method">{(data.method || 'GET').toUpperCase()}</div>
             <div className="HttpNode__hint">double-click or edit icon</div>
 
             <Modal

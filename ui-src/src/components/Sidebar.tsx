@@ -61,14 +61,14 @@ const nodeMeta: Record<string, NodeMeta> = {
         category: 'data'
     },
     workbook: {
-        icon: '�',
+        icon: '📊',
         color: '#ff6b35',
         label: 'Workbook',
         description: 'Reusable task',
         category: 'logic'
     },
     playbooks: {
-        icon: '�',
+        icon: '📘',
         color: '#4b5563',
         label: 'Playbook',
         description: 'Nested playbook',
