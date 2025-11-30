@@ -15,7 +15,7 @@ A task step in a NoETL playbook has the following structure:
   call:
     name: step_name
     type: task_type
-    with:
+    args:
       param1: value1
       param2: value2
   next:
@@ -26,7 +26,7 @@ A task step in a NoETL playbook has the following structure:
 - **call**: Indicates this is a task call
 - **name**: The name of the task
 - **type**: The type of task to perform (e.g., `http`, `secret`, `postgres`, `duckdb`, `workbook`, `playbook`)
-- **with**: Parameters for the task
+- **args**: Parameters for the task
 - **next**: The next step to execute after this task
 
 ## HTTP Tasks
@@ -175,17 +175,17 @@ Executes a SQL query and returns the results.
 
 ```yaml
 - step: query_data
-  call:
-    name: query_data
+  tool: postgres
+  auth:
     type: postgres
-    with:
-      db_host: "{{ workload.db_host }}"
-      db_port: "{{ workload.db_port }}"
-      db_user: "{{ workload.db_user }}"
-      db_password: "{{ workload.db_password }}"
-      db_name: "{{ workload.db_name }}"
-    command: |
-      SELECT * FROM users WHERE id = {{ workload.user_id }}
+    inline:
+      host: "{{ workload.db_host }}"
+      port: "{{ workload.db_port }}"
+      user: "{{ workload.db_user }}"
+      password: "{{ workload.db_password }}"
+      database: "{{ workload.db_name }}"
+  command: |
+    SELECT * FROM users WHERE id = {{ workload.user_id }}
   next:
     - step: process_data
 ```
@@ -204,17 +204,17 @@ Executes a SQL statement that doesn't return results (e.g., INSERT, UPDATE, DELE
 
 ```yaml
 - step: update_data
-  call:
-    name: update_data
+  tool: postgres
+  auth:
     type: postgres
-    with:
-      db_host: "{{ workload.db_host }}"
-      db_port: "{{ workload.db_port }}"
-      db_user: "{{ workload.db_user }}"
-      db_password: "{{ workload.db_password }}"
-      db_name: "{{ workload.db_name }}"
-    command: |
-      UPDATE users SET name = '{{ workload.user_name }}' WHERE id = {{ workload.user_id }}
+    inline:
+      host: "{{ workload.db_host }}"
+      port: "{{ workload.db_port }}"
+      user: "{{ workload.db_user }}"
+      password: "{{ workload.db_password }}"
+      database: "{{ workload.db_name }}"
+  command: |
+    UPDATE users SET name = '{{ workload.user_name }}' WHERE id = {{ workload.user_id }}
   next:
     - step: process_result
 ```
@@ -233,18 +233,18 @@ Inserts data into a table.
 
 ```yaml
 - step: insert_data
-  call:
-    name: insert_data
+  tool: postgres
+  auth:
     type: postgres
-    with:
-      db_host: "{{ workload.db_host }}"
-      db_port: "{{ workload.db_port }}"
-      db_user: "{{ workload.db_user }}"
-      db_password: "{{ workload.db_password }}"
-      db_name: "{{ workload.db_name }}"
-    command: |
-      INSERT INTO users (name, email, created_at)
-      VALUES ('{{ workload.user_name }}', '{{ workload.user_email }}', NOW())
+    inline:
+      host: "{{ workload.db_host }}"
+      port: "{{ workload.db_port }}"
+      user: "{{ workload.db_user }}"
+      password: "{{ workload.db_password }}"
+      database: "{{ workload.db_name }}"
+  command: |
+    INSERT INTO users (name, email, created_at)
+    VALUES ('{{ workload.user_name }}', '{{ workload.user_email }}', NOW())
   next:
     - step: process_result
 ```
@@ -264,19 +264,19 @@ Updates data in a table.
 
 ```yaml
 - step: update_data
-  call:
-    name: update_data
+  tool: postgres
+  auth:
     type: postgres
-    with:
-      db_host: "{{ workload.db_host }}"
-      db_port: "{{ workload.db_port }}"
-      db_user: "{{ workload.db_user }}"
-      db_password: "{{ workload.db_password }}"
-      db_name: "{{ workload.db_name }}"
-    command: |
-      UPDATE users 
-      SET name = '{{ workload.user_name }}', updated_at = NOW() 
-      WHERE id = {{ workload.user_id }}
+    inline:
+      host: "{{ workload.db_host }}"
+      port: "{{ workload.db_port }}"
+      user: "{{ workload.db_user }}"
+      password: "{{ workload.db_password }}"
+      database: "{{ workload.db_name }}"
+  command: |
+    UPDATE users 
+    SET name = '{{ workload.user_name }}', updated_at = NOW() 
+    WHERE id = {{ workload.user_id }}
   next:
     - step: process_result
 ```
@@ -295,18 +295,18 @@ Deletes data from a table.
 
 ```yaml
 - step: delete_data
-  call:
-    name: delete_data
+  tool: postgres
+  auth:
     type: postgres
-    with:
-      db_host: "{{ workload.db_host }}"
-      db_port: "{{ workload.db_port }}"
-      db_user: "{{ workload.db_user }}"
-      db_password: "{{ workload.db_password }}"
-      db_name: "{{ workload.db_name }}"
-    command: |
-      DELETE FROM users 
-      WHERE id = {{ workload.user_id }}
+    inline:
+      host: "{{ workload.db_host }}"
+      port: "{{ workload.db_port }}"
+      user: "{{ workload.db_user }}"
+      password: "{{ workload.db_password }}"
+      database: "{{ workload.db_name }}"
+  command: |
+    DELETE FROM users 
+    WHERE id = {{ workload.user_id }}
   next:
     - step: process_result
 ```
@@ -332,7 +332,7 @@ Reads data from a file.
   call:
     name: read_file
     type: file
-    with:
+    args:
       operation: "read"
       path: "{{ workload.file_path }}"
       format: "json"
@@ -360,7 +360,7 @@ Writes data to a file.
   call:
     name: write_file
     type: file
-    with:
+    args:
       operation: "write"
       path: "{{ workload.output_path }}"
       data: "{{ process_data.result }}"
@@ -389,7 +389,7 @@ Appends data to a file.
   call:
     name: append_file
     type: file
-    with:
+    args:
       operation: "append"
       path: "{{ workload.log_path }}"
       data: "{{ process_data.result }}"
@@ -414,7 +414,7 @@ Deletes a file.
   call:
     name: delete_file
     type: file
-    with:
+    args:
       operation: "delete"
       path: "{{ workload.temp_file_path }}"
   next:
@@ -438,14 +438,12 @@ Applies a function to each item in a list.
 
 ```yaml
 transform_data:
-  call:
-    name: transform_data
-    type: python
-    with:
-      data: "{{ fetch_data.response.json.items }}"
-    code: |
-      def main(data):
-          return [{"price": item["price"] * 1.1, **{k: v for k, v in item.items() if k != "price"}} for item in data]
+  tool: python
+  data:
+    items: "{{ fetch_data.response.json.items }}"
+  code: |
+    def main(items):
+        return [{"price": item["price"] * 1.1, **{k: v for k, v in item.items() if k != "price"}} for item in items]
   next: save_data
 ```
 
@@ -462,12 +460,10 @@ Filters items in a list.
 
 ```yaml
 filter_data:
-  call:
-    name: filter_data
-    type: python
-    with:
-      data: "{{ fetch_data.response.json.items }}"
-      min_price: 10
+  tool: python
+  data:
+    items: "{{ fetch_data.response.json.items }}"
+    min_price: 10
     code: |
       def main(data, min_price):
           return [item for item in data if item["price"] > min_price]
@@ -491,7 +487,7 @@ calculate_total:
   call:
     name: calculate_total
     type: python
-    with:
+    args:
       data: "{{ fetch_data.response.json.items }}"
     code: |
       def main(data):
@@ -514,7 +510,7 @@ merge_data:
   call:
     name: merge_data
     type: python
-    with:
+    args:
       data1: "{{ fetch_data_1.response.json }}"
       data2: "{{ fetch_data_2.response.json }}"
     code: |
@@ -553,7 +549,7 @@ send_email:
   call:
     name: send_email
     type: email
-    with:
+    args:
       to: "{{ workload.user_email }}"
       subject: "Data Processing Complete"
       body: "Your data has been processed successfully."
@@ -585,7 +581,7 @@ send_slack:
   call:
     name: send_slack
     type: slack
-    with:
+    args:
       webhook: "{{ workload.slack_webhook }}"
       message: "Data processing complete"
       channel: "#notifications"
@@ -646,7 +642,7 @@ print_message:
   call:
     name: print_message
     type: python
-    with:
+    args:
       user_name: "{{ workload.user_name }}"
     code: |
       def main(user_name):

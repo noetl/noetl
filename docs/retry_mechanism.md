@@ -141,7 +141,7 @@ This creates a delay between 50% and 150% of the calculated delay.
 
 ```yaml
 - step: fetch_data
-  type: http
+  tool: http
   method: GET
   url: "{{ api_url }}"
   retry:
@@ -156,7 +156,7 @@ This creates a delay between 50% and 150% of the calculated delay.
 
 ```yaml
 - step: process_data
-  type: python
+  tool: python
   code: |
     def main(input_data):
         # Processing logic that might fail
@@ -171,7 +171,7 @@ This creates a delay between 50% and 150% of the calculated delay.
 
 ```yaml
 - step: query_database
-  type: postgres
+  tool: postgres
   auth:
     type: postgres
     credential: prod_db
@@ -187,7 +187,7 @@ This creates a delay between 50% and 150% of the calculated delay.
 
 ```yaml
 - step: analyze_data
-  type: duckdb
+  tool: duckdb
   query: "{{ analysis_query }}"
   retry:
     max_attempts: 3

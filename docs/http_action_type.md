@@ -4,7 +4,7 @@ Note: The new widget-based DSL lets you call HTTP directly from a step without d
 
 ```yaml
 - step: call_api
-  type: http
+  tool: http
   method: GET
   endpoint: "https://httpbin.org/get"
   headers:
@@ -51,7 +51,7 @@ A basic HTTP task has the following structure:
   payload:  # Request body (for POST, PUT, PATCH requests)
     key1: "value1"
     key2: "value2"
-  with:  # Variables to use in the task
+  args:  # Variables to use in the task
     api_key: "{{ api_key }}"
   return: |  # Template to format the response
     {% if status == 'success' %}
@@ -88,7 +88,7 @@ This task sends a POST request to the OpenAI API to convert natural language to 
         content: "Your system prompt here..."
       - role: "user"
         content: "{{ query }}"
-  with:
+  args:
     query: "{{ query }}"
     openai_api_key: "{{ openai_api_key }}"
   return: |
@@ -118,7 +118,7 @@ This task sends a GET request to the Amadeus API:
     Authorization: "Bearer {{ access_token }}"
     Content-Type: "application/json"
   params: "{{ query_params }}"
-  with:
+  args:
     endpoint_path: "{{ endpoint_path }}"
     query_params: "{{ query_params }}"
     access_token: "{{ access_token }}"
@@ -196,7 +196,7 @@ Can be converted to this HTTP task:
     messages:
       - role: "user"
         content: "{{ query }}"
-  with:
+  args:
     api_key: "{{ api_key }}"
     query: "{{ query }}"
   return: |

@@ -11,7 +11,7 @@ Checks (fails on any violation):
 Usage:
   python scripts/validate_playbooks.py [ROOT_DIR]
 
-Defaults to scanning ./examples when ROOT_DIR not provided.
+Defaults to scanning ./tests/fixtures/playbooks when ROOT_DIR not provided.
 Exits with code 1 on any violation; prints a summary report.
 """
 
@@ -100,7 +100,7 @@ def validate_playbook(doc: Dict[str, Any]) -> List[str]:
 
 
 def main() -> int:
-    root = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("examples")
+    root = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("tests/fixtures/playbooks")
     files = iter_playbook_files(root)
     problems: List[Tuple[str, List[str]]] = []
     for fp in files:

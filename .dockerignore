@@ -23,7 +23,9 @@ data/noetldb/
 .vscode/
 .vscode-test/
 .env.tradetrend
-examples/tradetrend
+# Test data and temporary files
+tests/fixtures/playbooks/**/test_data/
+tests/fixtures/playbooks/**/temp/
 .*
 # Virtual environments
 publish_env/

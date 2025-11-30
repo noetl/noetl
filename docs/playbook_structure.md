@@ -117,13 +117,11 @@ Example:
 
 ```yaml
 - step: fetch_data
-  call:
-    name: fetch_data
-    type: http
-    method: GET
-    endpoint: "https://api.example.com/data"
-    headers:
-      Authorization: "Bearer {{ workload.api_key }}"
+  tool: http
+  method: GET
+  endpoint: "https://api.example.com/data"
+  headers:
+    Authorization: "Bearer {{ workload.api_key }}"
   next: process_data
 ```
 

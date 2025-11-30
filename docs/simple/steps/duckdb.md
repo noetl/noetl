@@ -8,7 +8,7 @@ What it does
 - Produces tables/views accessible within the step; result exposure is engine-dependent.
 
 Required keys
-- type: duckdb
+- tool: duckdb
 - commands or sql: SQL text to execute
 
 Common optional keys
@@ -24,7 +24,7 @@ Auth and attachments
 Unified auth mapping example (from HTTP → DuckDB → Postgres → GCS pipeline)
 ```yaml
 - step: aggregate_with_duckdb
-  type: duckdb
+  tool: duckdb
   auth:
     pg_db:
       source: credential

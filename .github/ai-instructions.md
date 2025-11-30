@@ -51,7 +51,7 @@ workload:                 # Global variables merged with payload; Jinja2 templat
   variable: value
 workbook:                 # Named reusable tasks (optional)
   - name: task_name       # Reference name
-    type: python          # Action type: python, http, postgres, duckdb, playbook, iterator
+    tool: python          # Action type: python, http, postgres, duckdb, playbook, iterator
     code: |               # Type-specific configuration
       def main(input_data):
         return result
@@ -187,7 +187,7 @@ See `tests/fixtures/playbooks/script_execution/` and `docs/script_attribute_desi
 - `ci/taskfile/` - Specialized taskfiles for testing, troubleshooting, and observability
 - `tests/taskfile/noetltest.yml` - Test task definitions
 - `docker/` - Container build scripts for all components
-- `examples/` - Reference playbooks demonstrating patterns
+- `tests/fixtures/playbooks/` - Comprehensive test playbooks demonstrating all patterns
 
 **Testing:**
 - Follow `test-*-full` pattern for integration tests (e.g., `task test-control-flow-workbook-full`)

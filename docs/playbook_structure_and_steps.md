@@ -74,7 +74,7 @@ Attach a `data` object to either the step itself (inputs to the action) or to th
 ```yaml
 workbook:
   - name: fetch_weather
-    type: http
+    tool: http
     method: GET
     endpoint: "{{ workload.base_url }}/forecast"
     params:
@@ -112,7 +112,7 @@ workbook:
 
 ```yaml
 - step: aggregate_metrics
-  type: duckdb
+  tool: duckdb
   command: |
     INSTALL postgres; LOAD postgres;
     ATTACH '{{ workload.pg_conn }}' AS pgdb (TYPE POSTGRES);

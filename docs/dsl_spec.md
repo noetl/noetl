@@ -7,13 +7,13 @@ The NoETL DSL defines workflows as a sequence of typed steps (widgets). Each ste
 This revision replaces the previous "run/rule/case" model with explicit step types:
 - start — Entry point of a workflow. Must route to the first executable step via `next`.
 - end — Terminal step. No `next`. Used broadly.
-- workbook — Invokes a named task from the workbook library; use `task:` and `with:` to pass inputs.
+- workbook — Invokes a named task from the workbook library; use `task:` and `args:` to pass inputs.
 - python — Runs inline Python in the step itself.
 - http — Makes an HTTP call directly from a step (method, endpoint, headers, params/payload).
 - duckdb — Executes DuckDB SQL/script in the step.
 - postgres — Executes PostgreSQL SQL/script in the step.
 - secrets — Reads a secret from a provider (e.g., Google Secret Manager) and exposes it as `secret_value` (or a custom alias).
-- playbooks — Executes all playbooks under a catalog path, forwarding inputs via `with:`; the step result can be passed on to the next step.
+- playbooks — Executes all playbooks under a catalog path, forwarding inputs via `args:`; the step result can be passed on to the next step.
 - loop — Runs a loop over either a workbook task (for single-step loops) or playbooks (for multi-step subflows).
 
 ---
@@ -99,7 +99,7 @@ Invoke a named task from the workbook library.
 
 Inputs:
 - task (string, required): Name of a task defined under `workbook` at top-level
-- with (object, optional): Inputs forwarded to the task
+- args (object, optional): Inputs forwarded to the task
 - as (string, optional): Variable name to store the task result
 
 Outputs:
@@ -108,9 +108,9 @@ Outputs:
 Example:
 ```yaml
 - step: fetch_weather
-  type: workbook
+  tool: workbook
   task: get_weather
-  with:
+  args:
     city: "Paris"
   as: weather
   next: end
@@ -121,7 +121,7 @@ Execute inline Python code.
 
 Inputs:
 - code (string, required): Python code to execute
-- with (object, optional): Variables to inject into the code context
+- args (object, optional): Variables to inject into the code context
 - as (string, optional): Variable name to store the result
 
 Outputs:
@@ -130,8 +130,8 @@ Outputs:
 Example:
 ```yaml
 - step: compute_score
-  type: python
-  with:
+  tool: python
+  args:
     a: 5
     b: 7
   code: |
@@ -183,7 +183,7 @@ Outputs:
 Example:
 ```yaml
 - step: duck_transform
-  type: duckdb
+  tool: duckdb
   script: |
     CREATE OR REPLACE TABLE t AS SELECT 1 AS id;
     SELECT * FROM t;

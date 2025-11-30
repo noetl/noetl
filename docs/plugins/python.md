@@ -17,7 +17,7 @@ When you define a step like this:
 ```yaml
 - step: initialize_test_data
   desc: "Generate initial test data"
-  type: python
+  tool: python
   code: |
     def main(**kwargs):
         # Your Python code here
@@ -235,7 +235,7 @@ def main(execution_id, workload):
 When you define a step like this:
 ```yaml
 - step: initialize_test_data
-  type: python
+  tool: python
   data:
     execution_id: "{{ execution_id }}"
     workload: "{{ workload }}"
