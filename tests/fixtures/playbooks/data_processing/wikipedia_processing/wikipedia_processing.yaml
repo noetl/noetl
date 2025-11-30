@@ -1,0 +1,55 @@
+apiVersion: noetl.io/v1
+kind: Playbook
+metadata:
+  name: wikipedia_processing
+  path: data_processing/wikipedia_processing
+spec:
+  jobId: "{{ job.uuid }}"
+  execution_id: "{{ job.uuid }}"
+  pg_host: "{{ env.POSTGRES_HOST | default('database') }}"
+  pg_port: "{{ env.POSTGRES_PORT | default('5432') }}"
+  pg_user: "{{ env.POSTGRES_USER | default('demo') }}"
+  pg_password: "{{ env.POSTGRES_PASSWORD | default('demo') }}"
+  pg_db: "{{ env.POSTGRES_DB | default('demo_noetl') }}"
+  table_name: "wikipedia_articles"
+workflow:
+  - step: start
+    desc: "Start Wikipedia Data Processing Workflow"
+    next:
+      - step: fetch_wikipedia_data
+
+  - step: fetch_wikipedia_data
+    desc: "Fetch data from Wikipedia API"
+    tool: http
+    method: GET
+    endpoint: "https://en.wikipedia.org/api/rest_v1/page/summary/NoSQL"
+    headers:
+      User-Agent: "NoETL Example/1.0"
+      Accept: "application/json"
+    next:
+      - step: process_in_duckdb
+
+  - step: process_in_duckdb
+    desc: "Process Wikipedia data in DuckDB"
+    tool: duckdb
+    code: "-- Create a table from the Wikipedia API response\nDROP TABLE IF EXISTS wiki_data;\nCREATE TABLE wiki_data AS\nSELECT \n  '{{ fetch_wikipedia_data.data.title }}' AS title,\n  '{{ fetch_wikipedia_data.data.extract }}' AS extract,\n  '{{ fetch_wikipedia_data.data.description }}' AS description,\n  '{{ fetch_wikipedia_data.data.timestamp }}' AS last_updated;\n\n-- Show the data\nSELECT * FROM wiki_data;\n\n-- Create a table with word counts from the extract\nDROP TABLE IF EXISTS word_counts;\nCREATE TABLE word_counts AS\nSELECT \n  unnest(string_split(extract, ' ')) AS word,\n  COUNT(*) as count\nFROM wiki_data\nGROUP BY word\nORDER BY count DESC\nLIMIT 10;\n\n-- Show word counts\nSELECT * FROM word_counts;\n"
+    next:
+      - step: store_in_postgres
+
+  - step: store_in_postgres
+    desc: "Store processed data in PostgreSQL"
+    tool: postgres
+    auth: postgres
+    code: "-- Create table for Wikipedia articles\nDROP TABLE IF EXISTS wikipedia_articles;\nCREATE TABLE wikipedia_articles (\n  id SERIAL PRIMARY KEY,\n  title VARCHAR(500),\n  extract TEXT,\n  description VARCHAR(1000),\n  last_updated TIMESTAMP,\n  word_count INTEGER,\n  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP\n);\n\n-- Insert processed data\nINSERT INTO wikipedia_articles (title, extract, description, last_updated, word_count)\nSELECT \n  title,\n  extract,\n  description,\n  last_updated::TIMESTAMP,\n  LENGTH(extract) - LENGTH(REPLACE(extract, ' ', '')) + 1 AS word_count\nFROM wiki_data;\n\n-- Show inserted data\nSELECT * FROM wikipedia_articles;\n"
+    next:
+      - step: analyze_results
+
+  - step: analyze_results
+    desc: "Analyze stored results with Python"
+    tool: python
+    code: "def main():\n    import psycopg2\n    import json\n    \n    # Connect to database\n    conn = psycopg2.connect(\n        host='database',\n        port='5432',\n        user='demo',\n        password='demo',\n        database='demo_noetl'\n    )\n    \n    try:\n        with conn.cursor() as cursor:\n            # Get article data\n            cursor.execute('SELECT title, description, word_count FROM wikipedia_articles ORDER BY created_at DESC LIMIT 1')\n            row = cursor.fetchone()\n            \n            if row:\n                title, description, word_count = row\n                return {\n                    'title': title,\n                    'description': description,\n                    'word_count': word_count,\n                    'status': 'success'\n                }\n            else:\n                return {'status': 'no_data'}\n    finally:\n        conn.close()\n"
+    next:
+      - step: end
+
+  - step: end
+    desc: "End of Wikipedia processing workflow"
