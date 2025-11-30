@@ -321,10 +321,13 @@ const FlowVisualizationInner: React.FC<FlowVisualizationProps> = ({
         let uniqueId = baseId;
         let c = 1;
         while (parsed.some(t => t.id === uniqueId)) uniqueId = `${baseId}_${c++}`;
+        // Infer type from step name if no tool/type specified (for start/end)
+        const stepName = (entry.step || '').toLowerCase();
+        const inferredType = (stepName === 'start' || stepName === 'end') ? stepName : 'workbook';
         const t: TaskNode = {
           id: uniqueId,
           name: rawName,
-          type: mapType(entry.type || 'workbook'),
+          type: mapType(entry.tool || entry.type || inferredType),
           config: undefined,
         } as any;
         const cfg: any = {};
