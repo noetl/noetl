@@ -33,6 +33,7 @@ test_env/
 *.venv/
 venv/
 env/
+data/.venv/
 .vscode/launch.json
 # Terraform
 .terraform*

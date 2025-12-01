@@ -1,0 +1,219 @@
+apiVersion: noetl.io/v1
+kind: Playbook
+metadata:
+  name: test_vars_cache
+  path: test/vars_cache
+
+workload:
+  execution_id: '{{ job.uuid }}'
+  initial_value: 100
+
+workflow:
+- step: start
+  desc: Test vars_cache functionality
+  next:
+  - step: test_set_var
+
+- step: test_set_var
+  desc: Set initial variables using Python
+  tool: python
+  code: |
+    import asyncio
+    from noetl.worker.vars_cache import VarsCache
+    
+    async def set_vars():
+        execution_id = int("{{ workload.execution_id }}")
+        
+        # Set individual variables
+        await VarsCache.set_cached(
+            var_name="counter",
+            var_value=0,
+            execution_id=execution_id,
+            var_type="user_defined",
+            source_step="test_set_var"
+        )
+        
+        await VarsCache.set_cached(
+            var_name="status",
+            var_value="initialized",
+            execution_id=execution_id,
+            var_type="user_defined",
+            source_step="test_set_var"
+        )
+        
+        await VarsCache.set_cached(
+            var_name="config",
+            var_value={"timeout": 30, "retries": 3},
+            execution_id=execution_id,
+            var_type="user_defined",
+            source_step="test_set_var"
+        )
+        
+        return {"status": "success", "data": {"vars_set": 3}}
+    
+    def main():
+        return asyncio.run(set_vars())
+  next:
+  - step: test_get_var
+
+- step: test_get_var
+  desc: Retrieve and verify variables
+  tool: python
+  code: |
+    import asyncio
+    from noetl.worker.vars_cache import VarsCache
+    
+    async def get_vars():
+        execution_id = int("{{ workload.execution_id }}")
+        
+        # Get individual variable
+        counter = await VarsCache.get_cached("counter", execution_id)
+        status = await VarsCache.get_cached("status", execution_id)
+        config = await VarsCache.get_cached("config", execution_id)
+        
+        # Get all variables
+        all_vars = await VarsCache.get_all_vars(execution_id)
+        
+        return {
+            "status": "success",
+            "data": {
+                "counter": counter,
+                "status_var": status,
+                "config": config,
+                "all_vars": all_vars,
+                "access_counts": {
+                    "counter": counter["access_count"] if counter else 0,
+                    "status": status["access_count"] if status else 0
+                }
+            }
+        }
+    
+    def main():
+        return asyncio.run(get_vars())
+  next:
+  - step: test_update_var
+
+- step: test_update_var
+  desc: Update variable values
+  tool: python
+  code: |
+    import asyncio
+    from noetl.worker.vars_cache import VarsCache
+    
+    async def update_vars():
+        execution_id = int("{{ workload.execution_id }}")
+        
+        # Update counter
+        await VarsCache.set_cached(
+            var_name="counter",
+            var_value=1,
+            execution_id=execution_id,
+            var_type="user_defined",
+            source_step="test_update_var"
+        )
+        
+        # Update status
+        await VarsCache.set_cached(
+            var_name="status",
+            var_value="processing",
+            execution_id=execution_id,
+            var_type="user_defined",
+            source_step="test_update_var"
+        )
+        
+        # Get updated values
+        counter = await VarsCache.get_cached("counter", execution_id)
+        status = await VarsCache.get_cached("status", execution_id)
+        
+        return {
+            "status": "success",
+            "data": {
+                "counter_value": counter["value"],
+                "counter_access_count": counter["access_count"],
+                "status_value": status["value"],
+                "status_access_count": status["access_count"]
+            }
+        }
+    
+    def main():
+        return asyncio.run(update_vars())
+  next:
+  - step: test_bulk_set
+
+- step: test_bulk_set
+  desc: Test bulk variable setting
+  tool: python
+  code: |
+    import asyncio
+    from noetl.worker.vars_cache import VarsCache
+    
+    async def bulk_set():
+        execution_id = int("{{ workload.execution_id }}")
+        
+        # Set multiple variables at once
+        vars_to_set = {
+            "bulk_var_1": "value1",
+            "bulk_var_2": 42,
+            "bulk_var_3": [1, 2, 3],
+            "bulk_var_4": {"nested": "object"}
+        }
+        
+        count = await VarsCache.set_multiple(
+            variables=vars_to_set,
+            execution_id=execution_id,
+            var_type="computed",
+            source_step="test_bulk_set"
+        )
+        
+        # Get all vars with metadata
+        all_with_meta = await VarsCache.get_all_vars_with_metadata(execution_id)
+        
+        return {
+            "status": "success",
+            "data": {
+                "bulk_set_count": count,
+                "total_vars": len(all_with_meta),
+                "var_names": list(all_with_meta.keys())
+            }
+        }
+    
+    def main():
+        return asyncio.run(bulk_set())
+  next:
+  - step: test_delete_var
+
+- step: test_delete_var
+  desc: Test variable deletion
+  tool: python
+  code: |
+    import asyncio
+    from noetl.worker.vars_cache import VarsCache
+    
+    async def delete_vars():
+        execution_id = int("{{ workload.execution_id }}")
+        
+        # Delete single variable
+        deleted = await VarsCache.delete_var("bulk_var_1", execution_id)
+        
+        # Verify deletion
+        deleted_var = await VarsCache.get_cached("bulk_var_1", execution_id)
+        
+        # Get remaining vars
+        all_vars = await VarsCache.get_all_vars(execution_id)
+        
+        return {
+            "status": "success",
+            "data": {
+                "delete_success": deleted,
+                "var_still_exists": deleted_var is not None,
+                "remaining_var_count": len(all_vars)
+            }
+        }
+    
+    def main():
+        return asyncio.run(delete_vars())
+  next:
+  - step: end
+
+- step: end
+  desc: End workflow - cleanup will happen automatically
