@@ -97,7 +97,7 @@ tasks:
         echo "Next steps:"
         echo "  1) Close and reopen your WSL terminal (or run: newgrp docker)"
         echo "  2) Ensure Docker Desktop is running and WSL integration is enabled"
-  echo "  3) Re-run: task dev:tools:validate-docker"
+        echo "  3) Re-run: task dev:tools:validate-docker"
         '
 
   dev:tools:validate-devtools:

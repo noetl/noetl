@@ -34,8 +34,8 @@ workflow:
     tool: http
     method: GET
     url: "{{ workload.api_url }}"
-    save:
-      storage: postgres
+    sink:
+      tool: postgres
       auth: "{{ workload.pg_auth }}"
       statement: |
         {% for item in result.data %}
@@ -50,6 +50,8 @@ workflow:
     auth: "{{ workload.pg_auth }}"
     command: |
       SELECT COUNT(*) as records FROM public.http_to_postgres_direct;
+    result:
+      direct_count: "{{ result.command_0[0].records }}"
     next:
       - step: end
 

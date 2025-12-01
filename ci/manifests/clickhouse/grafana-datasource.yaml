@@ -1,0 +1,27 @@
+# Grafana DataSource for ClickHouse
+# Enables querying ClickHouse observability data in Grafana
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: clickhouse-datasource
+  namespace: vmstack
+  labels:
+    grafana_datasource: "1"
+data:
+  clickhouse-datasource.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: ClickHouse
+        type: grafana-clickhouse-datasource
+        access: proxy
+        url: http://clickhouse.clickhouse.svc.cluster.local:8123
+        jsonData:
+          defaultDatabase: observability
+          port: 8123
+          protocol: http
+          username: default
+        secureJsonData:
+          password: ""
+        isDefault: false
+        editable: true

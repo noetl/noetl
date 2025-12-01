@@ -435,7 +435,7 @@ next:
    - step: fetch
      type: http
      args: { url: "..." }
-     save: { storage: postgres, table: t }
+     sink: { tool: postgres, table: t }
    
    # NEW (v2)
    - step: fetch
@@ -775,7 +775,7 @@ noetl status <execution_id>
     # Fail if any example contains legacy patterns
     ! grep -r "tool: iterator" examples/workflows/v2/
     ! grep -r "^  args:" examples/workflows/v2/  # Step-level args
-    ! grep -r "^  save:" examples/workflows/v2/  # Step-level save
+    ! grep -r "^  sink:" examples/workflows/v2/  # Step-level save
 
 - name: Validate Sink Format
   run: |
@@ -839,7 +839,7 @@ dsl.sanity-check: dsl.validate-examples dsl.lint-examples
 	@echo "Checking for legacy fields..."
 	@! grep -r "tool: iterator" examples/workflows/v2/ || (echo "❌ Found legacy 'tool: iterator'" && exit 1)
 	@! grep -r "^  args:" examples/workflows/v2/ || (echo "❌ Found step-level 'args'" && exit 1)
-	@! grep -r "^  save:" examples/workflows/v2/ || (echo "❌ Found step-level 'save'" && exit 1)
+	@! grep -r "^  sink:" examples/workflows/v2/ || (echo "❌ Found step-level 'save'" && exit 1)
 	@echo "Validating sink format..."
 	@python scripts/validate_sink_format.py examples/workflows/v2/
 	@echo "✅ Sanity checks passed"

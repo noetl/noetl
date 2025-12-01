@@ -8,7 +8,7 @@ The save block configuration has been standardized to use `storage:` attribute i
 
 ### Before (Old Format - NOT SUPPORTED)
 ```yaml
-save:
+sink:
   type: postgres        # ❌ Wrong - conflicts with action type
   data:
     field1: value1
@@ -18,8 +18,8 @@ save:
 
 ### After (New Format - CORRECT)
 ```yaml
-save:
-  storage: postgres     # ✅ Correct - clearly indicates storage backend
+sink:
+  tool: postgres     # ✅ Correct - clearly indicates storage backend
   args:                 # ✅ Preferred - but 'data' also works
     field1: value1
   auth: credential_ref
@@ -30,8 +30,8 @@ save:
 
 ### Option 1: Using `args` (Recommended)
 ```yaml
-save:
-  storage: postgres
+sink:
+  tool: postgres
   args:
     id: "{{ execution_id }}"
     name: "{{ item.name }}"
@@ -43,8 +43,8 @@ save:
 
 ### Option 2: Using `data` (Also Supported)
 ```yaml
-save:
-  storage: postgres
+sink:
+  tool: postgres
   data:
     id: "{{ execution_id }}"
     name: "{{ item.name }}"
@@ -60,14 +60,14 @@ The `storage:` attribute can be:
 
 1. **String (Flat Structure)**
    ```yaml
-   save:
-     storage: postgres
+   sink:
+     tool: postgres
      args: {...}
    ```
 
 2. **Dict (Nested Structure)**
    ```yaml
-   save:
+   sink:
      storage:
        type: postgres
        table: my_table
@@ -96,8 +96,8 @@ When using save blocks inside iterator tasks:
     code: |
       def main(input_data):
           return {'result': input_data}
-    save:
-      storage: postgres
+    sink:
+      tool: postgres
       args:
         id: "{{ execution_id }}:{{ item.id }}"
         data: "{{ item }}"

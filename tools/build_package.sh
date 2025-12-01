@@ -22,7 +22,15 @@ if command -v uv >/dev/null 2>&1; then
   uv add --dev build twine >/dev/null 2>&1 || true
 fi
 
+if command -v python3 >/dev/null 2>&1; then
+  python3 -c "import build" >/dev/null 2>&1 || {
+    echo "[build_package] Installing build dependencies via pip"
+    python3 -m pip install --upgrade pip >/dev/null 2>&1 || true
+    python3 -m pip install --upgrade build twine >/dev/null 2>&1 || true
+  }
+fi
+
 echo "[build_package] Building package"
-python -m build
+python3 -m build
 
 echo "[build_package] Done. Artifacts in dist/"

@@ -50,7 +50,7 @@ const ExecutionDetail: React.FC = () => {
 
   // Pagination state for events table
   const [currentPage, setCurrentPage] = useState<number>(1);
-  const [pageSize, setPageSize] = useState<number>(10);
+  const [pageSize, setPageSize] = useState<number>(100);
 
   // Event filtering state
   const [activeTab, setActiveTab] = useState<string>("all");

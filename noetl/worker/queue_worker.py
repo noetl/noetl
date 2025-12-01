@@ -49,6 +49,15 @@ class QueueWorker:
         self.worker_id = worker_id or self._settings.worker_id or str(uuid.uuid4())
         self._jinja = Environment(loader=BaseLoader(), undefined=StrictUndefined)
         self._jinja.filters["tojson"] = lambda value: json.dumps(value, ensure_ascii=False)
+        
+        # Register token resolution function for OAuth/service account auth
+        try:
+            from noetl.core.auth.token_resolver import register_token_functions
+            register_token_functions(self._jinja, {})
+            logger.debug("Registered token resolution functions in Jinja environment")
+        except Exception as e:
+            logger.warning(f"Failed to register token functions (non-critical): {e}")
+        
         self._thread_pool = thread_pool or ThreadPoolExecutor(max_workers=4)
         if process_pool is not None:
             self._process_pool = process_pool
@@ -138,14 +147,13 @@ class QueueWorker:
         task_data: Dict[str, Any],
         use_process: bool,
     ) -> Dict[str, Any]:
-        tool = str(action_cfg.get("tool") or "").strip().lower()
-        if tool == "python":
-            from noetl.plugin.tools.python import execute_python_task_async
-
-            return await execute_python_task_async(
-                action_cfg, exec_ctx, self._jinja, task_data, None
-            )
-
+        # CRITICAL: Check if loop is in action_cfg
+        has_loop = 'loop' in action_cfg
+        logger.critical(f"WORKER._run_action: task='{task_name}', has_loop={has_loop}, action_cfg_keys={list(action_cfg.keys())}")
+        if has_loop:
+            logger.critical(f"WORKER._run_action: loop block = {action_cfg.get('loop')}")
+        
+        # All tools (including Python) must go through execute_task to support iterator/loop handling
         from noetl.plugin import execute_task
 
         loop = asyncio.get_running_loop()

@@ -240,7 +240,7 @@ spec:
 
     response = requests.post(
         f"{SERVER_URL}/catalog/register",
-        json={"content_base64": playbook_base64}
+        json={"content": playbook_base64}
     )
 
     if response.status_code == 200:
@@ -460,7 +460,7 @@ spec:
 
     response = requests.post(
         f"{SERVER_URL}/catalog/register",
-        json={"content_base64": playbook_base64}
+        json={"content": playbook_base64}
     )
 
     if response.status_code == 200:

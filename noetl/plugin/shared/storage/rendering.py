@@ -39,11 +39,11 @@ def render_data_mapping(
     except Exception as render_err:
         # Log the rendering failure for debugging
         logger.warning(
-            f"SAVE: Template rendering failed for mapping {mapping}, "
+            f"SINK: Template rendering failed for mapping {mapping}, "
             f"falling back to unrendered: {render_err}"
         )
         logger.debug(
-            f"SAVE: Available context keys: "
+            f"SINK: Available context keys: "
             f"{list(context.keys()) if isinstance(context, dict) else type(context)}"
         )
         # Fallback: return as-is if rendering fails

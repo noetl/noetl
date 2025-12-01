@@ -1,5 +1,76 @@
 # Changelog
 
+All notable changes to this project will be documented in this file.
+
+## [1.3.0](https://github.com/noetl/noetl/compare/v1.2.5...v1.3.0) (2025-11-28)
+
+### Features
+
+* container secrets ([f6a1391](https://github.com/noetl/noetl/commit/f6a1391f3bb2437add043b48610dddd5625287ff))
+* **container:** add container tool with authenticated remote file downloads ([fa8c1db](https://github.com/noetl/noetl/commit/fa8c1db48b21db7ff87c1126e99cc8ba36d67449))
+
+### Bug Fixes
+
+* support effective audience resolution in token provider ([5034593](https://github.com/noetl/noetl/commit/503459359e5d26592a844ce2f1409ced19cf5779))
+
+## [1.3.0](https://github.com/noetl/noetl/compare/v1.2.5...v1.3.0) (2025-11-28)
+
+### Features
+
+* container secrets ([f6a1391](https://github.com/noetl/noetl/commit/f6a1391f3bb2437add043b48610dddd5625287ff))
+* **container:** add container tool with authenticated remote file downloads ([fa8c1db](https://github.com/noetl/noetl/commit/fa8c1db48b21db7ff87c1126e99cc8ba36d67449))
+
+### Bug Fixes
+
+* support effective audience resolution in token provider ([5034593](https://github.com/noetl/noetl/commit/503459359e5d26592a844ce2f1409ced19cf5779))
+
+## [1.3.0](https://github.com/noetl/noetl/compare/v1.2.5...v1.3.0) (2025-11-28)
+
+### Features
+
+* container secrets ([f6a1391](https://github.com/noetl/noetl/commit/f6a1391f3bb2437add043b48610dddd5625287ff))
+* **container:** add container tool with authenticated remote file downloads ([fa8c1db](https://github.com/noetl/noetl/commit/fa8c1db48b21db7ff87c1126e99cc8ba36d67449))
+
+## [1.3.0](https://github.com/noetl/noetl/compare/v1.2.5...v1.3.0) (2025-11-28)
+
+### Features
+
+* **container:** add container tool with authenticated remote file downloads ([fa8c1db](https://github.com/noetl/noetl/commit/fa8c1db48b21db7ff87c1126e99cc8ba36d67449))
+
+## [1.4.0](https://github.com/noetl/noetl/compare/v1.3.0...v1.4.0) (2025-11-28)
+
+### Features
+
+* **container:** enhance job creation with remote file downloads and optional ConfigMap ([4104fbb](https://github.com/noetl/noetl/commit/4104fbb7e42445f5916f1043232f171b96d1c155))
+
+## [1.3.0](https://github.com/noetl/noetl/compare/v1.2.5...v1.3.0) (2025-11-27)
+
+### Features
+
+* **container:** add container tool executor ([2a0010e](https://github.com/noetl/noetl/commit/2a0010ef2ed134216c7de4103976c102164af5a8))
+
+## [1.2.5](https://github.com/noetl/noetl/compare/v1.2.4...v1.2.5) (2025-11-26)
+
+### Bug Fixes
+
+* Preserve loop variables from server-side rendering ([d7c5b41](https://github.com/noetl/noetl/commit/d7c5b41bdc6ecdde5e39a4d05f9da21f389763af))
+* version loop ([0b8c664](https://github.com/noetl/noetl/commit/0b8c664a984df7a5a1e50980b2e8416cee0f363a))
+
+## [1.2.4](https://github.com/noetl/noetl/compare/v1.2.3...v1.2.4) (2025-11-25)
+
+### Bug Fixes
+
+* Fix Release label ([5abe9b8](https://github.com/noetl/noetl/commit/5abe9b87e0c71c97406c4b9162d16a20dc0cf584))
+
+## [1.2.3](https://github.com/noetl/noetl/compare/v1.2.2...v1.2.3) (2025-11-25)
+
+### Bug Fixes
+
+* CI/CD test build ([0f994c3](https://github.com/noetl/noetl/commit/0f994c3fd0dae8eb9a43ae7449e29d2d9fabec84))
+* Update Release GitHub workflow ([68b34f2](https://github.com/noetl/noetl/commit/68b34f2e4e234f122c80261b3c55e79fd23dfa11))
+
+# Changelog
+
 ## [Unreleased] - Unified Kubernetes Deployment
 
 ### Fixed

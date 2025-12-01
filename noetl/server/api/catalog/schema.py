@@ -5,6 +5,7 @@ Provides unified schema design for catalog resource lookup and management.
 Supports multiple lookup strategies: catalog_id, path + version.
 """
 
+import base64
 from datetime import datetime
 from typing import Any, Optional
 from pydantic import model_validator, Field, field_validator
@@ -140,3 +141,53 @@ class CatalogEntry(AppBaseModel):
 class CatalogEntries(AppBaseModel):
     """Response model for list of catalog entries endpoint"""
     entries: list[CatalogEntry]
+
+
+class CatalogRegisterRequest(AppBaseModel):
+    """Request model for registering a new catalog entry"""
+    content: str = Field(
+        description="YAML content of the catalog resource (accepts base64 encoded or plain text)",
+        example="apiVersion: noetl.io/v1\nkind: Playbook\nmetadata:\n  name: example\n  path: examples/demo"
+    )
+    resource_type: str = Field(
+        default="Playbook",
+        description="Type of resource to register (e.g., 'Playbook', 'Tool', 'Model')",
+        example="Playbook"
+    )
+
+    @field_validator('content', mode="before")
+    @classmethod
+    def decode_data(cls, val):
+        try:
+            return base64.b64decode(val).decode("utf-8")
+        except Exception:
+            return val
+
+
+class CatalogRegisterResponse(AppBaseModel):
+    """Response model for catalog registration endpoint"""
+    status: str = Field(
+        description="Operation status",
+        example="success"
+    )
+    message: str = Field(
+        description="Human-readable result message",
+        example="Resource 'examples/demo' version '1' registered."
+    )
+    path: str = Field(
+        description="Catalog path of the registered resource",
+        example="examples/demo"
+    )
+    version: int = Field(
+        description="Version number of the registered resource",
+        example=1
+    )
+    catalog_id: str = Field(
+        description="Unique catalog entry identifier",
+        example="478775660589088776"
+    )
+    kind: str = Field(
+        description="Resource type/kind",
+        example="Playbook"
+    )
+        

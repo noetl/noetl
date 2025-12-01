@@ -218,8 +218,8 @@ workflow:
   # Save with unified auth
   - step: save_results
     type: save
-    save:
-      storage: postgres
+    sink:
+      tool: postgres
       auth:
         pg_results:
           type: postgres

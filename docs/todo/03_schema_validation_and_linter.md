@@ -770,7 +770,7 @@ OK   tests/fixtures/control_flow_workbook.yaml
 FAIL examples/legacy_iterator.yaml: 3 schema errors
   - at 0/tool: 'iterator' is not valid under any of the given schemas
   - at 0/args: Additional properties are not allowed ('args' was unexpected)
-  - at 0/save: Additional properties are not allowed ('save' was unexpected)
+  - at 0/sink: Additional properties are not allowed ('save' was unexpected)
 
 FAIL examples/legacy_iterator.yaml: 5 lint errors
   - examples/legacy_iterator.yaml process_users: tool: iterator is invalid; use step.loop

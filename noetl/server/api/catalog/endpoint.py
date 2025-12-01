@@ -3,46 +3,79 @@ from noetl.server.api.catalog.schema import (
     CatalogEntryRequest,
     CatalogEntriesRequest,
     CatalogEntries,
+    CatalogRegisterRequest,
+    CatalogRegisterResponse,
 )
 from .service import CatalogService, get_catalog_service
 from fastapi import APIRouter, Depends, Request, HTTPException
 from fastapi.responses import JSONResponse
 from noetl.core.logger import setup_logger
+import base64
 
 logger = setup_logger(__name__, include_location=True)
 router = APIRouter()
 
 
-@router.post("/catalog/register", response_class=JSONResponse, tags=["Catalog"])
+@router.post(
+    "/catalog/register",
+    response_model=CatalogRegisterResponse,
+    tags=["Catalog"],
+    summary="Register a new catalog resource",
+    description="""
+Register a new catalog resource (Playbook, Tool, Model, etc.) with version control.
+
+**Request Body:**
+- `content`: YAML content of the resource (accepts base64 encoded or plain text)
+- `resource_type`: Type of resource to register (default: "Playbook")
+
+**Behavior:**
+- Automatically increments version if resource already exists at the same path
+- Extracts metadata (name, path, kind) from YAML content
+- Validates resource structure before registration
+
+**Returns:**
+- Registration confirmation with catalog_id, path, version, and kind
+
+**Examples:**
+
+Register a new Playbook:
+```json
+POST /catalog/register
+{
+  "content": "apiVersion: noetl.io/v1\\nkind: Playbook\\nmetadata:\\n  name: example\\n  path: examples/demo\\n...",
+  "resource_type": "Playbook"
+}
+```
+
+Register with base64 encoded content:
+```json
+POST /catalog/register
+{
+  "content": "YXBpVmVyc2lvbjogbm9ldGwuaW8vdjEKa2luZDogUGxheWJvb2s=",
+  "resource_type": "Playbook"
+}
+```
+
+**Response:**
+```json
+{
+  "status": "success",
+  "message": "Resource 'examples/demo' version '1' registered.",
+  "path": "examples/demo",
+  "version": 1,
+  "catalog_id": "478775660589088776",
+  "kind": "Playbook"
+}
+```
+    """
+)
 async def register_resource(
-    request: Request,
+    request: CatalogRegisterRequest,
     catalog_service: CatalogService = Depends(get_catalog_service),
-    content_base64: str = None,
-    content: str = None,
-    resource_type: str = "Playbook"
 ):
     try:
-        if not content_base64 and not content:
-            try:
-                body = await request.json()
-                content_base64 = body.get("content_base64")
-                content = body.get("content")
-                resource_type = body.get("resource_type", resource_type)
-            except:
-                pass
-
-        if content_base64:
-            import base64 as _b64
-            content = _b64.b64decode(content_base64).decode('utf-8')
-        elif not content:
-            raise HTTPException(
-                status_code=400,
-                detail="The content or content_base64 must be provided."
-            )
-
-        result = await catalog_service.register_resource(content, resource_type)
-        return result
-
+        result = await catalog_service.register_resource(request.content, request.resource_type)
+        return CatalogRegisterResponse(**result)
     except Exception as e:
         logger.exception(f"Error registering resource: {e}.")
         raise HTTPException(

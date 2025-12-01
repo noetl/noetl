@@ -11,7 +11,7 @@ Core execution step kinds:
 - snowflake: Snowflake SQL (DDL/DML/query, VARIANT/JSON handling, setup/verify around transfers, optional retry)
 - workbook: Invoke a named task defined in the `workbook` block.
 - playbook: Compose and call another playbook (`path`, optional `return_step`), enabling modular pipelines.
-- save: Not a top-level type; used inside steps to persist results (event log, postgres, duckdb, http, python custom code).
+- sink: Not a top-level type; used inside steps to persist results (event log, postgres, duckdb, http, python custom code).
 
 Cross-cutting capability:
 - retry: Inline policy block available on action steps (http, python, postgres, duckdb, workbook task, inner iterator task) controlling bounded re-attempt logic (see `retry.md`).

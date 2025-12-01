@@ -317,6 +317,73 @@ Examples:
 
 ---
 
+## Template Context and Result References
+
+### Step Result References in Workflow
+
+During workflow execution, completed step results are available in subsequent steps via Jinja2 templates:
+- `{{ step_name }}` or `{{ step_name.result }}` - Full result object (envelope with `status`, `data`, `error`, `meta`)
+- `{{ step_name.data }}` - Direct access to the data payload when step returns envelope structure
+- `{{ step_name.data.field }}` - Access specific fields within the data payload
+
+Example:
+```yaml
+- step: fetch_data
+  type: python
+  code: |
+    def main():
+      return {"status": "success", "data": {"count": 42, "name": "test"}}
+  next: process
+
+- step: process
+  type: python
+  code: |
+    def main(count, name):
+      print(f"Processing {name} with count {count}")
+  args:
+    count: "{{ fetch_data.data.count }}"
+    name: "{{ fetch_data.data.name }}"
+```
+
+### Sink Template Context (Result Unwrapping)
+
+When a `sink:` block executes, the worker provides a **special context** where result envelopes are unwrapped for convenience:
+
+**Available variables in sink templates:**
+- **`result`** or **`data`**: Unwrapped step result data (the contents of the `data` field from the envelope)
+- **`this`**: Full result envelope with `status`, `data`, `error`, `meta` fields
+- **`workload`**: Global workflow variables
+- **`execution_id`**: Current execution identifier
+- Prior step results by name
+
+**Important**: Use `{{ result }}` not `{{ result.data }}` in sink blocks, as the worker has already unwrapped the envelope.
+
+✅ **Correct sink usage:**
+```yaml
+- step: generate
+  type: python
+  code: |
+    def main():
+      return {"status": "success", "data": {"value": 123, "message": "hello"}}
+  sink:
+    tool: postgres
+    table: outputs
+    args:
+      value: "{{ result.value }}"          # Direct field access
+      message: "{{ result.message }}"      # Not result.data.message
+      full_data: "{{ result }}"            # Full unwrapped data object
+      status_check: "{{ this.status }}"    # Envelope metadata
+```
+
+❌ **Incorrect - double nesting:**
+```yaml
+sink:
+  args:
+    value: "{{ result.data.value }}"  # WRONG: result is already unwrapped
+```
+
+---
+
 ## Validation Summary
 
 - `start` must define `next`.

@@ -27,7 +27,7 @@ spec:
             name: noetl-secret
         env:
         - name: NOETL_VERSION
-          value: 1.0.3
+          value: 1.0.4
         volumeMounts:
         - name: noetl-data
           mountPath: /opt/noetl/data

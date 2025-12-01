@@ -40,14 +40,14 @@ Example (fragment from composition test)
     data:
       user_data: "{{ user }}"
       execution_context: "{{ execution_id }}"
-    save:
+    sink:
       data:
         id: "{{ execution_id }}:{{ user.name }}"
         execution_id: "{{ execution_id }}"
         user_name: "{{ user.name }}"
         profile_score: "{{ this.profile_score or 0.0 }}"
         score_category: "{{ this.score_category or 'unknown' }}"
-      storage: postgres
+      tool: postgres
       auth: "{{ workload.pg_auth }}"
       table: public.user_profile_results
       mode: upsert

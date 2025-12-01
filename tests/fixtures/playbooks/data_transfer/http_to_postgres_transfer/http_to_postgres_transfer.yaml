@@ -36,11 +36,11 @@ workflow:
     desc: Transfer HTTP API data to PostgreSQL
     tool: transfer
     source:
-      type: http
+      tool: http
       url: "{{ workload.api_url }}"
       method: GET
     target:
-      type: postgres
+      tool: postgres
       auth: "{{ workload.pg_auth }}"
       table: public.http_to_postgres_transfer
       mode: insert

@@ -272,10 +272,10 @@ def handle_postgres_storage(
         Save result envelope with status, data, and meta
     """
     logger.critical("=" * 80)
-    logger.critical("SAVE.POSTGRES: handle_postgres_storage CALLED")
-    logger.critical(f"SAVE.POSTGRES: table={table}, mode={mode}")
-    logger.critical(f"SAVE.POSTGRES: credential_ref={credential_ref}")
-    logger.critical(f"SAVE.POSTGRES: rendered_data={rendered_data}")
+    logger.critical("SINK.POSTGRES: handle_postgres_storage CALLED")
+    logger.critical(f"SINK.POSTGRES: table={table}, mode={mode}")
+    logger.critical(f"SINK.POSTGRES: credential_ref={credential_ref}")
+    logger.critical(f"SINK.POSTGRES: rendered_data={rendered_data}")
     logger.critical("=" * 80)
 
     # Resolve credential alias if provided (best-effort)
@@ -304,17 +304,17 @@ def handle_postgres_storage(
 
     # DEBUG: Log context keys before calling postgres plugin
     logger.debug(
-        f"SAVE: Calling postgres plugin with context keys: "
+        f"SINK: Calling postgres plugin with context keys: "
         f"{list(context.keys()) if isinstance(context, dict) else type(context)}"
     )
     if isinstance(context, dict) and "result" in context:
         result_val = context["result"]
         logger.debug(
-            f"SAVE: Found 'result' in context - type: {type(result_val)}, "
+            f"SINK: Found 'result' in context - type: {type(result_val)}, "
             f"keys: {list(result_val.keys()) if isinstance(result_val, dict) else 'not dict'}"
         )
     else:
-        logger.debug("SAVE: No 'result' found in context")
+        logger.debug("SINK: No 'result' found in context")
 
     # Delegate to postgres plugin
     try:
@@ -324,7 +324,7 @@ def handle_postgres_storage(
             pg_task, context, jinja_env, pg_with, log_event_callback
         )
     except Exception as e:
-        logger.error(f"SAVE: Failed delegating to postgres plugin: {e}")
+        logger.error(f"SINK: Failed delegating to postgres plugin: {e}")
         pg_result = {"status": "error", "error": str(e)}
 
     # Normalize into save envelope
@@ -337,7 +337,7 @@ def handle_postgres_storage(
                 "task_result": pg_result.get("data"),
             },
             "meta": {
-                "storage_kind": "postgres",
+                "tool_kind": "postgres",
                 "credential_ref": credential_ref,
                 "save_spec": {
                     "mode": mode,
@@ -355,7 +355,7 @@ def handle_postgres_storage(
         return {
             "status": "error",
             "data": None,
-            "meta": {"storage_kind": "postgres"},
+            "meta": {"tool_kind": "postgres"},
             "error": (
                 (pg_result or {}).get("error")
                 if isinstance(pg_result, dict)

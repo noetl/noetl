@@ -313,6 +313,78 @@ class QueuePublisher:
                     # Expand workbook references (if type='workbook')
                     step_cfg = await expand_workbook_reference(step_cfg, catalog_id)
 
+                    # Render step args with available context (workload for initial steps)
+                    # IMPORTANT: For iterator steps, DO NOT render the nested 'task' block
+                    # because it contains templates like {{ item }} that only exist during iteration
+                    if "args" in step_cfg and step_cfg["args"] and context:
+                        from noetl.core.dsl.render import render_template
+                        from jinja2 import BaseLoader, Environment
+                        
+                        try:
+                            env = Environment(loader=BaseLoader())
+                            step_cfg["args"] = render_template(
+                                env, step_cfg["args"], context, rules=None, strict_keys=False
+                            )
+                        except Exception as e:
+                            logger.warning(f"Failed to render args for step '{step_name}': {e}")
+                    
+                    # Preserve blocks that should not be rendered server-side:
+                    # 1. For iterator steps (OLD format): nested 'task' block (contains {{ item }} templates)
+                    # 2. For loop steps (NEW format): 'loop' block AND nested tool config (contains {{ item }} templates)
+                    # 3. For all steps: 'sink' block (contains {{ result }} templates)
+                    step_tool = (step_cfg.get("tool") or "").lower()
+                    is_iterator_old = step_tool == "iterator"
+                    has_loop_new = "loop" in step_cfg
+                    
+                    # Always preserve sink block (regardless of step type)
+                    sink_block = step_cfg.pop("sink", None)
+                    if sink_block is not None:
+                        logger.critical(f"PUBLISHER: Extracted sink block for step '{step_name}': {sink_block}")
+                    
+                    # Preserve loop block (NEW format)
+                    loop_block = step_cfg.pop("loop", None)
+                    if loop_block is not None:
+                        logger.critical(f"PUBLISHER: Extracted loop block for step '{step_name}': {loop_block}")
+                    
+                    if is_iterator_old and context:
+                        from noetl.core.dsl.render import render_template
+                        from jinja2 import BaseLoader, Environment
+                        
+                        try:
+                            env = Environment(loader=BaseLoader())
+                            # Save the task block before rendering (OLD format)
+                            task_block = step_cfg.get("task")
+                            
+                            # Remove task block temporarily to prevent rendering
+                            if task_block:
+                                step_cfg_without_task = {k: v for k, v in step_cfg.items() if k != "task"}
+                            else:
+                                step_cfg_without_task = step_cfg
+                            
+                            # Render iterator config (collection, element, mode, etc.)
+                            # This will render {{ workload.items }} in collection
+                            step_cfg_rendered = render_template(
+                                env, step_cfg_without_task, context, rules=None, strict_keys=False
+                            )
+                            
+                            # Restore the task block unrendered
+                            if task_block:
+                                step_cfg_rendered["task"] = task_block
+                            
+                            step_cfg = step_cfg_rendered
+                        except Exception as e:
+                            logger.warning(f"Failed to render iterator config for step '{step_name}': {e}")
+                    
+                    # Restore loop block after rendering (worker will render it with item context)
+                    if loop_block is not None:
+                        step_cfg["loop"] = loop_block
+                        logger.critical(f"PUBLISHER: Restored loop block for step '{step_name}'")
+                    
+                    # Restore sink block after rendering (worker will render it with result context)
+                    if sink_block is not None:
+                        step_cfg["sink"] = sink_block
+                        logger.critical(f"PUBLISHER: Restored sink block for step '{step_name}'")
+
                     # Encode step config for queue
                     encoded_step_cfg = encode_task_for_queue(step_cfg)
 
@@ -388,11 +460,51 @@ class QueuePublisher:
         Returns:
             queue_id of published task
         """
+        # CRITICAL: Preserve blocks that should NOT be rendered server-side
+        # These blocks contain templates ({{ item }}, {{ result }}) that must be
+        # rendered worker-side AFTER task execution completes
+        
+        # Make a copy to avoid mutating the original config
+        step_config_copy = dict(step_config)
+        
+        # 1. Always preserve sink block (contains {{ result }} templates)
+        sink_block = step_config_copy.pop("sink", None)
+        if sink_block is not None:
+            logger.critical(f"PUBLISHER.publish_step: Extracted sink block for step '{step_name}': {sink_block}")
+        
+        # 2. Preserve loop block (NEW format - contains {{ item }} templates)
+        loop_block = step_config_copy.pop("loop", None)
+        if loop_block is not None:
+            logger.critical(f"PUBLISHER.publish_step: Extracted loop block for step '{step_name}': {loop_block}")
+        
+        # 3. For OLD iterator format: preserve nested 'task' block
+        step_tool = (step_config_copy.get("tool") or "").lower()
+        task_block = None
+        if step_tool == "iterator":
+            task_block = step_config_copy.pop("task", None)
+            if task_block is not None:
+                logger.critical(f"PUBLISHER.publish_step: Extracted task block for iterator step '{step_name}'")
+        
         # Generate queue_id from database
         queue_id = await get_snowflake_id()
 
         # Encode task config for queue (base64 encode code/command fields)
-        encoded_step_config = encode_task_for_queue(step_config)
+        # Use the config with preserved blocks removed
+        encoded_step_config = encode_task_for_queue(step_config_copy)
+        
+        # Restore preserved blocks AFTER encoding but BEFORE queue insertion
+        # This ensures they bypass server-side rendering but get passed to worker
+        if sink_block is not None:
+            encoded_step_config["sink"] = sink_block
+            logger.critical(f"PUBLISHER.publish_step: Restored sink block for step '{step_name}'")
+        
+        if loop_block is not None:
+            encoded_step_config["loop"] = loop_block
+            logger.critical(f"PUBLISHER.publish_step: Restored loop block for step '{step_name}'")
+        
+        if task_block is not None:
+            encoded_step_config["task"] = task_block
+            logger.critical(f"PUBLISHER.publish_step: Restored task block for iterator step '{step_name}'")
 
         # Build task context
         task_context = {

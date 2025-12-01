@@ -392,7 +392,7 @@ jobs:
           # Fail if any legacy patterns found
           ! grep -r "tool: iterator" examples/ tests/fixtures/ || (echo "ERROR: tool: iterator found" && exit 1)
           ! grep -r "^  args:" examples/ tests/fixtures/ | grep -v "tool:" || (echo "ERROR: step-level args found" && exit 1)
-          ! grep -r "^  save:" examples/ tests/fixtures/ | grep -v "result:" || (echo "ERROR: step-level save found" && exit 1)
+          ! grep -r "^  sink:" examples/ tests/fixtures/ | grep -v "result:" || (echo "ERROR: step-level save found" && exit 1)
           ! grep -r "^  task:" examples/ tests/fixtures/ || (echo "ERROR: nested task found" && exit 1)
 
   dsl-test-suite:
@@ -467,7 +467,7 @@ dsl-v2-checks:
     tool: playbook
     path: tests/fixtures/playbooks/user_profile_scorer
     args: { user_data: "{{ user }}" }
-    save:
+    sink:
       table: public.user_profile_results
       key: id
       args: { id: "{{ execution_id }}:{{ user.name }}" }
@@ -512,8 +512,8 @@ dsl-v2-checks:
   tool: postgres
   args:
     query: "select * from users"
-  save:
-    storage: duckdb
+  sink:
+    tool: duckdb
     file: ./users.duckdb
     table: users
 ```

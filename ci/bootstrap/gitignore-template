@@ -1,0 +1,85 @@
+# Template .gitignore for projects using NoETL as submodule
+# Copy this to your project root
+
+# === Python ===
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+*.venv/
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.pytest_cache/
+
+# === IDEs ===
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# === Project-Specific ===
+
+# Credentials (NEVER commit!)
+credentials/
+secrets/
+*.secret.json
+*.local.json
+.env.local
+.env.prod
+.secrets/
+
+# Data directories
+data/
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+logs/
+*.log
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# === NoETL Submodule Cache ===
+# These are created by NoETL infrastructure
+noetl/ci/kind/cache/
+noetl/data/noetldb/
+noetl/logs/
+
+# === Keep Templates ===
+# Allow template/example files
+!credentials/*.example.json
+!credentials/*.template.json
+!.env.example
+!.env.template

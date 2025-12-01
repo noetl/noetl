@@ -131,8 +131,8 @@ Use `{{ secret.* }}` references in headers, params, or payloads to resolve value
       latitude: "{{ city.lat }}"
       longitude: "{{ city.lon }}"
       current: temperature_2m
-    save:
-      storage: postgres
+    sink:
+      tool: postgres
       table: weather_data
       args:
         city_name: "{{ city.name }}"

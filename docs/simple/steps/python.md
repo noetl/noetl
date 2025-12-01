@@ -13,7 +13,7 @@ Required keys
 Common optional keys
 - data: Arguments passed to `main` as keyword args
 - assert: Validate inputs/outputs (expects/returns)
-- save: Persist the return value or a projection
+- sink: Persist the return value or a projection
 
 Inputs and context
 - Values in `data:` are evaluated from context and passed to `main`.

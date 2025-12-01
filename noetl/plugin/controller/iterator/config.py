@@ -277,6 +277,26 @@ def extract_config(task_config: Dict[str, Any]) -> Dict[str, Any]:
     """
     Extract iterator configuration parameters from task_config.
     
+    Supports two formats:
+    1. NEW: loop attribute with tool/code/command at step level
+       step:
+         tool: python
+         loop:
+           collection: [...]
+           element: item
+         code: |
+           ...
+    
+    2. OLD (deprecated): tool: iterator with nested task block
+       step:
+         tool: iterator
+         collection: [...]
+         element: item
+         task:
+           tool: python
+           code: |
+             ...
+    
     Args:
         task_config: Task configuration
         
@@ -286,51 +306,100 @@ def extract_config(task_config: Dict[str, Any]) -> Dict[str, Any]:
     Raises:
         ValueError: If required parameters missing
     """
-    iterator_name = task_config.get('element')
-    nested_task = task_config.get('task') or {}
+    # Check for NEW format: loop attribute
+    if 'loop' in task_config:
+        loop_config = task_config['loop']
+        if not isinstance(loop_config, dict):
+            raise ValueError("'loop' attribute must be a dictionary")
+        
+        iterator_name = loop_config.get('element')
+        if iterator_name is None:
+            raise ValueError("Loop requires 'element' key in loop configuration")
+        
+        # Extract collection from loop config
+        collection = loop_config.get('collection')
+        
+        # The nested task is the step itself (minus the loop config and other step-level attributes)
+        # Exclude: loop (loop config), sink (will be treated as per-item only), next (workflow routing),
+        # step (step name), desc (step description)
+        excluded_keys = {'loop', 'next', 'step', 'desc'}
+        nested_task = {k: v for k, v in task_config.items() if k not in excluded_keys}
+        
+        logger.info(f"ITERATOR.CONFIG: NEW format - loop attribute with tool={nested_task.get('tool')}")
+        
+        # Extract behavior controls from loop config
+        mode = str(loop_config.get('mode') or 'sequential').strip().lower()
+        if mode == 'parallel':
+            mode = 'async'
+        
+        concurrency = int(loop_config.get('concurrency') or (8 if mode == 'async' else 1))
+        enumerate_flag = bool(loop_config.get('enumerate') or False)
+        where_expr = loop_config.get('where')
+        
+        limit_val = loop_config.get('limit')
+        try:
+            limit_n = int(limit_val) if limit_val is not None else None
+        except Exception:
+            limit_n = None
+        
+        chunk_val = loop_config.get('chunk')
+        try:
+            chunk_n = int(chunk_val) if chunk_val is not None else None
+        except Exception:
+            chunk_n = None
+        
+        order_by_expr = loop_config.get('order_by')
+    
+    # OLD format: tool: iterator with nested task block
+    else:
+        iterator_name = task_config.get('element')
+        nested_task = task_config.get('task') or {}
+        
+        # Extract collection from root level (OLD format)
+        collection = task_config.get('collection')
+        
+        logger.info(f"ITERATOR.CONFIG: OLD format - tool: iterator with nested task keys: {list(nested_task.keys()) if isinstance(nested_task, dict) else 'not dict'}, has_sink={bool(nested_task.get('sink'))}")
+        
+        if iterator_name is None:
+            raise ValueError("Iterator requires 'element' key (tool: iterator or loop.element)")
+        
+        if not isinstance(nested_task, dict) or not nested_task:
+            raise ValueError(
+                "Iterator requires a nested 'task' block to execute per element/batch"
+            )
+        
+        # Extract behavior controls from root level (OLD format)
+        mode = str(task_config.get('mode') or 'sequential').strip().lower()
+        if mode == 'parallel':
+            mode = 'async'
+        
+        concurrency = int(task_config.get('concurrency') or (8 if mode == 'async' else 1))
+        enumerate_flag = bool(task_config.get('enumerate') or False)
+        where_expr = task_config.get('where')
+        
+        limit_val = task_config.get('limit')
+        try:
+            limit_n = int(limit_val) if limit_val is not None else None
+        except Exception:
+            limit_n = None
+        
+        chunk_val = task_config.get('chunk')
+        try:
+            chunk_n = int(chunk_val) if chunk_val is not None else None
+        except Exception:
+            chunk_n = None
+        
+        order_by_expr = task_config.get('order_by')
     
     print(f"!!! ITERATOR.CONFIG: nested_task keys={list(nested_task.keys()) if isinstance(nested_task, dict) else 'not dict'}")
-    print(f"!!! ITERATOR.CONFIG: has_save={bool(nested_task.get('save'))}")
-    print(f"!!! ITERATOR.CONFIG: save_block={nested_task.get('save')}")
-    
-    logger.info(f"ITERATOR.CONFIG: Extracted nested_task with keys: {list(nested_task.keys()) if isinstance(nested_task, dict) else 'not dict'}, has_save={bool(nested_task.get('save'))}")
-    
-    if iterator_name is None:
-        raise ValueError("Iterator requires 'element' key (tool: iterator)")
-    
-    if not isinstance(nested_task, dict) or not nested_task:
-        raise ValueError(
-            "Iterator requires a nested 'task' block to execute per element/batch"
-        )
-    
-    # Extract behavior controls
-    mode = str(task_config.get('mode') or 'sequential').strip().lower()
-    if mode == 'parallel':
-        mode = 'async'
-    
-    concurrency = int(task_config.get('concurrency') or 
-                     (8 if mode == 'async' else 1))
-    
-    enumerate_flag = bool(task_config.get('enumerate') or False)
-    where_expr = task_config.get('where')
-    
-    limit_val = task_config.get('limit')
-    try:
-        limit_n = int(limit_val) if limit_val is not None else None
-    except Exception:
-        limit_n = None
-    
-    chunk_val = task_config.get('chunk')
-    try:
-        chunk_n = int(chunk_val) if chunk_val is not None else None
-    except Exception:
-        chunk_n = None
-    
-    order_by_expr = task_config.get('order_by')
+    print(f"!!! ITERATOR.CONFIG: has_sink={bool(nested_task.get('sink'))}")
+    print(f"!!! ITERATOR.CONFIG: sink_block={nested_task.get('sink')}")
+    print(f"!!! ITERATOR.CONFIG: collection={collection}")
     
     return {
         'iterator_name': iterator_name,
         'nested_task': nested_task,
+        'collection': collection,
         'mode': mode,
         'concurrency': concurrency,
         'enumerate_flag': enumerate_flag,

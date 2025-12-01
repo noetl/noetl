@@ -1,0 +1,90 @@
+# ClickHouse CRDs
+# Custom Resource Definitions for ClickHouse Operator
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: clickhouseinstallations.clickhouse.altinity.com
+spec:
+  group: clickhouse.altinity.com
+  scope: Namespaced
+  names:
+    kind: ClickHouseInstallation
+    singular: clickhouseinstallation
+    plural: clickhouseinstallations
+    shortNames:
+      - chi
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              x-kubernetes-preserve-unknown-fields: true
+            status:
+              type: object
+              x-kubernetes-preserve-unknown-fields: true
+      additionalPrinterColumns:
+        - name: Version
+          type: string
+          description: ClickHouse version
+          jsonPath: .status.version
+        - name: Status
+          type: string
+          description: Installation status
+          jsonPath: .status.status
+        - name: Hosts
+          type: integer
+          description: Number of hosts
+          jsonPath: .status.hostsCount
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: clickhouseinstallationtemplates.clickhouse.altinity.com
+spec:
+  group: clickhouse.altinity.com
+  scope: Namespaced
+  names:
+    kind: ClickHouseInstallationTemplate
+    singular: clickhouseinstallationtemplate
+    plural: clickhouseinstallationtemplates
+    shortNames:
+      - chit
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          x-kubernetes-preserve-unknown-fields: true
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: clickhouseoperatorconfigurations.clickhouse.altinity.com
+spec:
+  group: clickhouse.altinity.com
+  scope: Namespaced
+  names:
+    kind: ClickHouseOperatorConfiguration
+    singular: clickhouseoperatorconfiguration
+    plural: clickhouseoperatorconfigurations
+    shortNames:
+      - chopconf
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          x-kubernetes-preserve-unknown-fields: true

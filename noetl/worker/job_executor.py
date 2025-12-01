@@ -170,12 +170,14 @@ class JobExecutor:
                 "strict": True,
             }
             rendered = await self._api.render_context(payload)
+            logger.critical(f"WORKER.RENDER: Received from server render_context: {rendered}")
             if isinstance(rendered, dict):
                 work_context = rendered.get("work")
                 if isinstance(work_context, dict):
                     job.context = work_context
                 task_cfg = rendered.get("task")
                 if isinstance(task_cfg, dict):
+                    logger.critical(f"WORKER.RENDER: task_cfg has sink: {'sink' in task_cfg}, sink value: {task_cfg.get('sink')}")
                     return ActionConfig.model_validate(task_cfg)
             return job.action
         except Exception as exc:
@@ -226,7 +228,11 @@ class JobExecutor:
         await self._emit_event(complete_event)
 
     async def _execute_action(self, prepared: PreparedJob) -> None:
-        node_type = "iterator" if prepared.action_type == "iterator" else "task"
+        # Check if step has loop configuration (NEW format) or is iterator type (OLD format)
+        has_loop = 'loop' in (prepared.action_cfg.model_dump() or {})
+        is_iterator_old = prepared.action_type == "iterator"
+        node_type = "iterator" if (has_loop or is_iterator_old) else "task"
+        
         start_event = self._build_event_payload(
             prepared,
             event_type="action_started",
@@ -262,7 +268,7 @@ class JobExecutor:
                 prepared.use_process,
             )
             action_duration = time.time() - action_start_time
-            result = await self._run_inline_save_if_needed(prepared, exec_ctx, result)
+            result = await self._run_inline_sink_if_needed(prepared, exec_ctx, result)
             if self._result_indicates_error(result):
                 err_msg = self._extract_error_message(result)
                 tb_text = self._extract_traceback(result)
@@ -335,14 +341,34 @@ class JobExecutor:
         )
         return exec_ctx
 
-    async def _run_inline_save_if_needed(
+    async def _run_inline_sink_if_needed(
         self,
         prepared: PreparedJob,
         exec_ctx: Dict[str, Any],
         result: Dict[str, Any],
     ) -> Dict[str, Any]:
-        inline_save = prepared.action_cfg.save
-        if not inline_save:
+        inline_sink = prepared.action_cfg.sink
+        if not inline_sink:
+            return result
+
+        # CRITICAL: For iterator actions (with loop attribute), do NOT run inline sink here.
+        # The iterator executor handles per-iteration sinks internally.
+        # Only run inline sink for non-iterator actions.
+        logger.critical(f"SINK_CHECK: action_cfg keys: {list(prepared.action_cfg.__dict__.keys() if hasattr(prepared.action_cfg, '__dict__') else prepared.action_cfg.keys() if isinstance(prepared.action_cfg, dict) else 'unknown')}")
+        logger.critical(f"SINK_CHECK: action_cfg type: {type(prepared.action_cfg)}")
+        
+        # Check for loop attribute (use model_dump to get dict representation for Pydantic models)
+        action_cfg_dict = (prepared.action_cfg.model_dump() 
+                          if hasattr(prepared.action_cfg, 'model_dump') 
+                          else dict(prepared.action_cfg) if hasattr(prepared.action_cfg, '__dict__')
+                          else prepared.action_cfg)
+        has_loop = 'loop' in action_cfg_dict
+        logger.critical(f"SINK_CHECK: has_loop={has_loop}")
+        if has_loop:
+            logger.info(
+                f"SINK: Skipping inline sink execution for iterator action "
+                f"(has loop attribute) - iterator executor handles per-iteration sinks"
+            )
             return result
 
         try:
@@ -352,23 +378,35 @@ class JobExecutor:
                 if isinstance(result, dict) and result.get("data") is not None
                 else result
             )
+            logger.critical(f"SINK_CONTEXT: Original result type: {type(result)}, has 'data': {isinstance(result, dict) and 'data' in result}")
+            if isinstance(result, dict):
+                logger.critical(f"SINK_CONTEXT: Result keys: {list(result.keys())}")
+                logger.critical(f"SINK_CONTEXT: Result.data value: {result.get('data')}")
+            logger.critical(f"SINK_CONTEXT: Extracted current_result type: {type(current_result)}")
+            if isinstance(current_result, dict):
+                logger.critical(f"SINK_CONTEXT: current_result keys: {list(current_result.keys())}")
             exec_ctx_with_result["result"] = current_result
             exec_ctx_with_result["this"] = result
-            exec_ctx_with_result.setdefault("data", current_result)
+            exec_ctx_with_result["data"] = current_result  # FORCE override, don't use setdefault
+            logger.critical(f"SINK_CONTEXT: Context 'result' assigned - type: {type(exec_ctx_with_result.get('result'))}")
+            logger.critical(f"SINK_CONTEXT: Context 'data' assigned - type: {type(exec_ctx_with_result.get('data'))}")
         except Exception:
             exec_ctx_with_result = exec_ctx
 
-        from noetl.plugin.shared.storage import execute_save_task as _do_save
+        from noetl.plugin.shared.storage import execute_sink_task as _do_sink
 
-        save_payload = {"save": inline_save}
+        sink_payload = {"sink": inline_sink}
+        logger.critical(f"INLINE_SINK: About to call execute_sink_task with inline_sink type: {type(inline_sink)}")
+        logger.critical(f"INLINE_SINK: inline_sink value: {inline_sink}")
+        logger.critical(f"INLINE_SINK: sink_payload: {sink_payload}")
         loop = None
         loop = asyncio.get_running_loop()
-        save_out = await loop.run_in_executor(
-            None, _do_save, save_payload, exec_ctx_with_result, self._jinja
+        sink_out = await loop.run_in_executor(
+            None, _do_sink, sink_payload, exec_ctx_with_result, self._jinja
         )
         if isinstance(result, dict):
             result.setdefault("meta", {})
-            result["meta"]["save"] = save_out
+            result["meta"]["sink"] = sink_out
         return result
 
     def _result_indicates_error(self, result: Dict[str, Any]) -> bool:
@@ -379,9 +417,9 @@ class JobExecutor:
             return True
         meta = result.get("meta")
         if isinstance(meta, dict):
-            save_result = meta.get("save")
-            if isinstance(save_result, dict):
-                return save_result.get("status") == "error"
+            sink_result = meta.get("sink")
+            if isinstance(sink_result, dict):
+                return sink_result.get("status") == "error"
         return False
 
     def _extract_error_message(self, result: Dict[str, Any]) -> str:
@@ -390,9 +428,9 @@ class JobExecutor:
                 return str(result["error"])
             meta = result.get("meta")
             if isinstance(meta, dict):
-                save_result = meta.get("save")
-                if isinstance(save_result, dict):
-                    return save_result.get("error", "Unknown save error")
+                sink_result = meta.get("sink")
+                if isinstance(sink_result, dict):
+                    return sink_result.get("error", "Unknown sink error")
         return "Unknown error"
 
     def _extract_traceback(self, result: Dict[str, Any]) -> str:

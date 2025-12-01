@@ -1,0 +1,125 @@
+# NATS JetStream for Messaging and KV Store
+# https://docs.nats.io/running-a-nats-service/introduction/running/nats-kubernetes
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nats-config
+  namespace: nats
+data:
+  nats.conf: |
+    port: 4222
+    http_port: 8222
+    
+    jetstream {
+      store_dir: /data/jetstream
+      max_memory_store: 1GB
+      max_file_store: 5GB
+    }
+    
+    # Simple authentication for development
+    authorization {
+      user: noetl
+      password: noetl
+    }
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: nats-storage
+  namespace: nats
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: nats
+  namespace: nats
+  labels:
+    app: nats
+spec:
+  serviceName: nats
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nats
+  template:
+    metadata:
+      labels:
+        app: nats
+    spec:
+      containers:
+        - name: nats
+          image: nats:latest
+          ports:
+            - containerPort: 4222
+              name: client
+              protocol: TCP
+            - containerPort: 8222
+              name: monitoring
+              protocol: TCP
+            - containerPort: 6222
+              name: cluster
+              protocol: TCP
+          args:
+            - "-c"
+            - "/etc/nats/nats.conf"
+          volumeMounts:
+            - name: nats-config
+              mountPath: /etc/nats
+            - name: nats-storage
+              mountPath: /data
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "2Gi"
+              cpu: "1000m"
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8222
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8222
+            initialDelaySeconds: 10
+            periodSeconds: 5
+      volumes:
+        - name: nats-config
+          configMap:
+            name: nats-config
+        - name: nats-storage
+          persistentVolumeClaim:
+            claimName: nats-storage
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nats
+  namespace: nats
+  labels:
+    app: nats
+spec:
+  type: NodePort
+  ports:
+    - port: 4222
+      targetPort: 4222
+      nodePort: 30422
+      protocol: TCP
+      name: client
+    - port: 8222
+      targetPort: 8222
+      nodePort: 30822
+      protocol: TCP
+      name: monitoring
+  selector:
+    app: nats

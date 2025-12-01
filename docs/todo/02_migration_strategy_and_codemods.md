@@ -55,11 +55,11 @@ task:                             # Nested blob
   tool: playbook
   path: ...
   args: ...
-  save: ...
+  sink: ...
 
 # Step-level args/save
 args: { ... }
-save: { storage: postgres, ... }
+sink: { tool: postgres, ... }
 ```
 
 **To:** Normalized structure
@@ -264,11 +264,11 @@ any_done([ids])         # Any step done
    tool: iterator
    ```
 
-2. ❌ **Step-level `args:` or `save:`**
+2. ❌ **Step-level `args:` or `sink:`**
    ```yaml
    # ERROR: Must move under tool
    args: { ... }
-   save: { ... }
+   sink: { ... }
    ```
 
 3. ❌ **Nested `task:` object**
@@ -400,7 +400,7 @@ task:
   path: ...                  # → spec.path
   name: ...                  # → spec.name
   args: { ... }              # → tool.args
-  save: { ... }              # → tool.result.sink
+  sink: { ... }              # → tool.result.sink
 
 # After
 tool:
@@ -448,8 +448,8 @@ tool:
 **For `save` (single map):**
 ```yaml
 # Before
-save:
-  storage: postgres
+sink:
+  tool: postgres
   table: users
   key: id
 
@@ -470,9 +470,9 @@ tool:
 **For `save` (list):**
 ```yaml
 # Before
-save:
-  - { storage: postgres, table: users }
-  - { storage: duckdb, file: ./out.db }
+sink:
+  - { tool: postgres, table: users }
+  - { tool: duckdb, file: ./out.db }
 
 # After
 tool:
@@ -566,8 +566,8 @@ tool:
 # Auto-key under that sink type and drop redundant storage
 
 # Before
-save:
-  storage: postgres
+sink:
+  tool: postgres
   table: users
   key: id
 
@@ -655,7 +655,7 @@ def normalize_tool(step):
             storage = save.get("storage", "postgres")
             sinks.append({storage: save})
         elif isinstance(save, list):
-            for s in save:
+            for s in sink:
                 sinks.append(s)
     
     # Scalar tool → object
@@ -838,7 +838,7 @@ These are simple text-based replacements for quick fixes:
 \b(iter|iterator|over|coll):\s*\n → loop:\n
 
 # Move save (AST safer, but regex possible)
-\n\s+save:\s*\n → move under tool.result.sink
+\n\s+sink:\s*\n → move under tool.result.sink
 
 # Convert scalar next
 \n\s+next:\s*([A-Za-z0-9_-]+)\s*$ → \n  next:\n    - step: \1
@@ -866,8 +866,8 @@ These are simple text-based replacements for quick fixes:
     return_step: finalize_result
     args:
       user_data: "{{ user }}"
-    save:
-      storage: postgres
+    sink:
+      tool: postgres
       table: public.user_profile_results
       key: id
       args:
@@ -913,8 +913,8 @@ These are simple text-based replacements for quick fixes:
   tool: postgres
   args:
     query: "SELECT * FROM users"
-  save:
-    storage: duckdb
+  sink:
+    tool: duckdb
     file: ./users.duckdb
     table: users
 ```
@@ -986,8 +986,8 @@ These are simple text-based replacements for quick fixes:
   code: |
     def main(input_data):
         return {"result": input_data * 2}
-  save:
-    - storage: postgres
+  sink:
+    - tool: postgres
       table: results
       key: id
     - storage: s3
@@ -1243,7 +1243,7 @@ Add legacy test to CI pipeline:
   run: |
     ! grep -r "tool: iterator" examples/ tests/fixtures/
     ! grep -r "^  args:" examples/ tests/fixtures/ | grep -v "tool:"
-    ! grep -r "^  save:" examples/ tests/fixtures/ | grep -v "result:"
+    ! grep -r "^  sink:" examples/ tests/fixtures/ | grep -v "result:"
     ! grep -r "^  task:" examples/ tests/fixtures/
 ```
 

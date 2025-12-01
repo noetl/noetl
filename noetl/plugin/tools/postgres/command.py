@@ -41,12 +41,14 @@ def escape_task_with_params(task_with: Dict) -> Dict:
     return processed_task_with
 
 
-def decode_base64_commands(task_config: Dict) -> str:
+def decode_base64_commands(task_config: Dict, context: Dict = None, jinja_env: Environment = None) -> str:
     """
-    Decode base64 encoded SQL commands from task configuration.
+    Decode SQL commands from task configuration with priority: script > command_b64 > command.
     
     Args:
         task_config: The task configuration
+        context: Execution context (for script resolution)
+        jinja_env: Jinja2 environment (for script resolution)
         
     Returns:
         Decoded SQL commands string
@@ -54,6 +56,17 @@ def decode_base64_commands(task_config: Dict) -> str:
     Raises:
         ValueError: If no command fields found or decoding fails
     """
+    # Priority 1: External script
+    if 'script' in task_config:
+        from noetl.plugin.shared.script import resolve_script
+        logger.debug(f"POSTGRES: Resolving external script")
+        if not context or not jinja_env:
+            raise ValueError("Context and jinja_env are required for script resolution")
+        commands = resolve_script(task_config['script'], context, jinja_env)
+        logger.debug(f"POSTGRES: Resolved script from {task_config['script']['source']['type']}, length={len(commands)} chars")
+        return commands
+    
+    # Priority 2: Base64 encoded command
     command_b64 = task_config.get('command_b64', '')
     commands_b64 = task_config.get('commands_b64', '')
     
@@ -72,8 +85,14 @@ def decode_base64_commands(task_config: Dict) -> str:
         except Exception as e:
             logger.error(f"POSTGRES: Failed to decode base64 commands: {e}")
             raise ValueError(f"Invalid base64 commands encoding: {e}")
+    
+    # Priority 3: Inline command (fallback for direct usage)
+    elif 'command' in task_config:
+        commands = task_config['command']
+        logger.debug(f"POSTGRES: Using inline command, length={len(commands)} chars")
+    
     else:
-        raise ValueError("No command_b64 or commands_b64 field found - PostgreSQL tasks require base64 encoded commands")
+        raise ValueError("No SQL command provided. Expected 'script', 'command_b64', 'commands_b64', or 'command'")
     
     return commands
 

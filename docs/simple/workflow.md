@@ -14,7 +14,7 @@ Step keys (common)
 - implementation fields: code | command | sql | endpoint | path | ... (depends on type)
 - retry: bounded retry policy (max_attempts, initial_delay, backoff_multiplier, max_delay, retry_when, stop_when) — see `steps/retry.md`
 - assert: input/output contracts (expects, returns)
-- save: persist outputs to variables or storages
+- sink: persist outputs to variables or storages
 - next: transitions to subsequent steps
 
 Transitions (next)

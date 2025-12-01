@@ -3,6 +3,7 @@ WORKDIR /ui
 COPY ui-src/package.json ui-src/package-lock.json ./ui-src/
 RUN cd ui-src && npm ci
 COPY ui-src ./ui-src
+ENV VITE_API_BASE_URL=/api
 RUN cd ui-src && npm run build
 
 FROM python:3.12-slim AS builder
@@ -34,6 +35,9 @@ RUN uv pip install -e .
 
 FROM python:3.12-slim AS production
 
+LABEL org.opencontainers.image.source=https://github.com/noetl/noetl
+LABEL org.opencontainers.image.licenses=MIT
+
 RUN apt-get update && apt-get --no-install-recommends install -y \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
@@ -62,3 +66,5 @@ ENV NOETL_ENABLE_UI=false
 # - Set NOETL_RUN_MODE=worker and NOETL_PLAYBOOK_PATH for worker mode
 # - Set NOETL_RUN_MODE=cli for CLI mode
 CMD ["python", "-m", "noetl.main", "server", "start", "--host", "0.0.0.0", "--port", "8080"]
+
+# ===

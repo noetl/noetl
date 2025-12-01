@@ -28,6 +28,42 @@ nodes:
         listenAddress: "127.0.0.1"
         protocol: TCP
 
+        # ClickHouse HTTP
+      - containerPort: 30123
+        hostPort: 30123
+        listenAddress: "127.0.0.1"
+        protocol: TCP
+
+        # ClickHouse Native
+      - containerPort: 30900
+        hostPort: 30900
+        listenAddress: "127.0.0.1"
+        protocol: TCP
+
+        # Qdrant HTTP
+      - containerPort: 30633
+        hostPort: 30633
+        listenAddress: "127.0.0.1"
+        protocol: TCP
+
+        # Qdrant gRPC
+      - containerPort: 30634
+        hostPort: 30634
+        listenAddress: "127.0.0.1"
+        protocol: TCP
+
+        # NATS Client
+      - containerPort: 30422
+        hostPort: 30422
+        listenAddress: "127.0.0.1"
+        protocol: TCP
+
+        # NATS Monitoring
+      - containerPort: 30822
+        hostPort: 30822
+        listenAddress: "127.0.0.1"
+        protocol: TCP
+
     # ci/kind/cache added to .gitignore
     extraMounts:
       - hostPath: ci/kind/cache/pg-data

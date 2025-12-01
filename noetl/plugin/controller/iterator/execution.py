@@ -113,14 +113,14 @@ def build_iteration_context(
     return iter_ctx
 
 
-def build_nested_with_params(
+def build_nested_args(
     nested_task: Dict[str, Any],
     iter_ctx: Dict[str, Any],
     item_for_task: Any,
     jinja_env: Environment,
 ) -> Dict[str, Any]:
     """
-    Build with-parameters for nested task execution.
+    Build args for nested task execution.
 
     Args:
         nested_task: Nested task configuration
@@ -129,34 +129,38 @@ def build_nested_with_params(
         jinja_env: Jinja2 environment
 
     Returns:
-        Nested with-parameters dictionary
+        Nested args dictionary
     """
-    nested_with = {}
+    nested_args = {}
 
     try:
-        for k, v in (nested_task.get("with") or {}).items():
+        for k, v in (nested_task.get("args") or {}).items():
             try:
-                nested_with[k] = (
-                    render_template(jinja_env, v, iter_ctx) if isinstance(v, str) else v
-                )
-            except Exception:
-                nested_with[k] = v
-    except Exception:
-        nested_with = {}
+                # Special handling: if value is exactly "{{ varname }}" and varname exists in context,
+                # pass the object directly without string rendering to preserve types (dicts, lists)
+                if isinstance(v, str):
+                    v_stripped = v.strip()
+                    if v_stripped.startswith("{{") and v_stripped.endswith("}}"):
+                        var_name = v_stripped[2:-2].strip()
+                        logger.info(f"ITERATOR_ARGS_DEBUG: Checking var_name='{var_name}', in context={var_name in iter_ctx}, type={type(iter_ctx.get(var_name))}")
+                        if var_name in iter_ctx:
+                            # Pass the actual object, not string-rendered version
+                            nested_args[k] = iter_ctx[var_name]
+                            logger.info(f"ITERATOR_ARGS_DEBUG: Passed object directly for '{k}': type={type(nested_args[k])}")
+                            continue
+                    # Regular template rendering for string values
+                    nested_args[k] = render_template(jinja_env, v, iter_ctx)
+                    logger.info(f"ITERATOR_ARGS_DEBUG: Rendered string for '{k}': type={type(nested_args[k])}, value={nested_args[k][:100] if isinstance(nested_args[k], str) else nested_args[k]}")
+                else:
+                    nested_args[k] = v
+            except Exception as e:
+                logger.warning(f"ITERATOR_ARGS_DEBUG: Exception for key '{k}': {e}")
+                nested_args[k] = v
+    except Exception as e:
+        logger.warning(f"ITERATOR_ARGS_DEBUG: Exception building args: {e}")
+        nested_args = {}
 
-    # For Python nested tasks, provide conventional kwargs
-    nested_type = _resolve_task_kind(nested_task)
-
-    if nested_type == "python":
-        # Back-compat: expose element as 'value' for simple functions
-        if "value" not in nested_with:
-            nested_with["value"] = item_for_task
-
-        # Expose batch if available
-        if "batch" in iter_ctx and "batch" not in nested_with:
-            nested_with["batch"] = iter_ctx.get("batch")
-
-    return nested_with
+    return nested_args
 
 
 def _encode_nested_task(nested_task: Dict[str, Any]) -> Dict[str, Any]:
@@ -206,7 +210,7 @@ def _encode_nested_task(nested_task: Dict[str, Any]) -> Dict[str, Any]:
 def execute_nested_task(
     nested_task: Dict[str, Any],
     iter_ctx: Dict[str, Any],
-    nested_with: Dict[str, Any],
+    nested_args: Dict[str, Any],
     jinja_env: Environment,
     iter_index: int,
 ) -> Dict[str, Any]:
@@ -216,7 +220,7 @@ def execute_nested_task(
     Args:
         nested_task: Nested task configuration
         iter_ctx: Iteration context
-        nested_with: Nested with-parameters
+        nested_args: Nested args
         jinja_env: Jinja2 environment
         iter_index: Iteration index for logging
 
@@ -241,7 +245,7 @@ def execute_nested_task(
         nested_task.get("name") or nested_task.get("task") or "nested",
         iter_ctx,
         jinja_env,
-        nested_with,
+        nested_args,
     )
 
     logger.info(
@@ -252,11 +256,11 @@ def execute_nested_task(
     return result
 
 
-def execute_per_item_save(
+def execute_per_item_sink(
     nested_task: Dict[str, Any],
     nested_result: Dict[str, Any],
     iter_ctx: Dict[str, Any],
-    nested_with: Dict[str, Any],
+    nested_args: Dict[str, Any],
     jinja_env: Environment,
     log_event_callback: Optional[Callable] = None,
     iter_index: int = 0,
@@ -271,7 +275,7 @@ def execute_per_item_save(
         nested_task: Nested task configuration
         nested_result: Nested task result
         iter_ctx: Iteration context
-        nested_with: Nested with-parameters
+        nested_args: Nested args
         jinja_env: Jinja2 environment
         log_event_callback: Optional callback for event reporting
         iter_index: Current iteration index for event identification
@@ -282,27 +286,27 @@ def execute_per_item_save(
     Raises:
         Exception: If save fails (propagated to caller)
     """
-    nested_save = nested_task.get("save")
+    nested_sink = nested_task.get('sink')
 
     print(
-        f"!!! ITERATOR.SAVE: execute_per_item_save called for iter_index={iter_index}"
+        f"!!! ITERATOR.SINK: execute_per_item_sink called for iter_index={iter_index}"
     )
     print(
-        f"!!! ITERATOR.SAVE: nested_task keys={list(nested_task.keys()) if isinstance(nested_task, dict) else 'not dict'}"
+        f"!!! ITERATOR.SINK: nested_task keys={list(nested_task.keys()) if isinstance(nested_task, dict) else 'not dict'}"
     )
-    print(f"!!! ITERATOR.SAVE: nested_save={nested_save}")
+    print(f"!!! ITERATOR.SINK: nested_sink={nested_sink}")
 
     logger.critical(
-        f"ITERATOR.SAVE: execute_per_item_save called for iter_index={iter_index}"
+        f"ITERATOR.SINK: execute_per_item_sink called for iter_index={iter_index}"
     )
-    logger.critical(f"ITERATOR.SAVE: nested_save={nested_save}")
+    logger.critical(f"ITERATOR.SINK: nested_sink={nested_sink}")
 
-    if not nested_save:
-        logger.critical("ITERATOR.SAVE: No save configuration found - SKIPPING")
+    if not nested_sink:
+        logger.critical("ITERATOR.SINK: No save configuration found - SKIPPING")
         return {"status": "skipped", "data": None, "meta": {}}
 
     logger.critical(
-        f"ITERATOR.SAVE: Executing per-item save for iteration {iter_index}"
+        f"ITERATOR.SINK: Executing per-item save for iteration {iter_index}"
     )
 
     # Emit explicit save_started event
@@ -316,41 +320,63 @@ def execute_per_item_save(
             0,
             iter_ctx,
             None,
-            {"iteration_index": iter_index, "save_config": nested_save},
+            {"iteration_index": iter_index, "sink_config": nested_sink},
             None,
         )
 
     ctx_for_save = dict(iter_ctx)
     ctx_for_save["this"] = nested_result
     if isinstance(nested_result, dict):
-        ctx_for_save.setdefault("data", nested_result.get("data"))
-        # Add 'result' to context for template access in save blocks
-        # For HTTP tasks: result.data contains the response body
-        # For other tasks: result contains the full task result
-        ctx_for_save["result"] = nested_result
+        # Extract the actual data from the result wrapper
+        result_data = nested_result.get("data", nested_result)
+        # FORCE override 'data' in context - don't use setdefault as iter_ctx may have stale 'data'
+        ctx_for_save["data"] = result_data
+        # Add 'result' to context pointing to the data, not the wrapper
+        # This allows templates like {{ result.item_name }} to work directly
+        ctx_for_save["result"] = result_data
+        logger.critical(f"ITERATOR.SINK: Set result in context - type={type(result_data)}, value={result_data}")
+        
+        # CRITICAL FIX: Re-inject result data directly into sink args
+        # The sink args may have been pre-rendered to empty strings during worker context rendering
+        # We need to populate them with actual result data here
+        if isinstance(nested_sink, dict) and 'args' in nested_sink and isinstance(result_data, dict):
+            sink_args = nested_sink.get('args', {})
+            if isinstance(sink_args, dict):
+                # Replace any empty string values in sink args with corresponding values from result_data
+                for key, value in list(sink_args.items()):
+                    if value == '' or value is None:
+                        # Try to find matching key in result_data
+                        if key in result_data:
+                            sink_args[key] = result_data[key]
+                            logger.critical(f"ITERATOR.SINK: Populated sink arg '{key}' from result_data: {result_data[key]}")
+                logger.critical(f"ITERATOR.SINK: Updated sink_args = {sink_args}")
+    
+    # DEBUG: Log the sink config BEFORE passing to storage executor
+    logger.critical(f"ITERATOR.SINK: nested_sink BEFORE storage call = {nested_sink}")
+    logger.critical(f"ITERATOR.SINK: nested_sink.args = {nested_sink.get('args') if isinstance(nested_sink, dict) else 'N/A'}")
 
     # Delegate to storage save executor
     try:
-        from noetl.plugin.shared.storage import execute_save_task as _do_save
+        from noetl.plugin.shared.storage import execute_sink_task as _do_sink
 
-        logger.critical(f"ITERATOR.SAVE: Imported execute_save_task, calling now...")
-        logger.critical(f"ITERATOR.SAVE: Context keys available: {list(ctx_for_save.keys())}")
+        logger.critical(f"ITERATOR.SINK: Imported execute_sink_task, calling now...")
+        logger.critical(f"ITERATOR.SINK: Context keys available: {list(ctx_for_save.keys())}")
         # Check if step name is in context
-        step_nm = nested_with.get("name") or nested_with.get("task") or "iterator"
+        step_nm = nested_args.get("name") or nested_args.get("task") or "iterator"
         if step_nm in ctx_for_save:
-            logger.critical(f"ITERATOR.SAVE: {step_nm} = {ctx_for_save[step_nm]}")
-        save_result = _do_save(
-            {"save": nested_save}, ctx_for_save, jinja_env, nested_with
+            logger.critical(f"ITERATOR.SINK: {step_nm} = {ctx_for_save[step_nm]}")
+        sink_result = _do_sink(
+            {'sink': nested_sink}, ctx_for_save, jinja_env, nested_args
         )
-        logger.critical(f"ITERATOR.SAVE: execute_save_task returned: {save_result}")
+        logger.critical(f"ITERATOR.SINK: execute_sink_task returned: {sink_result}")
 
         logger.info(
-            f"ITERATOR: Save completed with status: {save_result.get('status') if isinstance(save_result, dict) else 'unknown'}"
+            f"ITERATOR: Save completed with status: {sink_result.get('status') if isinstance(sink_result, dict) else 'unknown'}"
         )
 
         # Check save result and raise exception if failed
-        if isinstance(save_result, dict) and save_result.get("status") == "error":
-            error_msg = save_result.get("error", "Save operation failed")
+        if isinstance(sink_result, dict) and sink_result.get("status") == "error":
+            error_msg = sink_result.get("error", "Save operation failed")
             logger.error(
                 f"ITERATOR: per-item save failed for iteration {iter_index}: {error_msg}"
             )
@@ -382,12 +408,12 @@ def execute_per_item_save(
                 "success",
                 0,
                 iter_ctx,
-                save_result,
+                sink_result,
                 {"iteration_index": iter_index},
                 None,
             )
 
-        return save_result
+        return sink_result
 
     except Exception as e:
         # Emit explicit save_error event for unexpected failures
@@ -447,16 +473,16 @@ def run_one_iteration(
     print(
         f"!!! nested_task keys={list(nested_task.keys()) if isinstance(nested_task, dict) else 'not dict'}"
     )
-    print(f"!!! has_save={bool(nested_task.get('save'))}\n")
+    print(f"!!! has_sink={bool(nested_task.get('sink'))}\n")
 
     logger.critical(f"ITERATOR.EXECUTION: run_one_iteration iter_index={iter_index}")
     logger.critical(
         f"ITERATOR.EXECUTION: nested_task keys={list(nested_task.keys()) if isinstance(nested_task, dict) else 'not dict'}"
     )
     logger.critical(
-        f"ITERATOR.EXECUTION: nested_task.get('save')={nested_task.get('save')}"
+        f"ITERATOR.EXECUTION: nested_task.get('sink')={nested_task.get('sink')}"
     )
-    logger.critical(f"ITERATOR.EXECUTION: has_save={bool(nested_task.get('save'))}")
+    logger.critical(f"ITERATOR.EXECUTION: has_sink={bool(nested_task.get('sink'))}")
 
     # Emit explicit iteration_started event
     if log_event_callback:
@@ -469,7 +495,7 @@ def run_one_iteration(
             0,
             context,
             None,
-            {"iteration_index": iter_index, "has_save": bool(nested_task.get("save"))},
+            {"iteration_index": iter_index, "has_sink": bool(nested_task.get('sink'))},
             None,
         )
 
@@ -497,15 +523,15 @@ def run_one_iteration(
         task_config,
     )
 
-    # Build nested with-parameters
-    nested_with = build_nested_with_params(
+    # Build nested args
+    nested_args = build_nested_args(
         nested_task, iter_ctx, item_for_task, jinja_env
     )
 
     # Execute nested task
     try:
         nested_result = execute_nested_task(
-            nested_task, iter_ctx, nested_with, jinja_env, iter_index
+            nested_task, iter_ctx, nested_args, jinja_env, iter_index
         )
     except Exception as e_nested:
         logger.error(
@@ -540,22 +566,22 @@ def run_one_iteration(
     print(
         f"!!! nested_task keys={list(nested_task.keys()) if isinstance(nested_task, dict) else 'not dict'}"
     )
-    print(f"!!! has_save={bool(nested_task.get('save'))}")
-    print(f"!!! save_config={nested_task.get('save')}\n")
+    print(f"!!! has_sink={bool(nested_task.get('sink'))}")
+    print(f"!!! sink_config={nested_task.get('sink')}\n")
 
-    logger.critical(f"ITERATOR.EXECUTION: About to call execute_per_item_save")
+    logger.critical(f"ITERATOR.EXECUTION: About to call execute_per_item_sink")
     logger.critical(
         f"ITERATOR.EXECUTION: nested_task keys before save: {list(nested_task.keys()) if isinstance(nested_task, dict) else 'not dict'}"
     )
     logger.critical(
-        f"ITERATOR.EXECUTION: nested_task['save'] = {nested_task.get('save')}"
+        f"ITERATOR.EXECUTION: nested_task['sink'] = {nested_task.get('sink')}"
     )
     try:
-        save_result = execute_per_item_save(
+        sink_result = execute_per_item_sink(
             nested_task,
             nested_result,
             iter_ctx,
-            nested_with,
+            nested_args,
             jinja_env,
             log_event_callback,
             iter_index,
@@ -606,8 +632,8 @@ def run_one_iteration(
     }
 
     # Add save info to result metadata if save was performed
-    if isinstance(save_result, dict) and save_result.get("status") == "success":
-        result_dict["save_meta"] = save_result.get("meta", {})
+    if isinstance(sink_result, dict) and sink_result.get("status") == "success":
+        result_dict["save_meta"] = sink_result.get("meta", {})
 
     # Emit explicit iteration_completed event
     if log_event_callback:
@@ -620,7 +646,7 @@ def run_one_iteration(
             0,
             context,
             result_dict,
-            {"iteration_index": iter_index, "has_save": bool(nested_task.get("save"))},
+            {"iteration_index": iter_index, "has_sink": bool(nested_task.get('sink'))},
             None,
         )
 

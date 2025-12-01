@@ -48,32 +48,31 @@ workflow:
 
   - step: fetch_weather_data
     desc: Fetch weather data for multiple cities using iterator with HTTP and save
-    tool: iterator
-    collection: "{{ workload.test_cities }}"
-    element: city
-    mode: sequential
-    task:
-      tool: http
-      method: GET
-      url: "https://api.open-meteo.com/v1/forecast"
-      params:
+    tool: http
+    method: GET
+    url: "https://api.open-meteo.com/v1/forecast"
+    loop:
+      collection: "{{ workload.test_cities }}"
+      element: city
+      mode: sequential
+    params:
+      latitude: "{{ city.lat }}"
+      longitude: "{{ city.lon }}"
+      current: temperature_2m
+    sink:
+      tool: postgres
+      auth: "{{ workload.pg_auth }}"
+      table: public.http_iterator_save_test
+      mode: upsert
+      key: id
+      args:
+        id: "{{ execution_id }}:{{ city.name }}"
+        execution_id: "{{ execution_id }}"
+        city_name: "{{ city.name }}"
+        temperature: "{{ result.data.data.current.temperature_2m }}"
         latitude: "{{ city.lat }}"
         longitude: "{{ city.lon }}"
-        current: temperature_2m
-      save:
-        storage: postgres
-        auth: "{{ workload.pg_auth }}"
-        table: public.http_iterator_save_test
-        mode: upsert
-        key: id
-        args:
-          id: "{{ execution_id }}:{{ city.name }}"
-          execution_id: "{{ execution_id }}"
-          city_name: "{{ city.name }}"
-          temperature: "{{ result.data.data.current.temperature_2m }}"
-          latitude: "{{ city.lat }}"
-          longitude: "{{ city.lon }}"
-          http_status: 200
+        http_status: 200
     next:
       - step: verify_results
 

@@ -1,0 +1,36 @@
+version: '3.45'
+
+# Cache management tasks for local file cache directories
+
+tasks:
+  postgres:local:clear-cache:
+    desc: Clear postgres data cache directory
+    aliases: [cpd, clear-postgres-data]
+    cmds:
+      - rm -rf ci/kind/cache/pg-data/*
+
+  noetl:local:clear-data:
+    desc: Clear noetl data cache directory
+    aliases: [cnd, clear-noetl-data]
+    cmds:
+      - rm -rf ci/kind/cache/noetl-data/*
+
+  noetl:local:clear-logs:
+    desc: Clear noetl logs cache directory
+    aliases: [cnl, clear-noetl-logs]
+    cmds:
+      - rm -rf ci/kind/cache/noetl-logs/*
+
+  noetl:local:clear-all:
+    desc: Clear all local file cache directories
+    aliases: [clear-all, clear-all-cache]
+    cmds:
+      - rm -rf ci/kind/cache/pg-data/*
+      - rm -rf ci/kind/cache/noetl-data/*
+      - rm -rf ci/kind/cache/noetl-logs/*
+      - echo "✓ All cache directories cleared"
+
+  cache:local:clear-all:
+    desc: Clear all local file cache directories
+    cmds:
+      - task: noetl:local:clear-all

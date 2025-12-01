@@ -6,28 +6,28 @@ Two shapes
 1. Variable save (in‑memory context)
 2. Storage save (delegated to a storage adapter)
 
-Minimal variable save:
+Minimal variable sink:
 ```yaml
 - step: fetch
   type: http
   endpoint: https://example.com
-  save: { name: page, data: "{{ this.data }}" }
+  sink: { name: page, data: "{{ this.data }}" }
 ```
 
-Iterator aggregated variable save:
+Iterator aggregated variable sink:
 ```yaml
 - step: http_loop
   type: iterator
   # ...iterator config...
-  save:
+  sink:
     - name: http_loop
       data: "{{ this.result }}"
 ```
 
 Storage delegation (flat form):
 ```yaml
-save:
-  storage: postgres
+sink:
+  tool: postgres
   auth: app_db
   table: public.items
   mode: upsert          # insert | upsert | replace (engine defined)
@@ -39,7 +39,7 @@ save:
 
 Storage delegation (nested form):
 ```yaml
-save:
+sink:
   storage:
     type: postgres
     table: public.items
@@ -61,15 +61,15 @@ Supported storage types (simple docs scope)
 Delegation examples
 Event log (simple variable archiving):
 ```yaml
-save:
+sink:
   storage: event_log
   data: "{{ result.data }}"
 ```
 
 Postgres flat structure (from simple save test):
 ```yaml
-save:
-  storage: postgres
+sink:
+  tool: postgres
   auth: "{{ workload.pg_auth }}"
   table: simple_test_flat
   data:
@@ -80,7 +80,7 @@ save:
 
 Postgres nested + upsert:
 ```yaml
-save:
+sink:
   storage:
     type: postgres
     table: simple_test_nested
@@ -95,7 +95,7 @@ save:
 
 DuckDB analytics staging (delegation test):
 ```yaml
-save:
+sink:
   storage:
     type: duckdb
     commands: |
@@ -107,7 +107,7 @@ save:
 
 HTTP webhook:
 ```yaml
-save:
+sink:
   storage:
     type: http
     url: https://httpbin.org/post
@@ -116,9 +116,9 @@ save:
   data: "{{ result.data }}"
 ```
 
-Custom python save:
+Custom python sink:
 ```yaml
-save:
+sink:
   storage:
     type: python
     code: |
@@ -131,8 +131,8 @@ save:
 
 Iterator per-item guarded save (from http_duckdb_postgres example):
 ```yaml
-save:
-  storage: postgres
+sink:
+  tool: postgres
   args:                        # engine-specific optional grouping
     id: "{{ execution_id }}:{{ city.name }}:{{ http_loop.result_index }}"
     execution_id: "{{ execution_id }}"

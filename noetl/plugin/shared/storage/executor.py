@@ -1,14 +1,14 @@
 """
-Save task executor.
+Sink task executor.
 
-Main orchestrator for save tasks that delegates to storage-specific handlers.
+Main orchestrator for sink tasks that delegates to tool-specific handlers.
 """
 
 from typing import Dict, Any, Optional, Callable
 from jinja2 import Environment
 
 from noetl.core.logger import setup_logger
-from .config import extract_save_config
+from .config import extract_sink_config
 from .rendering import render_data_mapping, normalize_params
 from .postgres import handle_postgres_storage
 from .python import handle_python_storage
@@ -18,7 +18,7 @@ from .http import handle_http_storage
 logger = setup_logger(__name__, include_location=True)
 
 
-def execute_save_task(
+def execute_sink_task(
     task_config: Dict[str, Any],
     context: Dict[str, Any],
     jinja_env: Environment,
@@ -26,33 +26,33 @@ def execute_save_task(
     log_event_callback: Optional[Callable] = None
 ) -> Dict[str, Any]:
     """
-    Execute a 'save' task.
+    Execute a 'sink' task.
     
     This executor:
-    1. Extracts save configuration (storage type, data, auth, etc.)
+    1. Extracts sink configuration (tool type, data, auth, etc.)
     2. Renders data and parameters with Jinja2 templates
-    3. Delegates to appropriate storage handler based on storage type
-    4. Returns normalized save result envelope
+    3. Delegates to appropriate tool handler based on tool type
+    4. Returns normalized sink result envelope
     
     Expected task_config keys (declarative):
     
     Flat structure (backward compatible):
-      - storage: <string> (e.g. 'postgres', 'event_log', 'duckdb')
+      - tool: <string> (e.g. 'postgres', 'event_log', 'duckdb')
       - auth: <string|dict> (credential reference or auth config)
       - data: <object/list/scalar>
-      - table: <string> (for database storage)
+      - table: <string> (for database tools)
       - mode/key/format (optional)
 
     Nested structure (recommended):
-      - storage:
+      - tool:
           type: <string> (e.g. 'postgres', 'duckdb', 'http', 'python')
           data: <object/list/scalar>
           auth: <string|dict> (credential reference or auth config)
-          table: <string> (for database storage)
+          table: <string> (for database tools)
           mode/key/format (optional)
 
     Statement mode (both structures):
-      - storage: <string> OR { type: <string>, statement: <string>, params: <dict>, ... }
+      - tool: <string> OR { type: <string>, statement: <string>, params: <dict>, ... }
       - auth: <string|dict> (credential reference or auth config)
 
     Current implementation persists to event_log implicitly (via returned result envelope).
@@ -66,23 +66,23 @@ def execute_save_task(
         log_event_callback: Optional event logging callback
         
     Returns:
-        Save result dictionary with keys:
+        Sink result dictionary with keys:
         - status: 'success' or 'error'
-        - data: Save result data (if success)
-        - meta: Metadata about storage operation
+        - data: Sink result data (if success)
+        - meta: Metadata about tool operation
         - error: Error message (if error)
     """
-    logger.critical("SAVE.EXECUTOR: execute_save_task CALLED")
-    logger.critical(f"SAVE.EXECUTOR: task_config={task_config}")
+    logger.critical("SINK.EXECUTOR: execute_sink_task CALLED")
+    logger.critical(f"SINK.EXECUTOR: task_config={task_config}")
     
     try:
-        # Step 1: Extract save configuration
-        config = extract_save_config(task_config)
+        # Step 1: Extract sink configuration
+        config = extract_sink_config(task_config)
         
         kind = config['kind']
-        logger.critical(f"SAVE.EXECUTOR: Extracted save config with kind={kind}")
-        logger.critical(f"SAVE.EXECUTOR: Full config={config}")
-        storage_config = config['storage_config']
+        logger.critical(f"SINK.EXECUTOR: Extracted sink config with kind={kind}")
+        logger.critical(f"SINK.EXECUTOR: Full config={config}")
+        tool_config = config['tool_config']
         data_spec = config['data_spec']
         statement = config['statement']
         params = config['params']
@@ -109,17 +109,17 @@ def execute_save_task(
         # Normalize complex param values (dict/list) to JSON strings
         rendered_params = normalize_params(rendered_params)
         
-        # Step 3: Handle storage kinds
+        # Step 3: Handle tool kinds
         if kind in ('event', 'event_log', ''):
-            # Event log storage (implicit via return envelope)
+            # Event log tool (implicit via return envelope)
             result_payload = {
                 'saved': 'event',
                 'data': rendered_data,
             }
             meta_payload = {
-                'storage_kind': kind,
+                'tool_kind': kind,
                 'credential_ref': credential_ref,
-                'save_spec': {
+                'sink_spec': {
                     'mode': mode,
                     'format': fmt,
                     'key': key_cols,
@@ -138,44 +138,44 @@ def execute_save_task(
                 'meta': meta_payload,
             }
         
-        # Chain to the appropriate action plugin based on storage type
+        # Chain to the appropriate action plugin based on tool type
         if kind == 'postgres':
-            logger.info(f"SAVE.EXECUTOR: Delegating to postgres handler with table={table}, mode={mode}")
+            logger.info(f"SINK.EXECUTOR: Delegating to postgres handler with table={table}, mode={mode}")
             return handle_postgres_storage(
-                storage_config, rendered_data, rendered_params, statement,
+                tool_config, rendered_data, rendered_params, statement,
                 table, mode, key_cols, auth_config, credential_ref, spec,
                 task_with, context, jinja_env, log_event_callback
             )
         
         elif kind == 'python':
             return handle_python_storage(
-                storage_config, rendered_data, rendered_params,
+                tool_config, rendered_data, rendered_params,
                 auth_config, credential_ref, spec,
                 task_with, context, jinja_env, log_event_callback
             )
         
         elif kind == 'duckdb':
             return handle_duckdb_storage(
-                storage_config, rendered_data, rendered_params, statement,
+                tool_config, rendered_data, rendered_params, statement,
                 auth_config, credential_ref, spec,
                 task_with, context, jinja_env, log_event_callback
             )
         
         elif kind == 'http':
             return handle_http_storage(
-                storage_config, rendered_data, rendered_params,
+                tool_config, rendered_data, rendered_params,
                 auth_config, credential_ref, spec,
                 task_with, context, jinja_env, log_event_callback
             )
         
         else:
-            raise ValueError(f"Unsupported save storage type: {kind}")
+            raise ValueError(f"Unsupported sink tool type: {kind}")
             
     except Exception as e:
-        logger.exception(f"Error executing save task: {e}")
+        logger.exception(f"Error executing sink task: {e}")
         return {
             'status': 'error',
             'data': None,
-            'meta': {'storage_kind': kind if 'kind' in locals() else 'unknown'},
+            'meta': {'tool_kind': kind if 'kind' in locals() else 'unknown'},
             'error': str(e)
         }

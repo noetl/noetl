@@ -137,7 +137,7 @@ def handle_duckdb_storage(
     elif credential_ref and "auth" not in duck_with:
         duck_with["auth"] = credential_ref
 
-    logger.debug("SAVE: Calling duckdb plugin for storage")
+    logger.debug("SINK: Calling duckdb plugin for storage")
 
     # Delegate to duckdb plugin
     try:
@@ -147,7 +147,7 @@ def handle_duckdb_storage(
             duck_task, context, jinja_env, duck_with, log_event_callback
         )
     except Exception as e:
-        logger.error(f"SAVE: Failed delegating to duckdb plugin: {e}")
+        logger.error(f"SINK: Failed delegating to duckdb plugin: {e}")
         duck_result = {"status": "error", "error": str(e)}
 
     # Normalize into save envelope
@@ -156,7 +156,7 @@ def handle_duckdb_storage(
             "status": "success",
             "data": {"saved": "duckdb", "task_result": duck_result.get("data")},
             "meta": {
-                "storage_kind": "duckdb",
+                "tool_kind": "duckdb",
                 "credential_ref": credential_ref,
             },
         }
@@ -164,7 +164,7 @@ def handle_duckdb_storage(
         return {
             "status": "error",
             "data": None,
-            "meta": {"storage_kind": "duckdb"},
+            "meta": {"tool_kind": "duckdb"},
             "error": (
                 (duck_result or {}).get("error")
                 if isinstance(duck_result, dict)

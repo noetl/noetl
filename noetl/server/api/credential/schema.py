@@ -5,6 +5,15 @@ Supports:
 - Credential creation and updates
 - Credential listing and retrieval
 - GCP token generation
+- Token-based authentication (OAuth, service accounts)
+
+Credential Types:
+- generic: Generic credential (default)
+- postgres, snowflake, http: Database/service specific credentials
+- google_service_account: Google Cloud service account key (JSON)
+- google_oauth: Google OAuth credentials
+- gcp: Google Cloud Platform credentials (alias for google_service_account)
+- httpBearerAuth: HTTP Bearer token authentication
 """
 
 from typing import Optional, Dict, Any, List, Union
@@ -22,7 +31,16 @@ class CredentialCreateRequest(BaseModel):
     )
     type: str = Field(
         default="generic",
-        description="Credential type (e.g., httpBearerAuth, serviceAccount, postgres)",
+        description=(
+            "Credential type. Supported types:\n"
+            "- generic: Generic credential (default)\n"
+            "- postgres, snowflake, http: Database/service credentials\n"
+            "- google_service_account: Google service account JSON key\n"
+            "- google_oauth: Google OAuth credentials\n"
+            "- gcp: Google Cloud Platform (alias for google_service_account)\n"
+            "- httpBearerAuth: HTTP Bearer token\n"
+            "Token-based types (google_*, gcp) enable dynamic token resolution in playbooks."
+        ),
         alias="credential_type"
     )
     data: Dict[str, Any] = Field(

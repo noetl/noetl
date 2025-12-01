@@ -2,7 +2,7 @@
 
 ## Overview
 
-The Python plugin executes user-provided Python code inside a step. It is designed to be flexible with function signatures and straightforward in how step `data` is passed to your `main()` function. It also powers the `save: { storage: python }` storage mode.
+The Python plugin executes user-provided Python code inside a step. It is designed to be flexible with function signatures and straightforward in how step `data` is passed to your `main()` function. It also powers the `sink: { storage: python }` storage mode.
 
 Key behaviors:
 - Step `data` is rendered via Jinja2 before execution.

@@ -8,7 +8,7 @@ _DEFAULTS_MS: Dict[str, int] = {
     "http": 1200,
     "postgres": 800,
     "duckdb": 8000,
-    "save": 500,
+    'sink': 500,
     "iterator": 0,
 }
 

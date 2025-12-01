@@ -1069,7 +1069,7 @@ tool:
   collection: "{{ items }}"
   element: item
   args: { query: "SELECT *" }
-  save: { storage: postgres, table: results }
+  sink: { tool: postgres, table: results }
 ```
 
 ### New (v2)
