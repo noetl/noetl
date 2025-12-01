@@ -59,7 +59,7 @@ def convert_legacy_auth(step_config: Dict, task_with: Dict) -> Dict:
     return converted
 
 
-def resolve_auth_map(
+async def resolve_auth_map(
     step_config: Dict, 
     task_with: Dict, 
     jinja_env: Environment, 
@@ -68,10 +68,10 @@ def resolve_auth_map(
     """
     Resolve the unified auth map from step config and task_with parameters.
     
-    This function:
+    This async function:
     1. Merges auth from step (preferred) and task_with (overrides)
     2. Deep-renders templates using Jinja
-    3. Fetches credential records from providers
+    3. Fetches credential records from providers (with caching)
     4. Normalizes fields according to type
     5. Returns resolved auth map ready for plugin use
     
@@ -174,7 +174,17 @@ def resolve_auth_map(
         elif provider == 'secret_manager':
             # Fetch scalar value from secret manager with OAuth authentication
             oauth_cred = spec.get('oauth_credential') or spec.get('auth_credential')
-            execution_id = context.get('execution_id') or context.get('job', {}).get('uuid')
+            # Try to get execution_id as integer for caching
+            execution_id = context.get('execution_id')
+            if execution_id is None:
+                job = context.get('job', {})
+                if isinstance(job, dict):
+                    execution_id = job.get('execution_id')
+            # Convert to int if it's a string
+            if execution_id and isinstance(execution_id, str) and execution_id.isdigit():
+                execution_id = int(execution_id)
+            elif execution_id and not isinstance(execution_id, int):
+                execution_id = None  # Invalid format, skip caching
             
             # Special handling for oauth2_client_credentials which has separate keys
             if auth_type == 'oauth2_client_credentials':
@@ -183,7 +193,7 @@ def resolve_auth_map(
                 
                 # Fetch client_id
                 if client_id_key:
-                    client_id = fetch_secret_manager_value(
+                    client_id = await fetch_secret_manager_value(
                         key=client_id_key,
                         auth_type='api_key',
                         oauth_credential=oauth_cred,
@@ -197,7 +207,7 @@ def resolve_auth_map(
                 
                 # Fetch client_secret
                 if client_secret_key:
-                    client_secret = fetch_secret_manager_value(
+                    client_secret = await fetch_secret_manager_value(
                         key=client_secret_key,
                         auth_type='api_key',
                         oauth_credential=oauth_cred,
@@ -212,7 +222,7 @@ def resolve_auth_map(
                 logger.debug(f"AUTH: Retrieved OAuth2 client credentials for alias '{alias}'")
             elif key:
                 # Standard single-key secret fetching
-                secret_value = fetch_secret_manager_value(
+                secret_value = await fetch_secret_manager_value(
                     key=key,
                     auth_type=auth_type,
                     oauth_credential=oauth_cred,

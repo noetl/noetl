@@ -24,7 +24,7 @@ from .response import process_response, create_mock_response
 logger = setup_logger(__name__, include_location=True)
 
 
-def execute_http_task(
+async def execute_http_task(
     task_config: Dict[str, Any],
     context: Dict[str, Any],
     jinja_env: Environment,
@@ -32,7 +32,7 @@ def execute_http_task(
     log_event_callback: Optional[Callable] = None
 ) -> Dict[str, Any]:
     """
-    Execute an HTTP task.
+    Execute an HTTP task with async authentication resolution and credential caching.
 
     Args:
         task_config: The task configuration
@@ -74,7 +74,7 @@ def execute_http_task(
         logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Rendered endpoint={endpoint}")
 
         # Process authentication FIRST and add to context for template rendering
-        auth_headers, resolved_auth_map = _process_authentication_with_context(task_config, task_with, jinja_env, context)
+        auth_headers, resolved_auth_map = await _process_authentication_with_context(task_config, task_with, jinja_env, context)
         if resolved_auth_map:
             logger.debug(f"HTTP: Adding {len(resolved_auth_map)} resolved auth items to context")
             context['auth'] = resolved_auth_map
@@ -204,7 +204,7 @@ def execute_http_task(
         return result
 
 
-def _process_authentication_with_context(
+async def _process_authentication_with_context(
     task_config: Dict[str, Any],
     task_with: Dict[str, Any],
     jinja_env: Environment,
@@ -226,7 +226,7 @@ def _process_authentication_with_context(
         auth_config = task_config.get('auth') or task_with.get('auth')
         if auth_config:
             logger.debug("HTTP: Using unified auth system")
-            resolved_auth = resolve_auth_map(step_config=task_config, task_with=task_with, jinja_env=jinja_env, context=context)
+            resolved_auth = await resolve_auth_map(step_config=task_config, task_with=task_with, jinja_env=jinja_env, context=context)
             
             if resolved_auth:
                 # Build headers from resolved auth

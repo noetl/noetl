@@ -60,42 +60,66 @@ def redact_dict(data: Dict) -> Dict:
     return result
 
 
-def fetch_secret_manager_value(
+async def fetch_secret_manager_value(
     key: str, 
     auth_type: str,
     oauth_credential: Optional[str] = None,
     execution_id: Optional[int] = None
 ) -> Optional[str]:
     """
-    Fetch a scalar value from an external secret manager.
+    Fetch a scalar value from an external secret manager with caching.
     
     Supports:
     - Google Secret Manager with OAuth authentication
+    - Execution-scoped credential caching (1-hour TTL)
     - Environment variable fallback
     
     Args:
         key: Secret key/path (e.g., 'projects/123/secrets/name/versions/1')
         auth_type: Authentication type to determine field mapping
         oauth_credential: Optional OAuth credential name for authentication
-        execution_id: Optional execution ID (integer) for caching (not yet implemented)
+        execution_id: Optional execution ID (integer) for caching
         
     Returns:
         Secret value or None if not found
-        
-    Note:
-        Caching is disabled because this function is called from sync context
-        but CredentialCache requires async. Future: implement sync wrapper or
-        make auth resolution async.
     """
-    # TODO: Implement caching when auth resolution is made async
-    # The CredentialCache class requires async/await but this function
-    # is called from sync context (resolve_auth_map)
+    # Check cache first if execution_id provided
+    if execution_id:
+        try:
+            from noetl.worker.credential_cache import CredentialCache
+            cached = await CredentialCache.get_cached(
+                credential_name=key,
+                execution_id=execution_id
+            )
+            if cached and isinstance(cached, dict):
+                secret_value = cached.get('value')
+                if secret_value:
+                    logger.debug(f"AUTH: Retrieved secret '{key}' from cache (execution {execution_id})")
+                    return secret_value
+        except Exception as e:
+            logger.debug(f"AUTH: Cache lookup failed for '{key}': {e}")
     
     # Try Google Secret Manager if key looks like a GCP resource path
     if key.startswith('projects/') and '/secrets/' in key:
         try:
             secret_value = _fetch_google_secret(key, oauth_credential)
             if secret_value:
+                # Cache the secret if execution_id provided
+                if execution_id:
+                    try:
+                        from noetl.worker.credential_cache import CredentialCache
+                        await CredentialCache.set_cached(
+                            credential_name=key,
+                            credential_type='secret_manager',
+                            data={'value': secret_value},
+                            cache_type='secret',
+                            execution_id=execution_id,
+                            ttl_seconds=3600  # 1 hour cache
+                        )
+                        logger.info(f"AUTH: Cached secret '{key}' for execution {execution_id}")
+                    except Exception as e:
+                        logger.warning(f"AUTH: Failed to cache secret '{key}': {e}")
+                
                 return secret_value
         except Exception as e:
             logger.warning(f"AUTH: Failed to fetch from Google Secret Manager: {e}")

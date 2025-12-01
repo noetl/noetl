@@ -16,7 +16,7 @@ Cache key format:
 - Execution-scoped: {credential_name}:{execution_id}
 - Global-scoped: {credential_name}:global:{token_type}
 
-Backend: PostgreSQL (noetl.credential_cache table)
+Backend: PostgreSQL (noetl.auth_cache table)
 Future: Support NATS KV or ValKey for distributed caching
 """
 
@@ -90,7 +90,7 @@ class CredentialCache:
                     # Fetch and update access tracking
                     await cursor.execute(
                         """
-                        UPDATE noetl.credential_cache
+                        UPDATE noetl.auth_cache
                         SET accessed_at = now(),
                             access_count = access_count + 1
                         WHERE cache_key = %s
@@ -183,7 +183,7 @@ class CredentialCache:
                 async with conn.cursor() as cursor:
                     await cursor.execute(
                         """
-                        INSERT INTO noetl.credential_cache (
+                        INSERT INTO noetl.auth_cache (
                             cache_key, credential_name, credential_type, cache_type,
                             scope_type, execution_id, parent_execution_id,
                             data_encrypted, expires_at
@@ -232,7 +232,7 @@ class CredentialCache:
                     # Delete entries for this execution or its parent
                     await cursor.execute(
                         """
-                        DELETE FROM noetl.credential_cache
+                        DELETE FROM noetl.auth_cache
                         WHERE scope_type = 'execution'
                           AND (execution_id = %s OR parent_execution_id = %s)
                         """,
@@ -265,7 +265,7 @@ class CredentialCache:
                 async with conn.cursor() as cursor:
                     await cursor.execute(
                         """
-                        DELETE FROM noetl.credential_cache
+                        DELETE FROM noetl.auth_cache
                         WHERE expires_at < now()
                         """
                     )

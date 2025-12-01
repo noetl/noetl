@@ -415,9 +415,9 @@ CREATE TABLE IF NOT EXISTS noetl.dentry (
 CREATE INDEX IF NOT EXISTS idx_dentry_parent ON noetl.dentry(parent_id);
 CREATE INDEX IF NOT EXISTS idx_dentry_kind ON noetl.dentry(kind);
 
--- Credential Cache
+-- Auth Cache
 -- Stores decrypted credentials and tokens with TTL for playbook execution scope
-CREATE TABLE IF NOT EXISTS noetl.credential_cache (
+CREATE TABLE IF NOT EXISTS noetl.auth_cache (
     cache_key TEXT PRIMARY KEY,
     credential_name TEXT NOT NULL,
     credential_type TEXT NOT NULL,
@@ -432,19 +432,19 @@ CREATE TABLE IF NOT EXISTS noetl.credential_cache (
     access_count INTEGER DEFAULT 0
 );
 
-CREATE INDEX IF NOT EXISTS idx_credential_cache_execution ON noetl.credential_cache (execution_id) WHERE execution_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_credential_cache_parent_execution ON noetl.credential_cache (parent_execution_id) WHERE parent_execution_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_credential_cache_expires ON noetl.credential_cache (expires_at);
-CREATE INDEX IF NOT EXISTS idx_credential_cache_type ON noetl.credential_cache (cache_type, scope_type);
-CREATE INDEX IF NOT EXISTS idx_credential_cache_credential ON noetl.credential_cache (credential_name);
+CREATE INDEX IF NOT EXISTS idx_auth_cache_execution ON noetl.auth_cache (execution_id) WHERE execution_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_auth_cache_parent_execution ON noetl.auth_cache (parent_execution_id) WHERE parent_execution_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_auth_cache_expires ON noetl.auth_cache (expires_at);
+CREATE INDEX IF NOT EXISTS idx_auth_cache_type ON noetl.auth_cache (cache_type, scope_type);
+CREATE INDEX IF NOT EXISTS idx_auth_cache_credential ON noetl.auth_cache (credential_name);
 
-COMMENT ON TABLE noetl.credential_cache IS 'Caches decrypted credentials and tokens with TTL';
-COMMENT ON COLUMN noetl.credential_cache.cache_key IS 'Unique cache key: <credential_name>:<execution_id> for execution scope, <credential_name>:global:<token_type> for global tokens';
-COMMENT ON COLUMN noetl.credential_cache.cache_type IS 'secret: raw credential data, token: derived authentication token (OAuth, JWT, etc.)';
-COMMENT ON COLUMN noetl.credential_cache.scope_type IS 'execution: limited to playbook execution and sub-playbooks, global: shared across all executions until token expires';
-COMMENT ON COLUMN noetl.credential_cache.execution_id IS 'Execution scope: credential tied to this execution and its sub-playbooks';
-COMMENT ON COLUMN noetl.credential_cache.parent_execution_id IS 'Top-level execution ID for cleanup when parent completes';
-COMMENT ON COLUMN noetl.credential_cache.expires_at IS 'TTL: execution-scoped expires when playbook completes, global expires based on token expiration';
+COMMENT ON TABLE noetl.auth_cache IS 'Caches decrypted credentials and tokens with TTL';
+COMMENT ON COLUMN noetl.auth_cache.cache_key IS 'Unique cache key: <credential_name>:<execution_id> for execution scope, <credential_name>:global:<token_type> for global tokens';
+COMMENT ON COLUMN noetl.auth_cache.cache_type IS 'secret: raw credential data, token: derived authentication token (OAuth, JWT, etc.)';
+COMMENT ON COLUMN noetl.auth_cache.scope_type IS 'execution: limited to playbook execution and sub-playbooks, global: shared across all executions until token expires';
+COMMENT ON COLUMN noetl.auth_cache.execution_id IS 'Execution scope: credential tied to this execution and its sub-playbooks';
+COMMENT ON COLUMN noetl.auth_cache.parent_execution_id IS 'Top-level execution ID for cleanup when parent completes';
+COMMENT ON COLUMN noetl.auth_cache.expires_at IS 'TTL: execution-scoped expires when playbook completes, global expires based on token expiration';
 
 -- Snowflake-like id helpers
 CREATE SEQUENCE IF NOT EXISTS noetl.snowflake_seq;
