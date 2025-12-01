@@ -3,6 +3,8 @@
 ## Overview
 Refactored `noetl/plugin/_auth.py` (587 lines) into a modular package structure at `noetl/plugin/auth/` with logical separation of concerns.
 
+**Latest Enhancement**: Added Secret Manager provider support for secure credential retrieval from external secret management systems (Google Secret Manager, AWS Secrets Manager, etc.). See [Secret Manager Auth Provider](./secret_manager_auth_provider.md) for detailed documentation.
+
 ## New Package Structure
 
 ```
@@ -20,22 +22,26 @@ noetl/plugin/auth/
 ## Module Breakdown
 
 ### 1. **constants.py** (27 lines)
-- `AUTH_TYPES`: Supported authentication types (postgres, hmac, s3, bearer, basic, header, api_key)
+- `AUTH_TYPES`: Supported authentication types (postgres, hmac, s3, bearer, basic, header, api_key, oauth2_client_credentials)
 - `AUTH_PROVIDERS`: Supported providers (credential_store, secret_manager, inline)
 - `REDACTED_FIELDS`: Fields to redact in logs
 
-### 2. **utils.py** (87 lines)
+### 2. **utils.py** (120+ lines)
 - `deep_render_template()`: Recursively render Jinja templates in nested objects
 - `redact_dict()`: Create redacted copy of dictionary for safe logging
-- `fetch_secret_manager_value()`: Fetch scalar value from external secret manager
+- `fetch_secret_manager_value()`: Fetch secrets from external secret management systems with OAuth and caching
+- `_fetch_google_secret()`: Google Secret Manager API integration with base64 decoding
 
 ### 3. **normalize.py** (73 lines)
 - `normalize_postgres_fields()`: Normalize postgres credential fields to standard names
 - `normalize_hmac_fields()`: Normalize HMAC credential fields for GCS/S3
 
-### 4. **resolver.py** (219 lines)
+### 4. **resolver.py** (250+ lines)
 - `convert_legacy_auth()`: Convert legacy auth/credentials/secret formats to unified format
 - `resolve_auth_map()`: Main resolution function that merges, renders, and resolves auth configurations
+- **Secret Manager Provider**: Detects `provider: secret_manager` and fetches credentials from external stores
+- **OAuth2 Client Credentials**: Supports multi-value secrets (client_id + client_secret)
+- **Credential Caching**: Integrates with CredentialCache for 1-hour TTL execution-scoped caching
 
 ### 5. **postgres.py** (37 lines)
 - `get_postgres_auth()`: Extract postgres authentication from resolved auth map
@@ -100,6 +106,42 @@ from noetl.plugin.auth import resolve_auth_map, get_postgres_auth
 4. **Updated tests**: Fixed all mock patch paths in `tests/test_unified_auth.py`
 5. **Backward compatibility**: Maintained the same public API surface
 6. **Removed old file**: Deleted `noetl/plugin/_auth.py` after successful migration
+7. **Secret Manager Provider**: Added external secret management system integration with OAuth and caching
+8. **OAuth2 Client Credentials**: Added support for multi-value secrets (client_id + client_secret)
+9. **Template Context Injection**: Resolved credentials automatically available in Jinja2 templates
+
+## Latest Features (v1.5.0)
+
+### Secret Manager Provider
+- Fetch credentials from external secret stores (Google Secret Manager, AWS Secrets Manager)
+- OAuth-based authentication with automatic token resolution
+- Execution-scoped credential caching (1-hour TTL)
+- Support for single-value (API keys) and multi-value (OAuth credentials) secrets
+- Template integration: `{{ auth.alias.field }}` access
+
+### OAuth2 Client Credentials
+- New auth type: `oauth2_client_credentials`
+- Separate key fields: `client_id_key` and `client_secret_key`
+- Automatic fetching of both values from Secret Manager
+- Integration with HTTP OAuth token requests
+
+### Example Usage
+```yaml
+auth:
+  amadeus:
+    type: oauth2_client_credentials
+    provider: secret_manager
+    client_id_key: projects/123/secrets/client-id/versions/1
+    client_secret_key: projects/123/secrets/client-secret/versions/1
+    oauth_credential: google_oauth
+
+data:
+  grant_type: client_credentials
+  client_id: '{{ auth.amadeus.client_id }}'
+  client_secret: '{{ auth.amadeus.client_secret }}'
+```
+
+See [Secret Manager Auth Provider](./secret_manager_auth_provider.md) for complete documentation.
 
 ## Test Results
 
