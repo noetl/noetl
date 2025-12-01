@@ -171,29 +171,76 @@ def resolve_auth_map(
             except Exception as e:
                 logger.warning(f"AUTH: Error fetching credential '{key}' for alias '{alias}': {e}")
                 
-        elif key and provider == 'secret_manager':
-            # Fetch scalar value from secret manager
-            secret_value = fetch_secret_manager_value(key, auth_type)
-            if secret_value:
-                # Map to appropriate field based on type
-                if auth_type == 'bearer':
-                    resolved_spec['token'] = secret_value
-                elif auth_type == 'basic':
-                    # For basic auth, we expect username:password or just password
-                    if ':' in secret_value:
-                        username, password = secret_value.split(':', 1)
-                        resolved_spec['username'] = username
-                        resolved_spec['password'] = password
+        elif provider == 'secret_manager':
+            # Fetch scalar value from secret manager with OAuth authentication
+            oauth_cred = spec.get('oauth_credential') or spec.get('auth_credential')
+            execution_id = context.get('execution_id') or context.get('job', {}).get('uuid')
+            
+            # Special handling for oauth2_client_credentials which has separate keys
+            if auth_type == 'oauth2_client_credentials':
+                client_id_key = spec.get('client_id_key')
+                client_secret_key = spec.get('client_secret_key')
+                
+                # Fetch client_id
+                if client_id_key:
+                    client_id = fetch_secret_manager_value(
+                        key=client_id_key,
+                        auth_type='api_key',
+                        oauth_credential=oauth_cred,
+                        execution_id=execution_id
+                    )
+                    if client_id:
+                        resolved_spec['client_id'] = client_id
+                        logger.debug(f"AUTH: Retrieved client_id for alias '{alias}'")
                     else:
-                        resolved_spec['password'] = secret_value
-                elif auth_type == 'api_key':
-                    resolved_spec['value'] = secret_value
-                elif auth_type == 'header':
-                    resolved_spec['value'] = secret_value
-                    
-                logger.debug(f"AUTH: Retrieved secret for alias '{alias}' from secret manager")
-            else:
-                logger.warning(f"AUTH: Failed to retrieve secret '{key}' for alias '{alias}'")
+                        logger.warning(f"AUTH: Failed to retrieve client_id from '{client_id_key}' for alias '{alias}'")
+                
+                # Fetch client_secret
+                if client_secret_key:
+                    client_secret = fetch_secret_manager_value(
+                        key=client_secret_key,
+                        auth_type='api_key',
+                        oauth_credential=oauth_cred,
+                        execution_id=execution_id
+                    )
+                    if client_secret:
+                        resolved_spec['client_secret'] = client_secret
+                        logger.debug(f"AUTH: Retrieved client_secret for alias '{alias}'")
+                    else:
+                        logger.warning(f"AUTH: Failed to retrieve client_secret from '{client_secret_key}' for alias '{alias}'")
+                
+                logger.debug(f"AUTH: Retrieved OAuth2 client credentials for alias '{alias}'")
+            elif key:
+                # Standard single-key secret fetching
+                secret_value = fetch_secret_manager_value(
+                    key=key,
+                    auth_type=auth_type,
+                    oauth_credential=oauth_cred,
+                    execution_id=execution_id
+                )
+                if secret_value:
+                    # Map to appropriate field based on type
+                    if auth_type == 'bearer':
+                        resolved_spec['token'] = secret_value
+                    elif auth_type == 'basic':
+                        # For basic auth, we expect username:password or just password
+                        if ':' in secret_value:
+                            username, password = secret_value.split(':', 1)
+                            resolved_spec['username'] = username
+                            resolved_spec['password'] = password
+                        else:
+                            resolved_spec['password'] = secret_value
+                    elif auth_type == 'api_key':
+                        resolved_spec['value'] = secret_value
+                    elif auth_type == 'header':
+                        resolved_spec['value'] = secret_value
+                    else:
+                        # Generic field mapping
+                        resolved_spec['value'] = secret_value
+                        
+                    logger.debug(f"AUTH: Retrieved secret for alias '{alias}' from secret manager")
+                else:
+                    logger.warning(f"AUTH: Failed to retrieve secret '{key}' for alias '{alias}'")
         
         # Set default secret_name for DuckDB
         if 'secret_name' not in resolved_spec:

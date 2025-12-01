@@ -7,7 +7,10 @@ workload:
   jobId: '{{ job.uuid }}'
   execution_id: '{{ job.uuid }}'
   pg_auth: pg_local
-  project_id: noetl-demo-19700101
+  oauth_cred: google_oauth
+  openai_secret_path: projects/1014428265962/secrets/openai-api-key/versions/1
+  amadeus_key_path: projects/1014428265962/secrets/api-key-test-api-amadeus-com/versions/1
+  amadeus_secret_path: projects/1014428265962/secrets/api-secret-test-api-amadeus-com/versions/1
   query: I want a one-way flight from SFO to JFK on September 15, 2025 for 1 adult
 workflow:
 - step: start
@@ -18,61 +21,47 @@ workflow:
   desc: Create results table in Postgres if not exists
   tool: postgres
   auth: "{{ workload.pg_auth }}"
-  code: "CREATE TABLE IF NOT EXISTS api_results (\n  id SERIAL PRIMARY KEY,\n  execution_id VARCHAR(64),\n  source VARCHAR(32),\n  result JSONB,\n  created_at TIMESTAMP DEFAULT NOW()\n);\n"
+  command: "CREATE TABLE IF NOT EXISTS api_results (\n  id SERIAL PRIMARY KEY,\n  execution_id VARCHAR(64),\n  source VARCHAR(32),\n  result JSONB,\n  created_at TIMESTAMP DEFAULT NOW()\n);\n"
   next:
   - step: create_amadeus_ai_event_table
 - step: create_amadeus_ai_event_table
   desc: Create Amadeus AI event table in Postgres if not exists
   tool: postgres
   auth: "{{ workload.pg_auth }}"
-  code: "CREATE TABLE IF NOT EXISTS amadeus_ai_events (\n  id SERIAL PRIMARY KEY,\n  execution_id VARCHAR(64),\n  event_type VARCHAR(32),\n  api_call_type VARCHAR(32),\n  input_data JSONB,\n  output_data JSONB,\n  status_code INTEGER,\n  event_time TIMESTAMP DEFAULT NOW(),\n  duration_ms INTEGER,\n  details JSONB\n);\n"
-  next:
-  - step: get_openai_api_key
-- step: get_openai_api_key
-  desc: Retrieve OpenAI API key from Google Secret Manager
-  tool: secrets
-  provider: google
-  project_id: '{{ spec.project_id }}'
-  secret_name: openai-api-key
-  next:
-  - step: get_amadeus_api_key
-- step: get_amadeus_api_key
-  desc: Retrieve Amadeus API key from Google Secret Manager
-  tool: secrets
-  provider: google
-  project_id: '{{ spec.project_id }}'
-  secret_name: api-key-test-api-amadeus-com
-  next:
-  - step: get_amadeus_api_secret
-- step: get_amadeus_api_secret
-  desc: Retrieve Amadeus API secret from Google Secret Manager
-  tool: secrets
-  provider: google
-  project_id: '{{ spec.project_id }}'
-  secret_name: api-secret-test-api-amadeus-com
+  command: "CREATE TABLE IF NOT EXISTS amadeus_ai_events (\n  id SERIAL PRIMARY KEY,\n  execution_id VARCHAR(64),\n  event_type VARCHAR(32),\n  api_call_type VARCHAR(32),\n  input_data JSONB,\n  output_data JSONB,\n  status_code INTEGER,\n  event_time TIMESTAMP DEFAULT NOW(),\n  duration_ms INTEGER,\n  details JSONB\n);\n"
   next:
   - step: get_amadeus_token
 - step: get_amadeus_token
-  desc: Get Amadeus API access token using REST API
+  desc: Get Amadeus API access token using OAuth client credentials
   tool: http
   method: POST
   endpoint: https://test.api.amadeus.com/v1/security/oauth2/token
   headers:
     Content-Type: application/x-www-form-urlencoded
-  payload:
+  auth:
+    amadeus:
+      type: oauth2_client_credentials
+      provider: secret_manager
+      client_id_key: '{{ workload.amadeus_key_path }}'
+      client_secret_key: '{{ workload.amadeus_secret_path }}'
+      oauth_credential: '{{ workload.oauth_cred }}'
+  data:
     grant_type: client_credentials
-    client_id: '{{ get_amadeus_api_key.secret_value }}'
-    client_secret: '{{ get_amadeus_api_secret.secret_value }}'
+    client_id: '{{ auth.amadeus.client_id }}'
+    client_secret: '{{ auth.amadeus.client_secret }}'
   next:
   - step: translate_query_to_amadeus
 - step: translate_query_to_amadeus
-  desc: Convert natural language query to Amadeus API endpoint and parameters using OpenAI REST API
+  desc: Convert natural language query to Amadeus API endpoint using OpenAI
   tool: http
   method: POST
   endpoint: https://api.openai.com/v1/chat/completions
-  headers:
-    Content-Type: application/json
-    Authorization: Bearer {{ get_openai_api_key.secret_value }}
+  auth:
+    openai:
+      type: bearer
+      provider: secret_manager
+      key: '{{ workload.openai_secret_path }}'
+      oauth_credential: '{{ workload.oauth_cred }}'
   payload:
     model: gpt-4o
     messages:
@@ -83,13 +72,11 @@ workflow:
     temperature: 0.1
   next:
   - step: store_openai_query_event
-- data:
-    query: '{{ spec.query }}'
-  step: store_openai_query_event
+- step: store_openai_query_event
   desc: Store the OpenAI query translation event
   tool: postgres
-  auth: postgres
-  code: "INSERT INTO amadeus_ai_events (execution_id, event_type, api_call_type, input_data, output_data, status_code, duration_ms, details)\nVALUES (\n  '{{ job.uuid }}',\n  'openai_query_translation',\n  'openai',\n  '{{ {\"user_query\": query, \"model\": \"gpt-4o\", \"system_prompt\": \"natural_language_to_amadeus_rest_api\"} | tojson }}',\n  {% if translate_query_to_amadeus.data is defined %}\n    '{{ translate_query_to_amadeus.data | tojson }}'\n  {% else %}\n    NULL\n  {% endif %},\n  {{ translate_query_to_amadeus.status_code | default(0) }},\n  {{ (translate_query_to_amadeus.elapsed * 1000) | round | int if translate_query_to_amadeus.elapsed else 0 }},\n  '{{ {\"endpoint\": \"https://api.openai.com/v1/chat/completions\", \"method\": \"POST\"} | tojson }}'\n);\n"
+  auth: '{{ workload.pg_auth }}'
+  command: "INSERT INTO amadeus_ai_events (execution_id, event_type, api_call_type, input_data, output_data, status_code, duration_ms, details)\nVALUES (\n  '{{ job.uuid }}',\n  'openai_query_translation',\n  'openai',\n  '{{ {\"user_query\": workload.query, \"model\": \"gpt-4o\", \"system_prompt\": \"natural_language_to_amadeus_rest_api\"} | tojson }}',\n  {% if translate_query_to_amadeus.data is defined %}\n    '{{ translate_query_to_amadeus.data | tojson }}'\n  {% else %}\n    NULL\n  {% endif %},\n  {{ translate_query_to_amadeus.status_code | default(0) }},\n  {{ (translate_query_to_amadeus.elapsed * 1000) | round | int if translate_query_to_amadeus.elapsed else 0 }},\n  '{{ {\"endpoint\": \"https://api.openai.com/v1/chat/completions\", \"method\": \"POST\"} | tojson }}'\n);\n"
   next:
   - step: parse_openai_response
 - step: parse_openai_response
@@ -107,14 +94,13 @@ workflow:
   endpoint: https://test.api.amadeus.com{{ parse_openai_response.endpoint }}
   headers:
     Authorization: Bearer {{ get_amadeus_token.data.access_token }}
-    Content-Type: application/json
   next:
   - step: store_amadeus_query_event
 - step: store_amadeus_query_event
   desc: Store the Amadeus API query event
   tool: postgres
-  auth: postgres
-  code: "INSERT INTO amadeus_ai_events (execution_id, event_type, api_call_type, input_data, output_data, status_code, duration_ms, details)\nVALUES (\n  '{{ job.uuid }}',\n  'amadeus_api_search',\n  'amadeus',\n  '{{ {\"endpoint\": parse_openai_response.endpoint, \"params\": parse_openai_response.params, \"access_token_used\": true} | tojson }}',\n  {% if execute_amadeus_query.data is defined %}\n    '{{ execute_amadeus_query.data | tojson }}'\n  {% else %}\n    NULL\n  {% endif %},\n  {{ execute_amadeus_query.status_code | default(0) }},\n  {{ (execute_amadeus_query.elapsed * 1000) | round | int if execute_amadeus_query.elapsed else 0 }},\n  '{{ {\"full_endpoint\": execute_amadeus_query.url, \"method\": \"GET\"} | tojson }}'\n);\n"
+  auth: '{{ workload.pg_auth }}'
+  command: "INSERT INTO amadeus_ai_events (execution_id, event_type, api_call_type, input_data, output_data, status_code, duration_ms, details)\nVALUES (\n  '{{ job.uuid }}',\n  'amadeus_api_search',\n  'amadeus',\n  '{{ {\"endpoint\": parse_openai_response.endpoint, \"params\": parse_openai_response.params, \"access_token_used\": true} | tojson }}',\n  {% if execute_amadeus_query.data is defined %}\n    '{{ execute_amadeus_query.data | tojson }}'\n  {% else %}\n    NULL\n  {% endif %},\n  {{ execute_amadeus_query.status_code | default(0) }},\n  {{ (execute_amadeus_query.elapsed * 1000) | round | int if execute_amadeus_query.elapsed else 0 }},\n  '{{ {\"full_endpoint\": execute_amadeus_query.url, \"method\": \"GET\"} | tojson }}'\n);\n"
   next:
   - step: translate_amadeus_response
 - step: translate_amadeus_response
@@ -122,9 +108,12 @@ workflow:
   tool: http
   method: POST
   endpoint: https://api.openai.com/v1/chat/completions
-  headers:
-    Content-Type: application/json
-    Authorization: Bearer {{ get_openai_api_key.secret_value }}
+  auth:
+    openai:
+      type: bearer
+      provider: secret_manager
+      key: '{{ workload.openai_secret_path }}'
+      oauth_credential: '{{ workload.oauth_cred }}'
   payload:
     model: gpt-4o
     messages:
@@ -138,15 +127,15 @@ workflow:
 - step: store_openai_response_event
   desc: Store the OpenAI response translation event
   tool: postgres
-  auth: postgres
-  code: "INSERT INTO amadeus_ai_events (execution_id, event_type, api_call_type, input_data, output_data, status_code, duration_ms, details)\nVALUES (\n  '{{ job.uuid }}',\n  'openai_response_translation',\n  'openai',\n  '{{ {\"amadeus_response_base64\": execute_amadeus_query.data | tojson | b64encode, \"model\": \"gpt-4o\", \"system_prompt\": \"amadeus_response_to_natural_language\"} | tojson }}',\n  {% if translate_amadeus_response.data is defined %}\n    '{{ {\"response_base64\": translate_amadeus_response.data | tojson | b64encode, \"is_base64_encoded\": true} | tojson }}'\n  {% else %}\n    NULL\n  {% endif %},\n  {{ translate_amadeus_response.status_code | default(0) }},\n  {{ (translate_amadeus_response.elapsed * 1000) | round | int if translate_amadeus_response.elapsed else 0 }},\n  '{{ {\"endpoint\": \"https://api.openai.com/v1/chat/completions\", \"method\": \"POST\"} | tojson }}'\n);\n"
+  auth: '{{ workload.pg_auth }}'
+  command: "INSERT INTO amadeus_ai_events (execution_id, event_type, api_call_type, input_data, output_data, status_code, duration_ms, details)\nVALUES (\n  '{{ job.uuid }}',\n  'openai_response_translation',\n  'openai',\n  '{{ {\"amadeus_response_base64\": execute_amadeus_query.data | tojson | b64encode, \"model\": \"gpt-4o\", \"system_prompt\": \"amadeus_response_to_natural_language\"} | tojson }}',\n  {% if translate_amadeus_response.data is defined %}\n    '{{ {\"response_base64\": translate_amadeus_response.data | tojson | b64encode, \"is_base64_encoded\": true} | tojson }}'\n  {% else %}\n    NULL\n  {% endif %},\n  {{ translate_amadeus_response.status_code | default(0) }},\n  {{ (translate_amadeus_response.elapsed * 1000) | round | int if translate_amadeus_response.elapsed else 0 }},\n  '{{ {\"endpoint\": \"https://api.openai.com/v1/chat/completions\", \"method\": \"POST\"} | tojson }}'\n);\n"
   next:
   - step: insert_final_result
 - step: insert_final_result
   desc: Insert final natural language result into PostgreSQL
   tool: postgres
-  auth: postgres
-  code: "INSERT INTO api_results (execution_id, source, result)\nVALUES (\n  '{{ job.uuid }}',\n  'amadeus_api',\n  '{{ {\"query\": spec.query, \"natural_language_result\": (translate_amadeus_response.data.choices[0].message.content if translate_amadeus_response.data and translate_amadeus_response.data.choices else 'No response generated') | b64encode, \"execution_id\": job.uuid, \"is_base64_encoded\": true} | tojson }}'\n);\n"
+  auth: '{{ workload.pg_auth }}'
+  command: "INSERT INTO api_results (execution_id, source, result)\nVALUES (\n  '{{ job.uuid }}',\n  'amadeus_api',\n  '{{ {\"query\": spec.query, \"natural_language_result\": (translate_amadeus_response.data.choices[0].message.content if translate_amadeus_response.data and translate_amadeus_response.data.choices else 'No response generated') | b64encode, \"execution_id\": job.uuid, \"is_base64_encoded\": true} | tojson }}'\n);\n"
   next:
   - step: end
 - step: end

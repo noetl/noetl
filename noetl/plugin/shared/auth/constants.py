@@ -10,7 +10,8 @@ AUTH_TYPES = {
     "bearer",
     "basic", 
     "header",
-    "api_key"
+    "api_key",
+    "oauth2_client_credentials"
 }
 
 # Supported providers
