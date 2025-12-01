@@ -72,9 +72,14 @@ def build_request_args(
     else:
         # POST/PUT/PATCH methods use request body
         if json_body is None:
-            if 'query' not in data_map and 'body' not in data_map:
+            # Check for explicit body in data_map
+            if 'body' in data_map:
+                json_body = data_map['body']
+            # If no explicit sections, use data_map if it has content
+            elif data_map and 'query' not in data_map:
                 json_body = data_map
-            elif isinstance(payload, (dict, list)) and not json_body:
+            # Fallback to direct payload configuration
+            elif isinstance(payload, (dict, list)):
                 json_body = payload
         
         if json_body is not None:
