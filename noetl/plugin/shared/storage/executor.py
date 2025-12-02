@@ -163,11 +163,12 @@ def execute_sink_task(
             )
         
         elif kind == 'http':
-            return handle_http_storage(
+            import asyncio
+            return asyncio.run(handle_http_storage(
                 tool_config, rendered_data, rendered_params,
                 auth_config, credential_ref, spec,
                 task_with, context, jinja_env, log_event_callback
-            )
+            ))
         
         else:
             raise ValueError(f"Unsupported sink tool type: {kind}")
