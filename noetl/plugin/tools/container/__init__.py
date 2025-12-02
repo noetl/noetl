@@ -1,25 +1,16 @@
-"""
-Container plugin for NoETL.
+"""Container execution tool for NoETL.
 
-This package provides Kubernetes Job-based container task execution capabilities with:
-- Kubernetes Job creation and lifecycle management
-- ConfigMap-based script and file injection
-- Pod log streaming and execution monitoring
-- Credential and secret injection via environment variables
-- Script loading from file, GCS, S3, HTTP sources
-- Resource limits and cleanup management
-
-Usage:
-    from noetl.plugin.tools.container import execute_container_task
-    
-    result = execute_container_task(
-        task_config={'runtime': {...}, 'script': {...}, 'env': {...}},
-        context={'execution_id': 'exec-123'},
-        jinja_env=jinja_env,
-        task_with={}
-    )
+Provides a lazy import wrapper so the optional 'kubernetes' dependency is only
+required when a container (K8s) task is actually executed.
 """
 
-from noetl.plugin.tools.container.executor import execute_container_task
+from typing import Any
 
-__all__ = ['execute_container_task']
+
+def execute_container_task(*args: Any, **kwargs: Any):
+    # Lazy import to avoid importing kubernetes client unless needed
+    from .executor import execute_container_task as _impl
+    return _impl(*args, **kwargs)
+
+
+__all__ = ["execute_container_task"]
