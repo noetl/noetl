@@ -251,10 +251,31 @@ See `tests/fixtures/playbooks/script_execution/` and `docs/script_attribute_desi
   - User: `noetl` / Password: `noetl` (NoETL metadata schema)
   - Schema: `noetl` (for NoETL system tables: catalog, event, queue, etc.)
 - **NoETL API for Postgres Queries**:
-  - Endpoint: `http://localhost:30082/docs#/default/execute_postgres_api_postgres_execute_post`
-  - Use this REST API instead of running `psql` commands directly
-  - Supports executing SQL queries against configured Postgres credentials
-  - Returns structured JSON responses with query results
+  - Endpoint: `POST http://localhost:30082/api/postgres/execute`
+  - Documentation: `http://localhost:30082/docs#/default/execute_postgres_api_postgres_execute_post`
+  - **Use this REST API instead of running `psql` commands directly**
+  - Request body examples:
+    ```json
+    {
+      "query": "SELECT * FROM noetl.catalog LIMIT 5",
+      "connection_string": "postgresql://demo:demo@localhost:54321/demo_noetl"
+    }
+    ```
+    Or with schema parameter:
+    ```json
+    {
+      "query": "SELECT execution_id, status FROM event WHERE execution_id = 123",
+      "schema": "noetl"
+    }
+    ```
+  - Response format:
+    ```json
+    {
+      "status": "ok",
+      "result": [{"column": "value"}]
+    }
+    ```
+  - Supports query parameters: `query`, `query_base64`, `procedure`, `parameters`, `schema`, `connection_string`
 
 **Deployment Modes:**
 - Local: Direct Python execution with file-based logs
