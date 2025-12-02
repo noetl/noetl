@@ -1,0 +1,66 @@
+apiVersion: noetl.io/v1
+kind: Playbook
+metadata:
+  name: test_pagination_cursor
+  path: tests/pagination/cursor
+  description: Cursor-based pagination test
+
+workload:
+  api_url: http://192.168.1.240:5555
+
+workflow:
+  - step: start
+    desc: Fetch all events with cursor pagination
+    next:
+      - step: fetch_all_events
+
+  - step: fetch_all_events
+    desc: Cursor-based pagination with automatic continuation
+    tool: http
+    url: "{{ workload.api_url }}/api/v1/events"
+    method: GET
+    params:
+      limit: 10
+    loop:
+      pagination:
+        type: response_based
+        continue_while: "{{ response.data.next_cursor is not none and response.data.next_cursor != '' }}"
+        next_page:
+          params:
+            cursor: "{{ response.data.next_cursor }}"
+            limit: "{{ response.data.limit }}"
+        merge_strategy: append
+        merge_path: data.events
+        max_iterations: 10
+    next:
+      - step: validate_results
+
+  - step: validate_results
+    desc: Validate merged results
+    tool: python
+    args:
+      input_data:
+        fetch_all_events: "{{ fetch_all_events }}"
+    code: |
+      def main(input_data):
+          # Check we got all items
+          data = input_data.get('fetch_all_events', [])
+          
+          print(f"Total events fetched: {len(data)}")
+          print(f"First event: {data[0] if data else None}")
+          print(f"Last event: {data[-1] if data else None}")
+          
+          # Validate
+          assert len(data) == 35, f"Expected 35 events, got {len(data)}"
+          assert data[0]['id'] == 1, f"First event should have id=1"
+          assert data[-1]['id'] == 35, f"Last event should have id=35"
+          
+          return {
+              'status': 'success',
+              'total_events': len(data)
+          }
+    next:
+      - step: end
+
+  - step: end
+    desc: Workflow complete

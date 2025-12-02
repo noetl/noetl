@@ -108,6 +108,24 @@ workflow:                 # Execution flow (required, must have 'start' step)
   - Direct action types: `python`, `http`, `postgres`, `duckdb`, `playbook`, `iterator`
 - **Conditional Flow**: Steps use `next` with optional `when` conditions and `then` arrays for routing
 - **Iterator**: `type: iterator` loops over collections with `collection`, `element`, and `mode` (sequential/async) attributes
+- **HTTP Pagination**: `loop.pagination` enables automatic page continuation with `continue_while`, `next_page`, and `merge_strategy` attributes
+  ```yaml
+  - step: fetch_all_data
+    tool: http
+    url: "{{ api_url }}/data"
+    params:
+      page: 1
+    loop:
+      pagination:
+        type: response_based
+        continue_while: "{{ response.paging.hasMore }}"
+        next_page:
+          params:
+            page: "{{ (response.paging.page | int) + 1 }}"
+        merge_strategy: append
+        merge_path: data
+        max_iterations: 100
+  ```
 - **Save Blocks**: Any action can have a `save` attribute to persist results to storage backends
 - **Playbook Composition**: `type: playbook` allows calling sub-playbooks with `path` and `return_step` attributes
 
