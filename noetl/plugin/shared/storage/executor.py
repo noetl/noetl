@@ -101,6 +101,7 @@ def execute_sink_task(
         rendered_data = None
         if data_spec is not None:
             rendered_data = render_data_mapping(jinja_env, data_spec, context)
+            logger.critical(f"SINK.EXECUTOR: Rendered data_spec -> rendered_data={rendered_data}")
         
         # Prefer canonical data mapping; keep params for legacy only
         rendered_params = (render_data_mapping(jinja_env, params, context) 
