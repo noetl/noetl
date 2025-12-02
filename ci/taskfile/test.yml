@@ -343,3 +343,189 @@ tasks:
       - echo "\n=== Running simple config retry test ==="
       - task: playbook:local:execute-retry-simple-config
       - echo "\n=== All retry tests completed ==="
+
+  # === Regression Testing (NoETL Native) ===
+  test:regression:setup:
+    desc: Setup test schema for regression testing
+    aliases: [trs, test-regression-setup]
+    cmds:
+      - task: kubectl:local:context-set-kind
+      - echo "=== Creating test schema for regression testing ==="
+      - |
+        if [ -x ".venv/bin/noetl" ]; then
+          cli=".venv/bin/noetl"
+        else
+          cli="noetl"
+        fi
+        
+        # Register schema creation playbook (using file path)
+        $cli register tests/fixtures/playbooks/regression_test/create_test_schema.yaml \
+          --host localhost --port 8082
+        
+        # Execute schema creation (using catalog path)
+        $cli execute playbook tests/fixtures/playbooks/regression_test/create_test_schema \
+          --host localhost --port 8082 \
+          --payload '{"pg_auth": "pg_k8s"}' --merge --json
+
+  test:regression:run:
+    desc: Run complete NoETL-native regression test suite
+    aliases: [trr, test-regression-run]
+    cmds:
+      - task: kubectl:local:context-set-kind
+      - echo "=== Running NoETL-native regression test suite ==="
+      - |
+        if [ -x ".venv/bin/noetl" ]; then
+          cli=".venv/bin/noetl"
+        else
+          cli="noetl"
+        fi
+        
+        # Register master test playbook (using file path)
+        echo "Registering master regression test playbook..."
+        $cli register tests/fixtures/playbooks/regression_test/master_regression_test.yaml \
+          --host localhost --port 8082
+        
+        # Execute master test playbook (using catalog path)
+        echo "Executing master regression test..."
+        $cli execute playbook tests/fixtures/playbooks/regression_test/master_regression_test \
+          --host localhost --port 8082 \
+          --payload '{"pg_auth": "pg_k8s"}' --merge --json
+
+  test:regression:full:
+    desc: Setup and run complete regression test suite
+    aliases: [trf, test-regression-full]
+    cmds:
+      - task: test:regression:setup
+      - task: test:regression:run
+
+  test:regression:results:
+    desc: View latest regression test results
+    aliases: [trv, test-regression-view]
+    cmds:
+      - task: kubectl:local:context-set-kind
+      - echo "=== Latest Regression Test Results ==="
+      - |
+        curl -sS -X POST "http://localhost:8082/api/postgres/execute" \
+          -H 'Content-Type: application/json' \
+          -d '{
+            "schema": "noetl_test",
+            "query": "SELECT test_run_id, test_timestamp, total_tests, passed_tests, failed_tests, success_rate FROM noetl_test.regression_summary ORDER BY test_timestamp DESC LIMIT 5"
+          }' | jq -C '.'
+      - echo "\n=== Failed Tests (Latest Run) ==="
+      - |
+        curl -sS -X POST "http://localhost:8082/api/postgres/execute" \
+          -H 'Content-Type: application/json' \
+          -d '{
+            "schema": "noetl_test",
+            "query": "SELECT r.playbook_name, r.category, r.status, r.validation_errors FROM noetl_test.regression_results r WHERE r.test_run_id = (SELECT test_run_id FROM noetl_test.regression_summary ORDER BY test_timestamp DESC LIMIT 1) AND r.test_passed = false"
+          }' | jq -C '.'
+
+  # === Regression Testing (Pytest) ===
+  test:playbooks:regression:
+    desc: Run pytest-based playbook regression test suite
+    aliases: [tpr, test-regression-pytest]
+    cmds:
+      - task: kubectl:local:context-set-kind
+      - echo "=== Running pytest playbook regression tests ==="
+      - pytest tests/test_playbook_regression.py -v --tb=short
+
+  test:playbooks:regression-category:
+    desc: Run regression tests for specific category
+    aliases: [tprc, test-regression-category]
+    vars:
+      CATEGORY: "{{ or .CATEGORY \"\" }}"
+    cmds:
+      - task: kubectl:local:context-set-kind
+      - |
+        category="{{.CATEGORY}}"
+        if [ -z "$category" ]; then
+          echo "ERROR: CATEGORY parameter is required"
+          echo "Usage: task test:playbooks:regression-category CATEGORY=basic"
+          echo "Available categories: basic, data_transfer, control_flow, storage, api_integration, advanced"
+          exit 1
+        fi
+        echo "=== Running regression tests for category: $category ==="
+        pytest tests/test_playbook_regression.py -v --tb=short --category="$category"
+
+  test:playbooks:regression-single:
+    desc: Run regression test for a single playbook
+    aliases: [tprs, test-regression-single]
+    vars:
+      PLAYBOOK: "{{ or .PLAYBOOK \"\" }}"
+    cmds:
+      - task: kubectl:local:context-set-kind
+      - |
+        playbook="{{.PLAYBOOK}}"
+        if [ -z "$playbook" ]; then
+          echo "ERROR: PLAYBOOK parameter is required"
+          echo "Usage: task test:playbooks:regression-single PLAYBOOK=hello_world"
+          exit 1
+        fi
+        echo "=== Running regression test for playbook: $playbook ==="
+        pytest tests/test_playbook_regression.py -v --tb=short -k "$playbook"
+
+  test:playbooks:update-expected:
+    desc: Update expected results for all playbooks (creates baseline)
+    aliases: [tpue, test-update-expected]
+    cmds:
+      - task: kubectl:local:context-set-kind
+      - echo "=== Updating expected results (creating baseline) ==="
+      - echo "⚠ This will overwrite all expected result files"
+      - pytest tests/test_playbook_regression.py -v --tb=short --update-expected
+
+  test:playbooks:update-expected-single:
+    desc: Update expected results for a single playbook
+    aliases: [tpues, test-update-expected-single]
+    vars:
+      PLAYBOOK: "{{ or .PLAYBOOK \"\" }}"
+    cmds:
+      - task: kubectl:local:context-set-kind
+      - |
+        playbook="{{.PLAYBOOK}}"
+        if [ -z "$playbook" ]; then
+          echo "ERROR: PLAYBOOK parameter is required"
+          echo "Usage: task test:playbooks:update-expected-single PLAYBOOK=hello_world"
+          exit 1
+        fi
+        echo "=== Updating expected results for playbook: $playbook ==="
+        pytest tests/test_playbook_regression.py -v --tb=short -k "$playbook" --update-expected
+
+  test:playbooks:list:
+    desc: List all configured playbooks in test suite
+    aliases: [tpl, test-list-playbooks]
+    cmds:
+      - |
+        echo "=== Configured Playbooks for Regression Testing ==="
+        echo ""
+        python3 -c "
+        import yaml
+        from pathlib import Path
+        
+        config_file = Path('tests/fixtures/playbook_test_config.yaml')
+        with open(config_file) as f:
+            config = yaml.safe_load(f)
+        
+        playbooks = config.get('playbooks', [])
+        
+        # Group by category
+        by_category = {}
+        for p in playbooks:
+            cat = p.get('category', 'uncategorized')
+            if cat not in by_category:
+                by_category[cat] = []
+            by_category[cat].append(p)
+        
+        # Print by category
+        for category in sorted(by_category.keys()):
+            print(f'\n{category.upper()}:')
+            for p in by_category[category]:
+                name = p.get('name')
+                enabled = '✓' if p.get('enabled', True) else '✗'
+                creds = ', '.join(p.get('requires_credentials', []))
+                creds_str = f' (creds: {creds})' if creds else ''
+                print(f'  {enabled} {name}{creds_str}')
+        
+        total = len(playbooks)
+        enabled_count = len([p for p in playbooks if p.get('enabled', True)])
+        print(f'\nTotal: {total} playbooks ({enabled_count} enabled)')
+        "

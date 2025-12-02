@@ -395,7 +395,7 @@ During workflow execution, completed step results are available in subsequent st
 Example:
 ```yaml
 - step: fetch_data
-  type: python
+  tool: python
   code: |
     def main():
       return {"count": 42, "name": "test"}
@@ -406,7 +406,7 @@ Example:
   next: process
 
 - step: process
-  type: python
+  tool: python
   code: |
     def main(count, name):
       print(f"Processing {name} with count {count}")
@@ -434,7 +434,7 @@ When a `sink:` block executes, the worker provides a **special context** where r
 ✅ **Correct sink usage:**
 ```yaml
 - step: generate
-  type: python
+  tool: python
   code: |
     def main():
       return {"status": "success", "data": {"value": 123, "message": "hello"}}

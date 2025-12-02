@@ -1,0 +1,417 @@
+apiVersion: noetl.io/v1
+kind: Playbook
+
+metadata:
+  name: master_regression_test
+  path: tests/fixtures/playbooks/regression_test/master_regression_test
+
+workload:
+  # Test run ID (use execution_id from this playbook)
+  test_run_id: "{{ execution_id }}"
+  
+  # Credentials
+  pg_auth: pg_local  # Default to local, can be overridden with --payload
+  
+  # Test configuration
+  test_config:
+    categories:
+      - basic
+      - control_flow
+      - storage
+      - data_processing
+      - advanced
+    
+    # Playbooks to test (categorized)
+    playbooks:
+      basic:
+        - name: hello_world
+          path: tests/fixtures/playbooks/hello_world/hello_world
+          expected_status: completed
+          min_steps: 3
+          required_steps: [start, test_step, end]
+        
+        - name: test_start_with_action
+          path: tests/fixtures/playbooks/test_start_with_action
+          expected_status: completed
+          min_steps: 2
+        
+        - name: test_end_with_action
+          path: tests/fixtures/playbooks/test_end_with_action
+          expected_status: completed
+          min_steps: 2
+        
+        - name: test_vars_simple
+          path: tests/fixtures/playbooks/vars_test/test_vars_simple
+          expected_status: completed
+          min_steps: 3
+        
+        - name: test_vars_block
+          path: tests/fixtures/playbooks/vars_test/test_vars_block
+          expected_status: completed
+          min_steps: 3
+        
+        - name: test_cache_simple
+          path: tests/fixtures/playbooks/cache_test/test_cache_simple
+          expected_status: completed
+          min_steps: 3
+      
+      control_flow:
+        - name: control_flow_workbook
+          path: tests/fixtures/playbooks/control_flow_workbook/control_flow_workbook
+          expected_status: completed
+          min_steps: 5
+        
+        - name: weather_control_flow
+          path: tests/fixtures/playbooks/control_flow/weather_control_flow/weather_control_flow
+          expected_status: completed
+          min_steps: 4
+      
+      storage:
+        - name: save_simple_test
+          path: tests/fixtures/playbooks/save_storage_test/save_simple_test
+          expected_status: completed
+          min_steps: 3
+          requires_credentials:
+            pg_auth: pg_k8s
+        
+        - name: save_edge_cases
+          path: tests/fixtures/playbooks/save_storage_test/save_edge_cases
+          expected_status: completed
+          min_steps: 10
+          requires_credentials:
+            pg_auth: pg_k8s
+      
+      data_processing:
+        - name: duckdb_gcs_workload_identity
+          path: tests/fixtures/playbooks/duckdb_gcs_workload_identity/duckdb_gcs_workload_identity
+          expected_status: completed
+          min_steps: 4
+          requires_credentials:
+            gcs_auth: gcs_hmac_local
+      
+      advanced:
+        - name: playbook_composition
+          path: tests/fixtures/playbooks/playbook_composition/playbook_composition
+          expected_status: completed
+          min_steps: 3
+        
+        - name: retry_simple_config
+          path: tests/fixtures/playbooks/retry_test/retry_simple_config
+          expected_status: completed
+          min_steps: 3
+
+workbook:
+  # Analyzer task - validates execution results
+  - name: analyze_test_result
+    tool: python
+    code: |
+      async def main():
+          """
+          Analyze playbook execution result against expected values.
+          
+          Context variables available:
+          - vars.test_name: Name of the test
+          - vars.expected_status: Expected execution status
+          - vars.expected_min_steps: Minimum expected steps
+          - vars.expected_step_names: Required step names
+          - vars.actual_execution_id: Execution ID from playbook
+          - vars.actual_status: Actual execution status
+          - vars.actual_events: Events from execution
+          """
+          import json
+          
+          # Get variables from context
+          test_name = context.get('vars', {}).get('test_name', 'unknown')
+          expected_status = context.get('vars', {}).get('expected_status', 'completed')
+          expected_min_steps = context.get('vars', {}).get('expected_min_steps', 0)
+          expected_step_names = context.get('vars', {}).get('expected_step_names', [])
+          
+          actual_execution_id = context.get('vars', {}).get('actual_execution_id')
+          actual_status = context.get('vars', {}).get('actual_status', 'unknown')
+          actual_events = context.get('vars', {}).get('actual_events', [])
+          
+          # Validation results
+          validations = {
+              'status_match': actual_status == expected_status,
+              'step_count_ok': len(actual_events) >= expected_min_steps,
+              'required_steps_present': True,
+              'errors': []
+          }
+          
+          # Check status
+          if not validations['status_match']:
+              validations['errors'].append(
+                  f"Status mismatch: expected '{expected_status}', got '{actual_status}'"
+              )
+          
+          # Check step count
+          if not validations['step_count_ok']:
+              validations['errors'].append(
+                  f"Insufficient steps: expected at least {expected_min_steps}, got {len(actual_events)}"
+              )
+          
+          # Check required steps
+          if expected_step_names:
+              actual_step_names = {
+                  e.get('step_name') for e in actual_events 
+                  if e.get('event_type') == 'action_completed'
+              }
+              missing_steps = set(expected_step_names) - actual_step_names
+              if missing_steps:
+                  validations['required_steps_present'] = False
+                  validations['errors'].append(
+                      f"Missing required steps: {list(missing_steps)}"
+                  )
+          
+          # Overall test result
+          test_passed = all([
+              validations['status_match'],
+              validations['step_count_ok'],
+              validations['required_steps_present']
+          ])
+          
+          result = {
+              'test_name': test_name,
+              'test_passed': test_passed,
+              'validation_passed': validations['status_match'] and validations['step_count_ok'],
+              'validations': validations,
+              'actual_execution_id': actual_execution_id,
+              'actual_status': actual_status,
+              'actual_step_count': len(actual_events),
+              'expected_status': expected_status,
+              'expected_min_steps': expected_min_steps
+          }
+          
+          print(f"TEST: {test_name} - {'PASSED' if test_passed else 'FAILED'}")
+          if validations['errors']:
+              print(f"  Errors: {validations['errors']}")
+          
+          return {"status": "success", "data": result}
+
+workflow:
+  - step: start
+    desc: "Start regression test suite"
+    next:
+      - step: test_basic_category
+
+  # === BASIC TESTS ===
+  - step: test_basic_category
+    desc: "Test basic playbooks"
+    tool: python
+    code: |
+      async def main():
+          print("=== Starting BASIC category tests ===")
+          return {"status": "success", "data": {"category": "basic", "test_count": 6}}
+    next:
+      - step: test_hello_world
+
+  - step: test_hello_world
+    desc: "Test hello_world playbook"
+    tool: playbook
+    path: tests/fixtures/playbooks/hello_world/hello_world
+    return_step: analyze_hello_world
+    next:
+      - step: analyze_hello_world
+
+  - step: analyze_hello_world
+    desc: "Analyze hello_world result"
+    tool: workbook
+    name: analyze_test_result
+    data:
+      test_name: hello_world
+      expected_status: completed
+      expected_min_steps: 3
+      expected_step_names: [start, test_step, end]
+      actual_execution_id: "{{ test_hello_world.execution_id }}"
+      actual_status: "{{ test_hello_world.status }}"
+      actual_events: "{{ test_hello_world.events }}"
+    vars:
+      test_name: "{{ result.data.test_name }}"
+      test_passed: "{{ result.data.test_passed }}"
+      validation_result: "{{ result.data }}"
+    sink:
+      tool: postgres
+      auth: "{{ workload.pg_auth }}"
+      table: noetl_test.regression_results
+      data:
+        test_run_id: "{{ workload.test_run_id }}"
+        playbook_name: hello_world
+        playbook_path: tests/fixtures/playbooks/hello_world/hello_world
+        category: basic
+        execution_id: "{{ test_hello_world.execution_id }}"
+        status: "{{ test_hello_world.status }}"
+        step_count: "{{ result.data.actual_step_count }}"
+        validation_passed: "{{ result.data.validation_passed }}"
+        validation_errors: "{{ result.data.validations.errors | tojson }}"
+        expected_status: "{{ result.data.expected_status }}"
+        actual_events: "{{ test_hello_world.events | tojson }}"
+        test_passed: "{{ result.data.test_passed }}"
+    next:
+      - step: test_start_with_action
+
+  - step: test_start_with_action
+    desc: "Test test_start_with_action playbook"
+    tool: playbook
+    path: tests/fixtures/playbooks/test_start_with_action
+    return_step: analyze_start_with_action
+    next:
+      - step: analyze_start_with_action
+
+  - step: analyze_start_with_action
+    desc: "Analyze test_start_with_action result"
+    tool: workbook
+    name: analyze_test_result
+    data:
+      test_name: test_start_with_action
+      expected_status: completed
+      expected_min_steps: 2
+      expected_step_names: []
+      actual_execution_id: "{{ test_start_with_action.execution_id }}"
+      actual_status: "{{ test_start_with_action.status }}"
+      actual_events: "{{ test_start_with_action.events }}"
+    vars:
+      test_passed: "{{ result.data.test_passed }}"
+    sink:
+      tool: postgres
+      auth: "{{ workload.pg_auth }}"
+      table: noetl_test.regression_results
+      data:
+        test_run_id: "{{ workload.test_run_id }}"
+        playbook_name: test_start_with_action
+        playbook_path: tests/fixtures/playbooks/test_start_with_action
+        category: basic
+        execution_id: "{{ test_start_with_action.execution_id }}"
+        status: "{{ test_start_with_action.status }}"
+        step_count: "{{ result.data.actual_step_count }}"
+        validation_passed: "{{ result.data.validation_passed }}"
+        validation_errors: "{{ result.data.validations.errors | tojson }}"
+        expected_status: "{{ result.data.expected_status }}"
+        actual_events: "{{ test_start_with_action.events | tojson }}"
+        test_passed: "{{ result.data.test_passed }}"
+    next:
+      - step: test_vars_simple
+
+  - step: test_vars_simple
+    desc: "Test test_vars_simple playbook"
+    tool: playbook
+    path: tests/fixtures/playbooks/vars_test/test_vars_simple
+    return_step: analyze_vars_simple
+    next:
+      - step: analyze_vars_simple
+
+  - step: analyze_vars_simple
+    desc: "Analyze test_vars_simple result"
+    tool: workbook
+    name: analyze_test_result
+    data:
+      test_name: test_vars_simple
+      expected_status: completed
+      expected_min_steps: 3
+      expected_step_names: []
+      actual_execution_id: "{{ test_vars_simple.execution_id }}"
+      actual_status: "{{ test_vars_simple.status }}"
+      actual_events: "{{ test_vars_simple.events }}"
+    vars:
+      test_passed: "{{ result.data.test_passed }}"
+    sink:
+      tool: postgres
+      auth: "{{ workload.pg_auth }}"
+      table: noetl_test.regression_results
+      data:
+        test_run_id: "{{ workload.test_run_id }}"
+        playbook_name: test_vars_simple
+        playbook_path: tests/fixtures/playbooks/vars_test/test_vars_simple
+        category: basic
+        execution_id: "{{ test_vars_simple.execution_id }}"
+        status: "{{ test_vars_simple.status }}"
+        step_count: "{{ result.data.actual_step_count }}"
+        validation_passed: "{{ result.data.validation_passed }}"
+        validation_errors: "{{ result.data.validations.errors | tojson }}"
+        expected_status: "{{ result.data.expected_status }}"
+        actual_events: "{{ test_vars_simple.events | tojson }}"
+        test_passed: "{{ result.data.test_passed }}"
+    next:
+      - step: generate_test_summary
+
+  # === TEST SUMMARY ===
+  - step: generate_test_summary
+    desc: "Generate test run summary"
+    tool: postgres
+    auth: "{{ workload.pg_auth }}"
+    command: |
+      INSERT INTO noetl_test.regression_summary (
+        test_run_id,
+        total_tests,
+        passed_tests,
+        failed_tests,
+        skipped_tests,
+        success_rate,
+        categories_tested,
+        test_config
+      )
+      SELECT 
+        {{ workload.test_run_id }},
+        COUNT(*) as total_tests,
+        COUNT(*) FILTER (WHERE test_passed = true) as passed_tests,
+        COUNT(*) FILTER (WHERE test_passed = false) as failed_tests,
+        0 as skipped_tests,
+        ROUND(100.0 * COUNT(*) FILTER (WHERE test_passed = true) / COUNT(*), 2) as success_rate,
+        ARRAY_AGG(DISTINCT category) as categories_tested,
+        '{{ workload.test_config | tojson }}'::jsonb as test_config
+      FROM noetl_test.regression_results
+      WHERE test_run_id = {{ workload.test_run_id }};
+      
+      SELECT * FROM noetl_test.regression_summary WHERE test_run_id = {{ workload.test_run_id }};
+    vars:
+      summary_data: "{{ result[0] }}"
+    next:
+      - step: report_results
+
+  - step: report_results
+    desc: "Report test results"
+    tool: python
+    code: |
+      async def main():
+          summary = context.get('vars', {}).get('summary_data', {})
+          
+          total = summary.get('total_tests', 0)
+          passed = summary.get('passed_tests', 0)
+          failed = summary.get('failed_tests', 0)
+          success_rate = summary.get('success_rate', 0)
+          
+          print("\n" + "="*60)
+          print("REGRESSION TEST SUMMARY")
+          print("="*60)
+          print(f"Total Tests:    {total}")
+          print(f"Passed:         {passed} ({success_rate}%)")
+          print(f"Failed:         {failed}")
+          print(f"Test Run ID:    {context.get('execution_id')}")
+          print("="*60)
+          
+          if failed == 0:
+              print("✓ ALL TESTS PASSED")
+              status = "success"
+          else:
+              print("✗ SOME TESTS FAILED")
+              status = "partial_success"
+          
+          return {
+              "status": status,
+              "data": {
+                  "summary": summary,
+                  "all_passed": failed == 0
+              }
+          }
+    next:
+      - step: end
+
+  - step: end
+    desc: "Test suite completed"
+    tool: end
+    sink:
+      tool: event_log
+      args:
+        status: "{{ report_results.status }}"
+        message: "Regression test suite completed"
+        test_run_id: "{{ workload.test_run_id }}"
+        summary: "{{ vars.summary_data }}"

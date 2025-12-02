@@ -65,12 +65,12 @@ workflow:                 # Execution flow (required, must have 'start' step)
       - when: "{{ condition }}"
         then:
           - step: next_step
-        data:             # Data to pass to next steps
+        args:             # Args to pass to next steps
           key: "{{ value }}"
   - step: task_step
-    type: workbook        # Reference workbook task by name
-    name: task_name       # OR inline action type: python, http, postgres, etc.
-    data:                 # Data passed to action via Jinja2 templating
+    tool: workbook        # Reference workbook task by name
+    name: task_name       # OR inline action tool: python, http, postgres, etc.
+    args:                 # Args passed to action via Jinja2 templating
       input: "{{ workload.variable }}"
     next:
       - step: end
@@ -104,10 +104,10 @@ workflow:                 # Execution flow (required, must have 'start' step)
   ```
 - **Workflow Entry**: Must have a step named "start" as the workflow entry point
 - **Step Types**:
-  - `type: workbook` - References named task from workbook section by `name` attribute
-  - Direct action types: `python`, `http`, `postgres`, `duckdb`, `playbook`, `iterator`
+  - `tool: workbook` - References named task from workbook section by `name` attribute
+  - Direct action tools: `python`, `http`, `postgres`, `duckdb`, `playbook`, `iterator`
 - **Conditional Flow**: Steps use `next` with optional `when` conditions and `then` arrays for routing
-- **Iterator**: `type: iterator` loops over collections with `collection`, `element`, and `mode` (sequential/async) attributes
+- **Iterator**: `tool: iterator` loops over collections with `collection`, `element`, and `mode` (sequential/async) attributes
 - **HTTP Pagination**: `loop.pagination` enables automatic page continuation with `continue_while`, `next_page`, and `merge_strategy` attributes
   ```yaml
   - step: fetch_all_data
