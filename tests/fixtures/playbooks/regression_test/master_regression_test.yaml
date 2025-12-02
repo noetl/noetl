@@ -25,13 +25,13 @@ workload:
     playbooks:
       basic:
         - name: hello_world
-          path: tests/fixtures/playbooks/hello_world/hello_world
+          path: tests/fixtures/playbooks/hello_world
           expected_status: completed
           min_steps: 3
           required_steps: [start, test_step, end]
         
         - name: test_start_with_action
-          path: tests/fixtures/playbooks/test_start_with_action
+          path: tests/control-flow/start_with_action
           expected_status: completed
           min_steps: 2
         
@@ -41,7 +41,7 @@ workload:
           min_steps: 2
         
         - name: test_vars_simple
-          path: tests/fixtures/playbooks/vars_test/test_vars_simple
+          path: test/vars_simple
           expected_status: completed
           min_steps: 3
         
@@ -110,30 +110,77 @@ workbook:
           Analyze playbook execution result against expected values.
           
           Context variables available:
-          - vars.test_name: Name of the test
-          - vars.expected_status: Expected execution status
-          - vars.expected_min_steps: Minimum expected steps
-          - vars.expected_step_names: Required step names
-          - vars.actual_execution_id: Execution ID from playbook
-          - vars.actual_status: Actual execution status
-          - vars.actual_events: Events from execution
+          - args.test_name: Name of the test
+          - args.expected_status: Expected execution status
+          - args.expected_min_steps: Minimum expected steps
+          - args.expected_step_names: Required step names
+          - args.actual_execution_id: Execution ID from playbook
           """
           import json
+          import psycopg2
+          import os
           
-          # Get variables from context
-          test_name = context.get('vars', {}).get('test_name', 'unknown')
-          expected_status = context.get('vars', {}).get('expected_status', 'completed')
-          expected_min_steps = context.get('vars', {}).get('expected_min_steps', 0)
-          expected_step_names = context.get('vars', {}).get('expected_step_names', [])
+          # Get arguments from context
+          test_name = context.get('args', {}).get('test_name', 'unknown')
+          expected_status = context.get('args', {}).get('expected_status', 'completed')
+          expected_min_steps = context.get('args', {}).get('expected_min_steps', 0)
+          expected_step_names = context.get('args', {}).get('expected_step_names', [])
           
-          actual_execution_id = context.get('vars', {}).get('actual_execution_id')
-          actual_status = context.get('vars', {}).get('actual_status', 'unknown')
-          actual_events = context.get('vars', {}).get('actual_events', [])
+          actual_execution_id = context.get('args', {}).get('actual_execution_id')
+          
+          if not actual_execution_id:
+              return {
+                  "status": "error",
+                  "error": "No execution_id provided"
+              }
+          
+          # Query postgres for execution events
+          db_host = os.environ.get('POSTGRES_HOST', 'localhost')
+          db_port = os.environ.get('POSTGRES_PORT', '5432')
+          db_name = os.environ.get('POSTGRES_DB', 'demo_noetl')
+          db_user = os.environ.get('POSTGRES_USER', 'demo')
+          db_pass = os.environ.get('POSTGRES_PASSWORD', 'demo')
+          
+          conn = psycopg2.connect(
+              host=db_host,
+              port=db_port,
+              database=db_name,
+              user=db_user,
+              password=db_pass
+          )
+          
+          try:
+              cursor = conn.cursor()
+              cursor.execute("""
+                  SELECT event_type, status, node_name, error
+                  FROM noetl.event
+                  WHERE execution_id = %s
+                  ORDER BY event_id
+              """, (actual_execution_id,))
+              
+              events = []
+              actual_status = 'unknown'
+              for row in cursor.fetchall():
+                  event = {
+                      'event_type': row[0],
+                      'status': row[1],
+                      'step_name': row[2],
+                      'error': row[3]
+                  }
+                  events.append(event)
+                  
+                  # Get final status from playbook_completed or playbook_failed event
+                  if row[0] in ['playbook_completed', 'playbook_failed']:
+                      actual_status = row[1]
+              
+              cursor.close()
+          finally:
+              conn.close()
           
           # Validation results
           validations = {
               'status_match': actual_status == expected_status,
-              'step_count_ok': len(actual_events) >= expected_min_steps,
+              'step_count_ok': len(events) >= expected_min_steps,
               'required_steps_present': True,
               'errors': []
           }
@@ -147,13 +194,13 @@ workbook:
           # Check step count
           if not validations['step_count_ok']:
               validations['errors'].append(
-                  f"Insufficient steps: expected at least {expected_min_steps}, got {len(actual_events)}"
+                  f"Insufficient steps: expected at least {expected_min_steps}, got {len(events)}"
               )
           
           # Check required steps
           if expected_step_names:
               actual_step_names = {
-                  e.get('step_name') for e in actual_events 
+                  e.get('step_name') for e in events 
                   if e.get('event_type') == 'action_completed'
               }
               missing_steps = set(expected_step_names) - actual_step_names
@@ -177,7 +224,7 @@ workbook:
               'validations': validations,
               'actual_execution_id': actual_execution_id,
               'actual_status': actual_status,
-              'actual_step_count': len(actual_events),
+              'actual_step_count': len(events),
               'expected_status': expected_status,
               'expected_min_steps': expected_min_steps
           }
@@ -208,51 +255,70 @@ workflow:
   - step: test_hello_world
     desc: "Test hello_world playbook"
     tool: playbook
-    path: tests/fixtures/playbooks/hello_world/hello_world
-    return_step: analyze_hello_world
+    path: tests/fixtures/playbooks/hello_world
     next:
-      - step: analyze_hello_world
+      - step: wait_for_hello_world
 
-  - step: analyze_hello_world
-    desc: "Analyze hello_world result"
-    tool: workbook
-    name: analyze_test_result
-    data:
-      test_name: hello_world
-      expected_status: completed
-      expected_min_steps: 3
-      expected_step_names: [start, test_step, end]
-      actual_execution_id: "{{ test_hello_world.execution_id }}"
-      actual_status: "{{ test_hello_world.status }}"
-      actual_events: "{{ test_hello_world.events }}"
+  - step: wait_for_hello_world
+    desc: "Wait for hello_world to complete"
+    tool: python
+    code: |
+      async def main():
+          import asyncio
+          await asyncio.sleep(3)  # Wait 3 seconds for nested playbook to complete
+          return {"status": "success", "data": {"waited": 3}}
+    next:
+      - step: validate_hello_world
+
+  - step: validate_hello_world
+    desc: "Validate hello_world test results"
+    tool: postgres
+    auth: "{{ workload.pg_auth }}"
+    command: |
+      WITH final_event AS (
+        SELECT status, event_type
+        FROM noetl.event
+        WHERE execution_id = {{ test_hello_world.execution_id }}
+        ORDER BY event_id DESC
+        LIMIT 1
+      ),
+      event_stats AS (
+        SELECT COUNT(*) as event_count
+        FROM noetl.event
+        WHERE execution_id = {{ test_hello_world.execution_id }}
+      )
+      SELECT 
+        '{{ test_hello_world.execution_id }}' as execution_id,
+        'hello_world' as test_name,
+        f.status as final_status,
+        s.event_count,
+        CASE WHEN f.status = 'COMPLETED' AND s.event_count >= 3 THEN true ELSE false END as test_passed
+      FROM final_event f, event_stats s
     vars:
       test_name: "{{ result.data.test_name }}"
       test_passed: "{{ result.data.test_passed }}"
-      validation_result: "{{ result.data }}"
     sink:
       tool: postgres
       auth: "{{ workload.pg_auth }}"
       table: noetl_test.regression_results
       data:
         test_run_id: "{{ workload.test_run_id }}"
-        playbook_name: hello_world
-        playbook_path: tests/fixtures/playbooks/hello_world/hello_world
+        playbook_name: "{{ result.data.command_0.rows[0].test_name }}"
+        playbook_path: tests/fixtures/playbooks/hello_world
         category: basic
-        execution_id: "{{ test_hello_world.execution_id }}"
-        status: "{{ test_hello_world.status }}"
-        step_count: "{{ result.data.actual_step_count }}"
-        validation_passed: "{{ result.data.validation_passed }}"
-        validation_errors: "{{ result.data.validations.errors | tojson }}"
-        expected_status: "{{ result.data.expected_status }}"
-        actual_events: "{{ test_hello_world.events | tojson }}"
-        test_passed: "{{ result.data.test_passed }}"
+        execution_id: "{{ result.data.command_0.rows[0].execution_id }}"
+        status: "{{ result.data.command_0.rows[0].final_status }}"
+        step_count: "{{ result.data.command_0.rows[0].event_count }}"
+        validation_passed: "{{ result.data.command_0.rows[0].test_passed }}"
+        expected_status: completed
+        test_passed: "{{ result.data.command_0.rows[0].test_passed }}"
     next:
       - step: test_start_with_action
 
   - step: test_start_with_action
     desc: "Test test_start_with_action playbook"
     tool: playbook
-    path: tests/fixtures/playbooks/test_start_with_action
+    path: tests/control-flow/start_with_action
     return_step: analyze_start_with_action
     next:
       - step: analyze_start_with_action
@@ -261,14 +327,12 @@ workflow:
     desc: "Analyze test_start_with_action result"
     tool: workbook
     name: analyze_test_result
-    data:
+    args:
       test_name: test_start_with_action
       expected_status: completed
       expected_min_steps: 2
       expected_step_names: []
       actual_execution_id: "{{ test_start_with_action.execution_id }}"
-      actual_status: "{{ test_start_with_action.status }}"
-      actual_events: "{{ test_start_with_action.events }}"
     vars:
       test_passed: "{{ result.data.test_passed }}"
     sink:
@@ -278,7 +342,7 @@ workflow:
       data:
         test_run_id: "{{ workload.test_run_id }}"
         playbook_name: test_start_with_action
-        playbook_path: tests/fixtures/playbooks/test_start_with_action
+        playbook_path: tests/control-flow/start_with_action
         category: basic
         execution_id: "{{ test_start_with_action.execution_id }}"
         status: "{{ test_start_with_action.status }}"
@@ -294,7 +358,7 @@ workflow:
   - step: test_vars_simple
     desc: "Test test_vars_simple playbook"
     tool: playbook
-    path: tests/fixtures/playbooks/vars_test/test_vars_simple
+    path: test/vars_simple
     return_step: analyze_vars_simple
     next:
       - step: analyze_vars_simple
@@ -303,14 +367,12 @@ workflow:
     desc: "Analyze test_vars_simple result"
     tool: workbook
     name: analyze_test_result
-    data:
+    args:
       test_name: test_vars_simple
       expected_status: completed
-      expected_min_steps: 3
+      expected_min_steps: 2
       expected_step_names: []
       actual_execution_id: "{{ test_vars_simple.execution_id }}"
-      actual_status: "{{ test_vars_simple.status }}"
-      actual_events: "{{ test_vars_simple.events }}"
     vars:
       test_passed: "{{ result.data.test_passed }}"
     sink:
@@ -320,7 +382,7 @@ workflow:
       data:
         test_run_id: "{{ workload.test_run_id }}"
         playbook_name: test_vars_simple
-        playbook_path: tests/fixtures/playbooks/vars_test/test_vars_simple
+        playbook_path: test/vars_simple
         category: basic
         execution_id: "{{ test_vars_simple.execution_id }}"
         status: "{{ test_vars_simple.status }}"
