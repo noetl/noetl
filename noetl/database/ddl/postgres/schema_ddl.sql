@@ -28,26 +28,30 @@ CREATE TABLE IF NOT EXISTS noetl.workload (
     PRIMARY KEY (execution_id)
 );
 
--- Execution Variables
--- Stores runtime variables for playbook execution scope (step results, bearer tokens, etc.)
-CREATE TABLE IF NOT EXISTS noetl.execution_variable (
+-- Variables Cache
+-- Stores runtime variables for playbook execution scope with access tracking
+CREATE TABLE IF NOT EXISTS noetl.vars_cache (
     execution_id BIGINT NOT NULL,
-    variable_name TEXT NOT NULL,
-    variable_type TEXT NOT NULL CHECK (variable_type IN ('step_result', 'bearer_token', 'computed', 'user_defined')),
-    variable_value JSONB NOT NULL,
+    var_name TEXT NOT NULL,
+    var_type TEXT NOT NULL CHECK (var_type IN ('user_defined', 'step_result', 'computed', 'iterator_state')),
+    var_value JSONB NOT NULL,
     source_step TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (execution_id, variable_name)
+    accessed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    access_count INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (execution_id, var_name)
 );
 
-CREATE INDEX IF NOT EXISTS idx_execution_variable_type ON noetl.execution_variable (variable_type);
-CREATE INDEX IF NOT EXISTS idx_execution_variable_source ON noetl.execution_variable (source_step);
+CREATE INDEX IF NOT EXISTS idx_vars_cache_type ON noetl.vars_cache (var_type);
+CREATE INDEX IF NOT EXISTS idx_vars_cache_source ON noetl.vars_cache (source_step);
+CREATE INDEX IF NOT EXISTS idx_vars_cache_execution ON noetl.vars_cache (execution_id);
 
-COMMENT ON TABLE noetl.execution_variable IS 'Execution-scoped variables for playbook runtime (bearer tokens, step results, computed values)';
-COMMENT ON COLUMN noetl.execution_variable.variable_type IS 'step_result: result from a step, bearer_token: OAuth/JWT token, computed: derived value, user_defined: explicit variable';
-COMMENT ON COLUMN noetl.execution_variable.variable_value IS 'Variable value stored as JSONB (supports any type)';
-COMMENT ON COLUMN noetl.execution_variable.source_step IS 'Step name that produced this variable (for bearer_token and step_result types)';
+COMMENT ON TABLE noetl.vars_cache IS 'Execution-scoped variables for playbook runtime with cache tracking';
+COMMENT ON COLUMN noetl.vars_cache.var_type IS 'step_result: result from a step, user_defined: explicit variable, computed: derived value, iterator_state: iterator loop state';
+COMMENT ON COLUMN noetl.vars_cache.var_value IS 'Variable value stored as JSONB (supports any type)';
+COMMENT ON COLUMN noetl.vars_cache.source_step IS 'Step name that produced this variable';
+COMMENT ON COLUMN noetl.vars_cache.access_count IS 'Number of times this variable has been accessed';
+COMMENT ON COLUMN noetl.vars_cache.accessed_at IS 'Last time this variable was read';
 
 -- Event
 CREATE TABLE IF NOT EXISTS noetl.event (
