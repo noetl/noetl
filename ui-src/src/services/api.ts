@@ -247,6 +247,15 @@ class APIService {
     });
     return response.data.items || [];
   }
+
+  async createOrUpdateCredential(data: any): Promise<CredentialData> {
+    const response = await apiClient.post("/credentials", data);
+    return response.data;
+  }
+
+  async deleteCredential(identifier: string): Promise<void> {
+    await apiClient.delete(`/credentials/${identifier}`);
+  }
 }
 
 export const apiService = new APIService();
