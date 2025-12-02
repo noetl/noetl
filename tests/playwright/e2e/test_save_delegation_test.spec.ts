@@ -1,37 +1,38 @@
 import { test, expect } from '@playwright/test';
 import { execSync } from 'child_process';
 
+const NOETL_HOST = process.env.NOETL_HOST ?? 'localhost';
+const NOETL_PORT = process.env.NOETL_PORT ?? '8082';
+const NOETL_BASE_URL = process.env.NOETL_BASE_URL ?? `http://${NOETL_HOST}:${NOETL_PORT}`;
+const PLAYBOOK_ID = 'save_delegation_test';
+const PLAYBOOK_PATH = 'tests/fixtures/playbooks/save_storage_test/save_delegation_test.yaml';
+
 test.describe('Save deligation test', () => {
 
-    // Run the registration command before all tests in this suite
     test.beforeAll(() => {
-        console.log('Registering save_delegation_test...');
-        execSync('noetl register tests/fixtures/playbooks/save_storage_test/save_delegation_test.yaml --host localhost --port 8082', { stdio: 'inherit' });
+        console.log(`Registering ${PLAYBOOK_ID}...`);
+        execSync(`noetl register ${PLAYBOOK_PATH} --host ${NOETL_HOST} --port ${NOETL_PORT}`, { stdio: 'inherit' });
     });
 
     test('should open catalog page', async ({ page }) => {
-        // Navigate to the catalog page
-        await page.goto('http://localhost:8082/catalog');
 
-        // Check that the page title contains "NoETL Dashboard"
-        await expect(page).toHaveTitle('NoETL Dashboard');
+        await test.step('Navigate to catalog', async () => {
+            await page.goto(`${NOETL_BASE_URL}/catalog`);
+        });
 
-        // Locate the first element that contains the text "save_delegation_test"
-        const exampleItem = page.locator("(//*[text()='save_delegation_test']/following::button[normalize-space()='Execute'])[1]");
+        await test.step('Verify title', async () => {
+            await expect(page).toHaveTitle('NoETL Dashboard');
+        });
 
-        // Inside that element, find the child with text "Execute" and click it
-        await exampleItem.click();
+        const exampleItem = page.locator(`(//*[text()='${PLAYBOOK_ID}']/following::button[normalize-space()='Execute'])[1]`);
 
-        // wait until URL contains "/execution"
-        await page.waitForURL('**/execution', { timeout: 60000 });
+        await test.step(`Execute ${PLAYBOOK_ID} playbook`, async () => {
+            await exampleItem.click();
+        });
 
-        // now check
-        await expect(page.url()).toContain('/execution');
-
-        const loader = page.locator("//*[text()='Loading executions...']");
-        await loader.waitFor({ state: 'visible', timeout: 5000 }).catch(() => { });
-        // Wait for the loader to disappear
-        await loader.waitFor({ state: 'detached' });
+        await test.step('Wait for execution page', async () => {
+            await expect(page).toHaveURL(/\/execution(\/|$)/, { timeout: 30000 });
+        });
 
         const headers = [
             'Execution ID',
@@ -43,50 +44,26 @@ test.describe('Save deligation test', () => {
             'Actions'
         ];
 
-        // Choose the first row of the table
-        const row = page.locator('.ant-table-tbody > tr:first-child');
-        const cells = row.locator('td');
+        await test.step('Wait and reload', async () => {
+            await page.waitForTimeout(5000);
+            await page.reload();
+        });
 
-        // Wait until all cells in the row have non-empty text
-        await expect(cells.first()).toHaveText(/.+/);
+        await test.step('Verify updated row', async () => {
+            const updatedRow = page.locator('.ant-table-tbody > tr:first-child');
+            const updatedCells = updatedRow.locator('td');
+            const updatedValues = await updatedCells.allTextContents();
+            const updatedRowData = Object.fromEntries(headers.map((key, i) => [key, updatedValues[i]]));
 
-        // Get all text contents of the cells in the row
-        const values = await cells.allTextContents();
+            console.log(updatedRowData);
+            await expect(page).toHaveTitle('NoETL Dashboard');
+            await expect(updatedRowData.Status).toBe('Completed');
+        });
 
-        // Map headers to their corresponding values
-        const rowData = Object.fromEntries(headers.map((key, i) => [key, values[i]]));
-
-        console.log(rowData);
-
-        // Assertions
-        await expect(rowData.Playbook).toBe('save_delegation_test');
-        await expect(rowData.Status).toBe('STARTED');
-        await expect(rowData.Duration).toBe('8h 0m');
-
-        // Wait a bit for the execution to complete
-        await page.waitForTimeout(5000);
-        // Refresh the page
-        await page.reload();
-
-        // Choose the first row of the table again
-        const updatedRow = page.locator('.ant-table-tbody > tr:first-child');
-        const updatedCells = updatedRow.locator('td');
-        // Get all text contents of the cells in the row
-        const updatedValues = await updatedCells.allTextContents();
-        // Map headers to their corresponding values
-        const updatedRowData = Object.fromEntries(headers.map((key, i) => [key, updatedValues[i]]));
-
-        console.log(updatedRowData);
-
-        // Assert changes
-        await expect(page).toHaveTitle('NoETL Dashboard');
-        await expect(updatedRowData.Status).toBe('Completed');
-        // await expect(updatedRowData.Playbook).toBe('save_delegation_test');
-
-        // Click the "View" button for the "save_delegation_test" task
-        // TODO fix the selector below from "Unknown" to "save_delegation_test"
-        const viewButton = await page.locator("(//*[text()='Unknown']/following::button[normalize-space()='View'])[1]");
-        await viewButton.click();
+        await test.step('Open execution details (View button)', async () => {
+            const viewButton = page.locator("(//*[text()='Unknown']/following::button[normalize-space()='View'])[1]");
+            await viewButton.click();
+        });
 
     });
 

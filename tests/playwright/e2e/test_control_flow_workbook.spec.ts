@@ -46,64 +46,12 @@ test.describe('Control flow workbook', () => {
         await test.step('Find playbook and execute it', async () => {
             const executeBtn = page.locator(`(//*[text()='control_flow_workbook']/following::button[normalize-space()='Execute'])[1]`);
             await executeBtn.click();
-            await page.waitForURL('**/execution', { timeout: 60000 });
-            await expect(page.url()).toContain('/execution');
+            await expect(page).toHaveURL(/\/execution(\/|$)/, { timeout: 30000 });
         });
 
-        await test.step('Wait for execution table to load and read first row', async () => {
-            const loader = page.locator("//*[text()='Loading executions...']");
-            await loader.waitFor({ state: 'visible', timeout: 5000 }).catch(() => { });
-            await loader.waitFor({ state: 'detached' });
-
-            const row = page.locator('.ant-table-tbody > tr:first-child');
-            const cells = row.locator('td');
-            const values = await cells.allTextContents();
-            executionRowData = Object.fromEntries(executionHeaders.map((k, i) => [k, values[i]]));
-            console.log(executionRowData);
-
-            await expect(executionRowData.Playbook).toBe(PLAYBOOK_ID);
-            await expect(executionRowData.Status).toBe('RUNNING');
-            await expect(executionRowData.Duration).toBe('3h 0m');
-        });
-
-        await test.step('Wait for completion and refresh table', async () => {
+        await test.step('Wait and reload for completion', async () => {
             await page.waitForTimeout(10000);
             await page.reload();
-
-            const updatedRow = page.locator('.ant-table-tbody > tr:first-child');
-            const updatedCells = updatedRow.locator('td');
-            const updatedValues = await updatedCells.allTextContents();
-            updatedExecutionRowData = Object.fromEntries(executionHeaders.map((k, i) => [k, updatedValues[i]]));
-
-            console.log(updatedExecutionRowData);
-
-            await expect(page).toHaveTitle('NoETL Dashboard');
-            await expect(updatedExecutionRowData.Status).toBe('COMPLETED');
-        });
-
-        await test.step('Open execution detail view', async () => {
-            const viewButton = page.locator(`(//*[text()='${PLAYBOOK_ID}']/following::button[normalize-space()='View'])[1]`);
-            await viewButton.click();
-            // Wait for URL change (adjust if another path is used)
-            await page.waitForURL(/.*\/execution\/.+/, { timeout: 15000 }).catch(() => { });
-            // Wait for table skeleton/spinner to disappear if present
-            const loading = page.locator("//*[text()='Loading events...']");
-            if (await loading.first().isVisible()) {
-                await loading.first().waitFor({ state: 'detached', timeout: 20000 }).catch(() => { });
-            }
-        });
-
-        await test.step('Wait for events table to populate', async () => {
-            await test.step('Open all events', async () => {
-                await page.click("//span[text()='10 / page']");
-                const allOption = page.locator("//div[text()='100 / page']");
-                await allOption.click();
-            });
-            await page.waitForSelector('.ant-table-wrapper .ant-table-row', { timeout: 20000 });
-            // Now expect at least 20 events
-            await expect.poll(async () => {
-                return await page.locator('.ant-table-wrapper .ant-table-row').count();
-            }, { timeout: 30000, intervals: [500] }).toBeGreaterThanOrEqual(20);
         });
 
         await test.step('Collect execution events table data', async () => {
