@@ -2,8 +2,9 @@ import { memo, useState } from 'react';
 import { Handle, Position, useReactFlow, type NodeProps, type Node } from '@xyflow/react';
 import './PythonNode.less';
 import { Modal, Input, Button, Tooltip } from 'antd';
-import { EditOutlined, DeleteOutlined } from '@ant-design/icons';
+import { EditOutlined, DeleteOutlined, QuestionCircleOutlined } from '@ant-design/icons';
 import { CodeEditor } from '../../CodeEditor';
+import { NodeDocumentation } from '../NodeDocumentation';
 
 interface PythonData {
     name?: string;
@@ -18,6 +19,7 @@ interface PythonData {
 function PythonNodeInternal({ id, data = {} }: NodeProps<Node<PythonData>>) {
     const { updateNodeData } = useReactFlow();
     const [modalOpen, setModalOpen] = useState(false);
+    const [docsOpen, setDocsOpen] = useState(false);
     const [draft, setDraft] = useState({
         code: '',
         module: '',
@@ -98,6 +100,14 @@ function PythonNodeInternal({ id, data = {} }: NodeProps<Node<PythonData>>) {
                 title={data.name ? `Python Config: ${data.name}` : 'Python Config'}
                 width={640}
                 footer={[
+                    <Button
+                        key="docs"
+                        icon={<QuestionCircleOutlined />}
+                        onClick={() => setDocsOpen(true)}
+                        style={{ float: 'left' }}
+                    >
+                        Docs
+                    </Button>,
                     <Button key="cancel" onClick={() => setModalOpen(false)}>Cancel</Button>,
                     <Button key="save" type="primary" onClick={commit}>Save</Button>
                 ]}
@@ -132,6 +142,12 @@ function PythonNodeInternal({ id, data = {} }: NodeProps<Node<PythonData>>) {
                     </div>
                 </div>
             </Modal>
+
+            <NodeDocumentation
+                open={docsOpen}
+                onClose={() => setDocsOpen(false)}
+                nodeType="python"
+            />
         </div>
     );
 }

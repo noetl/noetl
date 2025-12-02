@@ -2,7 +2,8 @@ import { memo, useState } from 'react';
 import { Handle, Position, useReactFlow, type NodeProps, type Node } from '@xyflow/react';
 import './PlaybooksNode.less';
 import { Modal, Input, Button, Tooltip } from 'antd';
-import { EditOutlined, DeleteOutlined } from '@ant-design/icons';
+import { EditOutlined, DeleteOutlined, QuestionCircleOutlined } from '@ant-design/icons';
+import { NodeDocumentation } from '../NodeDocumentation';
 
 interface PlaybooksData {
     name?: string;
@@ -17,6 +18,7 @@ interface PlaybooksData {
 function PlaybooksNodeInternal({ id, data = {} }: NodeProps<Node<PlaybooksData>>) {
     const { updateNodeData } = useReactFlow();
     const [modalOpen, setModalOpen] = useState(false);
+    const [docsOpen, setDocsOpen] = useState(false);
     const [draft, setDraft] = useState({
         path: '',
         entry_step: '',
@@ -97,6 +99,14 @@ function PlaybooksNodeInternal({ id, data = {} }: NodeProps<Node<PlaybooksData>>
                 title={data.name ? `Playbook Config: ${data.name}` : 'Playbook Config'}
                 width={640}
                 footer={[
+                    <Button
+                        key="docs"
+                        icon={<QuestionCircleOutlined />}
+                        onClick={() => setDocsOpen(true)}
+                        style={{ float: 'left' }}
+                    >
+                        Docs
+                    </Button>,
                     <Button key="cancel" onClick={() => setModalOpen(false)}>Cancel</Button>,
                     <Button key="save" type="primary" onClick={commit}>Save</Button>
                 ]}
@@ -129,6 +139,12 @@ function PlaybooksNodeInternal({ id, data = {} }: NodeProps<Node<PlaybooksData>>
                     </div>
                 </div>
             </Modal>
+
+            <NodeDocumentation
+                open={docsOpen}
+                onClose={() => setDocsOpen(false)}
+                nodeType="playbooks"
+            />
         </div>
     );
 }

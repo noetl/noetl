@@ -2,8 +2,9 @@ import { memo, useState } from 'react';
 import { Handle, Position, useReactFlow, type NodeProps, type Node } from '@xyflow/react';
 import './PostgresNode.less';
 import { Modal, Input, Button, Tooltip } from 'antd';
-import { EditOutlined, DeleteOutlined } from '@ant-design/icons';
+import { EditOutlined, DeleteOutlined, QuestionCircleOutlined } from '@ant-design/icons';
 import { CodeEditor } from '../../CodeEditor';
+import { NodeDocumentation } from '../NodeDocumentation';
 
 interface PostgresData {
     name?: string;
@@ -18,6 +19,7 @@ interface PostgresData {
 function PostgresNodeInternal({ id, data = {} }: NodeProps<Node<PostgresData>>) {
     const { updateNodeData } = useReactFlow();
     const [modalOpen, setModalOpen] = useState(false);
+    const [docsOpen, setDocsOpen] = useState(false);
     const [draft, setDraft] = useState({
         query: '',
         auth: '',
@@ -133,6 +135,14 @@ function PostgresNodeInternal({ id, data = {} }: NodeProps<Node<PostgresData>>) 
                 title={data.name ? `Postgres Config: ${data.name}` : 'Postgres Config'}
                 width={640}
                 footer={[
+                    <Button
+                        key="docs"
+                        icon={<QuestionCircleOutlined />}
+                        onClick={() => setDocsOpen(true)}
+                        style={{ float: 'left' }}
+                    >
+                        Docs
+                    </Button>,
                     <Button key="cancel" onClick={() => setModalOpen(false)}>Cancel</Button>,
                     <Button key="save" type="primary" onClick={commit} disabled={!!paramsError}>Save</Button>
                 ]}
@@ -169,6 +179,12 @@ function PostgresNodeInternal({ id, data = {} }: NodeProps<Node<PostgresData>>) 
                     </div>
                 </div>
             </Modal>
+
+            <NodeDocumentation
+                open={docsOpen}
+                onClose={() => setDocsOpen(false)}
+                nodeType="postgres"
+            />
         </div>
     );
 }

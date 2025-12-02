@@ -2,8 +2,9 @@ import { memo, useState } from 'react';
 import { Handle, Position, useReactFlow, type NodeProps, type Node } from '@xyflow/react';
 import './DuckDbNode.less';
 import { Modal, Input, Button, Tooltip } from 'antd';
-import { EditOutlined, DeleteOutlined } from '@ant-design/icons';
+import { EditOutlined, DeleteOutlined, QuestionCircleOutlined } from '@ant-design/icons';
 import { CodeEditor } from '../../CodeEditor';
+import { NodeDocumentation } from '../NodeDocumentation';
 
 interface DuckDbData {
     name?: string;
@@ -17,6 +18,7 @@ interface DuckDbData {
 function DuckDbNodeInternal({ id, data = {} }: NodeProps<Node<DuckDbData>>) {
     const { updateNodeData } = useReactFlow();
     const [modalOpen, setModalOpen] = useState(false);
+    const [docsOpen, setDocsOpen] = useState(false);
     const [draft, setDraft] = useState({
         query: '',
         file: ''
@@ -94,6 +96,14 @@ function DuckDbNodeInternal({ id, data = {} }: NodeProps<Node<DuckDbData>>) {
                 title={data.name ? `DuckDB Config: ${data.name}` : 'DuckDB Config'}
                 width={640}
                 footer={[
+                    <Button
+                        key="docs"
+                        icon={<QuestionCircleOutlined />}
+                        onClick={() => setDocsOpen(true)}
+                        style={{ float: 'left' }}
+                    >
+                        Docs
+                    </Button>,
                     <Button key="cancel" onClick={() => setModalOpen(false)}>Cancel</Button>,
                     <Button key="save" type="primary" onClick={commit}>Save</Button>
                 ]}
@@ -119,6 +129,12 @@ function DuckDbNodeInternal({ id, data = {} }: NodeProps<Node<DuckDbData>>) {
                     </div>
                 </div>
             </Modal>
+
+            <NodeDocumentation
+                open={docsOpen}
+                onClose={() => setDocsOpen(false)}
+                nodeType="duckdb"
+            />
         </div>
     );
 }

@@ -2,8 +2,9 @@ import { memo, useState } from 'react';
 import { Handle, Position, useReactFlow, type NodeProps, type Node } from '@xyflow/react';
 import './HttpNode.less';
 import { Modal, Input, Select, Button, Tooltip } from 'antd';
-import { EditOutlined, DeleteOutlined } from '@ant-design/icons';
+import { EditOutlined, DeleteOutlined, QuestionCircleOutlined } from '@ant-design/icons';
 import { CodeEditor } from '../../CodeEditor';
+import { NodeDocumentation } from '../NodeDocumentation';
 
 interface HttpData {
     name?: string;
@@ -20,6 +21,7 @@ interface HttpData {
 function HttpNodeInternal({ id, data = {} }: NodeProps<Node<HttpData>>) {
     const { updateNodeData } = useReactFlow();
     const [modalOpen, setModalOpen] = useState(false);
+    const [docsOpen, setDocsOpen] = useState(false);
     const [draft, setDraft] = useState({
         method: 'GET',
         endpoint: '',
@@ -161,6 +163,14 @@ function HttpNodeInternal({ id, data = {} }: NodeProps<Node<HttpData>>) {
                 title={data.name ? `HTTP Config: ${data.name}` : 'HTTP Config'}
                 width={640}
                 footer={[
+                    <Button
+                        key="docs"
+                        icon={<QuestionCircleOutlined />}
+                        onClick={() => setDocsOpen(true)}
+                        style={{ float: 'left' }}
+                    >
+                        Docs
+                    </Button>,
                     <Button key="cancel" onClick={() => setModalOpen(false)}>Cancel</Button>,
                     <Button key="save" type="primary" onClick={commit} disabled={!!(headerError || paramsError || payloadError)}>Save</Button>
                 ]}
@@ -214,6 +224,12 @@ function HttpNodeInternal({ id, data = {} }: NodeProps<Node<HttpData>>) {
                     </div>
                 </div>
             </Modal>
+
+            <NodeDocumentation
+                open={docsOpen}
+                onClose={() => setDocsOpen(false)}
+                nodeType="http"
+            />
         </div>
     );
 }
