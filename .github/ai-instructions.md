@@ -244,6 +244,18 @@ See `tests/fixtures/playbooks/script_execution/` and `docs/script_attribute_desi
 - Database connection via standard `POSTGRES_*` variables
 - **Timezone**: `TZ` must match across all components (Postgres, server, worker) - default is `UTC`
 
+**Database Access (Development):**
+- **PostgreSQL Connection**:
+  - JDBC URL: `jdbc:postgresql://localhost:54321/demo_noetl`
+  - User: `demo` / Password: `demo` (application data)
+  - User: `noetl` / Password: `noetl` (NoETL metadata schema)
+  - Schema: `noetl` (for NoETL system tables: catalog, event, queue, etc.)
+- **NoETL API for Postgres Queries**:
+  - Endpoint: `http://localhost:30082/docs#/default/execute_postgres_api_postgres_execute_post`
+  - Use this REST API instead of running `psql` commands directly
+  - Supports executing SQL queries against configured Postgres credentials
+  - Returns structured JSON responses with query results
+
 **Deployment Modes:**
 - Local: Direct Python execution with file-based logs
 - Docker: Containerized with environment-based configuration
