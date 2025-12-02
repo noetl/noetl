@@ -256,6 +256,72 @@ See `tests/fixtures/playbooks/script_execution/` and `docs/script_attribute_desi
   - `docker/postgres/Dockerfile` - Container TZ
 - **Documentation**: See `docs/timezone_configuration.md` for complete guide
 
+## API Development Standards
+
+**Pydantic Models (REQUIRED):**
+- **Every API endpoint MUST use Pydantic models** for request and response schemas
+- **Never use** raw dictionaries, `dict[str, Any]`, or untyped responses
+- Create dedicated schema file (`schema.py`) in each API module
+- Use `response_model` parameter on all endpoint decorators
+- Include `Field()` with descriptions for all model attributes
+
+**API Module Structure:**
+```
+noetl/server/api/{module}/
+├── __init__.py          # Export router
+├── schema.py            # Pydantic models (REQUIRED)
+└── endpoint.py          # FastAPI routes
+```
+
+**Example Pattern (from vars API):**
+```python
+# schema.py
+from pydantic import BaseModel, Field
+from typing import Optional, Any
+from datetime import datetime
+
+class VariableMetadata(BaseModel):
+    """Variable with full metadata."""
+    value: Any = Field(..., description="Variable value (JSON-serializable)")
+    type: str = Field(..., description="Variable type: user_defined, step_result, computed, iterator_state")
+    source_step: Optional[str] = Field(None, description="Step that created/updated the variable")
+    created_at: datetime = Field(..., description="Creation timestamp")
+    accessed_at: datetime = Field(..., description="Last access timestamp")
+    access_count: int = Field(..., description="Number of times variable was read")
+
+class VariableListResponse(BaseModel):
+    """Response for GET /api/vars/{execution_id}."""
+    execution_id: int = Field(..., description="Execution identifier")
+    variables: dict[str, VariableMetadata] = Field(..., description="Variables with metadata")
+    count: int = Field(..., description="Total variable count")
+
+class SetVariablesRequest(BaseModel):
+    """Request body for POST /api/vars/{execution_id}."""
+    variables: dict[str, Any] = Field(..., description="Variables to set")
+    var_type: str = Field(default="user_defined", description="Variable type")
+    source_step: Optional[str] = Field(None, description="Optional source step")
+
+# endpoint.py
+@router.get("/{execution_id}", response_model=VariableListResponse)
+async def list_variables(
+    execution_id: int = Path(..., description="Execution ID")
+) -> VariableListResponse:
+    """Get all variables with metadata."""
+    # ... implementation
+    return VariableListResponse(
+        execution_id=execution_id,
+        variables=variables,
+        count=len(variables)
+    )
+```
+
+**Benefits:**
+- Automatic OpenAPI/Swagger documentation generation
+- Request/response validation at API boundaries
+- Type safety and IDE autocomplete
+- Clear contract definition for API consumers
+- Prevents runtime type errors
+
 ## Writing Style Guidelines
 
 **Prohibited Words and Phrases:**

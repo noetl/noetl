@@ -1,0 +1,80 @@
+apiVersion: noetl.io/v1
+kind: Playbook
+metadata:
+  name: test_vars_api
+  path: /vars_test/api_test
+  description: Test variable management API endpoints
+
+workload:
+  test_mode: api_validation
+  initial_value: 100
+
+workflow:
+  - step: start
+    desc: Start workflow
+    next:
+      - step: create_initial_vars
+
+  - step: create_initial_vars
+    desc: Create some variables via vars block
+    tool: python
+    code: |
+      def main():
+        return {
+          "user_id": 999,
+          "username": "api_tester",
+          "score": 85,
+          "metadata": {
+            "created": "2025-12-01",
+            "source": "test_playbook"
+          }
+        }
+    vars:
+      test_user_id: "{{ result.user_id }}"
+      test_username: "{{ result.username }}"
+      test_score: "{{ result.score }}"
+      test_metadata: "{{ result.metadata }}"
+    next:
+      - step: wait_for_api_calls
+
+  - step: wait_for_api_calls
+    desc: Pause to allow API endpoint testing
+    tool: python
+    code: |
+      import time
+      def main():
+        # Keep execution alive for API testing
+        # In real test, external scripts will call API endpoints
+        time.sleep(5)
+        return {"status": "ready_for_api_tests"}
+    next:
+      - step: verify_vars_accessible
+
+  - step: verify_vars_accessible
+    desc: Verify variables are accessible after API operations
+    tool: python
+    code: |
+      def main(user_id, username, score, execution_id):
+        # Verify extracted variables are accessible
+        assert user_id == 999, f"Expected user_id=999, got {user_id}"
+        assert username == "api_tester", f"Expected username=api_tester, got {username}"
+        assert score == 85, f"Expected score=85, got {score}"
+        
+        return {
+          "verification": "passed",
+          "vars_loaded": True,
+          "execution_id": execution_id,
+          "user_id": user_id,
+          "username": username,
+          "score": score
+        }
+    args:
+      user_id: "{{ vars.test_user_id }}"
+      username: "{{ vars.test_username }}"
+      score: "{{ vars.test_score }}"
+      execution_id: "{{ execution_id }}"
+    next:
+      - step: end
+
+  - step: end
+    desc: End workflow
