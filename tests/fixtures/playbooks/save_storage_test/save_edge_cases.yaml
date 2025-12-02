@@ -230,13 +230,14 @@ workflow:
           # Data that might cause issues but should be handled gracefully
           potentially_problematic = {
               "valid_field": "this should work",
-              "test_execution": input_data.get("execution_id", "unknown"),
+              "test_execution": input_data.get("execution_id", "{{ execution_id }}"),
               "recovery_test": True
           }
           
           return potentially_problematic
     args:
-      input_data: "{{ test_error_recovery }}"
+      input_data:
+        execution_id: "{{ execution_id }}"
     sink:
       tool: http
       endpoint: "https://httpbin.org/status/200"
@@ -273,12 +274,13 @@ workflow:
                   "http"
               ],
               "test_status": "completed",
-              "execution_id": input_data.get("execution_id", "unknown")
+              "execution_id": input_data.get("execution_id", "{{ execution_id }}")
           }
           
           return summary
     args:
-      input_data: "{{ test_error_recovery }}"
+      input_data:
+        execution_id: "{{ execution_id }}"
     sink:
       tool: python
       code: |
