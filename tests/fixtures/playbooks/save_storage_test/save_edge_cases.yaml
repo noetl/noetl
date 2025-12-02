@@ -226,17 +226,15 @@ workflow:
     desc: "Test save error handling and recovery"
     tool: python
     code: |
-      def main(execution_id):
+      def main():
           # Data that might cause issues but should be handled gracefully            
           potentially_problematic = {
               "valid_field": "this should work",
-              "test_execution": execution_id,
+              "test_execution": "completed",
               "recovery_test": True
           }
           
           return potentially_problematic
-    args:
-      execution_id: "{{ execution_id }}"
     sink:
       tool: http
       endpoint: "https://httpbin.org/status/200"
@@ -257,7 +255,7 @@ workflow:
     desc: "Summarize edge case testing results"
     tool: python
     code: |
-      def main(execution_id):              
+      def main():              
           summary = {
               "edge_case_tests_completed": [
                   "mixed_data_types",
@@ -272,13 +270,10 @@ workflow:
                   "duckdb",
                   "http"
               ],
-              "test_status": "completed",
-              "execution_id": execution_id
+              "test_status": "completed"
           }
           
           return summary
-    args:
-      execution_id: "{{ execution_id }}"
     sink:
       tool: python
       code: |
@@ -287,8 +282,7 @@ workflow:
             summary = {
                 "edge_case_tests": data.get("edge_case_tests_completed", []),
                 "storage_types": data.get("storage_types_tested", []),
-                "status": data.get("test_status"),
-                "execution_id": data.get("execution_id")
+                "status": data.get("test_status")
             }
             print(f"Test Summary: {json.dumps(summary, indent=2)}")
             return summary
