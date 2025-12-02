@@ -92,6 +92,7 @@ def handle_http_storage(
         http_result = execute_http_task(
             http_task, context, jinja_env, http_with, log_event_callback
         )
+        logger.critical(f"SINK.HTTP: http_result={http_result}")
     except Exception as e:
         logger.error(f"SINK: Failed delegating to http plugin: {e}")
         http_result = {"status": "error", "error": str(e)}
