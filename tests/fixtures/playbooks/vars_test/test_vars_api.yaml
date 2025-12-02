@@ -41,8 +41,8 @@ workflow:
     desc: Pause to allow API endpoint testing
     tool: python
     code: |
-      import time
       def main():
+        import time
         # Keep execution alive for API testing
         # In real test, external scripts will call API endpoints
         time.sleep(5)
