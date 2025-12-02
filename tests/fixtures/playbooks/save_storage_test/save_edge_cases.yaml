@@ -226,14 +226,8 @@ workflow:
     desc: "Test save error handling and recovery"
     tool: python
     code: |
-      def main(input_data):
-          # Data that might cause issues but should be handled gracefully
-          # Handle case where input_data might be a string or dict
-          if isinstance(input_data, dict):
-              execution_id = input_data.get("execution_id", "{{ execution_id }}")
-          else:
-              execution_id = "{{ execution_id }}"
-              
+      def main(execution_id):
+          # Data that might cause issues but should be handled gracefully            
           potentially_problematic = {
               "valid_field": "this should work",
               "test_execution": execution_id,
@@ -242,8 +236,7 @@ workflow:
           
           return potentially_problematic
     args:
-      input_data:
-        execution_id: "{{ execution_id }}"
+      execution_id: "{{ execution_id }}"
     sink:
       tool: http
       endpoint: "https://httpbin.org/status/200"
@@ -264,13 +257,7 @@ workflow:
     desc: "Summarize edge case testing results"
     tool: python
     code: |
-      def main(input_data):
-          # Handle case where input_data might be a string or dict
-          if isinstance(input_data, dict):
-              execution_id = input_data.get("execution_id", "{{ execution_id }}")
-          else:
-              execution_id = "{{ execution_id }}"
-              
+      def main(execution_id):              
           summary = {
               "edge_case_tests_completed": [
                   "mixed_data_types",
@@ -291,8 +278,7 @@ workflow:
           
           return summary
     args:
-      input_data:
-        execution_id: "{{ execution_id }}"
+      execution_id: "{{ execution_id }}"
     sink:
       tool: python
       code: |
