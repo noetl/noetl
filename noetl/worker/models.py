@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class ActionConfig(BaseModel):
@@ -33,6 +33,30 @@ class ActionConfig(BaseModel):
         if isinstance(value, dict):
             return value
         raise TypeError("'args' must be a dictionary of task arguments")
+    
+    @model_validator(mode="before")
+    @classmethod
+    def _extract_data_to_args(cls, values: Any) -> Any:
+        """Extract 'data' field from task config and merge into 'args' for Python plugin compatibility."""
+        if not isinstance(values, dict):
+            return values
+        
+        # If there's a 'data' field, merge it into 'args'
+        data = values.get("data")
+        if data and isinstance(data, dict):
+            args = values.get("args", {})
+            if not isinstance(args, dict):
+                args = {}
+            # Merge data into args (data takes precedence)
+            merged_args = {**args, **data}
+            values["args"] = merged_args
+            
+            # Log for debugging
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.critical(f"ActionConfig: Merged data into args. args_before={args}, data={list(data.keys())}, args_after={list(merged_args.keys())}")
+        
+        return values
 
 
 class QueueJob(BaseModel):

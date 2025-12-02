@@ -177,8 +177,17 @@ class JobExecutor:
                     job.context = work_context
                 task_cfg = rendered.get("task")
                 if isinstance(task_cfg, dict):
-                    logger.critical(f"WORKER.RENDER: task_cfg has sink: {'sink' in task_cfg}, sink value: {task_cfg.get('sink')}")
-                    return ActionConfig.model_validate(task_cfg)
+                    logger.critical(f"WORKER.RENDER: task_cfg keys: {list(task_cfg.keys())}")
+                    logger.critical(f"WORKER.RENDER: task_cfg has 'data': {'data' in task_cfg}")
+                    if 'data' in task_cfg:
+                        logger.critical(f"WORKER.RENDER: data value: {task_cfg['data']}")
+                    logger.critical(f"WORKER.RENDER: task_cfg has 'args': {'args' in task_cfg}")
+                    if 'args' in task_cfg:
+                        logger.critical(f"WORKER.RENDER: args value: {task_cfg['args']}")
+                    logger.critical(f"WORKER.RENDER: About to call ActionConfig.model_validate")
+                    result = ActionConfig.model_validate(task_cfg)
+                    logger.critical(f"WORKER.RENDER: After model_validate, result.args = {result.args}")
+                    return result
             return job.action
         except Exception as exc:
             logger.exception(f"Failed to render context on server: {exc}")
