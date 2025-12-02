@@ -118,14 +118,15 @@ workflow:                 # Execution flow (required, must have 'start' step)
     loop:
       pagination:
         type: response_based
-        continue_while: "{{ response.paging.hasMore }}"
+        continue_while: "{{ response.data.paging.hasMore }}"
         next_page:
           params:
-            page: "{{ (response.paging.page | int) + 1 }}"
+            page: "{{ (response.data.paging.page | int) + 1 }}"
         merge_strategy: append
-        merge_path: data
+        merge_path: data.data
         max_iterations: 100
   ```
+  **Note**: HTTP responses are wrapped as `{id, status, data: <api_response>}`, so use `response.data.*` for API fields and `merge_path: data.data` for nested data arrays.
 - **Save Blocks**: Any action can have a `save` attribute to persist results to storage backends
 - **Playbook Composition**: `type: playbook` allows calling sub-playbooks with `path` and `return_step` attributes
 

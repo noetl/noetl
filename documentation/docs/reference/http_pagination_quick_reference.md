@@ -1,5 +1,22 @@
 # HTTP Pagination - Quick Reference
 
+## Important: HTTP Response Wrapper
+
+**All HTTP responses are wrapped** by the executor as:
+```json
+{
+  "id": "task-id",
+  "status": "success",
+  "data": {
+    // Your actual API response here
+  }
+}
+```
+
+This means:
+- Use `response.data.*` to access API fields (not `response.*`)
+- Use `merge_path: data.fieldName` to extract data (accounts for wrapper)
+
 ## Minimal Example
 
 ```yaml
@@ -11,38 +28,41 @@
   loop:
     pagination:
       type: response_based
-      continue_while: "{{ response.hasMore }}"
+      continue_while: "{{ response.data.hasMore }}"
       next_page:
         params:
-          page: "{{ response.page + 1 }}"
+          page: "{{ response.data.page + 1 }}"
       merge_strategy: append
-      merge_path: data
+      merge_path: data.data
 ```
 
 ## Pagination Types
 
 ### Page Number
 ```yaml
-continue_while: "{{ response.paging.hasMore == true }}"
+continue_while: "{{ response.data.paging.hasMore == true }}"
 next_page:
   params:
-    page: "{{ (response.paging.page | int) + 1 }}"
+    page: "{{ (response.data.paging.page | int) + 1 }}"
+merge_path: data.data  # Extract from wrapper then API response
 ```
 
 ### Offset-Based
 ```yaml
-continue_while: "{{ response.has_more }}"
+continue_while: "{{ response.data.has_more }}"
 next_page:
   params:
-    offset: "{{ response.offset + response.limit }}"
+    offset: "{{ response.data.offset + response.data.limit }}"
+merge_path: data.users
 ```
 
 ### Cursor-Based
 ```yaml
-continue_while: "{{ response.next_cursor is not none }}"
+continue_while: "{{ response.data.next_cursor is not none }}"
 next_page:
   params:
-    cursor: "{{ response.next_cursor }}"
+    cursor: "{{ response.data.next_cursor }}"
+merge_path: data.events
 ```
 
 ## Merge Strategies
@@ -74,37 +94,43 @@ pagination:
 
 In `continue_while` and `next_page` expressions:
 
-- `{{ response }}` - Current HTTP response
+- `{{ response }}` - HTTP executor result: `{id, status, data: <api_response>}`
+- `{{ response.data }}` - Actual API response (use this for API fields)
 - `{{ iteration }}` - Current iteration (0-based)
 - `{{ accumulated }}` - Merged data so far
 - `{{ workload.* }}` - Global variables
 - `{{ vars.* }}` - Execution variables
 
+**Remember**: Always use `response.data.*` to access API response fields!
+
 ## Common Patterns
 
 ### GitHub API
 ```yaml
-continue_while: "{{ response | length == 100 }}"
+continue_while: "{{ response.data | length == 100 }}"
 next_page:
   params:
     page: "{{ iteration + 2 }}"
+merge_path: data  # GitHub API returns array directly
 ```
 
 ### REST API with hasMore
 ```yaml
-continue_while: "{{ response.meta.hasMore }}"
+continue_while: "{{ response.data.meta.hasMore }}"
 next_page:
   params:
-    page: "{{ response.meta.page + 1 }}"
+    page: "{{ response.data.meta.page + 1 }}"
+merge_path: data.items
 ```
 
 ### GraphQL Cursor
 ```yaml
-continue_while: "{{ response.data.pageInfo.hasNextPage }}"
+continue_while: "{{ response.data.data.pageInfo.hasNextPage }}"
 next_page:
   body:
     variables:
-      cursor: "{{ response.data.pageInfo.endCursor }}"
+      cursor: "{{ response.data.data.pageInfo.endCursor }}"
+merge_path: data.data.items
 ```
 
 ## Testing
@@ -130,5 +156,5 @@ python tests/fixtures/servers/paginated_api.py 5555
 - `tests/scripts/test_pagination.sh` - Test runner
 
 **Documentation:**
-- `docs/http_pagination_design.md` - Design document
+- `documentation/docs/features/pagination_design.md` - Design document
 - `documentation/docs/features/pagination.md` - User guide

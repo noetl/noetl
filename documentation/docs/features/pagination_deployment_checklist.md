@@ -17,10 +17,10 @@
 - [x] README documentation for tests
 
 ### Documentation
-- [x] Design document (`docs/http_pagination_design.md`)
+- [x] Design document (`documentation/docs/features/pagination_design.md`)
 - [x] User guide (`documentation/docs/features/pagination.md`)
 - [x] Quick reference (`documentation/docs/reference/http_pagination_quick_reference.md`)
-- [x] Implementation summary (`docs/http_pagination_implementation_summary.md`)
+- [x] Implementation summary (`documentation/docs/features/pagination_implementation_summary.md`)
 - [x] Copilot instructions updated
 
 ## Deployment Steps
@@ -253,7 +253,7 @@ None currently. Report issues to GitHub.
 
 - Documentation: `documentation/docs/features/pagination.md`
 - Examples: `tests/fixtures/playbooks/pagination/`
-- Design: `docs/http_pagination_design.md`
+- Design: `documentation/docs/features/pagination_design.md`
 - Slack: #noetl-support
 
 ## Success Criteria

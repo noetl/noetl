@@ -25,17 +25,21 @@ Adds `loop.pagination` block to HTTP actions, enabling automatic continuation ba
   loop:
     pagination:
       type: response_based
-      continue_while: "{{ response.paging.hasMore }}"
+      continue_while: "{{ response.data.paging.hasMore }}"
       next_page:
         params:
-          page: "{{ (response.paging.page | int) + 1 }}"
+          page: "{{ (response.data.paging.page | int) + 1 }}"
       merge_strategy: append
-      merge_path: data
+      merge_path: data.data
       max_iterations: 100
       retry:
         max_attempts: 3
         backoff: exponential
 ```
+
+**Note**: HTTP responses are wrapped as `{id, status, data: <api_response>}`, so:
+- Use `response.data.*` to access API fields (not `response.*`)
+- Use `merge_path: data.data` for nested data (first `data` is wrapper, second is API field)
 
 ### Configuration Attributes
 
@@ -204,7 +208,7 @@ Contains:
 - File locations
 
 ### Design Document
-**File:** `docs/http_pagination_design.md`
+**File:** `documentation/docs/features/pagination_design.md`
 
 Contains:
 - Use cases
