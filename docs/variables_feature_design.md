@@ -4,12 +4,22 @@
 
 Add dynamic variable assignment and access during playbook execution. Variables are execution-scoped, can be set/updated at any point in the workflow, and persist in the database for the duration of the execution.
 
+## Implementation Status
+
+✅ **COMPLETED** - Vars block feature is fully implemented and tested.
+
+**Key Features**:
+- Declarative variable extraction from step results via `vars` block
+- Template-based value extraction using `{{ result.field }}` syntax
+- Automatic storage in `vars_cache` table with `var_type='step_result'`
+- Access in subsequent steps via `{{ vars.var_name }}` templates
+- Direct step name references (no wrapper objects needed)
+
 ## Table Design: `vars_cache`
 
 **Naming Pattern**: Following `auth_cache` pattern for consistency
 
-**Current**: `execution_variable`  
-**Proposed**: `vars_cache`
+**Implementation**: Table renamed from `execution_variable` to `vars_cache`
 
 **Rationale**:
 - Follows `auth_cache` naming convention
@@ -47,57 +57,90 @@ CHECK (var_type IN ('user_defined', 'step_result', 'computed', 'iterator_state')
 - **execution_id**: Execution isolation (BIGINT for Snowflake ID compatibility)
 - **var_name**: Variable identifier (used in templates as `{{ vars.var_name }}`)
 - **var_type**: Variable classification:
-  - `user_defined`: Explicitly set via `vars` block or API
-  - `step_result`: Auto-stored from step results (optional feature)
-  - `computed`: Calculated from expressions
-  - `iterator_state`: Loop iteration metadata (index, current_item, etc.)
+  - `user_defined`: Explicitly set via API (future)
+  - `step_result`: ✅ **IMPLEMENTED** - Extracted from step results via `vars` block
+  - `computed`: Calculated from expressions (future)
+  - `iterator_state`: Loop iteration metadata (future)
 - **var_value**: JSON value (supports strings, numbers, objects, arrays, booleans, null)
 - **source_step**: Which step created/updated the variable (for debugging/audit)
 - **access_count**: Number of times variable was read (tracking usage)
 - **created_at**: First assignment timestamp
 - **accessed_at**: Last access timestamp (updated on read)
 
-## DSL Syntax
+### Implementation Notes
 
-### 1. Variable Assignment in Steps
+**Design Decisions**:
+
+1. **Template Syntax**: Use `{{ result.field }}` for current step, not `{{ STEP.step_name.field }}`
+   - Simpler and more intuitive
+   - Consistent with other template namespaces (`workload`, `vars`)
+   - Less typing, cleaner playbook YAML
+
+2. **var_type**: Store extracted variables as `step_result`
+   - Aligns with existing database constraint
+   - Clear semantic meaning: variable came from step execution result
+   - Distinguishes from future `user_defined` (API-set) variables
+
+3. **Processing Location**: Server-side in orchestrator after `step_completed` event
+   - Has access to full eval_ctx with all step results
+   - Centralized variable storage logic
+   - Worker remains stateless
+
+4. **eval_ctx Structure**: Step results stored by step name with `data` field normalized
+   - `eval_ctx["step_name"]` contains the step's return value directly
+   - `eval_ctx["result"]` points to current step for vars block processing
+   - Server extracts `.data` field if present in step result envelope
+
+## DSL Syntax (Implemented)
+
+### 1. Variable Extraction from Step Results
+
+The `vars` block at the step level extracts values from the current step's result **after execution completes**:
 
 ```yaml
 workflow:
-- step: init
-  desc: Initialize workflow variables
+- step: fetch_data
+  desc: Query database and extract variables
+  tool: postgres
+  query: "SELECT user_id, email, created_at FROM users WHERE status = 'active' LIMIT 1"
   vars:
-    counter: 0
-    status: "started"
-    config:
-      timeout: 30
-      retries: 3
+    # Use {{ result.field }} to access current step's output
+    user_id: "{{ result[0].user_id }}"
+    user_email: "{{ result[0].email }}"
+    signup_date: "{{ result[0].created_at }}"
   next:
-  - step: process
+  - step: process_user
 
-- step: process
-  desc: Process data and update counter
+- step: process_user
+  desc: Use extracted variables in subsequent step
   tool: python
   code: |
-    def main():
-      return {"processed": 42}
-  vars:
-    counter: "{{ vars.counter + 1 }}"
-    last_result: "{{ this.data }}"
+    def main(user_id, user_email):
+      return {"status": "processed", "user": user_id}
+  args:
+    # Access stored variables via {{ vars.var_name }}
+    user_id: "{{ vars.user_id }}"
+    user_email: "{{ vars.user_email }}"
   next:
-  - step: check_status
+  - step: notify
 ```
 
-### 2. Variable Access in Templates
+### 2. Template Access Patterns
 
+**Within vars block (current step result)**:
+- `{{ result.field }}` - Direct access to current step's output
+- `{{ result.users[0].name }}` - Array/nested access
+- `{{ result.metadata.count }}` - Object navigation
+
+**In subsequent steps (stored variables)**:
 ```yaml
-- step: check_status
-  desc: Use variables in conditions and data
+- step: use_variables
   tool: http
   method: POST
-  endpoint: "{{ vars.config.url }}"
+  endpoint: "{{ vars.api_url }}"
   payload:
-    count: "{{ vars.counter }}"
-    status: "{{ vars.status }}"
+    user_id: "{{ vars.user_id }}"
+    email: "{{ vars.user_email }}"
     last_result: "{{ vars.last_result }}"
   next:
   - when: "{{ vars.counter >= 10 }}"
@@ -133,7 +176,9 @@ workflow:
       last_item_id: "{{ item.id }}"
 ```
 
-### 4. Pre-Step and Post-Step Variables
+### 4. Pre-Step and Post-Step Variables (Future Enhancement - NOT IMPLEMENTED)
+
+**Note**: This is a proposed future enhancement. The currently implemented `vars` block only supports post-execution extraction (equivalent to the "after" block below).
 
 ```yaml
 - step: complex_operation
@@ -148,7 +193,7 @@ workflow:
     after:
       operation_end: "{{ now() }}"
       operation_duration: "{{ vars.operation_end - vars.operation_start }}"
-      operation_result: "{{ this.data }}"
+      operation_result: "{{ result }}"  # Note: Use 'result' not 'this.data'
       attempt_number: "{{ vars.attempt_number + 1 }}"
   
   tool: python

@@ -79,7 +79,29 @@ workflow:                 # Execution flow (required, must have 'start' step)
 ```
 
 **Key Concepts:**
-- **Jinja2 Templating**: All string values support Jinja2 with access to `workload`, `execution_id`, step results (e.g., `{{ step_name.data }}`), and iterator context
+- **Jinja2 Templating**: All string values support Jinja2 with access to:
+  - `{{ workload.field }}` - Global workflow variables
+  - `{{ vars.var_name }}` - Stored variables extracted via vars blocks
+  - `{{ step_name.field }}` - Previous step results (server normalizes by extracting `.data` if present)
+  - `{{ result.field }}` - Current step result (used in vars block for extraction)
+  - `{{ execution_id }}` - Current execution identifier
+- **Variable Extraction**: Use `vars:` block at step level to declaratively extract values from step results:
+  ```yaml
+  - step: fetch_data
+    tool: postgres
+    query: "SELECT user_id, email FROM users LIMIT 1"
+    vars:
+      user_id: "{{ result[0].user_id }}"  # Extract from current step result
+      email: "{{ result[0].email }}"
+    next:
+    - step: process
+  
+  - step: process
+    tool: python
+    args:
+      user_id: "{{ vars.user_id }}"  # Access extracted variable
+      email: "{{ vars.email }}"
+  ```
 - **Workflow Entry**: Must have a step named "start" as the workflow entry point
 - **Step Types**:
   - `type: workbook` - References named task from workbook section by `name` attribute

@@ -749,6 +749,94 @@ async def _dispatch_first_step(execution_id: str) -> None:
     pass
 
 
+async def _process_step_vars(
+    execution_id: int,
+    step_name: str,
+    step_def: Dict[str, Any],
+    eval_ctx: Dict[str, Any]
+) -> None:
+    """
+    Process vars block from step definition after step completes.
+    
+    If step has a 'vars' block, render the templates and store in vars_cache.
+    
+    Example step definition:
+        - step: fetch_data
+          tool: postgres
+          query: "SELECT user_id, email FROM users LIMIT 1"
+          vars:
+            user_id: "{{ STEP.fetch_data.data[0].user_id }}"
+            email: "{{ STEP.fetch_data.data[0].email }}"
+    
+    Args:
+        execution_id: Execution ID
+        step_name: Name of the step that completed
+        step_def: Step definition dict from playbook
+        eval_ctx: Evaluation context with step results
+    """
+    vars_block = step_def.get("vars")
+    if not vars_block or not isinstance(vars_block, dict):
+        logger.debug(f"No vars block found for step '{step_name}'")
+        return
+    
+    logger.info(f"Processing vars block for step '{step_name}': {list(vars_block.keys())}")
+    
+    try:
+        # Render vars templates using Jinja2
+        from noetl.core.dsl.render import render_template
+        from jinja2 import BaseLoader, Environment
+        
+        # eval_ctx contains:
+        # - 'result': current step's result (normalized, 'data' field extracted if present)
+        # - step names: previous steps' results
+        # Templates can use: {{ result.field }} for current step or {{ other_step.field }} for previous steps
+        
+        env = Environment(loader=BaseLoader())
+        rendered_vars = {}
+        
+        for var_name, var_template in vars_block.items():
+            try:
+                # Render the template
+                if isinstance(var_template, str):
+                    template = env.from_string(var_template)
+                    rendered_value = template.render(eval_ctx)
+                    # Try to parse as JSON if it looks like JSON
+                    if rendered_value.strip().startswith(("{", "[")):
+                        try:
+                            import json
+                            rendered_value = json.loads(rendered_value)
+                        except:
+                            pass  # Keep as string
+                else:
+                    # Non-string values pass through
+                    rendered_value = var_template
+                
+                rendered_vars[var_name] = rendered_value
+                logger.debug(f"Rendered var '{var_name}' = {rendered_value}")
+            except Exception as e:
+                logger.warning(f"Failed to render var '{var_name}': {e}")
+                continue
+        
+        if not rendered_vars:
+            logger.debug(f"No vars successfully rendered for step '{step_name}'")
+            return
+        
+        # Store vars in vars_cache using worker's VarsCache class
+        from noetl.worker.vars_cache import VarsCache
+        
+        count = await VarsCache.set_multiple(
+            variables=rendered_vars,
+            execution_id=execution_id,
+            var_type="step_result",
+            source_step=step_name
+        )
+        
+        logger.info(f"Stored {count} variables from step '{step_name}' vars block")
+        
+    except Exception as e:
+        logger.exception(f"Error processing vars block for step '{step_name}': {e}")
+
+
 async def _process_transitions(execution_id: int) -> None:
     """
     Analyze completed steps and publish next actionable tasks to queue.
@@ -903,6 +991,9 @@ async def _process_transitions(execution_id: int) -> None:
                     logger.exception(
                         f"Error emitting step_completed for step '{step_name}'"
                     )
+
+                # Process vars block if present in step definition
+                await _process_step_vars(execution_id, step_name, step_def, eval_ctx)
 
                 # Get transitions for this step
                 step_transitions = transitions_by_step.get(step_name, [])

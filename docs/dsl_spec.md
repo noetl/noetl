@@ -60,12 +60,63 @@ Each step has:
 - step: Unique step name
 - type: One of `start|end|workbook|python|http|duckdb|postgres|secrets|playbooks|loop`
 - next: The next step name (string or list of names). Not allowed for `end`. Required for `start`.
+- vars: (object, optional): Variable extraction block - extracts values from step result after execution
 - Inputs/Outputs: Vary by type as defined below.
 
 General execution:
 - Steps execute in order by following `next`.
 - A step may optionally publish outputs to the playbook context under a variable name (see `as:` below).
+- A step may extract variables from its result using the `vars` block (see Variable Extraction below).
 - If a step has no `next` and is not `end`, the branch terminates implicitly.
+
+### Variable Extraction with `vars` Block
+
+The `vars` block allows declarative extraction of values from a step's result **after execution completes**. Extracted variables are stored and accessible in subsequent steps via `{{ vars.var_name }}` template syntax.
+
+**Syntax**:
+```yaml
+- step: step_name
+  tool: <action_type>
+  # ... tool-specific configuration ...
+  vars:
+    var_name: "{{ result.field }}"
+    another_var: "{{ result.nested.value }}"
+```
+
+**Template Namespace**:
+- `{{ result.field }}` - Access current step's output (use within vars block)
+- `{{ vars.var_name }}` - Access stored variables (use in subsequent steps)
+- `{{ step_name.field }}` - Access previous step's result directly
+- `{{ workload.field }}` - Access global workflow variables
+
+**Example**:
+```yaml
+- step: fetch_users
+  tool: postgres
+  query: "SELECT user_id, email, created_at FROM users WHERE active = true LIMIT 5"
+  vars:
+    first_user_id: "{{ result[0].user_id }}"
+    first_email: "{{ result[0].email }}"
+    user_count: "{{ result | length }}"
+  next:
+  - step: send_notification
+
+- step: send_notification
+  tool: http
+  method: POST
+  endpoint: "https://api.example.com/notify"
+  payload:
+    user_id: "{{ vars.first_user_id }}"
+    email: "{{ vars.first_email }}"
+    total_users: "{{ vars.user_count }}"
+```
+
+**Processing**:
+1. Step executes and produces result
+2. Server emits `step_completed` event
+3. `vars` block templates are rendered using step result
+4. Variables stored in `vars_cache` table with `var_type='step_result'`
+5. Subsequent steps access via `{{ vars.var_name }}`
 
 ### start
 Entry point that routes to the first executable step.
@@ -319,12 +370,27 @@ Examples:
 
 ## Template Context and Result References
 
+### Global Template Namespace
+
+NoETL uses Jinja2 templating throughout playbooks. The following namespaces are available in template expressions:
+
+**Core Namespaces**:
+- `{{ workload.field }}` - Global workflow variables defined in `workload:` section
+- `{{ vars.var_name }}` - Stored variables extracted via `vars` blocks in previous steps
+- `{{ step_name.field }}` - Results from completed steps (direct access)
+- `{{ execution_id }}` - Current execution identifier
+
+**Special Context**:
+- `{{ result.field }}` - Current step's result (available in `vars` block for value extraction)
+
 ### Step Result References in Workflow
 
 During workflow execution, completed step results are available in subsequent steps via Jinja2 templates:
 - `{{ step_name }}` or `{{ step_name.result }}` - Full result object (envelope with `status`, `data`, `error`, `meta`)
 - `{{ step_name.data }}` - Direct access to the data payload when step returns envelope structure
-- `{{ step_name.data.field }}` - Access specific fields within the data payload
+- `{{ step_name.field }}` - Simplified access to fields (server normalizes by extracting `.data` when present)
+
+**Recommended Pattern**: Use `{{ step_name.field }}` for direct access - the server automatically normalizes results.
 
 Example:
 ```yaml
@@ -332,7 +398,11 @@ Example:
   type: python
   code: |
     def main():
-      return {"status": "success", "data": {"count": 42, "name": "test"}}
+      return {"count": 42, "name": "test"}
+  vars:
+    # Extract variables using result namespace
+    item_count: "{{ result.count }}"
+    item_name: "{{ result.name }}"
   next: process
 
 - step: process
@@ -341,8 +411,11 @@ Example:
     def main(count, name):
       print(f"Processing {name} with count {count}")
   args:
-    count: "{{ fetch_data.data.count }}"
-    name: "{{ fetch_data.data.name }}"
+    # Access extracted variables
+    count: "{{ vars.item_count }}"
+    name: "{{ vars.item_name }}"
+    # Or access previous step directly
+    direct_count: "{{ fetch_data.count }}"
 ```
 
 ### Sink Template Context (Result Unwrapping)
