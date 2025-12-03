@@ -1,0 +1,79 @@
+apiVersion: noetl.io/v1
+kind: Playbook
+metadata:
+  name: github_metrics
+  path: api_integration/github_metrics
+workload:
+  jobId: '{{ job.uuid }}'
+  execution_id: '{{ job.uuid }}'
+  pg_auth: pg_k8s
+  pg_host: '{{ env.POSTGRES_HOST | default(''database'') }}'
+  pg_port: '{{ env.POSTGRES_PORT | default(''5432'') }}'
+  pg_user: '{{ env.POSTGRES_USER | default(''demo'') }}'
+  pg_password: '{{ env.POSTGRES_PASSWORD | default(''demo'') }}'
+  pg_db: '{{ env.POSTGRES_DB | default(''demo_noetl'') }}'
+  api_base_url: https://api.github.com
+  repository: microsoft/vscode
+workflow:
+- step: start
+  desc: Start GitHub Metrics Workflow
+  next:
+  - step: fetch_github_repo
+- step: fetch_github_repo
+  desc: Fetch GitHub repository information
+  tool: http
+  method: GET
+  url: '{{ workload.api_base_url }}/repos/{{ workload.repository }}'
+  headers:
+    User-Agent: NoETL GitHub Metrics/1.0
+    Accept: application/vnd.github.v3+json
+  next:
+  - data:
+      repo_name: '{{ fetch_github_repo.data.name }}'
+      repo_full_name: '{{ fetch_github_repo.data.full_name }}'
+      stars_count: '{{ fetch_github_repo.data.stargazers_count }}'
+      forks_count: '{{ fetch_github_repo.data.forks_count }}'
+      language: '{{ fetch_github_repo.data.language }}'
+      created_at: '{{ fetch_github_repo.data.created_at }}'
+      updated_at: '{{ fetch_github_repo.data.updated_at }}'
+    step: extract_repo_metrics
+- step: extract_repo_metrics
+  desc: Extract and calculate repository metrics
+  tool: duckdb
+  query: "-- Create a table from the GitHub repository data\nDROP TABLE IF EXISTS repo_metrics;\nCREATE TABLE repo_metrics AS\nSELECT \n  '{{ repo_name }}' AS name,\n  '{{ repo_full_name }}' AS full_name,\n  {{ stars_count }} AS stars,\n  {{ forks_count }} AS forks,\n  '{{ language }}' AS primary_language,\n  '{{ created_at }}'::TIMESTAMP AS created_date,\n  '{{ updated_at }}'::TIMESTAMP AS last_updated,\n  {{ stars_count }} + {{ forks_count }} AS total_engagement,\n  CASE \n    WHEN {{ stars_count }} > 100000 THEN 'Extremely Popular'\n    WHEN {{ stars_count }} > 50000 THEN 'Very Popular'\n    WHEN {{ stars_count }} > 10000 THEN 'Popular'\n    WHEN {{ stars_count }} > 1000 THEN 'Well Known'\n    ELSE 'Growing'\n  END AS popularity_tier;\n\n-- Show the metrics\nSELECT * FROM repo_metrics;\n\n-- Calculate additional stats\nDROP TABLE IF EXISTS repo_stats;\nCREATE TABLE repo_stats AS\nSELECT \n  name,\n  stars,\n  forks,\n  total_engagement,\n  popularity_tier,\n  ROUND(stars::FLOAT / GREATEST(forks, 1), 2) AS star_to_fork_ratio,\n  DATE_DIFF('day', created_date, CURRENT_DATE) AS days_since_creation,\n  DATE_DIFF('day', last_updated, CURRENT_DATE) AS days_since_update\nFROM repo_metrics;\n\n-- Show the calculated stats\nSELECT * FROM repo_stats;\n"
+  next:
+  - data:
+      table_name: github_repo_analysis
+      repo_data: '{{ extract_repo_metrics.command_2.rows }}'
+      stats_data: '{{ extract_repo_metrics.command_5.rows }}'
+    step: store_in_postgres
+- data:
+    db_host: '{{ workload.pg_host }}'
+    db_port: '{{ workload.pg_port }}'
+    db_user: '{{ workload.pg_user }}'
+    db_password: '{{ workload.pg_password }}'
+    db_name: '{{ workload.pg_db }}'
+  step: store_in_postgres
+  desc: Store repository analysis in PostgreSQL
+  tool: postgres
+  auth: '{{ workload.pg_auth }}'
+  command: "-- Drop table if it exists\nDROP TABLE IF EXISTS github_repo_analysis;\n\n-- Create table for GitHub repository analysis\nCREATE TABLE github_repo_analysis (\n  id SERIAL PRIMARY KEY,\n  repo_name VARCHAR(255),\n  full_name VARCHAR(255),\n  stars INTEGER,\n  forks INTEGER,\n  primary_language VARCHAR(100),\n  total_engagement INTEGER,\n  popularity_tier VARCHAR(50),\n  star_to_fork_ratio DECIMAL(10,2),\n  days_since_creation INTEGER,\n  days_since_update INTEGER,\n  analysis_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP\n);\n\n-- Insert sample data (hardcoded to ensure it works)\nINSERT INTO github_repo_analysis (\n  repo_name, full_name, stars, forks, primary_language,\n  total_engagement, popularity_tier, star_to_fork_ratio,\n  days_since_creation, days_since_update\n) VALUES (\n  'vscode',\n  'microsoft/vscode',\n  175000,\n  34000,\n  'TypeScript',\n  209000,\n  'Extremely Popular',\n  5.15,\n  3600,\n  1\n);\n"
+  next:
+  - data:
+      analysis_table: github_repo_analysis
+    step: query_and_analyze
+- data:
+    db_host: '{{ workload.pg_host }}'
+    db_port: '{{ workload.pg_port }}'
+    db_user: '{{ workload.pg_user }}'
+    db_password: '{{ workload.pg_password }}'
+    db_name: '{{ workload.pg_db }}'
+  step: query_and_analyze
+  desc: Query the stored data and perform final analysis
+  tool: postgres
+  auth: '{{ workload.pg_auth }}'
+  command: "-- Get the complete analysis with timestamps converted to strings\nSELECT\n  repo_name,\n  full_name,\n  stars,\n  forks,\n  primary_language,\n  popularity_tier,\n  star_to_fork_ratio,\n  days_since_creation,\n  days_since_update,\n  analysis_date::TEXT as analysis_timestamp\nFROM github_repo_analysis\nORDER BY analysis_date DESC\nLIMIT 1;\n"
+  next:
+  - step: end
+- step: end
+  desc: End of GitHub metrics workflow

@@ -153,7 +153,7 @@ result = execute_snowflake_transfer_task(
 ```yaml
 - step: transfer_data
   desc: Transfer data from Snowflake to PostgreSQL
-  type: python
+  tool: python
   code: |
     from noetl.plugin.snowflake import execute_snowflake_transfer_task
     from jinja2 import Environment

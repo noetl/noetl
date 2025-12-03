@@ -101,6 +101,7 @@ def execute_sink_task(
         rendered_data = None
         if data_spec is not None:
             rendered_data = render_data_mapping(jinja_env, data_spec, context)
+            logger.critical(f"SINK.EXECUTOR: Rendered data_spec -> rendered_data={rendered_data}")
         
         # Prefer canonical data mapping; keep params for legacy only
         rendered_params = (render_data_mapping(jinja_env, params, context) 
@@ -162,11 +163,12 @@ def execute_sink_task(
             )
         
         elif kind == 'http':
-            return handle_http_storage(
+            import asyncio
+            return asyncio.run(handle_http_storage(
                 tool_config, rendered_data, rendered_params,
                 auth_config, credential_ref, spec,
                 task_with, context, jinja_env, log_event_callback
-            )
+            ))
         
         else:
             raise ValueError(f"Unsupported sink tool type: {kind}")

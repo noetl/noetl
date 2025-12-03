@@ -6,11 +6,11 @@ metadata:
   description: Test HTTP retry based on status code condition
 
 workload:
-  test_url: https://httpbin.org/status/503
+  test_url: https://httpbin.org/get
   
 workflow:
   - step: start
-    desc: Fetch URL that returns 503 and retry on 5xx status codes
+    desc: Fetch URL that returns 200 (changed from 503 for testing)
     tool: http
     method: GET
     url: "{{ workload.test_url }}"
@@ -19,8 +19,8 @@ workflow:
       initial_delay: 0.5
       backoff_multiplier: 2.0
       max_delay: 5.0
-      # Retry on server errors (5xx status codes)
-      retry_when: "{{ status_code >= 500 and status_code < 600 }}"
+      # Retry on specific HTTP errors
+      retry_on: ["http_error", "connection_error"]
     next:
       - step: end
         

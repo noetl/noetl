@@ -55,26 +55,26 @@ Use `next` to move between steps. Each entry in `next` can be a direct transitio
 
 ### Passing Data Forward
 
-Attach a `data` object to either the step itself (inputs to the action) or to the `next` target (payload override for the downstream step).
+Use `args` to pass data to actions. Attach it to either the step itself (inputs to the action) or to the `next` target (payload override for the downstream step).
 
 ```yaml
 - step: aggregate_alerts
-  type: workbook
+  tool: workbook
   name: consolidate_alerts
   next:
-    - data:
+    - args:
         alerts: "{{ city_loop.results }}"
       step: persist_alerts
 ```
 
 ## Workbook
 
-`workbook` hosts reusable actions referenced from steps. Every entry requires `name` and `type` and may include type-specific settings (`code`, `endpoint`, `command`, etc.). Workbook tasks can use the same action types as steps except `workbook`.
+`workbook` hosts reusable actions referenced from steps. Every entry requires `name` and `tool` and may include tool-specific settings (`code`, `endpoint`, `command`, etc.). Workbook tasks can use the same action tools as steps except `workbook`.
 
 ```yaml
 workbook:
   - name: fetch_weather
-    type: http
+    tool: http
     method: GET
     endpoint: "{{ workload.base_url }}/forecast"
     params:
@@ -86,8 +86,8 @@ workbook:
 
 - **start** – Entry router. Defines only `next` transitions.
 - **end** – Terminal aggregator. Optionally collates results or triggers `save` logic.
-- **workbook** – Invokes a named workbook action (requires `name`).
-- **python** – Runs inline Python via `def main(...)` using variables from `data`.
+- **workbook** – Invokes a named workbook action (requires `name` and `tool: workbook`).
+- **python** – Runs inline Python via `def main(...)` using variables from `args`.
 - **http** – Calls an HTTP endpoint (method, endpoint, headers, payload).
 - **duckdb / postgres** – Execute SQL or scripts in the respective engines.
 - **secrets** – Resolve secrets into the workflow context.
@@ -98,8 +98,8 @@ workbook:
 
 ```yaml
 - step: score_user
-  type: python
-  data:
+  tool: python
+  args:
     payload: "{{ workload.user }}"
   code: |
     def main(payload):
@@ -112,7 +112,7 @@ workbook:
 
 ```yaml
 - step: aggregate_metrics
-  type: duckdb
+  tool: duckdb
   command: |
     INSTALL postgres; LOAD postgres;
     ATTACH '{{ workload.pg_conn }}' AS pgdb (TYPE POSTGRES);
@@ -129,15 +129,15 @@ workbook:
 
 ```yaml
 - step: process_users
-  type: iterator
+  tool: iterator
   collection: "{{ workload.users }}"
   element: user
   mode: sequential
   task:
     task: process_user
-    type: playbook
+    tool: playbook
     path: tests/fixtures/playbooks/playbook_composition/user_profile_scorer.yaml
-    data:
+    args:
       user_data: "{{ user }}"
 ```
 

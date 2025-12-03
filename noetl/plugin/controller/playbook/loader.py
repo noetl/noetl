@@ -51,7 +51,6 @@ def load_playbook_from_filesystem(playbook_path: str) -> str:
     
     # Check common playbook file locations
     possible_paths = [
-        f"./examples/{playbook_path.replace('examples/', '')}.yaml",
         f"./{playbook_path}.yaml",
         f"{playbook_path}.yaml",
         playbook_path

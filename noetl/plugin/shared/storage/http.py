@@ -4,6 +4,7 @@ HTTP storage delegation for save operations.
 Handles delegating to http plugin for HTTP POST/PUT operations.
 """
 
+import asyncio
 from typing import Any, Callable, Dict, Optional
 
 from jinja2 import Environment
@@ -13,7 +14,7 @@ from noetl.core.logger import setup_logger
 logger = setup_logger(__name__, include_location=True)
 
 
-def handle_http_storage(
+async def handle_http_storage(
     storage_config: Dict[str, Any],
     rendered_data: Dict[str, Any],
     rendered_params: Dict[str, Any],
@@ -89,9 +90,10 @@ def handle_http_storage(
     try:
         from noetl.plugin.tools.http import execute_http_task
 
-        http_result = execute_http_task(
+        http_result = await execute_http_task(
             http_task, context, jinja_env, http_with, log_event_callback
         )
+        logger.critical(f"SINK.HTTP: http_result={http_result}")
     except Exception as e:
         logger.error(f"SINK: Failed delegating to http plugin: {e}")
         http_result = {"status": "error", "error": str(e)}

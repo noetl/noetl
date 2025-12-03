@@ -21,11 +21,13 @@ NoETL is a workflow automation framework for data processing and MLOps orchestra
 
 **Setup & Testing:**
 ```bash
-task bring-all                    # Complete K8s dev environment (build + deploy all components)
-task deploy-postgres              # Deploy PostgreSQL to kind cluster
-task deploy-noetl                 # Deploy NoETL server and workers
-task observability:activate-all   # Deploy ClickHouse, Qdrant, NATS
-task test-*-full                  # Integration tests (register credentials, playbook, execute)
+task bring-all                                      # Complete K8s dev environment (build + deploy all components)
+task deploy-postgres                                # Deploy PostgreSQL to kind cluster
+task deploy-noetl                                   # Deploy NoETL server and workers
+task observability:activate-all                     # Deploy ClickHouse, Qdrant, NATS
+task pagination-server:test:pagination-server:full  # Deploy pagination test server
+task test:regression:full                           # Complete regression test suite (setup + run)
+task test-*-full                                    # Integration tests (register credentials, playbook, execute)
 ```
 
 **Local Development:**
@@ -51,7 +53,7 @@ workload:                 # Global variables merged with payload; Jinja2 templat
   variable: value
 workbook:                 # Named reusable tasks (optional)
   - name: task_name       # Reference name
-    type: python          # Action type: python, http, postgres, duckdb, playbook, iterator
+    tool: python          # Action type: python, http, postgres, duckdb, playbook, iterator
     code: |               # Type-specific configuration
       def main(input_data):
         return result
@@ -65,12 +67,12 @@ workflow:                 # Execution flow (required, must have 'start' step)
       - when: "{{ condition }}"
         then:
           - step: next_step
-        data:             # Data to pass to next steps
+        args:             # Args to pass to next steps
           key: "{{ value }}"
   - step: task_step
-    type: workbook        # Reference workbook task by name
-    name: task_name       # OR inline action type: python, http, postgres, etc.
-    data:                 # Data passed to action via Jinja2 templating
+    tool: workbook        # Reference workbook task by name
+    name: task_name       # OR inline action tool: python, http, postgres, etc.
+    args:                 # Args passed to action via Jinja2 templating
       input: "{{ workload.variable }}"
     next:
       - step: end
@@ -79,13 +81,54 @@ workflow:                 # Execution flow (required, must have 'start' step)
 ```
 
 **Key Concepts:**
-- **Jinja2 Templating**: All string values support Jinja2 with access to `workload`, `execution_id`, step results (e.g., `{{ step_name.data }}`), and iterator context
+- **Jinja2 Templating**: All string values support Jinja2 with access to:
+  - `{{ workload.field }}` - Global workflow variables
+  - `{{ vars.var_name }}` - Stored variables extracted via vars blocks
+  - `{{ step_name.field }}` - Previous step results (server normalizes by extracting `.data` if present)
+  - `{{ result.field }}` - Current step result (used in vars block for extraction)
+  - `{{ execution_id }}` - Current execution identifier
+- **Variable Extraction**: Use `vars:` block at step level to declaratively extract values from step results:
+  ```yaml
+  - step: fetch_data
+    tool: postgres
+    query: "SELECT user_id, email FROM users LIMIT 1"
+    vars:
+      user_id: "{{ result[0].user_id }}"  # Extract from current step result
+      email: "{{ result[0].email }}"
+    next:
+    - step: process
+  
+  - step: process
+    tool: python
+    args:
+      user_id: "{{ vars.user_id }}"  # Access extracted variable
+      email: "{{ vars.email }}"
+  ```
 - **Workflow Entry**: Must have a step named "start" as the workflow entry point
 - **Step Types**:
-  - `type: workbook` - References named task from workbook section by `name` attribute
-  - Direct action types: `python`, `http`, `postgres`, `duckdb`, `playbook`, `iterator`
+  - `tool: workbook` - References named task from workbook section by `name` attribute
+  - Direct action tools: `python`, `http`, `postgres`, `duckdb`, `playbook`, `iterator`
 - **Conditional Flow**: Steps use `next` with optional `when` conditions and `then` arrays for routing
-- **Iterator**: `type: iterator` loops over collections with `collection`, `element`, and `mode` (sequential/async) attributes
+- **Iterator**: `tool: iterator` loops over collections with `collection`, `element`, and `mode` (sequential/async) attributes
+- **HTTP Pagination**: `loop.pagination` enables automatic page continuation with `continue_while`, `next_page`, and `merge_strategy` attributes
+  ```yaml
+  - step: fetch_all_data
+    tool: http
+    url: "{{ api_url }}/data"
+    params:
+      page: 1
+    loop:
+      pagination:
+        type: response_based
+        continue_while: "{{ response.data.paging.hasMore }}"
+        next_page:
+          params:
+            page: "{{ (response.data.paging.page | int) + 1 }}"
+        merge_strategy: append
+        merge_path: data.data
+        max_iterations: 100
+  ```
+  **Note**: HTTP responses are wrapped as `{id, status, data: <api_response>}`, so use `response.data.*` for API fields and `merge_path: data.data` for nested data arrays.
 - **Save Blocks**: Any action can have a `save` attribute to persist results to storage backends
 - **Playbook Composition**: `type: playbook` allows calling sub-playbooks with `path` and `return_step` attributes
 
@@ -185,9 +228,13 @@ See `tests/fixtures/playbooks/script_execution/` and `docs/script_attribute_desi
 **Development Infrastructure:**
 - `taskfile.yml` - Main task automation with included taskfiles for tests and monitoring
 - `ci/taskfile/` - Specialized taskfiles for testing, troubleshooting, and observability
+- `ci/taskfile/test-server.yml` - Pagination test server lifecycle management
 - `tests/taskfile/noetltest.yml` - Test task definitions
 - `docker/` - Container build scripts for all components
-- `examples/` - Reference playbooks demonstrating patterns
+- `docker/test-server/` - Pagination test server Dockerfile
+- `ci/manifests/test-server/` - Kubernetes manifests for test server
+- `tests/fixtures/playbooks/` - Comprehensive test playbooks demonstrating all patterns
+- `tests/fixtures/servers/paginated_api.py` - FastAPI pagination test server
 
 **Testing:**
 - Follow `test-*-full` pattern for integration tests (e.g., `task test-control-flow-workbook-full`)
@@ -202,6 +249,39 @@ See `tests/fixtures/playbooks/script_execution/` and `docs/script_attribute_desi
 - Worker pool configuration via `NOETL_WORKER_POOL_*`
 - Database connection via standard `POSTGRES_*` variables
 - **Timezone**: `TZ` must match across all components (Postgres, server, worker) - default is `UTC`
+
+**Database Access (Development):**
+- **PostgreSQL Connection**:
+  - JDBC URL: `jdbc:postgresql://localhost:54321/demo_noetl`
+  - User: `demo` / Password: `demo` (application data)
+  - User: `noetl` / Password: `noetl` (NoETL metadata schema)
+  - Schema: `noetl` (for NoETL system tables: catalog, event, queue, etc.)
+- **NoETL API for Postgres Queries**:
+  - Endpoint: `POST http://localhost:30082/api/postgres/execute`
+  - Documentation: `http://localhost:30082/docs#/default/execute_postgres_api_postgres_execute_post`
+  - **Use this REST API instead of running `psql` commands directly**
+  - Request body examples:
+    ```json
+    {
+      "query": "SELECT * FROM noetl.catalog LIMIT 5",
+      "connection_string": "postgresql://demo:demo@localhost:54321/demo_noetl"
+    }
+    ```
+    Or with schema parameter:
+    ```json
+    {
+      "query": "SELECT execution_id, status FROM event WHERE execution_id = 123",
+      "schema": "noetl"
+    }
+    ```
+  - Response format:
+    ```json
+    {
+      "status": "ok",
+      "result": [{"column": "value"}]
+    }
+    ```
+  - Supports query parameters: `query`, `query_base64`, `procedure`, `parameters`, `schema`, `connection_string`
 
 **Deployment Modes:**
 - Local: Direct Python execution with file-based logs
@@ -223,6 +303,17 @@ See `tests/fixtures/playbooks/script_execution/` and `docs/script_attribute_desi
   - Individual: `task clickhouse:deploy`, `task qdrant:deploy`, `task nats:deploy`
 - **Documentation**: See `docs/observability_services.md` for complete guide
 
+**Test Infrastructure:**
+- **Pagination Test Server**: FastAPI server for testing HTTP pagination patterns
+  - Access: ClusterIP (paginated-api.test-server.svc.cluster.local:5555), NodePort (localhost:30555)
+  - Endpoints: `/api/v1/assessments` (page-based), `/api/v1/users` (offset-based), `/api/v1/events` (cursor-based), `/api/v1/flaky` (retry testing)
+  - Commands:
+    - Deploy: `task pagination-server:test:pagination-server:full`
+    - Status: `task pagination-server:test:pagination-server:status`
+    - Test: `task pagination-server:test:pagination-server:test`
+    - Logs: `task pagination-server:test:pagination-server:logs`
+  - Configuration: `ci/manifests/test-server/`, `docker/test-server/Dockerfile`
+
 **Timezone Configuration** (CRITICAL):
 - **Default**: UTC for all components (Postgres, server, worker)
 - **Requirement**: `TZ` environment variable must match between database and application
@@ -233,6 +324,72 @@ See `tests/fixtures/playbooks/script_execution/` and `docs/script_attribute_desi
   - `ci/manifests/noetl/configmap.yaml` - Server/Worker TZ
   - `docker/postgres/Dockerfile` - Container TZ
 - **Documentation**: See `docs/timezone_configuration.md` for complete guide
+
+## API Development Standards
+
+**Pydantic Models (REQUIRED):**
+- **Every API endpoint MUST use Pydantic models** for request and response schemas
+- **Never use** raw dictionaries, `dict[str, Any]`, or untyped responses
+- Create dedicated schema file (`schema.py`) in each API module
+- Use `response_model` parameter on all endpoint decorators
+- Include `Field()` with descriptions for all model attributes
+
+**API Module Structure:**
+```
+noetl/server/api/{module}/
+├── __init__.py          # Export router
+├── schema.py            # Pydantic models (REQUIRED)
+└── endpoint.py          # FastAPI routes
+```
+
+**Example Pattern (from vars API):**
+```python
+# schema.py
+from pydantic import BaseModel, Field
+from typing import Optional, Any
+from datetime import datetime
+
+class VariableMetadata(BaseModel):
+    """Variable with full metadata."""
+    value: Any = Field(..., description="Variable value (JSON-serializable)")
+    type: str = Field(..., description="Variable type: user_defined, step_result, computed, iterator_state")
+    source_step: Optional[str] = Field(None, description="Step that created/updated the variable")
+    created_at: datetime = Field(..., description="Creation timestamp")
+    accessed_at: datetime = Field(..., description="Last access timestamp")
+    access_count: int = Field(..., description="Number of times variable was read")
+
+class VariableListResponse(BaseModel):
+    """Response for GET /api/vars/{execution_id}."""
+    execution_id: int = Field(..., description="Execution identifier")
+    variables: dict[str, VariableMetadata] = Field(..., description="Variables with metadata")
+    count: int = Field(..., description="Total variable count")
+
+class SetVariablesRequest(BaseModel):
+    """Request body for POST /api/vars/{execution_id}."""
+    variables: dict[str, Any] = Field(..., description="Variables to set")
+    var_type: str = Field(default="user_defined", description="Variable type")
+    source_step: Optional[str] = Field(None, description="Optional source step")
+
+# endpoint.py
+@router.get("/{execution_id}", response_model=VariableListResponse)
+async def list_variables(
+    execution_id: int = Path(..., description="Execution ID")
+) -> VariableListResponse:
+    """Get all variables with metadata."""
+    # ... implementation
+    return VariableListResponse(
+        execution_id=execution_id,
+        variables=variables,
+        count=len(variables)
+    )
+```
+
+**Benefits:**
+- Automatic OpenAPI/Swagger documentation generation
+- Request/response validation at API boundaries
+- Type safety and IDE autocomplete
+- Clear contract definition for API consumers
+- Prevents runtime type errors
 
 ## Writing Style Guidelines
 

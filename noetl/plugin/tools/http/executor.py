@@ -14,7 +14,7 @@ from jinja2 import Environment
 
 from noetl.core.dsl.render import render_template
 from noetl.core.logger import setup_logger
-from noetl.worker.auth_resolver import resolve_auth
+from noetl.plugin.shared.auth.resolver import resolve_auth_map
 from noetl.worker.auth_compatibility import transform_credentials_to_auth, validate_auth_transition
 
 from .auth import build_auth_headers
@@ -24,7 +24,7 @@ from .response import process_response, create_mock_response
 logger = setup_logger(__name__, include_location=True)
 
 
-def execute_http_task(
+async def execute_http_task(
     task_config: Dict[str, Any],
     context: Dict[str, Any],
     jinja_env: Environment,
@@ -32,7 +32,7 @@ def execute_http_task(
     log_event_callback: Optional[Callable] = None
 ) -> Dict[str, Any]:
     """
-    Execute an HTTP task.
+    Execute an HTTP task with async authentication resolution and credential caching.
 
     Args:
         task_config: The task configuration
@@ -73,6 +73,13 @@ def execute_http_task(
         logger.critical(f"HTTP.EXECUTE: Rendered endpoint={endpoint}")
         logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Rendered endpoint={endpoint}")
 
+        # Process authentication FIRST and add to context for template rendering
+        auth_headers, resolved_auth_map = await _process_authentication_with_context(task_config, task_with, jinja_env, context)
+        if resolved_auth_map:
+            logger.debug(f"HTTP: Adding {len(resolved_auth_map)} resolved auth items to context")
+            context['auth'] = resolved_auth_map
+        
+        # Now render data/payload with auth in context
         # Unified data model: render step.data and allow explicit data.query/data.body
         raw_data = task_config.get('data') if isinstance(task_config, dict) else None
         data_map = render_template(jinja_env, raw_data or {}, context)
@@ -87,8 +94,7 @@ def execute_http_task(
         headers = render_template(jinja_env, task_config.get('headers', {}), context)
         logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Rendered headers={headers}")
 
-        # Process unified auth system to add authentication headers
-        auth_headers = _process_authentication(task_config, task_with, jinja_env, context)
+        # Apply auth headers (already processed above)
         if auth_headers:
             logger.debug(f"HTTP: Applying {len(auth_headers)} auth headers")
             headers.update(auth_headers)
@@ -198,6 +204,65 @@ def execute_http_task(
         return result
 
 
+async def _process_authentication_with_context(
+    task_config: Dict[str, Any],
+    task_with: Dict[str, Any],
+    jinja_env: Environment,
+    context: Dict[str, Any]
+) -> tuple[Dict[str, str], Dict[str, Any]]:
+    """
+    Process authentication configuration, build auth headers, and return resolved auth map.
+    
+    Args:
+        task_config: Task configuration
+        task_with: Task with parameters
+        jinja_env: Jinja2 environment
+        context: Execution context
+        
+    Returns:
+        Tuple of (auth_headers, resolved_auth_map) where resolved_auth_map can be used in templates
+    """
+    try:
+        auth_config = task_config.get('auth') or task_with.get('auth')
+        if auth_config:
+            logger.debug("HTTP: Using unified auth system")
+            resolved_auth = await resolve_auth_map(step_config=task_config, task_with=task_with, jinja_env=jinja_env, context=context)
+            
+            if resolved_auth:
+                # Build headers from resolved auth
+                # For HTTP, we need to convert the resolved auth dict to headers
+                headers = {}
+                for alias, cred_data in resolved_auth.items():
+                    auth_type = cred_data.get('type')
+                    if auth_type == 'bearer':
+                        token = cred_data.get('token') or cred_data.get('value')
+                        if token:
+                            headers['Authorization'] = f'Bearer {token}'
+                    elif auth_type == 'api_key':
+                        header_name = cred_data.get('header_name', 'X-API-Key')
+                        api_key = cred_data.get('api_key') or cred_data.get('value')
+                        if api_key:
+                            headers[header_name] = api_key
+                    elif auth_type == 'basic':
+                        import base64
+                        username = cred_data.get('username', '')
+                        password = cred_data.get('password', '')
+                        credentials = f'{username}:{password}'
+                        encoded = base64.b64encode(credentials.encode()).decode()
+                        headers['Authorization'] = f'Basic {encoded}'
+                
+                # Return headers and full resolved auth map for template context
+                return headers, resolved_auth
+            else:
+                logger.debug("HTTP: Auth config provided but resolution failed")
+        else:
+            logger.debug("HTTP: No auth configuration found")
+    except Exception as e:
+        logger.debug(f"HTTP: Unified auth processing failed: {e}", exc_info=True)
+    
+    return {}, {}
+
+
 def _process_authentication(
     task_config: Dict[str, Any],
     task_with: Dict[str, Any],
@@ -216,22 +281,8 @@ def _process_authentication(
     Returns:
         Dictionary of authentication headers
     """
-    try:
-        auth_config = task_config.get('auth') or task_with.get('auth')
-        if auth_config:
-            logger.debug("HTTP: Using unified auth system")
-            mode, resolved_items = resolve_auth(auth_config, jinja_env, context)
-            
-            if resolved_items:
-                return build_auth_headers(resolved_items, mode)
-            else:
-                logger.debug("HTTP: Auth config provided but resolution failed")
-        else:
-            logger.debug("HTTP: No auth configuration found")
-    except Exception as e:
-        logger.debug(f"HTTP: Unified auth processing failed: {e}", exc_info=True)
-    
-    return {}
+    headers, _ = _process_authentication_with_context(task_config, task_with, jinja_env, context)
+    return headers
 
 
 def _should_mock_request(endpoint: str) -> bool:

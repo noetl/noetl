@@ -3,7 +3,7 @@ PostgreSQL SQL execution with direct connections and transaction handling.
 
 This module provides the core execution logic for PostgreSQL operations with:
 - Direct connection per execution (no pooling on worker side)
-- Async/await execution model
+- Async execution model using psycopg AsyncConnection
 - Transaction management with automatic rollback on error
 - CALL statement special handling (autocommit mode)
 - Result data extraction and formatting
@@ -19,7 +19,7 @@ from noetl.core.logger import setup_logger
 logger = setup_logger(__name__, include_location=True)
 
 
-async def execute_sql_with_pool(
+async def execute_sql_with_connection(
     connection_string: str,
     commands: List[str],
     host: str = "unknown",
@@ -27,11 +27,20 @@ async def execute_sql_with_pool(
     database: str = "unknown"
 ) -> Dict[str, Dict]:
     """
-    Execute SQL statements using a direct connection (no pooling).
+    Execute SQL statements using a direct async connection.
     
     Opens a fresh connection for each execution, executes commands,
-    and properly closes the connection afterward. This ensures clean
-    state and proper error handling without pool corruption issues.
+    and properly closes the connection afterward. This is appropriate
+    for worker-side execution where workers are ephemeral and connect
+    to various user databases.
+    
+    Workers should NOT use connection pooling because:
+    - Workers are ephemeral (can be scaled up/down)
+    - Each playbook step may connect to different databases
+    - Steps of one playbook instance can be distributed among several workers
+    - Connection pools would leak resources across worker restarts
+    
+    Uses ASYNC psycopg AsyncConnection for proper async execution.
     
     Args:
         connection_string: PostgreSQL connection string
@@ -46,31 +55,46 @@ async def execute_sql_with_pool(
     Raises:
         Exception: If connection or execution fails
     """
-    from psycopg import AsyncConnection
     from psycopg.rows import dict_row
+    import time
     
-    logger.debug(f"Executing {len(commands)} SQL commands on {host}:{port}/{database}")
+    conn_id = f"{host}:{port}/{database}-{int(time.time() * 1000)}"
+    logger.error(f"[CONN-{conn_id}] START: Creating connection to {host}:{port}/{database}")
+    logger.error(f"[CONN-{conn_id}] Executing {len(commands)} SQL commands")
     
-    # Use async with for automatic connection management
-    async with await AsyncConnection.connect(
-        connection_string,
-        autocommit=False,
-        row_factory=dict_row
-    ) as conn:
-        try:
-            # Execute commands
+    # Use direct async connection (no pooling) for worker-side execution
+    # Connection is properly closed by context manager
+    conn = None
+    try:
+        logger.error(f"[CONN-{conn_id}] Calling AsyncConnection.connect()...")
+        conn = await AsyncConnection.connect(
+            connection_string,
+            autocommit=False,
+            row_factory=dict_row
+        )
+        logger.error(f"[CONN-{conn_id}] Connection created, PID: {conn.info.backend_pid if conn and conn.info else 'unknown'}")
+        
+        async with conn:
+            logger.error(f"[CONN-{conn_id}] Entered context manager, executing statements...")
+            # Execute commands within connection context
             results = await execute_sql_statements_async(conn, commands)
-            logger.debug(f"Closed connection to {host}:{port}/{database}")
+            logger.error(f"[CONN-{conn_id}] SQL execution completed, exiting context manager")
             return results
-        except Exception as e:
-            # Log and rollback on error
-            logger.exception(f"Failed to execute SQL: {e}")
+    except Exception as e:
+        # Log the error - connection cleanup happens automatically
+        logger.error(f"[CONN-{conn_id}] ERROR: {e}")
+        logger.exception(f"[CONN-{conn_id}] Failed to execute SQL on {database}: {e}")
+        raise
+    finally:
+        logger.error(f"[CONN-{conn_id}] FINALLY: Connection state: {conn.closed if conn else 'None'}")
+        if conn and not conn.closed:
+            logger.error(f"[CONN-{conn_id}] WARNING: Connection still open in finally block!")
             try:
-                await conn.rollback()
-                logger.debug("Rolled back transaction after error")
-            except Exception as rollback_error:
-                logger.error(f"Failed to rollback: {rollback_error}")
-            raise
+                await conn.close()
+                logger.error(f"[CONN-{conn_id}] Manually closed connection in finally")
+            except Exception as close_err:
+                logger.error(f"[CONN-{conn_id}] Error closing: {close_err}")
+        logger.error(f"[CONN-{conn_id}] END: Cleanup complete")
 
 
 async def execute_sql_statements_async(
@@ -98,10 +122,12 @@ async def execute_sql_statements_async(
         - columns: List of column names
         - message: Status message
     """
+    conn_pid = conn.info.backend_pid if conn and conn.info else 'unknown'
+    logger.error(f"[PID-{conn_pid}] Executing {len(commands)} statements on connection")
     results = {}
     
     for i, cmd in enumerate(commands):
-        logger.info(f"Executing Postgres command: {cmd[:100]}{'...' if len(cmd) > 100 else ''}")
+        logger.info(f"[PID-{conn_pid}] Executing Postgres command {i+1}/{len(commands)}: {cmd[:100]}{'...' if len(cmd) > 100 else ''}")
         is_select = cmd.strip().upper().startswith("SELECT")
         is_call = cmd.strip().upper().startswith("CALL")
         returns_data = is_select or "RETURNING" in cmd.upper()
@@ -165,6 +191,49 @@ async def execute_sql_statements_async(
             await conn.set_autocommit(original_autocommit)
 
     return results
+
+
+async def _fetch_result_rows_async(cursor) -> List[Dict]:
+    """
+    Fetch and format result rows from async cursor.
+    
+    Handles special data types:
+    - Decimal -> float
+    - datetime/date/time -> ISO format string
+    - JSON strings -> preserve as-is
+    - Other types -> preserve as-is
+    
+    Args:
+        cursor: Async PostgreSQL cursor object with executed query
+        
+    Returns:
+        List of row dictionaries with column name keys
+    """
+    rows = await cursor.fetchall()
+    logger.debug(f"Fetched {len(rows)} rows")
+    result_data = []
+    
+    # Rows are already dicts due to row_factory=dict_row in connection config
+    for row in rows:
+        logger.debug(f"Processing row type: {type(row)}, row: {row}")
+        row_dict = {}
+        for col_name, value in row.items():
+            # Handle JSON/dict types
+            if isinstance(value, dict) or (isinstance(value, str) and (
+                    value.startswith('{') or value.startswith('['))):
+                row_dict[col_name] = value
+            # Convert Decimal to float for JSON serialization
+            elif isinstance(value, Decimal):
+                row_dict[col_name] = float(value)
+            # Convert datetime objects to ISO format strings for JSON serialization
+            elif isinstance(value, (datetime, date, time)):
+                row_dict[col_name] = value.isoformat()
+            else:
+                row_dict[col_name] = value
+        
+        result_data.append(row_dict)
+    
+    return result_data
 
 
 async def _fetch_result_rows_async(cursor) -> List[Dict]:

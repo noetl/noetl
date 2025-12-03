@@ -42,7 +42,7 @@ Register a new Playbook:
 ```json
 POST /catalog/register
 {
-  "content": "apiVersion: noetl.io/v1\\nkind: Playbook\\nmetadata:\\n  name: example\\n  path: examples/demo\\n...",
+  "content": "apiVersion: noetl.io/v1\\nkind: Playbook\\nmetadata:\\n  name: example\\n  path: tests/fixtures/playbooks/hello_world/hello_world\\n...",
   "resource_type": "Playbook"
 }
 ```
@@ -60,8 +60,8 @@ POST /catalog/register
 ```json
 {
   "status": "success",
-  "message": "Resource 'examples/demo' version '1' registered.",
-  "path": "examples/demo",
+  "message": "Resource 'tests/fixtures/playbooks/hello_world/hello_world' version '1' registered.",
+  "path": "tests/fixtures/playbooks/hello_world/hello_world",
   "version": 1,
   "catalog_id": "478775660589088776",
   "kind": "Playbook"
@@ -120,7 +120,7 @@ POST /catalog/list
 {
   "entries": [
     {
-      "path": "examples/hello_world",
+      "path": "tests/fixtures/playbooks/hello_world/hello_world",
       "kind": "Playbook",
       "version": 2,
       "content": "apiVersion: noetl.io/v1...",
@@ -185,7 +185,7 @@ Get specific version by path and version:
 ```json
 POST /catalog/resource
 {
-  "path": "examples/hello_world",
+  "path": "tests/fixtures/playbooks/hello_world/hello_world",
   "version": 2
 }
 ```
@@ -194,7 +194,7 @@ Get latest version:
 ```json
 POST /catalog/resource
 {
-  "path": "examples/hello_world",
+  "path": "tests/fixtures/playbooks/hello_world/hello_world",
   "version": "latest"
 }
 ```
@@ -203,7 +203,7 @@ Get all versions of a resource:
 ```json
 POST /catalog/resource
 {
-  "path": "examples/hello_world"
+  "path": "tests/fixtures/playbooks/hello_world/hello_world"
 }
 ```
 
@@ -211,7 +211,7 @@ POST /catalog/resource
 ```json
 [
   {
-    "path": "examples/hello_world",
+    "path": "tests/fixtures/playbooks/hello_world/hello_world",
     "kind": "Playbook",
     "version": 2,
     "content": "apiVersion: noetl.io/v1...",

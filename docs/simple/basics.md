@@ -4,8 +4,8 @@ Core structure
 - Header: `apiVersion`, `kind`, and `metadata` (`name`, `path`, optional extras)
 - Workload: global defaults merged with the execution payload
 - Workflow: ordered steps with routing expressed via `next`
-- Workbook: reusable named tasks referenced by `type: workbook`
-- Composition: invoke another playbook via a `type: playbook` step (modular reuse)
+- Workbook: reusable named tasks referenced by `tool: workbook`
+- Composition: invoke another playbook via a `tool: playbook` step (modular reuse)
 - Retry: optional `retry` block on action steps to re-attempt transient failures (see `steps/retry.md`)
 
 Naming and references
@@ -14,9 +14,9 @@ Naming and references
 - Execution metadata like `execution_id`, `started_at`, etc. is available for templating
 
 Data flow
-- `data` under a step evaluates expressions and becomes the argument set for the action type
+- `data` under a step evaluates expressions and becomes the argument set for the action tool
 - Transitions in `next` can also attach `data` so downstream steps receive shaped payloads
-- Use `save` to forward results to storage-oriented actions (postgres, duckdb, http, ...)
+- Use `sink` to forward results to storage-oriented actions (postgres, duckdb, http, ...)
 
 Contracts
 - `assert.expects`: validate required inputs before the action runs
@@ -28,8 +28,8 @@ Control flow
   - direct continuation: `- step: end`
   - conditional: `- when: <expr>`, `then: [ { step: ... } ]`, optional `else`
   - parallel fan-out: multiple entries without `when` get scheduled together
-- `type: iterator` performs per-element execution with `collection`, `element`, and an embedded `task`
-- `type: playbook` executes another playbook (optionally extracting a specific `return_step` result)
+- `loop` performs per-element execution with `collection`, `element`, and `mode` attributes
+- `tool: playbook` executes another playbook (optionally extracting a specific `return_step` result)
 - `retry` evaluates after each attempt: `stop_when` (short-circuit success) then `retry_when` (decide next attempt)
 
 Idempotency and reruns

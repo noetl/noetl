@@ -1,0 +1,25 @@
+# Ignore README and documentation during build
+README.md
+
+# Git files
+.git
+.gitignore
+
+# IDE files
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# Python cache
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.py[cod]
+
+# OS files
+.DS_Store
+Thumbs.db

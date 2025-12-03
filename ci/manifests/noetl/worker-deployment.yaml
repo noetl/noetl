@@ -22,6 +22,7 @@ spec:
         runtime: cpu
         worker-pool: worker-cpu-01
     spec:
+      serviceAccountName: noetl-worker
       initContainers:
         - name: wait-for-api
           image: curlimages/curl:8.7.1
@@ -55,8 +56,8 @@ spec:
               mountPath: /opt/noetl/data
           resources:
             requests:
-              cpu: "250m"
-              memory: "256Mi"
+              cpu: "100m"
+              memory: "128Mi"
             limits:
               cpu: "500m"
               memory: "512Mi"

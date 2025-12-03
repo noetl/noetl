@@ -28,11 +28,11 @@ The unified Execution API maintains backward compatibility by including both old
     "start_time": "2025-10-12T10:00:00Z",  // ← Backward compatible
     
     "status": "running",
-    "path": "examples/weather",
+    "path": "tests/fixtures/playbooks/hello_world/hello_world",
     "version": "v1.0.0",
     "catalog_id": "cat_123",
-    "playbook_id": "examples/weather",
-    "playbook_name": "weather",
+    "playbook_id": "tests/fixtures/playbooks/hello_world/hello_world",
+    "playbook_name": "hello_world",
     "progress": 0,
     "result": {...}
 }
@@ -100,14 +100,14 @@ All these requests are equivalent:
 
 // Method 2: path + version
 {
-    "path": "examples/weather",
+    "path": "tests/fixtures/playbooks/hello_world/hello_world",
     "version": "v1.0.0",
     "parameters": {...}
 }
 
 // Method 3: playbook_id (legacy, normalized to path)
 {
-    "playbook_id": "examples/weather",
+    "playbook_id": "tests/fixtures/playbooks/hello_world/hello_world",
     "parameters": {...}
     // version defaults to "latest"
 }
@@ -120,14 +120,14 @@ Both names accepted in requests:
 ```json
 // New style
 {
-    "path": "examples/weather",
-    "parameters": {"city": "NYC"}
+    "path": "tests/fixtures/playbooks/hello_world/hello_world",
+    "parameters": {"message": "Hello World"}
 }
 
 // Old style (still works)
 {
-    "path": "examples/weather",
-    "input_payload": {"city": "NYC"}
+    "path": "tests/fixtures/playbooks/hello_world/hello_world",
+    "input_payload": {"message": "Hello World"}
 }
 ```
 
@@ -141,7 +141,7 @@ Both names accepted in requests:
 # Test that CLI still works with old field access
 curl -X POST http://localhost:8083/api/executions/run \
   -H "Content-Type: application/json" \
-  -d '{"playbook_id": "examples/test", "parameters": {}}' \
+  -d '{"playbook_id": "tests/fixtures/playbooks/hello_world/hello_world", "parameters": {}}' \
   | jq '.id, .execution_id'
 
 # Both should return the same value
@@ -154,8 +154,8 @@ curl -X POST http://localhost:8083/api/executions/run \
 curl -X POST http://localhost:8083/api/executions/run \
   -H "Content-Type: application/json" \
   -d '{
-    "playbook_id": "examples/test",
-    "input_payload": {"key": "value"},
+    "playbook_id": "tests/fixtures/playbooks/hello_world/hello_world",
+    "input_payload": {"message": "Hello World"},
     "merge": false
   }'
 
@@ -169,9 +169,9 @@ curl -X POST http://localhost:8083/api/executions/run \
 curl -X POST http://localhost:8083/api/executions/run \
   -H "Content-Type: application/json" \
   -d '{
-    "path": "examples/test",
+    "path": "tests/fixtures/playbooks/hello_world/hello_world",
     "version": "v1.0.0",
-    "parameters": {"key": "value"},
+    "parameters": {"message": "Hello World"},
     "type": "playbook"
   }'
 
@@ -244,9 +244,9 @@ curl -X POST http://localhost:8083/api/executions/run \
 ```python
 # Use new field names
 response = api.post("/api/executions/run", json={
-    "path": "examples/weather",
+    "path": "tests/fixtures/playbooks/hello_world/hello_world",
     "version": "v1.0.0",
-    "parameters": {"city": "NYC"},
+    "parameters": {"message": "Hello World"},
     "type": "playbook"
 })
 
@@ -259,8 +259,8 @@ execution_type = response.json()["type"]
 ```python
 # Continue using old field names
 response = api.post("/api/executions/run", json={
-    "playbook_id": "examples/weather",
-    "parameters": {"city": "NYC"}
+    "playbook_id": "tests/fixtures/playbooks/hello_world/hello_world",
+    "parameters": {"message": "Hello World"}
 })
 
 # Both work

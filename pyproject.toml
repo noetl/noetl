@@ -55,6 +55,7 @@ dependencies = [
     "azure-identity>=1.23.0",
     "azure-keyvault-secrets>=4.8.0",
     "ortools>=9.10",
+    "kubernetes>=31.0.0",
 ]
 
 [project.optional-dependencies]

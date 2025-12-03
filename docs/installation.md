@@ -129,6 +129,7 @@ For a complete development environment with server, workers, and observability:
 - Kind (Kubernetes in Docker)
 - kubectl
 - Helm (for observability stack)
+- Task (task runner) - install from https://taskfile.dev
 
 **Quick Start:**
 ```bash
@@ -136,16 +137,16 @@ For a complete development environment with server, workers, and observability:
 git clone https://github.com/noetl/noetl.git
 cd noetl
 
-# Deploy unified platform
-./k8s/deploy-unified-platform.sh
+# Deploy complete platform (creates cluster, builds images, deploys all services)
+task bring-all
 ```
 
 **This provides:**
-- NoETL server at http://localhost:30082
+- NoETL server at http://localhost:8082 (NodePort 30082)
 - Grafana dashboard at http://localhost:3000 (admin/admin)
-- VictoriaMetrics at http://localhost:8428/vmui/
-- All components in unified `noetl-platform` namespace
-- Automatic monitoring and logging
+- PostgreSQL database with monitoring
+- All components deployed to kind cluster
+- Automatic monitoring and observability stack
 
 **Clean up:**
 ```bash

@@ -108,6 +108,37 @@ def execute_loop_task(
         limit_n = config['limit_n']
         chunk_n = config['chunk_n']
         order_by_expr = config['order_by_expr']
+        pagination_config = config.get('pagination_config')
+        
+        # Check for pagination mode - if configured, delegate to pagination executor
+        if pagination_config:
+            logger.info("ITERATOR.EXECUTOR: Pagination detected, delegating to pagination executor")
+            from .pagination import execute_paginated_http
+            
+            # Execute paginated HTTP
+            result_data = execute_paginated_http(
+                nested_task,
+                pagination_config,
+                context,
+                jinja_env
+            )
+            
+            # Build success result
+            if log_event_callback:
+                log_event_callback(
+                    'iterator_completed', task_id, task_name, 'iterator',
+                    'success', 1, context, None,
+                    {'result': result_data},
+                    None
+                )
+            
+            return {
+                'id': task_id,
+                'status': 'success',
+                'data': result_data
+            }
+        
+        # Standard iterator execution (non-paginated)
         
         # Step 2: Resolve collection (use from config if available, otherwise resolve from task_config)
         if collection_expr is not None:

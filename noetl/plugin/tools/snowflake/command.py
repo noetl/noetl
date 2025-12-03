@@ -18,7 +18,8 @@ def decode_base64_commands(task_config: Dict) -> str:
     """
     Decode base64 encoded SQL commands from task configuration.
     
-    Supports both singular (command_b64) and plural (commands_b64) field names.
+    Supports both base64-encoded commands (command_b64/commands_b64) and plain text (command/commands).
+    Priority: command_b64 > commands_b64 > command > commands
     
     Args:
         task_config: Task configuration dictionary
@@ -29,18 +30,27 @@ def decode_base64_commands(task_config: Dict) -> str:
     Raises:
         ValueError: If no command field is found or decoding fails
     """
+    # Try base64-encoded versions first (preferred for security)
     command_b64 = task_config.get('command_b64') or task_config.get('commands_b64')
     
-    if not command_b64:
-        raise ValueError("No 'command_b64' or 'commands_b64' field found in task config")
+    if command_b64:
+        try:
+            decoded = base64.b64decode(command_b64).decode('utf-8')
+            logger.debug(f"Decoded {len(decoded)} characters of SQL commands from base64")
+            return decoded
+        except Exception as e:
+            logger.error(f"Failed to decode base64 commands: {e}")
+            raise ValueError(f"Failed to decode base64 SQL commands: {e}")
     
-    try:
-        decoded = base64.b64decode(command_b64).decode('utf-8')
-        logger.debug(f"Decoded {len(decoded)} characters of SQL commands")
-        return decoded
-    except Exception as e:
-        logger.error(f"Failed to decode base64 commands: {e}")
-        raise ValueError(f"Failed to decode base64 SQL commands: {e}")
+    # Fallback to plain text commands (for convenience, like Postgres plugin)
+    command_plain = task_config.get('command') or task_config.get('commands')
+    
+    if command_plain:
+        logger.debug(f"Using plain text SQL commands ({len(command_plain)} characters)")
+        return command_plain
+    
+    # No command found
+    raise ValueError("No SQL command field found. Use 'command_b64'/'commands_b64' (base64) or 'command'/'commands' (plain text)")
 
 
 def escape_task_with_params(task_with: Dict) -> Dict:

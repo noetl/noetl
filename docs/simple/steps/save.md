@@ -9,7 +9,7 @@ Two shapes
 Minimal variable sink:
 ```yaml
 - step: fetch
-  type: http
+  tool: http
   endpoint: https://example.com
   sink: { name: page, data: "{{ this.data }}" }
 ```
@@ -17,8 +17,11 @@ Minimal variable sink:
 Iterator aggregated variable sink:
 ```yaml
 - step: http_loop
-  type: iterator
-  # ...iterator config...
+  tool: http
+  loop:
+    # ...iterator config...
+    collection: "{{ workload.items }}"
+    element: item
   sink:
     - name: http_loop
       data: "{{ this.result }}"
@@ -40,12 +43,11 @@ sink:
 Storage delegation (nested form):
 ```yaml
 sink:
-  storage:
-    type: postgres
-    table: public.items
-    mode: upsert
-    key: id
-    auth: app_db
+  tool: postgres
+  table: public.items
+  mode: upsert
+  key: id
+  auth: app_db
   data:
     id: "{{ execution_id }}:{{ user.id }}"
     name: "{{ user.name }}"
@@ -62,7 +64,7 @@ Delegation examples
 Event log (simple variable archiving):
 ```yaml
 sink:
-  storage: event_log
+  tool: event_log
   data: "{{ result.data }}"
 ```
 
@@ -81,12 +83,11 @@ sink:
 Postgres nested + upsert:
 ```yaml
 sink:
-  storage:
-    type: postgres
-    table: simple_test_nested
-    mode: upsert
-    key: test_id
-    auth: "{{ workload.pg_auth }}"
+  tool: postgres
+  table: simple_test_nested
+  mode: upsert
+  key: test_id
+  auth: "{{ workload.pg_auth }}"
   data:
     test_id: "{{ result.data.nested_id }}"
     test_name: "nested_structure_test"
@@ -96,36 +97,33 @@ sink:
 DuckDB analytics staging (delegation test):
 ```yaml
 sink:
-  storage:
-    type: duckdb
-    commands: |
-      CREATE OR REPLACE TABLE test_duckdb AS 
-      SELECT 'delegation_test' as test_type, 'duckdb_working' as status;
-      SELECT * FROM test_duckdb;
+  tool: duckdb
+  commands: |
+    CREATE OR REPLACE TABLE test_duckdb AS 
+    SELECT 'delegation_test' as test_type, 'duckdb_working' as status;
+    SELECT * FROM test_duckdb;
   data: "{{ result.data }}"
 ```
 
 HTTP webhook:
 ```yaml
 sink:
-  storage:
-    type: http
-    url: https://httpbin.org/post
-    method: POST
-    headers: { Content-Type: application/json }
+  tool: http
+  url: https://httpbin.org/post
+  method: POST
+  headers: { Content-Type: application/json }
   data: "{{ result.data }}"
 ```
 
 Custom python sink:
 ```yaml
 sink:
-  storage:
-    type: python
-    code: |
-      def main(data):
-          # transform or route data
-          print("Storing", data.keys())
-          return {"status": "ok"}
+  tool: python
+  code: |
+    def main(data):
+        # transform or route data
+        print("Storing", data.keys())
+        return {"status": "ok"}
   data: "{{ result.data }}"
 ```
 
