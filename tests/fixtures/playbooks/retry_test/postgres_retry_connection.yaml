@@ -7,15 +7,14 @@ metadata:
 
 workload:
   query: SELECT 1 as test_value
+  pg_auth: pg_k8s
   
 workflow:
   - step: start
     desc: Execute query with retry on errors
     tool: postgres
-    auth:
-      tool: postgres
-      credential: test_postgres
-    query: "{{ workload.query }}"
+    auth: "{{ workload.pg_auth }}"
+    command: "{{ workload.query }}"
     retry:
       max_attempts: 3
       initial_delay: 1.0

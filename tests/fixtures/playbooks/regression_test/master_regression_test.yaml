@@ -16,9 +16,7 @@ workload:
   skip_playbooks:
     - test/vars_cache  # datetime serialization issue in VarsCache
     - /vars_test/api_test  # assertion mismatch
-    - tests/retry/http_status_code  # unknown error
-    - tests/retry/postgres_connection  # missing credentials
-    - tests/retry/duckdb_query  # missing command
+    - tests/retry/http_status_code  # unknown error - needs investigation
     - tests/fixtures/playbooks/save_storage_test/save_simple_test  # duplicate key (needs create_tables)
     - tests/fixtures/playbooks/save_storage_test/save_delegation_test  # result extraction issue
     - tests/script_execution/python_file  # relative path issue
@@ -221,7 +219,7 @@ workflow:
       retry_on: ["timeout"]
     next: [step: tests/retry/http_stop_condition]
   
-  # SKIPPED: tests/retry/http_status_code - unknown error
+  # SKIPPED: tests/retry/http_status_code - unknown error - needs investigation
   
   - step: tests/retry/http_stop_condition
     tool: playbook
@@ -229,10 +227,23 @@ workflow:
     retry:
       max_attempts: 2
       retry_on: ["timeout"]
-    next: [step: tests/fixtures/playbooks/save_storage_test/create_tables]
+    next: [step: tests/retry/postgres_connection]
   
-  # SKIPPED: tests/retry/postgres_connection - missing credentials
-  # SKIPPED: tests/retry/duckdb_query - missing command
+  - step: tests/retry/postgres_connection
+    tool: playbook
+    path: tests/retry/postgres_connection
+    retry:
+      max_attempts: 2
+      retry_on: ["timeout"]
+    next: [step: tests/retry/duckdb_query]
+  
+  - step: tests/retry/duckdb_query
+    tool: playbook
+    path: tests/retry/duckdb_query
+    retry:
+      max_attempts: 2
+      retry_on: ["timeout"]
+    next: [step: tests/fixtures/playbooks/save_storage_test/create_tables]
 
   # === SAVE STORAGE TESTS ===
   - step: tests/fixtures/playbooks/save_storage_test/create_tables
