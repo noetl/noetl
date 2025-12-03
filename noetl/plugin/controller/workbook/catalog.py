@@ -6,8 +6,10 @@ Handles fetching playbooks from catalog and finding workbook actions by name.
 
 from typing import Any, Dict, List, Optional
 
+import httpx
 import yaml
 
+from noetl.core.config import get_worker_settings
 from noetl.core.logger import setup_logger
 
 logger = setup_logger(__name__, include_location=True)
@@ -17,7 +19,11 @@ async def fetch_playbook_from_catalog(
     path: str, version: str = "latest"
 ) -> Dict[str, Any]:
     """
-    Fetch playbook from catalog service.
+    Fetch playbook from catalog service via HTTP API.
+
+    Worker uses server HTTP API for catalog lookups to maintain clean
+    architecture separation. Worker should NEVER access noetl schema
+    database directly.
 
     Args:
         path: Playbook path in catalog
@@ -28,15 +34,29 @@ async def fetch_playbook_from_catalog(
 
     Raises:
         ValueError: If playbook not found or cannot be parsed
+        httpx.HTTPError: If HTTP request fails
     """
-    logger.info(f"WORKBOOK: Fetching playbook from catalog: {path} v{version}")
+    logger.info(f"WORKBOOK: Fetching playbook from catalog via API: {path} v{version}")
 
-    # Import catalog service here to avoid circular imports
-    from noetl.server.api.catalog import get_catalog_service
+    # Get server API URL from worker settings
+    worker_settings = get_worker_settings()
+    server_url = worker_settings.server_api_url.rstrip("/")
 
-    # Fetch playbook from catalog
-    catalog = get_catalog_service()
-    entry = await catalog.fetch_entry(path, version)
+    # Fetch playbook from catalog via HTTP API
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                f"{server_url}/catalog/resource",
+                json={"path": path, "version": version}
+            )
+            response.raise_for_status()
+            entry = response.json()
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 404:
+            raise ValueError(f"Playbook not found in catalog: {path} v{version}")
+        raise ValueError(f"Failed to fetch playbook from catalog: {e}")
+    except Exception as e:
+        raise ValueError(f"Error communicating with catalog API: {e}")
 
     if not entry or not entry.get("content"):
         raise ValueError(f"Could not fetch playbook content for {path} v{version}")
@@ -47,6 +67,7 @@ async def fetch_playbook_from_catalog(
     except Exception as e:
         raise ValueError(f"Failed to parse playbook YAML: {e}")
 
+    logger.info(f"WORKBOOK: Successfully fetched playbook {path} v{version} from catalog")
     return playbook
 
 
