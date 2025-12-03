@@ -13,6 +13,7 @@ import { Layout, Menu, Typography, ConfigProvider, Result, Button, App as AntdAp
 
 // Import components
 import Catalog from "./components/Catalog";
+import Credentials from "./components/Credentials";
 import Editor from "./components/Editor";
 import Execution from "./components/Execution";
 import ExecutionDetail from "./components/ExecutionDetail";
@@ -79,6 +80,11 @@ const App: React.FC = () => {
                     onClick: () => navigate("/catalog"),
                   },
                   {
+                    key: "/credentials",
+                    label: "Credentials",
+                    onClick: () => navigate("/credentials"),
+                  },
+                  {
                     key: "/editor",
                     label: "Editor",
                     onClick: () => navigate("/editor"),
@@ -104,6 +110,7 @@ const App: React.FC = () => {
             >
               <Routes>
                 <Route path="/catalog" element={<Catalog />} />
+                <Route path="/credentials" element={<Credentials />} />
                 <Route path="/editor" element={<Editor />} />
                 <Route path="/execution" element={<Execution />} />
                 <Route path="/execution/:id" element={<ExecutionDetail />} />

@@ -183,6 +183,38 @@ async def get_credential(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.delete("/credentials/{identifier}")
+async def delete_credential(identifier: str):
+    """
+    Delete a credential by ID or name.
+    
+    **Path Parameters**:
+    - `identifier`: Credential ID (numeric) or name (string)
+    
+    **Examples**:
+    ```
+    DELETE /credentials/123456789
+    DELETE /credentials/my-database-creds
+    ```
+    
+    **Response**:
+    ```json
+    {
+        "message": "Credential deleted successfully",
+        "id": "123456789"
+    }
+    ```
+    """
+    try:
+        result = await CredentialService.delete_credential(identifier)
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error deleting credential: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ============================================================================
 # GCP Token Endpoint
 # ============================================================================
