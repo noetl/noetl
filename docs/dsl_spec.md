@@ -60,34 +60,116 @@ Each step has:
 - step: Unique step name
 - type: One of `start|end|workbook|python|http|duckdb|postgres|secrets|playbooks|loop`
 - next: The next step name (string or list of names). Not allowed for `end`. Required for `start`.
-- vars: (object, optional): Variable extraction block - extracts values from step result after execution
+- args: (object, optional): Input variables passed to the step BEFORE execution
+- vars: (object, optional): Variable extraction block - extracts values from step result AFTER execution
 - Inputs/Outputs: Vary by type as defined below.
 
 General execution:
 - Steps execute in order by following `next`.
+- A step may receive input variables via `args:` (evaluated BEFORE execution).
+- A step may extract output variables via `vars:` block (evaluated AFTER execution).
 - A step may optionally publish outputs to the playbook context under a variable name (see `as:` below).
-- A step may extract variables from its result using the `vars` block (see Variable Extraction below).
 - If a step has no `next` and is not `end`, the branch terminates implicitly.
 
-### Variable Extraction with `vars` Block
+### Variable Lifecycle: BEFORE vs AFTER Execution
 
-The `vars` block allows declarative extraction of values from a step's result **after execution completes**. Extracted variables are stored and accessible in subsequent steps via `{{ vars.var_name }}` template syntax.
+NoETL provides different mechanisms for passing variables at different stages of step execution.
 
-**Syntax**:
+#### BEFORE Execution (Input Variables)
+
+**1. Global Variables** - `workload:` section (top-level)
 ```yaml
-- step: step_name
-  tool: <action_type>
-  # ... tool-specific configuration ...
-  vars:
-    var_name: "{{ result.field }}"
-    another_var: "{{ result.nested.value }}"
+workload:
+  api_key: "abc123"
+  retry_count: 3
+  base_url: "{{ payload.environment }}"  # Can use payload from CLI
+
+workflow:
+  - step: fetch_data
+    tool: http
+    endpoint: "{{ workload.base_url }}/api/data"
+    headers:
+      Authorization: "Bearer {{ workload.api_key }}"
 ```
 
-**Template Namespace**:
-- `{{ result.field }}` - Access current step's output (use within vars block)
-- `{{ vars.var_name }}` - Access stored variables (use in subsequent steps)
-- `{{ step_name.field }}` - Access previous step's result directly
-- `{{ workload.field }}` - Access global workflow variables
+**2. Step Input Arguments** - `args:` at step level
+```yaml
+- step: compute
+  tool: python
+  args:                                    # ← BEFORE execution, passed to main()
+    input_value: 100
+    multiplier: "{{ workload.retry_count }}"
+    previous_total: "{{ fetch_data.total }}"
+  code: |
+    def main(input_value, multiplier, previous_total):
+      return {"result": input_value * multiplier + previous_total}
+```
+
+**3. Next Step Arguments** - `args:` in `next` block
+```yaml
+- step: decide
+  tool: python
+  code: |
+    def main():
+      return {"should_retry": True, "attempt_number": 1}
+  next:
+    - when: "{{ result.should_retry }}"
+      then:
+        - step: retry_step
+      args:                                # ← BEFORE retry_step execution
+        attempt: "{{ result.attempt_number }}"
+        max_attempts: 3
+```
+
+#### AFTER Execution (Extract from Result)
+
+**1. Vars Block** - `vars:` at step level (extract and store for reuse)
+```yaml
+- step: fetch_users
+  tool: postgres
+  query: "SELECT user_id, email, created_at FROM users WHERE active = true LIMIT 5"
+  vars:                                    # ← AFTER execution, extracts from result
+    first_user_id: "{{ result[0].user_id }}"
+    first_email: "{{ result[0].email }}"
+    user_count: "{{ result | length }}"
+  next:
+    - step: send_notification
+
+- step: send_notification
+  tool: http
+  method: POST
+  endpoint: "https://api.example.com/notify"
+  payload:
+    user_id: "{{ vars.first_user_id }}"   # Access extracted variable
+    email: "{{ vars.first_email }}"
+    total_users: "{{ vars.user_count }}"
+```
+
+**2. Direct Step Access** - `{{ step_name.field }}` (no extraction needed)
+```yaml
+- step: calculate
+  tool: python
+  code: |
+    def main():
+      return {"total": 100, "count": 5}
+  next:
+    - step: report
+
+- step: report
+  tool: python
+  args:
+    total: "{{ calculate.total }}"                      # Direct access
+    average: "{{ calculate.total / calculate.count }}"  # Can compute inline
+```
+
+**Template Namespace Summary**:
+- `{{ workload.field }}` - Global variables (BEFORE: defined in workload section)
+- `{{ args.field }}` - Step input arguments (BEFORE: passed via args)
+- `{{ result.field }}` - Current step result (AFTER: use in vars block)
+- `{{ vars.var_name }}` - Extracted variables (AFTER: use in subsequent steps)
+- `{{ step_name.field }}` - Previous step result (AFTER: direct access)
+- `{{ execution_id }}` - System variable (available anytime)
+- `{{ payload.field }}` - CLI payload (available anytime)
 
 **Example**:
 ```yaml
@@ -110,13 +192,9 @@ The `vars` block allows declarative extraction of values from a step's result **
     email: "{{ vars.first_email }}"
     total_users: "{{ vars.user_count }}"
 ```
+---
 
-**Processing**:
-1. Step executes and produces result
-2. Server emits `step_completed` event
-3. `vars` block templates are rendered using step result
-4. Variables stored in `vars_cache` table with `var_type='step_result'`
-5. Subsequent steps access via `{{ vars.var_name }}`
+## Step Types
 
 ### start
 Entry point that routes to the first executable step.

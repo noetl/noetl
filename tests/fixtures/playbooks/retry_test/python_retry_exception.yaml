@@ -14,7 +14,7 @@ workflow:
     tool: python
     code: |
       
-      def main(input_data):
+      def main():
           import random
           # Simulate random failures for testing retry
           rand_val = random.randint(1, 100)

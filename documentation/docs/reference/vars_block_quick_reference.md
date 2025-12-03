@@ -2,27 +2,37 @@
 
 ## When to Use
 
-Use the `vars` block to **extract and store values** from a step's result for reuse in subsequent steps.
+Use the `vars` block to **extract and store values AFTER step execution** from a step's result for reuse in subsequent steps.
+
+For **BEFORE execution** variables, use:
+- `workload:` section for global variables
+- `args:` at step level for step-specific inputs
+- `args:` in `next:` block to pass values to next step
 
 ## Syntax
 
 ```yaml
 - step: step_name
   tool: <action_type>
+  args:                      # ← BEFORE execution (optional)
+    input_var: "{{ workload.value }}"
   # ... tool configuration ...
-  vars:
+  vars:                      # ← AFTER execution (optional)
     variable_name: "{{ result.field }}"
     another_var: "{{ result.nested.value }}"
 ```
 
 ## Template Namespaces
 
-| In vars block | In subsequent steps | Accesses |
-|---------------|---------------------|----------|
-| `{{ result.field }}` | N/A | Current step's result |
-| N/A | `{{ vars.var_name }}` | Stored variable |
-| N/A | `{{ step_name.field }}` | Previous step result |
-| `{{ workload.field }}` | `{{ workload.field }}` | Global workflow vars |
+| Context | Template | When Available | Description |
+|---------|----------|----------------|-------------|
+| **BEFORE** | `{{ workload.field }}` | Always | Global variables from workload section |
+| **BEFORE** | `{{ args.field }}` | In step code | Input arguments passed to step |
+| **BEFORE** | `{{ step_name.field }}` | After step_name executes | Direct access to previous step result |
+| **AFTER** | `{{ result.field }}` | In vars block | Current step's result |
+| **AFTER** | `{{ vars.var_name }}` | After vars extraction | Stored extracted variable |
+| **ANYTIME** | `{{ execution_id }}` | Always | System execution identifier |
+| **ANYTIME** | `{{ payload.field }}` | Always | CLI --payload values |
 
 ## Common Patterns
 

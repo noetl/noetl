@@ -24,29 +24,48 @@ NoETL's asynchronous, event-driven architecture requires specific testing patter
 
 1. **Each step executes in isolation** - Workers pull jobs independently
 2. **Server coordinates via events** - Command → event → command flow
-3. **`tool: playbook` returns immediately** - Doesn't wait for sub-playbook completion
-4. **Validation queries the event log** - Final status determined from events
+3. **`tool: playbook` triggers new execution chain** - Creates child execution_id with parent_execution_id reference
+4. **Both executions run in parallel** - Parent and child execution chains proceed independently
+5. **Parent step waits for child completion** - Server analyzes events from child execution to determine when complete
+6. **Validation still needs wait time** - Child execution takes time to complete all its steps
+7. **Event log contains final status** - Query `noetl.event` table for child execution completion
 
 ### Three-Step Pattern
 
+**How `tool: playbook` Works:**
+1. **Triggers new execution chain** - Creates child execution with new execution_id
+2. **Sets parent reference** - Child execution has `parent_execution_id` pointing to parent
+3. **Server monitors child events** - Analyzes events from workers to determine child completion
+4. **Parent step completes when child completes** - Step waits for child execution to finish
+5. **Both run via worker events** - Parent and child executions coordinated through event stream
+
+**Why We Still Need Wait Step:**
+- Parent step does wait for child completion before proceeding to `next:`
+- BUT the validation step needs the child execution_id to query its events
+- The wait step ensures child execution has fully completed and all events are persisted
+- Without wait, we might query events while they're still being written
+
 ```yaml
-# 1. Execute test playbook (async)
+# 1. Execute test playbook (triggers child execution chain)
 - step: test_playbook
   tool: playbook
   path: tests/fixtures/playbooks/hello_world
   next:
     - step: wait_for_completion
+  # Parent step waits for child execution to complete
+  # Returns with child execution_id once child finishes
 
-# 2. Wait for nested execution
+# 2. Wait for event persistence and processing
 - step: wait_for_completion
   tool: python
   code: |
     async def main():
         import asyncio
-        await asyncio.sleep(3)
+        await asyncio.sleep(3)  # Ensure events persisted
         return {"status": "success"}
   next:
     - step: validate_results
+  # Gives time for all child events to be written to DB
 
 # 3. Query events and validate
 - step: validate_results
@@ -75,8 +94,41 @@ NoETL's asynchronous, event-driven architecture requires specific testing patter
     table: noetl_test.regression_results
     data:
       test_run_id: "{{ workload.test_run_id }}"
-      status: "{{ result.data.command_0.rows[0].final_status }}"
       test_passed: "{{ result.data.command_0.rows[0].test_passed }}"
+```
+
+### Why the Wait Step is Necessary
+
+**How `tool: playbook` Execution Works:**
+1. Parent step makes HTTP POST to `/api/run/playbook`
+2. Server creates new execution chain with child execution_id
+3. Child execution_id references parent via `parent_execution_id`
+4. **Parent step WAITS for child execution to complete** (via event analysis)
+5. Server monitors child execution events from workers
+6. When child execution completes, parent step returns child execution_id
+7. Parent step then proceeds to `next:`
+
+**Why We Still Need Wait Step:**
+- Parent step does wait for child completion internally
+- However, this is done via event stream analysis
+- Events are processed asynchronously by workers
+- Small timing gap between step completion and all events being persisted
+- Validation queries need events to be fully written to database
+
+**Timeline Analysis (execution 508709863430554191):**
+```
+21:15:42.378589 - Child execution starts (new execution_id created)
+21:15:42.417788 - Parent step sees child completion event
+21:15:42.422100 - Validation step starts (4ms later - too fast!)
+21:15:42.538732 - All child events persisted (160ms total)
+→ Validation queried 116ms before all events were written
+```
+
+**With wait step:**
+```
+Step 1: tool: playbook → waits for child execution → returns child execution_id
+Step 2: Sleep 3 seconds → ensures all child events persisted to DB
+Step 3: Query events → all child execution events available
 ```
 
 ## Quick Start
@@ -250,32 +302,39 @@ ORDER BY test_run_id DESC, playbook_name;
 
 ### Basic Test Pattern
 
-Add a new test to `master_regression_test.yaml`:
+Add a new test to `master_regression_test.yaml`. The wait step ensures all child execution events are persisted:
 
 ```yaml
-# 1. Execute test playbook
+# 1. Execute test playbook (creates child execution chain)
 - step: test_my_playbook
   desc: "Test my_playbook"
   tool: playbook
   path: tests/fixtures/playbooks/my_category/my_playbook
   next:
     - step: wait_for_my_playbook
+  # This step:
+  # - Triggers child execution with new execution_id
+  # - Waits for child completion via event analysis
+  # - Returns child execution_id when complete
+  # - Then proceeds to next step
 
-# 2. Wait for completion
+# 2. Wait for event persistence (REQUIRED)
 - step: wait_for_my_playbook
-  desc: "Wait for my_playbook to complete"
+  desc: "Ensure all child execution events are persisted"
   tool: python
   code: |
     async def main():
         import asyncio
-        await asyncio.sleep(3)  # Adjust as needed
+        await asyncio.sleep(3)  # Adjust based on playbook complexity
         return {"status": "success"}
   next:
     - step: validate_my_playbook
+  # Child execution completed, but events may still be
+  # writing to database. This ensures full persistence.
 
-# 3. Validate and save
+# 3. Validate and save (all child events now in database)
 - step: validate_my_playbook
-  desc: "Validate my_playbook results"
+  desc: "Query child execution events for validation"
   tool: postgres
   auth: "{{ workload.pg_auth }}"
   command: |
@@ -368,11 +427,55 @@ command: |
 
 **Symptom**: Results show `status: 'unknown'` and `step_count: 0`
 
-**Cause**: Validation queried events before nested playbook completed
+**Cause**: Event persistence lag - validation queried before all events written to database
+
+**Explanation**: 
+- `tool: playbook` triggers child execution with new execution_id
+- Parent step waits for child completion via event stream analysis
+- When child completes, parent step returns child execution_id
+- However, workers may still be writing final events to database
+- If wait time too short, validation queries incomplete event set
 
 **Solution**: Increase wait time:
 ```yaml
-await asyncio.sleep(5)  # Increase from 3 to 5 seconds
+await asyncio.sleep(5)  # Increase from 3 to 5 seconds for complex playbooks
+```
+
+**Diagnosis**: Check parent/child execution relationship:
+```sql
+-- Find parent and child executions
+SELECT 
+  e1.execution_id as parent_exec_id,
+  e2.execution_id as child_exec_id,
+  e2.event_type,
+  e2.created_at
+FROM noetl.event e1
+JOIN noetl.event e2 ON e2.parent_execution_id = e1.execution_id
+WHERE e1.execution_id = <parent_id>
+ORDER BY e2.created_at;
+```
+
+### Missing Wait Step
+
+**Symptom**: Test validation gets incomplete event data
+
+**Cause**: No buffer time for event persistence after child execution completes
+
+**Solution**: Always add wait step between execute and validate:
+```yaml
+- step: test_playbook
+  tool: playbook
+  path: catalog/path
+  next: [step: wait_step]  # Required for event persistence
+
+- step: wait_step
+  tool: python
+  code: |
+    async def main():
+        import asyncio
+        await asyncio.sleep(3)  # Buffer for event writes
+        return {"status": "success"}
+  next: [step: validate]
 ```
 
 ### Wrong Execution ID

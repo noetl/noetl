@@ -56,6 +56,8 @@ workflow:
         test_id: "{{ result.record_id }}"
         test_name: "{{ result.description }}"
         test_value: 42
+        storage_type: "flat"
+        test_execution: "{{ execution_id }}"
     next:
       - step: postgres_nested_test
 
@@ -81,9 +83,9 @@ workflow:
       args:
         test_id: "{{ result.nested_id }}"
         test_name: "nested_structure_test"
-        test_value: "{{ workload.test_data.value }}"
-        execution_id: "{{ execution_id }}"
-        nested_indicator: true
+        test_data: {"value": "{{ workload.test_data.value }}", "nested_indicator": true}
+        storage_type: "nested"
+        test_execution: "{{ execution_id }}"
     next:
       - step: end
 

@@ -18,11 +18,9 @@ workflow:
   desc: Set initial variables using Python
   tool: python
   code: |
-    import asyncio
-    from noetl.worker.vars_cache import VarsCache
-    
-    async def set_vars():
-        execution_id = int("{{ workload.execution_id }}")
+    async def main():
+        from noetl.worker.vars_cache import VarsCache
+        execution_id = int(context.get('execution_id'))
         
         # Set individual variables
         await VarsCache.set_cached(
@@ -50,9 +48,6 @@ workflow:
         )
         
         return {"status": "success", "data": {"vars_set": 3}}
-    
-    def main():
-        return asyncio.run(set_vars())
   next:
   - step: test_get_var
 
@@ -60,11 +55,9 @@ workflow:
   desc: Retrieve and verify variables
   tool: python
   code: |
-    import asyncio
-    from noetl.worker.vars_cache import VarsCache
-    
-    async def get_vars():
-        execution_id = int("{{ workload.execution_id }}")
+    async def main():
+        from noetl.worker.vars_cache import VarsCache
+        execution_id = int(context.get('execution_id'))
         
         # Get individual variable
         counter = await VarsCache.get_cached("counter", execution_id)
@@ -87,9 +80,6 @@ workflow:
                 }
             }
         }
-    
-    def main():
-        return asyncio.run(get_vars())
   next:
   - step: test_update_var
 
@@ -97,11 +87,9 @@ workflow:
   desc: Update variable values
   tool: python
   code: |
-    import asyncio
-    from noetl.worker.vars_cache import VarsCache
-    
-    async def update_vars():
-        execution_id = int("{{ workload.execution_id }}")
+    async def main():
+        from noetl.worker.vars_cache import VarsCache
+        execution_id = int(context.get('execution_id'))
         
         # Update counter
         await VarsCache.set_cached(
@@ -134,9 +122,6 @@ workflow:
                 "status_access_count": status["access_count"]
             }
         }
-    
-    def main():
-        return asyncio.run(update_vars())
   next:
   - step: test_bulk_set
 
@@ -144,11 +129,9 @@ workflow:
   desc: Test bulk variable setting
   tool: python
   code: |
-    import asyncio
-    from noetl.worker.vars_cache import VarsCache
-    
-    async def bulk_set():
-        execution_id = int("{{ workload.execution_id }}")
+    async def main():
+        from noetl.worker.vars_cache import VarsCache
+        execution_id = int(context.get('execution_id'))
         
         # Set multiple variables at once
         vars_to_set = {
@@ -176,9 +159,6 @@ workflow:
                 "var_names": list(all_with_meta.keys())
             }
         }
-    
-    def main():
-        return asyncio.run(bulk_set())
   next:
   - step: test_delete_var
 
@@ -186,11 +166,9 @@ workflow:
   desc: Test variable deletion
   tool: python
   code: |
-    import asyncio
-    from noetl.worker.vars_cache import VarsCache
-    
-    async def delete_vars():
-        execution_id = int("{{ workload.execution_id }}")
+    async def main():
+        from noetl.worker.vars_cache import VarsCache
+        execution_id = int(context.get('execution_id'))
         
         # Delete single variable
         deleted = await VarsCache.delete_var("bulk_var_1", execution_id)
@@ -209,9 +187,6 @@ workflow:
                 "remaining_var_count": len(all_vars)
             }
         }
-    
-    def main():
-        return asyncio.run(delete_vars())
   next:
   - step: end
 

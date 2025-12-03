@@ -57,6 +57,8 @@ workflow:
         test_id: "delegation_test"
         test_name: "{{ result.test }}"
         test_value: "{{ result.value }}"
+        storage_type: "delegation"
+        test_execution: "{{ execution_id }}"
     next:
       - step: duckdb_test
 
