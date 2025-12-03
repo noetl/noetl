@@ -18,6 +18,10 @@ workload:
     - tests/script_execution/python_file  # relative path issue
     - tests/script_execution/postgres_file  # relative path issue
     - tests/script_execution/postgres_s3  # missing S3 credentials
+    - tests/retry/simple_config  # retry test playbooks not yet implemented
+    - tests/retry/python_exception  # retry test playbooks not yet implemented
+    - tests/retry/http_status_code  # retry test playbooks not yet implemented
+    - tests/retry/http_stop_condition  # retry test playbooks not yet implemented
 
 workbook:
   - name: run_playbook_with_retry
