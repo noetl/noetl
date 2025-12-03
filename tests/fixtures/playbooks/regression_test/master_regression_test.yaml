@@ -14,9 +14,7 @@ workload:
   
   # Skip playbooks with known issues
   skip_playbooks:
-    - test/vars_cache  # datetime serialization issue in VarsCache
-    - /vars_test/api_test  # assertion mismatch
-    - tests/retry/http_status_code  # unknown error - needs investigation
+    - test/vars_cache  # datetime serialization issue in VarsCache (internal API test)
     - tests/script_execution/python_file  # relative path issue
     - tests/script_execution/postgres_file  # relative path issue
     - tests/script_execution/postgres_s3  # missing S3 credentials
@@ -86,6 +84,14 @@ workflow:
     retry:
       max_attempts: 2
       retry_on: ["timeout"]
+    next: [step: /vars_test/api_test]
+  
+  - step: /vars_test/api_test
+    tool: playbook
+    path: /vars_test/api_test
+    retry:
+      max_attempts: 2
+      retry_on: ["timeout"]
     next: [step: test/vars_cache]
   
   - step: test/vars_cache
@@ -95,8 +101,6 @@ workflow:
       max_attempts: 2
       retry_on: ["timeout"]
     next: [step: test/cache_simple]
-  
-  # SKIPPED: /vars_test/api_test - assertion mismatch
 
   # === CACHE TESTS ===
   - step: test/cache_simple
@@ -215,9 +219,15 @@ workflow:
     retry:
       max_attempts: 2
       retry_on: ["timeout"]
-    next: [step: tests/retry/http_stop_condition]
+    next: [step: tests/retry/http_status_code]
   
-  # SKIPPED: tests/retry/http_status_code - unknown error - needs investigation
+  - step: tests/retry/http_status_code
+    tool: playbook
+    path: tests/retry/http_status_code
+    retry:
+      max_attempts: 2
+      retry_on: ["timeout"]
+    next: [step: tests/retry/http_stop_condition]
   
   - step: tests/retry/http_stop_condition
     tool: playbook

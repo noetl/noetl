@@ -55,6 +55,10 @@ workflow:
     tool: python
     code: |
       def main(user_id, username, score, execution_id):
+        # Convert to correct types since Jinja templates may return strings
+        user_id = int(user_id) if isinstance(user_id, str) else user_id
+        score = int(score) if isinstance(score, str) else score
+        
         # Verify extracted variables are accessible
         assert user_id == 999, f"Expected user_id=999, got {user_id}"
         assert username == "api_tester", f"Expected username=api_tester, got {username}"
