@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.3.0](https://github.com/noetl/noetl/compare/v1.2.5...v1.3.0) (2025-12-03)
+
+### Features
+
+* container secrets ([f6a1391](https://github.com/noetl/noetl/commit/f6a1391f3bb2437add043b48610dddd5625287ff))
+* **container:** add container tool with authenticated remote file downloads ([fa8c1db](https://github.com/noetl/noetl/commit/fa8c1db48b21db7ff87c1126e99cc8ba36d67449))
+* enhance GoogleTokenProvider for effective audience resolution and lazy imports for container execution ([ff8819c](https://github.com/noetl/noetl/commit/ff8819c87b2d5b78b11d5eaf92b5f9a50b25f1c6))
+
+### Bug Fixes
+
+* support effective audience resolution in token provider ([5034593](https://github.com/noetl/noetl/commit/503459359e5d26592a844ce2f1409ced19cf5779))
+
 ## [1.3.0](https://github.com/noetl/noetl/compare/v1.2.5...v1.3.0) (2025-11-28)
 
 ### Features
