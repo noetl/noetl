@@ -17,8 +17,6 @@ workload:
     - test/vars_cache  # datetime serialization issue in VarsCache
     - /vars_test/api_test  # assertion mismatch
     - tests/retry/http_status_code  # unknown error - needs investigation
-    - tests/fixtures/playbooks/save_storage_test/save_simple_test  # duplicate key (needs create_tables)
-    - tests/fixtures/playbooks/save_storage_test/save_delegation_test  # result extraction issue
     - tests/script_execution/python_file  # relative path issue
     - tests/script_execution/postgres_file  # relative path issue
     - tests/script_execution/postgres_s3  # missing S3 credentials
