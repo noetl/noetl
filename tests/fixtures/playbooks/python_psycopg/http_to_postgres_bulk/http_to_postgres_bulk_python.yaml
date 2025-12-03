@@ -7,9 +7,9 @@ metadata:
 workload:
   api_url: "https://jsonplaceholder.typicode.com/posts"
   pg_credential: pg_local
-  # PostgreSQL connection details for psycopg
-  pg_host: localhost
-  pg_port: 54321
+  # PostgreSQL connection details for psycopg - using K8s service
+  pg_host: postgres.postgres.svc.cluster.local
+  pg_port: 5432
   pg_user: demo
   pg_password: demo
   pg_database: demo_noetl

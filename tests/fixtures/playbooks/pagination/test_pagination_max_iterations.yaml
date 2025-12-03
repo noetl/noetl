@@ -6,7 +6,7 @@ metadata:
   description: Test max_iterations safety limit
 
 workload:
-  api_url: http://192.168.1.240:5555
+  api_url: http://paginated-api.test-server.svc.cluster.local:5555
 
 workflow:
   - step: start

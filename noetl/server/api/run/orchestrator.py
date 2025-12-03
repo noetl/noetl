@@ -184,10 +184,10 @@ async def _check_execution_completion(
             # No pending work - execution is complete, emit completion events
             logger.info(f"All active work completed for execution {execution_id}, finalizing")
 
-            # Get catalog_id and catalog path from playbook_started event
+            # Get catalog_id, catalog path, and parent_execution_id from playbook_started event
             await cur.execute(
                 """
-                SELECT catalog_id, node_name as catalog_path
+                SELECT catalog_id, node_name as catalog_path, parent_execution_id
                 FROM noetl.event
                 WHERE execution_id = %(execution_id)s
                   AND event_type = 'playbook_started'
@@ -204,6 +204,7 @@ async def _check_execution_completion(
 
             catalog_id = row["catalog_id"]
             catalog_path = row["catalog_path"]
+            parent_execution_id = row["parent_execution_id"]
 
             # Get parent_event_id from workflow_initialized event
             await cur.execute(
@@ -280,6 +281,7 @@ async def _check_execution_completion(
                         catalog_id,
                         event_id,
                         parent_event_id,
+                        parent_execution_id,
                         event_type,
                         node_id,
                         node_name,
@@ -292,6 +294,7 @@ async def _check_execution_completion(
                         %(catalog_id)s,
                         %(event_id)s,
                         %(parent_event_id)s,
+                        %(parent_execution_id)s,
                         %(event_type)s,
                         %(node_id)s,
                         %(node_name)s,
@@ -306,6 +309,7 @@ async def _check_execution_completion(
                         "catalog_id": catalog_id,
                         "event_id": execution_event_id,
                         "parent_event_id": workflow_event_id,
+                        "parent_execution_id": int(parent_execution_id) if parent_execution_id else None,
                         "event_type": "playbook_completed",
                         "node_id": "playbook",
                         "node_name": catalog_path,

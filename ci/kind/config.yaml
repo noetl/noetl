@@ -64,6 +64,12 @@ nodes:
         listenAddress: "127.0.0.1"
         protocol: TCP
 
+        # Pagination Test Server
+      - containerPort: 30555
+        hostPort: 30555
+        listenAddress: "127.0.0.1"
+        protocol: TCP
+
     # ci/kind/cache added to .gitignore
     extraMounts:
       - hostPath: ci/kind/cache/pg-data

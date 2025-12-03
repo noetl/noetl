@@ -16,6 +16,47 @@ The regression testing framework uses:
 
 This creates a self-contained, database-backed test suite that runs entirely within NoETL's architecture.
 
+## Test Infrastructure
+
+### Pagination Test Server
+
+NoETL includes a dedicated FastAPI test server for testing HTTP pagination patterns. This server runs within the Kubernetes cluster and provides consistent, predictable pagination endpoints for regression tests.
+
+**Deployment:**
+```bash
+# Deploy test server
+task pagination-server:test:pagination-server:full
+
+# Check status
+task pagination-server:test:pagination-server:status
+
+# Test endpoints
+task pagination-server:test:pagination-server:test
+
+# View logs
+task pagination-server:test:pagination-server:logs
+```
+
+**Access:**
+- **ClusterIP**: `paginated-api.test-server.svc.cluster.local:5555` (internal)
+- **NodePort**: `http://localhost:30555` (external)
+
+**Endpoints:**
+- `GET /health` - Health check
+- `GET /api/v1/assessments?page={n}` - Page-number based pagination (35 items, 10 per page)
+- `GET /api/v1/users?offset={n}&limit={n}` - Offset-based pagination
+- `GET /api/v1/events?cursor={token}` - Cursor-based pagination
+- `GET /api/v1/flaky?page={n}` - Simulated failures for retry testing
+
+**Configuration:**
+- Source: `tests/fixtures/servers/paginated_api.py`
+- Docker: `docker/test-server/Dockerfile`
+- Manifests: `ci/manifests/test-server/`
+- Tasks: `ci/taskfile/test-server.yml`
+
+**Port Mapping:**
+The test server's NodePort (30555) must be configured in the kind cluster configuration (`ci/kind/config.yaml`). If you recreate the cluster, the port mapping is automatically included.
+
 ## Architecture
 
 ### Event-Driven Design

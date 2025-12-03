@@ -41,10 +41,19 @@ class WorkerAPIClient:
 
     async def complete_job(self, queue_id: int) -> None:
         try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                await client.post(self._url(f"/queue/{queue_id}/complete"))
-        except Exception:
-            logger.debug("Failed to complete job %s", queue_id, exc_info=True)
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(self._url(f"/queue/{queue_id}/complete"))
+                response.raise_for_status()
+                logger.debug("Successfully completed job %s", queue_id)
+        except httpx.TimeoutException as exc:
+            logger.error("Timeout completing job %s: %s", queue_id, exc, exc_info=True)
+            raise
+        except httpx.HTTPStatusError as exc:
+            logger.error("HTTP error completing job %s (status %s): %s", queue_id, exc.response.status_code, exc, exc_info=True)
+            raise
+        except Exception as exc:
+            logger.error("Failed to complete job %s: %s", queue_id, exc, exc_info=True)
+            raise
 
     async def fail_job(
         self, queue_id: int, should_retry: bool, retry_delay_seconds: int

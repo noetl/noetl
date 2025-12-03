@@ -21,11 +21,13 @@ NoETL is a workflow automation framework for data processing and MLOps orchestra
 
 **Setup & Testing:**
 ```bash
-task bring-all                    # Complete K8s dev environment (build + deploy all components)
-task deploy-postgres              # Deploy PostgreSQL to kind cluster
-task deploy-noetl                 # Deploy NoETL server and workers
-task observability:activate-all   # Deploy ClickHouse, Qdrant, NATS
-task test-*-full                  # Integration tests (register credentials, playbook, execute)
+task bring-all                                      # Complete K8s dev environment (build + deploy all components)
+task deploy-postgres                                # Deploy PostgreSQL to kind cluster
+task deploy-noetl                                   # Deploy NoETL server and workers
+task observability:activate-all                     # Deploy ClickHouse, Qdrant, NATS
+task pagination-server:test:pagination-server:full  # Deploy pagination test server
+task test:regression:full                           # Complete regression test suite (setup + run)
+task test-*-full                                    # Integration tests (register credentials, playbook, execute)
 ```
 
 **Local Development:**
@@ -226,9 +228,13 @@ See `tests/fixtures/playbooks/script_execution/` and `docs/script_attribute_desi
 **Development Infrastructure:**
 - `taskfile.yml` - Main task automation with included taskfiles for tests and monitoring
 - `ci/taskfile/` - Specialized taskfiles for testing, troubleshooting, and observability
+- `ci/taskfile/test-server.yml` - Pagination test server lifecycle management
 - `tests/taskfile/noetltest.yml` - Test task definitions
 - `docker/` - Container build scripts for all components
+- `docker/test-server/` - Pagination test server Dockerfile
+- `ci/manifests/test-server/` - Kubernetes manifests for test server
 - `tests/fixtures/playbooks/` - Comprehensive test playbooks demonstrating all patterns
+- `tests/fixtures/servers/paginated_api.py` - FastAPI pagination test server
 
 **Testing:**
 - Follow `test-*-full` pattern for integration tests (e.g., `task test-control-flow-workbook-full`)
@@ -296,6 +302,17 @@ See `tests/fixtures/playbooks/script_execution/` and `docs/script_attribute_desi
   - `task observability:activate-all` / `task observability:deactivate-all`
   - Individual: `task clickhouse:deploy`, `task qdrant:deploy`, `task nats:deploy`
 - **Documentation**: See `docs/observability_services.md` for complete guide
+
+**Test Infrastructure:**
+- **Pagination Test Server**: FastAPI server for testing HTTP pagination patterns
+  - Access: ClusterIP (paginated-api.test-server.svc.cluster.local:5555), NodePort (localhost:30555)
+  - Endpoints: `/api/v1/assessments` (page-based), `/api/v1/users` (offset-based), `/api/v1/events` (cursor-based), `/api/v1/flaky` (retry testing)
+  - Commands:
+    - Deploy: `task pagination-server:test:pagination-server:full`
+    - Status: `task pagination-server:test:pagination-server:status`
+    - Test: `task pagination-server:test:pagination-server:test`
+    - Logs: `task pagination-server:test:pagination-server:logs`
+  - Configuration: `ci/manifests/test-server/`, `docker/test-server/Dockerfile`
 
 **Timezone Configuration** (CRITICAL):
 - **Default**: UTC for all components (Postgres, server, worker)
