@@ -1,0 +1,104 @@
+apiVersion: noetl.io/v1
+kind: Playbook
+metadata:
+  name: test_vars_block
+  path: vars_test/test_vars_block
+  description: Test vars block for extracting variables from step results
+
+workload:
+  greeting: "Hello"
+  
+workflow:
+  - step: start
+    desc: Start execution
+    next:
+      - step: fetch_data
+
+  - step: fetch_data
+    desc: Simulate fetching data and extract vars
+    tool: python
+    code: |
+      def main():
+          # Simulate fetching data from a database
+          return {
+              "status": "success",
+              "users": [
+                  {"user_id": 123, "email": "alice@example.com", "name": "Alice"},
+                  {"user_id": 456, "email": "bob@example.com", "name": "Bob"}
+              ],
+              "metadata": {
+                  "count": 2,
+                  "source": "test_db"
+              }
+          }
+    vars:
+      first_user_id: "{{ result.users[0].user_id }}"
+      first_email: "{{ result.users[0].email }}"
+      user_count: "{{ result.metadata.count }}"
+      data_source: "{{ result.metadata.source }}"
+    next:
+      - step: use_extracted_vars
+
+  - step: use_extracted_vars
+    desc: Use variables that were extracted by vars block
+    tool: python
+    code: |
+      def main(first_user_id, first_email, user_count, data_source):
+          # This step receives vars extracted from previous step
+          return {
+              "status": "success",
+              "message": f"Processing user {first_user_id} ({first_email})",
+              "total_users": user_count,
+              "source": data_source,
+              "values_received": {
+                  "first_user_id": first_user_id,
+                  "first_email": first_email,
+                  "user_count": user_count,
+                  "data_source": data_source
+              }
+          }
+    args:
+      first_user_id: "{{ vars.first_user_id }}"
+      first_email: "{{ vars.first_email }}"
+      user_count: "{{ vars.user_count }}"
+      data_source: "{{ vars.data_source }}"
+    next:
+      - step: verify_vars
+
+  - step: verify_vars
+    desc: Verify all vars were extracted and used correctly
+    tool: python
+    code: |
+      def main():
+          from noetl.worker.vars_cache import VarsCache
+          import asyncio
+          
+          execution_id = int(context.get('execution_id'))
+          
+          # Get all vars
+          all_vars = asyncio.run(VarsCache.get_all_vars(execution_id))
+          
+          # Check expected vars
+          checks = {
+              "first_user_id_exists": "first_user_id" in all_vars,
+              "first_user_id_correct": all_vars.get("first_user_id") == 123,
+              "first_email_exists": "first_email" in all_vars,
+              "first_email_correct": all_vars.get("first_email") == "alice@example.com",
+              "user_count_exists": "user_count" in all_vars,
+              "user_count_correct": all_vars.get("user_count") == 2,
+              "data_source_exists": "data_source" in all_vars,
+              "data_source_correct": all_vars.get("data_source") == "test_db"
+          }
+          
+          all_passed = all(checks.values())
+          
+          return {
+              "status": "success" if all_passed else "failed",
+              "checks": checks,
+              "all_vars": all_vars
+          }
+    next:
+      - step: end
+
+  - step: end
+    desc: End execution

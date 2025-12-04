@@ -111,10 +111,15 @@ def extract_sink_config(
     # Get sink configuration attributes
     # Prefer nested tool.data/args over top-level data/args for nested structure
     # Support both 'data' and 'args' for flexibility
+    # For HTTP sinks, 'payload' is an alias for 'data'
     if isinstance(tool_value, dict):
-        data_spec = tool_value.get('data') or tool_value.get('args')
+        data_spec = (tool_value.get('data') or 
+                    tool_value.get('args') or
+                    tool_value.get('payload'))
     else:
-        data_spec = payload.get('data') or payload.get('args')
+        data_spec = (payload.get('data') or 
+                    payload.get('args') or
+                    payload.get('payload'))
     
     # Statement can come from nested tool or top-level
     # Also support 'commands' and 'sql' aliases (for DuckDB compatibility)

@@ -34,6 +34,18 @@ export interface PlaybookData {
   created_at?: string
 }
 
+export interface CredentialData {
+  id: string;
+  name: string;
+  type: string;
+  meta?: any;
+  tags?: string[];
+  description?: string;
+  created_at: string;
+  updated_at: string;
+  data?: Record<string, any>;
+}
+
 export interface ExecutionEvent {
   event_id: string;
   event_type: string;

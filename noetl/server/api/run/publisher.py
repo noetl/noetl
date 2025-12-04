@@ -19,15 +19,19 @@ logger = setup_logger(__name__, include_location=True)
 
 def encode_task_for_queue(task_config: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Apply base64 encoding to multiline code/commands in task configuration
-    to prevent serialization issues when passing through JSON in queue table.
-    Only base64 versions are stored - original fields are removed to ensure single method of handling.
+    Apply base64 encoding to multiline code in task configuration.
+    
+    IMPORTANT: command/commands fields are NOT encoded here because they contain
+    Jinja2 templates that must be rendered by the worker with full execution context
+    (including results from previous steps). The rendering happens via /context/render
+    endpoint before task execution. The postgres/duckdb executors accept inline 'command'
+    field directly without base64 encoding.
 
     Args:
         task_config: The original task configuration
 
     Returns:
-        Modified task configuration with base64 encoded fields, original fields removed
+        Modified task configuration with code_b64 field (if code present), command/commands unchanged
     """
     if not isinstance(task_config, dict):
         return task_config
@@ -44,15 +48,8 @@ def encode_task_for_queue(task_config: Dict[str, Any]) -> Dict[str, Any]:
             # Remove original to ensure only base64 is used
             encoded_task.pop("code", None)
 
-        # Encode command/commands for PostgreSQL and DuckDB and remove originals
-        for field in ("command", "commands"):
-            cmd_val = encoded_task.get(field)
-            if isinstance(cmd_val, str) and cmd_val.strip():
-                encoded_task[f"{field}_b64"] = base64.b64encode(
-                    cmd_val.encode("utf-8")
-                ).decode("ascii")
-                # Remove original to ensure only base64 is used
-                encoded_task.pop(field, None)
+        # DO NOT encode command/commands - they need to be rendered with Jinja2 first
+        # The postgres/duckdb executors support inline 'command' field without base64 encoding
 
     except Exception:
         logger.debug("Failed to encode task fields", exc_info=True)

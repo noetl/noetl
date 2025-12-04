@@ -99,8 +99,8 @@ def create_task_config(
         task_id = str(uuid.uuid4())
         task_name = task_config.get('task', 'duckdb_task')
         
-        # Decode base64 commands
-        commands = _decode_commands(task_config)
+        # Decode commands with script support
+        commands = _decode_commands(task_config, context, jinja_env)
         
         return TaskConfig(
             task_id=task_id,
@@ -154,42 +154,67 @@ def preprocess_task_with(
         return task_with or {}
 
 
-def _decode_commands(task_config: Dict[str, Any]) -> str:
+def _decode_commands(task_config: Dict[str, Any], context: Optional[ContextDict] = None, jinja_env: Optional[JinjaEnvironment] = None) -> str:
     """
-    Decode base64 encoded commands from task configuration.
+    Decode or extract commands from task configuration.
+    
+    Priority order (matching postgres plugin):
+    1. script attribute (external code loading)
+    2. Base64 encoded: command_b64, commands_b64, query_b64
+    3. Inline: query, queries, command, commands, cmd, cmds (string or array)
+    
+    Supports multiple attribute aliases for flexibility.
+    Arrays are joined with newlines into a single string.
     
     Args:
         task_config: Task configuration containing commands
+        context: Execution context (required for script resolution)
+        jinja_env: Jinja2 environment (required for script resolution)
         
     Returns:
-        Decoded commands string
+        Commands string
         
     Raises:
         ConfigurationError: If no valid commands found or decoding fails
     """
     import base64
     
-    command_b64 = task_config.get('command_b64', '')
-    commands_b64 = task_config.get('commands_b64', '')
+    # Priority 1: External script (requires context and jinja_env)
+    if 'script' in task_config:
+        from noetl.plugin.shared.script import resolve_script
+        logger.debug(f"DUCKDB: Resolving external script")
+        if not context or not jinja_env:
+            raise ConfigurationError("Context and jinja_env are required for script resolution")
+        commands = resolve_script(task_config['script'], context, jinja_env)
+        logger.debug(f"DUCKDB: Resolved script from {task_config['script']['source']['type']}, length={len(commands)} chars")
+        return commands
     
-    commands = ''
+    # Priority 2: Base64 encoded commands (check aliases)
+    base64_aliases = ['command_b64', 'commands_b64', 'query_b64']
+    for alias in base64_aliases:
+        if alias in task_config:
+            try:
+                commands = base64.b64decode(task_config[alias].encode('ascii')).decode('utf-8')
+                logger.debug(f"DUCKDB: Decoded base64 from '{alias}', length={len(commands)} chars")
+                return commands
+            except Exception as e:
+                raise ConfigurationError(f"Invalid base64 encoding in '{alias}': {e}")
     
-    if command_b64:
-        try:
-            commands = base64.b64decode(command_b64.encode('ascii')).decode('utf-8')
-            logger.debug(f"Decoded base64 command, length={len(commands)} chars")
-        except Exception as e:
-            raise ConfigurationError(f"Invalid base64 command encoding: {e}")
-    elif commands_b64:
-        try:
-            commands = base64.b64decode(commands_b64.encode('ascii')).decode('utf-8')
-            logger.debug(f"Decoded base64 commands, length={len(commands)} chars")
-        except Exception as e:
-            raise ConfigurationError(f"Invalid base64 commands encoding: {e}")
-    else:
-        raise ConfigurationError("No command_b64 or commands_b64 field found - DuckDB tasks require base64 encoded commands")
+    # Priority 3: Inline command (check aliases: query, queries, command, commands, cmd, cmds)
+    inline_aliases = ['query', 'queries', 'command', 'commands', 'cmd', 'cmds']
+    for alias in inline_aliases:
+        if alias in task_config:
+            value = task_config[alias]
+            # Handle array or string
+            if isinstance(value, list):
+                commands = '\n'.join(str(item) for item in value)
+                logger.debug(f"DUCKDB: Using inline '{alias}' array ({len(value)} items), total length={len(commands)} chars")
+            else:
+                commands = str(value)
+                logger.debug(f"DUCKDB: Using inline '{alias}', length={len(commands)} chars")
+            return commands
     
-    return commands
+    raise ConfigurationError("No command provided. Expected 'script', base64 field (command_b64/commands_b64/query_b64), or inline field (query/queries/command/commands/cmd/cmds)")
 
 
 def _coerce_stringified_objects(processed: Any) -> Any:

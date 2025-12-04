@@ -43,7 +43,11 @@ def escape_task_with_params(task_with: Dict) -> Dict:
 
 def decode_base64_commands(task_config: Dict, context: Dict = None, jinja_env: Environment = None) -> str:
     """
-    Decode SQL commands from task configuration with priority: script > command_b64 > command.
+    Decode SQL commands from task configuration with priority: script > *_b64 > inline.
+    
+    Supports multiple attribute aliases:
+    - Inline: query, queries, command, commands, cmd, cmds (any can be string or array)
+    - Base64: query_b64, command_b64, commands_b64
     
     Args:
         task_config: The task configuration
@@ -66,35 +70,34 @@ def decode_base64_commands(task_config: Dict, context: Dict = None, jinja_env: E
         logger.debug(f"POSTGRES: Resolved script from {task_config['script']['source']['type']}, length={len(commands)} chars")
         return commands
     
-    # Priority 2: Base64 encoded command
-    command_b64 = task_config.get('command_b64', '')
-    commands_b64 = task_config.get('commands_b64', '')
+    # Priority 2: Base64 encoded command (check aliases)
+    base64_aliases = ['command_b64', 'commands_b64', 'query_b64']
+    for alias in base64_aliases:
+        if alias in task_config:
+            try:
+                commands = base64.b64decode(task_config[alias].encode('ascii')).decode('utf-8')
+                logger.debug(f"POSTGRES: Decoded base64 from '{alias}', length={len(commands)} chars")
+                return commands
+            except Exception as e:
+                logger.error(f"POSTGRES: Failed to decode base64 from '{alias}': {e}")
+                raise ValueError(f"Invalid base64 encoding in '{alias}': {e}")
     
-    commands = ''
-    if command_b64:
-        try:
-            commands = base64.b64decode(command_b64.encode('ascii')).decode('utf-8')
-            logger.debug(f"POSTGRES: Decoded base64 command, length={len(commands)} chars")
-        except Exception as e:
-            logger.error(f"POSTGRES: Failed to decode base64 command: {e}")
-            raise ValueError(f"Invalid base64 command encoding: {e}")
-    elif commands_b64:
-        try:
-            commands = base64.b64decode(commands_b64.encode('ascii')).decode('utf-8')
-            logger.debug(f"POSTGRES: Decoded base64 commands, length={len(commands)} chars")
-        except Exception as e:
-            logger.error(f"POSTGRES: Failed to decode base64 commands: {e}")
-            raise ValueError(f"Invalid base64 commands encoding: {e}")
+    # Priority 3: Inline command (check aliases: query, queries, command, commands, cmd, cmds)
+    inline_aliases = ['query', 'queries', 'command', 'commands', 'cmd', 'cmds']
+    for alias in inline_aliases:
+        if alias in task_config:
+            value = task_config[alias]
+            # Handle array or string
+            if isinstance(value, list):
+                commands = '\n'.join(str(item) for item in value)
+                logger.debug(f"POSTGRES: Using inline '{alias}' array ({len(value)} items), total length={len(commands)} chars")
+            else:
+                commands = str(value)
+                logger.debug(f"POSTGRES: Using inline '{alias}', length={len(commands)} chars")
+            return commands
     
-    # Priority 3: Inline command (fallback for direct usage)
-    elif 'command' in task_config:
-        commands = task_config['command']
-        logger.debug(f"POSTGRES: Using inline command, length={len(commands)} chars")
-    
-    else:
-        raise ValueError("No SQL command provided. Expected 'script', 'command_b64', 'commands_b64', or 'command'")
-    
-    return commands
+    raise ValueError("No SQL command provided. Expected 'script', base64 field (command_b64/commands_b64/query_b64), or inline field (query/queries/command/commands/cmd/cmds)")
+
 
 
 def render_and_split_commands(commands: str, jinja_env: Environment, context: Dict, task_with: Dict) -> List[str]:

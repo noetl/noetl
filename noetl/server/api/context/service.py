@@ -18,6 +18,7 @@ from noetl.core.logger import setup_logger
 from noetl.server.api.broker.service import EventService
 from noetl.server.api.catalog import get_catalog_service
 from noetl.server.api.catalog.service import CatalogService
+from noetl.worker.vars_cache import VarsCache
 
 logger = setup_logger(__name__, include_location=True)
 
@@ -109,7 +110,7 @@ async def fetch_execution_context(execution_id: int) -> Dict[str, Any]:
     }
 
 
-def build_rendering_context(
+async def build_rendering_context(
     workload: Dict[str, Any],
     results: Dict[str, Any],
     steps: list,
@@ -132,6 +133,23 @@ def build_rendering_context(
         "workload": workload,
         "results": results,
     }
+
+    # Add vars namespace from VarsCache if execution_id available
+    execution_id = None
+    if isinstance(extra_context, dict):
+        execution_id = extra_context.get("execution_id")
+    
+    if execution_id:
+        try:
+            vars_data = await VarsCache.get_all_vars(execution_id)
+            base_ctx["vars"] = vars_data
+            logger.info(f"✓ Loaded {len(vars_data)} variables from vars_cache for execution {execution_id}")
+        except Exception as e:
+            logger.warning(f"Failed to load vars_cache for execution {execution_id}: {e}")
+            base_ctx["vars"] = {}
+    else:
+        logger.info("No execution_id in extra_context, vars namespace will be empty")
+        base_ctx["vars"] = {}
 
     # Allow direct references to prior step names
     if isinstance(results, dict):
@@ -461,7 +479,7 @@ async def render_context(
         extra_context["execution_id"] = execution_id
 
     # Build rendering context
-    render_ctx = build_rendering_context(
+    render_ctx = await build_rendering_context(
         workload=exec_ctx["workload"],
         results=exec_ctx["results"],
         steps=exec_ctx["steps"],

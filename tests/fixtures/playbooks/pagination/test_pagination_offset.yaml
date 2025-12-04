@@ -1,0 +1,67 @@
+apiVersion: noetl.io/v1
+kind: Playbook
+metadata:
+  name: test_pagination_offset
+  path: tests/pagination/offset
+  description: Offset-based pagination test
+
+workload:
+  api_url: http://paginated-api.test-server.svc.cluster.local:5555
+
+workflow:
+  - step: start
+    desc: Fetch all users with offset pagination
+    next:
+      - step: fetch_all_users
+
+  - step: fetch_all_users
+    desc: Offset-based pagination with automatic continuation
+    tool: http
+    url: "{{ workload.api_url }}/api/v1/users"
+    method: GET
+    params:
+      offset: 0
+      limit: 10
+    loop:
+      pagination:
+        type: response_based
+        continue_while: "{{ response.data.has_more == true }}"
+        next_page:
+          params:
+            offset: "{{ (response.data.offset | int) + (response.data.limit | int) }}"
+            limit: "{{ response.data.limit }}"
+        merge_strategy: append
+        merge_path: data.users
+        max_iterations: 10
+    next:
+      - step: validate_results
+
+  - step: validate_results
+    desc: Validate merged results
+    tool: python
+    args:
+      input_data:
+        fetch_all_users: "{{ fetch_all_users }}"
+    code: |
+      def main(input_data):
+          # Check we got all items
+          data = input_data.get('fetch_all_users', [])
+          
+          print(f"Total users fetched: {len(data)}")
+          print(f"First user: {data[0] if data else None}")
+          print(f"Last user: {data[-1] if data else None}")
+          
+          # Validate
+          assert len(data) == 35, f"Expected 35 users, got {len(data)}"
+          assert data[0]['id'] == 1, f"First user should have id=1"
+          assert data[-1]['id'] == 35, f"Last user should have id=35"
+          
+          return {
+              'status': 'success',
+              'total_users': len(data)
+          }
+    next:
+      - step: end
+
+  - step: end
+    desc: Workflow complete

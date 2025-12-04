@@ -1,0 +1,63 @@
+apiVersion: noetl.io/v1
+kind: Playbook
+metadata:
+  name: test_pagination_max_iterations
+  path: tests/pagination/max_iterations
+  description: Test max_iterations safety limit
+
+workload:
+  api_url: http://paginated-api.test-server.svc.cluster.local:5555
+
+workflow:
+  - step: start
+    desc: Test max_iterations limit
+    next:
+      - step: fetch_with_limit
+
+  - step: fetch_with_limit
+    desc: Pagination stops at max_iterations
+    tool: http
+    url: "{{ workload.api_url }}/api/v1/assessments"
+    method: GET
+    params:
+      page: 1
+      pageSize: 10
+    loop:
+      pagination:
+        type: response_based
+        continue_while: "{{ response.paging.hasMore == true }}"
+        next_page:
+          params:
+            page: "{{ (response.paging.page | int) + 1 }}"
+        merge_strategy: append
+        merge_path: data
+        max_iterations: 2  # Only fetch first 2 pages (20 items)  # Only 2 pages
+    next:
+      - step: validate_results
+
+  - step: validate_results
+    desc: Validate limited results
+    tool: python
+    args:
+      input_data:
+        fetch_with_limit: "{{ fetch_with_limit }}"
+    code: |
+      def main(input_data):
+          # Should only get 2 pages = 20 items (not all 35)
+          data = input_data.get('fetch_with_limit', [])
+          
+          print(f"Total items fetched (limited): {len(data)}")
+          
+          # Validate max_iterations worked
+          assert len(data) == 20, f"Expected 20 items (2 pages), got {len(data)}"
+          
+          return {
+              'status': 'success',
+              'total_items': len(data),
+              'max_iterations_worked': True
+          }
+    next:
+      - step: end
+
+  - step: end
+    desc: Workflow complete

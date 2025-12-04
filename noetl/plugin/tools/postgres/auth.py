@@ -219,6 +219,7 @@ def validate_and_render_connection_params(task_with: Dict, jinja_env: Environmen
         if not pg_conn_string or str(pg_conn_string).strip() == '':
             raise ValueError("Database connection string is empty after rendering")
     else:
-        pg_conn_string = f"dbname={pg_db} user={pg_user} password={pg_password} host={pg_host} port={pg_port}"
+        # Build connection string with connect_timeout to prevent DNS hangs
+        pg_conn_string = f"dbname={pg_db} user={pg_user} password={pg_password} host={pg_host} port={pg_port} connect_timeout=10"
 
     return pg_host, pg_port, pg_user, pg_password, pg_db, pg_conn_string

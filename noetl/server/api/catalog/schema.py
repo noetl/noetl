@@ -147,7 +147,7 @@ class CatalogRegisterRequest(AppBaseModel):
     """Request model for registering a new catalog entry"""
     content: str = Field(
         description="YAML content of the catalog resource (accepts base64 encoded or plain text)",
-        example="apiVersion: noetl.io/v1\nkind: Playbook\nmetadata:\n  name: example\n  path: examples/demo"
+        example="apiVersion: noetl.io/v1\nkind: Playbook\nmetadata:\n  name: example\n  path: tests/fixtures/playbooks/hello_world/hello_world"
     )
     resource_type: str = Field(
         default="Playbook",
@@ -172,11 +172,11 @@ class CatalogRegisterResponse(AppBaseModel):
     )
     message: str = Field(
         description="Human-readable result message",
-        example="Resource 'examples/demo' version '1' registered."
+        example="Resource 'tests/fixtures/playbooks/hello_world/hello_world' version '1' registered."
     )
     path: str = Field(
         description="Catalog path of the registered resource",
-        example="examples/demo"
+        example="tests/fixtures/playbooks/hello_world/hello_world"
     )
     version: int = Field(
         description="Version number of the registered resource",

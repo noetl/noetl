@@ -134,7 +134,7 @@ Results Aggregation
     path: workflows/examples/playbook_a
   next:
     - step: run_playbook_b
-      with:
+      args:
         data_from_a: "{{ run_playbook_a }}"
 ```
 
@@ -144,7 +144,7 @@ Results Aggregation
   call:
     type: playbooks
     path: workflows/examples/playbook_b
-    with:
+    args:
       input_data: "{{ previous_step_result }}"
       additional_param: "{{ workload.some_value }}"
 ```
@@ -155,7 +155,7 @@ Results Aggregation
   call:
     type: workbook
     name: aggregation_task
-    with:
+    args:
       result_1: "{{ playbook_1_result }}"
       result_2: "{{ playbook_2_result }}"
       result_3: "{{ playbook_3_result }}"

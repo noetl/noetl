@@ -81,7 +81,7 @@ task noetltest:playbook-execute -- \
 
 ```yaml
 - step: transfer_sf_to_pg
-  type: python
+  tool: python
   code: |
     from noetl.plugin.snowflake import execute_snowflake_transfer_task
     from jinja2 import Environment
@@ -120,7 +120,7 @@ task noetltest:playbook-execute -- \
 
 ```yaml
 - step: transfer_pg_to_sf
-  type: python
+  tool: python
   code: |
     from noetl.plugin.snowflake import execute_snowflake_transfer_task
     from jinja2 import Environment

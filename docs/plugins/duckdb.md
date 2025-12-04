@@ -17,10 +17,14 @@ The DuckDB plugin can read/write local files and cloud storage, and attach exter
 ## Example
 
 ```yaml
-type: duckdb
-credentials:
-  pg_db:      { key: pg_local }
-  gcs_secret: { key: gcs_hmac_local }
+tool: duckdb
+auth:
+  pg_db:
+    type: postgres
+    credential: pg_local
+  gcs_secret:
+    type: hmac
+    credential: gcs_hmac_local
 commands: |
   INSTALL postgres; LOAD postgres;
   INSTALL httpfs;  LOAD httpfs;

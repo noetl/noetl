@@ -288,7 +288,7 @@ apiVersion: noetl.io/v1
 kind: Playbook
 metadata:
   name: python_gcs_script_example
-  path: examples/script_execution/python_gcs
+  path: tests/fixtures/playbooks/script_execution/python_gcs
 
 workload:
   gcs_bucket: data-pipelines-scripts
@@ -326,7 +326,7 @@ apiVersion: noetl.io/v1
 kind: Playbook
 metadata:
   name: postgres_s3_script_example
-  path: examples/script_execution/postgres_s3
+  path: tests/fixtures/playbooks/script_execution/postgres_s3
 
 workload:
   s3_bucket: sql-scripts-prod
@@ -364,7 +364,7 @@ apiVersion: noetl.io/v1
 kind: Playbook
 metadata:
   name: duckdb_file_script_example
-  path: examples/script_execution/duckdb_file
+  path: tests/fixtures/playbooks/script_execution/python_file
 
 workflow:
   - step: start
@@ -393,7 +393,7 @@ apiVersion: noetl.io/v1
 kind: Playbook
 metadata:
   name: python_http_script_example
-  path: examples/script_execution/python_http
+  path: tests/fixtures/playbooks/script_execution/python_http
 
 workload:
   script_api: https://scripts.example.com/api/v1

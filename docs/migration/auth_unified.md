@@ -19,7 +19,7 @@ NoETL v1.0+ introduces a unified authentication system that consolidates all aut
 **Before (Deprecated):**
 ```yaml
 - step: query_database
-  type: postgres
+  tool: postgres
   credential: my_postgres_cred  # ❌ Deprecated
   command_b64: "..."
 ```
@@ -27,7 +27,7 @@ NoETL v1.0+ introduces a unified authentication system that consolidates all aut
 **After (Unified):**
 ```yaml
 - step: query_database  
-  type: postgres
+  tool: postgres
   auth:                    # ✅ New unified syntax
     type: postgres
     credential: my_postgres_cred
@@ -39,7 +39,7 @@ NoETL v1.0+ introduces a unified authentication system that consolidates all aut
 **Before (Deprecated):**
 ```yaml
 - step: process_data
-  type: duckdb
+  tool: duckdb
   credentials:             # ❌ Deprecated
     db:
       key: postgres_main
@@ -51,7 +51,7 @@ NoETL v1.0+ introduces a unified authentication system that consolidates all aut
 **After (Unified):**
 ```yaml
 - step: process_data
-  type: duckdb
+  tool: duckdb
   auth:                    # ✅ New unified syntax
     db:
       type: postgres
@@ -111,7 +111,7 @@ auth:
 
 ```yaml
 - step: run_sql
-  type: postgres
+  tool: postgres
   auth:
     type: postgres
     credential: production_db
@@ -123,7 +123,7 @@ auth:
 #### Bearer Token
 ```yaml
 - step: api_call
-  type: http
+  tool: http
   method: GET
   endpoint: https://api.example.com/data
   auth:
@@ -134,7 +134,7 @@ auth:
 #### Basic Authentication
 ```yaml
 - step: api_call
-  type: http
+  tool: http
   method: POST
   endpoint: https://api.example.com/secure
   auth:
@@ -147,7 +147,7 @@ auth:
 #### API Key
 ```yaml
 - step: api_call
-  type: http
+  tool: http
   method: GET
   endpoint: https://api.example.com/data
   auth:
@@ -160,7 +160,7 @@ auth:
 #### Custom Headers
 ```yaml
 - step: api_call
-  type: http
+  tool: http
   method: GET
   endpoint: https://api.example.com/data
   auth:
@@ -175,7 +175,7 @@ auth:
 #### Multiple Services
 ```yaml
 - step: etl_pipeline
-  type: duckdb
+  tool: duckdb
   auth:
     # Postgres connection for reading
     source_db:
@@ -205,7 +205,7 @@ DuckDB can also accept single auth configurations that get auto-wrapped:
 
 ```yaml
 - step: simple_duckdb
-  type: duckdb
+  tool: duckdb
   auth:  # Single auth gets wrapped as 'default' alias
     type: postgres
     credential: simple_db
@@ -312,13 +312,13 @@ auth:
 ```yaml
 # ❌ Wrong: Postgres expects single auth
 - step: postgres_task
-  type: postgres
+  tool: postgres
   auth:
     db1: {...}  # Multi auth not supported
 
 # ✅ Correct: Use single auth
 - step: postgres_task
-  type: postgres  
+  tool: postgres  
   auth:
     type: postgres
     credential: my_db
@@ -369,8 +369,9 @@ auth:
 
 ## Examples Repository
 
-See the `examples/unified-auth/` directory for complete working examples:
-- `examples/unified-auth/postgres-single.yaml`
-- `examples/unified-auth/http-bearer.yaml` 
-- `examples/unified-auth/duckdb-multi.yaml`
-- `examples/unified-auth/migration-comparison.yaml`
+## Examples Repository
+
+See the `tests/fixtures/playbooks/oauth/` directory for complete working examples:
+- `tests/fixtures/playbooks/oauth/google_secret_manager/google_secret_manager.yaml`
+- `tests/fixtures/playbooks/oauth/google_gcs/google_gcs_oauth.yaml`
+- `tests/fixtures/playbooks/oauth/interactive_brokers/ib_gateway_test.yaml`

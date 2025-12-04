@@ -19,11 +19,15 @@ logs/
 .env.local
 .secrets/
 node_modules/
+ui-src/node_modules/
+documentation/node_modules/
 data/noetldb/
 .vscode/
 .vscode-test/
 .env.tradetrend
-examples/tradetrend
+# Test data and temporary files
+tests/fixtures/playbooks/**/test_data/
+tests/fixtures/playbooks/**/temp/
 .*
 # Virtual environments
 publish_env/
@@ -31,6 +35,7 @@ test_env/
 *.venv/
 venv/
 env/
+data/.venv/
 .vscode/launch.json
 # Terraform
 .terraform*

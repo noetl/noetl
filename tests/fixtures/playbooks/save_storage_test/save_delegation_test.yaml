@@ -10,12 +10,31 @@ workload:
   test_message: "Hello from save storage delegation test!"
 
 workflow:
-  # Test 1: Event storage (default)
+  # Setup: Create tables first
   - step: start
-    desc: "Test event storage delegation"
+    desc: "Setup test tables"
+    next:
+      - step: create_tables
+  
+  - step: create_tables
+    desc: "Create required test tables"
+    tool: playbook
+    path: tests/fixtures/playbooks/save_storage_test/create_tables
+    args:
+      pg_auth: "{{ workload.pg_auth }}"
+    next:
+      - step: truncate_tables
+  
+  - step: truncate_tables
+    desc: "Clear test data from previous runs"
+    tool: postgres
+    auth: "{{ workload.pg_auth }}"
+    command: |
+      TRUNCATE TABLE simple_test_flat CASCADE;
     next:
       - step: event_test
-
+  
+  # Test 1: Event storage (default)
   - step: event_test
     desc: "Test event storage delegation"
     tool: python
@@ -23,11 +42,8 @@ workflow:
       # Simple function that doesn't need input_data parameter
       def main(**kwargs):
           return {
-              "status": "success",
-              "data": {
-                  "test": "event_storage",
-                  "message": "Event storage delegation working"
-              }
+              "test": "event_storage",
+              "message": "Event storage delegation working"
           }
     sink:
       tool: event
@@ -42,12 +58,9 @@ workflow:
     code: |
       def main(**kwargs):
           return {
-              "status": "success",
-              "data": {
-                  "test": "postgres_storage", 
-                  "message": "Postgres storage delegation working",
-                  "value": 123
-              }
+              "test": "postgres_storage", 
+              "message": "Postgres storage delegation working",
+              "value": 123
           }
     sink:
       tool: postgres
@@ -57,6 +70,8 @@ workflow:
         test_id: "delegation_test"
         test_name: "{{ result.test }}"
         test_value: "{{ result.value }}"
+        storage_type: "delegation"
+        test_execution: "{{ execution_id }}"
     next:
       - step: duckdb_test
 
@@ -67,11 +82,8 @@ workflow:
     code: |
       def main(**kwargs):
           return {
-              "status": "success",
-              "data": {
-                  "test": "duckdb_storage",
-                  "message": "DuckDB storage delegation working"
-              }
+              "test": "duckdb_storage",
+              "message": "DuckDB storage delegation working"
           }
     sink:
       tool: duckdb
@@ -89,11 +101,8 @@ workflow:
     code: |
       def main(**kwargs):
           return {
-              "status": "success",
-              "data": {
-                  "test": "http_storage",
-                  "message": "HTTP storage delegation working"
-              }
+              "test": "http_storage",
+              "message": "HTTP storage delegation working"
           }
     sink:
       tool: http

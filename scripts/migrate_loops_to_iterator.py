@@ -9,7 +9,7 @@ Usage:
       python3 scripts/migrate_loops_to_iterator.py --apply
 
 Targets (recursive):
-  workflows/, examples/, data/, playbooks/
+  workflows/, data/, playbooks/, tests/fixtures/playbooks/
 
 Transforms:
   - type: loop          -> type: iterator
@@ -39,7 +39,7 @@ except Exception:
     YAML = None  # type: ignore
 
 
-ROOTS = ["workflows", "examples", "data", "playbooks"]
+ROOTS = ["workflows", "data", "playbooks", "tests/fixtures/playbooks"]
 GLOBS = ["**/*.yaml", "**/*.yml"]
 
 
