@@ -24,6 +24,7 @@ import {
   EyeOutlined,
   FileTextOutlined,
   UploadOutlined,
+  PlusOutlined,
 } from "@ant-design/icons";
 import { apiService } from "../services/api";
 import { PlaybookData } from "../types";
@@ -58,6 +59,12 @@ const Catalog: React.FC = () => {
   const [payloadFile, setPayloadFile] = useState<File | null>(null);
   const [mergePayload, setMergePayload] = useState(false);
   const [activePayloadTab, setActivePayloadTab] = useState("json");
+
+  // Create playbook modal state
+  const [createModalVisible, setCreateModalVisible] = useState(false);
+  const [createPlaybookJson, setCreatePlaybookJson] = useState("");
+  const [createPlaybookFile, setCreatePlaybookFile] = useState<File | null>(null);
+  const [activeCreateTab, setActiveCreateTab] = useState("json");
 
   // Debounced search function
   const debounceSearch = useCallback(
@@ -246,6 +253,55 @@ const Catalog: React.FC = () => {
     return false; // Prevent auto upload
   };
 
+  const handleCreatePlaybookFileUpload = (file: File) => {
+    setCreatePlaybookFile(file);
+    return false; // Prevent auto upload
+  };
+
+  const handleOpenCreateModal = () => {
+    setCreateModalVisible(true);
+    setCreatePlaybookJson("");
+    setCreatePlaybookFile(null);
+    setActiveCreateTab("json");
+  };
+
+  const handleCloseCreateModal = () => {
+    setCreateModalVisible(false);
+    setCreatePlaybookJson("");
+    setCreatePlaybookFile(null);
+    setActiveCreateTab("json");
+  };
+
+  const handleCreatePlaybook = async () => {
+    let playbookContent = null;
+
+    try {
+      if (activeCreateTab === "json" && createPlaybookJson.trim()) {
+        // Send the content as-is (can be JSON or YAML)
+        playbookContent = createPlaybookJson.trim();
+      } else if (activeCreateTab === "file" && createPlaybookFile) {
+        const fileText = await createPlaybookFile.text();
+        playbookContent = fileText.trim();
+      } else {
+        message.error("Please provide playbook data");
+        return;
+      }
+    } catch (error) {
+      message.error("Failed to read playbook data.");
+      return;
+    }
+
+    try {
+      await apiService.registerPlaybook(playbookContent);
+      message.success("Playbook registered successfully!");
+      setCreateModalVisible(false);
+      fetchCatalogData();
+    } catch (error: any) {
+      console.error("Failed to register playbook:", error);
+      message.error(error?.response?.data?.detail || "Failed to register playbook. Please try again.");
+    }
+  };
+
   const handleViewFlow = (playbookId: string, playbookName: string) => {
     // Navigate to execution page with playbook visualization (query + state)
     navigate(`/execution?playbook=${encodeURIComponent(playbookId)}&view=workflow`, {
@@ -286,7 +342,16 @@ const Catalog: React.FC = () => {
   return (
     <Content className="catalog-main-content">
       <Space direction="vertical" size="large" className="catalog-space-vertical">
-        <Title level={2}>📚 Playbook Catalog</Title>
+        <div className="catalog-header">
+          <Title level={2}>📚 Playbook Catalog</Title>
+          <Button
+            type="primary"
+            icon={<PlusOutlined />}
+            onClick={handleOpenCreateModal}
+          >
+            New Playbook
+          </Button>
+        </div>
 
         <Search
           placeholder="Search playbooks..."
@@ -469,6 +534,115 @@ const Catalog: React.FC = () => {
           >
             Merge with existing payload
           </Checkbox>
+        </Space>
+      </Modal>
+
+      {/* Create Playbook Modal */}
+      <Modal
+        title="Create New Playbook"
+        open={createModalVisible}
+        onCancel={handleCloseCreateModal}
+        width={800}
+        footer={[
+          <Button key="cancel" onClick={handleCloseCreateModal}>
+            Cancel
+          </Button>,
+          <Button
+            key="create"
+            type="primary"
+            onClick={handleCreatePlaybook}
+          >
+            Register Playbook
+          </Button>,
+        ]}
+      >
+        <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+          <Tabs activeKey={activeCreateTab} onChange={setActiveCreateTab}>
+            <TabPane tab="JSON/YAML" key="json">
+              <Space
+                direction="vertical"
+                size="small"
+                style={{ width: "100%" }}
+              >
+                <Text>Enter playbook definition (JSON or YAML):</Text>
+                <TextArea
+                  rows={18}
+                  placeholder={`apiVersion: noetl.io/v1
+kind: Playbook
+metadata:
+  name: my_playbook
+  path: catalog/my_playbook
+workload:
+  variable: value
+workflow:
+  - step: start
+    desc: Start workflow
+    next:
+      - step: end
+  - step: end
+    desc: End workflow`}
+                  value={createPlaybookJson}
+                  onChange={(e) => setCreatePlaybookJson(e.target.value)}
+                  style={{ fontFamily: "monospace" }}
+                />
+              </Space>
+            </TabPane>
+            <TabPane tab="Upload File" key="file">
+              <Space
+                direction="vertical"
+                size="small"
+                style={{ width: "100%" }}
+              >
+                <Text>Upload playbook file (JSON or YAML):</Text>
+                <Upload
+                  beforeUpload={handleCreatePlaybookFileUpload}
+                  maxCount={1}
+                  accept=".json,.yaml,.yml"
+                  fileList={
+                    createPlaybookFile
+                      ? [{ uid: "1", name: createPlaybookFile.name, status: "done" }]
+                      : []
+                  }
+                  onRemove={() => setCreatePlaybookFile(null)}
+                >
+                  <Button icon={<UploadOutlined />}>Select Playbook File</Button>
+                </Upload>
+                {createPlaybookFile && (
+                  <Text type="secondary">Selected: {createPlaybookFile.name}</Text>
+                )}
+                <Alert
+                  message="Playbook Structure"
+                  description={
+                    <pre style={{ fontSize: "12px", margin: 0 }}>
+                      {`apiVersion: noetl.io/v1
+kind: Playbook
+metadata:
+  name: example_playbook
+  path: catalog/examples/example
+workload:
+  param1: value1
+workflow:
+  - step: start
+    desc: Entry point
+    next:
+      - step: process
+  - step: process
+    tool: python
+    code: |
+      def main(input_data):
+        return {"result": "success"}
+    next:
+      - step: end
+  - step: end
+    desc: End workflow`}
+                    </pre>
+                  }
+                  type="info"
+                  style={{ marginTop: "16px" }}
+                />
+              </Space>
+            </TabPane>
+          </Tabs>
         </Space>
       </Modal>
     </Content>
