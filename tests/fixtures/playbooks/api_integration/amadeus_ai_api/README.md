@@ -93,10 +93,14 @@ workload:
 # Register the playbook
 task register-playbook PLAYBOOK=tests/fixtures/playbooks/api_integration/amadeus_ai_api
 
-# Execute via API
+# Execute via API (Phase 1)
 curl -X POST http://localhost:8082/api/run/playbook \
   -H "Content-Type: application/json" \
-  -d '{"path": "api_integration/amadeus_ai_api", "payload": {}}'
+  -d '{"path": "api_integration/amadeus_ai_api", "args": {"query": "I want a one-way flight from SFO to JFK on March 15, 2026 for 1 adult"}}'
+
+# Poll execution status/result via NoETL REST
+# Replace <EXECUTION_ID> with the id returned from the call above
+curl -s http://localhost:8082/api/executions/<EXECUTION_ID> | jq .
 ```
 
 ### Expected Output
@@ -127,6 +131,42 @@ SELECT
 FROM api_results 
 WHERE execution_id = 'YOUR-EXECUTION-ID';
 ```
+
+### Using GraphQL Router (Phase 1)
+
+The GraphQL router provides a convenient interface to start the playbook and then poll results from NoETL REST.
+
+1) Start the router (see `noetl-graphql-router/README.md`). Ensure env:
+- `NOETL_BASE_URL=http://localhost:8082`
+
+2) Execute the playbook via GraphQL. Use the mutation from this repo file:
+
+File: `tests/fixtures/playbooks/api_integration/amadeus_ai_api/router_example.graphql`
+```
+mutation ExecuteAmadeus($vars: JSON) {
+  executePlaybook(name: "api_integration/amadeus_ai_api", variables: $vars) {
+    id
+    name
+    status
+  }
+}
+```
+
+GraphQL variables example:
+```
+{
+  "vars": {
+    "query": "I want a one-way flight from SFO to JFK on March 15, 2026 for 1 adult"
+  }
+}
+```
+
+3) Copy the returned `id` as `<EXECUTION_ID>` and poll NoETL REST for status/result:
+```
+curl -s http://localhost:8082/api/executions/<EXECUTION_ID> | jq .
+```
+
+Note: NATS-based live subscriptions are planned for the next phase. The WebSocket endpoint `/ws` is disabled in Phase 1; polling the REST endpoint is the supported method to retrieve the final markdown result and/or status updates.
 
 ## Authentication Architecture
 

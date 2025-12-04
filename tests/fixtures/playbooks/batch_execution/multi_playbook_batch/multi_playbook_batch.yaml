@@ -26,7 +26,7 @@ workflow:
   desc: Start Multiple Playbook Batch Workflow
   next:
   - step: run_http_test
-- data:
+- args:
     url: https://httpbin.org/get
     method: GET
   step: run_http_test
@@ -37,10 +37,10 @@ workflow:
     url: '{{ url }}'
     method: '{{ method }}'
   next:
-  - data:
+  - args:
       http_result: '{{ run_http_test }}'
     step: run_weather_processing
-- data:
+- args:
     cities: '{{ spec.cities }}'
     base_url: '{{ spec.base_url }}'
     temperature_threshold: '{{ spec.temperature_threshold }}'
@@ -53,10 +53,10 @@ workflow:
     base_url: '{{ base_url }}'
     temperature_threshold: '{{ temperature_threshold }}'
   next:
-  - data:
+  - args:
       weather_result: '{{ run_weather_processing }}'
     step: run_data_transformation
-- data:
+- args:
     baseFilePath: '{{ spec.baseFilePath }}'
     bucket: '{{ spec.bucket }}'
     pg_host: '{{ spec.pg_host }}'

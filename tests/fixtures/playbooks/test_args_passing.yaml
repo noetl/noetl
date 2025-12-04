@@ -1,0 +1,37 @@
+apiVersion: noetl.io/v1
+kind: Playbook
+metadata:
+  name: test_args_passing
+  path: tests/test_args_passing
+
+workload:
+  initial_value: 100
+
+workflow:
+  - step: start
+    desc: Start workflow
+    next:
+      - args:
+          test_var: "{{ workload.initial_value }}"
+          computed: 200
+        step: use_vars
+
+  - step: use_vars
+    desc: Test that variables from data block are available
+    tool: python
+    code: |
+      def main():
+          # These should be available from the data block in next
+          test_var = {{ test_var }}
+          computed = {{ computed }}
+          result = test_var + computed
+          print(f"test_var={test_var}, computed={computed}, result={result}")
+          assert test_var == 100, f"Expected test_var=100, got {test_var}"
+          assert computed == 200, f"Expected computed=200, got {computed}"
+          assert result == 300, f"Expected result=300, got {result}"
+          return {"status": "success", "result": result}
+    next:
+      - step: end
+
+  - step: end
+    desc: End workflow

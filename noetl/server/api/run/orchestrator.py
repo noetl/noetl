@@ -1223,16 +1223,16 @@ async def _process_transitions(execution_id: int) -> None:
                         if loop_block is not None:
                             logger.critical(f"ORCHESTRATOR: Extracted loop block for step '{to_step}'")
 
-                        # Render step's existing args with current execution context
-                        if "args" in step_config and step_config["args"]:
-                            logger.info(f"RENDER_DEBUG: Rendering args for step '{to_step}', before: {step_config['args']}, eval_ctx keys: {list(eval_ctx.keys())}")
-                            step_config["args"] = _render_with_params(step_config["args"], eval_ctx)
-                            logger.info(f"RENDER_DEBUG: After rendering: {step_config['args']}")
+                        # DO NOT render step's existing args here - they need to be rendered worker-side
+                        # where the full context (including previous step results) is available.
+                        # The orchestrator only merges args from next blocks into step_config["args"]
+                        # but leaves template rendering for the worker to handle with complete context.
                         
-                        # Render with_params (args from next) with current execution context
-                        # This ensures templates like {{ process_data.data.temp_table }} are resolved
+                        # Merge with_params (args from next) into step args WITHOUT rendering
+                        # Worker will render all args together with full execution context
                         if with_params:
-                            with_params = _render_with_params(with_params, eval_ctx)
+                            # DO NOT render with_params here either - pass templates through
+                            # with_params = _render_with_params(with_params, eval_ctx)  # REMOVED
                             if "args" not in step_config:
                                 step_config["args"] = {}
                             step_config["args"].update(with_params)
