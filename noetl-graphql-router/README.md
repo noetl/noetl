@@ -10,20 +10,22 @@ Rust-based GraphQL router/proxy that accepts GraphQL requests from the UI and tr
 
 Status: Initial scaffold suitable for local development and iterative integration.
 
-Endpoints
----------
+Endpoints (Phase 1)
+-------------------
 - HTTP GraphQL: POST /graphql
 - GraphQL Playground: GET /
-- GraphQL Subscriptions (WebSocket): GET /ws
 
-GraphQL Schema (initial)
+Notes:
+- WebSocket subscriptions (/ws) are disabled in Phase 1. They will return in Phase 2 once NATS/JetStream is enabled.
+
+GraphQL Schema (Phase 1)
 ------------------------
 - Query
   - `health`: String — basic readiness check
 - Mutation
   - `executePlaybook(name: String!, variables: JSON)`: `Execution` — requests NoETL to run a playbook
-- Subscription (phase 2)
-  - `playbookUpdates(executionId: ID!)`: `JSON` — streams events for a given playbook execution via NATS
+
+Subscription support will be added in Phase 2.
 
 Configuration
 -------------
@@ -31,8 +33,8 @@ The service is configured via environment variables:
 
 - `ROUTER_PORT` (default: 8090) — HTTP server port
 - `NOETL_BASE_URL` (default: http://localhost:8082) — NoETL REST API base URL
-- `NATS_URL` (default: nats://127.0.0.1:4222) — NATS connection URL
-- `NATS_UPDATES_SUBJECT_PREFIX` (default: playbooks.executions.) — Subject prefix for updates; final subject is `${prefix}{executionId}.events`
+- `NATS_URL` (default: nats://127.0.0.1:4222) — Optional in Phase 1; used in Phase 2 for subscriptions
+- `NATS_UPDATES_SUBJECT_PREFIX` (default: playbooks.executions.) — Optional in Phase 1; Phase 2 subject will be `${prefix}{executionId}.events`
 
 Assumptions and TODO
 --------------------
@@ -53,6 +55,7 @@ Environment (optional):
 ```
 export ROUTER_PORT=8090
 export NOETL_BASE_URL=http://localhost:8082
+# NATS is not used in Phase 1; keep for future Phase 2
 export NATS_URL=nats://127.0.0.1:4222
 export NATS_UPDATES_SUBJECT_PREFIX=playbooks.executions.
 ```
@@ -68,13 +71,12 @@ Run:
 ```
 docker run --rm -p 8090:8090 \
   -e NOETL_BASE_URL=http://host.docker.internal:8082 \
-  -e NATS_URL=nats://host.docker.internal:4222 \
   noetl-graphql-router:local
 ```
 
 Kubernetes (Kind)
 -----------------
-Manifests are in `k8s/`. Update environment to match your cluster services (NoETL service DNS, NATS, etc.). Then:
+Manifests are in `k8s/`. Update environment to match your cluster services (NoETL service DNS). NATS-related envs are currently unused in Phase 1. Then:
 ```
 kubectl apply -f k8s/
 ```
@@ -98,7 +100,6 @@ How to run (local):
      - `docker build -t noetl-graphql-router:local .`
      - `docker run --rm -p 8090:8090 \
          -e NOETL_BASE_URL=http://host.docker.internal:8082 \
-         -e NATS_URL=nats://host.docker.internal:4222 \
          noetl-graphql-router:local`
 3. Open GraphQL Playground at `http://localhost:8090/`.
 4. Paste the mutation from `router_example.graphql` into the left pane and provide variables like:
@@ -116,7 +117,7 @@ curl -s http://localhost:8082/api/executions/<executionId> | jq .
 ```
 Look for the latest event status and any `result` payload with the final markdown. You can poll this endpoint until status becomes `COMPLETED` or `FAILED`.
 
-7. Phase 2 (optional preview): You can also try the subscription snippet in `router_example.graphql` over `ws://localhost:8090/ws` once NATS is configured in your environment.
+7. Phase 2 (preview): Live subscriptions over WebSocket will be enabled when NATS/JetStream is configured. For now, use REST polling only.
 
 Notes
 -----

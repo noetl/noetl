@@ -166,7 +166,7 @@ GraphQL variables example:
 curl -s http://localhost:8082/api/executions/<EXECUTION_ID> | jq .
 ```
 
-Note: NATS-based live subscriptions are planned for the next phase. For now, polling the REST endpoint is the supported method to retrieve the final markdown result and/or status updates.
+Note: NATS-based live subscriptions are planned for the next phase. The WebSocket endpoint `/ws` is disabled in Phase 1; polling the REST endpoint is the supported method to retrieve the final markdown result and/or status updates.
 
 ## Authentication Architecture
 

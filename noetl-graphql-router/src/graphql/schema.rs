@@ -1,13 +1,9 @@
-use std::pin::Pin;
-
-use async_graphql::{Context, Object, Schema, Subscription, Result as GqlResult, EmptyMutation, EmptySubscription, ID, Json};
-use futures::{Stream, StreamExt};
+use async_graphql::{Context, Object, Schema, Result as GqlResult, EmptySubscription, ID, Json};
 
 use crate::noetl_client::NoetlClient;
-use crate::nats::Nats;
-use super::types::{Execution, JsonValue};
+use super::types::Execution;
 
-pub type AppSchema = Schema<QueryRoot, MutationRoot, SubscriptionRoot>;
+pub type AppSchema = Schema<QueryRoot, MutationRoot, EmptySubscription>;
 
 pub struct QueryRoot;
 
@@ -36,22 +32,5 @@ impl MutationRoot {
             name: resp.name.unwrap_or(name),
             status: resp.status,
         })
-    }
-}
-
-pub struct SubscriptionRoot;
-
-#[Subscription]
-impl SubscriptionRoot {
-    async fn playbook_updates(
-        &self,
-        ctx: &Context<'_>,
-        execution_id: ID,
-    ) -> GqlResult<impl Stream<Item = JsonValue>> {
-        let nats = ctx.data::<Nats>()?.clone();
-        let prefix = ctx.data::<String>()?.clone();
-        let subject = format!("{}{}.events", prefix, execution_id.as_str());
-        let stream = nats.subscribe_json(subject).await?;
-        Ok(stream.map(|val| Json(val)))
     }
 }
