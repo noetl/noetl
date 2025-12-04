@@ -145,6 +145,13 @@ class APIService {
     return response.data;
   }
 
+  async registerPlaybook(playbookData: any): Promise<CreatePlaybookResponse> {
+    // If it's already a string (YAML or JSON text), use it directly
+    const content = typeof playbookData === 'string' ? playbookData : JSON.stringify(playbookData);
+    const response = await apiClient.post("/catalog/register", { content, resource_type: "Playbook" });
+    return response.data;
+  }
+
   async updatePlaybook(
     id: string,
     data: Partial<PlaybookData>,
