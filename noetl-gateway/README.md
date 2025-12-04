@@ -129,5 +129,6 @@ Project Links
 -------------
 - Tests/fixtures playbooks: `tests/fixtures/playbooks` and `tests/fixtures/playbooks/regression_test`
 - NoETL OpenAPI: http://localhost:8082/openapi.json
+- tests/fixtures/playbooks/api_integration/amadeus_ai_api
 
 
