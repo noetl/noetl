@@ -352,10 +352,14 @@ const Execution: React.FC = () => {
               ? stepMatch[1].trim()
               : `Step ${taskIndex + 1}`;
 
+            // Infer type from step name for start/end
+            const stepNameLower = taskName.toLowerCase();
+            const inferredType = (stepNameLower === 'start' || stepNameLower === 'end') ? stepNameLower : 'default';
+
             currentTask = {
               id: taskName.replace(/[^a-zA-Z0-9]/g, "_").toLowerCase(),
               name: taskName,
-              type: "default",
+              type: inferredType,
             };
           } else if (
             trimmed.startsWith("desc:") &&
@@ -372,15 +376,15 @@ const Execution: React.FC = () => {
               currentTask.name = description;
             }
           } else if (
-            trimmed.startsWith("type:") &&
+            (trimmed.startsWith("type:") || trimmed.startsWith("tool:")) &&
             currentTask.name &&
             !inNestedLogic
           ) {
             const typeMatch = trimmed.match(
-              /type:\s*['"](.*?)['"]|type:\s*([^'"]+)/,
+              /(type|tool):\s*['"](.*)? '"]|(type|tool):\s*([^'"]+)/,
             );
             if (typeMatch) {
-              currentTask.type = (typeMatch[1] || typeMatch[2] || "").trim();
+              currentTask.type = (typeMatch[2] || typeMatch[4] || "").trim();
             }
           }
 
@@ -673,7 +677,6 @@ const Execution: React.FC = () => {
           {/* Inline Flow Visualization using shared component in read-only view mode */}
           <FlowVisualization
             visible={showWorkflowVisualization}
-            embedded={showWorkflowVisualization}
             readOnly
             hideTitle
             onClose={() => {
