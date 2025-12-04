@@ -258,13 +258,15 @@ def merge_template_work_context(
 
     If template contains a 'work' object, promotes those values to top-level
     context for easier access during rendering.
+    
+    Also promotes 'args' from the task object to make them available for template rendering.
 
     Args:
-        template: Template object (may contain 'work' key)
+        template: Template object (may contain 'work' key and 'task' key with 'args')
         context: Base rendering context
 
     Returns:
-        Updated context with template work merged
+        Updated context with template work and args merged
     """
     try:
         if isinstance(template, dict) and isinstance(template.get("work"), dict):
@@ -274,8 +276,20 @@ def merge_template_work_context(
             for k, v in incoming_work.items():
                 if k not in context:
                     context[k] = v
+        
+        # Promote args from task to top-level context for template rendering
+        # This makes variables from 'data:' blocks in 'next:' available as {{ var_name }}
+        if isinstance(template, dict):
+            task_obj = template.get("task")
+            if isinstance(task_obj, dict):
+                args_obj = task_obj.get("args")
+                if isinstance(args_obj, dict):
+                    logger.debug(f"Promoting task args to context: {list(args_obj.keys())}")
+                    for k, v in args_obj.items():
+                        if k not in context:
+                            context[k] = v
     except Exception as e:
-        logger.warning(f"Failed to merge template work context: {e}")
+        logger.warning(f"Failed to merge template work/args context: {e}")
 
     return context
 

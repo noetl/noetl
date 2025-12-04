@@ -14,9 +14,10 @@ impl NoetlClient {
     }
 
     pub async fn execute_playbook(&self, name: &str, variables: serde_json::Value) -> anyhow::Result<ExecutionResponse> {
-        // NOTE: Align path with your NoETL API per openapi.json. Placeholder used here.
-        let url = format!("{}/api/playbooks/execute", self.base_url.trim_end_matches('/'));
-        let payload = ExecuteRequest { name: name.to_string(), variables };
+        // Execute playbook via unified execution endpoint
+        // POST {NOETL}/api/run/playbook with body { path, args }
+        let url = format!("{}/api/run/playbook", self.base_url.trim_end_matches('/'));
+        let payload = ExecuteRequest { path: name.to_string(), args: variables };
         let res = self.http.post(url)
             .json(&payload)
             .send().await
@@ -47,9 +48,11 @@ impl NoetlClient {
 
 #[derive(Debug, Serialize)]
 struct ExecuteRequest {
-    name: String,
+    // Playbook catalog path, e.g. "api_integration/amadeus_ai_api"
+    path: String,
+    // Parameters for execution. Server accepts aliases (args/parameters/input_payload); we send args.
     #[serde(default)]
-    variables: serde_json::Value,
+    args: serde_json::Value,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -57,4 +60,5 @@ pub struct ExecutionResponse {
     pub execution_id: String,
     pub name: Option<String>,
     pub status: Option<String>,
+    pub path: Option<String>,
 }

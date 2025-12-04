@@ -1,0 +1,25 @@
+# Sample GraphQL operations for running the Amadeus AI API playbook via noetl-graphql-router
+
+# 1) Execute the playbook. Post this to http://localhost:8090/graphql
+#    Variables example is provided below the mutation.
+mutation ExecuteAmadeus($vars: JSON) {
+  executePlaybook(name: "api_integration/amadeus_ai_api", variables: $vars) {
+    id
+    name
+    status
+  }
+}
+
+# Suggested variables for the mutation (send as GraphQL variables JSON):
+# {
+#   "vars": {
+#     "query": "I want a one-way flight from SFO to JFK on March 15, 2026 for 1 adult"
+#   }
+# }
+
+
+# 2) Subscribe to updates via WebSocket ws://localhost:8090/ws
+#    Replace EXECUTION_ID with the id returned from ExecuteAmadeus
+subscription OnAmadeusUpdates($id: ID!) {
+  playbookUpdates(executionId: $id)
+}
