@@ -396,7 +396,7 @@ const Credentials: React.FC = () => {
     return (
         <Content className="credentials-main-content">
             <Space direction="vertical" size="large" className="credentials-space-vertical">
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div className="credentials-header">
                     <Title level={2}>🔐 Credentials</Title>
                     <Button
                         type="primary"
@@ -422,7 +422,7 @@ const Credentials: React.FC = () => {
                 <Space direction="vertical" size="middle" className="credentials-credentials-space">
                     {credentials.map((credential) => (
                         <Card key={credential.id} size="small" className="credentials-credential-card">
-                            <div style={{ position: "relative", minHeight: "120px" }}>
+                            <div className="credentials-card-container">
                                 <Row gutter={16}>
                                     <Col flex="auto">
                                         <Space
@@ -430,13 +430,13 @@ const Credentials: React.FC = () => {
                                             size="large"
                                             className="credentials-credential-row"
                                         >
-                                            <div style={{ width: "100%" }}>
-                                                <Title level={5} style={{ margin: 0, marginBottom: 4 }}>
-                                                    <KeyOutlined style={{ marginRight: 8 }} />
+                                            <div className="credentials-card-content">
+                                                <Title level={5} className="credentials-card-header">
+                                                    <KeyOutlined className="credentials-card-icon" />
                                                     {credential.name}
                                                     <Tag
                                                         color={getTypeColor(credential.type)}
-                                                        style={{ marginLeft: 8 }}
+                                                        className="credentials-card-type-tag"
                                                     >
                                                         {credential.type}
                                                     </Tag>
@@ -451,14 +451,14 @@ const Credentials: React.FC = () => {
                                                     </Text>
                                                 </Space>
                                                 {credential.description && (
-                                                    <div style={{ marginTop: 4 }}>
+                                                    <div className="credentials-card-meta">
                                                         <Text type="secondary">{credential.description}</Text>
                                                     </div>
                                                 )}
                                                 {credential.tags && credential.tags.length > 0 && (
-                                                    <div style={{ marginTop: 8 }}>
+                                                    <div className="credentials-card-tags">
                                                         {credential.tags.map((tag) => (
-                                                            <Tag key={tag} style={{ marginBottom: 4 }}>
+                                                            <Tag key={tag} className="credentials-card-tag">
                                                                 {tag}
                                                             </Tag>
                                                         ))}
@@ -469,16 +469,12 @@ const Credentials: React.FC = () => {
                                                 {visibleDataIds.has(credential.id) && credential.data && (
                                                     <Card
                                                         size="small"
-                                                        style={{
-                                                            marginTop: 12,
-                                                            backgroundColor: "transparent",
-                                                            border: "1px solid #d9d9d9",
-                                                        }}
+                                                        className="credentials-data-card"
                                                     >
-                                                        <Space direction="vertical" size="small" style={{ width: "100%" }}>
+                                                        <Space direction="vertical" size="small" className="credentials-data-container">
                                                             <Text strong>Credential Data:</Text>
                                                             {Object.entries(credential.data).map(([key, value]) => (
-                                                                <div key={key} style={{ marginLeft: 12 }}>
+                                                                <div key={key} className="credentials-data-item">
                                                                     <Text type="secondary">{key}: </Text>
                                                                     <Text
                                                                         code
@@ -502,15 +498,7 @@ const Credentials: React.FC = () => {
                                         </Space>
                                     </Col>
                                 </Row>
-                                <div
-                                    style={{
-                                        position: "absolute",
-                                        top: "0",
-                                        right: "0",
-                                        paddingTop: "40px",
-                                        paddingRight: "12px",
-                                    }}
-                                >
+                                <div className="credentials-actions">
                                     <Space>
                                         <Button
                                             type="text"
@@ -642,27 +630,27 @@ const Credentials: React.FC = () => {
                                 <TextArea
                                     rows={10}
                                     placeholder='{ "key": "value" }'
-                                    style={{ fontFamily: "monospace" }}
+                                    className="credentials-json-input"
                                 />
                             </Form.Item>
                         </Form>
                     </TabPane>
 
                     <TabPane tab="JSON" key="json">
-                        <Space direction="vertical" style={{ width: "100%" }} size="middle">
+                        <Space direction="vertical" className="credentials-upload-file" size="middle">
                             <Text>Paste complete credential JSON:</Text>
                             <TextArea
                                 rows={18}
                                 value={jsonInput}
                                 onChange={handleJsonInputChange}
                                 placeholder={JSON.stringify(getExampleJson("postgres"), null, 2)}
-                                style={{ fontFamily: "monospace" }}
+                                className="credentials-json-input"
                             />
                         </Space>
                     </TabPane>
 
                     <TabPane tab="Upload File" key="file">
-                        <Space direction="vertical" style={{ width: "100%" }} size="middle">
+                        <Space direction="vertical" className="credentials-upload-file" size="middle">
                             <Text>Upload credential JSON file:</Text>
                             <Upload
                                 beforeUpload={handleFileUpload}
@@ -685,17 +673,17 @@ const Credentials: React.FC = () => {
                                 description={
                                     <div>
                                         <Text strong>Snowflake (RSA Key-Pair):</Text>
-                                        <pre style={{ fontSize: "11px", marginTop: 8 }}>
+                                        <pre className="credentials-example-pre">
                                             {JSON.stringify(getExampleJson("snowflake"), null, 2)}
                                         </pre>
                                         <Text strong>PostgreSQL:</Text>
-                                        <pre style={{ fontSize: "11px", marginTop: 8 }}>
+                                        <pre className="credentials-example-pre">
                                             {JSON.stringify(getExampleJson("postgres"), null, 2)}
                                         </pre>
                                     </div>
                                 }
                                 type="info"
-                                style={{ marginTop: 16 }}
+                                className="credentials-example-section"
                             />
                         </Space>
                     </TabPane>
