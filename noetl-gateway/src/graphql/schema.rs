@@ -1,7 +1,7 @@
-use async_graphql::{Context, Object, Schema, Result as GqlResult, EmptySubscription, ID, Json};
+use async_graphql::{Context, EmptySubscription, ID, Json, Object, Result as GqlResult, Schema};
 
-use crate::noetl_client::NoetlClient;
 use super::types::Execution;
+use crate::{noetl_client::NoetlClient, result_ext::ResultExt};
 
 pub type AppSchema = Schema<QueryRoot, MutationRoot, EmptySubscription>;
 
@@ -26,7 +26,7 @@ impl MutationRoot {
     ) -> GqlResult<Execution> {
         let client = ctx.data::<NoetlClient>()?;
         let vars = variables.map(|j| j.0).unwrap_or(serde_json::Value::Null);
-        let resp = client.execute_playbook(&name, vars).await?;
+        let resp = client.execute_playbook(&name, vars).await.log("execute playbook")?;
         Ok(Execution {
             id: ID(resp.execution_id.clone()),
             name: resp.name.unwrap_or(name),
