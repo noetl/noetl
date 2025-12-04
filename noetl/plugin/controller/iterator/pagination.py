@@ -26,24 +26,33 @@ def merge_response(
     
     Args:
         accumulated: Previously accumulated data
-        response: Current HTTP response
-        merge_strategy: Strategy (append|extend|replace|collect)
-        merge_path: JSONPath to data array in response
+        response: Current HTTP response (wrapped as {id, status, data: <api_response>})
+        merge_strategy: Strategy (append|extend|replace|collect|sink_only)
+        merge_path: JSONPath to data array in response (e.g., "data.data" for HTTP responses)
         
     Returns:
         Updated accumulated data
     """
-    # Extract data from response if merge_path specified
+    # Extract data from response using merge_path
     data_to_merge = response
+    
     if merge_path:
         try:
             # Simple dot-notation path traversal
+            # For HTTP responses with merge_path="data.data":
+            #   First "data" extracts from wrapper: response.data (API response)
+            #   Second "data" extracts items array: response.data.data (items)
             parts = merge_path.split('.')
             for part in parts:
                 if isinstance(data_to_merge, dict):
                     data_to_merge = data_to_merge.get(part)
+                    if data_to_merge is None:
+                        logger.warning(f"PAGINATION.MERGE: Path part '{part}' not found, stopping traversal")
+                        break
                 else:
+                    logger.warning(f"PAGINATION.MERGE: Cannot traverse '{part}' on non-dict type {type(data_to_merge)}")
                     break
+            logger.debug(f"PAGINATION.MERGE: Extracted data using path '{merge_path}': {type(data_to_merge)}")
         except Exception as e:
             logger.warning(f"Failed to extract merge_path '{merge_path}': {e}")
             data_to_merge = response
@@ -86,6 +95,18 @@ def merge_response(
         if accumulated is None:
             accumulated = []
         accumulated.append(response)
+        return accumulated
+    
+    elif merge_strategy == 'sink_only':
+        # Don't accumulate in memory - data is saved via sink mechanism
+        # Return metadata about current page only
+        if accumulated is None:
+            accumulated = {'pages_fetched': 0, 'items_fetched': 0}
+        
+        accumulated['pages_fetched'] = accumulated.get('pages_fetched', 0) + 1
+        if isinstance(data_to_merge, list):
+            accumulated['items_fetched'] = accumulated.get('items_fetched', 0) + len(data_to_merge)
+        
         return accumulated
     
     else:
@@ -159,7 +180,8 @@ async def execute_paginated_http_async(
     task_config: Dict[str, Any],
     pagination_config: Dict[str, Any],
     context: Dict[str, Any],
-    jinja_env: Environment
+    jinja_env: Environment,
+    sink_callback: Optional[callable] = None
 ) -> Any:
     """
     Execute paginated HTTP requests with automatic continuation (async).
@@ -169,9 +191,10 @@ async def execute_paginated_http_async(
         pagination_config: Pagination configuration
         context: Execution context
         jinja_env: Jinja2 environment
+        sink_callback: Optional callback to save data after each page (for sink support)
         
     Returns:
-        Accumulated results
+        Accumulated results (or metadata if using sink_only strategy)
         
     Raises:
         Exception: If execution fails
@@ -185,6 +208,7 @@ async def execute_paginated_http_async(
     merge_path = pagination_config.get('merge_path')
     max_iterations = pagination_config.get('max_iterations', 1000)
     retry_config = pagination_config.get('retry', {})
+    sink_per_page = pagination_config.get('sink_per_page', False)  # Save after each page
     
     # Initialize accumulated results
     accumulated = None
@@ -226,6 +250,28 @@ async def execute_paginated_http_async(
         accumulated = merge_response(accumulated, response, merge_strategy, merge_path)
         
         logger.info(f"PAGINATION: Iteration {iteration} complete, merged results")
+        
+        # Execute sink callback per page if configured
+        if sink_per_page and sink_callback and merge_strategy != 'sink_only':
+            try:
+                # Extract the page data for sinking
+                page_data = response
+                if isinstance(response, dict) and 'data' in response:
+                    page_data = response['data']
+                
+                if merge_path:
+                    # Apply merge_path to extract specific data
+                    parts = merge_path.split('.')
+                    for part in parts:
+                        if isinstance(page_data, dict):
+                            page_data = page_data.get(part)
+                        else:
+                            break
+                
+                await sink_callback(page_data, iteration)
+                logger.info(f"PAGINATION: Saved page {iteration} via sink")
+            except Exception as e:
+                logger.error(f"PAGINATION: Failed to sink page {iteration}: {e}")
         
         # Check continuation condition
         check_context = dict(pag_context)
@@ -291,7 +337,8 @@ def execute_paginated_http(
     task_config: Dict[str, Any],
     pagination_config: Dict[str, Any],
     context: Dict[str, Any],
-    jinja_env: Environment
+    jinja_env: Environment,
+    sink_callback: Optional[callable] = None
 ) -> Any:
     """
     Execute paginated HTTP requests (sync wrapper).
@@ -304,28 +351,35 @@ def execute_paginated_http(
         pagination_config: Pagination configuration
         context: Execution context
         jinja_env: Jinja2 environment
+        sink_callback: Optional callback to save data after each page
         
     Returns:
-        Accumulated results
+        Accumulated results (or metadata if using sink_only strategy)
         
     Raises:
         Exception: If execution fails
     """
-    # Create a new event loop for this thread (safe for worker threads)
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
     try:
-        return loop.run_until_complete(
-            execute_paginated_http_async(
-                task_config,
-                pagination_config,
-                context,
-                jinja_env
+        # Create new event loop for thread safety
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        try:
+            result = loop.run_until_complete(
+                execute_paginated_http_async(
+                    task_config,
+                    pagination_config,
+                    context,
+                    jinja_env,
+                    sink_callback
+                )
             )
-        )
-    finally:
-        loop.close()
-        asyncio.set_event_loop(None)
+            return result
+        finally:
+            loop.close()
+    except Exception as e:
+        logger.error(f"PAGINATION: Execution failed: {e}")
+        raise
 
 
 def render_dict(d: Dict[str, Any], jinja_env: Environment, context: Dict[str, Any]) -> Dict[str, Any]:

@@ -44,8 +44,18 @@ workflow:
         fetch_all_users: "{{ fetch_all_users }}"
     code: |
       def main(input_data):
-          # Check we got all items
-          data = input_data.get('fetch_all_users', [])
+          # Check we got all items - handle server wrapping in {'value': [items]}
+          raw_data = input_data.get('fetch_all_users', [])
+          
+          # Unwrap if server wrapped in {'value': ...}
+          if isinstance(raw_data, dict) and 'value' in raw_data:
+              data = raw_data['value']
+          elif isinstance(raw_data, dict) and 'data' in raw_data:
+              data = raw_data['data']
+          elif isinstance(raw_data, list):
+              data = raw_data
+          else:
+              data = []
           
           print(f"Total users fetched: {len(data)}")
           print(f"First user: {data[0] if data else None}")

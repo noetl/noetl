@@ -15,6 +15,7 @@ data:
   NOETL_RUN_MODE: "server"
   NOETL_ENABLE_UI: "true"
   NOETL_DEBUG: "true"
+  NOETL_HTTP_MOCK_LOCAL: "false"
   NOETL_HOST: "0.0.0.0"
   NOETL_PORT: "8082"
   NOETL_SERVER_URL: "http://noetl.noetl.svc.cluster.local:8082"
