@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: noetl-graphql-router
+  labels:
+    app: noetl-graphql-router
+spec:
+  selector:
+    app: noetl-graphql-router
+  ports:
+    - name: http
+      port: 8090
+      targetPort: 8090
+      protocol: TCP
