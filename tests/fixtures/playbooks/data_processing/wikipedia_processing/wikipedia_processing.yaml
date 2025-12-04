@@ -41,14 +41,48 @@ workflow:
     desc: "Store processed data in PostgreSQL"
     tool: postgres
     auth: '{{ workload.pg_auth }}'
-    command: "-- Create table for Wikipedia articles\nDROP TABLE IF EXISTS wikipedia_articles;\nCREATE TABLE wikipedia_articles (\n  id SERIAL PRIMARY KEY,\n  title VARCHAR(500),\n  extract TEXT,\n  description VARCHAR(1000),\n  last_updated TIMESTAMP,\n  word_count INTEGER,\n  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP\n);\n\n-- Insert processed data\nINSERT INTO wikipedia_articles (title, extract, description, last_updated, word_count)\nSELECT \n  title,\n  extract,\n  description,\n  last_updated::TIMESTAMP,\n  LENGTH(extract) - LENGTH(REPLACE(extract, ' ', '')) + 1 AS word_count\nFROM wiki_data;\n\n-- Show inserted data\nSELECT * FROM wikipedia_articles;\n"
+    command: |
+      -- Create table for Wikipedia articles
+      DROP TABLE IF EXISTS wikipedia_articles;
+      CREATE TABLE wikipedia_articles (
+        id SERIAL PRIMARY KEY,
+        title VARCHAR(500),
+        extract TEXT,
+        description VARCHAR(1000),
+        last_updated TIMESTAMP,
+        word_count INTEGER,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
+      -- Insert processed data using data from fetch_wikipedia_data
+      INSERT INTO wikipedia_articles (title, extract, description, last_updated, word_count)
+      VALUES (
+        '{{ fetch_wikipedia_data.data.title }}',
+        '{{ fetch_wikipedia_data.data.extract }}',
+        '{{ fetch_wikipedia_data.data.description }}',
+        '{{ fetch_wikipedia_data.data.timestamp }}'::TIMESTAMP,
+        LENGTH('{{ fetch_wikipedia_data.data.extract }}') - LENGTH(REPLACE('{{ fetch_wikipedia_data.data.extract }}', ' ', '')) + 1
+      );
+
+      -- Show inserted data
+      SELECT * FROM wikipedia_articles;
     next:
       - step: analyze_results
 
   - step: analyze_results
-    desc: "Analyze stored results with Python"
-    tool: python
-    code: "def main():\n    import psycopg2\n    import json\n    \n    # Connect to database\n    conn = psycopg2.connect(\n        host='database',\n        port='5432',\n        user='demo',\n        password='demo',\n        database='demo_noetl'\n    )\n    \n    try:\n        with conn.cursor() as cursor:\n            # Get article data\n            cursor.execute('SELECT title, description, word_count FROM wikipedia_articles ORDER BY created_at DESC LIMIT 1')\n            row = cursor.fetchone()\n            \n            if row:\n                title, description, word_count = row\n                return {\n                    'title': title,\n                    'description': description,\n                    'word_count': word_count,\n                    'status': 'success'\n                }\n            else:\n                return {'status': 'no_data'}\n    finally:\n        conn.close()\n"
+    desc: "Analyze stored results with PostgreSQL"
+    tool: postgres
+    auth: '{{ workload.pg_auth }}'
+    command: |
+      -- Get article data
+      SELECT 
+        title,
+        description, 
+        word_count,
+        'success' as status
+      FROM wikipedia_articles 
+      ORDER BY created_at DESC 
+      LIMIT 1;
     next:
       - step: end
 
