@@ -45,7 +45,7 @@ workflow:
       client_id_key: '{{ workload.amadeus_key_path }}'
       client_secret_key: '{{ workload.amadeus_secret_path }}'
       oauth_credential: '{{ workload.oauth_cred }}'
-  args:
+  data:
     grant_type: client_credentials
     client_id: '{{ auth.amadeus.client_id }}'
     client_secret: '{{ auth.amadeus.client_secret }}'

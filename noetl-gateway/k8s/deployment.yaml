@@ -1,22 +1,22 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: noetl-graphql-router
+  name: noetl-gateway
   labels:
-    app: noetl-graphql-router
+    app: noetl-gateway
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: noetl-graphql-router
+      app: noetl-gateway
   template:
     metadata:
       labels:
-        app: noetl-graphql-router
+        app: noetl-gateway
     spec:
       containers:
         - name: router
-          image: noetl-graphql-router:local
+          image: noetl-gateway:local
           imagePullPolicy: IfNotPresent
           ports:
             - name: http

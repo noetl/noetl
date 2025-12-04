@@ -39,7 +39,7 @@ async fn main() -> anyhow::Result<()> {
         .with_state(());
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
-    tracing::info!(%addr, noetl_base, nats_url, "starting noetl-graphql-router (Phase 1, NATS disabled)");
+    tracing::info!(%addr, noetl_base, nats_url, "starting noetl-gateway (Phase 1, NATS disabled)");
     axum::Server::bind(&addr).serve(app.into_make_service()).await?;
     Ok(())
 }
