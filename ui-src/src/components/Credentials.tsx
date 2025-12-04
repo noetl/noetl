@@ -422,109 +422,116 @@ const Credentials: React.FC = () => {
                 <Space direction="vertical" size="middle" className="credentials-credentials-space">
                     {credentials.map((credential) => (
                         <Card key={credential.id} size="small" className="credentials-credential-card">
-                            <Row align="middle" gutter={16}>
-                                <Col flex="auto">
-                                    <Space
-                                        direction="horizontal"
-                                        size="large"
-                                        className="credentials-credential-row"
-                                    >
-                                        <div style={{ width: "100%" }}>
-                                            <Title level={5} style={{ margin: 0, marginBottom: 4 }}>
-                                                <KeyOutlined style={{ marginRight: 8 }} />
-                                                {credential.name}
-                                                <Tag
-                                                    color={getTypeColor(credential.type)}
-                                                    style={{ marginLeft: 8 }}
-                                                >
-                                                    {credential.type}
-                                                </Tag>
-                                            </Title>
-                                            <Space direction="horizontal" size="large">
-                                                <Text type="secondary">ID: {credential.id}</Text>
-                                                <Text type="secondary">
-                                                    Created: {new Date(credential.created_at).toLocaleDateString()}
-                                                </Text>
-                                                <Text type="secondary">
-                                                    Updated: {new Date(credential.updated_at).toLocaleDateString()}
-                                                </Text>
-                                            </Space>
-                                            {credential.description && (
-                                                <div style={{ marginTop: 4 }}>
-                                                    <Text type="secondary">{credential.description}</Text>
-                                                </div>
-                                            )}
-                                            {credential.tags && credential.tags.length > 0 && (
-                                                <div style={{ marginTop: 8 }}>
-                                                    {credential.tags.map((tag) => (
-                                                        <Tag key={tag} style={{ marginBottom: 4 }}>
-                                                            {tag}
-                                                        </Tag>
-                                                    ))}
-                                                </div>
-                                            )}
-
-                                            {/* Show credential data if visible */}
-                                            {visibleDataIds.has(credential.id) && credential.data && (
-                                                <Card
-                                                    size="small"
-                                                    style={{
-                                                        marginTop: 12,
-                                                        backgroundColor: "#f5f5f5",
-                                                    }}
-                                                >
-                                                    <Space direction="vertical" size="small" style={{ width: "100%" }}>
-                                                        <Text strong>Credential Data:</Text>
-                                                        {Object.entries(credential.data).map(([key, value]) => (
-                                                            <div key={key} style={{ marginLeft: 12 }}>
-                                                                <Text type="secondary">{key}: </Text>
-                                                                <Text
-                                                                    code
-                                                                    copyable={{
-                                                                        text: formatDataValue(value),
-                                                                        tooltips: ["Copy", "Copied!"],
-                                                                    }}
-                                                                    style={{
-                                                                        backgroundColor: "#fff",
-                                                                        padding: "2px 8px",
-                                                                    }}
-                                                                >
-                                                                    {key.toLowerCase().includes("password") ||
-                                                                        key.toLowerCase().includes("secret") ||
-                                                                        key.toLowerCase().includes("token")
-                                                                        ? "••••••••"
-                                                                        : formatDataValue(value)}
-                                                                </Text>
-                                                            </div>
+                            <div style={{ position: "relative", minHeight: "120px" }}>
+                                <Row gutter={16}>
+                                    <Col flex="auto">
+                                        <Space
+                                            direction="horizontal"
+                                            size="large"
+                                            className="credentials-credential-row"
+                                        >
+                                            <div style={{ width: "100%" }}>
+                                                <Title level={5} style={{ margin: 0, marginBottom: 4 }}>
+                                                    <KeyOutlined style={{ marginRight: 8 }} />
+                                                    {credential.name}
+                                                    <Tag
+                                                        color={getTypeColor(credential.type)}
+                                                        style={{ marginLeft: 8 }}
+                                                    >
+                                                        {credential.type}
+                                                    </Tag>
+                                                </Title>
+                                                <Space direction="horizontal" size="large">
+                                                    <Text type="secondary">ID: {credential.id}</Text>
+                                                    <Text type="secondary">
+                                                        Created: {new Date(credential.created_at).toLocaleDateString()}
+                                                    </Text>
+                                                    <Text type="secondary">
+                                                        Updated: {new Date(credential.updated_at).toLocaleDateString()}
+                                                    </Text>
+                                                </Space>
+                                                {credential.description && (
+                                                    <div style={{ marginTop: 4 }}>
+                                                        <Text type="secondary">{credential.description}</Text>
+                                                    </div>
+                                                )}
+                                                {credential.tags && credential.tags.length > 0 && (
+                                                    <div style={{ marginTop: 8 }}>
+                                                        {credential.tags.map((tag) => (
+                                                            <Tag key={tag} style={{ marginBottom: 4 }}>
+                                                                {tag}
+                                                            </Tag>
                                                         ))}
-                                                    </Space>
-                                                </Card>
-                                            )}
-                                        </div>
-                                    </Space>
-                                </Col>
-                                <Col>
+                                                    </div>
+                                                )}
+
+                                                {/* Show credential data if visible */}
+                                                {visibleDataIds.has(credential.id) && credential.data && (
+                                                    <Card
+                                                        size="small"
+                                                        style={{
+                                                            marginTop: 12,
+                                                            backgroundColor: "transparent",
+                                                            border: "1px solid #d9d9d9",
+                                                        }}
+                                                    >
+                                                        <Space direction="vertical" size="small" style={{ width: "100%" }}>
+                                                            <Text strong>Credential Data:</Text>
+                                                            {Object.entries(credential.data).map(([key, value]) => (
+                                                                <div key={key} style={{ marginLeft: 12 }}>
+                                                                    <Text type="secondary">{key}: </Text>
+                                                                    <Text
+                                                                        code
+                                                                        copyable={{
+                                                                            text: formatDataValue(value),
+                                                                            tooltips: ["Copy", "Copied!"],
+                                                                        }}
+                                                                    >
+                                                                        {key.toLowerCase().includes("password") ||
+                                                                            key.toLowerCase().includes("secret") ||
+                                                                            key.toLowerCase().includes("token")
+                                                                            ? "••••••••"
+                                                                            : formatDataValue(value)}
+                                                                    </Text>
+                                                                </div>
+                                                            ))}
+                                                        </Space>
+                                                    </Card>
+                                                )}
+                                            </div>
+                                        </Space>
+                                    </Col>
+                                </Row>
+                                <div
+                                    style={{
+                                        position: "absolute",
+                                        top: "0",
+                                        right: "0",
+                                        paddingTop: "40px",
+                                        paddingRight: "12px",
+                                    }}
+                                >
                                     <Space>
-                                        <Tooltip title={visibleDataIds.has(credential.id) ? "Hide data" : "View data"}>
-                                            <Button
-                                                type="text"
-                                                icon={
-                                                    visibleDataIds.has(credential.id) ? (
-                                                        <EyeInvisibleOutlined />
-                                                    ) : (
-                                                        <EyeOutlined />
-                                                    )
-                                                }
-                                                onClick={() => toggleDataVisibility(credential.id)}
-                                            />
-                                        </Tooltip>
-                                        <Tooltip title="Copy credential ID">
-                                            <Button
-                                                type="text"
-                                                icon={<CopyOutlined />}
-                                                onClick={() => handleCopyToClipboard(credential.id)}
-                                            />
-                                        </Tooltip>
+                                        <Button
+                                            type="text"
+                                            icon={
+                                                visibleDataIds.has(credential.id) ? (
+                                                    <EyeInvisibleOutlined />
+                                                ) : (
+                                                    <EyeOutlined />
+                                                )
+                                            }
+                                            onClick={() => toggleDataVisibility(credential.id)}
+                                        >
+                                            {visibleDataIds.has(credential.id) ? "Hide" : "View"}
+                                        </Button>
+                                        <Button
+                                            type="text"
+                                            icon={<CopyOutlined />}
+                                            onClick={() => handleCopyToClipboard(credential.id)}
+                                        >
+                                            Copy
+                                        </Button>
                                         <Button
                                             type="text"
                                             icon={<EditOutlined />}
@@ -533,7 +540,7 @@ const Credentials: React.FC = () => {
                                             Edit
                                         </Button>
                                         <Button
-                                            type="text"
+                                            type="primary"
                                             danger
                                             icon={<DeleteOutlined />}
                                             onClick={() => handleDeleteCredential(credential)}
@@ -541,8 +548,8 @@ const Credentials: React.FC = () => {
                                             Delete
                                         </Button>
                                     </Space>
-                                </Col>
-                            </Row>
+                                </div>
+                            </div>
                         </Card>
                     ))}
                 </Space>
