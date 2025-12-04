@@ -10,31 +10,47 @@ pub struct NoetlClient {
 
 impl NoetlClient {
     pub fn new(base_url: String) -> Self {
-        Self { base_url, http: reqwest::Client::new() }
+        Self {
+            base_url,
+            http: reqwest::Client::new(),
+        }
     }
 
-    pub async fn execute_playbook(&self, name: &str, variables: serde_json::Value) -> anyhow::Result<ExecutionResponse> {
+    pub async fn execute_playbook(
+        &self,
+        name: &str,
+        variables: serde_json::Value,
+    ) -> anyhow::Result<ExecutionResponse> {
         // Execute playbook via unified execution endpoint
         // POST {NOETL}/api/run/playbook with body { path, args }
         let url = format!("{}/api/run/playbook", self.base_url.trim_end_matches('/'));
-        let payload = ExecuteRequest { path: name.to_string(), args: variables };
-        let res = self.http.post(url)
+        let payload = ExecuteRequest {
+            path: name.to_string(),
+            args: variables,
+        };
+        let res = self
+            .http
+            .post(url)
             .json(&payload)
-            .send().await
+            .send()
+            .await
             .context("noetl execute_playbook: send")?;
         let status = res.status();
         let body = res.text().await.unwrap_or_default();
         if !status.is_success() {
             return Err(anyhow::anyhow!("NoETL execute failed: {} - {}", status, body));
         }
-        let parsed: ExecutionResponse = serde_json::from_str(&body)
-            .context("parse execute response")?;
+        let parsed: ExecutionResponse = serde_json::from_str(&body).context("parse execute response")?;
         Ok(parsed)
     }
 
     pub async fn get_playbook_status(&self, execution_id: &str) -> anyhow::Result<serde_json::Value> {
         // Placeholder path; adjust to real API
-        let url = format!("{}/api/playbooks/executions/{}/status", self.base_url.trim_end_matches('/'), execution_id);
+        let url = format!(
+            "{}/api/playbooks/executions/{}/status",
+            self.base_url.trim_end_matches('/'),
+            execution_id
+        );
         let res = self.http.get(url).send().await.context("noetl get status: send")?;
         let status = res.status();
         let body = res.text().await.unwrap_or_default();
