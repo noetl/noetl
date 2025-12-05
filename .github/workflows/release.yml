@@ -23,9 +23,6 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
 
-      - name: Tshoot Tags
-        run: git tag | grep v1.
-
       - name: Token
         id: app-token
         uses: actions/create-github-app-token@v1
