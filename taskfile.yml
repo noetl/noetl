@@ -45,6 +45,9 @@ includes:
   nats:
     taskfile: ci/taskfile/nats.yml
     dir: .
+  analytics:
+    taskfile: ci/taskfile/analytics.yml
+    dir: .
   observability:
     taskfile: ci/taskfile/observability.yml
     dir: .
@@ -109,6 +112,16 @@ tasks:
       - task: postgres:k8s:deploy
       - task: monitoring:k8s:deploy
       - task: noetl:k8s:deploy
+
+  analytics:k8s:deploy:
+    desc: Deploy analytics stack (Superset + JupyterLab)
+    cmds:
+      - task: analytics:k8s:deploy
+
+  analytics:k8s:remove:
+    desc: Remove analytics stack (Superset + JupyterLab)
+    cmds:
+      - task: analytics:k8s:remove
 
   docker:local:build:
     desc: Build NoETL Docker image

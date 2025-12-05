@@ -176,6 +176,7 @@ class QueuePublisher:
         parent_event_id: str,
         context: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        parent_execution_id: Optional[str] = None,
     ) -> List[str]:
         """
         Publish initial workflow steps to queue.
@@ -191,6 +192,7 @@ class QueuePublisher:
             parent_event_id: Parent event ID (workflow initialized event)
             context: Optional execution context
             metadata: Optional iterator/execution metadata to propagate through queue
+            parent_execution_id: Optional parent execution ID for nested playbook calls
 
         Returns:
             List of queue_ids for published tasks
@@ -413,6 +415,7 @@ class QueuePublisher:
                         max_attempts=5,
                         available_at=available_at,
                         parent_event_id=parent_event_id,
+                        parent_execution_id=parent_execution_id,
                         event_id=None,
                         queue_id=queue_id,
                         status="queued",
@@ -520,6 +523,9 @@ class QueuePublisher:
         # Lazy import to avoid circular dependency
         from noetl.server.api.queue.service import QueueService
 
+        # Extract parent_execution_id from context if available
+        parent_execution_id = context.get("parent_execution_id") if context else None
+        
         # Use QueueService to enqueue the job
         response = await QueueService.enqueue_job(
             execution_id=execution_id,
@@ -533,6 +539,7 @@ class QueuePublisher:
             max_attempts=5,
             available_at=available_at,
             parent_event_id=parent_event_id,
+            parent_execution_id=parent_execution_id,
             event_id=None,
             queue_id=queue_id,
             status="queued",
@@ -566,6 +573,16 @@ class QueuePublisher:
             logger.debug(
                 f"Emitted step_started event for '{step_name}', event_id={step_started_result.event_id}"
             )
+            
+            # Update queue entry with event_id
+            async with get_pool_connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        "UPDATE noetl.queue SET event_id = %s WHERE queue_id = %s",
+                        (step_started_result.event_id, response.id)
+                    )
+                    await conn.commit()
+                    
         except Exception as e:
             logger.warning(
                 f"Failed to emit step_started event for step '{step_name}': {e}",
