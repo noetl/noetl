@@ -64,14 +64,14 @@ Docker
 ------
 Build:
 ```
-docker build -t noetl-graphql-router:local .
+docker build --progress plain -t noetl-gateway:local .
 ```
 
 Run:
 ```
 docker run --rm -p 8090:8090 \
   -e NOETL_BASE_URL=http://host.docker.internal:8082 \
-  noetl-graphql-router:local
+  noetl-gateway:local
 ```
 
 Kubernetes (Kind)
@@ -95,12 +95,12 @@ How to run (local):
 1. Ensure NoETL server is running at `http://localhost:8082` and NATS at `nats://127.0.0.1:4222`.
 2. Start the router (choose one):
    - Rust toolchain (recommended Rust >= 1.83):
-     - `cd noetl-graphql-router && cargo run`
+     - `cd noetl-gateway && cargo run`
    - Docker (uses Rust 1.83 in builder):
-     - `docker build -t noetl-graphql-router:local .`
+     - `docker build -t noetl-gateway:local .`
      - `docker run --rm -p 8090:8090 \
          -e NOETL_BASE_URL=http://host.docker.internal:8082 \
-         noetl-graphql-router:local`
+         noetl-gateway:local`
 3. Open GraphQL Playground at `http://localhost:8090/`.
 4. Paste the mutation from `router_example.graphql` into the left pane and provide variables like:
 ```
@@ -129,3 +129,6 @@ Project Links
 -------------
 - Tests/fixtures playbooks: `tests/fixtures/playbooks` and `tests/fixtures/playbooks/regression_test`
 - NoETL OpenAPI: http://localhost:8082/openapi.json
+- tests/fixtures/playbooks/api_integration/amadeus_ai_api
+
+
