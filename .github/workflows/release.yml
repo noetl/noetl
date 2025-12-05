@@ -22,6 +22,10 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
+          fetch-tags: true
+
+      - name: Tshoot Tags
+        run: git tag | grep v1.
 
       - name: Token
         id: app-token
