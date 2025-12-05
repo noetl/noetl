@@ -151,3 +151,33 @@ psql "postgresql://demo:demo@postgres.postgres.svc.cluster.local:5432/demo_noetl
 - Top-level shortcuts in `taskfile.yml`:
   - `task analytics:k8s:deploy`
   - `task analytics:k8s:remove`
+  
+## Execution analysis notebook (Jupyter)
+
+An exploratory dashboard-style notebook is provided to analyze NoETL playbook executions stored in Postgres:
+
+- Location in repo: `tests/fixtures/notebooks/regression_dashboard.py`
+- It is a Jupyter-friendly Python script with `#%%` cells (works in JupyterLab, VS Code, PyCharm).
+- What it shows:
+  - Recent runs overview and final statuses
+  - KPIs (success/error counts, median duration)
+  - Failures by step (top offenders)
+  - Slowest steps by duration percentiles
+  - Drill-down timeline (Gantt-like) for a selected execution
+
+Dependencies (install inside JupyterLab or your local venv):
+
+```bash
+pip install pandas sqlalchemy psycopg2-binary plotly
+```
+
+Connectivity:
+- By default, it reads DB params from `tests/fixtures/credentials/pg_local.json` (in-cluster DNS).
+- It has an automatic fallback to `localhost:54321` (Kind NodePort) with `demo:demo` user for `demo_noetl` DB.
+
+How to run:
+1. Open JupyterLab at http://localhost:30999.
+2. Upload `tests/fixtures/notebooks/regression_dashboard.py` (or mount your repo into the pod).
+3. Open it and execute the cells. Adjust parameters at the top (playbook path, lookback window) as needed.
+
+Or run locally in your IDE with a Jupyter kernel; ensure Postgres is reachable on `localhost:54321`.

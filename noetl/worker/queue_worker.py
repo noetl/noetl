@@ -253,6 +253,12 @@ class QueueWorker:
             if queue_id is not None:
                 await self._fail_job(queue_id, should_retry=False, retry_delay_seconds=0)
             return
+        except Exception as exc:
+            # Catch any other validation errors (TypeError, etc) to prevent worker crash
+            logger.exception(f"Unexpected error validating job payload {queue_id}: {exc}")
+            if queue_id is not None:
+                await self._fail_job(queue_id, should_retry=False, retry_delay_seconds=0)
+            return
         try:
             await self._job_executor.run(job_model)
             await self._complete_job(job_model.queue_id)
