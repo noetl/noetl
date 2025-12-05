@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.7.1](https://github.com/noetl/noetl/compare/v1.7.0...v1.7.1) (2025-12-05)
+
+### Bug Fixes
+
+* Tshoot tags ([e054773](https://github.com/noetl/noetl/commit/e0547739f3c1388ceff2cfd60890a0a3f93cf18e))
+
 ## [1.3.0](https://github.com/noetl/noetl/compare/v1.2.5...v1.3.0) (2025-12-05)
 
 ### Features
