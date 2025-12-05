@@ -2,6 +2,77 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.7.1](https://github.com/noetl/noetl/compare/v1.7.0...v1.7.1) (2025-12-05)
+
+### Bug Fixes
+
+* Tshoot tags ([e054773](https://github.com/noetl/noetl/commit/e0547739f3c1388ceff2cfd60890a0a3f93cf18e))
+
+## [1.3.0](https://github.com/noetl/noetl/compare/v1.2.5...v1.3.0) (2025-12-05)
+
+### Features
+
+* Add credential management UI with Snowflake RSA key-pair support ([9f9ab63](https://github.com/noetl/noetl/commit/9f9ab637e2e13153be361b5455274565a57afa70))
+* add Credentials component with API integration for credential management ([79c7329](https://github.com/noetl/noetl/commit/79c73299d36eb63152641fbc47cecb22a78099e2))
+* add credentials management tab with catalog-like design ([267f673](https://github.com/noetl/noetl/commit/267f673149f1da8da17d9a6418d4550f6657805f))
+* add playbook creation functionality with modal and API integration ([cc6deeb](https://github.com/noetl/noetl/commit/cc6deeb2c53fc1597ece728a10923ea70f4f6e58))
+* container secrets ([f6a1391](https://github.com/noetl/noetl/commit/f6a1391f3bb2437add043b48610dddd5625287ff))
+* **container:** add container tool with authenticated remote file downloads ([fa8c1db](https://github.com/noetl/noetl/commit/fa8c1db48b21db7ff87c1126e99cc8ba36d67449))
+* enhance execute_playbook documentation and add execution status details ([740f522](https://github.com/noetl/noetl/commit/740f5220b7c01cdc1232c0107dfe39cd0ffd6256))
+* enhance GoogleTokenProvider for effective audience resolution and lazy imports for container execution ([ff8819c](https://github.com/noetl/noetl/commit/ff8819c87b2d5b78b11d5eaf92b5f9a50b25f1c6))
+* refactor noetl-gateway structure and update dependencies ([ac3d5e5](https://github.com/noetl/noetl/commit/ac3d5e5f7723101378f4086c78f79028b1e73168))
+
+### Bug Fixes
+
+* add ui-src and documentation node_modules to ignore list ([b99aae1](https://github.com/noetl/noetl/commit/b99aae10adbf8e4ca19a7cdd641ef02f4309cff0))
+* Fix Release workflow ([8209c11](https://github.com/noetl/noetl/commit/8209c11ef9ec71e9b471dce250e3dd6bbc79bb24))
+* reduce padding in catalog loading, error, and main content sections ([6580922](https://github.com/noetl/noetl/commit/65809221d31e309798a94e19f3cee3b62a7ed6f3))
+* support effective audience resolution in token provider ([5034593](https://github.com/noetl/noetl/commit/503459359e5d26592a844ce2f1409ced19cf5779))
+* Tshoot tags ([90253b0](https://github.com/noetl/noetl/commit/90253b0baf9d0e5a7983db18f581f7eaaf442fae))
+* Update Build GitHub workflow ([ab66c0d](https://github.com/noetl/noetl/commit/ab66c0d085cfeaa20e8a538349fbb7d0d611bb83))
+
+## [1.3.0](https://github.com/noetl/noetl/compare/v1.2.5...v1.3.0) (2025-12-05)
+
+### Features
+
+* Add credential management UI with Snowflake RSA key-pair support ([9f9ab63](https://github.com/noetl/noetl/commit/9f9ab637e2e13153be361b5455274565a57afa70))
+* add Credentials component with API integration for credential management ([79c7329](https://github.com/noetl/noetl/commit/79c73299d36eb63152641fbc47cecb22a78099e2))
+* add credentials management tab with catalog-like design ([267f673](https://github.com/noetl/noetl/commit/267f673149f1da8da17d9a6418d4550f6657805f))
+* add playbook creation functionality with modal and API integration ([cc6deeb](https://github.com/noetl/noetl/commit/cc6deeb2c53fc1597ece728a10923ea70f4f6e58))
+* container secrets ([f6a1391](https://github.com/noetl/noetl/commit/f6a1391f3bb2437add043b48610dddd5625287ff))
+* **container:** add container tool with authenticated remote file downloads ([fa8c1db](https://github.com/noetl/noetl/commit/fa8c1db48b21db7ff87c1126e99cc8ba36d67449))
+* enhance execute_playbook documentation and add execution status details ([740f522](https://github.com/noetl/noetl/commit/740f5220b7c01cdc1232c0107dfe39cd0ffd6256))
+* enhance GoogleTokenProvider for effective audience resolution and lazy imports for container execution ([ff8819c](https://github.com/noetl/noetl/commit/ff8819c87b2d5b78b11d5eaf92b5f9a50b25f1c6))
+* refactor noetl-gateway structure and update dependencies ([ac3d5e5](https://github.com/noetl/noetl/commit/ac3d5e5f7723101378f4086c78f79028b1e73168))
+
+### Bug Fixes
+
+* add ui-src and documentation node_modules to ignore list ([b99aae1](https://github.com/noetl/noetl/commit/b99aae10adbf8e4ca19a7cdd641ef02f4309cff0))
+* Fix Release workflow ([8209c11](https://github.com/noetl/noetl/commit/8209c11ef9ec71e9b471dce250e3dd6bbc79bb24))
+* reduce padding in catalog loading, error, and main content sections ([6580922](https://github.com/noetl/noetl/commit/65809221d31e309798a94e19f3cee3b62a7ed6f3))
+* support effective audience resolution in token provider ([5034593](https://github.com/noetl/noetl/commit/503459359e5d26592a844ce2f1409ced19cf5779))
+* Update Build GitHub workflow ([ab66c0d](https://github.com/noetl/noetl/commit/ab66c0d085cfeaa20e8a538349fbb7d0d611bb83))
+
+## [1.3.0](https://github.com/noetl/noetl/compare/v1.2.5...v1.3.0) (2025-12-05)
+
+### Features
+
+* Add credential management UI with Snowflake RSA key-pair support ([9f9ab63](https://github.com/noetl/noetl/commit/9f9ab637e2e13153be361b5455274565a57afa70))
+* add Credentials component with API integration for credential management ([79c7329](https://github.com/noetl/noetl/commit/79c73299d36eb63152641fbc47cecb22a78099e2))
+* add credentials management tab with catalog-like design ([267f673](https://github.com/noetl/noetl/commit/267f673149f1da8da17d9a6418d4550f6657805f))
+* add playbook creation functionality with modal and API integration ([cc6deeb](https://github.com/noetl/noetl/commit/cc6deeb2c53fc1597ece728a10923ea70f4f6e58))
+* container secrets ([f6a1391](https://github.com/noetl/noetl/commit/f6a1391f3bb2437add043b48610dddd5625287ff))
+* **container:** add container tool with authenticated remote file downloads ([fa8c1db](https://github.com/noetl/noetl/commit/fa8c1db48b21db7ff87c1126e99cc8ba36d67449))
+* enhance execute_playbook documentation and add execution status details ([740f522](https://github.com/noetl/noetl/commit/740f5220b7c01cdc1232c0107dfe39cd0ffd6256))
+* enhance GoogleTokenProvider for effective audience resolution and lazy imports for container execution ([ff8819c](https://github.com/noetl/noetl/commit/ff8819c87b2d5b78b11d5eaf92b5f9a50b25f1c6))
+* refactor noetl-gateway structure and update dependencies ([ac3d5e5](https://github.com/noetl/noetl/commit/ac3d5e5f7723101378f4086c78f79028b1e73168))
+
+### Bug Fixes
+
+* add ui-src and documentation node_modules to ignore list ([b99aae1](https://github.com/noetl/noetl/commit/b99aae10adbf8e4ca19a7cdd641ef02f4309cff0))
+* reduce padding in catalog loading, error, and main content sections ([6580922](https://github.com/noetl/noetl/commit/65809221d31e309798a94e19f3cee3b62a7ed6f3))
+* support effective audience resolution in token provider ([5034593](https://github.com/noetl/noetl/commit/503459359e5d26592a844ce2f1409ced19cf5779))
+
 ## [1.3.0](https://github.com/noetl/noetl/compare/v1.2.5...v1.3.0) (2025-12-04)
 
 ### Features
