@@ -94,7 +94,8 @@ class WorkerAPIClient:
 
     async def render_context(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
+            # Increased timeout to 120s to accommodate complex template rendering
+            async with httpx.AsyncClient(timeout=120.0) as client:
                 resp = await client.post(self._url("/context/render"), json=payload)
                 resp.raise_for_status()
                 rendered = resp.json().get("rendered")
