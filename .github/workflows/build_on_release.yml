@@ -12,7 +12,7 @@ permissions:
 jobs:
   build_push_image:
     name: build_push_image
-    timeout-minutes: 10
+    timeout-minutes: 20
     runs-on: ubuntu-latest
 
     env:
