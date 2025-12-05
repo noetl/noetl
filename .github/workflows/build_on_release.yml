@@ -1,4 +1,4 @@
-name: "Build image on Release ⚙️"
+name: "Build image and package on Release ⚙️"
 
 on:
   release:
@@ -10,8 +10,8 @@ permissions:
   packages: write
 
 jobs:
-  build_deploy:
-    name: build
+  build_push_image:
+    name: build_push_image
     timeout-minutes: 10
     runs-on: ubuntu-latest
 
@@ -20,7 +20,7 @@ jobs:
 
     steps:
       - name: Checkout source code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ github.event.release.tag_name }}  
 
@@ -49,3 +49,51 @@ jobs:
           tags: |
             ghcr.io/noetl/noetl:${{ env.IMAGE_TAG }}
             ghcr.io/noetl/noetl:latest
+
+  build_push_pip:
+    name: build_push_pip
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+
+    env:
+      PIP_PACKAGE_VERSION: ${{ github.event.release.tag_name }}
+
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.release.tag_name }}
+      
+      - name: Install Node v23
+        uses: actions/setup-node@v6
+        with:
+          node-version: "23.11.x"
+
+      - name: Install UV
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.9.x"
+
+      - name: Install UI dependencies
+        working-directory: ui-src
+        run: npm ci
+
+      - name: Build UI
+        working-directory: ui-src
+        run: npm run build
+
+      - name: Copy built UI artifacts to noetl/core/ui
+        run: cp -R ui-src/dist/* noetl/core/ui/
+
+      - name: Install NoETL dependencies
+        run: uv sync --locked --all-extras
+        # --all-extras Include all optional dependencies.
+        # --locked Assert that the uv.lock will remain unchanged. Requires that the lockfile is up-to-date
+
+      - name: Build NoETL
+        run: uv build
+
+      - name: Publish to PyPI
+        env:
+          UV_PUBLISH_TOKEN: ${{ secrets.PYPI_TOKEN }}
+        run: uv publish
