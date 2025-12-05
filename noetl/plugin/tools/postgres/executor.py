@@ -1,24 +1,24 @@
 """
-PostgreSQL task execution orchestration with async connection pooling.
+PostgreSQL task execution orchestration with async connections.
 
 Main entry point for executing PostgreSQL tasks with:
 - Authentication resolution
 - Command parsing and rendering
-- Async SQL execution with connection pooling
+- Async SQL execution using psycopg AsyncConnection
 - Result processing
 - Event logging
 """
 
+import asyncio
 import uuid
 import datetime
-import asyncio
 from typing import Dict
 from jinja2 import Environment
 from noetl.core.logger import setup_logger
 
 from .auth import resolve_postgres_auth, validate_and_render_connection_params
 from .command import escape_task_with_params, decode_base64_commands, render_and_split_commands
-from .execution import execute_sql_with_pool
+from .execution import execute_sql_with_connection
 from .response import process_results, format_success_response, format_error_response, format_exception_response
 
 logger = setup_logger(__name__, include_location=True)
@@ -79,7 +79,7 @@ def execute_postgres_task(task_config: Dict, context: Dict, jinja_env: Environme
         >>> result['status']
         'success'
     """
-    # Since we're called from worker's thread pool executor, just run async code directly
+    # Execute directly (async) - use asyncio.run() to bridge sync/async boundary
     return asyncio.run(_execute_postgres_task_async(task_config, context, jinja_env, task_with, log_event_callback))
 
 
@@ -176,11 +176,11 @@ async def _execute_postgres_task_async(
                 {'with_params': task_with}, None
             )
 
-        # Step 7: Execute SQL statements using connection pool (async)
+        # Step 7: Execute SQL statements using async connection
         results = {}
         if commands:
-            results = await execute_sql_with_pool(pg_conn_string, commands, pg_host, pg_port, pg_db)
-        # Connection automatically returned to pool
+            results = await execute_sql_with_connection(pg_conn_string, commands, pg_host, pg_port, pg_db)
+        # Connection automatically closed via context manager
 
         # Step 8: Process results
         end_time = datetime.datetime.now()

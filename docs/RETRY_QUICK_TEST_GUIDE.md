@@ -213,7 +213,7 @@ workflow:
     next: [failing_task]
     
   - step: failing_task
-    type: python
+    tool: python
     code: |
       def main(input_data):
           raise Exception("Intentional failure for testing")

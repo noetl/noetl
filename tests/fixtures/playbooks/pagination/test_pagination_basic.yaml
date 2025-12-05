@@ -1,0 +1,79 @@
+apiVersion: noetl.io/v1
+kind: Playbook
+metadata:
+  name: test_pagination_basic
+  path: tests/pagination/basic
+  description: Basic page-number pagination test
+
+workload:
+  api_url: http://paginated-api.test-server.svc.cluster.local:5555
+
+workflow:
+  - step: start
+    desc: Fetch all assessments with pagination
+    next:
+      - step: fetch_all_assessments
+
+  - step: fetch_all_assessments
+    desc: Page-number pagination with automatic continuation
+    tool: http
+    url: "{{ workload.api_url }}/api/v1/assessments"
+    method: GET
+    params:
+      page: 1
+      pageSize: 10
+    loop:
+      pagination:
+        type: response_based
+        continue_while: "{{ response.data.paging.hasMore == true }}"
+        next_page:
+          params:
+            page: "{{ (response.data.paging.page | int) + 1 }}"
+            pageSize: "{{ response.data.paging.pageSize }}"
+        merge_strategy: append
+        merge_path: data.data
+        max_iterations: 10
+    next:
+      - step: validate_results
+
+  - step: validate_results
+    desc: Validate merged results
+    tool: python
+    args:
+      input_data:
+        fetch_all_assessments: "{{ fetch_all_assessments }}"
+    code: |
+      def main(input_data):
+          # Check we got all items - handle server wrapping in {'value': [items]}
+          raw_data = input_data.get('fetch_all_assessments', [])
+          
+          # Unwrap if server wrapped in {'value': ...}
+          if isinstance(raw_data, dict) and 'value' in raw_data:
+              data = raw_data['value']
+          elif isinstance(raw_data, dict) and 'data' in raw_data:
+              data = raw_data['data']
+          elif isinstance(raw_data, list):
+              data = raw_data
+          else:
+              data = []
+          
+          print(f"Total items fetched: {len(data)}")
+          print(f"First item: {data[0] if data else None}")
+          print(f"Last item: {data[-1] if data else None}")
+          
+          # Validate
+          assert len(data) == 35, f"Expected 35 items, got {len(data)}"
+          assert data[0]['id'] == 1, f"First item should have id=1, got {data[0]['id']}"
+          assert data[-1]['id'] == 35, f"Last item should have id=35, got {data[-1]['id']}"
+          
+          return {
+              'status': 'success',
+              'total_items': len(data),
+              'first_id': data[0]['id'],
+              'last_id': data[-1]['id']
+          }
+    next:
+      - step: end
+
+  - step: end
+    desc: Workflow complete

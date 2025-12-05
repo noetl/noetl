@@ -48,6 +48,10 @@ includes:
   observability:
     taskfile: ci/taskfile/observability.yml
     dir: .
+  pagination-server:
+    taskfile: ci/taskfile/test-server.yml
+    dir: .
+    flatten: false
 
 tasks:
   default:

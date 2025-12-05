@@ -6,6 +6,7 @@ appropriate plugin implementations based on task tool. It serves as the
 MCP tool interface for executing NoETL playbook actions.
 """
 
+import asyncio
 from typing import Any, Callable, Dict, Optional
 
 from jinja2 import Environment
@@ -157,9 +158,25 @@ def execute_task(
 
     # Dispatch to appropriate action handler
     if task_type == "http":
-        return execute_http_task(
-            task_config, wrapped_context, jinja_env, args or {}, log_event_callback
-        )
+        # HTTP plugin is async for credential caching support
+        # Check if we're already in an async context
+        try:
+            loop = asyncio.get_running_loop()
+            # Already in async context - cannot use asyncio.run()
+            # Create a task and get result synchronously using run_until_complete on a new thread
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                future = pool.submit(
+                    lambda: asyncio.run(execute_http_task(
+                        task_config, wrapped_context, jinja_env, args or {}, log_event_callback
+                    ))
+                )
+                return future.result()
+        except RuntimeError:
+            # No running loop - safe to use asyncio.run()
+            return asyncio.run(execute_http_task(
+                task_config, wrapped_context, jinja_env, args or {}, log_event_callback
+            ))
     elif task_type == "python":
         return execute_python_task(
             task_config, wrapped_context, jinja_env, args or {}, log_event_callback
@@ -176,6 +193,12 @@ def execute_task(
         )
     elif task_type == "postgres":
         return execute_postgres_task(
+            task_config, wrapped_context, jinja_env, args or {}, log_event_callback
+        )
+    elif task_type == "container":
+        # Lazy import to avoid optional deps unless needed
+        from noetl.plugin.tools.container import execute_container_task
+        return execute_container_task(
             task_config, wrapped_context, jinja_env, args or {}, log_event_callback
         )
     elif task_type == "snowflake":
@@ -218,7 +241,7 @@ def execute_task(
     else:
         raise ValueError(
             f"Unknown task tool '{raw_type}'. "
-            f"Available tools: http, python, duckdb, postgres, snowflake, snowflake_transfer, transfer, secrets, playbook, workbook, save. "
+            f"Available tools: http, python, duckdb, postgres, container, snowflake, snowflake_transfer, transfer, secrets, playbook, workbook, save. "
             f"Note: Use 'loop:' attribute to iterate over collections, not 'tool: iterator'."
         )
 

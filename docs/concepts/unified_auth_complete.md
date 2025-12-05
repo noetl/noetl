@@ -186,7 +186,7 @@ workflow:
         service: s3
         key: aws_s3_backup
         scope: "s3://backup-bucket"
-    with:
+    args:
       auto_secrets: true  # default: true
     commands: |
       -- Extensions auto-loaded: postgres, httpfs

@@ -160,9 +160,9 @@ fi
 
 echo
 echo -e "${GREEN}To use these images in Kubernetes:${NC}"
-echo -e "  1. Load them into Kind: k8s/load-noetl-images.sh"
+echo -e "  1. Load them into Kind: task kind:local:image-load"
 echo -e "  2. Update the deployment YAML files to use these images"
-echo -e "  3. Apply the updated deployment files with kubectl"
+echo -e "  3. Apply deployments: task deploy-noetl"
 echo
-echo -e "${YELLOW}Example:${NC}"
-echo -e "  kubectl apply -f ${K8S_DIR}/noetl-deployment.yaml"
+echo -e "${YELLOW}Example workflow:${NC}"
+echo -e "  task build && task deploy-noetl"

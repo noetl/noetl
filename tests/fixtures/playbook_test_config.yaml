@@ -1,0 +1,396 @@
+# NoETL Playbook Regression Test Configuration
+# =============================================
+# Defines which playbooks should be tested and their expected behaviors
+#
+# Test Categories:
+# - basic: Simple playbooks testing core functionality
+# - data_transfer: Data movement between systems
+# - control_flow: Conditional logic and workflow branching
+# - storage: Save/sink operations
+# - api_integration: External API calls
+# - advanced: Complex multi-step workflows
+
+version: 1.0
+
+# Global test configuration
+config:
+  # Default timeout for playbook execution (seconds)
+  default_timeout: 300
+  
+  # Retry failed tests
+  retry_count: 0
+  
+  # Credentials to register before testing
+  required_credentials:
+    - pg_k8s
+    - pg_local
+    - gcs_hmac_local
+    - sf_test
+    - google_oauth
+
+# Playbook test definitions
+playbooks:
+  # === Basic Playbooks ===
+  - name: hello_world
+    path: tests/fixtures/playbooks/hello_world/hello_world
+    category: basic
+    enabled: true
+    requires_credentials: []
+    expected_result_file: hello_world.json
+    validation:
+      execution_status: completed
+      min_steps: 3
+      required_steps:
+        - start
+        - test_step
+        - end
+      step_validations:
+        test_step:
+          status: action_completed
+          result_type: dict
+          result_fields:
+            - status
+            - data
+          result_checks:
+            - field: status
+              value: success
+            - field: data.message
+              value: "Hello World"
+
+  - name: test_start_with_action
+    path: tests/fixtures/playbooks/test_start_with_action
+    category: basic
+    enabled: true
+    requires_credentials: []
+    expected_result_file: test_start_with_action.json
+    validation:
+      execution_status: completed
+
+  - name: test_end_with_action
+    path: tests/fixtures/playbooks/test_end_with_action
+    category: basic
+    enabled: true
+    requires_credentials: []
+    expected_result_file: test_end_with_action.json
+    validation:
+      execution_status: completed
+
+  # === Control Flow ===
+  - name: control_flow_workbook
+    path: tests/fixtures/playbooks/control_flow_workbook/control_flow_workbook
+    category: control_flow
+    enabled: true
+    requires_credentials: []
+    expected_result_file: control_flow_workbook.json
+    validation:
+      execution_status: completed
+      min_steps: 5
+
+  - name: weather_control_flow
+    path: tests/fixtures/playbooks/control_flow/weather_control_flow/weather_control_flow
+    category: control_flow
+    enabled: true
+    requires_credentials: []
+    expected_result_file: weather_control_flow.json
+    validation:
+      execution_status: completed
+
+  # === Storage/Save Tests ===
+  - name: save_simple_test
+    path: tests/fixtures/playbooks/save_storage_test/save_simple_test
+    category: storage
+    enabled: true
+    requires_credentials: [pg_k8s]
+    requires_setup: create_tables
+    expected_result_file: save_simple_test.json
+    validation:
+      execution_status: completed
+      required_steps:
+        - start
+        - test_postgres_save
+        - end
+
+  - name: save_edge_cases
+    path: tests/fixtures/playbooks/save_storage_test/save_edge_cases
+    category: storage
+    enabled: true
+    requires_credentials: [pg_k8s]
+    requires_setup: create_tables
+    expected_result_file: save_edge_cases.json
+    validation:
+      execution_status: completed
+      min_steps: 10
+
+  - name: save_all_storage_types
+    path: tests/fixtures/playbooks/save_storage_test/save_all_storage_types
+    category: storage
+    enabled: true
+    requires_credentials: [pg_k8s]
+    requires_setup: create_tables
+    expected_result_file: save_all_storage_types.json
+    validation:
+      execution_status: completed
+
+  - name: save_delegation_test
+    path: tests/fixtures/playbooks/save_storage_test/save_delegation_test
+    category: storage
+    enabled: true
+    requires_credentials: [pg_k8s]
+    requires_setup: create_tables
+    expected_result_file: save_delegation_test.json
+    validation:
+      execution_status: completed
+
+  # === Vars Tests ===
+  - name: test_vars_simple
+    path: tests/fixtures/playbooks/vars_test/test_vars_simple
+    category: basic
+    enabled: true
+    requires_credentials: []
+    expected_result_file: test_vars_simple.json
+    validation:
+      execution_status: completed
+
+  - name: test_vars_block
+    path: tests/fixtures/playbooks/vars_test/test_vars_block
+    category: basic
+    enabled: true
+    requires_credentials: []
+    expected_result_file: test_vars_block.json
+    validation:
+      execution_status: completed
+
+  - name: test_vars_template_access
+    path: tests/fixtures/playbooks/vars_test/test_vars_template_access
+    category: basic
+    enabled: true
+    requires_credentials: []
+    expected_result_file: test_vars_template_access.json
+    validation:
+      execution_status: completed
+
+  - name: test_vars_cache
+    path: tests/fixtures/playbooks/vars_test/test_vars_cache
+    category: basic
+    enabled: true
+    requires_credentials: []
+    expected_result_file: test_vars_cache.json
+    validation:
+      execution_status: completed
+
+  - name: test_vars_api
+    path: tests/fixtures/playbooks/vars_test/test_vars_api
+    category: basic
+    enabled: true
+    requires_credentials: []
+    expected_result_file: test_vars_api.json
+    validation:
+      execution_status: completed
+
+  # === DuckDB Tests ===
+  - name: duckdb_gcs_workload_identity
+    path: tests/fixtures/playbooks/duckdb_gcs_workload_identity/duckdb_gcs_workload_identity
+    category: data_processing
+    enabled: true
+    requires_credentials: [gcs_hmac_local]
+    expected_result_file: duckdb_gcs_workload_identity.json
+    validation:
+      execution_status: completed
+
+  # === Retry Tests ===
+  - name: retry_simple_config
+    path: tests/fixtures/playbooks/retry_test/retry_simple_config
+    category: advanced
+    enabled: true
+    requires_credentials: []
+    expected_result_file: retry_simple_config.json
+    validation:
+      execution_status: completed
+
+  - name: http_retry_status_code
+    path: tests/fixtures/playbooks/retry_test/http_retry_status_code
+    category: advanced
+    enabled: true
+    requires_credentials: []
+    expected_result_file: http_retry_status_code.json
+    validation:
+      execution_status: completed
+
+  - name: http_retry_with_stop
+    path: tests/fixtures/playbooks/retry_test/http_retry_with_stop
+    category: advanced
+    enabled: true
+    requires_credentials: []
+    expected_result_file: http_retry_with_stop.json
+    validation:
+      execution_status: completed
+
+  - name: python_retry_exception
+    path: tests/fixtures/playbooks/retry_test/python_retry_exception
+    category: advanced
+    enabled: true
+    requires_credentials: []
+    expected_result_file: python_retry_exception.json
+    validation:
+      execution_status: completed
+
+  - name: postgres_retry_connection
+    path: tests/fixtures/playbooks/retry_test/postgres_retry_connection
+    category: advanced
+    enabled: true
+    requires_credentials: [pg_k8s]
+    expected_result_file: postgres_retry_connection.json
+    validation:
+      execution_status: completed
+
+  - name: duckdb_retry_query
+    path: tests/fixtures/playbooks/retry_test/duckdb_retry_query
+    category: advanced
+    enabled: true
+    requires_credentials: []
+    expected_result_file: duckdb_retry_query.json
+    validation:
+      execution_status: completed
+
+  # === Pagination Tests ===
+  - name: test_pagination_basic
+    path: tests/fixtures/playbooks/pagination/test_pagination_basic
+    category: api_integration
+    enabled: true
+    requires_credentials: []
+    expected_result_file: test_pagination_basic.json
+    validation:
+      execution_status: completed
+
+  - name: test_pagination_offset
+    path: tests/fixtures/playbooks/pagination/test_pagination_offset
+    category: api_integration
+    enabled: true
+    requires_credentials: []
+    expected_result_file: test_pagination_offset.json
+    validation:
+      execution_status: completed
+
+  - name: test_pagination_cursor
+    path: tests/fixtures/playbooks/pagination/test_pagination_cursor
+    category: api_integration
+    enabled: true
+    requires_credentials: []
+    expected_result_file: test_pagination_cursor.json
+    validation:
+      execution_status: completed
+
+  - name: test_pagination_max_iterations
+    path: tests/fixtures/playbooks/pagination/test_pagination_max_iterations
+    category: api_integration
+    enabled: true
+    requires_credentials: []
+    expected_result_file: test_pagination_max_iterations.json
+    validation:
+      execution_status: completed
+
+  - name: test_pagination_retry
+    path: tests/fixtures/playbooks/pagination/test_pagination_retry
+    category: api_integration
+    enabled: true
+    requires_credentials: []
+    expected_result_file: test_pagination_retry.json
+    validation:
+      execution_status: completed
+
+  # === Playbook Composition ===
+  - name: playbook_composition
+    path: tests/fixtures/playbooks/playbook_composition/playbook_composition
+    category: advanced
+    enabled: true
+    requires_credentials: []
+    expected_result_file: playbook_composition.json
+    validation:
+      execution_status: completed
+
+  - name: user_profile_scorer
+    path: tests/fixtures/playbooks/playbook_composition/user_profile_scorer
+    category: advanced
+    enabled: true
+    requires_credentials: []
+    expected_result_file: user_profile_scorer.json
+    validation:
+      execution_status: completed
+
+  # === Script Execution Tests ===
+  - name: python_file_example
+    path: tests/fixtures/playbooks/script_execution/python_file_example
+    category: advanced
+    enabled: true
+    requires_credentials: []
+    expected_result_file: python_file_example.json
+    validation:
+      execution_status: completed
+
+  - name: python_http_example
+    path: tests/fixtures/playbooks/script_execution/python_http_example
+    category: advanced
+    enabled: true
+    requires_credentials: []
+    expected_result_file: python_http_example.json
+    validation:
+      execution_status: completed
+
+  - name: python_gcs_example
+    path: tests/fixtures/playbooks/script_execution/python_gcs_example
+    category: advanced
+    enabled: true
+    requires_credentials: [gcs_hmac_local]
+    expected_result_file: python_gcs_example.json
+    validation:
+      execution_status: completed
+
+  - name: postgres_file_example
+    path: tests/fixtures/playbooks/script_execution/postgres_file_example
+    category: advanced
+    enabled: true
+    requires_credentials: [pg_k8s]
+    expected_result_file: postgres_file_example.json
+    validation:
+      execution_status: completed
+
+  # === Cache Test ===
+  - name: test_cache_simple
+    path: tests/fixtures/playbooks/cache_test/test_cache_simple
+    category: basic
+    enabled: true
+    requires_credentials: []
+    expected_result_file: test_cache_simple.json
+    validation:
+      execution_status: completed
+
+  # === Data Transfer ===
+  - name: http_to_postgres_simple
+    path: tests/fixtures/playbooks/data_transfer/http_to_postgres_simple/http_to_postgres_simple
+    category: data_transfer
+    enabled: true
+    requires_credentials: [pg_k8s]
+    requires_setup: create_tables
+    expected_result_file: http_to_postgres_simple.json
+    validation:
+      execution_status: completed
+
+  # === Broken Playbooks (Expected to Fail) ===
+  - name: should_error_tool_is_required
+    path: tests/fixtures/playbooks/broken_playbooks/should_error_tool_is_required
+    category: negative_test
+    enabled: true
+    requires_credentials: []
+    expected_result_file: should_error_tool_is_required.json
+    validation:
+      execution_status: failed
+      expect_error: true
+      error_pattern: "tool.*required"
+
+# Setup tasks required before certain tests
+setup_tasks:
+  create_tables:
+    playbook: tests/fixtures/playbooks/save_storage_test/create_tables
+    credentials: [pg_k8s]
+    run_once: true
+    description: Create database tables for save storage tests

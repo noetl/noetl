@@ -1,0 +1,120 @@
+---
+apiVersion: noetl.io/v1
+kind: Playbook
+metadata:
+  name: test_vars_template_access
+  description: Test {{ vars.var_name }} template access in Jinja2
+  path: vars_test/test_vars_template_access
+  version: 1.0.0
+  labels:
+    test: true
+    feature: vars_cache
+    phase: 2
+
+# Test scenario:
+# 1. Set multiple variables using VarsCache
+# 2. Use {{ vars.var_name }} in subsequent step data
+# 3. Verify template rendering works with vars namespace
+
+workload:
+  greeting: "Hello"
+
+workflow:
+  - step: start
+    desc: Start workflow
+    next:
+      - step: set_variables
+
+  - step: set_variables
+    desc: Set multiple test variables
+    tool: python
+    code: |
+      async def main():
+          from noetl.worker.vars_cache import VarsCache
+          execution_id = int(context.get('execution_id'))
+          
+          # Set multiple variables
+          variables = {
+              "counter": 42,
+              "message": "Template access works!",
+              "config": {
+                  "timeout": 30,
+                  "retries": 3
+              }
+          }
+          
+          count = await VarsCache.set_multiple(
+              variables=variables,
+              execution_id=execution_id,
+              var_type="user_defined",
+              source_step="set_variables"
+          )
+          
+          return {"status": "success", "variables_set": count}
+    next:
+      - step: use_vars_in_template
+
+  - step: use_vars_in_template
+    desc: Use {{ vars.var_name }} in step data
+    tool: python
+    code: |
+      def main(counter, message, timeout, full_greeting):
+          # This step receives data using {{ vars.* }} templates          
+          return {
+              "status": "success",
+              "received_counter": counter,
+              "received_message": message,
+              "received_timeout": timeout,
+              "full_greeting": full_greeting
+          }
+    args:
+      counter: "{{ vars.counter }}"
+      message: "{{ vars.message }}"
+      timeout: "{{ vars.config.timeout }}"
+      full_greeting: "{{ workload.greeting }}, {{ vars.message }}"
+    next:
+      - step: verify_results
+
+  - step: verify_results
+    desc: Verify template values were rendered correctly
+    tool: python
+    code: |
+      def main():
+          # Get previous step result
+          prev_result = context.get('use_vars_in_template', {})
+          if isinstance(prev_result, dict) and 'data' in prev_result:
+              prev_result = prev_result['data']
+          
+          # Verify values
+          counter = prev_result.get("received_counter")
+          message = prev_result.get("received_message")
+          timeout = prev_result.get("received_timeout")
+          greeting = prev_result.get("full_greeting")
+          
+          success = (
+              counter == 42 and
+              message == "Template access works!" and
+              timeout == 30 and
+              greeting == "Hello, Template access works!"
+          )
+          
+          return {
+              "status": "success" if success else "failed",
+              "verification": {
+                  "counter_correct": counter == 42,
+                  "message_correct": message == "Template access works!",
+                  "timeout_correct": timeout == 30,
+                  "greeting_correct": greeting == "Hello, Template access works!"
+              },
+              "values": {
+                  "counter": counter,
+                  "message": message,
+                  "timeout": timeout,
+                  "greeting": greeting
+              }
+          }
+    next:
+      - step: end
+
+  - step: end
+    desc: End workflow

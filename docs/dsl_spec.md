@@ -7,13 +7,13 @@ The NoETL DSL defines workflows as a sequence of typed steps (widgets). Each ste
 This revision replaces the previous "run/rule/case" model with explicit step types:
 - start — Entry point of a workflow. Must route to the first executable step via `next`.
 - end — Terminal step. No `next`. Used broadly.
-- workbook — Invokes a named task from the workbook library; use `task:` and `with:` to pass inputs.
+- workbook — Invokes a named task from the workbook library; use `task:` and `args:` to pass inputs.
 - python — Runs inline Python in the step itself.
 - http — Makes an HTTP call directly from a step (method, endpoint, headers, params/payload).
 - duckdb — Executes DuckDB SQL/script in the step.
 - postgres — Executes PostgreSQL SQL/script in the step.
 - secrets — Reads a secret from a provider (e.g., Google Secret Manager) and exposes it as `secret_value` (or a custom alias).
-- playbooks — Executes all playbooks under a catalog path, forwarding inputs via `with:`; the step result can be passed on to the next step.
+- playbooks — Executes all playbooks under a catalog path, forwarding inputs via `args:`; the step result can be passed on to the next step.
 - loop — Runs a loop over either a workbook task (for single-step loops) or playbooks (for multi-step subflows).
 
 ---
@@ -60,12 +60,141 @@ Each step has:
 - step: Unique step name
 - type: One of `start|end|workbook|python|http|duckdb|postgres|secrets|playbooks|loop`
 - next: The next step name (string or list of names). Not allowed for `end`. Required for `start`.
+- args: (object, optional): Input variables passed to the step BEFORE execution
+- vars: (object, optional): Variable extraction block - extracts values from step result AFTER execution
 - Inputs/Outputs: Vary by type as defined below.
 
 General execution:
 - Steps execute in order by following `next`.
+- A step may receive input variables via `args:` (evaluated BEFORE execution).
+- A step may extract output variables via `vars:` block (evaluated AFTER execution).
 - A step may optionally publish outputs to the playbook context under a variable name (see `as:` below).
 - If a step has no `next` and is not `end`, the branch terminates implicitly.
+
+### Variable Lifecycle: BEFORE vs AFTER Execution
+
+NoETL provides different mechanisms for passing variables at different stages of step execution.
+
+#### BEFORE Execution (Input Variables)
+
+**1. Global Variables** - `workload:` section (top-level)
+```yaml
+workload:
+  api_key: "abc123"
+  retry_count: 3
+  base_url: "{{ payload.environment }}"  # Can use payload from CLI
+
+workflow:
+  - step: fetch_data
+    tool: http
+    endpoint: "{{ workload.base_url }}/api/data"
+    headers:
+      Authorization: "Bearer {{ workload.api_key }}"
+```
+
+**2. Step Input Arguments** - `args:` at step level
+```yaml
+- step: compute
+  tool: python
+  args:                                    # ← BEFORE execution, passed to main()
+    input_value: 100
+    multiplier: "{{ workload.retry_count }}"
+    previous_total: "{{ fetch_data.total }}"
+  code: |
+    def main(input_value, multiplier, previous_total):
+      return {"result": input_value * multiplier + previous_total}
+```
+
+**3. Next Step Arguments** - `args:` in `next` block
+```yaml
+- step: decide
+  tool: python
+  code: |
+    def main():
+      return {"should_retry": True, "attempt_number": 1}
+  next:
+    - when: "{{ result.should_retry }}"
+      then:
+        - step: retry_step
+      args:                                # ← BEFORE retry_step execution
+        attempt: "{{ result.attempt_number }}"
+        max_attempts: 3
+```
+
+#### AFTER Execution (Extract from Result)
+
+**1. Vars Block** - `vars:` at step level (extract and store for reuse)
+```yaml
+- step: fetch_users
+  tool: postgres
+  query: "SELECT user_id, email, created_at FROM users WHERE active = true LIMIT 5"
+  vars:                                    # ← AFTER execution, extracts from result
+    first_user_id: "{{ result[0].user_id }}"
+    first_email: "{{ result[0].email }}"
+    user_count: "{{ result | length }}"
+  next:
+    - step: send_notification
+
+- step: send_notification
+  tool: http
+  method: POST
+  endpoint: "https://api.example.com/notify"
+  payload:
+    user_id: "{{ vars.first_user_id }}"   # Access extracted variable
+    email: "{{ vars.first_email }}"
+    total_users: "{{ vars.user_count }}"
+```
+
+**2. Direct Step Access** - `{{ step_name.field }}` (no extraction needed)
+```yaml
+- step: calculate
+  tool: python
+  code: |
+    def main():
+      return {"total": 100, "count": 5}
+  next:
+    - step: report
+
+- step: report
+  tool: python
+  args:
+    total: "{{ calculate.total }}"                      # Direct access
+    average: "{{ calculate.total / calculate.count }}"  # Can compute inline
+```
+
+**Template Namespace Summary**:
+- `{{ workload.field }}` - Global variables (BEFORE: defined in workload section)
+- `{{ args.field }}` - Step input arguments (BEFORE: passed via args)
+- `{{ result.field }}` - Current step result (AFTER: use in vars block)
+- `{{ vars.var_name }}` - Extracted variables (AFTER: use in subsequent steps)
+- `{{ step_name.field }}` - Previous step result (AFTER: direct access)
+- `{{ execution_id }}` - System variable (available anytime)
+- `{{ payload.field }}` - CLI payload (available anytime)
+
+**Example**:
+```yaml
+- step: fetch_users
+  tool: postgres
+  query: "SELECT user_id, email, created_at FROM users WHERE active = true LIMIT 5"
+  vars:
+    first_user_id: "{{ result[0].user_id }}"
+    first_email: "{{ result[0].email }}"
+    user_count: "{{ result | length }}"
+  next:
+  - step: send_notification
+
+- step: send_notification
+  tool: http
+  method: POST
+  endpoint: "https://api.example.com/notify"
+  payload:
+    user_id: "{{ vars.first_user_id }}"
+    email: "{{ vars.first_email }}"
+    total_users: "{{ vars.user_count }}"
+```
+---
+
+## Step Types
 
 ### start
 Entry point that routes to the first executable step.
@@ -99,7 +228,7 @@ Invoke a named task from the workbook library.
 
 Inputs:
 - task (string, required): Name of a task defined under `workbook` at top-level
-- with (object, optional): Inputs forwarded to the task
+- args (object, optional): Inputs forwarded to the task
 - as (string, optional): Variable name to store the task result
 
 Outputs:
@@ -108,9 +237,9 @@ Outputs:
 Example:
 ```yaml
 - step: fetch_weather
-  type: workbook
+  tool: workbook
   task: get_weather
-  with:
+  args:
     city: "Paris"
   as: weather
   next: end
@@ -121,7 +250,7 @@ Execute inline Python code.
 
 Inputs:
 - code (string, required): Python code to execute
-- with (object, optional): Variables to inject into the code context
+- args (object, optional): Variables to inject into the code context
 - as (string, optional): Variable name to store the result
 
 Outputs:
@@ -130,8 +259,8 @@ Outputs:
 Example:
 ```yaml
 - step: compute_score
-  type: python
-  with:
+  tool: python
+  args:
     a: 5
     b: 7
   code: |
@@ -183,7 +312,7 @@ Outputs:
 Example:
 ```yaml
 - step: duck_transform
-  type: duckdb
+  tool: duckdb
   script: |
     CREATE OR REPLACE TABLE t AS SELECT 1 AS id;
     SELECT * FROM t;
@@ -319,30 +448,52 @@ Examples:
 
 ## Template Context and Result References
 
+### Global Template Namespace
+
+NoETL uses Jinja2 templating throughout playbooks. The following namespaces are available in template expressions:
+
+**Core Namespaces**:
+- `{{ workload.field }}` - Global workflow variables defined in `workload:` section
+- `{{ vars.var_name }}` - Stored variables extracted via `vars` blocks in previous steps
+- `{{ step_name.field }}` - Results from completed steps (direct access)
+- `{{ execution_id }}` - Current execution identifier
+
+**Special Context**:
+- `{{ result.field }}` - Current step's result (available in `vars` block for value extraction)
+
 ### Step Result References in Workflow
 
 During workflow execution, completed step results are available in subsequent steps via Jinja2 templates:
 - `{{ step_name }}` or `{{ step_name.result }}` - Full result object (envelope with `status`, `data`, `error`, `meta`)
 - `{{ step_name.data }}` - Direct access to the data payload when step returns envelope structure
-- `{{ step_name.data.field }}` - Access specific fields within the data payload
+- `{{ step_name.field }}` - Simplified access to fields (server normalizes by extracting `.data` when present)
+
+**Recommended Pattern**: Use `{{ step_name.field }}` for direct access - the server automatically normalizes results.
 
 Example:
 ```yaml
 - step: fetch_data
-  type: python
+  tool: python
   code: |
     def main():
-      return {"status": "success", "data": {"count": 42, "name": "test"}}
+      return {"count": 42, "name": "test"}
+  vars:
+    # Extract variables using result namespace
+    item_count: "{{ result.count }}"
+    item_name: "{{ result.name }}"
   next: process
 
 - step: process
-  type: python
+  tool: python
   code: |
     def main(count, name):
       print(f"Processing {name} with count {count}")
   args:
-    count: "{{ fetch_data.data.count }}"
-    name: "{{ fetch_data.data.name }}"
+    # Access extracted variables
+    count: "{{ vars.item_count }}"
+    name: "{{ vars.item_name }}"
+    # Or access previous step directly
+    direct_count: "{{ fetch_data.count }}"
 ```
 
 ### Sink Template Context (Result Unwrapping)
@@ -361,7 +512,7 @@ When a `sink:` block executes, the worker provides a **special context** where r
 ✅ **Correct sink usage:**
 ```yaml
 - step: generate
-  type: python
+  tool: python
   code: |
     def main():
       return {"status": "success", "data": {"value": 123, "message": "hello"}}

@@ -489,7 +489,7 @@ pip install ortools
 
 Plan a playbook (no execution, just schedule JSON):
 
-noetl plan examples/test/http_duckdb_postgres.yaml --resources http_pool=4,pg_pool=5,duckdb_host=1 --max-solve-seconds 5 --json
+noetl plan tests/fixtures/playbooks/data_transfer/http_to_postgres_simple/http_to_postgres_simple.yaml --resources http_pool=4,pg_pool=5,duckdb_host=1 --max-solve-seconds 5 --json
 
 The output includes per-step start/end times and respects capacities (e.g., http_pool concurrency, exclusive duckdb_host).
 

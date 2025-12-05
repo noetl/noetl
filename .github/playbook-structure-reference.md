@@ -47,7 +47,7 @@ workload:
 ```yaml
 workbook:
   - name: compute_flag
-    type: python
+    tool: python
     code: |
       def main(temperature_c):
           return {"is_hot": temperature_c >= 25.0}
@@ -103,7 +103,7 @@ workflow:
 
 ```yaml
 - step: process
-  type: python
+  tool: python
   data:
     value: "{{ workload.input }}"
   code: |
@@ -236,13 +236,13 @@ Auth types: `postgres`, `duckdb`, `hmac`, `bearer`
 **Example - Accessing step results:**
 ```yaml
 - step: compute_score
-  type: python
+  tool: python
   code: |
     def main():
         return {"score": 85, "grade": "A"}
 
 - step: use_result
-  type: python
+  tool: python
   data:
     previous_score: "{{ compute_score.data.score }}"  # Access: 85
   code: |
@@ -259,7 +259,7 @@ Auth types: `postgres`, `duckdb`, `hmac`, `bearer`
 ```yaml
 - step: end
   desc: "Complete execution"
-  type: python
+  tool: python
   data:
     final_results: "{{ aggregate_step.data }}"
   code: |
@@ -276,14 +276,14 @@ kind: Playbook
 
 metadata:
   name: minimal_example
-  path: examples/minimal_example
+  path: tests/fixtures/playbooks/hello_world/hello_world
 
 workload:
   threshold: 25
 
 workbook:
   - name: check_threshold
-    type: python
+    tool: python
     code: |
       def main(value):
           return {"passed": value > 25}
@@ -307,7 +307,7 @@ workflow:
           - step: end
 
   - step: success_path
-    type: python
+    tool: python
     code: |
       def main():
           return {"message": "Threshold passed"}

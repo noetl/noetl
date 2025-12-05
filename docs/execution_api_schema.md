@@ -13,8 +13,8 @@ The Execution API provides two endpoints for executing playbooks with different 
 **Request Schema**: `ExecutionByIdRequest`
 ```json
 {
-  "playbook_id": "examples/weather/forecast",
-  "parameters": {"city": "New York"},
+  "playbook_id": "tests/fixtures/playbooks/hello_world/hello_world",
+  "parameters": {"message": "Hello World"},
   "merge": false,
   "parent_execution_id": "exec_123",
   "parent_event_id": "event_456",
@@ -33,9 +33,9 @@ The Execution API provides two endpoints for executing playbooks with different 
 ```json
 {
   "id": "exec_789",
-  "playbook_id": "examples/weather/forecast",
-  "playbook_name": "forecast",
-  "path": "examples/weather/forecast",
+  "playbook_id": "tests/fixtures/playbooks/hello_world/hello_world",
+  "playbook_name": "hello_world",
+  "path": "tests/fixtures/playbooks/hello_world/hello_world",
   "version": "latest",
   "execution_type": "playbook",
   "status": "running",
@@ -54,10 +54,10 @@ The Execution API provides two endpoints for executing playbooks with different 
 **Request Schema**: `ExecutionByPathRequest`
 ```json
 {
-  "path": "examples/weather/forecast",
+  "path": "tests/fixtures/playbooks/hello_world/hello_world",
   "version": "v1.2.0",
   "execution_type": "playbook",
-  "parameters": {"city": "New York"},
+  "parameters": {"message": "Hello World"},
   "merge": false,
   "sync_to_postgres": true,
   "context": {
@@ -86,7 +86,7 @@ The Execution API provides two endpoints for executing playbooks with different 
   "execution_id": "exec_789",
   "timestamp": "2025-10-11T10:30:00Z",
   "status": "running",
-  "path": "examples/weather/forecast",
+  "path": "tests/fixtures/playbooks/hello_world/hello_world",
   "version": "v1.2.0",
   "execution_type": "playbook",
   "result": null
@@ -224,17 +224,17 @@ For systems currently using `/executions/run`, migration to `/execute` is straig
 **Before (Legacy)**:
 ```python
 {
-    "playbook_id": "examples/weather/forecast",
-    "parameters": {"city": "NYC"}
+    "playbook_id": "tests/fixtures/playbooks/hello_world/hello_world",
+    "parameters": {"message": "Hello World"}
 }
 ```
 
 **After (Version-Controlled)**:
 ```python
 {
-    "path": "examples/weather/forecast",
+    "path": "tests/fixtures/playbooks/hello_world/hello_world",
     "version": "latest",  # or "v1.0.0"
-    "parameters": {"city": "NYC"}
+    "parameters": {"message": "Hello World"}
 }
 ```
 

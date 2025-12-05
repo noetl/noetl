@@ -312,9 +312,16 @@ def extract_config(task_config: Dict[str, Any]) -> Dict[str, Any]:
         if not isinstance(loop_config, dict):
             raise ValueError("'loop' attribute must be a dictionary")
         
+        # Check if this is pagination mode (no collection iteration)
+        is_pagination = 'pagination' in loop_config
+        
         iterator_name = loop_config.get('element')
-        if iterator_name is None:
-            raise ValueError("Loop requires 'element' key in loop configuration")
+        if iterator_name is None and not is_pagination:
+            raise ValueError("Loop requires 'element' key in loop configuration (unless using pagination)")
+        
+        # For pagination mode, use a placeholder element name
+        if is_pagination and iterator_name is None:
+            iterator_name = '_page_item'
         
         # Extract collection from loop config
         collection = loop_config.get('collection')
@@ -396,6 +403,13 @@ def extract_config(task_config: Dict[str, Any]) -> Dict[str, Any]:
     print(f"!!! ITERATOR.CONFIG: sink_block={nested_task.get('sink')}")
     print(f"!!! ITERATOR.CONFIG: collection={collection}")
     
+    # Extract pagination config (only valid in NEW format with loop attribute)
+    pagination_config = None
+    if 'loop' in task_config:
+        loop_config = task_config['loop']
+        if 'pagination' in loop_config:
+            pagination_config = extract_pagination_config(loop_config['pagination'])
+    
     return {
         'iterator_name': iterator_name,
         'nested_task': nested_task,
@@ -407,4 +421,65 @@ def extract_config(task_config: Dict[str, Any]) -> Dict[str, Any]:
         'limit_n': limit_n,
         'chunk_n': chunk_n,
         'order_by_expr': order_by_expr,
+        'pagination_config': pagination_config,
+    }
+
+
+def extract_pagination_config(pagination: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Extract and validate pagination configuration.
+    
+    Args:
+        pagination: Pagination block from loop config
+        
+    Returns:
+        Validated pagination config
+        
+    Raises:
+        ValueError: If pagination config is invalid
+    """
+    if not isinstance(pagination, dict):
+        raise ValueError("'pagination' must be a dictionary")
+    
+    # Required fields
+    pag_type = pagination.get('type')
+    if not pag_type:
+        raise ValueError("pagination.type is required (e.g., 'response_based')")
+    
+    continue_while = pagination.get('continue_while')
+    if not continue_while:
+        raise ValueError("pagination.continue_while is required (Jinja2 expression)")
+    
+    next_page = pagination.get('next_page')
+    if not next_page or not isinstance(next_page, dict):
+        raise ValueError("pagination.next_page is required and must be a dictionary")
+    
+    merge_strategy = pagination.get('merge_strategy')
+    if not merge_strategy:
+        raise ValueError("pagination.merge_strategy is required (append|extend|replace|collect)")
+    
+    if merge_strategy not in ('append', 'extend', 'replace', 'collect'):
+        raise ValueError(f"Invalid merge_strategy '{merge_strategy}'. Must be: append, extend, replace, or collect")
+    
+    # Optional fields
+    merge_path = pagination.get('merge_path')  # JSONPath to data array
+    max_iterations = pagination.get('max_iterations', 1000)
+    try:
+        max_iterations = int(max_iterations)
+    except Exception:
+        max_iterations = 1000
+    
+    # Retry config (optional)
+    retry_config = pagination.get('retry', {})
+    if not isinstance(retry_config, dict):
+        retry_config = {}
+    
+    return {
+        'type': pag_type,
+        'continue_while': continue_while,
+        'next_page': next_page,
+        'merge_strategy': merge_strategy,
+        'merge_path': merge_path,
+        'max_iterations': max_iterations,
+        'retry': retry_config,
     }

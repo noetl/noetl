@@ -18,6 +18,7 @@ from noetl.core.logger import setup_logger
 from noetl.server.api.broker.service import EventService
 from noetl.server.api.catalog import get_catalog_service
 from noetl.server.api.catalog.service import CatalogService
+from noetl.worker.vars_cache import VarsCache
 
 logger = setup_logger(__name__, include_location=True)
 
@@ -109,7 +110,7 @@ async def fetch_execution_context(execution_id: int) -> Dict[str, Any]:
     }
 
 
-def build_rendering_context(
+async def build_rendering_context(
     workload: Dict[str, Any],
     results: Dict[str, Any],
     steps: list,
@@ -132,6 +133,23 @@ def build_rendering_context(
         "workload": workload,
         "results": results,
     }
+
+    # Add vars namespace from VarsCache if execution_id available
+    execution_id = None
+    if isinstance(extra_context, dict):
+        execution_id = extra_context.get("execution_id")
+    
+    if execution_id:
+        try:
+            vars_data = await VarsCache.get_all_vars(execution_id)
+            base_ctx["vars"] = vars_data
+            logger.info(f"✓ Loaded {len(vars_data)} variables from vars_cache for execution {execution_id}")
+        except Exception as e:
+            logger.warning(f"Failed to load vars_cache for execution {execution_id}: {e}")
+            base_ctx["vars"] = {}
+    else:
+        logger.info("No execution_id in extra_context, vars namespace will be empty")
+        base_ctx["vars"] = {}
 
     # Allow direct references to prior step names
     if isinstance(results, dict):
@@ -240,13 +258,15 @@ def merge_template_work_context(
 
     If template contains a 'work' object, promotes those values to top-level
     context for easier access during rendering.
+    
+    Also promotes 'args' from the task object to make them available for template rendering.
 
     Args:
-        template: Template object (may contain 'work' key)
+        template: Template object (may contain 'work' key and 'task' key with 'args')
         context: Base rendering context
 
     Returns:
-        Updated context with template work merged
+        Updated context with template work and args merged
     """
     try:
         if isinstance(template, dict) and isinstance(template.get("work"), dict):
@@ -256,8 +276,38 @@ def merge_template_work_context(
             for k, v in incoming_work.items():
                 if k not in context:
                     context[k] = v
+        
+        # Promote args from task to top-level context for template rendering
+        # Args may contain templates that need to be rendered with the current context first
+        if isinstance(template, dict):
+            task_obj = template.get("task")
+            if isinstance(task_obj, dict):
+                args_obj = task_obj.get("args")
+                if isinstance(args_obj, dict):
+                    logger.debug(f"Promoting task args to context: {list(args_obj.keys())}")
+                    # Render args templates BEFORE promoting to context
+                    # This ensures templates like {{ fetch_github_repo.data.name }} are resolved
+                    from jinja2 import Environment, BaseLoader, Undefined
+                    env = Environment(loader=BaseLoader(), undefined=Undefined)
+                    
+                    for k, v in args_obj.items():
+                        # Skip if already in context to avoid overriding
+                        if k in context:
+                            continue
+                        # Render template strings
+                        if isinstance(v, str) and "{{" in v:
+                            try:
+                                tmpl = env.from_string(v)
+                                rendered_val = tmpl.render(**context)
+                                context[k] = rendered_val
+                                logger.debug(f"  Rendered arg {k}: '{v}' -> '{rendered_val}'")
+                            except Exception as e:
+                                logger.warning(f"Failed to render arg template '{k}': {e}")
+                                context[k] = v
+                        else:
+                            context[k] = v
     except Exception as e:
-        logger.warning(f"Failed to merge template work context: {e}")
+        logger.warning(f"Failed to merge template work/args context: {e}")
 
     return context
 
@@ -461,7 +511,7 @@ async def render_context(
         extra_context["execution_id"] = execution_id
 
     # Build rendering context
-    render_ctx = build_rendering_context(
+    render_ctx = await build_rendering_context(
         workload=exec_ctx["workload"],
         results=exec_ctx["results"],
         steps=exec_ctx["steps"],

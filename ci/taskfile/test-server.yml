@@ -1,0 +1,84 @@
+version: '3.45'
+
+tasks:
+  test:pagination-server:build:
+    desc: Build pagination test server Docker image
+    aliases: [tpsb, test-pagination-server-build]
+    vars:
+      IMAGE_TAG:
+        sh: date +%Y-%m-%d-%H-%M
+    cmds:
+      - docker build -t local/test-server:{{.IMAGE_TAG}} -f docker/test-server/Dockerfile .
+      - docker tag local/test-server:{{.IMAGE_TAG}} local/test-server:latest
+      - echo "Built test-server:{{.IMAGE_TAG}}"
+
+  test:pagination-server:load:
+    desc: Load pagination test server image into kind cluster
+    aliases: [tpsl, test-pagination-server-load]
+    cmds:
+      - kind load docker-image local/test-server:latest --name noetl
+
+  test:pagination-server:deploy:
+    desc: Deploy pagination test server to Kubernetes
+    aliases: [tpsd, test-pagination-server-deploy]
+    cmds:
+      - kubectl apply -f ci/manifests/test-server/namespace.yaml
+      - sleep 2
+      - kubectl apply -f ci/manifests/test-server/deployment.yaml
+      - echo "Waiting for pagination test server to be ready..."
+      - kubectl wait --for=condition=ready pod -l app=paginated-api -n test-server --timeout=60s || true
+      - kubectl get pods -n test-server
+
+  test:pagination-server:undeploy:
+    desc: Remove pagination test server from Kubernetes
+    aliases: [tpsu, test-pagination-server-undeploy]
+    cmds:
+      - kubectl delete -f ci/manifests/test-server/deployment.yaml --ignore-not-found=true
+      - kubectl delete namespace test-server --ignore-not-found=true
+
+  test:pagination-server:status:
+    desc: Check pagination test server status
+    aliases: [tpss, test-pagination-server-status]
+    cmds:
+      - echo "=== Pagination Test Server Pods ==="
+      - kubectl get pods -n test-server
+      - echo ""
+      - echo "=== Pagination Test Server Services ==="
+      - kubectl get svc -n test-server
+      - echo ""
+      - echo "=== Pagination Test Server Endpoints ==="
+      - 'echo "ClusterIP: http://paginated-api.test-server.svc.cluster.local:5555"'
+      - 'echo "NodePort: http://localhost:30555"'
+
+  test:pagination-server:logs:
+    desc: Show pagination test server logs
+    aliases: [tpslog, test-pagination-server-logs]
+    cmds:
+      - kubectl logs -n test-server -l app=paginated-api --tail=100
+
+  test:pagination-server:test:
+    desc: Test the paginated API server endpoints
+    aliases: [tpst, test-pagination-server-test]
+    cmds:
+      - |
+        echo "Testing paginated API endpoints..."
+        kubectl run -n test-server curl-test --image=curlimages/curl:latest --rm -i --restart=Never -- sh -c '
+        echo "=== Health Check ==="
+        curl -s http://paginated-api:5555/health
+        echo ""
+        echo ""
+        echo "=== Page 1 of assessments ==="
+        curl -s http://paginated-api:5555/api/v1/assessments?page=1 | head -20
+        echo ""
+        echo "=== Users with offset ==="
+        curl -s http://paginated-api:5555/api/v1/users?offset=0&limit=5
+        echo ""
+        '
+
+  test:pagination-server:full:
+    desc: Build, load, and deploy pagination test server
+    aliases: [tpsf, test-pagination-server-full]
+    cmds:
+      - task: test:pagination-server:build
+      - task: test:pagination-server:load
+      - task: test:pagination-server:deploy

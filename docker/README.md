@@ -54,7 +54,7 @@ Notes:
 
 ## Deploying to Kubernetes
 
-See k8s/docs/README.md for the current, consolidated Kubernetes docs. In short:
+See the main README.md and ci/README.md for Kubernetes deployment documentation. In short:
 - noetl-deployment.yaml uses noetl-pip:latest (port 8084)
 - noetl-dev-deployment.yaml uses noetl-local-dev:latest (port 8080)
 

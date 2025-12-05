@@ -263,6 +263,69 @@ class CredentialService:
             raise HTTPException(status_code=500, detail=str(e))
     
     @staticmethod
+    async def delete_credential(identifier: str) -> dict:
+        """
+        Delete a credential by ID or name.
+        
+        Args:
+            identifier: Credential ID (numeric) or name
+            
+        Returns:
+            Dict with deletion confirmation
+            
+        Raises:
+            HTTPException: If credential not found or operation fails
+        """
+        try:
+            by_id = identifier.isdigit()
+            
+            async with get_async_db_connection() as conn:
+                async with conn.cursor() as cursor:
+                    if by_id:
+                        await cursor.execute(
+                            """
+                            DELETE FROM credential
+                            WHERE id = %s
+                            RETURNING id, name
+                            """,
+                            (int(identifier),)
+                        )
+                    else:
+                        await cursor.execute(
+                            """
+                            DELETE FROM credential
+                            WHERE name = %s
+                            RETURNING id, name
+                            """,
+                            (identifier,)
+                        )
+                    
+                    row = await cursor.fetchone()
+                    
+                    if not row:
+                        raise HTTPException(
+                            status_code=404,
+                            detail="Credential not found"
+                        )
+                    
+                    try:
+                        await conn.commit()
+                    except Exception as e:
+                        logger.warning(f"Commit warning (may auto-commit): {e}")
+                    
+                    return {
+                        "message": "Credential deleted successfully",
+                        "id": str(row[0]),
+                        "name": row[1]
+                    }
+                    
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.exception(f"Error deleting credential: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+    
+    @staticmethod
     async def get_gcp_token(request: GCPTokenRequest) -> GCPTokenResponse:
         """
         Obtain a GCP access token using various credential sources.

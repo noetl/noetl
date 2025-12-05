@@ -167,12 +167,12 @@ workflow:
     desc: Start simple test
     next:
       - step: test_step
-        with:
+        args:
           message: "{{ workload.message }}"
 
   - step: test_step
     desc: Simple test step
-    type: python
+    tool: python
     code: |
       def main(message):
           print(f"TEST_STEP: {message}")

@@ -8,10 +8,10 @@ What it does
 - Provides per-item and aggregated save options.
 
 Required keys
-- type: iterator
-- collection: list value to iterate
-- element: variable name bound to the current item
-- task: step (or steps) to execute for each item
+- loop: block with iterator configuration
+  - collection: list value to iterate
+  - element: variable name bound to the current item
+  - mode: sequential|async (optional, default sequential)
 
 Control options
 - mode: sequential (default) or async
@@ -37,43 +37,48 @@ Usage patterns (fragments)
 - Async HTTP fan-out with guarded Postgres upsert
   ```yaml
   - step: http_loop
-    type: iterator
-    element: city
-    collection: "{{ workload.cities }}"
-    mode: async
-    task:
-      type: http
-      endpoint: "{{ workload.base_url }}/forecast"
-      data: { latitude: "{{ city.lat }}", longitude: "{{ city.lon }}", hourly: temperature_2m, forecast_days: 1 }
-      sink:
-        data:
-          id: "{{ execution_id }}:{{ city.name }}:{{ http_loop.result_index }}"
-          execution_id: "{{ execution_id }}"
-          iter_index: "{{ http_loop.result_index }}"
-          city: "{{ city.name }}"
-          payload: "{{ (this.data | tojson) if this is defined and this.data is defined else '' }}"
-        tool: postgres
-        auth: pg_local
-        table: public.weather_http_raw
-        mode: upsert
-        key: id
+    tool: http
+    loop:
+      element: city
+      collection: "{{ workload.cities }}"
+      mode: async
+    endpoint: "{{ workload.base_url }}/forecast"
+    data:
+      latitude: "{{ city.lat }}"
+      longitude: "{{ city.lon }}"
+      hourly: temperature_2m
+      forecast_days: 1
+    sink:
+      data:
+        id: "{{ execution_id }}:{{ city.name }}:{{ http_loop.result_index }}"
+        execution_id: "{{ execution_id }}"
+        iter_index: "{{ http_loop.result_index }}"
+        city: "{{ city.name }}"
+        payload: "{{ (this.data | tojson) if this is defined and this.data is defined else '' }}"
+      tool: postgres
+      auth: pg_local
+      table: public.weather_http_raw
+      mode: upsert
+      key: id
   ```
 
 - Aggregate results for later steps
   ```yaml
   - step: http_loop
-    type: iterator
-    element: it
-    collection: "{{ http_search.result.items }}"
-    task:
-      - step: get
-        type: http
-        url: "{{ it.url }}"
-        method: GET
-        sink: { name: content, data: "{{ this.data }}" }
+    tool: http
+    loop:
+      element: it
+      collection: "{{ http_search.result.items }}"
+    url: "{{ it.url }}"
+    method: GET
     sink:
-      - name: http_loop
-        data: "{{ this.result }}"
+      - name: content
+        data: "{{ this.data }}"
+  
+  - step: use_aggregated
+    tool: python
+    args:
+      pages: "{{ http_loop.result }}"
   ```
 
 Notes

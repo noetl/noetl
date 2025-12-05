@@ -16,7 +16,7 @@ workflow:
   - step: retry
     desc: Execute DuckDB query with retry
     tool: duckdb
-    query: "{{ workload.test_query }}"
+    command: "{{ workload.test_query }}"
     retry:
       max_attempts: 3
       initial_delay: 0.5

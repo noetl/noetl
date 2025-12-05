@@ -109,7 +109,7 @@ The `noetl.queue` table already has the necessary columns:
 ```yaml
 workflow:
   - step: fetch_api_data
-    type: http
+    tool: http
     url: https://api.example.com/data
     retry:
       max_attempts: 5

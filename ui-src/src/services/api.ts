@@ -4,6 +4,7 @@ import {
   ExecutionData,
   PlaybookData,
   ServerStatus,
+  CredentialData,
 } from "../types";
 import { CreatePlaybookResponse } from "./api.types";
 const getApiBaseUrl = () => {
@@ -144,6 +145,13 @@ class APIService {
     return response.data;
   }
 
+  async registerPlaybook(playbookData: any): Promise<CreatePlaybookResponse> {
+    // If it's already a string (YAML or JSON text), use it directly
+    const content = typeof playbookData === 'string' ? playbookData : JSON.stringify(playbookData);
+    const response = await apiClient.post("/catalog/register", { content, resource_type: "Playbook" });
+    return response.data;
+  }
+
   async updatePlaybook(
     id: string,
     data: Partial<PlaybookData>,
@@ -222,6 +230,38 @@ class APIService {
       { params: { q: query } }
     );
     return response.data;
+  }
+
+  async getCredentials(type?: string): Promise<CredentialData[]> {
+    const params: any = {};
+    if (type) {
+      params.type = type;
+    }
+    const response = await apiClient.get("/credentials", { params });
+    return response.data.items || [];
+  }
+
+  async getCredential(identifier: string, includeData: boolean = false): Promise<CredentialData> {
+    const response = await apiClient.get(`/credentials/${identifier}`, {
+      params: { include_data: includeData }
+    });
+    return response.data;
+  }
+
+  async searchCredentials(query: string): Promise<CredentialData[]> {
+    const response = await apiClient.get("/credentials", {
+      params: { q: query }
+    });
+    return response.data.items || [];
+  }
+
+  async createOrUpdateCredential(data: any): Promise<CredentialData> {
+    const response = await apiClient.post("/credentials", data);
+    return response.data;
+  }
+
+  async deleteCredential(identifier: string): Promise<void> {
+    await apiClient.delete(`/credentials/${identifier}`);
   }
 }
 

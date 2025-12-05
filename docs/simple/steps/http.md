@@ -8,7 +8,7 @@ What it does
 - In later steps, access it via `<step_name>.data`.
 
 Required keys
-- type: http
+- tool: http
 - endpoint: URL to call (templating allowed)
 
 Common optional keys
@@ -76,7 +76,7 @@ Examples (fragments)
   element: item
   collection: "{{ workload.items }}"
   task:
-    type: http
+    tool: http
     endpoint: "https://api.example.com/{{ item.id }}"
     sink:
       data:

@@ -47,10 +47,10 @@ Supports multiple lookup strategies with priority ordering:
 {"catalog_id": "cat_123", "parameters": {...}}
 
 // Path + version lookup
-{"path": "examples/weather", "version": "v1.0.0", "parameters": {...}}
+{"path": "tests/fixtures/playbooks/hello_world/hello_world", "version": "v1.0.0", "parameters": {...}}
 
 // Legacy playbook_id (auto-resolves to latest)
-{"playbook_id": "examples/weather", "parameters": {...}}
+{"playbook_id": "tests/fixtures/playbooks/hello_world/hello_world", "parameters": {...}}
 ```
 
 #### ExecutionResponse
@@ -162,9 +162,9 @@ def model_post_init(self, __context):
 #### CLI Compatibility
 Existing CLI works without changes:
 ```bash
-noetl execute playbook "examples/weather" \
+noetl execute playbook "tests/fixtures/playbooks/hello_world/hello_world" \
   --port 8083 \
-  --payload '{"key": "value"}' \
+  --payload '{"message": "Hello World"}' \
   --merge \
   --json
 ```

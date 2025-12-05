@@ -16,7 +16,7 @@ The Postgres plugin executes SQL commands against PostgreSQL databases. It uses 
 ### Basic Table Creation
 ```yaml
 - step: ensure_pg_table
-  type: postgres
+  tool: postgres
   auth: pg_local
   command: |
     CREATE TABLE IF NOT EXISTS public.weather_http_raw (
@@ -34,7 +34,7 @@ The Postgres plugin executes SQL commands against PostgreSQL databases. It uses 
 ### With Non-Secret Overrides
 ```yaml
 - step: custom_database
-  type: postgres
+  tool: postgres
   auth: pg_local
   with:
     db_name: "custom_database"  # Override default database
@@ -46,7 +46,7 @@ The Postgres plugin executes SQL commands against PostgreSQL databases. It uses 
 ### Data Insertion with Templates
 ```yaml
 - step: insert_weather_data
-  type: postgres
+  tool: postgres
   auth: pg_local
   command: |
     INSERT INTO public.weather_http_raw (
@@ -68,11 +68,11 @@ The Postgres plugin executes SQL commands against PostgreSQL databases. It uses 
 ### Before
 ```yaml
 - step: get_pg_credential
-  type: secret
+  tool: secret
   path: credentials/postgres/local
   
 - step: postgres_task
-  type: postgres
+  tool: postgres
   credential: "{{ get_pg_credential.data.data }}"
   command: SELECT 1;
 ```

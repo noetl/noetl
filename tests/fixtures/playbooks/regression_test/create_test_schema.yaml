@@ -1,0 +1,119 @@
+apiVersion: noetl.io/v1
+kind: Playbook
+
+metadata:
+  name: create_test_schema
+  path: tests/fixtures/playbooks/regression_test/create_test_schema
+
+workload:
+  description: "Create database schema for regression test results"
+  pg_auth: pg_local  # Default to local, can be overridden with --payload '{"pg_auth": "pg_k8s"}'
+
+workflow:
+  - step: start
+    desc: "Start schema creation"
+    next:
+      - step: create_test_results_table
+
+  - step: create_test_results_table
+    desc: "Create table for storing test execution results"
+    tool: postgres
+    auth: "{{ workload.pg_auth }}"
+    command: |
+      CREATE SCHEMA IF NOT EXISTS noetl_test;
+      
+      DROP TABLE IF EXISTS noetl_test.regression_results CASCADE;
+      
+      CREATE TABLE noetl_test.regression_results (
+        test_run_id BIGINT NOT NULL,
+        test_timestamp TIMESTAMP NOT NULL DEFAULT NOW(),
+        playbook_name VARCHAR(255) NOT NULL,
+        playbook_path VARCHAR(500) NOT NULL,
+        category VARCHAR(100),
+        execution_id BIGINT,
+        status VARCHAR(50) NOT NULL,
+        execution_time_ms INTEGER,
+        step_count INTEGER,
+        error_message TEXT,
+        validation_passed BOOLEAN,
+        validation_errors JSONB,
+        expected_status VARCHAR(50),
+        actual_events JSONB,
+        test_passed BOOLEAN NOT NULL,
+        PRIMARY KEY (test_run_id, playbook_name)
+      );
+      
+      CREATE INDEX idx_test_results_run ON noetl_test.regression_results(test_run_id);
+      CREATE INDEX idx_test_results_passed ON noetl_test.regression_results(test_passed);
+      CREATE INDEX idx_test_results_playbook ON noetl_test.regression_results(playbook_name);
+      
+      COMMENT ON TABLE noetl_test.regression_results IS 'Regression test results for all playbooks';
+      COMMENT ON COLUMN noetl_test.regression_results.test_run_id IS 'Unique ID for test run (use execution_id of master test)';
+      COMMENT ON COLUMN noetl_test.regression_results.validation_passed IS 'Whether validation rules passed';
+      COMMENT ON COLUMN noetl_test.regression_results.test_passed IS 'Overall test pass/fail';
+    next:
+      - step: create_test_summary_table
+
+  - step: create_test_summary_table
+    desc: "Create table for test run summaries"
+    tool: postgres
+    auth: "{{ workload.pg_auth }}"
+    command: |
+      DROP TABLE IF EXISTS noetl_test.regression_summary CASCADE;
+      
+      CREATE TABLE noetl_test.regression_summary (
+        test_run_id BIGINT PRIMARY KEY,
+        test_timestamp TIMESTAMP NOT NULL DEFAULT NOW(),
+        total_tests INTEGER NOT NULL,
+        passed_tests INTEGER NOT NULL,
+        failed_tests INTEGER NOT NULL,
+        skipped_tests INTEGER NOT NULL,
+        total_execution_time_ms INTEGER,
+        success_rate DECIMAL(5,2),
+        categories_tested TEXT[],
+        git_commit VARCHAR(100),
+        test_config JSONB,
+        CONSTRAINT check_test_counts CHECK (total_tests = passed_tests + failed_tests + skipped_tests)
+      );
+      
+      CREATE INDEX idx_test_summary_timestamp ON noetl_test.regression_summary(test_timestamp);
+      
+      COMMENT ON TABLE noetl_test.regression_summary IS 'Summary of regression test runs';
+    next:
+      - step: create_expected_results_table
+
+  - step: create_expected_results_table
+    desc: "Create table for storing expected results (baseline)"
+    tool: postgres
+    auth: "{{ workload.pg_auth }}"
+    command: |
+      DROP TABLE IF EXISTS noetl_test.expected_results CASCADE;
+      
+      CREATE TABLE noetl_test.expected_results (
+        playbook_name VARCHAR(255) PRIMARY KEY,
+        playbook_path VARCHAR(500) NOT NULL,
+        expected_status VARCHAR(50) NOT NULL,
+        expected_min_steps INTEGER,
+        expected_step_names TEXT[],
+        expected_events JSONB,
+        validation_rules JSONB,
+        baseline_created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        baseline_updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        baseline_execution_id BIGINT,
+        notes TEXT
+      );
+      
+      CREATE INDEX idx_expected_results_path ON noetl_test.expected_results(playbook_path);
+      
+      COMMENT ON TABLE noetl_test.expected_results IS 'Expected results baseline for playbooks';
+    next:
+      - step: end
+
+  - step: end
+    desc: "Schema creation completed"
+    tool: end
+    sink:
+      tool: event_log
+      args:
+        status: "success"
+        message: "Test schema created successfully"

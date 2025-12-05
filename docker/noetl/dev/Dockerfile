@@ -39,6 +39,7 @@ LABEL org.opencontainers.image.source=https://github.com/noetl/noetl
 LABEL org.opencontainers.image.licenses=MIT
 
 RUN apt-get update && apt-get --no-install-recommends install -y \
+    curl \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 

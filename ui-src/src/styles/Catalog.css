@@ -9,7 +9,7 @@
    ========================================================================== */
 
 .catalog-loading-content {
-    padding: 50px;
+    padding: 24px;
     text-align: center;
 }
 
@@ -18,14 +18,25 @@
 }
 
 .catalog-error-content {
-    padding: 50px;
+    padding: 24px;
 }
 
 .catalog-main-content {
-    padding: 50px;
+    padding: 24px;
 }
 
 .catalog-space-vertical {
+    width: 100%;
+}
+
+/* ==========================================================================
+   Header
+   ========================================================================== */
+
+.catalog-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
     width: 100%;
 }
 

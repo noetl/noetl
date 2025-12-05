@@ -866,7 +866,7 @@ def manage_catalog(
 
 @cli_app.command("run")
 def run_playbook(
-    playbook_id: str = typer.Argument(..., help="Playbook path/name as registered in catalog (e.g., examples/weather_loop_example)"),
+    playbook_id: str = typer.Argument(..., help="Playbook path/name as registered in catalog (e.g., tests/fixtures/playbooks/weather/weather_loop_example)"),
     host: str = typer.Option("localhost", "--host", help="NoETL server host"),
     port: int = typer.Option(8082, "--port", "-p", help="NoETL server port"),
     input: str = typer.Option(None, "--input", "-i", help="Path to JSON file with parameters"),
@@ -884,7 +884,7 @@ def run_playbook(
            -d '{"path": "<playbook_path>", "args": {...}}'
 
     Example:
-      noetl run "examples/weather_loop_example" --host localhost --port 8082
+      noetl run "tests/fixtures/playbooks/weather/weather_loop_example" --host localhost --port 8082
     """
     try:
         parameters = {}
@@ -973,7 +973,7 @@ def plan_schedule(
 
 @execute_app.command("playbook")
 def execute_playbook_by_name(
-    playbook_id: str = typer.Argument(..., help="Playbook path/name as registered in catalog (e.g., examples/weather_loop_example)"),
+    playbook_id: str = typer.Argument(..., help="Playbook path/name as registered in catalog (e.g., tests/fixtures/playbooks/weather/weather_loop_example)"),
     host: str = typer.Option("localhost", "--host", help="NoETL server host"),
     port: int = typer.Option(8082, "--port", "-p", help="NoETL server port"),
     input: str = typer.Option(None, "--input", "-i", help="Path to JSON file with parameters"),
@@ -990,7 +990,7 @@ def execute_playbook_by_name(
            -d '{"path": "<playbook_path>", "args": {...}}'
 
     Example:
-      noetl execute playbook "examples/weather_loop_example" --host localhost --port 8082
+      noetl execute playbook "tests/fixtures/playbooks/weather/weather_loop_example" --host localhost --port 8082
     """
     try:
         parameters = {}

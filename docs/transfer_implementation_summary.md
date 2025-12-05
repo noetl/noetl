@@ -78,7 +78,7 @@ noetl/plugin/transfer/
 
 ```yaml
 - step: transfer_data
-  type: transfer  # Generic action type
+  tool: transfer  # Generic action type
   source:  # Self-contained source config
     type: snowflake  # Type specified here
     auth:
