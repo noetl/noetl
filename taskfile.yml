@@ -48,6 +48,9 @@ includes:
   analytics:
     taskfile: ci/taskfile/analytics.yml
     dir: .
+  jupyterlab:
+    taskfile: ci/taskfile/jupyterlab.yml
+    dir: .
   observability:
     taskfile: ci/taskfile/observability.yml
     dir: .
