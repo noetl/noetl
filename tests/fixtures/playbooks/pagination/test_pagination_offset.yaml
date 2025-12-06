@@ -22,17 +22,18 @@ workflow:
     params:
       offset: 0
       limit: 10
-    loop:
-      pagination:
-        type: response_based
-        continue_while: "{{ response.data.has_more == true }}"
-        next_page:
+    retry:
+      on_success:
+        while: "{{ response.has_more == true }}"
+        max_attempts: 10
+        next_call:
           params:
-            offset: "{{ (response.data.offset | int) + (response.data.limit | int) }}"
-            limit: "{{ response.data.limit }}"
-        merge_strategy: append
-        merge_path: data.users
-        max_iterations: 10
+            offset: "{{ (response.offset | int) + (response.limit | int) }}"
+            limit: "{{ response.limit }}"
+        collect:
+          strategy: append
+          path: users
+          into: pages
     next:
       - step: validate_results
 

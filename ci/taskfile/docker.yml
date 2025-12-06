@@ -5,7 +5,7 @@ tasks:
     desc: Build noetl container with docker
     aliases: [dbn, docker-build-noetl]
     vars:
-      CACHE: '{{ if (eq .CLI_ARGS "cache")}}{{ else }}--no-cache{{ end }}'
+      CACHE: '{{.CACHE | default ""}}'
       REGISTRY: '{{.REGISTRY | default "local"}}'
       IMAGE_NAME: '{{.IMAGE_NAME | default "noetl"}}'
       IMAGE_TAG:

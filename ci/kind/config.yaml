@@ -64,6 +64,18 @@ nodes:
         listenAddress: "127.0.0.1"
         protocol: TCP
 
+        # Superset (Analytics)
+      - containerPort: 30888
+        hostPort: 30888
+        listenAddress: "127.0.0.1"
+        protocol: TCP
+
+        # JupyterLab (Analytics)
+      - containerPort: 30999
+        hostPort: 30999
+        listenAddress: "127.0.0.1"
+        protocol: TCP
+
         # Pagination Test Server
       - containerPort: 30555
         hostPort: 30555

@@ -316,6 +316,17 @@ make destroy                 # Clean up all resources (cluster, Docker, caches)
 
 NoETL is primarily deployed as a Kubernetes-based service. After running `make bootstrap`, the server and workers are already running in your Kind cluster.
 
+### Analytics (Superset + JupyterLab)
+
+You can provision Apache Superset and JupyterLab in a dedicated `analytics` namespace for dashboards and ML exploration:
+
+- Deploy: `task analytics:k8s:deploy`
+- Access Superset: http://localhost:30888 (default admin `admin`/`admin`)
+- Access JupyterLab: http://localhost:30999 (default token `noetl`)
+- Remove: `task analytics:k8s:remove`
+
+See the detailed guide: [Analytics Stack (Superset + JupyterLab)](docs/analytics.md)
+
 ### Working with Playbooks
 
 ```bash

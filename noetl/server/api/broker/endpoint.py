@@ -51,7 +51,7 @@ async def emit_event(payload: EventEmitRequest):
         logger.error(f"Validation error emitting event: {e}")
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        logger.error(f"Error emitting event: {e}")
+        logger.exception(f"Error emitting event for execution_id={payload.execution_id}, event_type={payload.event_type}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

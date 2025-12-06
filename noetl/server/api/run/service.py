@@ -163,6 +163,11 @@ class ExecutionService:
             "version": str(catalog_entry.version)
         }
         
+        # Extract parent_execution_id from request context if this is a nested playbook call
+        parent_execution_id = None
+        if request.context and request.context.parent_execution_id:
+            parent_execution_id = str(request.context.parent_execution_id)
+        
         queue_ids = await QueuePublisher.publish_initial_steps(
             execution_id=execution_id,
             catalog_id=catalog_entry.catalog_id,
@@ -170,7 +175,8 @@ class ExecutionService:
             workflow_steps=execution_plan.workflow_steps,
             parent_event_id=workflow_event_id,
             context=context,
-            metadata=request.metadata
+            metadata=request.metadata,
+            parent_execution_id=parent_execution_id
         )
         
         logger.info(

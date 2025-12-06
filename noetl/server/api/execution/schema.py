@@ -20,3 +20,4 @@ class ExecutionEntryResponse(AppBaseModel):
     progress: int = Field(..., ge=0, le=100, description="Execution progress percentage (0-100)")
     result: Optional[Dict[str, Any]] = Field(None, description="Execution results with command outputs")
     error: Optional[str] = Field(None, description="Error message if execution failed")
+    parent_execution_id: Optional[str] = Field(None, description="Parent execution ID if this is a sub-playbook")

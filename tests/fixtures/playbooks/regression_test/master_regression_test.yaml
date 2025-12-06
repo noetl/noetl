@@ -34,6 +34,19 @@ workflow:
   - step: start
     desc: "Start regression test suite - 52 playbooks (4 skipped)"
     next:
+      - step: create_test_schema
+
+  # === SCHEMA SETUP ===
+  - step: create_test_schema
+    desc: "Create database schema for test results"
+    tool: playbook
+    path: tests/fixtures/playbooks/regression_test/create_test_schema
+    payload:
+      pg_auth: "{{ workload.pg_auth }}"
+    retry:
+      max_attempts: 2
+      retry_on: ["timeout"]
+    next:
       - step: tests/fixtures/playbooks/hello_world
 
   # === BASIC TESTS ===
@@ -195,6 +208,14 @@ workflow:
   - step: tests/pagination/retry
     tool: playbook
     path: tests/pagination/retry
+    retry:
+      max_attempts: 2
+      retry_on: ["timeout"]
+    next: [step: tests/pagination/loop_with_pagination]
+  
+  - step: tests/pagination/loop_with_pagination
+    tool: playbook
+    path: tests/pagination/loop_with_pagination
     retry:
       max_attempts: 2
       retry_on: ["timeout"]

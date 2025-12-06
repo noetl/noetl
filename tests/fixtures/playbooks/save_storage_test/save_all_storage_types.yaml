@@ -176,7 +176,8 @@ workflow:
                   "test_type": "flat_structure"
               }
           }
-    args: "{{ start }}"
+    args:
+      input: "{{ start }}"
     sink:
       tool: postgres
       args:
@@ -205,7 +206,8 @@ workflow:
                   "test_type": "nested_structure"
               }
           }
-    args: "{{ test_flat_postgres_save }}"
+    args:
+      input: "{{ test_flat_postgres_save }}"
     sink:
       tool: postgres
       table: simple_test_nested
@@ -309,7 +311,8 @@ workflow:
                   "test_type": "duckdb_analytics"
               }
           }
-    args: "{{ test_python_save }}"
+    args:
+      input: "{{ test_python_save }}"
     sink:
       tool: duckdb
       commands: |
@@ -349,7 +352,8 @@ workflow:
                   "test_type": "http_webhook"
               }
           }
-    args: "{{ test_duckdb_save }}"
+    args:
+      input: "{{ test_duckdb_save }}"
     sink:
       tool: http
       endpoint: "https://httpbin.org/post"

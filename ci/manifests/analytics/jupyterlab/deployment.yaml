@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jupyterlab
+  namespace: analytics
+  labels:
+    app: jupyterlab
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: jupyterlab
+  template:
+    metadata:
+      labels:
+        app: jupyterlab
+    spec:
+      containers:
+        - name: jupyterlab
+          image: jupyter/datascience-notebook:python-3.11.6
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8888
+          env:
+            - name: JUPYTER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: jupyterlab-secret
+                  key: JUPYTER_TOKEN
+          args:
+            - start-notebook.py
+            - --NotebookApp.token=$(JUPYTER_TOKEN)
+            - --NotebookApp.allow_origin='*'
+            - --NotebookApp.allow_remote_access=True
+            - --NotebookApp.disable_check_xsrf=True
+          volumeMounts:
+            - name: notebooks
+              mountPath: /home/jovyan/work
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
+      volumes:
+        - name: notebooks
+          emptyDir: {}

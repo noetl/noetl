@@ -80,7 +80,8 @@ def report_event(event_data: Dict[str, Any], server_url: str) -> Dict[str, Any]:
     Report an event to the NoETL server synchronously.
     """
     url, json_data = _prepare_event_payload(event_data, server_url)
-    with httpx.Client(timeout=10.0) as client:
+    # Increased timeout to 120 seconds to accommodate long-running database operations
+    with httpx.Client(timeout=120.0) as client:
         response = client.post(
             url,
             content=json_data,
@@ -105,7 +106,8 @@ async def report_event_async(
     Report an event to the NoETL server asynchronously.
     """
     url, json_data = _prepare_event_payload(event_data, server_url)
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    # Increased timeout to 120 seconds to accommodate long-running database operations
+    async with httpx.AsyncClient(timeout=120.0) as client:
         response = await client.post(
             url,
             content=json_data,

@@ -65,3 +65,10 @@ ci/kind/cache
 /tests/fixtures/credentials/sf_rsa_key.pub
 /tests/fixtures/playbooks/oauth/interactive_brokers/ib_oauth.yaml
 /tests/fixtures/credentials/google_oauth.json
+
+# --- Credentials (prevent accidental secret commits) ---
+# Block plaintext tokens/keys in test credentials directory
+# Note: we intentionally allow tracked JSON samples like pg_local.json
+/tests/fixtures/credentials/*.txt
+/tests/fixtures/credentials/*.pem
+/tests/fixtures/credentials/*.key

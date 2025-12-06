@@ -1004,8 +1004,7 @@ async def _process_transitions(execution_id: int) -> None:
 
                 if not step_transitions:
                     logger.info(f"No transitions found for step '{step_name}'")
-                    # Check if execution should be finalized
-                    await _check_execution_completion(execution_id, by_name)
+                    # Don't check completion here - do it once after ALL steps processed
                     continue
 
                 logger.info(
@@ -1270,8 +1269,13 @@ async def _process_transitions(execution_id: int) -> None:
                     except Exception as e:
                         logger.exception(f"Failed to publish step '{to_step}'")
 
-                # After processing all transitions, check if execution should be finalized
-                await _check_execution_completion(execution_id, by_name)
+                # DO NOT check completion here - it creates a race condition where
+                # we mark the workflow complete before all steps have had their
+                # transitions fully processed and published to the queue.
+                # Completion will be checked once after ALL steps are processed.
+
+    # After ALL completed steps have been processed, check if execution should be finalized
+    await _check_execution_completion(execution_id, by_name)
 
 
 async def _check_iterator_completions(execution_id: str) -> None:

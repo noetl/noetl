@@ -1,0 +1,113 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jupyterlab
+  namespace: noetl
+  labels:
+    app: jupyterlab
+    component: analytics
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: jupyterlab
+  template:
+    metadata:
+      labels:
+        app: jupyterlab
+        component: analytics
+    spec:
+      containers:
+      - name: jupyterlab
+        image: jupyter/scipy-notebook:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8888
+          name: http
+          protocol: TCP
+        env:
+        # NoETL server configuration
+        - name: NOETL_SERVER_URL
+          value: "http://noetl.noetl.svc.cluster.local:8082"
+        
+        # PostgreSQL configuration
+        - name: POSTGRES_HOST
+          value: "postgres.postgres.svc.cluster.local"
+        - name: POSTGRES_PORT
+          value: "5432"
+        - name: POSTGRES_USER
+          value: "demo"
+        - name: POSTGRES_PASSWORD
+          value: "demo"
+        - name: POSTGRES_DB
+          value: "demo_noetl"
+        
+        # JupyterLab configuration
+        - name: JUPYTER_ENABLE_LAB
+          value: "yes"
+        - name: JUPYTER_TOKEN
+          value: "noetl"
+        - name: GRANT_SUDO
+          value: "yes"
+        
+        command:
+        - bash
+        - -c
+        - |
+          # Install additional Python packages
+          pip install --quiet --no-cache-dir \
+            psycopg[binary] \
+            duckdb \
+            polars \
+            pyarrow \
+            plotly \
+            requests
+          
+          # Start JupyterLab
+          start-notebook.sh \
+            --ServerApp.token='noetl' \
+            --ServerApp.password='' \
+            --ServerApp.allow_origin='*' \
+            --ServerApp.base_url=/ \
+            --ServerApp.port=8888
+        
+        volumeMounts:
+        - name: notebook-storage
+          mountPath: /home/jovyan/work
+        - name: notebooks
+          mountPath: /home/jovyan/work/notebooks
+          readOnly: true
+        
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "500m"
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"
+        
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 8888
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+        
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 8888
+          initialDelaySeconds: 15
+          periodSeconds: 5
+          timeoutSeconds: 3
+      
+      volumes:
+      - name: notebook-storage
+        persistentVolumeClaim:
+          claimName: jupyterlab-pvc
+      - name: notebooks
+        configMap:
+          name: jupyterlab-notebooks
