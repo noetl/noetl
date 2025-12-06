@@ -120,8 +120,14 @@ async def report_event_async(
             response.status_code,
             response.text,
         )
+        # For debugging: log the request payload on failure
+        if response.status_code == 422:
+            logger.error(
+                "Validation error for event. Request payload: %s",
+                json_data[:500] if len(json_data) > 500 else json_data
+            )
         raise RuntimeError(
-            f"Failed to report event, status code: {response.status_code}"
+            f"Failed to report event, status code: {response.status_code}, response: {response.text[:200]}"
         )
 
 

@@ -403,13 +403,6 @@ def extract_config(task_config: Dict[str, Any]) -> Dict[str, Any]:
     print(f"!!! ITERATOR.CONFIG: sink_block={nested_task.get('sink')}")
     print(f"!!! ITERATOR.CONFIG: collection={collection}")
     
-    # Extract pagination config (only valid in NEW format with loop attribute)
-    pagination_config = None
-    if 'loop' in task_config:
-        loop_config = task_config['loop']
-        if 'pagination' in loop_config:
-            pagination_config = extract_pagination_config(loop_config['pagination'])
-    
     return {
         'iterator_name': iterator_name,
         'nested_task': nested_task,
@@ -421,7 +414,6 @@ def extract_config(task_config: Dict[str, Any]) -> Dict[str, Any]:
         'limit_n': limit_n,
         'chunk_n': chunk_n,
         'order_by_expr': order_by_expr,
-        'pagination_config': pagination_config,
     }
 
 

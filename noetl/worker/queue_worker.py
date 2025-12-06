@@ -155,13 +155,65 @@ class QueueWorker:
         
         # All tools (including Python) must go through execute_task to support iterator/loop handling
         from noetl.plugin import execute_task
+        
+        # Create event callback for iterator executor
+        # This is a sync function that will be called from the thread pool
+        def event_callback(
+            event_type: str,
+            task_id: str,
+            task_name: str,
+            task_type: str,
+            status: str,
+            duration: float,
+            context: Dict[str, Any],
+            result: Optional[Any],
+            event_data: Optional[Dict[str, Any]],
+            error: Optional[str]
+        ) -> None:
+            """Sync callback that bridges to async event emission."""
+            import asyncio as async_module
+            from noetl.plugin.runtime import report_event_async
+            
+            # Build event payload matching server expectations
+            # Server uses EventEmitRequest schema which expects specific field names
+            payload = {
+                'event_type': event_type,
+                'execution_id': str(exec_ctx.get('execution_id')),  # Must be string
+                'status': status,
+                'node_name': task_name,  # Server expects node_name for step/task name
+                'node_type': task_type,  # Server expects node_type for task type
+                'duration': duration,
+                'context': event_data or {},  # Iterator metadata goes in context
+                'meta': {
+                    'task_id': task_id
+                },
+                'result': result
+            }
+            
+            if error:
+                payload['error'] = error
+            
+            # Run async event emission in a new event loop
+            # This is safe because we're in a thread pool, not the main event loop
+            try:
+                loop = async_module.new_event_loop()
+                async_module.set_event_loop(loop)
+                try:
+                    loop.run_until_complete(
+                        report_event_async(payload, self.server_url)
+                    )
+                finally:
+                    loop.close()
+                logger.info(f"WORKER: Emitted {event_type} event via callback")
+            except Exception as e:
+                logger.error(f"WORKER: Failed to emit {event_type} event: {e}", exc_info=True)
 
         loop = asyncio.get_running_loop()
         executor = (
             self._process_pool if use_process and self._process_pool else self._thread_pool
         )
         return await loop.run_in_executor(
-            executor, execute_task, action_cfg, task_name, exec_ctx, self._jinja, task_data
+            executor, execute_task, action_cfg, task_name, exec_ctx, self._jinja, task_data, event_callback
         )
 
     async def _evaluate_retry_policy(

@@ -255,6 +255,13 @@ class SuccessRetryPolicy:
         # Second unwrap: Get the actual API response from 'data' key
         actual_response = http_metadata.get('data', http_metadata) if isinstance(http_metadata, dict) else http_metadata
         
+        # DEBUG: Log the actual response structure
+        logger.critical(f"RETRY.should_continue: response type={type(response)}, keys={list(response.keys()) if isinstance(response, dict) else 'N/A'}")
+        logger.critical(f"RETRY.should_continue: http_metadata type={type(http_metadata)}, keys={list(http_metadata.keys()) if isinstance(http_metadata, dict) else 'N/A'}")
+        logger.critical(f"RETRY.should_continue: actual_response type={type(actual_response)}, keys={list(actual_response.keys()) if isinstance(actual_response, dict) else 'N/A'}")
+        if isinstance(actual_response, dict):
+            logger.critical(f"RETRY.should_continue: actual_response.paging={actual_response.get('paging')}")
+        
         # Convert to DotDict to allow dot notation in Jinja2 templates
         # This enables response.paging.hasMore instead of response['paging']['hasMore']
         actual_response_dotted = DotDict(actual_response)

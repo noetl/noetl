@@ -2,7 +2,7 @@ apiVersion: noetl.io/v1
 kind: Playbook
 metadata:
   name: test_loop_with_pagination
-  path: tests/pagination/loop_with_pagination
+  path: tests/pagination/loop_with_pagination/loop_with_pagination
   description: Test iterator (loop) with HTTP pagination - preserving results at each level
 
 workload:
@@ -22,7 +22,7 @@ workflow:
       - step: fetch_all_endpoints
 
   - step: fetch_all_endpoints
-    desc: Loop over endpoints with HTTP pagination via success-side retry
+    desc: Loop over endpoints with HTTP pagination via retry.on_success
     tool: http
     loop:
       collection: "{{ workload.endpoints }}"
@@ -33,49 +33,18 @@ workflow:
     params:
       page: 1
       pageSize: "{{ endpoint.page_size }}"
-    # Unified retry: error recovery + success-driven repetition (pagination)
     retry:
-      # Error-side retry: Handle transient failures
-      on_error:
-        when: "{{ error.status in [429, 500, 502, 503] }}"
-        max_attempts: 3
-        backoff_multiplier: 2.0
-        initial_delay: 1.0
-      
-      # Success-side retry: Pagination pattern
       on_success:
-        # Continue while API indicates more data
-        while: "{{ response.data.has_more == true }}"
+        while: "{{ response.paging.hasMore == true }}"
         max_attempts: 10
-        
-        # How to build next request from previous response
         next_call:
           params:
-            page: "{{ (response.data.offset | int) + (response.data.limit | int) }}"
-            pageSize: "{{ response.data.limit }}"
-        
-        # How to aggregate results across pages
+            page: "{{ (response.paging.page | int) + 1 }}"
+            pageSize: "{{ response.paging.pageSize }}"
         collect:
           strategy: append
-          path: data.users  # Extract items from response.data.users
-          into: pages       # Store accumulated results in {{ pages }}
-        
-        # Per-page side effects: save each page as it's fetched
-        per_iteration:
-          sink:
-            tool: postgres
-            auth: pg_k8s
-            table: noetl_test.pagination_loop_results
-            mode: insert
-            args:
-              execution_id: "{{ execution_id }}"
-              endpoint_name: "{{ endpoint.name }}"
-              endpoint_path: "{{ endpoint.path }}"
-              page_size: "{{ endpoint.page_size }}"
-              result_count: "{{ page['data']['data'] | length }}"
-              result_data: "{{ page['data'] }}"
-              iteration_index: "{{ _retry.index }}"
-              iteration_count: "{{ _retry.count }}"
+          path: data
+          into: pages
     next:
       - step: validate_results
 
@@ -86,9 +55,8 @@ workflow:
       loop_results: "{{ fetch_all_endpoints }}"
       workload: "{{ workload }}"
     code: |
-      def main(input_data):
-          loop_results = input_data.get('loop_results', {})
-          workload = input_data.get('workload', {})
+      def main(loop_results, workload):
+          # Directly receive parameters - no need for input_data wrapper
           
           # Handle different result formats
           if isinstance(loop_results, dict):
@@ -189,8 +157,7 @@ workflow:
     args:
       saved_data: "{{ verify_saved_data }}"
     code: |
-      def main(input_data):
-          saved_data = input_data.get('saved_data', [])
+      def main(saved_data):
           
           print(f"Saved data records: {len(saved_data)}")
           

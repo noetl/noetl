@@ -23,6 +23,11 @@ EventType = Literal[
     "action_started",
     "action_completed",
     "action_failed",
+    "iterator_started",      # Iterator/loop execution started
+    "iterator_completed",    # Iterator/loop completed all iterations
+    "iterator_failed",       # Iterator/loop failed
+    "iteration_completed",   # Single iteration within loop completed
+    "retry_scheduled",       # Retry attempt scheduled for failed action
     "error",
     "info",
     "warning"

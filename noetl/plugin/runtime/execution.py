@@ -90,7 +90,8 @@ def execute_task(
     task_name: str,
     context: Dict[str, Any],
     jinja_env: Environment,
-    args: Optional[Dict[str, Any]] = None
+    args: Optional[Dict[str, Any]] = None,
+    event_callback: Optional[Callable] = None
 ) -> Dict[str, Any]:
     """
     Execute a task based on its declared tool.
@@ -108,6 +109,7 @@ def execute_task(
         context: Execution context
         jinja_env: Jinja2 environment for template rendering
         args: Task arguments/parameters
+        event_callback: Optional callback for emitting iterator/loop events
 
     Returns:
         Task execution result
@@ -144,7 +146,7 @@ def execute_task(
         logger.debug(f"Executing task '{task_name}' with loop configuration")
         wrapped_context = _wrap_context_results(context)
         return execute_iterator_task(
-            task_config, wrapped_context, jinja_env, args or {}
+            task_config, wrapped_context, jinja_env, args or {}, event_callback
         )
     
     task_type, raw_type = _resolve_task_type(task_config)
@@ -156,32 +158,18 @@ def execute_task(
 
     # Dispatch to appropriate action handler
     if task_type == "http":
-        # HTTP plugin is async for credential caching support
-        # Import retry wrapper
-        from noetl.plugin.runtime.retry import execute_with_retry
-        
-        # Create async wrapper for retry system
-        def http_executor_sync(cfg, ctx, env, task_w):
-            try:
-                loop = asyncio.get_running_loop()
-                import concurrent.futures
-                with concurrent.futures.ThreadPoolExecutor() as pool:
-                    future = pool.submit(
-                        lambda: asyncio.run(execute_http_task(cfg, ctx, env, task_w))
-                    )
-                    return future.result()
-            except RuntimeError:
-                return asyncio.run(execute_http_task(cfg, ctx, env, task_w))
-        
-        # Execute with unified retry (handles both on_error and on_success)
-        return execute_with_retry(
-            http_executor_sync,
-            task_config,
-            task_name,
-            wrapped_context,
-            jinja_env,
-            args or {}
-        )
+        # HTTP plugin is async - run directly without retry wrapper
+        # Retry is now handled server-side through event-driven control loop
+        try:
+            loop = asyncio.get_running_loop()
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                future = pool.submit(
+                    lambda: asyncio.run(execute_http_task(task_config, wrapped_context, jinja_env, args or {}))
+                )
+                return future.result()
+        except RuntimeError:
+            return asyncio.run(execute_http_task(task_config, wrapped_context, jinja_env, args or {}))
     elif task_type == "python":
         return execute_python_task(
             task_config, wrapped_context, jinja_env, args or {}

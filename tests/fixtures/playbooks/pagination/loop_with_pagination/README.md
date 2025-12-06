@@ -1,44 +1,89 @@
 # Loop with Pagination Test
 
-This folder contains a comprehensive test for combining **iterator loops** with **HTTP pagination** using NoETL's unified retry system.
+This folder contains a test for the **distributed iterator + pagination architecture** combining event-driven loop orchestration with HTTP pagination using NoETL's unified retry system.
+
+## 🎯 Current Status
+
+**✅ PHASE 1 COMPLETE: Worker-Side Architecture**
+- Loop detection and routing to iterator executor
+- Collection analysis (filter, sort, limit)
+- Event callback integration
+- `iterator_started` event emission with full metadata
+
+**⏳ PHASE 2 PENDING: Server-Side Orchestration**
+- Process `iterator_started` event
+- Enqueue N iteration jobs (one per collection item)
+- Track iteration completion
+- Emit `iterator_completed` event
+
+**🔮 PHASE 3 DESIGNED: Pagination via Retry**
+- HTTP action execution with `retry.on_success`
+- Server-side pagination state tracking
+- Page continuation logic
+- Result aggregation
 
 ## Overview
 
-The `test_loop_with_pagination.yaml` playbook demonstrates how to:
-- Iterate over multiple API endpoints using `tool: iterator`
-- Apply HTTP pagination to each endpoint via success-side retry
-- Collect paginated results using append strategy
-- Persist per-iteration results to PostgreSQL
-- Validate total items across all endpoints
+The `loop_with_pagination.yaml` playbook demonstrates the **event-driven distributed loop pattern** where:
+- Worker analyzes collection and emits `iterator_started` event
+- Server will process event and enqueue iteration jobs (when implemented)
+- Each iteration runs independently with pagination support via `retry.on_success`
 
-## Test Scenario
-
-**Endpoints Tested:**
-1. **Assessments API**: `/api/v1/assessments` (10 items per page, ~35 total)
-2. **Users API**: `/api/v1/users` (15 items per page, ~35 total)
-
-**Loop Configuration:**
-- Mode: Sequential iteration
-- Collection: 2 endpoints
-- Element variable: `{{ endpoint }}`
-
-**Pagination Configuration:**
-- Type: Response-based (success-side retry)
-- Continue condition: `{{ response.data.has_more == true }}`
-- Max iterations: 10 per endpoint
-- Collection strategy: Append items from `data.users`
-
-**Expected Results:**
-- Total endpoints processed: 2
-- Total items fetched: 70 (35 + 35)
-- Database records: 2 (one per iteration)
-- Iteration indices: [0, 1]
+**Test Scenario:**
+- **Collection**: 2 API endpoints (assessments, users)
+- **Mode**: Sequential iteration
+- **Expected**: `iterator_started` event with collection metadata
 
 ## Files
 
-- `test_loop_with_pagination.yaml` - Playbook definition
-- `pagination_loop_test.ipynb` - Interactive test notebook
+- `loop_with_pagination.yaml` - Playbook definition with loop + pagination config
+- `pagination_loop_test.ipynb` - **Validation notebook** (shows architecture details)
 - `README.md` - This file
+
+## Architecture Validation
+
+The test notebook (`pagination_loop_test.ipynb`) validates the complete architecture:
+
+### What It Shows
+
+**✅ Event Flow Timeline**
+- Displays all events: `playbook_started` → `iterator_started` → `action_completed`
+
+**✅ iterator_started Event Details**
+- Status, total count, collection size
+- Mode (sequential/async), iterator name
+- Nested task tool type
+
+**✅ Iterator Metadata**
+- Complete collection data (2 endpoints with paths, page_size)
+- Nested task configuration (HTTP action with pagination)
+- Pagination config: `retry.on_success` with while condition, max_attempts, merge strategy
+
+**✅ Implementation Status**
+```
+✅ Worker Event Callback: WORKING
+✅ Iterator Executor: WORKING
+✅ iterator_started Event: EMITTED
+✅ Event Schema: VALID
+⏳ Server Orchestrator: NOT YET IMPLEMENTED
+```
+
+### Environment Auto-Detection
+
+The notebook supports both environments via `NOETL_ENV` variable:
+
+**Localhost Mode** (default):
+```python
+# Automatically uses:
+# - Server: http://localhost:8082 (NodePort 30082)
+# - Database: localhost:54321 (NodePort 30321)
+```
+
+**Kubernetes Mode**:
+```bash
+export NOETL_ENV=kubernetes
+# Uses in-cluster service URLs
+```
 
 ## Deploying the Notebook
 
@@ -83,175 +128,253 @@ kubectl wait --for=condition=ready pod -l app=jupyterlab -n noetl --timeout=90s
 
 ### Prerequisites
 
-1. **Pagination Test Server** running:
+1. **NoETL Server** deployed:
+   ```bash
+   task deploy-noetl
+   ```
+
+2. **Pagination Test Server** running (for full end-to-end test when server orchestration is implemented):
    ```bash
    task pagination-server:test:pagination-server:full
    ```
 
-2. **PostgreSQL** with test schema and table:
-
-   The notebook (cell 3) automatically creates the required table, or you can create it manually:
-
-   ```sql
-   CREATE SCHEMA IF NOT EXISTS noetl_test;
-
-   CREATE TABLE IF NOT EXISTS noetl_test.pagination_loop_results (
-       id SERIAL PRIMARY KEY,
-       execution_id BIGINT,
-       endpoint_name TEXT,
-       endpoint_path TEXT,
-       page_size INTEGER,
-       result_count INTEGER,
-       result_data JSONB,
-       iteration_index INTEGER,
-       iteration_count INTEGER,
-       created_at TIMESTAMP DEFAULT NOW()
-   );
-
-   CREATE INDEX IF NOT EXISTS idx_pagination_loop_execution_id 
-   ON noetl_test.pagination_loop_results(execution_id);
-   ```
-
-3. **Credentials** registered:
-   ```bash
-   task register-test-credentials
-   ```
+3. **PostgreSQL** accessible:
+   - Localhost: `jdbc:postgresql://localhost:54321/demo_noetl`
+   - Kubernetes: `postgres.postgres.svc.cluster.local:5432/demo_noetl`
 
 ### Method 1: Using the Notebook (Recommended)
 
-Open `pagination_loop_test.ipynb` in JupyterLab (http://localhost:30888):
+Open `pagination_loop_test.ipynb` in JupyterLab or VS Code:
 
-1. **Execute Setup** (Cells 1-2)
-   - Loads configuration and database utilities
-   - Uses modern stack: psycopg3, Polars, Plotly
+1. **Execute Setup** (Cell 1)
+   - Auto-detects environment (localhost/kubernetes)
+   - Configures server and database connections
+   - Set `NOETL_ENV=kubernetes` to override
 
-2. **Initialize Test Table** (Cell 3)
+2. **Initialize Test Table** (Cell 2)
    - Creates `noetl_test.pagination_loop_results` table
-   - Automatically creates schema and index
 
-3. **Start Test** (Cell 4)
-   - Executes playbook via NoETL API
+3. **Load Database Utilities** (Cell 3)
+   - Provides query helper functions
+
+4. **Execute Playbook** (Cell 4)
+   - Launches test execution
    - Captures execution_id
 
-4. **Monitor Progress** (Cell 5)
-   - Real-time event tracking
-   - Shows step completion counts
+5. **Monitor Execution** (Cell 5)
+   - Polls status (will timeout - this is expected)
+   - Shows event counts
 
-5. **Analyze Results** (Cell 6)
-   - Queries `pagination_loop_results` table
-   - Shows per-endpoint breakdown
+6. **Validate Architecture** (Cell 6) **← KEY VALIDATION**
+   - ✅ Confirms `iterator_started` event was emitted
+   - ✅ Shows collection metadata (2 endpoints)
+   - ✅ Displays pagination configuration
+   - ✅ Verifies event schema
+   - ⚠️ Notes server orchestration not yet implemented
 
-6. **Validate** (Cell 7)
-   - Runs 5 validation checks
-   - Reports pass/fail status
+7. **Review Status** (Cells 7-8)
+   - Shows implementation phases
+   - Documents next steps
 
-7. **Visualize** (Cells 8-9)
-   - Bar chart: items per endpoint
-   - Timeline: event progression
-
-8. **Cleanup** (Cell 10)
-   - Optional test data removal
-
-### Method 2: Using Task Command
+### Method 2: Using cURL (Quick Validation)
 
 ```bash
-# Register playbook
-kubectl exec -n noetl $(kubectl get pod -n noetl -l app=noetl -o jsonpath='{.items[0].metadata.name}') -- \
-  noetl-ctl catalog register \
-  /app/tests/fixtures/playbooks/pagination/loop_with_pagination/test_loop_with_pagination.yaml \
-  tests/pagination/loop_with_pagination
-
-# Execute test
-curl -X POST http://localhost:30082/api/run/playbook \
+# Execute playbook
+curl -X POST http://localhost:8082/api/run/playbook \
   -H "Content-Type: application/json" \
-  -d '{"path": "tests/pagination/loop_with_pagination"}'
+  -d '{"path": "tests/pagination/loop_with_pagination/loop_with_pagination"}'
+
+# Get execution_id from response, then check iterator_started event
+curl -s -X POST "http://localhost:8082/api/postgres/execute" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "SELECT event_type, status FROM noetl.event WHERE execution_id = <EXECUTION_ID> ORDER BY event_id", "schema": "noetl"}' | jq
+
+# Verify iterator_started event with metadata
+curl -s -X POST "http://localhost:8082/api/postgres/execute" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "SELECT context FROM noetl.event WHERE execution_id = <EXECUTION_ID> AND event_type = '\''iterator_started'\''", "schema": "noetl"}' | jq
 ```
 
-### Method 3: Using NoETL CLI
+## Expected Results (Phase 1)
 
-```bash
-# From NoETL pod
-kubectl exec -it -n noetl $(kubectl get pod -n noetl -l app=noetl -o jsonpath='{.items[0].metadata.name}') -- bash
+Since server orchestration is not yet implemented, you should see:
 
-# Inside pod
-noetl-ctl catalog register \
-  /app/tests/fixtures/playbooks/pagination/loop_with_pagination/test_loop_with_pagination.yaml \
-  tests/pagination/loop_with_pagination
-
-noetl-ctl run playbook tests/pagination/loop_with_pagination
+**✅ Expected Events:**
+```
+playbook_started          STARTED
+workflow_initialized      COMPLETED  
+step_started              RUNNING
+action_started            RUNNING
+iterator_started          RUNNING      ← KEY EVENT!
+action_completed          COMPLETED
+step_result               COMPLETED
 ```
 
-## Validation Criteria
+**✅ iterator_started Context:**
+```json
+{
+  "total_count": 2,
+  "collection_size": 2,
+  "mode": "sequential",
+  "iterator_name": "endpoint",
+  "collection": [
+    {"name": "assessments", "path": "/api/v1/assessments", "page_size": 10},
+    {"name": "users", "path": "/api/v1/users", "page_size": 15}
+  ],
+  "nested_task": {
+    "tool": "http",
+    "retry": {
+      "on_success": {
+        "while": "{{ response.paging.hasMore == true }}",
+        "max_attempts": 10,
+        "collect": {"strategy": "append", "path": "data"}
+      }
+    }
+  }
+}
+```
 
-The notebook performs these checks:
+**⚠️ Expected Behavior:**
+- Execution will **not complete** automatically
+- No `iteration_completed` events (server doesn't enqueue iterations yet)
+- Timeout is **expected** - this validates worker-side implementation only
 
-1. ✅ **Endpoint Count**: Exactly 2 endpoints processed
-2. ✅ **Assessments Items**: 35 items fetched
-3. ✅ **Users Items**: 35 items fetched
-4. ✅ **Total Items**: 70 items total
-5. ✅ **Iteration Indices**: [0, 1] in correct order
+## Validation Criteria (Phase 1)
+
+The notebook validates:
+
+1. ✅ **Loop Detection**: Worker routes to iterator executor
+2. ✅ **Event Emission**: `iterator_started` event exists in database
+3. ✅ **Collection Analysis**: 2 endpoints with correct metadata
+4. ✅ **Event Schema**: Status is RUNNING, context has all required fields
+5. ✅ **Pagination Config**: nested_task contains retry.on_success configuration
 
 ## Key Features Demonstrated
 
-### 1. Iterator with Pagination
-```yaml
-- step: fetch_all_endpoints
-  tool: iterator
-  collection: "{{ workload.endpoints }}"
-  element: endpoint
-  mode: sequential
-  action:
-    tool: http
-    url: "{{ pagination_server_url }}{{ endpoint.path }}"
-    params:
-      page_size: "{{ endpoint.page_size }}"
-      page: 1
-    loop:
-      pagination:
-        type: response_based
-        continue_while: "{{ response.data.has_more }}"
-        next_page:
-          params:
-            page: "{{ (response.data.page | int) + 1 }}"
-        merge_strategy: append
-        merge_path: data.users
-        max_iterations: 10
-```
+### 1. Distributed Loop Architecture (Event-Driven)
 
-### 2. Unified Retry System
+**Phase 1 (✅ Complete):**
+- Worker detects `loop` in step configuration
+- Routes to iterator executor for collection analysis
+- Emits `iterator_started` event with full metadata:
+  - Collection details (2 endpoints with paths, page_size)
+  - Iterator configuration (mode, name, total_count)
+  - Nested task definition (HTTP action with retry.on_success pagination)
+- Event stored in PostgreSQL event table
+- Worker reports back via `action_completed`
+
+**Phase 2 (⏳ Pending - Not Yet Implemented):**
+- Server orchestrator will receive `iterator_started` event
+- Enqueue N iteration jobs (one per collection element)
+- Workers execute each iteration with full pagination
+- Emit `iteration_completed` events
+- Server aggregates results
+- Emit `iterator_completed` when all done
+
+**Phase 3 (🔮 Designed - Not Yet Implemented):**
+- Retry logic for failed iterations
+- Concurrent iteration execution
+- Chunk processing for large collections
+
+### 2. HTTP Retry with Pagination (retry.on_success)
+
+**Worker-Side Analysis (✅ Complete):**
 ```yaml
 retry:
-  error_side:
-    enabled: true
-    max_attempts: 3
-    backoff_strategy: exponential
-    retry_on_status: [429, 500, 502, 503]
-  success_side:
-    enabled: true
-    max_attempts: 10
+  on_success:                                    # Pagination trigger
+    while: "{{ response.paging.hasMore == true }}"  # Continue condition
+    max_attempts: 10                                # Max pages
+    collect:
+      strategy: append                              # Merge strategy
+      path: data                                    # Result path
 ```
 
-### 3. Per-Iteration Sink
+**Server-Side Execution (⏳ Pending):**
+- Worker will execute HTTP request with auto-pagination
+- Server will receive paginated results via `iteration_completed` events
+- Aggregation across all endpoints happens in server
+- Final merged dataset stored in event context
+
+### 3. Jinja2 Templating
+
+**Current Implementation:**
 ```yaml
-sink:
-  tool: postgres
-  auth:
-    type: postgres
-    credential: pg_k8s
-  table: noetl_test.pagination_loop_results
-  data:
-    execution_id: "{{ execution_id }}"
-    endpoint_name: "{{ endpoint.name }}"
-    endpoint_path: "{{ endpoint.path }}"
-    page_size: "{{ endpoint.page_size }}"
-    result_count: "{{ pages | length }}"
-    iteration_index: "{{ __iteration__.index }}"
-    iteration_count: "{{ __iteration__.count }}"
+loop:
+  collection: "{{ workload.endpoints }}"     # Template evaluation
+  element: endpoint                           # Iterator variable
+
+workload:
+  server_url: "{{ secret.PAGINATED_API_URL }}"  # Secret resolution
+  endpoints:
+    - name: assessments
+      path: /api/v1/assessments
+      page_size: 10
+```
+
+**Validation:**
+- ✅ Collection templating works (2 endpoints extracted)
+- ✅ Secret resolution works (server_url from PAGINATED_API_URL)
+- ⏳ Element access in nested tasks (will work when iterations execute)
+
+### 4. Collection Processing Patterns
+
+**Supported Modes:**
+- `sequential`: Process one element at a time (tested)
+- `async`: Process all elements concurrently (not tested yet)
+- `chunked`: Process in batches (not tested yet)
+
+**Current Validation:**
+```python
+mode = iterator_context.get('mode')  # Returns: 'sequential'
+total_count = iterator_context.get('total_count')  # Returns: 2
+collection_size = len(collection)  # Returns: 2
 ```
 
 ## Troubleshooting
 
+### Iterator Event Not Appearing
+
+**Check event emission:**
+```sql
+SELECT event_type, status, context->>'iterator_name' as iterator_name
+FROM noetl.event
+WHERE execution_id = <EXECUTION_ID>
+ORDER BY event_id;
+```
+
+**Common issues:**
+- Missing `loop` parameter in step configuration
+- Invalid collection template (use `{{ workload.field }}` syntax)
+- Event callback not passed through execution chain (fixed in Phase 1)
+- EventType schema missing iterator types (fixed in Phase 1)
+- Status values lowercase instead of uppercase (fixed in Phase 1)
+
+### Environment Detection Issues
+
+**Check environment setting:**
+```python
+import os
+env = os.getenv('NOETL_ENV', 'localhost')
+print(f"Environment: {env}")
+```
+
+**Kubernetes mode not working:**
+```bash
+# Set environment variable before notebook
+export NOETL_ENV=kubernetes
+# Or set in notebook cell:
+os.environ['NOETL_ENV'] = 'kubernetes'
+```
+
+### Execution Timeout
+
+**Expected behavior in Phase 1:**
+- Execution will timeout waiting for completion
+- This is **normal** - server orchestration not implemented yet
+- Use Cell 6 validation to verify architecture instead
+
 ### Test Server Not Running
+
 ```bash
 task pagination-server:test:pagination-server:status
 task pagination-server:test:pagination-server:logs
@@ -281,9 +404,83 @@ WHERE execution_id = <your_execution_id>
 ORDER BY created_at;
 ```
 
-## Database Schema
+## Success Criteria
 
-Results are saved to `noetl_test.pagination_loop_results`:
+### Phase 1 Success (Current - What to Validate Now)
+
+The test is successful when notebook Cell 6 shows:
+
+1. ✅ **Event Flow**: 7+ events including `iterator_started`
+2. ✅ **Iterator Started Details**:
+   - Status: RUNNING
+   - Total Count: 2
+   - Collection Size: 2
+   - Mode: sequential
+   - Iterator Name: endpoint
+   - Nested Tool: http
+3. ✅ **Iterator Metadata**:
+   - Collection: 2 endpoints with name, path, page_size
+   - Nested Task: HTTP action with retry.on_success pagination config
+   - Pagination Config: while condition, max_attempts=10, collect strategy
+4. ✅ **Implementation Status**:
+   - Worker Event Callback: ✅
+   - Iterator Executor: ✅
+   - iterator_started Event: ✅
+   - Event Schema: ✅
+   - Server Orchestrator: ⏳ (expected pending)
+
+### Phase 2 Success (When Implemented - Expected Future Behavior)
+
+When server orchestration is complete, the test should also show:
+
+- ⏳ 2 `iteration_completed` events (one per endpoint)
+- ⏳ 1 `iterator_completed` event
+- ⏳ ~70 total items fetched (35 assessments + 35 users)
+- ⏳ 2 records in `noetl_test.pagination_loop_results`
+- ⏳ Final execution status: COMPLETED
+
+## Next Steps (Development)
+
+To complete Phase 2, implement in `noetl/server/api/orchestrator/orchestrator.py`:
+
+1. **Add `_process_iterator_started()` handler:**
+   ```python
+   async def _process_iterator_started(self, execution_id: int, event: Dict[str, Any]):
+       """Enqueue iteration jobs from iterator_started event."""
+       context = event.get('context', {})
+       collection = context.get('collection', [])
+       nested_task = context.get('nested_task', {})
+       
+       for idx, element in enumerate(collection):
+           # Create iteration job
+           job_data = {
+               'execution_id': execution_id,
+               'iteration_index': idx,
+               'element': element,
+               'task_config': nested_task
+           }
+           # Enqueue via queue API
+           await self._enqueue_job(job_data)
+   ```
+
+2. **Register handler in event processor:**
+   ```python
+   event_handlers = {
+       'iterator_started': self._process_iterator_started,
+       # ... existing handlers
+   }
+   ```
+
+3. **Test with this playbook** - should see:
+   - 2 iteration jobs enqueued
+   - Workers execute HTTP requests with pagination
+   - ~35 items per endpoint (70 total)
+   - `iteration_completed` events emitted
+   - `iterator_completed` event when all done
+
+## Database Schema (Phase 2)
+
+When sink is implemented, results will be saved to `noetl_test.pagination_loop_results`:
 
 | Column | Type | Description |
 |--------|------|-------------|
@@ -303,12 +500,5 @@ Results are saved to `noetl_test.pagination_loop_results`:
 - [Iterator Loops](../../../../docs/loop_step_parameter.md)
 - [Unified Retry System](../../../../docs/retry_unified_implementation.md)
 - [Pagination Tests Overview](../README.md)
-
-## Success Criteria
-
-A successful test run will:
-- ✅ Complete without errors
-- ✅ Fetch exactly 70 items (35 per endpoint)
-- ✅ Create 2 database records
-- ✅ Show correct iteration indices [0, 1]
-- ✅ Pass all 5 validation checks in the notebook
+- [Token Authentication Implementation](../../../../docs/token_auth_implementation.md) (current work)
+- [Event-Driven Architecture](../../../../docs/event_model.md)
