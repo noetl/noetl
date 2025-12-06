@@ -474,6 +474,11 @@ def extract_pagination_config(pagination: Dict[str, Any]) -> Dict[str, Any]:
     if not isinstance(retry_config, dict):
         retry_config = {}
     
+    # Sink config (optional) - save each page individually
+    sink_config = pagination.get('sink')
+    if sink_config and not isinstance(sink_config, dict):
+        raise ValueError("pagination.sink must be a dictionary")
+    
     return {
         'type': pag_type,
         'continue_while': continue_while,
@@ -482,4 +487,6 @@ def extract_pagination_config(pagination: Dict[str, Any]) -> Dict[str, Any]:
         'merge_path': merge_path,
         'max_iterations': max_iterations,
         'retry': retry_config,
+        'sink': sink_config,  # Add sink config for per-page saving
     }
+

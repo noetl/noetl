@@ -70,15 +70,39 @@ class OrchestratorQueries:
     
     @staticmethod
     async def has_execution_failed(execution_id: int) -> bool:
-        """Check if execution has failed."""
-        query, params = OrchestratorQueries._build_event_check_query(
-            execution_id=execution_id,
-            event_types=["playbook_failed", "workflow_failed"]
-        )
+        """
+        Check if execution has permanently failed (not recoverable by retry).
+        
+        Returns True only if there's a failure event AND no successful action_completed
+        event after the failure. This allows retries to succeed and continue the workflow.
+        """
+        query = """
+            WITH failure_time AS (
+                SELECT MAX(created_at) as last_failure
+                FROM noetl.event
+                WHERE execution_id = %(execution_id)s
+                  AND event_type IN ('playbook_failed', 'workflow_failed')
+            ),
+            success_after_failure AS (
+                SELECT COUNT(*) as success_count
+                FROM noetl.event e, failure_time f
+                WHERE e.execution_id = %(execution_id)s
+                  AND e.event_type = 'action_completed'
+                  AND e.created_at > f.last_failure
+            )
+            SELECT 
+                CASE 
+                    WHEN (SELECT last_failure FROM failure_time) IS NULL THEN FALSE
+                    WHEN (SELECT success_count FROM success_after_failure) > 0 THEN FALSE
+                    ELSE TRUE
+                END as has_failed
+        """
+        params = {"execution_id": execution_id}
         async with get_pool_connection() as conn:
             async with conn.cursor() as cur:
                 await cur.execute(query, params)
-                return await cur.fetchone() is not None
+                row = await cur.fetchone()
+                return row["has_failed"] if row else False
     
     @staticmethod
     async def has_workflow_initialized(execution_id: int) -> bool:
@@ -121,7 +145,13 @@ class OrchestratorQueries:
     
     @staticmethod
     async def get_completed_steps_without_step_completed(execution_id: int) -> List[str]:
-        """Get steps with action_completed but no step_completed event."""
+        """
+        Get steps with action_completed but no step_completed event.
+        
+        This includes:
+        1. Normal successful steps without step_completed
+        2. Retried steps that succeeded after initial failure (have action_completed after step_failed)
+        """
         query = """
             SELECT DISTINCT node_name
             FROM noetl.event

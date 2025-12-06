@@ -208,7 +208,7 @@ async def execute_paginated_http_async(
     merge_path = pagination_config.get('merge_path')
     max_iterations = pagination_config.get('max_iterations', 1000)
     retry_config = pagination_config.get('retry', {})
-    sink_per_page = pagination_config.get('sink_per_page', False)  # Save after each page
+    sink_config = pagination_config.get('sink')  # Per-page sink configuration
     
     # Initialize accumulated results
     accumulated = None
@@ -251,14 +251,11 @@ async def execute_paginated_http_async(
         
         logger.info(f"PAGINATION: Iteration {iteration} complete, merged results")
         
-        # Execute sink callback per page if configured
-        if sink_per_page and sink_callback and merge_strategy != 'sink_only':
+        # Execute sink for this page if configured
+        if sink_config and sink_callback:
             try:
                 # Extract the page data for sinking
                 page_data = response
-                if isinstance(response, dict) and 'data' in response:
-                    page_data = response['data']
-                
                 if merge_path:
                     # Apply merge_path to extract specific data
                     parts = merge_path.split('.')
@@ -268,10 +265,17 @@ async def execute_paginated_http_async(
                         else:
                             break
                 
-                await sink_callback(page_data, iteration)
+                # Create page context for sink rendering
+                page_context = dict(pag_context)
+                page_context['page'] = {'data': page_data}
+                page_context['page_number'] = iteration
+                
+                # Call sink callback with page data and context
+                await sink_callback(sink_config, page_context, iteration)
                 logger.info(f"PAGINATION: Saved page {iteration} via sink")
             except Exception as e:
                 logger.error(f"PAGINATION: Failed to sink page {iteration}: {e}")
+                # Continue pagination even if sink fails (can make this configurable)
         
         # Check continuation condition
         check_context = dict(pag_context)

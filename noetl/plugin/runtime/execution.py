@@ -90,8 +90,7 @@ def execute_task(
     task_name: str,
     context: Dict[str, Any],
     jinja_env: Environment,
-    args: Optional[Dict[str, Any]] = None,
-    log_event_callback: Optional[Callable] = None,
+    args: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     """
     Execute a task based on its declared tool.
@@ -109,7 +108,6 @@ def execute_task(
         context: Execution context
         jinja_env: Jinja2 environment for template rendering
         args: Task arguments/parameters
-        log_event_callback: Optional callback for logging events
 
     Returns:
         Task execution result
@@ -146,7 +144,7 @@ def execute_task(
         logger.debug(f"Executing task '{task_name}' with loop configuration")
         wrapped_context = _wrap_context_results(context)
         return execute_iterator_task(
-            task_config, wrapped_context, jinja_env, args or {}, log_event_callback
+            task_config, wrapped_context, jinja_env, args or {}
         )
     
     task_type, raw_type = _resolve_task_type(task_config)
@@ -159,70 +157,71 @@ def execute_task(
     # Dispatch to appropriate action handler
     if task_type == "http":
         # HTTP plugin is async for credential caching support
-        # Check if we're already in an async context
-        try:
-            loop = asyncio.get_running_loop()
-            # Already in async context - cannot use asyncio.run()
-            # Create a task and get result synchronously using run_until_complete on a new thread
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor() as pool:
-                future = pool.submit(
-                    lambda: asyncio.run(execute_http_task(
-                        task_config, wrapped_context, jinja_env, args or {}, log_event_callback
-                    ))
-                )
-                return future.result()
-        except RuntimeError:
-            # No running loop - safe to use asyncio.run()
-            return asyncio.run(execute_http_task(
-                task_config, wrapped_context, jinja_env, args or {}, log_event_callback
-            ))
+        # Import retry wrapper
+        from noetl.plugin.runtime.retry import execute_with_retry
+        
+        # Create async wrapper for retry system
+        def http_executor_sync(cfg, ctx, env, task_w):
+            try:
+                loop = asyncio.get_running_loop()
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as pool:
+                    future = pool.submit(
+                        lambda: asyncio.run(execute_http_task(cfg, ctx, env, task_w))
+                    )
+                    return future.result()
+            except RuntimeError:
+                return asyncio.run(execute_http_task(cfg, ctx, env, task_w))
+        
+        # Execute with unified retry (handles both on_error and on_success)
+        return execute_with_retry(
+            http_executor_sync,
+            task_config,
+            task_name,
+            wrapped_context,
+            jinja_env,
+            args or {}
+        )
     elif task_type == "python":
         return execute_python_task(
-            task_config, wrapped_context, jinja_env, args or {}, log_event_callback
+            task_config, wrapped_context, jinja_env, args or {}
         )
     elif task_type == "duckdb":
         return execute_duckdb_task(
-            task_config, wrapped_context, jinja_env, args or {}, log_event_callback
+            task_config, wrapped_context, jinja_env, args or {}
         )
     elif task_type == "container":
         # Lazy import to avoid optional deps unless needed
         from noetl.plugin.tools.container import execute_container_task
         return execute_container_task(
-            task_config, wrapped_context, jinja_env, args or {}, log_event_callback
+            task_config, wrapped_context, jinja_env, args or {}
         )
     elif task_type == "postgres":
         return execute_postgres_task(
-            task_config, wrapped_context, jinja_env, args or {}, log_event_callback
-        )
-    elif task_type == "container":
-        # Lazy import to avoid optional deps unless needed
-        from noetl.plugin.tools.container import execute_container_task
-        return execute_container_task(
-            task_config, wrapped_context, jinja_env, args or {}, log_event_callback
+            task_config, wrapped_context, jinja_env, args or {}
         )
     elif task_type == "snowflake":
         return execute_snowflake_task(
-            task_config, wrapped_context, jinja_env, args or {}, log_event_callback
+            task_config, wrapped_context, jinja_env, args or {}
         )
     elif task_type == "snowflake_transfer":
         return execute_snowflake_transfer_action(
-            task_config, wrapped_context, jinja_env, args or {}, log_event_callback
+            task_config, wrapped_context, jinja_env, args or {}
         )
     elif task_type == "transfer":
         # Generic transfer executor - infers direction from source/target types
         return execute_transfer_action(
-            task_config, wrapped_context, jinja_env, args or {}, log_event_callback
+            task_config, wrapped_context, jinja_env, args or {}
         )
     elif task_type == "secrets":
         # For secrets, we need to get the secret_manager from context or somewhere
         secret_manager = wrapped_context.get("secret_manager")
         return execute_secrets_task(
-            task_config, wrapped_context, secret_manager, args or {}, log_event_callback
+            task_config, wrapped_context, secret_manager, args or {}
         )
     elif task_type == "playbook":
         return execute_playbook_task(
-            task_config, wrapped_context, jinja_env, args or {}, log_event_callback
+            task_config, wrapped_context, jinja_env, args or {}
         )
     elif task_type == "workbook":
         # Workbook tasks need async execution for catalog access
@@ -231,12 +230,11 @@ def execute_task(
             task_config,
             wrapped_context,
             jinja_env,
-            args,
-            log_event_callback,
+            args
         )
     elif task_type == 'sink':
         return execute_sink_task(
-            task_config, wrapped_context, jinja_env, args or {}, log_event_callback
+            task_config, wrapped_context, jinja_env, args or {}
         )
     else:
         raise ValueError(
@@ -251,8 +249,7 @@ def _execute_workbook_async(
     task_config: Dict[str, Any],
     context: Dict[str, Any],
     jinja_env: Environment,
-    args: Optional[Dict[str, Any]],
-    log_event_callback: Optional[Callable],
+    args: Optional[Dict[str, Any]]
 ) -> Dict[str, Any]:
     """
     Execute workbook task with proper async handling.
@@ -266,7 +263,6 @@ def _execute_workbook_async(
         context: Execution context
         jinja_env: Jinja2 environment
         args: Task arguments
-        log_event_callback: Optional event logging callback
 
     Returns:
         Task execution result
@@ -280,7 +276,7 @@ def _execute_workbook_async(
         asyncio.set_event_loop(loop)
 
     return loop.run_until_complete(
-        execute_workbook_task(task_config, context, jinja_env, args, log_event_callback)
+        execute_workbook_task(task_config, context, jinja_env, args)
     )
 
 
@@ -289,8 +285,7 @@ def execute_task_resolved(
     task_name: str,
     context: Dict[str, Any],
     jinja_env: Environment,
-    args: Optional[Dict[str, Any]] = None,
-    log_event_callback: Optional[Callable] = None,
+    args: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     """
     Execute a task with resolved configuration.
@@ -303,11 +298,10 @@ def execute_task_resolved(
         context: Execution context
         jinja_env: Jinja2 environment for template rendering
         args: Task arguments
-        log_event_callback: Optional callback for logging events
 
     Returns:
         Task execution result
     """
     return execute_task(
-        task_config, task_name, context, jinja_env, args, log_event_callback
+        task_config, task_name, context, jinja_env, args
     )

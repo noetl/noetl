@@ -1,0 +1,221 @@
+apiVersion: noetl.io/v1
+kind: Playbook
+metadata:
+  name: test_loop_with_pagination
+  path: tests/pagination/loop_with_pagination
+  description: Test iterator (loop) with HTTP pagination - preserving results at each level
+
+workload:
+  api_url: http://paginated-api.test-server.svc.cluster.local:5555
+  endpoints:
+    - name: assessments
+      path: /api/v1/assessments
+      page_size: 10
+    - name: users
+      path: /api/v1/users
+      page_size: 15
+
+workflow:
+  - step: start
+    desc: Start loop + pagination test
+    next:
+      - step: fetch_all_endpoints
+
+  - step: fetch_all_endpoints
+    desc: Loop over endpoints with HTTP pagination via success-side retry
+    tool: http
+    loop:
+      collection: "{{ workload.endpoints }}"
+      element: endpoint
+      mode: sequential
+    url: "{{ workload.api_url }}{{ endpoint.path }}"
+    method: GET
+    params:
+      page: 1
+      pageSize: "{{ endpoint.page_size }}"
+    # Unified retry: error recovery + success-driven repetition (pagination)
+    retry:
+      # Error-side retry: Handle transient failures
+      on_error:
+        when: "{{ error.status in [429, 500, 502, 503] }}"
+        max_attempts: 3
+        backoff_multiplier: 2.0
+        initial_delay: 1.0
+      
+      # Success-side retry: Pagination pattern
+      on_success:
+        # Continue while API indicates more data
+        while: "{{ response.data.has_more == true }}"
+        max_attempts: 10
+        
+        # How to build next request from previous response
+        next_call:
+          params:
+            page: "{{ (response.data.offset | int) + (response.data.limit | int) }}"
+            pageSize: "{{ response.data.limit }}"
+        
+        # How to aggregate results across pages
+        collect:
+          strategy: append
+          path: data.users  # Extract items from response.data.users
+          into: pages       # Store accumulated results in {{ pages }}
+        
+        # Per-page side effects: save each page as it's fetched
+        per_iteration:
+          sink:
+            tool: postgres
+            auth: pg_k8s
+            table: noetl_test.pagination_loop_results
+            mode: insert
+            args:
+              execution_id: "{{ execution_id }}"
+              endpoint_name: "{{ endpoint.name }}"
+              endpoint_path: "{{ endpoint.path }}"
+              page_size: "{{ endpoint.page_size }}"
+              result_count: "{{ page['data']['data'] | length }}"
+              result_data: "{{ page['data'] }}"
+              iteration_index: "{{ _retry.index }}"
+              iteration_count: "{{ _retry.count }}"
+    next:
+      - step: validate_results
+
+  - step: validate_results
+    desc: Validate loop + pagination results
+    tool: python
+    args:
+      loop_results: "{{ fetch_all_endpoints }}"
+      workload: "{{ workload }}"
+    code: |
+      def main(input_data):
+          loop_results = input_data.get('loop_results', {})
+          workload = input_data.get('workload', {})
+          
+          # Handle different result formats
+          if isinstance(loop_results, dict):
+              # Check for aggregated results structure
+              if 'items' in loop_results:
+                  results = loop_results['items']
+              elif 'results' in loop_results:
+                  results = loop_results['results']
+              else:
+                  results = [loop_results]
+          elif isinstance(loop_results, list):
+              results = loop_results
+          else:
+              results = []
+          
+          print(f"Loop results type: {type(loop_results)}")
+          print(f"Number of endpoint iterations: {len(results)}")
+          
+          validation = {
+              'total_iterations': len(results),
+              'endpoints_tested': [],
+              'total_items_fetched': 0
+          }
+          
+          for idx, result in enumerate(results):
+              print(f"\n=== Iteration {idx} ===")
+              
+              # Unwrap result if needed
+              if isinstance(result, dict):
+                  if 'data' in result:
+                      data = result['data']
+                  elif 'value' in result:
+                      data = result['value']
+                  else:
+                      data = result
+              else:
+                  data = result
+              
+              # Extract items
+              if isinstance(data, dict) and 'data' in data:
+                  items = data['data']
+              elif isinstance(data, list):
+                  items = data
+              else:
+                  items = []
+              
+              endpoint_name = workload['endpoints'][idx]['name'] if idx < len(workload['endpoints']) else f'unknown_{idx}'
+              items_count = len(items) if isinstance(items, list) else 0
+              
+              print(f"Endpoint: {endpoint_name}")
+              print(f"Items fetched: {items_count}")
+              
+              validation['endpoints_tested'].append({
+                  'endpoint': endpoint_name,
+                  'items_count': items_count
+              })
+              validation['total_items_fetched'] += items_count
+          
+          # Validation checks
+          assert len(results) == 2, f"Expected 2 endpoint iterations, got {len(results)}"
+          
+          # Assessments endpoint should have ~35 items (3.5 pages * 10)
+          assessments_count = validation['endpoints_tested'][0]['items_count']
+          assert assessments_count == 35, f"Expected 35 assessments, got {assessments_count}"
+          
+          # Users endpoint should have ~35 items as well
+          users_count = validation['endpoints_tested'][1]['items_count']
+          assert users_count == 35, f"Expected 35 users, got {users_count}"
+          
+          validation['status'] = 'success'
+          validation['message'] = f"Successfully validated {len(results)} endpoints with {validation['total_items_fetched']} total items"
+          
+          return validation
+    next:
+      - step: verify_saved_data
+
+  - step: verify_saved_data
+    desc: Verify data was saved correctly during pagination
+    tool: postgres
+    auth: pg_k8s
+    query: |
+      SELECT 
+        endpoint_name,
+        endpoint_path,
+        page_size,
+        result_count,
+        iteration_index,
+        iteration_count
+      FROM noetl_test.pagination_loop_results
+      WHERE execution_id = {{ execution_id }}
+      ORDER BY iteration_index
+    next:
+      - step: validate_saved_data
+
+  - step: validate_saved_data
+    desc: Validate saved pagination data
+    tool: python
+    args:
+      saved_data: "{{ verify_saved_data }}"
+    code: |
+      def main(input_data):
+          saved_data = input_data.get('saved_data', [])
+          
+          print(f"Saved data records: {len(saved_data)}")
+          
+          # Should have 2 records (one per endpoint iteration)
+          assert len(saved_data) == 2, f"Expected 2 saved records, got {len(saved_data)}"
+          
+          # Verify first record (assessments)
+          first = saved_data[0]
+          assert first['endpoint_name'] == 'assessments', f"Expected 'assessments', got {first['endpoint_name']}"
+          assert first['result_count'] == 35, f"Expected 35 items in assessments, got {first['result_count']}"
+          assert first['iteration_index'] == 0, f"Expected iteration_index=0, got {first['iteration_index']}"
+          
+          # Verify second record (users)
+          second = saved_data[1]
+          assert second['endpoint_name'] == 'users', f"Expected 'users', got {second['endpoint_name']}"
+          assert second['result_count'] == 35, f"Expected 35 items in users, got {second['result_count']}"
+          assert second['iteration_index'] == 1, f"Expected iteration_index=1, got {second['iteration_index']}"
+          
+          return {
+              'status': 'success',
+              'message': 'All saved data validated successfully',
+              'records_validated': len(saved_data)
+          }
+    next:
+      - step: end
+
+  - step: end
+    desc: Test complete
