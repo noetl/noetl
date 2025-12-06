@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: jupyterlab-notebooks
+  namespace: noetl
+  labels:
+    app: jupyterlab
+    component: analytics
+data:
+  regression_dashboard.ipynb: |
+    # Notebook content will be mounted from the file
+    # Use: kubectl create configmap jupyterlab-notebooks --from-file=tests/fixtures/notebooks/regression_dashboard.ipynb -n noetl --dry-run=client -o yaml | kubectl apply -f -
