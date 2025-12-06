@@ -512,7 +512,7 @@ Validated test cases in `tests/fixtures/playbooks/pagination/`:
 Run pagination tests:
 ```bash
 task test:k8s:register-playbooks
-curl -X POST http://localhost:8082/api/run/playbook \
+curl -X POST http://localhost:30082/api/run/playbook \
   -H "Content-Type: application/json" \
   -d '{"path": "tests/pagination/loop_with_pagination"}'
 ```

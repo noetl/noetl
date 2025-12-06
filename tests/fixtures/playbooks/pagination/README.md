@@ -37,6 +37,23 @@ Safety limit testing:
 - Validates only 20 items fetched (not all 35)
 - Ensures infinite loop protection works
 
+### loop_with_pagination/ (Dedicated Test Suite)
+Complete test suite for combining iterator loops with HTTP pagination.
+
+**Contains:**
+- `test_loop_with_pagination.yaml` - Playbook definition
+- `pagination_loop_test.ipynb` - Interactive validation notebook
+- `README.md` - Comprehensive documentation
+
+**Features:**
+- Iterator loop over multiple endpoints
+- HTTP pagination via success-side retry per endpoint
+- PostgreSQL persistence per iteration
+- 5 automated validation checks
+- Interactive visualizations
+
+**See:** `loop_with_pagination/README.md` for detailed usage
+
 ## Mock Server
 
 The test server (`tests/fixtures/servers/paginated_api.py`) provides:

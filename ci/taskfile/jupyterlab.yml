@@ -7,9 +7,10 @@ tasks:
       - echo "Deploying JupyterLab to noetl namespace..."
       - kubectl create namespace noetl --dry-run=client -o yaml | kubectl apply -f -
       - |
-        echo "Creating ConfigMap with notebook..."
+        echo "Creating ConfigMap with notebooks..."
         kubectl create configmap jupyterlab-notebooks \
           --from-file=regression_dashboard.ipynb=tests/fixtures/notebooks/regression_dashboard.ipynb \
+          --from-file=pagination_loop_test.ipynb=tests/fixtures/playbooks/pagination/loop_with_pagination/pagination_loop_test.ipynb \
           -n noetl \
           --dry-run=client -o yaml | kubectl apply -f -
       - kubectl apply -f ci/manifests/jupyterlab/pvc.yaml
@@ -18,7 +19,9 @@ tasks:
       - echo "✓ JupyterLab deployed"
       - echo "  Access at http://localhost:30888"
       - echo "  Token noetl"
-      - echo "  Notebook /work/notebooks/regression_dashboard.ipynb"
+      - echo "  Notebooks:"
+      - echo "    - /work/notebooks/regression_dashboard.ipynb"
+      - echo "    - /work/notebooks/pagination_loop_test.ipynb"
 
   undeploy:
     desc: Remove JupyterLab from kind cluster

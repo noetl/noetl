@@ -211,6 +211,14 @@ workflow:
     retry:
       max_attempts: 2
       retry_on: ["timeout"]
+    next: [step: tests/pagination/loop_with_pagination]
+  
+  - step: tests/pagination/loop_with_pagination
+    tool: playbook
+    path: tests/pagination/loop_with_pagination
+    retry:
+      max_attempts: 2
+      retry_on: ["timeout"]
     next: [step: tests/retry/simple_config]
 
   # === RETRY TESTS ===
