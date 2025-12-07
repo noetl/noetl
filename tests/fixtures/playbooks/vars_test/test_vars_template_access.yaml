@@ -67,7 +67,7 @@ workflow:
               "received_timeout": timeout,
               "full_greeting": full_greeting
           }
-    data:
+    args:
       counter: "{{ vars.counter }}"
       message: "{{ vars.message }}"
       timeout: "{{ vars.config.timeout }}"

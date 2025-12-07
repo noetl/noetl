@@ -30,12 +30,12 @@ workflow:
       - when: "{{ fetch_weather.max_temp > spec.temperature_threshold }}"
         then:
           - step: report_warm
-            data:
+            args:
               city: "{{ fetch_weather.city }}"
               temperature: "{{ fetch_weather.max_temp }}"
       - else:
           - step: report_cold
-            data:
+            args:
               city: "{{ fetch_weather.city }}"
               temperature: "{{ fetch_weather.max_temp }}"
 

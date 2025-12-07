@@ -48,8 +48,18 @@ workflow:
         fetch_with_retry: "{{ fetch_with_retry }}"
     code: |
       def main(input_data):
-          # Check we got all items despite failures
-          data = input_data.get('fetch_with_retry', [])
+          # Check we got all items despite failures - handle server wrapping
+          raw_data = input_data.get('fetch_with_retry', [])
+          
+          # Unwrap if server wrapped in {'value': ...}
+          if isinstance(raw_data, dict) and 'value' in raw_data:
+              data = raw_data['value']
+          elif isinstance(raw_data, dict) and 'data' in raw_data:
+              data = raw_data['data']
+          elif isinstance(raw_data, list):
+              data = raw_data
+          else:
+              data = []
           
           print(f"Total items fetched (with retry): {len(data)}")
           

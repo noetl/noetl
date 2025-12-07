@@ -258,13 +258,15 @@ def merge_template_work_context(
 
     If template contains a 'work' object, promotes those values to top-level
     context for easier access during rendering.
+    
+    Also promotes 'args' from the task object to make them available for template rendering.
 
     Args:
-        template: Template object (may contain 'work' key)
+        template: Template object (may contain 'work' key and 'task' key with 'args')
         context: Base rendering context
 
     Returns:
-        Updated context with template work merged
+        Updated context with template work and args merged
     """
     try:
         if isinstance(template, dict) and isinstance(template.get("work"), dict):
@@ -274,8 +276,38 @@ def merge_template_work_context(
             for k, v in incoming_work.items():
                 if k not in context:
                     context[k] = v
+        
+        # Promote args from task to top-level context for template rendering
+        # Args may contain templates that need to be rendered with the current context first
+        if isinstance(template, dict):
+            task_obj = template.get("task")
+            if isinstance(task_obj, dict):
+                args_obj = task_obj.get("args")
+                if isinstance(args_obj, dict):
+                    logger.debug(f"Promoting task args to context: {list(args_obj.keys())}")
+                    # Render args templates BEFORE promoting to context
+                    # This ensures templates like {{ fetch_github_repo.data.name }} are resolved
+                    from jinja2 import Environment, BaseLoader, Undefined
+                    env = Environment(loader=BaseLoader(), undefined=Undefined)
+                    
+                    for k, v in args_obj.items():
+                        # Skip if already in context to avoid overriding
+                        if k in context:
+                            continue
+                        # Render template strings
+                        if isinstance(v, str) and "{{" in v:
+                            try:
+                                tmpl = env.from_string(v)
+                                rendered_val = tmpl.render(**context)
+                                context[k] = rendered_val
+                                logger.debug(f"  Rendered arg {k}: '{v}' -> '{rendered_val}'")
+                            except Exception as e:
+                                logger.warning(f"Failed to render arg template '{k}': {e}")
+                                context[k] = v
+                        else:
+                            context[k] = v
     except Exception as e:
-        logger.warning(f"Failed to merge template work context: {e}")
+        logger.warning(f"Failed to merge template work/args context: {e}")
 
     return context
 
