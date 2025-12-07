@@ -380,26 +380,29 @@ async def evaluate_execution(
 
     try:
         # Handle iterator_started - enqueue iteration jobs
+        # Worker emits this event after analyzing collection
         if trigger_event_type == "iterator_started":
             logger.info(
                 f"ORCHESTRATOR: Detected iterator_started, enqueueing iterations for execution {exec_id}"
             )
-            # Get the event details
+            # Get the event details - iterator metadata is in context column
             async with get_pool_connection() as conn:
-                cursor = await conn.execute(
-                    "SELECT data, catalog_id, node_id, node_name, event_id FROM noetl.event WHERE event_id = %s",
-                    (trigger_event_id,)
-                )
-                event_row = await cursor.fetchone()
-                if event_row:
-                    event_obj = {
-                        'data': event_row[0] if isinstance(event_row[0], dict) else json.loads(event_row[0] or '{}'),
-                        'catalog_id': event_row[1],
-                        'node_id': event_row[2],
-                        'node_name': event_row[3],
-                        'event_id': event_row[4]
-                    }
-                    await _process_iterator_started(exec_id, event_obj)
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        "SELECT context, catalog_id, node_id, node_name, event_id FROM noetl.event WHERE event_id = %s",
+                        (trigger_event_id,)
+                    )
+                    event_row = await cur.fetchone()
+                    if event_row:
+                        context_data = event_row['context'] if 'context' in event_row.keys() else event_row[0]
+                        event_obj = {
+                            'context': context_data if isinstance(context_data, dict) else json.loads(context_data or '{}'),
+                            'catalog_id': event_row['catalog_id'] if 'catalog_id' in event_row.keys() else event_row[1],
+                            'node_id': event_row['node_id'] if 'node_id' in event_row.keys() else event_row[2],
+                            'node_name': event_row['node_name'] if 'node_name' in event_row.keys() else event_row[3],
+                            'event_id': event_row['event_id'] if 'event_id' in event_row.keys() else event_row[4]
+                        }
+                        await _process_iterator_started(exec_id, event_obj)
             return
         
         # Handle iteration_completed - track progress and aggregate when done
@@ -408,15 +411,17 @@ async def evaluate_execution(
                 f"ORCHESTRATOR: Detected iteration_completed for execution {exec_id}"
             )
             async with get_pool_connection() as conn:
-                cursor = await conn.execute(
-                    "SELECT data, parent_execution_id FROM noetl.event WHERE event_id = %s",
-                    (trigger_event_id,)
-                )
-                event_row = await cursor.fetchone()
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        "SELECT result, parent_execution_id FROM noetl.event WHERE event_id = %s",
+                        (trigger_event_id,)
+                    )
+                    event_row = await cur.fetchone()
                 if event_row:
+                    result_col = event_row['result'] if 'result' in event_row.keys() else event_row[0]
                     event_obj = {
-                        'data': event_row[0] if isinstance(event_row[0], dict) else json.loads(event_row[0] or '{}'),
-                        'parent_execution_id': event_row[1],
+                        'data': result_col if isinstance(result_col, dict) else json.loads(result_col or '{}'),
+                        'parent_execution_id': event_row['parent_execution_id'] if 'parent_execution_id' in event_row.keys() else event_row[1],
                         'event_id': trigger_event_id
                     }
                     await _process_iteration_completed(exec_id, event_obj)
@@ -429,15 +434,17 @@ async def evaluate_execution(
             )
             # First check if retry should happen
             async with get_pool_connection() as conn:
-                cursor = await conn.execute(
-                    "SELECT data FROM noetl.event WHERE event_id = %s",
-                    (trigger_event_id,)
-                )
-                event_row = await cursor.fetchone()
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        "SELECT result FROM noetl.event WHERE event_id = %s",
+                        (trigger_event_id,)
+                    )
+                    event_row = await cur.fetchone()
                 if event_row:
+                    result_data = event_row['result'] if 'result' in event_row.keys() else event_row[0]
                     event_obj = {
                         'event_type': 'action_failed',
-                        'data': event_row[0] if isinstance(event_row[0], dict) else json.loads(event_row[0] or '{}'),
+                        'data': result_data if isinstance(result_data, dict) else json.loads(result_data or '{}'),
                         'event_id': trigger_event_id
                     }
                     await _process_retry_eligible_event(exec_id, event_obj)
@@ -475,15 +482,17 @@ async def evaluate_execution(
             ):
                 # First check if success retry should happen
                 async with get_pool_connection() as conn:
-                    cursor = await conn.execute(
-                        "SELECT data FROM noetl.event WHERE event_id = %s",
-                        (trigger_event_id,)
-                    )
-                    event_row = await cursor.fetchone()
+                    async with conn.cursor() as cur:
+                        await cur.execute(
+                            "SELECT result FROM noetl.event WHERE event_id = %s",
+                            (trigger_event_id,)
+                        )
+                        event_row = await cur.fetchone()
                     if event_row:
+                        result_data = event_row['result'] if hasattr(event_row, '__getitem__') else event_row[0]
                         event_obj = {
                             'event_type': trigger_event_type,
-                            'data': event_row[0] if isinstance(event_row[0], dict) else json.loads(event_row[0] or '{}'),
+                            'data': result_data if isinstance(result_data, dict) else json.loads(result_data or '{}'),
                             'event_id': trigger_event_id
                         }
                         await _process_retry_eligible_event(exec_id, event_obj)
@@ -1003,6 +1012,35 @@ async def _process_transitions(execution_id: int) -> None:
             for step_name in completed_steps:
                 logger.info(f"Processing transitions for completed step '{step_name}'")
 
+                # Get step definition first
+                step_def = by_name.get(step_name, {})
+                
+                # Check if this step has a loop attribute - if so, check for pending iterations
+                if step_def.get("loop"):
+                    logger.info(f"Step '{step_name}' has loop attribute, checking for pending iterations")
+                    # Check if there are pending iteration jobs
+                    await cur.execute(
+                        """
+                        SELECT COUNT(*) as pending_count
+                        FROM noetl.queue
+                        WHERE parent_execution_id = %s
+                          AND node_name = %s
+                          AND status IN ('pending', 'running')
+                        """,
+                        (execution_id, step_name)
+                    )
+                    pending_row = await cur.fetchone()
+                    pending_count = pending_row['pending_count'] if pending_row else 0
+                    
+                    if pending_count > 0:
+                        logger.info(
+                            f"Step '{step_name}' has {pending_count} pending iteration jobs, "
+                            f"skipping transition processing until iterations complete"
+                        )
+                        continue  # Skip this step for now
+                    else:
+                        logger.info(f"All iterations complete for step '{step_name}', proceeding with transitions")
+
                 # Add current step result as 'result' for condition evaluation
                 if step_name in eval_ctx:
                     eval_ctx["result"] = eval_ctx[step_name]
@@ -1013,9 +1051,6 @@ async def _process_transitions(execution_id: int) -> None:
                     logger.warning(
                         f"No result found in eval_ctx for step '{step_name}'"
                     )
-
-                # Get step definition to extract node_type
-                step_def = by_name.get(step_name, {})
                 tool_name = step_def.get("tool")
                 if not isinstance(tool_name, str) or not tool_name.strip():
                     if step_name.lower() == "start":
@@ -1311,11 +1346,55 @@ async def _process_transitions(execution_id: int) -> None:
                                 step_config["args"] = {}
                             step_config["args"].update(with_params)
 
-                        # Restore preserved blocks (worker will render them with proper context)
+                        # Check if this is a loop step - handle via iterator pattern instead of queue
                         if loop_block is not None:
-                            step_config["loop"] = loop_block
-                            logger.critical(f"ORCHESTRATOR: Restored loop block for step '{to_step}'")
+                            logger.info(f"ORCHESTRATOR: Step '{to_step}' has loop attribute, initiating server-side iteration")
+                            
+                            # Emit iterator_started event (server-side only, not from worker)
+                            from noetl.server.api.broker.schema import EventEmitRequest
+                            
+                            # Build iterator context with collection metadata
+                            iterator_context = {
+                                "collection": loop_block.get("collection", []),
+                                "iterator_name": loop_block.get("element", "item"),
+                                "mode": loop_block.get("mode", "sequential"),
+                                "nested_task": step_config,  # The actual task config to execute per iteration
+                                "total_count": len(loop_block.get("collection", [])) if isinstance(loop_block.get("collection"), list) else 0
+                            }
+                            
+                            iterator_started_request = EventEmitRequest(
+                                execution_id=str(execution_id),
+                                catalog_id=catalog_id,
+                                event_type="iterator_started",
+                                status="RUNNING",
+                                node_id=to_step,
+                                node_name="iterator",
+                                node_type="iterator",
+                                parent_event_id=step_completed_event_id,
+                                context=iterator_context
+                            )
+                            
+                            try:
+                                result = await EventService.emit_event(iterator_started_request)
+                                iterator_event_id = result.event_id
+                                logger.info(f"Emitted iterator_started for '{to_step}', event_id={iterator_event_id}")
+                                
+                                # Process iterator_started to enqueue iteration jobs
+                                event_obj = {
+                                    'context': iterator_context,
+                                    'catalog_id': catalog_id,
+                                    'node_id': to_step,
+                                    'node_name': to_step,
+                                    'event_id': iterator_event_id
+                                }
+                                await _process_iterator_started(execution_id, event_obj)
+                                
+                            except Exception as e:
+                                logger.exception(f"Error emitting iterator_started for step '{to_step}'")
+                            
+                            continue  # Skip queue publishing for loop steps
                         
+                        # Restore preserved blocks (worker will render them with proper context)
                         if sink_block is not None:
                             step_config["sink"] = sink_block
                             logger.critical(f"ORCHESTRATOR: Restored sink block for step '{to_step}'")
@@ -1598,13 +1677,13 @@ async def _process_iterator_started(
     
     logger.info(f"ORCHESTRATOR: Processing iterator_started for execution {execution_id}")
     
-    # Extract iterator configuration from event
-    event_data = event.get('data', {})
-    iterator_name = event_data.get('iterator_name')
-    collection = event_data.get('collection', [])
-    nested_task = event_data.get('nested_task', {})
-    mode = event_data.get('mode', 'sequential')
-    chunk_size = event_data.get('chunk_size')
+    # Extract iterator configuration from event context
+    event_context = event.get('context', {})
+    iterator_name = event_context.get('iterator_name')
+    collection = event_context.get('collection', [])
+    nested_task = event_context.get('nested_task', {})
+    mode = event_context.get('mode', 'sequential')
+    chunk_size = event_context.get('chunk_size')
     
     if not collection:
         logger.warning(f"ORCHESTRATOR: Empty collection for iterator in execution {execution_id}")
@@ -1656,10 +1735,22 @@ async def _process_iterator_started(
     # Enqueue iteration jobs
     queue_ids = []
     for batch in batches:
-        # Build iteration task config
+        # Build iteration task config - inject element into nested_task
         iteration_task = dict(nested_task)
-        iteration_task['_iteration_index'] = batch['index']
-        iteration_task['_iterator_name'] = iterator_name
+        
+        # Build context with element data accessible via iterator variable name
+        # For example, if iterator_name='endpoint', templates can use {{ endpoint.name }}
+        iteration_context = {
+            iterator_name: batch.get('element'),  # Single element for non-chunked
+            '_iteration_index': batch['index'],
+            '_iterator_name': iterator_name,
+            '_total_iterations': len(batches)
+        }
+        
+        # If chunked, provide elements array
+        if 'elements' in batch:
+            iteration_context[f'{iterator_name}s'] = batch['elements']
+            iteration_context['_chunk_size'] = len(batch['elements'])
         
         # Build metadata for tracking
         iteration_meta = {
@@ -1672,23 +1763,21 @@ async def _process_iterator_started(
             }
         }
         
-        # Enqueue job with parent_execution_id
-        # Generate new execution_id for this iteration
-        iter_execution_id = get_snowflake_id()
-        
+        # Enqueue job - all iterations share the parent execution_id
+        # Database will auto-generate queue_id for each iteration
         response = await QueueService.enqueue_job(
-            execution_id=iter_execution_id,
+            execution_id=execution_id,  # All iterations share parent execution_id
             catalog_id=event.get('catalog_id'),
             node_id=f"{event.get('node_id')}_iter_{batch['index']}",
             node_name=f"{event.get('node_name')}_iter_{batch['index']}",
             node_type='iteration',
             action=json.dumps(iteration_task),
-            context={'_iteration_data': batch},
+            context=iteration_context,  # Element data injected here
             parent_execution_id=execution_id,
             priority=0,
             metadata=iteration_meta
         )
-        queue_ids.append(response.queue_id)
+        queue_ids.append(response.id)
     
     logger.info(
         f"ORCHESTRATOR: Enqueued {len(queue_ids)} iteration jobs for execution {execution_id}"
@@ -1718,74 +1807,76 @@ async def _process_iteration_completed(
     
     # Count total and completed iterations for parent
     async with get_pool_connection() as conn:
-        # Check how many iteration jobs exist for this parent
-        cursor = await conn.execute(
-            """
-            SELECT COUNT(*) as total
-            FROM noetl.queue
-            WHERE parent_execution_id = %s
-            """,
-            (parent_execution_id,)
-        )
-        row = await cursor.fetchone()
-        total_iterations = row[0] if row else 0
-        
-        # Check how many have completed
-        cursor = await conn.execute(
-            """
-            SELECT COUNT(DISTINCT execution_id) as completed
-            FROM noetl.event
-            WHERE parent_execution_id = %s
-            AND event_type = 'iteration_completed'
-            AND status = 'COMPLETED'
-            """,
-            (parent_execution_id,)
-        )
-        row = await cursor.fetchone()
+        async with conn.cursor() as cur:
+            # Check how many iteration jobs exist for this parent
+            await cur.execute(
+                """
+                SELECT COUNT(*) as total
+                FROM noetl.queue
+                WHERE parent_execution_id = %s
+                """,
+                (parent_execution_id,)
+            )
+            row = await cur.fetchone()
+            total_iterations = row[0] if row else 0
+            
+            # Check how many have completed
+            await cur.execute(
+                """
+                SELECT COUNT(DISTINCT execution_id) as completed
+                FROM noetl.event
+                WHERE parent_execution_id = %s
+                AND event_type = 'iteration_completed'
+                AND status = 'COMPLETED'
+                """,
+                (parent_execution_id,)
+            )
+            row = await cur.fetchone()
         completed_iterations = row[0] if row else 0
         
         logger.info(
             f"ORCHESTRATOR: Iterator progress - {completed_iterations}/{total_iterations} iterations"
         )
         
-        # If all iterations complete, emit iterator_completed
-        if completed_iterations >= total_iterations and total_iterations > 0:
-            logger.info(f"ORCHESTRATOR: All iterations complete for parent {parent_execution_id}")
-            
-            # Gather results from all iterations in order
-            cursor = await conn.execute(
-                """
-                SELECT data, meta
-                FROM noetl.event
-                WHERE parent_execution_id = %s
-                AND event_type = 'iteration_completed'
-                ORDER BY (meta->>'iteration_index')::int
-                """,
-                (parent_execution_id,)
-            )
-            
-            results = []
-            async for row in cursor:
-                event_data = row[0] if isinstance(row[0], dict) else json.loads(row[0] or '{}')
-                results.append(event_data.get('result'))
-            
-            # Emit iterator_completed event
-            now = datetime.now(timezone.utc)
-            completed_event_id = get_snowflake_id()
-            
-            # Get parent event details
-            cursor = await conn.execute(
-                """
-                SELECT catalog_id, node_id, node_name, event_id
-                FROM noetl.event
-                WHERE execution_id = %s
-                AND event_type = 'iterator_started'
-                ORDER BY created_at DESC
-                LIMIT 1
-                """,
-                (parent_execution_id,)
-            )
-            parent_event = await cursor.fetchone()
+        async with conn.cursor() as cur:
+            # If all iterations complete, emit iterator_completed
+            if completed_iterations >= total_iterations and total_iterations > 0:
+                logger.info(f"ORCHESTRATOR: All iterations complete for parent {parent_execution_id}")
+                
+                # Gather results from all iterations in order
+                await cur.execute(
+                    """
+                    SELECT data, meta
+                    FROM noetl.event
+                    WHERE parent_execution_id = %s
+                    AND event_type = 'iteration_completed'
+                    ORDER BY (meta->>'iteration_index')::int
+                    """,
+                    (parent_execution_id,)
+                )
+                
+                results = []
+                async for row in cur:
+                    event_data = row[0] if isinstance(row[0], dict) else json.loads(row[0] or '{}')
+                    results.append(event_data.get('result'))
+                
+                # Emit iterator_completed event
+                now = datetime.now(timezone.utc)
+                completed_event_id = get_snowflake_id()
+                
+                # Get parent event details
+                await cur.execute(
+                    """
+                    SELECT catalog_id, node_id, node_name, event_id
+                    FROM noetl.event
+                    WHERE execution_id = %s
+                    AND event_type = 'iterator_started'
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """,
+                    (parent_execution_id,)
+                )
+                parent_event = await cur.fetchone()
             
             if parent_event:
                 # Build comprehensive metadata for iterator completion
@@ -1896,27 +1987,28 @@ async def _process_retry_eligible_event(
         
         # Get original task config from queue or event
         async with get_pool_connection() as conn:
-            cursor = await conn.execute(
-                """
-                SELECT task_config, with_params, catalog_id, step_name
-                FROM noetl.queue
-                WHERE execution_id = %s
-                ORDER BY created_at DESC
-                LIMIT 1
-                """,
-                (execution_id,)
-            )
-            queue_row = await cursor.fetchone()
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    SELECT task_config, with_params, catalog_id, step_name
+                    FROM noetl.queue
+                    WHERE execution_id = %s
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """,
+                    (execution_id,)
+                )
+                queue_row = await cur.fetchone()
             
-            if queue_row:
-                task_config = queue_row[0] if isinstance(queue_row[0], dict) else json.loads(queue_row[0] or '{}')
-                with_params = queue_row[1] if isinstance(queue_row[1], dict) else json.loads(queue_row[1] or '{}')
-                
-                # Update retry metadata
-                if 'retry' not in task_config:
-                    task_config['retry'] = {}
-                task_config['retry']['_attempt_number'] = attempt_number + 1
-                task_config['retry']['_parent_event_id'] = event.get('event_id')
+                if queue_row:
+                    task_config = queue_row[0] if isinstance(queue_row[0], dict) else json.loads(queue_row[0] or '{}')
+                    with_params = queue_row[1] if isinstance(queue_row[1], dict) else json.loads(queue_row[1] or '{}')
+                    
+                    # Update retry metadata
+                    if 'retry' not in task_config:
+                        task_config['retry'] = {}
+                    task_config['retry']['_attempt_number'] = attempt_number + 1
+                    task_config['retry']['_parent_event_id'] = event.get('event_id')
                 
                 # Build retry metadata for tracking
                 retry_meta = {
@@ -2002,32 +2094,33 @@ async def _process_retry_eligible_event(
         
         # Get original task config and apply updates
         async with get_pool_connection() as conn:
-            cursor = await conn.execute(
-                """
-                SELECT task_config, with_params, catalog_id, step_name
-                FROM noetl.queue
-                WHERE execution_id = %s
-                ORDER BY created_at DESC
-                LIMIT 1
-                """,
-                (execution_id,)
-            )
-            queue_row = await cursor.fetchone()
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    SELECT task_config, with_params, catalog_id, step_name
+                    FROM noetl.queue
+                    WHERE execution_id = %s
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """,
+                    (execution_id,)
+                )
+                queue_row = await cur.fetchone()
             
-            if queue_row:
-                task_config = queue_row[0] if isinstance(queue_row[0], dict) else json.loads(queue_row[0] or '{}')
-                with_params = queue_row[1] if isinstance(queue_row[1], dict) else json.loads(queue_row[1] or '{}')
-                
-                # Apply next_call updates
-                env = Environment(loader=BaseLoader())
-                for key, update_spec in next_call.items():
-                    if isinstance(update_spec, dict):
-                        # Update nested config (e.g., params, headers)
-                        if key not in task_config:
-                            task_config[key] = {}
-                        for sub_key, template_value in update_spec.items():
-                            rendered = render_template(env, template_value, eval_context)
-                            task_config[key][sub_key] = rendered
+                if queue_row:
+                    task_config = queue_row[0] if isinstance(queue_row[0], dict) else json.loads(queue_row[0] or '{}')
+                    with_params = queue_row[1] if isinstance(queue_row[1], dict) else json.loads(queue_row[1] or '{}')
+                    
+                    # Apply next_call updates
+                    env = Environment(loader=BaseLoader())
+                    for key, update_spec in next_call.items():
+                        if isinstance(update_spec, dict):
+                            # Update nested config (e.g., params, headers)
+                            if key not in task_config:
+                                task_config[key] = {}
+                            for sub_key, template_value in update_spec.items():
+                                rendered = render_template(env, template_value, eval_context)
+                                task_config[key][sub_key] = rendered
                     else:
                         # Direct update
                         rendered = render_template(env, update_spec, eval_context)

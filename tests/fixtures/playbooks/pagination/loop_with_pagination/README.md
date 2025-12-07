@@ -4,17 +4,13 @@ This folder contains a test for the **distributed iterator + pagination architec
 
 ## 🎯 Current Status
 
-**✅ PHASE 1 COMPLETE: Worker-Side Architecture**
-- Loop detection and routing to iterator executor
-- Collection analysis (filter, sort, limit)
-- Event callback integration
+**✅ PHASE 2 COMPLETE: Server-Side Loop Orchestration**
+- Loop detection in publisher (initial steps & transitions)
+- Collection template rendering (`{{ workload.endpoints }}` → array)
 - `iterator_started` event emission with full metadata
-
-**⏳ PHASE 2 PENDING: Server-Side Orchestration**
-- Process `iterator_started` event
-- Enqueue N iteration jobs (one per collection item)
-- Track iteration completion
-- Emit `iterator_completed` event
+- Server processes event and enqueues N iteration jobs
+- Workers execute iteration jobs independently
+- All iterations share parent execution_id
 
 **🔮 PHASE 3 DESIGNED: Pagination via Retry**
 - HTTP action execution with `retry.on_success`
@@ -24,15 +20,17 @@ This folder contains a test for the **distributed iterator + pagination architec
 
 ## Overview
 
-The `loop_with_pagination.yaml` playbook demonstrates the **event-driven distributed loop pattern** where:
-- Worker analyzes collection and emits `iterator_started` event
-- Server will process event and enqueue iteration jobs (when implemented)
-- Each iteration runs independently with pagination support via `retry.on_success`
+The `loop_with_pagination.yaml` playbook demonstrates the **server-side distributed loop pattern** where:
+- Server detects `loop` attribute in step configuration
+- Server renders collection template (`{{ workload.endpoints }}`)
+- Server emits `iterator_started` event with collection metadata
+- Server enqueues N iteration jobs (one per collection item)
+- Workers execute iteration jobs independently with pagination support via `retry.on_success`
 
 **Test Scenario:**
 - **Collection**: 2 API endpoints (assessments, users)
 - **Mode**: Sequential iteration
-- **Expected**: `iterator_started` event with collection metadata
+- **Expected**: 2 iteration jobs created and executed successfully
 
 ## Files
 
@@ -61,11 +59,12 @@ The test notebook (`pagination_loop_test.ipynb`) validates the complete architec
 
 **✅ Implementation Status**
 ```
-✅ Worker Event Callback: WORKING
-✅ Iterator Executor: WORKING
+✅ Loop Detection: WORKING (publisher.py)
+✅ Collection Rendering: WORKING (Jinja2 templates)
 ✅ iterator_started Event: EMITTED
-✅ Event Schema: VALID
-⏳ Server Orchestrator: NOT YET IMPLEMENTED
+✅ Server Orchestrator: WORKING (_process_iterator_started)
+✅ Iteration Jobs: ENQUEUED (N jobs per N items)
+✅ Worker Execution: WORKING (independent iteration jobs)
 ```
 
 ### Environment Auto-Detection
@@ -195,26 +194,27 @@ curl -s -X POST "http://localhost:8082/api/postgres/execute" \
   -d '{"query": "SELECT context FROM noetl.event WHERE execution_id = <EXECUTION_ID> AND event_type = '\''iterator_started'\''", "schema": "noetl"}' | jq
 ```
 
-## Expected Results (Phase 1)
+## Expected Results (Phase 2)
 
-Since server orchestration is not yet implemented, you should see:
+With server orchestration now implemented, you should see:
 
 **✅ Expected Events:**
 ```
 playbook_started          STARTED
 workflow_initialized      COMPLETED  
-step_started              RUNNING
-action_started            RUNNING
-iterator_started          RUNNING      ← KEY EVENT!
-action_completed          COMPLETED
-step_result               COMPLETED
+iterator_started          RUNNING      ← Server detects loop
+action_started            RUNNING      ← iter_0 execution
+action_completed          COMPLETED    ← iter_0 completes
+step_result               COMPLETED    ← iter_0 result
+action_started            RUNNING      ← iter_1 execution
+action_completed          COMPLETED    ← iter_1 completes
+step_result               COMPLETED    ← iter_1 result
 ```
 
 **✅ iterator_started Context:**
 ```json
 {
   "total_count": 2,
-  "collection_size": 2,
   "mode": "sequential",
   "iterator_name": "endpoint",
   "collection": [
@@ -223,62 +223,95 @@ step_result               COMPLETED
   ],
   "nested_task": {
     "tool": "http",
+    "url": "{{ workload.api_url }}{{ endpoint.path }}",
+    "params": {"page": 1, "pageSize": "{{ endpoint.page_size }}"},
     "retry": {
       "on_success": {
         "while": "{{ response.paging.hasMore == true }}",
         "max_attempts": 10,
-        "collect": {"strategy": "append", "path": "data"}
+        "collect": {"strategy": "append", "path": "data"},
+        "next_call": {"params": {"page": "{{ (response.paging.page | int) + 1 }}"}}
       }
     }
   }
 }
 ```
 
-**⚠️ Expected Behavior:**
-- Execution will **not complete** automatically
-- No `iteration_completed` events (server doesn't enqueue iterations yet)
-- Timeout is **expected** - this validates worker-side implementation only
+**✅ Queue Jobs Created:**
+- `fetch_all_endpoints_iter_0` (for assessments endpoint)
+- `fetch_all_endpoints_iter_1` (for users endpoint)
+- Both jobs share same parent `execution_id`
+- Each job has iteration context with `endpoint` element data
 
-## Validation Criteria (Phase 1)
+## Validation Criteria (Phase 2)
 
 The notebook validates:
 
-1. ✅ **Loop Detection**: Worker routes to iterator executor
-2. ✅ **Event Emission**: `iterator_started` event exists in database
-3. ✅ **Collection Analysis**: 2 endpoints with correct metadata
-4. ✅ **Event Schema**: Status is RUNNING, context has all required fields
-5. ✅ **Pagination Config**: nested_task contains retry.on_success configuration
+1. ✅ **Loop Detection**: Server detects loop in publisher.py (both initial & transition paths)
+2. ✅ **Collection Rendering**: Template `{{ workload.endpoints }}` rendered to array of 2 endpoints
+3. ✅ **Event Emission**: `iterator_started` event exists in database with rendered collection
+4. ✅ **Iteration Jobs**: 2 queue jobs created (fetch_all_endpoints_iter_0, fetch_all_endpoints_iter_1)
+5. ✅ **Worker Execution**: Workers lease and execute iteration jobs independently
+6. ✅ **Shared Execution ID**: All iteration jobs share same parent execution_id
 
 ## Key Features Demonstrated
 
-### 1. Distributed Loop Architecture (Event-Driven)
+### 1. Distributed Loop Architecture (Server-Side)
 
-**Phase 1 (✅ Complete):**
-- Worker detects `loop` in step configuration
-- Routes to iterator executor for collection analysis
-- Emits `iterator_started` event with full metadata:
-  - Collection details (2 endpoints with paths, page_size)
-  - Iterator configuration (mode, name, total_count)
-  - Nested task definition (HTTP action with retry.on_success pagination)
-- Event stored in PostgreSQL event table
-- Worker reports back via `action_completed`
+**Phase 2 (✅ Complete):**
+- Server detects `loop` in step configuration (publisher.py)
+- Server renders collection template with Jinja2 Environment
+  - Input: `"{{ workload.endpoints }}"` (string template)
+  - Output: `[{...}, {...}]` (array of 2 endpoint objects)
+- Server emits `iterator_started` event with rendered collection
+- Server calls `_process_iterator_started()` in orchestrator.py:
+  - Extracts collection, nested_task, mode from event context
+  - Creates iteration context for each element (accessible via iterator variable)
+  - Enqueues N queue jobs (one per collection item)
+  - Each job has unique node_id: `{step_name}_iter_{index}`
+  - All jobs share parent execution_id
+- Workers lease iteration jobs from queue independently
+- Workers execute nested_task with iteration context injected
+- Workers report completion via events
 
-**Phase 2 (⏳ Pending - Not Yet Implemented):**
-- Server orchestrator will receive `iterator_started` event
-- Enqueue N iteration jobs (one per collection element)
-- Workers execute each iteration with full pagination
-- Emit `iteration_completed` events
-- Server aggregates results
-- Emit `iterator_completed` when all done
+**Implementation Details:**
+```python
+# publisher.py (lines 350-368, 540-560)
+collection_raw = loop_block.get("collection", [])
+if isinstance(collection_raw, str):
+    env = Environment(loader=BaseLoader())
+    collection = render_template(env, collection_raw, context or {})
 
-**Phase 3 (🔮 Designed - Not Yet Implemented):**
+# orchestrator.py (lines 1678-1785)
+async def _process_iterator_started(execution_id, event):
+    collection = event_context.get('collection', [])
+    for i, elem in enumerate(collection):
+        iteration_context = {
+            iterator_name: elem,  # e.g., 'endpoint': {...}
+            '_iteration_index': i,
+            '_total_iterations': len(collection)
+        }
+        await QueueService.enqueue_job(
+            execution_id=execution_id,  # Shared parent ID
+            node_id=f"{step_name}_iter_{i}",
+            action=json.dumps(nested_task),
+            context=iteration_context
+        )
+```
+
+**Phase 3 (🔮 Designed - Pagination):**
 - Retry logic for failed iterations
 - Concurrent iteration execution
 - Chunk processing for large collections
 
 ### 2. HTTP Retry with Pagination (retry.on_success)
 
-**Worker-Side Analysis (✅ Complete):**
+**Server-Side Orchestration (✅ Complete):**
+- Server renders collection template and creates iteration jobs
+- Each iteration job contains nested HTTP task config
+- Worker receives job with iteration context injected
+
+**Worker-Side Execution (✅ Working):**
 ```yaml
 retry:
   on_success:                                    # Pagination trigger
@@ -287,13 +320,17 @@ retry:
     collect:
       strategy: append                              # Merge strategy
       path: data                                    # Result path
+    next_call:
+      params:
+        page: "{{ (response.paging.page | int) + 1 }}"  # Next page
 ```
 
-**Server-Side Execution (⏳ Pending):**
-- Worker will execute HTTP request with auto-pagination
-- Server will receive paginated results via `iteration_completed` events
-- Aggregation across all endpoints happens in server
-- Final merged dataset stored in event context
+**Execution Flow:**
+1. Worker leases iteration job (e.g., `fetch_all_endpoints_iter_0`)
+2. Iteration context provides `endpoint` variable with element data
+3. Worker renders nested_task templates with iteration context
+4. HTTP action executes with pagination via retry.on_success
+5. Worker collects paginated results and reports completion
 
 ### 3. Jinja2 Templating
 
@@ -312,9 +349,10 @@ workload:
 ```
 
 **Validation:**
-- ✅ Collection templating works (2 endpoints extracted)
+- ✅ Collection template rendered (string → array)
 - ✅ Secret resolution works (server_url from PAGINATED_API_URL)
-- ⏳ Element access in nested tasks (will work when iterations execute)
+- ✅ Element access in iteration context (endpoint.name, endpoint.path, endpoint.page_size)
+- ✅ Nested task templates rendered with iteration context
 
 ### 4. Collection Processing Patterns
 
@@ -342,12 +380,11 @@ WHERE execution_id = <EXECUTION_ID>
 ORDER BY event_id;
 ```
 
-**Common issues:**
-- Missing `loop` parameter in step configuration
-- Invalid collection template (use `{{ workload.field }}` syntax)
-- Event callback not passed through execution chain (fixed in Phase 1)
-- EventType schema missing iterator types (fixed in Phase 1)
-- Status values lowercase instead of uppercase (fixed in Phase 1)
+### Common issues:**
+- Collection template not rendering: Check context contains workload data
+- Iteration jobs not created: Verify `_process_iterator_started` is called after event emission
+- Template errors in nested tasks: Ensure iteration context has iterator variable (e.g., `endpoint`)
+- Wrong number of jobs: Check collection rendering produced correct array length
 
 ### Environment Detection Issues
 
@@ -368,10 +405,10 @@ os.environ['NOETL_ENV'] = 'kubernetes'
 
 ### Execution Timeout
 
-**Expected behavior in Phase 1:**
-- Execution will timeout waiting for completion
-- This is **normal** - server orchestration not implemented yet
-- Use Cell 6 validation to verify architecture instead
+**Phase 2 behavior:**
+- Execution should complete successfully when pagination test server is running
+- If test server not running, iterations will fail (expected - validates architecture)
+- Use Cell validation to verify iteration jobs were created and executed
 
 ### Test Server Not Running
 
@@ -406,77 +443,70 @@ ORDER BY created_at;
 
 ## Success Criteria
 
-### Phase 1 Success (Current - What to Validate Now)
+### Phase 2 Success (Current - Validated ✅)
 
-The test is successful when notebook Cell 6 shows:
+The test is successful when validation shows:
 
-1. ✅ **Event Flow**: 7+ events including `iterator_started`
+1. ✅ **Event Flow**: `playbook_started` → `iterator_started` → multiple action events per iteration
 2. ✅ **Iterator Started Details**:
    - Status: RUNNING
    - Total Count: 2
-   - Collection Size: 2
    - Mode: sequential
    - Iterator Name: endpoint
-   - Nested Tool: http
-3. ✅ **Iterator Metadata**:
-   - Collection: 2 endpoints with name, path, page_size
-   - Nested Task: HTTP action with retry.on_success pagination config
-   - Pagination Config: while condition, max_attempts=10, collect strategy
-4. ✅ **Implementation Status**:
-   - Worker Event Callback: ✅
-   - Iterator Executor: ✅
-   - iterator_started Event: ✅
-   - Event Schema: ✅
-   - Server Orchestrator: ⏳ (expected pending)
+   - Collection: Array of 2 rendered endpoint objects (not template string)
+3. ✅ **Iteration Jobs**:
+   - 2 jobs created in queue table
+   - Job names: `fetch_all_endpoints_iter_0`, `fetch_all_endpoints_iter_1`
+   - Both share same parent execution_id
+   - Each has iteration context with endpoint element data
+4. ✅ **Worker Execution**:
+   - Workers lease iteration jobs independently
+   - Jobs execute successfully (when test server running)
+   - Action events emitted for each iteration
 
-### Phase 2 Success (When Implemented - Expected Future Behavior)
+### Phase 3 Success (When Implemented - Expected Future Behavior)
 
-When server orchestration is complete, the test should also show:
+When full pagination and aggregation are complete, the test should also show:
 
-- ⏳ 2 `iteration_completed` events (one per endpoint)
-- ⏳ 1 `iterator_completed` event
-- ⏳ ~70 total items fetched (35 assessments + 35 users)
-- ⏳ 2 records in `noetl_test.pagination_loop_results`
-- ⏳ Final execution status: COMPLETED
+- 🔮 Multiple pages fetched per endpoint (via retry.on_success)
+- 🔮 ~70 total items fetched (35 assessments + 35 users)
+- 🔮 Results aggregated across pages per iteration
+- 🔮 Final execution status: COMPLETED with aggregated results
 
-## Next Steps (Development)
+## Implementation Summary
 
-To complete Phase 2, implement in `noetl/server/api/orchestrator/orchestrator.py`:
+### What's Working (Phase 2 ✅)
 
-1. **Add `_process_iterator_started()` handler:**
-   ```python
-   async def _process_iterator_started(self, execution_id: int, event: Dict[str, Any]):
-       """Enqueue iteration jobs from iterator_started event."""
-       context = event.get('context', {})
-       collection = context.get('collection', [])
-       nested_task = context.get('nested_task', {})
-       
-       for idx, element in enumerate(collection):
-           # Create iteration job
-           job_data = {
-               'execution_id': execution_id,
-               'iteration_index': idx,
-               'element': element,
-               'task_config': nested_task
-           }
-           # Enqueue via queue API
-           await self._enqueue_job(job_data)
-   ```
+**Server-Side Loop Orchestration:**
+- `noetl/server/api/run/publisher.py` (lines 350-368, 540-560):
+  - Loop detection in both `publish_initial_steps` and `publish_step`
+  - Collection template rendering with Jinja2 Environment
+  - `iterator_started` event emission
+  - Direct call to `_process_iterator_started` after event emission
 
-2. **Register handler in event processor:**
-   ```python
-   event_handlers = {
-       'iterator_started': self._process_iterator_started,
-       # ... existing handlers
-   }
-   ```
+- `noetl/server/api/run/orchestrator.py` (lines 1678-1785):
+  - `_process_iterator_started()` function processes iterator_started events
+  - Extracts collection, nested_task, mode from event context
+  - Creates iteration context for each element
+  - Enqueues N queue jobs via `QueueService.enqueue_job()`
+  - All jobs share parent execution_id
 
-3. **Test with this playbook** - should see:
-   - 2 iteration jobs enqueued
-   - Workers execute HTTP requests with pagination
-   - ~35 items per endpoint (70 total)
-   - `iteration_completed` events emitted
-   - `iterator_completed` event when all done
+**Worker Execution:**
+- Workers lease iteration jobs from queue independently
+- Iteration context injected into nested_task templates
+- HTTP actions execute with pagination via retry.on_success
+- Workers report completion via events
+
+### Next Steps (Phase 3 - Future Work)
+
+Phase 3 will add full pagination support and result aggregation:
+
+1. **Pagination Tracking**: Track page state across retry attempts
+2. **Result Aggregation**: Collect and merge paginated results per iteration
+3. **Iterator Completion**: Emit `iterator_completed` event when all iterations done
+4. **Sink Integration**: Save aggregated results to database via sink blocks
+
+These features are designed but not yet implemented.
 
 ## Database Schema (Phase 2)
 

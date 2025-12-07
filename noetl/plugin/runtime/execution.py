@@ -118,9 +118,6 @@ def execute_task(
         ValueError: If task tool is unknown or not supported
     """
     # Import plugin executors here to avoid circular imports
-    from noetl.plugin.controller.iterator import (
-        execute_loop_task as execute_iterator_task,
-    )
     from noetl.plugin.controller.playbook import execute_playbook_task
     from noetl.plugin.controller.workbook import execute_workbook_task
     from noetl.plugin.shared.secrets import execute_secrets_task
@@ -136,19 +133,6 @@ def execute_task(
         execute_snowflake_transfer_action,
     )
 
-    # Check if this step has loop configuration (iterator pattern)
-    # If so, delegate to iterator executor regardless of tool type
-    logger.critical(f"EXECUTION.execute_task: task='{task_name}', checking for loop attribute")
-    logger.critical(f"EXECUTION.execute_task: task_config keys = {list(task_config.keys())}")
-    if 'loop' in task_config:
-        logger.critical(f"EXECUTION.execute_task: LOOP DETECTED! loop={task_config.get('loop')}")
-        logger.critical(f"EXECUTION.execute_task: Routing to iterator executor")
-        logger.debug(f"Executing task '{task_name}' with loop configuration")
-        wrapped_context = _wrap_context_results(context)
-        return execute_iterator_task(
-            task_config, wrapped_context, jinja_env, args or {}, event_callback
-        )
-    
     task_type, raw_type = _resolve_task_type(task_config)
 
     logger.debug(f"Executing task '{task_name}' of tool '{task_type}'")
@@ -228,7 +212,7 @@ def execute_task(
         raise ValueError(
             f"Unknown task tool '{raw_type}'. "
             f"Available tools: http, python, duckdb, postgres, container, snowflake, snowflake_transfer, transfer, secrets, playbook, workbook, save. "
-            f"Note: Use 'loop:' attribute to iterate over collections, not 'tool: iterator'."
+            f"Note: 'loop:' attribute is handled server-side for distributed iteration."
         )
 
 

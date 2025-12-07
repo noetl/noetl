@@ -23,7 +23,7 @@ from noetl.core.logger import setup_logger
 logger = setup_logger(__name__, include_location=True)
 
 # New imports from refactored structure
-from noetl.plugin.controller.iterator import execute_loop_task as execute_iterator_task
+# Iterator logic removed - loops are now handled server-side only
 from noetl.plugin.controller.playbook import execute_playbook_task
 from noetl.plugin.controller.result import process_loop_aggregation_job
 from noetl.plugin.controller.workbook import execute_workbook_task
