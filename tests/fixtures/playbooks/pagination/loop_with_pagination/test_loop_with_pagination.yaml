@@ -2,7 +2,7 @@ apiVersion: noetl.io/v1
 kind: Playbook
 metadata:
   name: test_loop_with_pagination
-  path: tests/pagination/loop_with_pagination/loop_with_pagination
+  path: tests/pagination/loop_with_pagination
   description: Test iterator (loop) with HTTP pagination - preserving results at each level
 
 workload:
