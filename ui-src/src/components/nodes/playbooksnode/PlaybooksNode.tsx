@@ -3,7 +3,6 @@ import { Handle, Position, useReactFlow, type NodeProps, type Node } from '@xyfl
 import './PlaybooksNode.less';
 import { Modal, Input, Button, Tooltip } from 'antd';
 import { EditOutlined, DeleteOutlined, QuestionCircleOutlined } from '@ant-design/icons';
-import { NodeDocumentation } from '../NodeDocumentation';
 
 interface PlaybooksData {
     name?: string;
@@ -21,7 +20,6 @@ interface PlaybooksData {
 function PlaybooksNodeInternal({ id, data = {} }: NodeProps<Node<PlaybooksData>>) {
     const { updateNodeData } = useReactFlow();
     const [modalOpen, setModalOpen] = useState(false);
-    const [docsOpen, setDocsOpen] = useState(false);
     const [draft, setDraft] = useState({
         path: '',
         entry_step: '',
@@ -104,8 +102,8 @@ function PlaybooksNodeInternal({ id, data = {} }: NodeProps<Node<PlaybooksData>>
                     <Button
                         key="docs"
                         icon={<QuestionCircleOutlined />}
-                        onClick={() => setDocsOpen(true)}
                         style={{ float: 'left' }}
+                        disabled
                     >
                         Docs
                     </Button>,
@@ -141,12 +139,6 @@ function PlaybooksNodeInternal({ id, data = {} }: NodeProps<Node<PlaybooksData>>
                     </div>
                 </div>
             </Modal>
-
-            <NodeDocumentation
-                open={docsOpen}
-                onClose={() => setDocsOpen(false)}
-                nodeType="playbooks"
-            />
         </div>
     );
 }

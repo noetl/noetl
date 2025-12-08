@@ -3,7 +3,6 @@ import { Handle, Position, useReactFlow, type NodeProps, type Node } from '@xyfl
 import { Button, Modal, Input, Tooltip } from 'antd';
 import { EditOutlined, DeleteOutlined, QuestionCircleOutlined } from '@ant-design/icons';
 import './WorkbookNode.less';
-import { NodeDocumentation } from '../NodeDocumentation';
 
 interface WorkbookData {
     name?: string;
@@ -16,7 +15,6 @@ interface WorkbookData {
 function WorkbookNodeInternal({ id, data = {} }: NodeProps<Node<WorkbookData>>) {
     const { updateNodeData } = useReactFlow();
     const [modalOpen, setModalOpen] = useState(false);
-    const [docsOpen, setDocsOpen] = useState(false);
     const [draft, setDraft] = useState({ name: '' });
 
     const openEditor = () => {
@@ -91,8 +89,8 @@ function WorkbookNodeInternal({ id, data = {} }: NodeProps<Node<WorkbookData>>) 
                     <Button
                         key="docs"
                         icon={<QuestionCircleOutlined />}
-                        onClick={() => setDocsOpen(true)}
                         style={{ float: 'left' }}
+                        disabled
                     >
                         Docs
                     </Button>,
@@ -110,12 +108,6 @@ function WorkbookNodeInternal({ id, data = {} }: NodeProps<Node<WorkbookData>>) 
                     />
                 </div>
             </Modal>
-
-            <NodeDocumentation
-                open={docsOpen}
-                onClose={() => setDocsOpen(false)}
-                nodeType="workbook"
-            />
         </div>
     );
 }

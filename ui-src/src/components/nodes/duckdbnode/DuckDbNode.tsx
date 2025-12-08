@@ -4,7 +4,6 @@ import './DuckDbNode.less';
 import { Modal, Input, Button, Tooltip } from 'antd';
 import { EditOutlined, DeleteOutlined, QuestionCircleOutlined } from '@ant-design/icons';
 import { CodeEditor } from '../../CodeEditor';
-import { NodeDocumentation } from '../NodeDocumentation';
 
 interface DuckDbData {
     name?: string;
@@ -19,7 +18,6 @@ interface DuckDbData {
 function DuckDbNodeInternal({ id, data = {} }: NodeProps<Node<DuckDbData>>) {
     const { updateNodeData } = useReactFlow();
     const [modalOpen, setModalOpen] = useState(false);
-    const [docsOpen, setDocsOpen] = useState(false);
     const [draft, setDraft] = useState({
         query: '',
         file: ''
@@ -99,8 +97,8 @@ function DuckDbNodeInternal({ id, data = {} }: NodeProps<Node<DuckDbData>>) {
                     <Button
                         key="docs"
                         icon={<QuestionCircleOutlined />}
-                        onClick={() => setDocsOpen(true)}
                         style={{ float: 'left' }}
+                        disabled
                     >
                         Docs
                     </Button>,
@@ -129,12 +127,6 @@ function DuckDbNodeInternal({ id, data = {} }: NodeProps<Node<DuckDbData>>) {
                     </div>
                 </div>
             </Modal>
-
-            <NodeDocumentation
-                open={docsOpen}
-                onClose={() => setDocsOpen(false)}
-                nodeType="duckdb"
-            />
         </div>
     );
 }

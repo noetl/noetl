@@ -4,7 +4,6 @@ import './HttpNode.less';
 import { Modal, Input, Select, Button, Tooltip } from 'antd';
 import { EditOutlined, DeleteOutlined, QuestionCircleOutlined } from '@ant-design/icons';
 import { CodeEditor } from '../../CodeEditor';
-import { NodeDocumentation } from '../NodeDocumentation';
 
 interface HttpData {
     name?: string;
@@ -26,7 +25,6 @@ interface HttpData {
 function HttpNodeInternal({ id, data = {} }: NodeProps<Node<HttpData>>) {
     const { updateNodeData } = useReactFlow();
     const [modalOpen, setModalOpen] = useState(false);
-    const [docsOpen, setDocsOpen] = useState(false);
     const [draft, setDraft] = useState({
         method: 'GET',
         endpoint: '',
@@ -187,8 +185,8 @@ function HttpNodeInternal({ id, data = {} }: NodeProps<Node<HttpData>>) {
                     <Button
                         key="docs"
                         icon={<QuestionCircleOutlined />}
-                        onClick={() => setDocsOpen(true)}
                         style={{ float: 'left' }}
+                        disabled
                     >
                         Docs
                     </Button>,
@@ -278,12 +276,6 @@ function HttpNodeInternal({ id, data = {} }: NodeProps<Node<HttpData>>) {
                     </div>
                 </div>
             </Modal>
-
-            <NodeDocumentation
-                open={docsOpen}
-                onClose={() => setDocsOpen(false)}
-                nodeType="http"
-            />
         </div>
     );
 }

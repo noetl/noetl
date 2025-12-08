@@ -4,7 +4,6 @@ import './PostgresNode.less';
 import { Modal, Input, Button, Tooltip } from 'antd';
 import { EditOutlined, DeleteOutlined, QuestionCircleOutlined } from '@ant-design/icons';
 import { CodeEditor } from '../../CodeEditor';
-import { NodeDocumentation } from '../NodeDocumentation';
 
 interface PostgresData {
     name?: string;
@@ -21,7 +20,6 @@ interface PostgresData {
 function PostgresNodeInternal({ id, data = {} }: NodeProps<Node<PostgresData>>) {
     const { updateNodeData } = useReactFlow();
     const [modalOpen, setModalOpen] = useState(false);
-    const [docsOpen, setDocsOpen] = useState(false);
     const [draft, setDraft] = useState({
         query: '',
         auth: '',
@@ -139,8 +137,8 @@ function PostgresNodeInternal({ id, data = {} }: NodeProps<Node<PostgresData>>) 
                     <Button
                         key="docs"
                         icon={<QuestionCircleOutlined />}
-                        onClick={() => setDocsOpen(true)}
                         style={{ float: 'left' }}
+                        disabled
                     >
                         Docs
                     </Button>,
@@ -180,12 +178,6 @@ function PostgresNodeInternal({ id, data = {} }: NodeProps<Node<PostgresData>>) 
                     </div>
                 </div>
             </Modal>
-
-            <NodeDocumentation
-                open={docsOpen}
-                onClose={() => setDocsOpen(false)}
-                nodeType="postgres"
-            />
         </div>
     );
 }

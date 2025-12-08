@@ -4,7 +4,6 @@ import './PythonNode.less';
 import { Modal, Input, Button, Tooltip } from 'antd';
 import { EditOutlined, DeleteOutlined, QuestionCircleOutlined } from '@ant-design/icons';
 import { CodeEditor } from '../../CodeEditor';
-import { NodeDocumentation } from '../NodeDocumentation';
 
 interface PythonData {
     name?: string;
@@ -20,7 +19,6 @@ interface PythonData {
 function PythonNodeInternal({ id, data = {} }: NodeProps<Node<PythonData>>) {
     const { updateNodeData } = useReactFlow();
     const [modalOpen, setModalOpen] = useState(false);
-    const [docsOpen, setDocsOpen] = useState(false);
     const [draft, setDraft] = useState({
         code: '',
         module: '',
@@ -103,8 +101,8 @@ function PythonNodeInternal({ id, data = {} }: NodeProps<Node<PythonData>>) {
                     <Button
                         key="docs"
                         icon={<QuestionCircleOutlined />}
-                        onClick={() => setDocsOpen(true)}
                         style={{ float: 'left' }}
+                        disabled
                     >
                         Docs
                     </Button>,
@@ -142,12 +140,6 @@ function PythonNodeInternal({ id, data = {} }: NodeProps<Node<PythonData>>) {
                     </div>
                 </div>
             </Modal>
-
-            <NodeDocumentation
-                open={docsOpen}
-                onClose={() => setDocsOpen(false)}
-                nodeType="python"
-            />
         </div>
     );
 }
