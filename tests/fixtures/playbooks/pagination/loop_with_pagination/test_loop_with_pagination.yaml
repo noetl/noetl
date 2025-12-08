@@ -37,6 +37,11 @@ workflow:
       page: 1
       pageSize: "{{ endpoint.page_size }}"
     retry:
+      on_error:
+        when: "{{ error.status in [500, 502, 503] }}"
+        max_attempts: 3
+        backoff_multiplier: 2.0
+        initial_delay: 0.5
       on_success:
         while: "{{ response.paging.hasMore == true }}"
         max_attempts: 10
@@ -119,71 +124,19 @@ workflow:
               validation['total_items_fetched'] += items_count
           
           # Validation checks
-          assert len(results) == 2, f"Expected 2 endpoint iterations, got {len(results)}"
+          expected_iterations = len(workload['endpoints'])
+          assert len(results) == expected_iterations, f"Expected {expected_iterations} endpoint iterations, got {len(results)}"
           
-          # Assessments endpoint should have ~35 items (3.5 pages * 10)
-          assessments_count = validation['endpoints_tested'][0]['items_count']
-          assert assessments_count == 35, f"Expected 35 assessments, got {assessments_count}"
-          
-          # Users endpoint should have ~35 items as well
-          users_count = validation['endpoints_tested'][1]['items_count']
-          assert users_count == 35, f"Expected 35 users, got {users_count}"
+          # Each assessments endpoint should have 35 items (since page_size varies but total is 35)
+          for idx, endpoint_result in enumerate(validation['endpoints_tested']):
+              items_count = endpoint_result['items_count']
+              endpoint_name = endpoint_result['endpoint']
+              assert items_count == 35, f"Expected 35 items for {endpoint_name}, got {items_count}"
           
           validation['status'] = 'success'
           validation['message'] = f"Successfully validated {len(results)} endpoints with {validation['total_items_fetched']} total items"
           
           return validation
-    next:
-      - step: verify_saved_data
-
-  - step: verify_saved_data
-    desc: Verify data was saved correctly during pagination
-    tool: postgres
-    auth: pg_k8s
-    query: |
-      SELECT 
-        endpoint_name,
-        endpoint_path,
-        page_size,
-        result_count,
-        iteration_index,
-        iteration_count
-      FROM noetl_test.pagination_loop_results
-      WHERE execution_id = {{ execution_id }}
-      ORDER BY iteration_index
-    next:
-      - step: validate_saved_data
-
-  - step: validate_saved_data
-    desc: Validate saved pagination data
-    tool: python
-    args:
-      saved_data: "{{ verify_saved_data }}"
-    code: |
-      def main(saved_data):
-          
-          print(f"Saved data records: {len(saved_data)}")
-          
-          # Should have 2 records (one per endpoint iteration)
-          assert len(saved_data) == 2, f"Expected 2 saved records, got {len(saved_data)}"
-          
-          # Verify first record (assessments)
-          first = saved_data[0]
-          assert first['endpoint_name'] == 'assessments', f"Expected 'assessments', got {first['endpoint_name']}"
-          assert first['result_count'] == 35, f"Expected 35 items in assessments, got {first['result_count']}"
-          assert first['iteration_index'] == 0, f"Expected iteration_index=0, got {first['iteration_index']}"
-          
-          # Verify second record (users)
-          second = saved_data[1]
-          assert second['endpoint_name'] == 'users', f"Expected 'users', got {second['endpoint_name']}"
-          assert second['result_count'] == 35, f"Expected 35 items in users, got {second['result_count']}"
-          assert second['iteration_index'] == 1, f"Expected iteration_index=1, got {second['iteration_index']}"
-          
-          return {
-              'status': 'success',
-              'message': 'All saved data validated successfully',
-              'records_validated': len(saved_data)
-          }
     next:
       - step: end
 

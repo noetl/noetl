@@ -1008,8 +1008,141 @@ async def _process_transitions(execution_id: int) -> None:
 
     async with get_pool_connection() as conn:
         async with conn.cursor() as cur:
+            # Check for parent steps with completed iterations (fix for loop completion bug)
+            # When a step has loop attribute, server expands into _iter_N jobs
+            # After all iterations complete, we need to emit action_completed for parent step
+            iteration_steps = [s for s in completed_steps if '_iter_' in s]
+            if iteration_steps:
+                # Group by parent step name (remove _iter_N suffix)
+                parent_steps = {}
+                for iter_step in iteration_steps:
+                    # Extract parent name: "fetch_all_endpoints_iter_0" -> "fetch_all_endpoints"
+                    parent_name = iter_step.rsplit('_iter_', 1)[0]
+                    if parent_name not in parent_steps:
+                        parent_steps[parent_name] = []
+                    parent_steps[parent_name].append(iter_step)
+                
+                # For each parent, check if all iterations are complete
+                for parent_name, iterations in parent_steps.items():
+                    # Check if parent step exists in workflow and has loop attribute
+                    parent_def = by_name.get(parent_name)
+                    if not parent_def or not parent_def.get("loop"):
+                        continue
+                    
+                    # Check if there are any pending iteration jobs
+                    await cur.execute(
+                        """
+                        SELECT COUNT(*) as pending_count
+                        FROM noetl.queue
+                        WHERE execution_id = %s
+                          AND node_name LIKE %s
+                          AND status IN ('pending', 'running')
+                        """,
+                        (execution_id, f"{parent_name}_iter_%")
+                    )
+                    pending_row = await cur.fetchone()
+                    pending_count = pending_row['pending_count'] if pending_row else 0
+                    
+                    if pending_count > 0:
+                        logger.debug(
+                            f"Parent step '{parent_name}' has {pending_count} pending iterations, skipping"
+                        )
+                        continue
+                    
+                    # Check if parent already has action_completed
+                    await cur.execute(
+                        """
+                        SELECT COUNT(*) as count
+                        FROM noetl.event
+                        WHERE execution_id = %s
+                          AND node_name = %s
+                          AND event_type = 'action_completed'
+                        """,
+                        (execution_id, parent_name)
+                    )
+                    existing_row = await cur.fetchone()
+                    if existing_row and existing_row['count'] > 0:
+                        logger.debug(f"Parent step '{parent_name}' already has action_completed")
+                        continue
+                    
+                    logger.info(
+                        f"All {len(iterations)} iterations complete for parent '{parent_name}', "
+                        f"emitting action_completed"
+                    )
+                    
+                    # Aggregate results from all iterations
+                    await cur.execute(
+                        """
+                        SELECT result
+                        FROM noetl.event
+                        WHERE execution_id = %s
+                          AND node_name LIKE %s
+                          AND event_type = 'step_result'
+                        ORDER BY node_name
+                        """,
+                        (execution_id, f"{parent_name}_iter_%")
+                    )
+                    
+                    aggregated_results = []
+                    async for row in cur:
+                        if row['result']:
+                            result_data = row['result'] if isinstance(row['result'], dict) else json.loads(row['result'] or '{}')
+                            aggregated_results.append(result_data)
+                    
+                    # Get parent_event_id from iterator_started event
+                    await cur.execute(
+                        """
+                        SELECT event_id
+                        FROM noetl.event
+                        WHERE execution_id = %s
+                          AND node_id = %s
+                          AND event_type = 'iterator_started'
+                        ORDER BY created_at DESC
+                        LIMIT 1
+                        """,
+                        (execution_id, parent_name)
+                    )
+                    iterator_event_row = await cur.fetchone()
+                    parent_event_id = iterator_event_row['event_id'] if iterator_event_row else None
+                    
+                    # Emit action_completed for parent step
+                    from noetl.server.api.broker.schema import EventEmitRequest
+                    
+                    parent_tool = parent_def.get("tool", "iterator")
+                    action_completed_request = EventEmitRequest(
+                        execution_id=str(execution_id),
+                        catalog_id=catalog_id,
+                        event_type="action_completed",
+                        status="COMPLETED",
+                        node_id=parent_name,
+                        node_name=parent_name,
+                        node_type="iterator",
+                        parent_event_id=parent_event_id,
+                        result={
+                            "items": aggregated_results,
+                            "count": len(aggregated_results),
+                            "iterations": len(iterations)
+                        }
+                    )
+                    
+                    try:
+                        result = await EventService.emit_event(action_completed_request)
+                        logger.info(
+                            f"Emitted action_completed for parent step '{parent_name}', "
+                            f"event_id={result.event_id}"
+                        )
+                    except Exception as e:
+                        logger.exception(
+                            f"Error emitting action_completed for parent step '{parent_name}'"
+                        )
+            
             # Process each completed step
             for step_name in completed_steps:
+                # Skip iteration steps (they were already handled in parent step emission above)
+                if '_iter_' in step_name:
+                    logger.debug(f"Skipping iteration step '{step_name}' - handled via parent step")
+                    continue
+                
                 logger.info(f"Processing transitions for completed step '{step_name}'")
 
                 # Get step definition first
