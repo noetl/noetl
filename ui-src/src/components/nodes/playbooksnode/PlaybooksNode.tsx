@@ -8,8 +8,11 @@ import { NodeDocumentation } from '../NodeDocumentation';
 interface PlaybooksData {
     name?: string;
     path?: string;
+    entryStep?: string;
+    returnStep?: string;
     entry_step?: string;
     return_step?: string;
+    task?: { name?: string; description?: string };
     onDelete?: (taskId: string) => void;
     readOnly?: boolean;
     [key: string]: unknown;
@@ -89,9 +92,8 @@ function PlaybooksNodeInternal({ id, data = {} }: NodeProps<Node<PlaybooksData>>
                 </div>
             </div>
             <div className="PlaybooksNode__summary">
-                {summaryPath || <span className="PlaybooksNode__empty-path">(no path)</span>}
+                {summaryPath || (data.task?.name ? <span className="PlaybooksNode__description">{data.task.name}</span> : <span className="PlaybooksNode__empty-path">(no path)</span>)}
             </div>
-            <div className="PlaybooksNode__hint">double-click or edit icon</div>
 
             <Modal
                 open={modalOpen}

@@ -9,6 +9,7 @@ import { NodeDocumentation } from '../NodeDocumentation';
 interface LoopData {
     name?: string;
     collection?: string;
+    task?: { name?: string; description?: string };
     onDelete?: (taskId: string) => void;
     readOnly?: boolean;
     [key: string]: unknown;
@@ -80,9 +81,8 @@ function LoopNodeInternal({ id, data = {} }: NodeProps<Node<LoopData>>) {
                 </div>
             </div>
             <div className="LoopNode__summary">
-                {summaryCollection || <span className="LoopNode__empty-collection">(no collection)</span>}
+                {summaryCollection || (data.task?.name ? <span className="LoopNode__description">{data.task.name}</span> : <span className="LoopNode__empty-collection">(no collection)</span>)}
             </div>
-            <div className="LoopNode__hint">double-click or edit icon</div>
 
             <Modal
                 open={modalOpen}

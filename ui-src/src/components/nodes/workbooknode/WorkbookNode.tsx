@@ -7,6 +7,7 @@ import { NodeDocumentation } from '../NodeDocumentation';
 
 interface WorkbookData {
     name?: string;
+    task?: { name?: string; description?: string };
     onDelete?: (taskId: string) => void;
     readOnly?: boolean;
     [key: string]: unknown;
@@ -78,9 +79,8 @@ function WorkbookNodeInternal({ id, data = {} }: NodeProps<Node<WorkbookData>>) 
                 </div>
             </div>
             <div className="WorkbookNode__summary">
-                {summaryName || <span className="WorkbookNode__empty-name">(no task name)</span>}
+                {summaryName || (data.task?.name ? <span className="WorkbookNode__description">{data.task.name}</span> : <span className="WorkbookNode__empty-name">(no task name)</span>)}
             </div>
-            <div className="WorkbookNode__hint">double-click or edit icon</div>
 
             <Modal
                 open={modalOpen}

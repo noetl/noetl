@@ -10,6 +10,7 @@ interface DuckDbData {
     name?: string;
     query?: string;
     file?: string;
+    task?: { name?: string; description?: string };
     onDelete?: (taskId: string) => void;
     readOnly?: boolean;
     [key: string]: unknown;
@@ -86,9 +87,8 @@ function DuckDbNodeInternal({ id, data = {} }: NodeProps<Node<DuckDbData>>) {
                 </div>
             </div>
             <div className="DuckDbNode__summary">
-                {summaryQuery || <span className="DuckDbNode__empty-query">(no query)</span>}
+                {summaryQuery || (data.task?.name ? <span className="DuckDbNode__description">{data.task.name}</span> : <span className="DuckDbNode__empty-query">(no query)</span>)}
             </div>
-            <div className="DuckDbNode__hint">double-click or edit icon</div>
 
             <Modal
                 open={modalOpen}

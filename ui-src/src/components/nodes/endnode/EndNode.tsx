@@ -69,8 +69,6 @@ function EndNodeInternal({ id, data = {} }: NodeProps<Node<EndNodeData>>) {
                     )}
                 </div>
             </div>
-            <div className="EndNode__label">End</div>
-            <div className="EndNode__hint">double-click or edit icon</div>
 
             <Modal
                 open={modalOpen}

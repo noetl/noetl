@@ -11,6 +11,7 @@ interface PythonData {
     code?: string;
     module?: string;
     callable?: string;
+    task?: { name?: string; description?: string };
     onDelete?: (taskId: string) => void;
     readOnly?: boolean;
     [key: string]: unknown;
@@ -90,9 +91,8 @@ function PythonNodeInternal({ id, data = {} }: NodeProps<Node<PythonData>>) {
                 </div>
             </div>
             <div className="PythonNode__summary">
-                {summaryCode || <span className="PythonNode__empty-code">(no code)</span>}
+                {summaryCode || (data.task?.name ? <span className="PythonNode__description">{data.task.name}</span> : <span className="PythonNode__empty-code">(no code)</span>)}
             </div>
-            <div className="PythonNode__hint">double-click or edit icon</div>
 
             <Modal
                 open={modalOpen}

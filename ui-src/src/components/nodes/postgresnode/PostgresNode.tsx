@@ -11,6 +11,7 @@ interface PostgresData {
     query?: string;
     auth?: string;
     params?: Record<string, any>;
+    task?: { name?: string; description?: string };
     onDelete?: (taskId: string) => void;
     readOnly?: boolean;
     [key: string]: unknown;
@@ -125,9 +126,8 @@ function PostgresNodeInternal({ id, data = {} }: NodeProps<Node<PostgresData>>) 
                 </div>
             </div>
             <div className="PostgresNode__summary">
-                {summaryQuery || <span className="PostgresNode__empty-query">(no query)</span>}
+                {summaryQuery || (data.task?.name ? <span className="PostgresNode__description">{data.task.name}</span> : <span className="PostgresNode__empty-query">(no query)</span>)}
             </div>
-            <div className="PostgresNode__hint">double-click or edit icon</div>
 
             <Modal
                 open={modalOpen}

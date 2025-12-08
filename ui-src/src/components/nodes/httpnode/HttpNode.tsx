@@ -13,6 +13,7 @@ interface HttpData {
     headers?: Record<string, any>;
     params?: Record<string, any>;
     payload?: Record<string, any>;
+    task?: { name?: string; description?: string };
     onDelete?: (taskId: string) => void;
     readOnly?: boolean;
     [key: string]: unknown;
@@ -153,9 +154,8 @@ function HttpNodeInternal({ id, data = {} }: NodeProps<Node<HttpData>>) {
                 </div>
             </div>
             <div className="HttpNode__summary">
-                {summaryEndpoint || <span className="HttpNode__empty-url">(no endpoint)</span>}
+                {summaryEndpoint || (data.task?.name ? <span className="HttpNode__description">{data.task.name}</span> : <span className="HttpNode__empty-url">(no endpoint)</span>)}
             </div>
-            <div className="HttpNode__hint">double-click or edit icon</div>
 
             <Modal
                 open={modalOpen}

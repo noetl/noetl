@@ -69,8 +69,6 @@ function StartNodeInternal({ id, data = {} }: NodeProps<Node<StartNodeData>>) {
                     )}
                 </div>
             </div>
-            <div className="StartNode__label">Start</div>
-            <div className="StartNode__hint">double-click or edit icon</div>
 
             <Modal
                 open={modalOpen}
