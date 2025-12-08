@@ -2,7 +2,7 @@ import { memo, useState } from 'react';
 import { Handle, Position, useReactFlow, type NodeProps, type Node } from '@xyflow/react';
 import './DuckDbNode.less';
 import { Modal, Input, Button, Tooltip } from 'antd';
-import { EditOutlined, DeleteOutlined, QuestionCircleOutlined } from '@ant-design/icons';
+import { EditOutlined, DeleteOutlined, QuestionCircleOutlined, ExclamationCircleOutlined } from '@ant-design/icons';
 import { CodeEditor } from '../../CodeEditor';
 
 interface DuckDbData {
@@ -22,6 +22,21 @@ function DuckDbNodeInternal({ id, data = {} }: NodeProps<Node<DuckDbData>>) {
         query: '',
         file: ''
     });
+
+    const handleDelete = () => {
+        Modal.confirm({
+            title: 'Delete Node',
+            icon: <ExclamationCircleOutlined />,
+            content: `Are you sure you want to delete the "${data.name || 'DuckDB'}" node?`,
+            okText: 'Delete',
+            okType: 'danger',
+            cancelText: 'Cancel',
+            centered: true,
+            onOk() {
+                data.onDelete?.(id);
+            },
+        });
+    };
 
     const openEditor = () => {
         setDraft({
@@ -78,7 +93,7 @@ function DuckDbNodeInternal({ id, data = {} }: NodeProps<Node<DuckDbData>>) {
                                 icon={<DeleteOutlined />}
                                 onPointerDown={preventNodeDrag}
                                 onMouseDown={preventNodeDrag}
-                                onClick={(e) => { preventNodeDrag(e); data.onDelete?.(id); }}
+                                onClick={(e) => { preventNodeDrag(e); handleDelete(); }}
                             />
                         </Tooltip>
                     )}

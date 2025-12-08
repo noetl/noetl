@@ -2,7 +2,7 @@ import { memo, useState } from 'react';
 import { Handle, Position, useReactFlow, type NodeProps, type Node } from '@xyflow/react';
 import './PythonNode.less';
 import { Modal, Input, Button, Tooltip } from 'antd';
-import { EditOutlined, DeleteOutlined, QuestionCircleOutlined } from '@ant-design/icons';
+import { EditOutlined, DeleteOutlined, QuestionCircleOutlined, ExclamationCircleOutlined } from '@ant-design/icons';
 import { CodeEditor } from '../../CodeEditor';
 
 interface PythonData {
@@ -24,6 +24,21 @@ function PythonNodeInternal({ id, data = {} }: NodeProps<Node<PythonData>>) {
         module: '',
         callable: ''
     });
+
+    const handleDelete = () => {
+        Modal.confirm({
+            title: 'Delete Node',
+            icon: <ExclamationCircleOutlined />,
+            content: `Are you sure you want to delete the "${data.name || 'Python'}" node?`,
+            okText: 'Delete',
+            okType: 'danger',
+            cancelText: 'Cancel',
+            centered: true,
+            onOk() {
+                data.onDelete?.(id);
+            },
+        });
+    };
 
     const openEditor = () => {
         setDraft({
@@ -82,7 +97,7 @@ function PythonNodeInternal({ id, data = {} }: NodeProps<Node<PythonData>>) {
                                 icon={<DeleteOutlined />}
                                 onPointerDown={preventNodeDrag}
                                 onMouseDown={preventNodeDrag}
-                                onClick={(e) => { preventNodeDrag(e); data.onDelete?.(id); }}
+                                onClick={(e) => { preventNodeDrag(e); handleDelete(); }}
                             />
                         </Tooltip>
                     )}

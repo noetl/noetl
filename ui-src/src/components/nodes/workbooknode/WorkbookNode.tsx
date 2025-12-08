@@ -1,7 +1,7 @@
 import { memo, useState } from 'react';
 import { Handle, Position, useReactFlow, type NodeProps, type Node } from '@xyflow/react';
 import { Button, Modal, Input, Tooltip } from 'antd';
-import { EditOutlined, DeleteOutlined, QuestionCircleOutlined } from '@ant-design/icons';
+import { EditOutlined, DeleteOutlined, QuestionCircleOutlined, ExclamationCircleOutlined } from '@ant-design/icons';
 import './WorkbookNode.less';
 
 interface WorkbookData {
@@ -16,6 +16,21 @@ function WorkbookNodeInternal({ id, data = {} }: NodeProps<Node<WorkbookData>>) 
     const { updateNodeData } = useReactFlow();
     const [modalOpen, setModalOpen] = useState(false);
     const [draft, setDraft] = useState({ name: '' });
+
+    const handleDelete = () => {
+        Modal.confirm({
+            title: 'Delete Node',
+            icon: <ExclamationCircleOutlined />,
+            content: `Are you sure you want to delete the "${data.name || 'Workbook'}" node?`,
+            okText: 'Delete',
+            okType: 'danger',
+            cancelText: 'Cancel',
+            centered: true,
+            onOk() {
+                data.onDelete?.(id);
+            },
+        });
+    };
 
     const openEditor = () => {
         setDraft({
@@ -70,7 +85,7 @@ function WorkbookNodeInternal({ id, data = {} }: NodeProps<Node<WorkbookData>>) 
                                 icon={<DeleteOutlined />}
                                 onPointerDown={preventNodeDrag}
                                 onMouseDown={preventNodeDrag}
-                                onClick={(e) => { preventNodeDrag(e); data.onDelete?.(id); }}
+                                onClick={(e) => { preventNodeDrag(e); handleDelete(); }}
                             />
                         </Tooltip>
                     )}

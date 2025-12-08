@@ -2,7 +2,7 @@ import { memo, useState } from 'react';
 import { Handle, Position, useReactFlow, type NodeProps, type Node } from '@xyflow/react';
 import './PostgresNode.less';
 import { Modal, Input, Button, Tooltip } from 'antd';
-import { EditOutlined, DeleteOutlined, QuestionCircleOutlined } from '@ant-design/icons';
+import { EditOutlined, DeleteOutlined, QuestionCircleOutlined, ExclamationCircleOutlined } from '@ant-design/icons';
 import { CodeEditor } from '../../CodeEditor';
 
 interface PostgresData {
@@ -32,6 +32,21 @@ function PostgresNodeInternal({ id, data = {} }: NodeProps<Node<PostgresData>>) 
         try {
             return obj && Object.keys(obj).length ? JSON.stringify(obj, null, 2) : '';
         } catch { return ''; }
+    };
+
+    const handleDelete = () => {
+        Modal.confirm({
+            title: 'Delete Node',
+            icon: <ExclamationCircleOutlined />,
+            content: `Are you sure you want to delete the "${data.name || 'Postgres'}" node?`,
+            okText: 'Delete',
+            okType: 'danger',
+            cancelText: 'Cancel',
+            centered: true,
+            onOk() {
+                data.onDelete?.(id);
+            },
+        });
     };
 
     const openEditor = () => {
@@ -118,7 +133,7 @@ function PostgresNodeInternal({ id, data = {} }: NodeProps<Node<PostgresData>>) 
                                 icon={<DeleteOutlined />}
                                 onPointerDown={preventNodeDrag}
                                 onMouseDown={preventNodeDrag}
-                                onClick={(e) => { preventNodeDrag(e); data.onDelete?.(id); }}
+                                onClick={(e) => { preventNodeDrag(e); handleDelete(); }}
                             />
                         </Tooltip>
                     )}

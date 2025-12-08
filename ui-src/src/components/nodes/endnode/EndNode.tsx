@@ -2,7 +2,7 @@ import { memo, useState } from 'react';
 import { Handle, Position, useReactFlow, type NodeProps, type Node } from '@xyflow/react';
 import './EndNode.less';
 import { Modal, Input, Button, Tooltip } from 'antd';
-import { EditOutlined, DeleteOutlined } from '@ant-design/icons';
+import { EditOutlined, DeleteOutlined, ExclamationCircleOutlined } from '@ant-design/icons';
 
 interface EndNodeData {
     name?: string;
@@ -14,6 +14,21 @@ interface EndNodeData {
 
 function EndNodeInternal({ id, data = {} }: NodeProps<Node<EndNodeData>>) {
     const { updateNodeData } = useReactFlow();
+
+    const handleDelete = () => {
+        Modal.confirm({
+            title: 'Delete Node',
+            icon: <ExclamationCircleOutlined />,
+            content: `Are you sure you want to delete the "${data.name || 'End'}" node?`,
+            okText: 'Delete',
+            okType: 'danger',
+            cancelText: 'Cancel',
+            centered: true,
+            onOk() {
+                data.onDelete?.(id);
+            },
+        });
+    };
     const [modalOpen, setModalOpen] = useState(false);
     const [draft, setDraft] = useState({ name: '', desc: '' });
 
@@ -66,7 +81,7 @@ function EndNodeInternal({ id, data = {} }: NodeProps<Node<EndNodeData>>) {
                                 icon={<DeleteOutlined />}
                                 onPointerDown={preventNodeDrag}
                                 onMouseDown={preventNodeDrag}
-                                onClick={(e) => { preventNodeDrag(e); data.onDelete?.(id); }}
+                                onClick={(e) => { preventNodeDrag(e); handleDelete(); }}
                             />
                         </Tooltip>
                     )}
