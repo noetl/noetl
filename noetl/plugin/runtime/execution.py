@@ -142,8 +142,21 @@ def execute_task(
 
     # Dispatch to appropriate action handler
     if task_type == "http":
+        # Check if retry.on_success is configured - this needs worker-side execution
+        retry_config = task_config.get('retry', {})
+        if retry_config.get('on_success'):
+            # Use worker-side retry wrapper for pagination/polling
+            from noetl.plugin.runtime.retry import execute_with_retry
+            return execute_with_retry(
+                lambda cfg, ctx, env, a: asyncio.run(execute_http_task(cfg, ctx, env, a or {})),
+                task_config,
+                task_name,
+                wrapped_context,
+                jinja_env,
+                args
+            )
         # HTTP plugin is async - run directly without retry wrapper
-        # Retry is now handled server-side through event-driven control loop
+        # on_error retry is handled server-side through event-driven control loop
         try:
             loop = asyncio.get_running_loop()
             import concurrent.futures

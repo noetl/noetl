@@ -83,7 +83,8 @@ class RetryPolicy:
         
         # Retry condition - Jinja2 expression that evaluates to boolean
         # Expression has access to: result, status_code, error, attempt
-        self.retry_when = retry_config.get('retry_when', None)
+        # Support both 'retry_when' (explicit) and 'when' (shorthand in on_error/on_success blocks)
+        self.retry_when = retry_config.get('retry_when') or retry_config.get('when')
         
         # Stop condition - overrides retry_when if true
         self.stop_when = retry_config.get('stop_when', None)
@@ -113,11 +114,28 @@ class RetryPolicy:
             logger.info(f"Max retry attempts ({self.max_attempts}) reached (next attempt would be {attempt})")
             return False
             
+        # Build error context for template evaluation
+        # Handle HTTP error responses: {status: 'error', data: {status_code: 500, ...}}
+        error_obj = {}
+        if error:
+            error_obj = {'message': str(error), 'type': type(error).__name__}
+        elif result.get('status') == 'error':
+            # HTTP error response - extract status code
+            data = result.get('data', {})
+            if isinstance(data, dict):
+                status_code = data.get('status_code')
+                if status_code:
+                    error_obj = {
+                        'status': status_code,
+                        'message': data.get('data', {}).get('detail') if isinstance(data.get('data'), dict) else str(data.get('data')),
+                        'type': 'HTTPError'
+                    }
+        
         # Build context for expression evaluation
         eval_context = {
             'result': result,
             'attempt': attempt,
-            'error': str(error) if error else None,
+            'error': DotDict(error_obj) if error_obj else None,
             'status_code': result.get('status_code'),
             'success': result.get('success', True),
             'data': result.get('data'),
@@ -140,11 +158,12 @@ class RetryPolicy:
         # Check retry condition
         if self.retry_when:
             try:
+                logger.info(f"Evaluating retry_when: {self.retry_when}, error_obj={error_obj}, eval_context keys={list(eval_context.keys())}")
                 template = self.jinja_env.from_string(self.retry_when)
                 should_retry = template.render(**eval_context)
                 # Convert to boolean
                 retry = str(should_retry).lower() in ('true', '1', 'yes')
-                logger.info(f"Retry condition '{self.retry_when}' evaluated to: {retry}")
+                logger.info(f"Retry condition '{self.retry_when}' evaluated to: {should_retry} -> {retry}")
                 return retry
             except Exception as e:
                 logger.warning(f"Error evaluating retry_when expression: {e}")
@@ -659,11 +678,18 @@ def _execute_iteration_with_error_retry(
         attempt += 1
         try:
             result = executor_func(task_config, context, jinja_env, task_with or {})
-            if not error_policy.should_retry(result, attempt, None):
+            logger.info(f"Error retry attempt {attempt}: result status={result.get('status')}, checking if should retry")
+            should_retry_result = error_policy.should_retry(result, attempt, None)
+            logger.info(f"Error retry attempt {attempt}: should_retry={should_retry_result}")
+            if not should_retry_result:
                 return result
+            logger.info(f"Error retry: retrying after delay (attempt {attempt}/{error_policy.max_attempts})")
             if attempt < error_policy.max_attempts:
-                time.sleep(error_policy.get_delay(attempt))
+                delay = error_policy.get_delay(attempt)
+                logger.info(f"Error retry: sleeping for {delay}s before next attempt")
+                time.sleep(delay)
         except Exception as e:
+            logger.error(f"Error retry attempt {attempt}: exception {e}")
             if attempt >= error_policy.max_attempts or not error_policy.should_retry({'success': False}, attempt, e):
                 raise
             time.sleep(error_policy.get_delay(attempt))

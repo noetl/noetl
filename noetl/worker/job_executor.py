@@ -675,12 +675,14 @@ class JobExecutor:
                     'retry_type': 'on_error' if 'on_error' in retry_config else ('on_success' if 'on_success' in retry_config else None)
                 }
                 
-                # Include full retry_config in data for server to make retry decisions
-                extra['data'] = {
+                # Include full retry_config in result for server to make retry decisions
+                # Wrap the actual result along with retry metadata
+                result_with_retry = {
                     'result': result.get('data') if isinstance(result, dict) else result,
                     'retry_config': retry_config,
                     'attempt_number': retry_config.get('_attempt_number', 1)
                 }
+                result = result_with_retry
         
         # Add execution details to meta
         meta['execution'] = {
@@ -700,7 +702,7 @@ class JobExecutor:
             status="COMPLETED",
             node_type=node_type,
             duration=duration,
-            result=result if not extra.get('data') else None,  # Don't duplicate result if we put it in data
+            result=result,
             parent_event_override=action_started_event_id,
             **extra
         )
