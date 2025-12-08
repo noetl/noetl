@@ -360,9 +360,6 @@ const PlaybookEditor: React.FC = () => {
           visible={showFlowVisualization}
           onClose={() => setShowFlowVisualization(false)}
           playbookId={playbookId || playbook?.catalog_id || "new"}
-          playbookName={playbook?.path || "New Playbook"}
-          content={content}
-          onUpdateContent={(newYaml) => setContent(newYaml)}
         />
 
         {/* Code Editor */}

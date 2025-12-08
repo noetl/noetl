@@ -23,7 +23,7 @@ import {
 import "@xyflow/react/dist/style.css";
 import "../styles/FlowVisualization.css";
 import { apiService } from "../services/api";
-import { nodeTypes } from './nodeTypes'; // simplified source
+import { nodeTypes } from './nodes'; // simplified source
 import { EditableTaskNode, TaskNode } from "./types";
 import { DnDProvider, useDnD } from "./DnDContext";
 import Sidebar from "./Sidebar";
@@ -34,11 +34,7 @@ interface FlowVisualizationProps {
   visible: boolean;
   onClose: () => void;
   playbookId: string;
-  playbookName: string;
-  content?: string;
   readOnly?: boolean;
-  hideTitle?: boolean;
-  onUpdateContent?: (newContent: string) => void;
 }
 
 // Minimal metadata retained locally only for icons/colors (no editors/complex config)
@@ -65,18 +61,13 @@ const FlowVisualizationInner: React.FC<FlowVisualizationProps> = ({
   visible,
   onClose,
   playbookId,
-  playbookName,
-  content,
   readOnly,
-  hideTitle,
-  onUpdateContent,
 }) => {
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [loading, setLoading] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
-  const [activeTask, setActiveTask] = useState<EditableTaskNode | null>(null);
   const [messageApi, contextHolder] = message.useMessage();
   const [tasks, setTasks] = useState<EditableTaskNode[]>([]);
   const [hasChanges, setHasChanges] = useState(false);
@@ -189,18 +180,20 @@ const FlowVisualizationInner: React.FC<FlowVisualizationProps> = ({
     messageApi.success("Component deleted");
   }, [messageApi, readOnly]);
 
-  // Layout constants for centered grid layout
-  const GRID_COLUMNS = 3;
-  const H_SPACING = 360;
-  const V_SPACING = 200;
-  const X_OFFSET = 300; // Increased to center the grid
-  const Y_OFFSET = 96;
+
 
   // Create flow nodes/edges from tasks - must be defined before recreateFlow
   const createFlowFromTasks = useCallback(
     (tasks: EditableTaskNode[]): { nodes: Node[]; edges: Edge[] } => {
       const flowNodes: Node[] = [];
       const flowEdges: Edge[] = [];
+
+      // Layout constants for centered grid layout
+      const GRID_COLUMNS = 3;
+      const H_SPACING = 360;
+      const V_SPACING = 200;
+      const X_OFFSET = 300; // Increased to center the grid
+      const Y_OFFSET = 96;
 
       // Create nodes in centered grid layout
       tasks.forEach((task, index) => {
@@ -269,31 +262,6 @@ const FlowVisualizationInner: React.FC<FlowVisualizationProps> = ({
     setEdges(flowEdges);
   }, [tasks, createFlowFromTasks, setNodes, setEdges]);
 
-  // Handle adding new task
-  const handleAddTask = useCallback(() => {
-    if (readOnly) return;
-    const newTask: EditableTaskNode = {
-      id: `task_${Date.now()}`,
-      name: 'New Component',
-      type: 'workbook',
-      description: '',
-      enabled: true,
-      position: { x: 100 + tasks.length * 50, y: 100 + tasks.length * 50 },
-    };
-
-    setTasks((prev) => [...prev, newTask]);
-    setHasChanges(true);
-    messageApi.success('New component added');
-  }, [tasks, messageApi, readOnly]);
-
-  // Auto-update YAML content when tasks change
-  useEffect(() => {
-    if (tasks.length > 0 && hasChanges && onUpdateContent) {
-      const updatedYaml = updateWorkflowInYaml(content || '', tasks);
-      onUpdateContent(updatedYaml);
-    }
-  }, [tasks, hasChanges]);
-
   // Re-enable automatic flow recreation for major changes
   useEffect(() => {
     if (tasks.length > 0) {
@@ -301,272 +269,25 @@ const FlowVisualizationInner: React.FC<FlowVisualizationProps> = ({
     }
   }, [tasks.length, recreateFlow]); // Only recreate when task count changes
 
-  const sanitizeId = (s: string) => (s || '')
-    .trim()
-    .replace(/[^a-zA-Z0-9_-]/g, '_')
-    .replace(/_{2,}/g, '_')
-    .toLowerCase() || `task_${Date.now()}`;
-
-  const parsePlaybookContent = (raw: string): TaskNode[] => {
-    if (!raw || !raw.trim()) return [];
-    try {
-      const doc: any = yaml.load(raw) || {};
-      const list = Array.isArray(doc?.workflow) ? doc.workflow
-        : Array.isArray(doc?.tasks) ? doc.tasks
-          : [];
-      if (!Array.isArray(list)) return [];
-      const parsed: TaskNode[] = [];
-      list.forEach((entry: any, idx: number) => {
-        if (!entry || typeof entry !== 'object') return;
-        const rawName: string = entry.desc || entry.name || entry.step || `Task ${idx + 1}`;
-        const baseId = sanitizeId(entry.step || entry.name || rawName || `task_${idx + 1}`);
-        let uniqueId = baseId;
-        let c = 1;
-        while (parsed.some(t => t.id === uniqueId)) uniqueId = `${baseId}_${c++}`;
-        // Infer type from step name if no tool/type specified (for start/end)
-        const stepName = (entry.step || '').toLowerCase();
-        const inferredType = (stepName === 'start' || stepName === 'end') ? stepName : 'workbook';
-        const t: TaskNode = {
-          id: uniqueId,
-          name: rawName,
-          type: mapType(entry.tool || entry.type || inferredType),
-          config: undefined,
-        } as any;
-        const cfg: any = {};
-        if (entry.config && typeof entry.config === 'object') Object.assign(cfg, entry.config);
-
-        // Extract desc field explicitly (used by start/end nodes and as fallback for other nodes)
-        if (typeof entry.desc === 'string') cfg.desc = entry.desc;
-
-        // Extract all possible fields from YAML step level
-        // Code/Query fields (with aliases)
-        if (typeof entry.code === 'string') cfg.code = entry.code;
-        if (typeof entry.sql === 'string') cfg.sql = entry.sql;
-        if (typeof entry.query === 'string') cfg.query = entry.query;
-        if (typeof entry.command === 'string') cfg.query = entry.command; // command → query
-        if (typeof entry.statement === 'string') cfg.statement = entry.statement;
-        if (typeof entry.procedure === 'string') cfg.query = entry.procedure; // procedure → query
-        if (entry.commands) cfg.commands = entry.commands; // array of queries (duckdb)
-
-        // Script field (string or object)
-        if (typeof entry.script === 'string') cfg.code = entry.script; // script → code
-        if (entry.script && typeof entry.script === 'object') cfg.script = entry.script; // script object for external sources
-
-        // Authentication fields
-        if (entry.auth) cfg.auth = entry.auth; // auth object or string
-        if (entry.credential) cfg.credential = entry.credential;
-        if (entry.credentials) cfg.credentials = entry.credentials; // multi-credential object
-
-        // HTTP-specific fields
-        if (typeof entry.method === 'string') cfg.method = entry.method;
-        if (typeof entry.endpoint === 'string') cfg.endpoint = entry.endpoint;
-        if (typeof entry.url === 'string') cfg.endpoint = entry.url; // url → endpoint
-        if (entry.headers) cfg.headers = entry.headers;
-        if (typeof entry.timeout === 'number') cfg.timeout = entry.timeout;
-        if (typeof entry.verify_ssl === 'boolean') cfg.verify_ssl = entry.verify_ssl;
-
-        // Data/Payload fields (with aliases)
-        if (entry.params) cfg.params = entry.params;
-        if (entry.args) cfg.args = entry.args;
-        if (entry.payload) cfg.payload = entry.payload;
-        if (entry.body) cfg.payload = entry.body; // body → payload
-        if (entry.data) cfg.payload = entry.data; // data → payload
-
-        // Loop/Iterator fields
-        if (typeof entry.file === 'string') cfg.file = entry.file;
-        if (typeof entry.collection === 'string') cfg.collection = entry.collection;
-        if (typeof entry.element === 'string') cfg.element = entry.element;
-        if (typeof entry.mode === 'string') cfg.mode = entry.mode;
-        if (entry.loop) cfg.loop = entry.loop; // loop object (collection, element, mode, pagination)
-
-        // Playbook/Workbook fields
-        if (typeof entry.path === 'string') cfg.path = entry.path;
-        if (typeof entry.catalog === 'string') cfg.path = entry.catalog; // catalog → path
-        if (typeof entry.entryStep === 'string') cfg.entryStep = entry.entryStep;
-        if (typeof entry.returnStep === 'string') cfg.returnStep = entry.returnStep;
-        if (typeof entry.return_step === 'string') cfg.returnStep = entry.return_step; // return_step → returnStep
-        if (typeof entry.taskName === 'string') cfg.taskName = entry.taskName;
-        if (typeof entry.name === 'string' && entry.tool === 'workbook') cfg.taskName = entry.name; // name → taskName in workbook
-
-        // Python-specific fields
-        if (typeof entry.module === 'string') cfg.module = entry.module;
-        if (typeof entry.callable === 'string') cfg.callable = entry.callable;
-        if (typeof entry.function === 'string') cfg.callable = entry.function; // function → callable
-
-        // Transfer tool fields
-        if (entry.source) cfg.source = entry.source; // source object
-        if (entry.target) cfg.target = entry.target; // target object
-        if (typeof entry.chunk_size === 'number') cfg.chunk_size = entry.chunk_size;
-
-        // Container tool fields
-        if (entry.runtime) cfg.runtime = entry.runtime; // runtime object
-        if (entry.env) cfg.env = entry.env; // environment variables
-
-        // Control flow fields
-        if (entry.next) cfg.next = entry.next; // routing array
-        if (entry.when) cfg.when = entry.when; // conditional expression
-        if (entry.then) cfg.then = entry.then; // conditional steps
-
-        // Result/State fields
-        if (entry.vars) cfg.vars = entry.vars; // variable assignments
-        if (entry.result) cfg.result = entry.result; // result mapping
-        if (entry.task) cfg.task = entry.task; // task identifier
-
-        // Persistence fields
-        if (entry.sink) cfg.sink = entry.sink; // sink object
-        if (entry.save) cfg.save = entry.save; // save configuration (alias for sink)
-
-        // Retry configuration
-        if (entry.retry) cfg.retry = entry.retry; // retry object or boolean
-        if (entry.retry_on) cfg.retry_on = entry.retry_on; // array of conditions
-        if (typeof entry.max_retries === 'number') cfg.max_retries = entry.max_retries;
-
-        if (Object.keys(cfg).length) (t as any).config = cfg;
-        parsed.push(t);
-      });
-      return parsed;
-    } catch (e) {
-      console.warn('YAML parse failed:', e);
-      return [];
-    }
-  };
-
-  const updateWorkflowInYaml = (original: string, taskList: EditableTaskNode[]): string => {
-    let doc: any = {};
-    try { if (original && original.trim()) doc = yaml.load(original) || {}; } catch { doc = {}; }
-    if (!doc || typeof doc !== 'object') doc = {};
-    delete doc.tasks;
-    delete doc.workflow;
-
-    doc.workflow = taskList.filter(t => (t.name || '').trim()).map(t => {
-      const cfg = t.config || {};
-      const { code, sql, ...rest } = cfg;
-      const stepKey = sanitizeId(t.name || t.id);
-      const out: any = { step: stepKey };
-      if (t.name && t.name.trim() && t.name.trim() !== stepKey) out.desc = t.name.trim();
-      if (t.type && t.type !== 'workbook') out.type = t.type;
-      if (Object.keys(rest).length) out.config = rest;
-      if (code) out.code = code;
-      if (sql) out.sql = sql;
-      return out;
-    });
-
-    try {
-      return yaml.dump(doc, { noRefs: true, lineWidth: 120 });
-    } catch (e) {
-      console.error('Failed to dump YAML:', e);
-      return original;
-    }
-  };
-
   const loadPlaybookFlow = async () => {
     setLoading(true);
     try {
-      let contentToUse = content;
 
-      if (!contentToUse && playbookId) {
-        contentToUse = await apiService.getPlaybookContent(playbookId);
-      }
-
-      if (contentToUse && contentToUse.trim()) {
-        const parsedTasks = parsePlaybookContent(contentToUse);
-        if (parsedTasks.length === 0) {
-          messageApi.warning(
-            "No workflow steps found in this playbook. Showing demo flow."
-          );
-
-          let demoTasks: EditableTaskNode[] = [];
-          if (
-            playbookId.toLowerCase().includes("weather") ||
-            playbookName.toLowerCase().includes("weather")
-          ) {
-            demoTasks = [
-              { id: "demo-1", name: "Start Weather Pipeline", type: 'start', enabled: true },
-              { id: "demo-2", name: "Fetch Weather API", type: 'http', enabled: true },
-              { id: "demo-3", name: "Transform Weather Data", type: 'python', enabled: true },
-              { id: "demo-4", name: "Analyze with DuckDB", type: 'duckdb', enabled: true },
-              { id: "demo-5", name: "Store in Postgres", type: 'postgres', enabled: true },
-              { id: "demo-6", name: "Generate Report", type: 'workbook', enabled: true },
-              { id: "demo-7", name: "End Pipeline", type: 'end', enabled: true },
-            ];
-          } else if (
-            playbookId.toLowerCase().includes("database") ||
-            playbookId.toLowerCase().includes("sql")
-          ) {
-            demoTasks = [
-              { id: "demo-1", name: "Start", type: 'start', enabled: true },
-              { id: "demo-2", name: "Load Secrets", type: 'secrets', enabled: true },
-              { id: "demo-3", name: "Query DuckDB", type: 'duckdb', enabled: true },
-              { id: "demo-4", name: "Query Postgres", type: 'postgres', enabled: true },
-              { id: "demo-5", name: "Process Results", type: 'python', enabled: true },
-              { id: "demo-6", name: "Loop Through Records", type: 'loop', enabled: true },
-              { id: "demo-7", name: "Export Data", type: 'workbook', enabled: true },
-              { id: "demo-8", name: "End", type: 'end', enabled: true },
-            ];
-          } else {
-            demoTasks = [
-              { id: "demo-1", name: "Start Workflow", type: 'start', enabled: true },
-              { id: "demo-2", name: "HTTP Request", type: 'http', enabled: true },
-              { id: "demo-3", name: "Python Transform", type: 'python', enabled: true },
-              { id: "demo-4", name: "DuckDB Analytics", type: 'duckdb', enabled: true },
-              { id: "demo-5", name: "Postgres Storage", type: 'postgres', enabled: true },
-              { id: "demo-6", name: "Call Sub-Playbook", type: 'playbooks', enabled: true },
-              { id: "demo-7", name: "Workbook Task", type: 'workbook', enabled: true },
-              { id: "demo-8", name: "Iterator Loop", type: 'loop', enabled: true },
-              { id: "demo-9", name: "End Workflow", type: 'end', enabled: true },
-            ];
-          }
-
-          setTasks(demoTasks);
-          const { nodes: flowNodes, edges: flowEdges } =
-            createFlowFromTasks(demoTasks);
-          setNodes(flowNodes);
-          setEdges(flowEdges);
-        } else {
-          const editableTasks: EditableTaskNode[] = parsedTasks.map((task) => ({
-            ...task,
-            type: mapType(task.type),
-            enabled: true,
-          }));
-          setTasks(editableTasks);
-          const { nodes: flowNodes, edges: flowEdges } =
-            createFlowFromTasks(editableTasks);
-          setNodes(flowNodes);
-          setEdges(flowEdges);
-          messageApi.success(
-            `Successfully parsed ${parsedTasks.length} workflow steps from ${playbookName}!`
-          );
-        }
-      } else {
-        messageApi.warning(`No content found for playbook: ${playbookName}`);
-        const demoTasks: EditableTaskNode[] = [
-          { id: "empty-1", name: "Start", type: 'start', enabled: true },
-          { id: "empty-2", name: "HTTP Example", type: 'http', enabled: true },
-          { id: "empty-3", name: "Python Example", type: 'python', enabled: true },
-          { id: "empty-4", name: "DuckDB Example", type: 'duckdb', enabled: true },
-          { id: "empty-5", name: "Postgres Example", type: 'postgres', enabled: true },
-          { id: "empty-6", name: "Playbooks Example", type: 'playbooks', enabled: true },
-          { id: "empty-7", name: "Workbook Example", type: 'workbook', enabled: true },
-          { id: "empty-8", name: "Loop Example", type: 'loop', enabled: true },
-          { id: "empty-9", name: "End", type: 'end', enabled: true },
-        ];
-        setTasks(demoTasks);
-        const { nodes: flowNodes, edges: flowEdges } =
-          createFlowFromTasks(demoTasks);
-        setNodes(flowNodes);
-        setEdges(flowEdges);
-      }
-    } catch (error) {
-      messageApi.error(
-        `Failed to load playbook flow for ${playbookName}.`
-      );
-      const errorTasks: EditableTaskNode[] = [
-        { id: "error-1", name: "Failed to Load Playbook", type: 'start', enabled: true },
-        { id: "error-2", name: "Check API Connection", type: 'python', enabled: true },
+      let demoTasks: EditableTaskNode[] = [
+        { id: "demo-1", name: "Start Workflow", type: 'start', enabled: true },
+        { id: "demo-2", name: "HTTP Request", type: 'http', enabled: true },
+        { id: "demo-3", name: "Python Transform", type: 'python', enabled: true },
+        { id: "demo-4", name: "DuckDB Analytics", type: 'duckdb', enabled: true },
+        { id: "demo-5", name: "Postgres Storage", type: 'postgres', enabled: true },
+        { id: "demo-6", name: "Call Sub-Playbook", type: 'playbooks', enabled: true },
+        { id: "demo-7", name: "Workbook Task", type: 'workbook', enabled: true },
+        { id: "demo-8", name: "Iterator Loop", type: 'loop', enabled: true },
+        { id: "demo-9", name: "End Workflow", type: 'end', enabled: true },
       ];
-      setTasks(errorTasks);
+
+      setTasks(demoTasks);
       const { nodes: flowNodes, edges: flowEdges } =
-        createFlowFromTasks(errorTasks);
+        createFlowFromTasks(demoTasks);
       setNodes(flowNodes);
       setEdges(flowEdges);
     } finally {
@@ -575,10 +296,10 @@ const FlowVisualizationInner: React.FC<FlowVisualizationProps> = ({
   };
 
   useEffect(() => {
-    if (visible && (playbookId || content)) {
+    if (visible && (playbookId)) {
       loadPlaybookFlow();
     }
-  }, [visible, playbookId, content]);
+  }, [visible, playbookId]);
 
   const handleFullscreen = () => setFullscreen((f) => !f);
 
@@ -669,34 +390,6 @@ const FlowVisualizationInner: React.FC<FlowVisualizationProps> = ({
   if (!visible) return null;
   return <>
     {flowInner}
-    <Modal
-      open={!!activeTask}
-      onCancel={() => setActiveTask(null)}
-      footer={null}
-      title={activeTask ? `Node: ${activeTask.name}` : ''}
-      width={420}
-    >
-      {activeTask && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <label style={{ fontSize: 12, fontWeight: 500 }}>Type</label>
-            <Select
-              disabled={!!readOnly}
-              value={activeTask.type}
-              onChange={(val) => handleEditTask({ ...activeTask, type: val })}
-              options={Object.keys(nodeMeta).map(t => ({ value: t, label: `${nodeMeta[t]?.icon || ''} ${nodeMeta[t]?.label || t}` }))}
-              style={{ width: '100%' }}
-            />
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8 }}>
-            <Button onClick={() => setActiveTask(null)}>Close</Button>
-            {!readOnly && (
-              <Button danger onClick={() => { if (activeTask) { handleDeleteTask(activeTask.id); setActiveTask(null); } }}>Delete</Button>
-            )}
-          </div>
-        </div>
-      )}
-    </Modal>
   </>;
 };
 

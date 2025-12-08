@@ -678,13 +678,11 @@ const Execution: React.FC = () => {
           <FlowVisualization
             visible={showWorkflowVisualization}
             readOnly
-            hideTitle
             onClose={() => {
               setShowWorkflowVisualization(false);
               navigate("/execution");
             }}
             playbookId={selectedPlaybookId}
-            playbookName={selectedPlaybookName}
           />
         </Space>
       ) : (
