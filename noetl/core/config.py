@@ -295,7 +295,7 @@ class Settings(BaseModel):
         Path to built UI assets inside the package (noetl/ui/build).
         Derived from the package location to avoid hard-coded paths.
         """
-        return (Path(__file__).resolve().parent / "ui" / "build")
+        return (Path(__file__).resolve().parent / "ui")
 
     @property
     def favicon_file(self) -> Path:
