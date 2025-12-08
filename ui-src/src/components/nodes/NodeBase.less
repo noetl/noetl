@@ -24,7 +24,7 @@
         top: 0;
         bottom: 0;
         width: 3px;
-        background: var(--node-color, #9ca3af);
+        background: var(--node-color, #2563eb);
         opacity: 0;
         transition: opacity 0.25s ease;
     }
@@ -37,17 +37,17 @@
         left: 0;
         right: 0;
         bottom: 0;
-        background: radial-gradient(circle at top left, var(--node-color-light, rgba(156, 163, 175, 0.08)) 0%, transparent 70%);
+        background: radial-gradient(circle at top left, var(--node-color-light, rgba(37, 99, 235, 0.08)) 0%, transparent 70%);
         opacity: 0;
         transition: opacity 0.25s ease;
         pointer-events: none;
     }
 
     &:hover {
-        border-color: var(--node-color, #d1d5db);
+        border-color: var(--node-color, #2563eb);
         box-shadow:
             0 4px 12px rgba(0, 0, 0, 0.08),
-            0 0 0 1px var(--node-color-light, rgba(156, 163, 175, 0.1));
+            0 0 0 1px var(--node-color-light, rgba(37, 99, 235, 0.08));
         transform: translateY(-2px);
 
         &::before {

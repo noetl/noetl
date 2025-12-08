@@ -20,56 +20,56 @@ const nodeMeta: Record<string, NodeMeta> = {
     },
     end: {
         icon: '🏁',
-        color: '#dc2626',
+        color: '#2563eb',
         label: 'End',
         description: 'Workflow completion',
         category: 'flow'
     },
     loop: {
         icon: '🔁',
-        color: '#a16207',
+        color: '#2563eb',
         label: 'Loop',
         description: 'Iterate over collections',
         category: 'logic'
     },
     http: {
         icon: '🌐',
-        color: '#9333ea',
+        color: '#2563eb',
         label: 'HTTP',
         description: 'API requests',
         category: 'actions'
     },
     python: {
         icon: '🐍',
-        color: '#15803d',
+        color: '#2563eb',
         label: 'Python',
         description: 'Execute Python code',
         category: 'actions'
     },
     postgres: {
         icon: '🐘',
-        color: '#1d4ed8',
+        color: '#2563eb',
         label: 'Postgres',
         description: 'Database queries',
         category: 'data'
     },
     duckdb: {
         icon: '🦆',
-        color: '#0d9488',
+        color: '#2563eb',
         label: 'DuckDB',
         description: 'Analytics queries',
         category: 'data'
     },
     workbook: {
         icon: '📊',
-        color: '#ff6b35',
+        color: '#2563eb',
         label: 'Workbook',
         description: 'Reusable task',
         category: 'logic'
     },
     playbooks: {
         icon: '📘',
-        color: '#4b5563',
+        color: '#2563eb',
         label: 'Playbook',
         description: 'Nested playbook',
         category: 'logic'
