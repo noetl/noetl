@@ -198,10 +198,11 @@ class APIService {
     await apiClient.post(`/executions/${id}/stop`);
   }
 
-  async getPlaybookContent(id: string): Promise<string | undefined> {
+  async getPlaybookContent(path: string): Promise<string | undefined> {
     try {
-      const response = await apiClient.get(`/catalog/playbook/content`, {
-        params: { playbook_id: id },
+      const response = await apiClient.post(`/catalog/resource`, {
+        path: path,
+        version: "latest"
       });
       return response.data.content as string;
     } catch (e) {
@@ -209,9 +210,10 @@ class APIService {
     }
   }
 
-  async savePlaybookContent(id: string, content: string): Promise<void> {
-    await apiClient.put(`/catalog/playbook/content`, { content }, {
-      params: { playbook_id: id },
+  async savePlaybookContent(path: string, content: string): Promise<void> {
+    await apiClient.post("/catalog/register", {
+      content,
+      resource_type: "Playbook"
     });
   }
 
