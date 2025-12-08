@@ -302,10 +302,10 @@ const Catalog: React.FC = () => {
     }
   };
 
-  const handleViewFlow = (playbookId: string, playbookName: string) => {
+  const handleViewFlow = (playbookPath: string, playbookName: string) => {
     // Navigate to execution page with playbook visualization (query + state)
-    navigate(`/execution?playbook=${encodeURIComponent(playbookId)}&view=workflow`, {
-      state: { playbookId, view: 'workflow' }
+    navigate(`/execution?playbook=${encodeURIComponent(playbookPath)}&view=workflow`, {
+      state: { playbookId: playbookPath, view: 'workflow' }
     });
   };
 
@@ -411,7 +411,7 @@ const Catalog: React.FC = () => {
                     <Button
                       type="text"
                       icon={<EyeOutlined />}
-                      onClick={() => handleViewFlow(playbook.catalog_id, playbook.path)}
+                      onClick={() => handleViewFlow(playbook.path, playbook.path)}
                     >
                       View
                     </Button>
