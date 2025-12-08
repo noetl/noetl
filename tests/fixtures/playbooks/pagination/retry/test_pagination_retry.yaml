@@ -2,7 +2,7 @@ apiVersion: noetl.io/v1
 kind: Playbook
 metadata:
   name: test_pagination_retry
-  path: tests/pagination/retry
+  path: tests/pagination/retry/retry
   description: Pagination with retry for failed requests
 
 workload:

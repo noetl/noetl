@@ -2,7 +2,7 @@ apiVersion: noetl.io/v1
 kind: Playbook
 metadata:
   name: test_pagination_max_iterations
-  path: tests/pagination/max_iterations
+  path: tests/pagination/max_iterations/max_iterations
   description: Test max_iterations safety limit
 
 workload:

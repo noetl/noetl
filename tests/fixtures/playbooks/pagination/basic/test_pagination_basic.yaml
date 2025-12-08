@@ -2,7 +2,7 @@ apiVersion: noetl.io/v1
 kind: Playbook
 metadata:
   name: test_pagination_basic
-  path: tests/pagination/basic
+  path: tests/pagination/basic/basic
   description: Basic page-number pagination test
 
 workload:

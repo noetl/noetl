@@ -175,7 +175,7 @@ workflow:
   # === PAGINATION TESTS ===
   - step: tests/pagination/basic
     tool: playbook
-    path: tests/pagination/basic
+    path: tests/pagination/basic/basic
     retry:
       max_attempts: 2
       retry_on: ["timeout"]
@@ -183,7 +183,7 @@ workflow:
   
   - step: tests/pagination/cursor
     tool: playbook
-    path: tests/pagination/cursor
+    path: tests/pagination/cursor/cursor
     retry:
       max_attempts: 2
       retry_on: ["timeout"]
@@ -191,7 +191,7 @@ workflow:
   
   - step: tests/pagination/offset
     tool: playbook
-    path: tests/pagination/offset
+    path: tests/pagination/offset/offset
     retry:
       max_attempts: 2
       retry_on: ["timeout"]
@@ -199,7 +199,7 @@ workflow:
   
   - step: tests/pagination/max_iterations
     tool: playbook
-    path: tests/pagination/max_iterations
+    path: tests/pagination/max_iterations/max_iterations
     retry:
       max_attempts: 2
       retry_on: ["timeout"]
@@ -207,7 +207,7 @@ workflow:
   
   - step: tests/pagination/retry
     tool: playbook
-    path: tests/pagination/retry
+    path: tests/pagination/retry/retry
     retry:
       max_attempts: 2
       retry_on: ["timeout"]
@@ -215,7 +215,7 @@ workflow:
   
   - step: tests/pagination/loop_with_pagination
     tool: playbook
-    path: tests/pagination/loop_with_pagination
+    path: tests/pagination/loop_with_pagination/loop_with_pagination
     retry:
       max_attempts: 2
       retry_on: ["timeout"]
