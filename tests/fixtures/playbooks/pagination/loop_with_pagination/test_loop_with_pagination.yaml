@@ -11,9 +11,12 @@ workload:
     - name: assessments
       path: /api/v1/assessments
       page_size: 10
-    - name: users
-      path: /api/v1/users
+    - name: assessments2
+      path: /api/v1/assessments
       page_size: 15
+    - name: assessments3
+      path: /api/v1/assessments
+      page_size: 20
 
 workflow:
   - step: start
