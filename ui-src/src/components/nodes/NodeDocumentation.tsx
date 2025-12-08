@@ -7,7 +7,7 @@ const { TabPane } = Tabs;
 interface NodeDocumentationProps {
     open: boolean;
     onClose: () => void;
-    nodeType: 'http' | 'python' | 'postgres' | 'duckdb' | 'playbooks' | 'workbook' | 'loop';
+    nodeType: 'http' | 'python' | 'postgres' | 'duckdb' | 'playbooks' | 'workbook';
 }
 
 const HTTP_DOCS = {
@@ -141,29 +141,6 @@ workbook:
         return {"transformed": data}`
 };
 
-const LOOP_DOCS = {
-    overview: `The Loop (Iterator) node executes a set of steps for each item in a collection. Supports both sequential and asynchronous execution modes.`,
-    parameters: [
-        { name: 'Collection', desc: 'Collection to iterate over. Supports Jinja2 templating: {{ items }}' },
-        { name: 'Element', desc: 'Variable name for the current item (configured in playbook YAML)' },
-        { name: 'Mode', desc: 'Execution mode: sequential or async (configured in playbook YAML)' }
-    ],
-    example: `# Example Loop Configuration
-Collection: {{ workload.users }}
-
-# In the playbook YAML, define the iterator behavior:
-- step: process_users
-  type: iterator
-  collection: "{{ workload.users }}"
-  element: user
-  mode: async
-  steps:
-    - step: score_user
-      type: python
-      code: |
-        def main(data):
-          return {"score": data["user"]["rating"] * 10}`
-};
 
 const DOCS_MAP = {
     http: HTTP_DOCS,
@@ -172,7 +149,6 @@ const DOCS_MAP = {
     duckdb: DUCKDB_DOCS,
     playbooks: PLAYBOOKS_DOCS,
     workbook: WORKBOOK_DOCS,
-    loop: LOOP_DOCS
 };
 
 export function NodeDocumentation({ open, onClose, nodeType }: NodeDocumentationProps) {

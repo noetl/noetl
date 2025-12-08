@@ -47,7 +47,6 @@ const nodeMeta: Record<string, { icon: string; color: string; label: string }> =
   postgres: { icon: '🐘', color: '#1d4ed8', label: 'postgres' },
   secrets: { icon: '🔐', color: '#6d28d9', label: 'secrets' },
   playbooks: { icon: '📘', color: '#4b5563', label: 'playbooks' },
-  loop: { icon: '🔁', color: '#a16207', label: 'loop' },
   end: { icon: '🏁', color: '#dc2626', label: 'end' },
   log: { icon: '📝', color: '#64748b', label: 'log' },
 };
@@ -138,7 +137,6 @@ const FlowVisualizationInner: React.FC<FlowVisualizationProps> = ({
       case 'postgres':
       case 'secrets':
       case 'playbooks':
-      case 'loop':
       case 'start':
       case 'end':
       case 'log':
@@ -281,7 +279,6 @@ const FlowVisualizationInner: React.FC<FlowVisualizationProps> = ({
         { id: "demo-5", name: "Postgres Storage", type: 'postgres', enabled: true },
         { id: "demo-6", name: "Call Sub-Playbook", type: 'playbooks', enabled: true },
         { id: "demo-7", name: "Workbook Task", type: 'workbook', enabled: true },
-        { id: "demo-8", name: "Iterator Loop", type: 'loop', enabled: true },
         { id: "demo-9", name: "End Workflow", type: 'end', enabled: true },
       ];
 

@@ -25,13 +25,6 @@ const nodeMeta: Record<string, NodeMeta> = {
         description: 'Workflow completion',
         category: 'flow'
     },
-    loop: {
-        icon: '🔁',
-        color: '#2563eb',
-        label: 'Loop',
-        description: 'Iterate over collections',
-        category: 'logic'
-    },
     http: {
         icon: '🌐',
         color: '#2563eb',

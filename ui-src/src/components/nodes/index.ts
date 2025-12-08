@@ -5,7 +5,6 @@ import { PythonNode } from './pythonnode/PythonNode';
 import { DuckDbNode } from './duckdbnode/DuckDbNode';
 import { PostgresNode } from './postgresnode/PostgresNode';
 import { PlaybooksNode } from './playbooksnode/PlaybooksNode';
-import { LoopNode } from './loopnode';
 import { WorkbookNode } from './workbooknode/WorkbookNode';
 
 export const nodeTypes = {
@@ -16,6 +15,5 @@ export const nodeTypes = {
   duckdb: DuckDbNode,
   postgres: PostgresNode,
   playbooks: PlaybooksNode,
-  loop: LoopNode,
   workbook: WorkbookNode,
 };
