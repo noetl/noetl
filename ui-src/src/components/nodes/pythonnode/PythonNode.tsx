@@ -61,7 +61,7 @@ function PythonNodeInternal({ id, data = {} }: NodeProps<Node<PythonData>>) {
             <Handle type="target" position={Position.Left} />
             <Handle type="source" position={Position.Right} />
             <div className="PythonNode__header">
-                <span className="PythonNode__header-text">🐍 {data.name || 'python'}</span>
+                <span className="PythonNode__header-text">🐍 python</span>
                 <div className="PythonNode__header-buttons">
                     <Tooltip title="Edit Python code">
                         <Button
@@ -91,7 +91,7 @@ function PythonNodeInternal({ id, data = {} }: NodeProps<Node<PythonData>>) {
                 </div>
             </div>
             <div className="PythonNode__summary">
-                {summaryCode || (data.task?.name ? <span className="PythonNode__description">{data.task.name}</span> : <span className="PythonNode__empty-code">(no code)</span>)}
+                {data.task?.name || summaryCode || <span className="PythonNode__empty-code">(no description)</span>}
             </div>
 
             <Modal

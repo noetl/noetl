@@ -57,7 +57,7 @@ function DuckDbNodeInternal({ id, data = {} }: NodeProps<Node<DuckDbData>>) {
             <Handle type="target" position={Position.Left} />
             <Handle type="source" position={Position.Right} />
             <div className="DuckDbNode__header">
-                <span className="DuckDbNode__header-text">🦆 {data.name || 'duckdb'}</span>
+                <span className="DuckDbNode__header-text">🦆 duckdb</span>
                 <div className="DuckDbNode__header-buttons">
                     <Tooltip title="Edit DuckDB query">
                         <Button
@@ -87,7 +87,7 @@ function DuckDbNodeInternal({ id, data = {} }: NodeProps<Node<DuckDbData>>) {
                 </div>
             </div>
             <div className="DuckDbNode__summary">
-                {summaryQuery || (data.task?.name ? <span className="DuckDbNode__description">{data.task.name}</span> : <span className="DuckDbNode__empty-query">(no query)</span>)}
+                {data.task?.name || summaryQuery || <span className="DuckDbNode__empty-query">(no description)</span>}
             </div>
 
             <Modal

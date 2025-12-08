@@ -9,6 +9,7 @@ import { NodeDocumentation } from '../NodeDocumentation';
 interface PostgresData {
     name?: string;
     query?: string;
+    command?: string;
     auth?: string;
     params?: Record<string, any>;
     task?: { name?: string; description?: string };
@@ -37,7 +38,7 @@ function PostgresNodeInternal({ id, data = {} }: NodeProps<Node<PostgresData>>) 
 
     const openEditor = () => {
         setDraft({
-            query: data.query || '',
+            query: data.query || data.command || '',
             auth: data.auth || '',
             params: data.params || {}
         });
@@ -81,7 +82,7 @@ function PostgresNodeInternal({ id, data = {} }: NodeProps<Node<PostgresData>>) 
     };
 
     const summaryQuery = (() => {
-        const q = (data.query || '').trim();
+        const q = (data.query || data.command || '').trim();
         return !q ? '' : q.length < 30 ? q : q.slice(0, 27) + '…';
     })();
 
@@ -96,7 +97,7 @@ function PostgresNodeInternal({ id, data = {} }: NodeProps<Node<PostgresData>>) 
             <Handle type="target" position={Position.Left} />
             <Handle type="source" position={Position.Right} />
             <div className="PostgresNode__header">
-                <span className="PostgresNode__header-text">🐘 {data.name || 'postgres'}</span>
+                <span className="PostgresNode__header-text">🐘 postgres</span>
                 <div className="PostgresNode__header-buttons">
                     <Tooltip title="Edit Postgres query">
                         <Button
@@ -126,7 +127,7 @@ function PostgresNodeInternal({ id, data = {} }: NodeProps<Node<PostgresData>>) 
                 </div>
             </div>
             <div className="PostgresNode__summary">
-                {summaryQuery || (data.task?.name ? <span className="PostgresNode__description">{data.task.name}</span> : <span className="PostgresNode__empty-query">(no query)</span>)}
+                {data.task?.name || summaryQuery || <span className="PostgresNode__empty-query">(no description)</span>}
             </div>
 
             <Modal

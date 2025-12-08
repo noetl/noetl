@@ -49,7 +49,7 @@ function WorkbookNodeInternal({ id, data = {} }: NodeProps<Node<WorkbookData>>) 
             <Handle type="target" position={Position.Left} />
             <Handle type="source" position={Position.Right} />
             <div className="WorkbookNode__header">
-                <span className="WorkbookNode__header-text">📊 {data.name || 'workbook'}</span>
+                <span className="WorkbookNode__header-text">📊 workbook</span>
                 <div className="WorkbookNode__header-buttons">
                     <Tooltip title="Edit Workbook task">
                         <Button
@@ -79,7 +79,7 @@ function WorkbookNodeInternal({ id, data = {} }: NodeProps<Node<WorkbookData>>) 
                 </div>
             </div>
             <div className="WorkbookNode__summary">
-                {summaryName || (data.task?.name ? <span className="WorkbookNode__description">{data.task.name}</span> : <span className="WorkbookNode__empty-name">(no task name)</span>)}
+                {data.task?.name || summaryName || <span className="WorkbookNode__empty-task">(no description)</span>}
             </div>
 
             <Modal

@@ -216,6 +216,8 @@ const FlowVisualizationInner: React.FC<FlowVisualizationProps> = ({
           type: task.type, // per-type component
           position: { x, y },
           data: {
+            ...task.config, // Spread config fields into data
+            name: task.name,
             task,
             onEdit: handleEditTask,
             onDelete: handleDeleteTask,
@@ -332,8 +334,93 @@ const FlowVisualizationInner: React.FC<FlowVisualizationProps> = ({
         } as any;
         const cfg: any = {};
         if (entry.config && typeof entry.config === 'object') Object.assign(cfg, entry.config);
+
+        // Extract desc field explicitly (used by start/end nodes and as fallback for other nodes)
+        if (typeof entry.desc === 'string') cfg.desc = entry.desc;
+
+        // Extract all possible fields from YAML step level
+        // Code/Query fields (with aliases)
         if (typeof entry.code === 'string') cfg.code = entry.code;
         if (typeof entry.sql === 'string') cfg.sql = entry.sql;
+        if (typeof entry.query === 'string') cfg.query = entry.query;
+        if (typeof entry.command === 'string') cfg.query = entry.command; // command → query
+        if (typeof entry.statement === 'string') cfg.statement = entry.statement;
+        if (typeof entry.procedure === 'string') cfg.query = entry.procedure; // procedure → query
+        if (entry.commands) cfg.commands = entry.commands; // array of queries (duckdb)
+
+        // Script field (string or object)
+        if (typeof entry.script === 'string') cfg.code = entry.script; // script → code
+        if (entry.script && typeof entry.script === 'object') cfg.script = entry.script; // script object for external sources
+
+        // Authentication fields
+        if (entry.auth) cfg.auth = entry.auth; // auth object or string
+        if (entry.credential) cfg.credential = entry.credential;
+        if (entry.credentials) cfg.credentials = entry.credentials; // multi-credential object
+
+        // HTTP-specific fields
+        if (typeof entry.method === 'string') cfg.method = entry.method;
+        if (typeof entry.endpoint === 'string') cfg.endpoint = entry.endpoint;
+        if (typeof entry.url === 'string') cfg.endpoint = entry.url; // url → endpoint
+        if (entry.headers) cfg.headers = entry.headers;
+        if (typeof entry.timeout === 'number') cfg.timeout = entry.timeout;
+        if (typeof entry.verify_ssl === 'boolean') cfg.verify_ssl = entry.verify_ssl;
+
+        // Data/Payload fields (with aliases)
+        if (entry.params) cfg.params = entry.params;
+        if (entry.args) cfg.args = entry.args;
+        if (entry.payload) cfg.payload = entry.payload;
+        if (entry.body) cfg.payload = entry.body; // body → payload
+        if (entry.data) cfg.payload = entry.data; // data → payload
+
+        // Loop/Iterator fields
+        if (typeof entry.file === 'string') cfg.file = entry.file;
+        if (typeof entry.collection === 'string') cfg.collection = entry.collection;
+        if (typeof entry.element === 'string') cfg.element = entry.element;
+        if (typeof entry.mode === 'string') cfg.mode = entry.mode;
+        if (entry.loop) cfg.loop = entry.loop; // loop object (collection, element, mode, pagination)
+
+        // Playbook/Workbook fields
+        if (typeof entry.path === 'string') cfg.path = entry.path;
+        if (typeof entry.catalog === 'string') cfg.path = entry.catalog; // catalog → path
+        if (typeof entry.entryStep === 'string') cfg.entryStep = entry.entryStep;
+        if (typeof entry.returnStep === 'string') cfg.returnStep = entry.returnStep;
+        if (typeof entry.return_step === 'string') cfg.returnStep = entry.return_step; // return_step → returnStep
+        if (typeof entry.taskName === 'string') cfg.taskName = entry.taskName;
+        if (typeof entry.name === 'string' && entry.tool === 'workbook') cfg.taskName = entry.name; // name → taskName in workbook
+
+        // Python-specific fields
+        if (typeof entry.module === 'string') cfg.module = entry.module;
+        if (typeof entry.callable === 'string') cfg.callable = entry.callable;
+        if (typeof entry.function === 'string') cfg.callable = entry.function; // function → callable
+
+        // Transfer tool fields
+        if (entry.source) cfg.source = entry.source; // source object
+        if (entry.target) cfg.target = entry.target; // target object
+        if (typeof entry.chunk_size === 'number') cfg.chunk_size = entry.chunk_size;
+
+        // Container tool fields
+        if (entry.runtime) cfg.runtime = entry.runtime; // runtime object
+        if (entry.env) cfg.env = entry.env; // environment variables
+
+        // Control flow fields
+        if (entry.next) cfg.next = entry.next; // routing array
+        if (entry.when) cfg.when = entry.when; // conditional expression
+        if (entry.then) cfg.then = entry.then; // conditional steps
+
+        // Result/State fields
+        if (entry.vars) cfg.vars = entry.vars; // variable assignments
+        if (entry.result) cfg.result = entry.result; // result mapping
+        if (entry.task) cfg.task = entry.task; // task identifier
+
+        // Persistence fields
+        if (entry.sink) cfg.sink = entry.sink; // sink object
+        if (entry.save) cfg.save = entry.save; // save configuration (alias for sink)
+
+        // Retry configuration
+        if (entry.retry) cfg.retry = entry.retry; // retry object or boolean
+        if (entry.retry_on) cfg.retry_on = entry.retry_on; // array of conditions
+        if (typeof entry.max_retries === 'number') cfg.max_retries = entry.max_retries;
+
         if (Object.keys(cfg).length) (t as any).config = cfg;
         parsed.push(t);
       });

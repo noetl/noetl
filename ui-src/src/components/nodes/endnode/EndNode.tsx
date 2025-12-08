@@ -6,6 +6,7 @@ import { EditOutlined, DeleteOutlined } from '@ant-design/icons';
 
 interface EndNodeData {
     name?: string;
+    desc?: string;
     onDelete?: (taskId: string) => void;
     readOnly?: boolean;
     [key: string]: unknown;
@@ -14,18 +15,20 @@ interface EndNodeData {
 function EndNodeInternal({ id, data = {} }: NodeProps<Node<EndNodeData>>) {
     const { updateNodeData } = useReactFlow();
     const [modalOpen, setModalOpen] = useState(false);
-    const [draft, setDraft] = useState({ name: '' });
+    const [draft, setDraft] = useState({ name: '', desc: '' });
 
     const openEditor = () => {
         setDraft({
-            name: data.name || 'end'
+            name: data.name || 'end',
+            desc: (data.desc as string) || ''
         });
         setModalOpen(true);
     };
 
     const commit = () => {
         updateNodeData(id, {
-            name: draft.name
+            name: draft.name,
+            desc: draft.desc
         });
         setModalOpen(false);
     };
@@ -40,7 +43,7 @@ function EndNodeInternal({ id, data = {} }: NodeProps<Node<EndNodeData>>) {
         <div className="EndNode" onDoubleClick={openEditor}>
             <Handle type="target" position={Position.Left} />
             <div className="EndNode__header">
-                <span className="EndNode__header-text">🏁 {data.name || 'end'}</span>
+                <span className="EndNode__header-text">🏁 end</span>
                 <div className="EndNode__header-buttons">
                     <Tooltip title="Edit End node">
                         <Button
@@ -69,6 +72,11 @@ function EndNodeInternal({ id, data = {} }: NodeProps<Node<EndNodeData>>) {
                     )}
                 </div>
             </div>
+            {data.desc && (
+                <div className="EndNode__summary">
+                    {(data.desc as string).substring(0, 60)}{(data.desc as string).length > 60 ? '...' : ''}
+                </div>
+            )}
 
             <Modal
                 open={modalOpen}
@@ -87,6 +95,13 @@ function EndNodeInternal({ id, data = {} }: NodeProps<Node<EndNodeData>>) {
                         value={draft.name}
                         placeholder='end'
                         onChange={e => setDraft(d => ({ ...d, name: e.target.value }))}
+                    />
+                    <div className="EndNodeModal__section-title" style={{ marginTop: '16px' }}>Description</div>
+                    <Input.TextArea
+                        value={draft.desc}
+                        placeholder='Workflow end point'
+                        rows={3}
+                        onChange={e => setDraft(d => ({ ...d, desc: e.target.value }))}
                     />
                 </div>
             </Modal>

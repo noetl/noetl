@@ -6,6 +6,7 @@ import { EditOutlined, DeleteOutlined } from '@ant-design/icons';
 
 interface StartNodeData {
     name?: string;
+    desc?: string;
     onDelete?: (taskId: string) => void;
     readOnly?: boolean;
     [key: string]: unknown;
@@ -14,18 +15,20 @@ interface StartNodeData {
 function StartNodeInternal({ id, data = {} }: NodeProps<Node<StartNodeData>>) {
     const { updateNodeData } = useReactFlow();
     const [modalOpen, setModalOpen] = useState(false);
-    const [draft, setDraft] = useState({ name: '' });
+    const [draft, setDraft] = useState({ name: '', desc: '' });
 
     const openEditor = () => {
         setDraft({
-            name: data.name || 'start'
+            name: data.name || 'start',
+            desc: (data.desc as string) || ''
         });
         setModalOpen(true);
     };
 
     const commit = () => {
         updateNodeData(id, {
-            name: draft.name
+            name: draft.name,
+            desc: draft.desc
         });
         setModalOpen(false);
     };
@@ -40,7 +43,7 @@ function StartNodeInternal({ id, data = {} }: NodeProps<Node<StartNodeData>>) {
         <div className="StartNode" onDoubleClick={openEditor}>
             <Handle type="source" position={Position.Right} />
             <div className="StartNode__header">
-                <span className="StartNode__header-text">🚀 {data.name || 'start'}</span>
+                <span className="StartNode__header-text">🚀 start</span>
                 <div className="StartNode__header-buttons">
                     <Tooltip title="Edit Start node">
                         <Button
@@ -69,6 +72,11 @@ function StartNodeInternal({ id, data = {} }: NodeProps<Node<StartNodeData>>) {
                     )}
                 </div>
             </div>
+            {data.desc && (
+                <div className="StartNode__summary">
+                    {(data.desc as string).substring(0, 60)}{(data.desc as string).length > 60 ? '...' : ''}
+                </div>
+            )}
 
             <Modal
                 open={modalOpen}
@@ -87,6 +95,13 @@ function StartNodeInternal({ id, data = {} }: NodeProps<Node<StartNodeData>>) {
                         value={draft.name}
                         placeholder='start'
                         onChange={e => setDraft(d => ({ ...d, name: e.target.value }))}
+                    />
+                    <div className="StartNodeModal__section-title" style={{ marginTop: '16px' }}>Description</div>
+                    <Input.TextArea
+                        value={draft.desc}
+                        placeholder='Workflow start point'
+                        rows={3}
+                        onChange={e => setDraft(d => ({ ...d, desc: e.target.value }))}
                     />
                 </div>
             </Modal>

@@ -62,7 +62,7 @@ function PlaybooksNodeInternal({ id, data = {} }: NodeProps<Node<PlaybooksData>>
             <Handle type="target" position={Position.Left} />
             <Handle type="source" position={Position.Right} />
             <div className="PlaybooksNode__header">
-                <span className="PlaybooksNode__header-text">📘 {data.name || 'playbooks'}</span>
+                <span className="PlaybooksNode__header-text">📘 playbook</span>
                 <div className="PlaybooksNode__header-buttons">
                     <Tooltip title="Edit Playbook path">
                         <Button
@@ -92,7 +92,7 @@ function PlaybooksNodeInternal({ id, data = {} }: NodeProps<Node<PlaybooksData>>
                 </div>
             </div>
             <div className="PlaybooksNode__summary">
-                {summaryPath || (data.task?.name ? <span className="PlaybooksNode__description">{data.task.name}</span> : <span className="PlaybooksNode__empty-path">(no path)</span>)}
+                {data.task?.name || summaryPath || <span className="PlaybooksNode__empty-path">(no description)</span>}
             </div>
 
             <Modal

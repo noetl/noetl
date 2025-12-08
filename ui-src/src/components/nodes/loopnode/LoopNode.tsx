@@ -51,7 +51,7 @@ function LoopNodeInternal({ id, data = {} }: NodeProps<Node<LoopData>>) {
             <Handle type="target" position={Position.Left} />
             <Handle type="source" position={Position.Right} />
             <div className="LoopNode__header">
-                <span className="LoopNode__header-text">🔁 {data.name || 'loop'}</span>
+                <span className="LoopNode__header-text">🔁 loop</span>
                 <div className="LoopNode__header-buttons">
                     <Tooltip title="Edit Loop collection">
                         <Button
@@ -81,7 +81,7 @@ function LoopNodeInternal({ id, data = {} }: NodeProps<Node<LoopData>>) {
                 </div>
             </div>
             <div className="LoopNode__summary">
-                {summaryCollection || (data.task?.name ? <span className="LoopNode__description">{data.task.name}</span> : <span className="LoopNode__empty-collection">(no collection)</span>)}
+                {data.task?.name || summaryCollection || <span className="LoopNode__empty-collection">(no description)</span>}
             </div>
 
             <Modal
