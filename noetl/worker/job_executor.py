@@ -619,7 +619,7 @@ class JobExecutor:
         
         # Add error details to meta
         meta['error'] = {
-            'message': error_message[:500],  # Truncate for meta
+            'message': (error_message[:500] if error_message else "Unknown error"),  # Truncate for meta
             'has_stack_trace': bool(stack_trace),
             'failed_at': datetime.datetime.now(datetime.timezone.utc).isoformat()
         }
