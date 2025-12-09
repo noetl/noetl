@@ -28,7 +28,8 @@ async def execute_http_task(
     task_config: Dict[str, Any],
     context: Dict[str, Any],
     jinja_env: Environment,
-    task_with: Dict[str, Any]
+    task_with: Dict[str, Any],
+    log_event_callback: Optional[Callable] = None
 ) -> Dict[str, Any]:
     """
     Execute an HTTP task with async authentication resolution and credential caching.
@@ -40,6 +41,7 @@ async def execute_http_task(
         context: The context to use for rendering templates
         jinja_env: The Jinja2 environment for template rendering
         task_with: The rendered 'with' parameters dictionary
+        log_event_callback: Optional callback for logging events (used by sink operations)
 
     Returns:
         A dictionary of the task result
