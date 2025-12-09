@@ -54,4 +54,8 @@ pub struct Execution {
     ///
     /// Status is `None` if execution metadata is unavailable.
     pub status: Option<String>,
+
+    /// Text output from the execution.
+    ///
+    pub text_output: Option<String>,
 }

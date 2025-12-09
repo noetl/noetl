@@ -18,7 +18,22 @@ reqwest = { version = "0.12", default-features = false, features = [
   "native-tls",
   # "rustls-tls",
 ] }
-dotenvy = "0.15"
+
 anyhow = "1"
 uuid = { version = "1", features = ["serde", "v4"] }
 once_cell = "1"
+chrono = { version = "0.4", features = ["default", "serde"] }
+dotenvy = "0.15"
+ctor = "0.6.3"
+envy = "0.4"
+
+# sqlx
+sqlx = { version = "0.8.2", features = [
+  "runtime-tokio",
+  "tls-rustls",
+  "postgres",
+  "chrono",
+  "uuid",
+] }
+
+base64-compat = "1.0.0"
