@@ -2,7 +2,7 @@ apiVersion: noetl.io/v1
 kind: Playbook
 metadata:
   name: test_pagination_retry
-  path: tests/pagination/retry
+  path: tests/pagination/retry/retry
   description: Pagination with retry for failed requests
 
 workload:
@@ -22,21 +22,22 @@ workflow:
     params:
       page: 1
       fail_on: "2"  # Fail on page 2 first attempt
-    loop:
-      pagination:
-        type: response_based
-        continue_while: "{{ response.data.paging.hasMore == true }}"
-        next_page:
+    retry:
+      on_error:
+        when: "{{ error.status in [500, 502, 503] }}"
+        max_attempts: 3
+        backoff_multiplier: 2.0
+        initial_delay: 0.5
+      on_success:
+        while: "{{ response.paging.hasMore == true }}"
+        max_attempts: 10
+        next_call:
           params:
-            page: "{{ (response.data.paging.page | int) + 1 }}"
-        merge_strategy: append
-        merge_path: data.data
-        max_iterations: 10
-        retry:
-          max_attempts: 3
-          backoff: exponential
-          initial_delay: 0.5
-          max_delay: 5
+            page: "{{ (response.paging.page | int) + 1 }}"
+        collect:
+          strategy: append
+          path: data
+          into: pages
     next:
       - step: validate_results
 

@@ -4,7 +4,7 @@ NoETL Event API Schemas - Request/Response models for event emission endpoints.
 Simple event emission without business logic - direct database operations only.
 """
 
-from typing import Optional, Dict, Any, Literal
+from typing import Optional, Dict, Any, List, Union, Literal
 from datetime import datetime
 from pydantic import BaseModel, Field, field_validator
 
@@ -23,6 +23,11 @@ EventType = Literal[
     "action_started",
     "action_completed",
     "action_failed",
+    "iterator_started",      # Iterator/loop execution started
+    "iterator_completed",    # Iterator/loop completed all iterations
+    "iterator_failed",       # Iterator/loop failed
+    "iteration_completed",   # Single iteration within loop completed
+    "retry_scheduled",       # Retry attempt scheduled for failed action
     "error",
     "info",
     "warning"
@@ -106,9 +111,9 @@ class EventEmitRequest(BaseModel):
         default=None,
         description="Event context data (arbitrary JSON)"
     )
-    result: Optional[Dict[str, Any]] = Field(
+    result: Optional[Any] = Field(
         default=None,
-        description="Event result data (arbitrary JSON)"
+        description="Event result data (arbitrary JSON - can be dict, list, string, number, etc.)"
     )
     error: Optional[str] = Field(
         default=None,

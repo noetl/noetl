@@ -1,0 +1,135 @@
+apiVersion: noetl.io/v1
+kind: Playbook
+metadata:
+  name: test_loop_with_pagination
+  path: tests/pagination/loop_with_pagination/loop_with_pagination
+  description: Test iterator (loop) with HTTP pagination - preserving results at each level
+
+workload:
+  api_url: http://paginated-api.test-server.svc.cluster.local:5555
+  endpoints:
+    - name: assessments
+      path: /api/v1/assessments
+      page_size: 10
+    - name: assessments2
+      path: /api/v1/assessments
+      page_size: 15
+    - name: assessments3
+      path: /api/v1/assessments
+      page_size: 20
+
+workflow:
+  - step: start
+    desc: Start loop + pagination test
+    next:
+      - step: fetch_all_endpoints
+
+  - step: fetch_all_endpoints
+    desc: Loop over endpoints with HTTP pagination via retry.on_success
+    tool: http
+    loop:
+      collection: "{{ workload.endpoints }}"
+      element: endpoint
+      mode: sequential
+    url: "{{ workload.api_url }}{{ endpoint.path }}"
+    method: GET
+    params:
+      page: 1
+      pageSize: "{{ endpoint.page_size }}"
+    retry:
+      on_error:
+        when: "{{ error.status in [500, 502, 503] }}"
+        max_attempts: 3
+        backoff_multiplier: 2.0
+        initial_delay: 0.5
+      on_success:
+        while: "{{ response.paging.hasMore == true }}"
+        max_attempts: 10
+        next_call:
+          params:
+            page: "{{ (response.paging.page | int) + 1 }}"
+            pageSize: "{{ response.paging.pageSize }}"
+        collect:
+          strategy: append
+          path: data
+          into: pages
+    next:
+      - step: validate_results
+
+  - step: validate_results
+    desc: Validate loop + pagination results
+    tool: python
+    args:
+      loop_results: "{{ fetch_all_endpoints }}"
+      workload: "{{ workload }}"
+    code: |
+      def main(loop_results, workload):
+          # Handle different result formats - server normalizes to direct value
+          # Parent aggregation returns array of iteration results directly
+          if isinstance(loop_results, dict) and 'value' in loop_results:
+              # Unwrap {value: [...]} structure
+              results = loop_results['value']
+          elif isinstance(loop_results, list):
+              results = loop_results
+          else:
+              results = [loop_results] if loop_results else []
+          
+          print(f"Loop results type: {type(loop_results)}")
+          print(f"Results after unwrapping type: {type(results)}")
+          print(f"Number of endpoint iterations: {len(results)}")
+          
+          validation = {
+              'total_iterations': len(results),
+              'endpoints_tested': [],
+              'total_items_fetched': 0
+          }
+          
+          for idx, result in enumerate(results):
+              print(f"\n=== Iteration {idx} ===")
+              print(f"Result type: {type(result)}")
+              
+              # Result is already the array of items from pagination
+              if isinstance(result, list):
+                  items = result
+              elif isinstance(result, dict):
+                  # Might be wrapped in data/value
+                  if 'data' in result:
+                      items = result['data']
+                  elif 'value' in result:
+                      items = result['value']
+                  else:
+                      items = [result]
+              else:
+                  items = []
+              
+              endpoint_name = workload['endpoints'][idx]['name'] if idx < len(workload['endpoints']) else f'unknown_{idx}'
+              items_count = len(items) if isinstance(items, list) else 0
+              
+              print(f"Endpoint: {endpoint_name}")
+              print(f"Items fetched: {items_count}")
+              
+              validation['endpoints_tested'].append({
+                  'endpoint': endpoint_name,
+                  'items_count': items_count
+              })
+              validation['total_items_fetched'] += items_count
+          
+          # Validation checks
+          expected_iterations = len(workload['endpoints'])
+          assert len(results) == expected_iterations, f"Expected {expected_iterations} endpoint iterations, got {len(results)}"
+          
+          # Each assessments endpoint should have 35 items (since page_size varies but total is 35)
+          for idx, endpoint_result in enumerate(validation['endpoints_tested']):
+              items_count = endpoint_result['items_count']
+              endpoint_name = endpoint_result['endpoint']
+              assert items_count == 35, f"Expected 35 items for {endpoint_name}, got {items_count}"
+          
+          validation['status'] = 'success'
+          validation['message'] = f"Successfully validated {len(results)} endpoints with {validation['total_items_fetched']} total items"
+          
+          return validation
+    next:
+      - step: end
+
+  - step: end
+    desc: Test complete

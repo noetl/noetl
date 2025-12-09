@@ -176,6 +176,7 @@ class QueuePublisher:
         parent_event_id: str,
         context: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        parent_execution_id: Optional[str] = None,
     ) -> List[str]:
         """
         Publish initial workflow steps to queue.
@@ -191,6 +192,7 @@ class QueuePublisher:
             parent_event_id: Parent event ID (workflow initialized event)
             context: Optional execution context
             metadata: Optional iterator/execution metadata to propagate through queue
+            parent_execution_id: Optional parent execution ID for nested playbook calls
 
         Returns:
             List of queue_ids for published tasks
@@ -338,10 +340,98 @@ class QueuePublisher:
                     if sink_block is not None:
                         logger.critical(f"PUBLISHER: Extracted sink block for step '{step_name}': {sink_block}")
                     
-                    # Preserve loop block (NEW format)
+                    # Check for loop block - handle via server-side iteration instead of queue
                     loop_block = step_cfg.pop("loop", None)
                     if loop_block is not None:
-                        logger.critical(f"PUBLISHER: Extracted loop block for step '{step_name}': {loop_block}")
+                        logger.info(f"PUBLISHER.publish_initial_steps: Step '{step_name}' has loop attribute, initiating server-side iteration")
+                        
+                        # Emit iterator_started event (server-side only)
+                        from noetl.server.api.broker.schema import EventEmitRequest
+                        from noetl.server.api.broker.service import EventService
+                        
+                        # Build iterator context with collection metadata
+                        # Render the collection template if it's a string (Jinja2 template)
+                        from noetl.core.dsl.render import render_template
+                        from jinja2 import BaseLoader, Environment
+                        
+                        collection_raw = loop_block.get("collection", [])
+                        if isinstance(collection_raw, str):
+                            # Build full render context with step results for collection template
+                            from noetl.server.api.run.orchestrator import OrchestratorQueries
+                            render_ctx = {"workload": (context or {}).get("workload", {})}
+                            
+                            logger.critical(f"PUBLISHER.publish_initial_steps: About to fetch step results for execution {execution_id}")
+                            # Fetch all step results for this execution
+                            result_rows = await OrchestratorQueries.get_step_results(int(execution_id))
+                            logger.critical(f"PUBLISHER.publish_initial_steps: Fetched {len(result_rows)} step results")
+                            for res_row in result_rows:
+                                if res_row["node_name"] and res_row["result"]:
+                                    # Normalize result: if it has 'data' field, use that instead of the envelope
+                                    result_value = res_row["result"]
+                                    if isinstance(result_value, dict) and "data" in result_value:
+                                        result_value = result_value["data"]
+                                    render_ctx[res_row["node_name"]] = result_value
+                                    logger.critical(f"PUBLISHER.publish_initial_steps: Added '{res_row['node_name']}' to context")
+                            
+                            logger.critical(f"PUBLISHER.publish_initial_steps: About to render template '{collection_raw}'")
+                            logger.critical(f"PUBLISHER.publish_initial_steps: Render context keys: {list(render_ctx.keys())}")
+                            # Render the template with full context (workload + step results)
+                            env = Environment(loader=BaseLoader())
+                            collection = render_template(env, collection_raw, render_ctx)
+                            logger.critical(f"PUBLISHER.publish_initial_steps: Rendered collection type={type(collection).__name__}, len={len(collection) if isinstance(collection, (list, str)) else 'N/A'}")
+                        else:
+                            collection = collection_raw
+                        
+                        # CRITICAL: Restore sink to nested_task BEFORE passing to iterator
+                        # Sink needs to execute per iteration in the worker
+                        if sink_block is not None:
+                            step_cfg["sink"] = sink_block
+                            logger.critical(f"PUBLISHER: Restored sink to nested_task for iterator step '{step_name}'")
+                        
+                        iterator_context = {
+                            "collection": collection,
+                            "iterator_name": loop_block.get("element", "item"),
+                            "mode": loop_block.get("mode", "sequential"),
+                            "nested_task": step_cfg,  # The actual task config to execute per iteration
+                            "total_count": len(collection) if isinstance(collection, list) else 0
+                        }
+                        
+                        iterator_started_request = EventEmitRequest(
+                            execution_id=str(execution_id),
+                            catalog_id=catalog_id,
+                            event_type="iterator_started",
+                            status="RUNNING",
+                            node_id=step_name,
+                            node_name="iterator",
+                            node_type="iterator",
+                            parent_event_id=parent_event_id,
+                            context=iterator_context
+                        )
+                        
+                        try:
+                            result = await EventService.emit_event(iterator_started_request)
+                            iterator_event_id = result.event_id
+                            logger.info(f"Emitted iterator_started for '{step_name}', event_id={iterator_event_id}")
+                            
+                            # Process iterator_started to enqueue iteration jobs
+                            # Import here to avoid circular dependency
+                            from noetl.server.api.run.orchestrator import _process_iterator_started
+                            event_obj = {
+                                'context': iterator_context,
+                                'catalog_id': catalog_id,
+                                'node_id': step_name,
+                                'node_name': step_name,
+                                'event_id': iterator_event_id
+                            }
+                            await _process_iterator_started(int(execution_id), event_obj)
+                            
+                            # Skip normal queue publishing - iteration jobs already enqueued
+                            queue_ids.append(str(iterator_event_id))
+                            continue
+                            
+                        except Exception as e:
+                            logger.exception(f"Error emitting iterator_started for step '{step_name}'")
+                            raise
                     
                     if is_iterator_old and context:
                         from noetl.core.dsl.render import render_template
@@ -413,6 +503,7 @@ class QueuePublisher:
                         max_attempts=5,
                         available_at=available_at,
                         parent_event_id=parent_event_id,
+                        parent_execution_id=parent_execution_id,
                         event_id=None,
                         queue_id=queue_id,
                         status="queued",
@@ -464,17 +555,112 @@ class QueuePublisher:
         # Make a copy to avoid mutating the original config
         step_config_copy = dict(step_config)
         
+        # DEBUG: Log incoming step_config keys
+        logger.critical(f"PUBLISHER.publish_step ENTRY: step='{step_name}', keys={list(step_config.keys())}, has_loop={'loop' in step_config}")
+        
         # 1. Always preserve sink block (contains {{ result }} templates)
         sink_block = step_config_copy.pop("sink", None)
         if sink_block is not None:
             logger.critical(f"PUBLISHER.publish_step: Extracted sink block for step '{step_name}': {sink_block}")
         
-        # 2. Preserve loop block (NEW format - contains {{ item }} templates)
+        # 2. Check for loop block - handle via server-side iteration instead of queue
         loop_block = step_config_copy.pop("loop", None)
         if loop_block is not None:
-            logger.critical(f"PUBLISHER.publish_step: Extracted loop block for step '{step_name}': {loop_block}")
+            logger.info(f"PUBLISHER: Step '{step_name}' has loop attribute, initiating server-side iteration")
+            
+            # Emit iterator_started event (server-side only)
+            from noetl.server.api.broker.schema import EventEmitRequest
+            from noetl.server.api.broker.service import EventService
+            
+            # Build iterator context with collection metadata
+            # Render the collection template if it's a string (Jinja2 template)
+            from noetl.core.dsl.render import render_template
+            from jinja2 import BaseLoader, Environment
+            
+            collection_raw = loop_block.get("collection", [])
+            logger.critical(f"PUBLISHER.publish_step: collection_raw = {collection_raw}, type = {type(collection_raw).__name__}")
+            if isinstance(collection_raw, str):
+                try:
+                    # Build full render context with step results for collection template
+                    from noetl.server.api.run.orchestrator import OrchestratorQueries
+                    render_ctx = {"workload": (context or {}).get("workload", {})}
+                    
+                    # Fetch all step results for this execution
+                    result_rows = await OrchestratorQueries.get_step_results(int(execution_id))
+                    logger.critical(f"PUBLISHER.publish_step: Fetched {len(result_rows)} step results")
+                    for res_row in result_rows:
+                        if res_row["node_name"] and res_row["result"]:
+                            # Normalize result: if it has 'data' field, use that
+                            result_value = res_row["result"]
+                            if isinstance(result_value, dict) and "data" in result_value:
+                                result_value = result_value["data"]
+                            render_ctx[res_row["node_name"]] = result_value
+                            logger.critical(f"PUBLISHER.publish_step: Added '{res_row['node_name']}' to context")
+                    
+                    # Render the template with full context (workload + step results)
+                    logger.critical(f"PUBLISHER.publish_step: Rendering template '{collection_raw}'")
+                    logger.critical(f"PUBLISHER.publish_step: Context keys: {list(render_ctx.keys())}")
+                    env = Environment(loader=BaseLoader())
+                    collection = render_template(env, collection_raw, render_ctx)
+                    logger.critical(f"PUBLISHER.publish_step: Rendered! Type={type(collection).__name__}, len={len(collection) if isinstance(collection, (list, str)) else 'N/A'}")
+                except Exception as e:
+                    logger.critical(f"PUBLISHER.publish_step: EXCEPTION during rendering: {e}")
+                    logger.exception("Full traceback:")
+                    collection = collection_raw  # Fall back to raw template
+            else:
+                collection = collection_raw
+            
+            # CRITICAL: Restore sink to nested_task BEFORE passing to iterator
+            # Sink needs to execute per iteration in the worker
+            if sink_block is not None:
+                step_config_copy["sink"] = sink_block
+                logger.critical(f"PUBLISHER.publish_step: Restored sink to nested_task for iterator step '{step_name}'")
+            
+            iterator_context = {
+                "collection": collection,
+                "iterator_name": loop_block.get("element", "item"),
+                "mode": loop_block.get("mode", "sequential"),
+                "nested_task": step_config_copy,  # The actual task config to execute per iteration
+                "total_count": len(collection) if isinstance(collection, list) else 0
+            }
+            
+            iterator_started_request = EventEmitRequest(
+                execution_id=str(execution_id),
+                catalog_id=catalog_id,
+                event_type="iterator_started",
+                status="RUNNING",
+                node_id=step_name,
+                node_name="iterator",
+                node_type="iterator",
+                parent_event_id=parent_event_id,
+                context=iterator_context
+            )
+            
+            try:
+                result = await EventService.emit_event(iterator_started_request)
+                iterator_event_id = result.event_id
+                logger.info(f"Emitted iterator_started for '{step_name}', event_id={iterator_event_id}")
+                
+                # Process iterator_started to enqueue iteration jobs
+                # Import here to avoid circular dependency
+                from noetl.server.api.run.orchestrator import _process_iterator_started
+                event_obj = {
+                    'context': iterator_context,
+                    'catalog_id': catalog_id,
+                    'node_id': step_name,
+                    'node_name': step_name,
+                    'event_id': iterator_event_id
+                }
+                await _process_iterator_started(int(execution_id), event_obj)
+                
+                # Return a placeholder queue_id (no actual queue job created)
+                return str(iterator_event_id)
+                
+            except Exception as e:
+                logger.exception(f"Error emitting iterator_started for step '{step_name}'")
+                raise
         
-        # 3. For OLD iterator format: preserve nested 'task' block
+        #3. For OLD iterator format: preserve nested 'task' block
         step_tool = (step_config_copy.get("tool") or "").lower()
         task_block = None
         if step_tool == "iterator":
@@ -520,6 +706,9 @@ class QueuePublisher:
         # Lazy import to avoid circular dependency
         from noetl.server.api.queue.service import QueueService
 
+        # Extract parent_execution_id from context if available
+        parent_execution_id = context.get("parent_execution_id") if context else None
+        
         # Use QueueService to enqueue the job
         response = await QueueService.enqueue_job(
             execution_id=execution_id,
@@ -533,6 +722,7 @@ class QueuePublisher:
             max_attempts=5,
             available_at=available_at,
             parent_event_id=parent_event_id,
+            parent_execution_id=parent_execution_id,
             event_id=None,
             queue_id=queue_id,
             status="queued",
@@ -566,6 +756,16 @@ class QueuePublisher:
             logger.debug(
                 f"Emitted step_started event for '{step_name}', event_id={step_started_result.event_id}"
             )
+            
+            # Update queue entry with event_id
+            async with get_pool_connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        "UPDATE noetl.queue SET event_id = %s WHERE queue_id = %s",
+                        (step_started_result.event_id, response.id)
+                    )
+                    await conn.commit()
+                    
         except Exception as e:
             logger.warning(
                 f"Failed to emit step_started event for step '{step_name}': {e}",

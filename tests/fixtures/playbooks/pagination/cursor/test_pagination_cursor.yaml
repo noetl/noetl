@@ -2,7 +2,7 @@ apiVersion: noetl.io/v1
 kind: Playbook
 metadata:
   name: test_pagination_cursor
-  path: tests/pagination/cursor
+  path: tests/pagination/cursor/cursor
   description: Cursor-based pagination test
 
 workload:
@@ -21,17 +21,18 @@ workflow:
     method: GET
     params:
       limit: 10
-    loop:
-      pagination:
-        type: response_based
-        continue_while: "{{ response.data.next_cursor is not none and response.data.next_cursor != '' }}"
-        next_page:
+    retry:
+      on_success:
+        while: "{{ response.next_cursor is not none and response.next_cursor != '' }}"
+        max_attempts: 10
+        next_call:
           params:
-            cursor: "{{ response.data.next_cursor }}"
-            limit: "{{ response.data.limit }}"
-        merge_strategy: append
-        merge_path: data.events
-        max_iterations: 10
+            cursor: "{{ response.next_cursor }}"
+            limit: "{{ response.limit }}"
+        collect:
+          strategy: append
+          path: events
+          into: pages
     next:
       - step: validate_results
 

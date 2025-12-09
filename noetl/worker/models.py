@@ -32,7 +32,12 @@ class ActionConfig(BaseModel):
             return {}
         if isinstance(value, dict):
             return value
-        raise TypeError("'args' must be a dictionary of task arguments")
+        # Return empty dict for invalid types to allow job to proceed and fail gracefully
+        # Log the issue for debugging
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Invalid args type: expected dict, got {type(value).__name__}. Value: {value!r}. Using empty dict.")
+        return {}
     
     @model_validator(mode="before")
     @classmethod

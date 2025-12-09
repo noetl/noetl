@@ -2,7 +2,7 @@ apiVersion: noetl.io/v1
 kind: Playbook
 metadata:
   name: test_pagination_basic
-  path: tests/pagination/basic
+  path: tests/pagination/basic/basic
   description: Basic page-number pagination test
 
 workload:
@@ -22,17 +22,18 @@ workflow:
     params:
       page: 1
       pageSize: 10
-    loop:
-      pagination:
-        type: response_based
-        continue_while: "{{ response.data.paging.hasMore == true }}"
-        next_page:
+    retry:
+      on_success:
+        while: "{{ response.paging.hasMore == true }}"
+        max_attempts: 10
+        next_call:
           params:
-            page: "{{ (response.data.paging.page | int) + 1 }}"
-            pageSize: "{{ response.data.paging.pageSize }}"
-        merge_strategy: append
-        merge_path: data.data
-        max_iterations: 10
+            page: "{{ (response.paging.page | int) + 1 }}"
+            pageSize: "{{ response.paging.pageSize }}"
+        collect:
+          strategy: append
+          path: data
+          into: pages
     next:
       - step: validate_results
 

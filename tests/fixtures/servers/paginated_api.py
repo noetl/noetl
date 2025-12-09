@@ -7,12 +7,16 @@ Provides realistic pagination patterns for integration testing.
 from fastapi import FastAPI, Query
 import uvicorn
 import sys
+from collections import defaultdict
 
 app = FastAPI()
 
 # Configuration
 ITEMS_PER_PAGE = 10
 TOTAL_ITEMS = 35  # 4 pages total
+
+# Track request attempts per page for flaky endpoint
+flaky_attempts = defaultdict(int)
 
 
 @app.get('/api/v1/assessments')
@@ -159,15 +163,19 @@ def get_flaky(page: int = Query(default=1), fail_on: str = Query(default='')):
     Flaky endpoint for retry testing.
     Query params:
     - page: Page number (1-based)
-    - fail_on: Comma-separated page numbers to fail on
+    - fail_on: Comma-separated page numbers to fail on FIRST attempt only
     
-    Returns error for specified pages, success otherwise.
+    Returns error for specified pages on first attempt, success on retry.
     """
     from fastapi import HTTPException
     
     fail_pages = [int(p) for p in fail_on.split(',') if p.strip()]
     
-    if page in fail_pages:
+    # Track attempts for this page
+    flaky_attempts[page] += 1
+    
+    # Fail only on first attempt
+    if page in fail_pages and flaky_attempts[page] == 1:
         raise HTTPException(status_code=500, detail="Simulated failure")
     
     # Success response
@@ -191,6 +199,14 @@ def get_flaky(page: int = Query(default=1), fail_on: str = Query(default='')):
             'pageSize': page_size
         }
     }
+
+
+@app.post('/api/v1/flaky/reset')
+def reset_flaky():
+    """Reset the flaky endpoint attempt counters."""
+    global flaky_attempts
+    flaky_attempts.clear()
+    return {'status': 'reset', 'message': 'Flaky endpoint counters cleared'}
 
 
 @app.get('/health')

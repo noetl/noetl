@@ -42,6 +42,7 @@ async def get_executions():
                     e.result,
                     e.error,
                     e.stack_trace,
+                    e.parent_execution_id,
                     c.path,
                     c.version
                 FROM event e
@@ -62,7 +63,8 @@ async def get_executions():
                     end_time=None,  # Not in query, needs to be computed from events
                     progress=0,  # Not in query, needs to be computed
                     result=row_dict["result"],
-                    error=row_dict["error"]
+                    error=row_dict["error"],
+                    parent_execution_id=row_dict.get("parent_execution_id")
                 ))
             return resp
 

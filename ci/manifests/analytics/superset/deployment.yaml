@@ -1,0 +1,70 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: superset
+  namespace: analytics
+  labels:
+    app: superset
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: superset
+  template:
+    metadata:
+      labels:
+        app: superset
+    spec:
+      initContainers:
+        - name: superset-init
+          image: apache/superset:3.1.0
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - secretRef:
+                name: superset-secret
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eux;
+              superset db upgrade;
+              superset fab create-admin \
+                --username "$SUPERSET_ADMIN_USERNAME" \
+                --firstname "$SUPERSET_ADMIN_FIRST_NAME" \
+                --lastname "$SUPERSET_ADMIN_LAST_NAME" \
+                --email "$SUPERSET_ADMIN_EMAIL" \
+                --password "$SUPERSET_ADMIN_PASSWORD" || true;
+              superset init;
+      containers:
+        - name: superset
+          image: apache/superset:3.1.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8088
+          envFrom:
+            - secretRef:
+                name: superset-secret
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8088
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8088
+            initialDelaySeconds: 60
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
+          command: ["/bin/sh","-c"]
+          args:
+            - |
+              set -e;
+              /usr/bin/run-server.sh

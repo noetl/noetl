@@ -2,7 +2,7 @@ apiVersion: noetl.io/v1
 kind: Playbook
 metadata:
   name: test_pagination_max_iterations
-  path: tests/pagination/max_iterations
+  path: tests/pagination/max_iterations/max_iterations
   description: Test max_iterations safety limit
 
 workload:
@@ -22,16 +22,17 @@ workflow:
     params:
       page: 1
       pageSize: 10
-    loop:
-      pagination:
-        type: response_based
-        continue_while: "{{ response.data.paging.hasMore == true }}"
-        next_page:
+    retry:
+      on_success:
+        while: "{{ response.paging.hasMore == true }}"
+        max_attempts: 2  # Only fetch first 2 pages (20 items)
+        next_call:
           params:
-            page: "{{ (response.data.paging.page | int) + 1 }}"
-        merge_strategy: append
-        merge_path: data.data
-        max_iterations: 2  # Only fetch first 2 pages (20 items)
+            page: "{{ (response.paging.page | int) + 1 }}"
+        collect:
+          strategy: append
+          path: data
+          into: pages
     next:
       - step: validate_results
 
