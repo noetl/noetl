@@ -169,15 +169,36 @@ async def _check_execution_completion(
             )
             row = await cur.fetchone()
             incomplete_steps = row["incomplete_steps"] if row else 0
+            
+            # Check for parent steps with completed iterations but no parent action_completed yet
+            # This prevents premature completion when iterations finish but parent aggregation pending
+            await cur.execute(
+                """
+                SELECT COUNT(DISTINCT SUBSTRING(node_name FROM '^(.+)_iter_')) as pending_parents
+                FROM noetl.event e1
+                WHERE e1.execution_id = %(execution_id)s
+                  AND e1.event_type = 'action_completed'
+                  AND e1.node_name LIKE '%%_iter_%%'
+                  AND NOT EXISTS (
+                      SELECT 1 FROM noetl.event e2
+                      WHERE e2.execution_id = e1.execution_id
+                        AND e2.node_name = SUBSTRING(e1.node_name FROM '^(.+)_iter_')
+                        AND e2.event_type = 'action_completed'
+                  )
+                """,
+                {"execution_id": int(execution_id)},
+            )
+            row = await cur.fetchone()
+            pending_parents = row["pending_parents"] if row else 0
 
             logger.info(
-                f"Execution {execution_id}: running_actions={running_count}, pending_jobs={pending_count}, incomplete_steps={incomplete_steps}"
+                f"Execution {execution_id}: running_actions={running_count}, pending_jobs={pending_count}, incomplete_steps={incomplete_steps}, pending_parents={pending_parents}"
             )
 
-            # If there are any running actions, pending jobs, or incomplete steps, execution is not complete
-            if running_count > 0 or pending_count > 0 or incomplete_steps > 0:
+            # If there are any running actions, pending jobs, incomplete steps, or pending parent aggregations, execution is not complete
+            if running_count > 0 or pending_count > 0 or incomplete_steps > 0 or pending_parents > 0:
                 logger.debug(
-                    f"Execution {execution_id} not complete: {running_count} running, {pending_count} pending"
+                    f"Execution {execution_id} not complete: {running_count} running, {pending_count} pending, {pending_parents} parents awaiting aggregation"
                 )
                 return
 
@@ -367,7 +388,7 @@ async def evaluate_execution(
         return
 
     logger.info(
-        f"ORCHESTRATOR: Evaluating execution_id={exec_id}, "
+        f">>> EVALUATE_EXECUTION CALLED: exec_id={exec_id}, "
         f"trigger={trigger_event_type}, event_id={trigger_event_id}"
     )
 
@@ -462,7 +483,7 @@ async def evaluate_execution(
 
         # Reconstruct execution state from events
         state = await _get_execution_state(exec_id)
-        logger.debug(f"ORCHESTRATOR: Execution {exec_id} state={state}")
+        logger.info(f">>> EVALUATE_EXECUTION STATE: {state} for exec_id={exec_id}")
 
         if state == "initial":
             # No progress yet - dispatch first workflow step
@@ -472,6 +493,7 @@ async def evaluate_execution(
             await _dispatch_first_step(exec_id)
 
         elif state == "in_progress":
+            logger.info(f">>> EVALUATE_EXECUTION: STATE IS IN_PROGRESS, will process transitions")
             # Steps are running - process completions and transitions
             # Check retry on_success for completed actions
             if trigger_event_type in (
@@ -937,7 +959,7 @@ async def _process_transitions(execution_id: int) -> None:
     5. Publish next steps to queue table as actionable tasks
     6. Workers execute and report results back via events
     """
-    logger.info(f"Processing transitions for execution {execution_id}")
+    logger.info(f">>> PROCESS_TRANSITIONS called for execution {execution_id}")
 
     # Find completed steps without step_completed event using async executor
     completed_steps = (
@@ -945,6 +967,8 @@ async def _process_transitions(execution_id: int) -> None:
             execution_id
         )
     )
+
+    logger.info(f">>> PROCESS_TRANSITIONS completed_steps={completed_steps}")
 
     if completed_steps:
         logger.info(f"Found {len(completed_steps)} completed steps: {completed_steps}")
@@ -1011,7 +1035,10 @@ async def _process_transitions(execution_id: int) -> None:
             # Check for parent steps with completed iterations (fix for loop completion bug)
             # When a step has loop attribute, server expands into _iter_N jobs
             # After all iterations complete, we need to emit action_completed for parent step
+            logger.debug(f"Checking for parent steps with completed iterations, completed_steps={completed_steps}")
+            parent_steps_to_process = []  # Track parents we emit action_completed for
             iteration_steps = [s for s in completed_steps if '_iter_' in s]
+            logger.debug(f"Found {len(iteration_steps)} iteration steps: {iteration_steps}")
             if iteration_steps:
                 # Group by parent step name (remove _iter_N suffix)
                 parent_steps = {}
@@ -1027,6 +1054,67 @@ async def _process_transitions(execution_id: int) -> None:
                     # Check if parent step exists in workflow and has loop attribute
                     parent_def = by_name.get(parent_name)
                     if not parent_def or not parent_def.get("loop"):
+                        continue
+                    
+                    # Get expected iteration count from iterator_started event
+                    logger.debug(f"Looking for iterator_started: execution_id={execution_id}, node_id={parent_name}")
+                    await cur.execute(
+                        """
+                        SELECT context FROM noetl.event
+                        WHERE execution_id = %s
+                          AND node_id = %s
+                          AND event_type = 'iterator_started'
+                        ORDER BY created_at DESC
+                        LIMIT 1
+                        """,
+                        (execution_id, parent_name)
+                    )
+                    iterator_row = await cur.fetchone()
+                    logger.debug(f"iterator_started query result for '{parent_name}': {iterator_row is not None}")
+                    expected_count = None
+                    if iterator_row and iterator_row['context']:
+                        context_data = iterator_row['context']
+                        if isinstance(context_data, dict):
+                            expected_count = context_data.get('total_count')
+                    
+                    logger.info(f"Parent '{parent_name}': expected_count={expected_count}, actual={len(iterations)}")
+                    
+                    if expected_count is None:
+                        logger.warning(
+                            f"Could not determine expected iteration count for '{parent_name}', skipping"
+                        )
+                        continue
+                    
+                    # Check how many iterations have actually completed
+                    actual_completed = len(iterations)
+                    
+                    if actual_completed < expected_count:
+                        logger.info(
+                            f"Parent step '{parent_name}' expects {expected_count} iterations, "
+                            f"only {actual_completed} completed so far, SKIPPING parent completion"
+                        )
+                        continue
+                    
+                    # CRITICAL: Also check for step_result events to ensure all results are available
+                    # Parent aggregation needs to wait for ALL step_result events, not just action_completed
+                    await cur.execute(
+                        """
+                        SELECT COUNT(*) as step_result_count
+                        FROM noetl.event
+                        WHERE execution_id = %s
+                          AND node_name LIKE %s
+                          AND event_type = 'step_result'
+                        """,
+                        (execution_id, f"{parent_name}_iter_%")
+                    )
+                    step_result_row = await cur.fetchone()
+                    step_result_count = step_result_row['step_result_count'] if step_result_row else 0
+                    
+                    if step_result_count < expected_count:
+                        logger.info(
+                            f"Parent step '{parent_name}' expects {expected_count} step_result events, "
+                            f"only {step_result_count} available so far, SKIPPING parent completion"
+                        )
                         continue
                     
                     # Check if there are any pending iteration jobs
@@ -1066,7 +1154,7 @@ async def _process_transitions(execution_id: int) -> None:
                         continue
                     
                     logger.info(
-                        f"All {len(iterations)} iterations complete for parent '{parent_name}', "
+                        f"All {expected_count} iterations complete for parent '{parent_name}', "
                         f"emitting action_completed"
                     )
                     
@@ -1087,7 +1175,12 @@ async def _process_transitions(execution_id: int) -> None:
                     async for row in cur:
                         if row['result']:
                             result_data = row['result'] if isinstance(row['result'], dict) else json.loads(row['result'] or '{}')
-                            aggregated_results.append(result_data)
+                            # Extract the actual result value - step_result wraps in {"value": ...}
+                            if isinstance(result_data, dict) and 'value' in result_data:
+                                result_value = result_data['value']
+                            else:
+                                result_value = result_data
+                            aggregated_results.append(result_value)
                     
                     # Get parent_event_id from iterator_started event
                     await cur.execute(
@@ -1109,6 +1202,9 @@ async def _process_transitions(execution_id: int) -> None:
                     from noetl.server.api.broker.schema import EventEmitRequest
                     
                     parent_tool = parent_def.get("tool", "iterator")
+                    # Result is array of results from all iterations
+                    # Users can access as: {{ step_name }} (array of iteration results)
+                    # Or {{ step_name | length }} for count, etc.
                     action_completed_request = EventEmitRequest(
                         execution_id=str(execution_id),
                         catalog_id=catalog_id,
@@ -1118,23 +1214,73 @@ async def _process_transitions(execution_id: int) -> None:
                         node_name=parent_name,
                         node_type="iterator",
                         parent_event_id=parent_event_id,
-                        result={
-                            "items": aggregated_results,
-                            "count": len(aggregated_results),
-                            "iterations": len(iterations)
-                        }
+                        result=aggregated_results  # Direct array (schema now supports Union[Dict, List])
                     )
                     
                     try:
                         result = await EventService.emit_event(action_completed_request)
                         logger.info(
                             f"Emitted action_completed for parent step '{parent_name}', "
-                            f"event_id={result.event_id}"
+                            f"event_id={result.event_id}, aggregated {len(aggregated_results)} iteration results"
+                        )
+                        
+                        # CRITICAL: Trigger orchestration for the parent action_completed event
+                        # This ensures the workflow can progress after parent aggregation
+                        logger.info(f"Triggering orchestration for parent step '{parent_name}' completion")
+                        await evaluate_execution(
+                            execution_id=str(execution_id),
+                            trigger_event_type="action_completed",
+                            trigger_event_id=result.event_id
+                        )
+                        
+                        # Add aggregated result to eval_ctx so it's available for condition evaluation
+                        # Users access as: {{ step_name }} (array of iteration results)
+                        # Or {{ step_name | length }} for count, etc.
+                        eval_ctx[parent_name] = aggregated_results
+                        logger.debug(
+                            f"Added {len(aggregated_results)} aggregated results to eval_ctx for parent step '{parent_name}'"
+                        )
+                        
+                        # Emit step_result event for consistency with other steps
+                        step_result_request = EventEmitRequest(
+                            execution_id=str(execution_id),
+                            catalog_id=catalog_id,
+                            event_type="step_result",
+                            status="COMPLETED",
+                            node_id=parent_name,
+                            node_name=parent_name,
+                            node_type="iterator",
+                            parent_event_id=result.event_id,
+                            result={"value": aggregated_results}
+                        )
+                        step_result_response = await EventService.emit_event(step_result_request)
+                        logger.info(
+                            f"Emitted step_result for parent step '{parent_name}', event_id={step_result_response.event_id}"
+                        )
+                        
+                        # Add parent to list for processing
+                        parent_steps_to_process.append(parent_name)
+                        
+                        # Trigger new orchestration cycle for parent step processing
+                        # Must be done AFTER this function completes to avoid recursion
+                        logger.info(
+                            f"Scheduling re-evaluation for parent step '{parent_name}' completion"
                         )
                     except Exception as e:
                         logger.exception(
-                            f"Error emitting action_completed for parent step '{parent_name}'"
+                            f"Error emitting events for parent step '{parent_name}'"
                         )
+            
+            # Process parent steps immediately after emitting their events
+            # Add them to completed_steps list so they get processed in the loop below
+            if parent_steps_to_process:
+                logger.info(
+                    f"Adding {len(parent_steps_to_process)} parent steps to processing queue: "
+                    f"{parent_steps_to_process}"
+                )
+                # Add parents to completed_steps - they now have action_completed events
+                completed_steps.extend(parent_steps_to_process)
+                logger.info(f"Extended completed_steps to {len(completed_steps)} items")
             
             # Process each completed step
             for step_name in completed_steps:

@@ -64,23 +64,18 @@ workflow:
       workload: "{{ workload }}"
     code: |
       def main(loop_results, workload):
-          # Directly receive parameters - no need for input_data wrapper
-          
-          # Handle different result formats
-          if isinstance(loop_results, dict):
-              # Check for aggregated results structure
-              if 'items' in loop_results:
-                  results = loop_results['items']
-              elif 'results' in loop_results:
-                  results = loop_results['results']
-              else:
-                  results = [loop_results]
+          # Handle different result formats - server normalizes to direct value
+          # Parent aggregation returns array of iteration results directly
+          if isinstance(loop_results, dict) and 'value' in loop_results:
+              # Unwrap {value: [...]} structure
+              results = loop_results['value']
           elif isinstance(loop_results, list):
               results = loop_results
           else:
-              results = []
+              results = [loop_results] if loop_results else []
           
           print(f"Loop results type: {type(loop_results)}")
+          print(f"Results after unwrapping type: {type(results)}")
           print(f"Number of endpoint iterations: {len(results)}")
           
           validation = {
@@ -91,23 +86,19 @@ workflow:
           
           for idx, result in enumerate(results):
               print(f"\n=== Iteration {idx} ===")
+              print(f"Result type: {type(result)}")
               
-              # Unwrap result if needed
-              if isinstance(result, dict):
+              # Result is already the array of items from pagination
+              if isinstance(result, list):
+                  items = result
+              elif isinstance(result, dict):
+                  # Might be wrapped in data/value
                   if 'data' in result:
-                      data = result['data']
+                      items = result['data']
                   elif 'value' in result:
-                      data = result['value']
+                      items = result['value']
                   else:
-                      data = result
-              else:
-                  data = result
-              
-              # Extract items
-              if isinstance(data, dict) and 'data' in data:
-                  items = data['data']
-              elif isinstance(data, list):
-                  items = data
+                      items = [result]
               else:
                   items = []
               

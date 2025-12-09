@@ -143,7 +143,7 @@ def execute_task(
     # Dispatch to appropriate action handler
     if task_type == "http":
         # Check if retry.on_success is configured - this needs worker-side execution
-        retry_config = task_config.get('retry', {})
+        retry_config = task_config.get('retry') or {}
         if retry_config.get('on_success'):
             # Use worker-side retry wrapper for pagination/polling
             from noetl.plugin.runtime.retry import execute_with_retry
