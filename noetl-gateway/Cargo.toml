@@ -37,3 +37,4 @@ sqlx = { version = "0.8.2", features = [
 ] }
 
 base64-compat = "1.0.0"
+tower-http = { version = "0.6", features = ["cors"] }

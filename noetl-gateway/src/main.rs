@@ -9,6 +9,7 @@ use async_graphql_axum::GraphQL;
 use axum::{Router, extract::State, response::Html, routing::get};
 use dotenvy::dotenv;
 use sqlx::postgres::PgPoolOptions;
+use tower_http::cors::{Any, CorsLayer};
 use tracing_subscriber::EnvFilter;
 mod config;
 mod db;
@@ -58,9 +59,12 @@ async fn main() -> anyhow::Result<()> {
         .data(pool.clone())
         .finish();
 
+    let cors = CorsLayer::new().allow_origin(Any).allow_methods(Any).allow_headers(Any);
+
     let app = Router::new()
         .route("/", get(playground))
         .route("/graphql", get(graphiql).post_service(GraphQL::new(schema.clone())))
+        .layer(cors)
         .with_state(());
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
