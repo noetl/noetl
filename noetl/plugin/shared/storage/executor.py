@@ -110,7 +110,7 @@ def execute_sink_task(
         # Normalize complex param values (dict/list) to JSON strings
         rendered_params = normalize_params(rendered_params)
         
-        # Step 3: Handle tool kinds
+        # Step 4: Handle tool kinds
         if kind in ('event', 'event_log', ''):
             # Event log tool (implicit via return envelope)
             result_payload = {

@@ -382,6 +382,12 @@ class QueuePublisher:
                         else:
                             collection = collection_raw
                         
+                        # CRITICAL: Restore sink to nested_task BEFORE passing to iterator
+                        # Sink needs to execute per iteration in the worker
+                        if sink_block is not None:
+                            step_cfg["sink"] = sink_block
+                            logger.critical(f"PUBLISHER: Restored sink to nested_task for iterator step '{step_name}'")
+                        
                         iterator_context = {
                             "collection": collection,
                             "iterator_name": loop_block.get("element", "item"),
@@ -603,6 +609,12 @@ class QueuePublisher:
                     collection = collection_raw  # Fall back to raw template
             else:
                 collection = collection_raw
+            
+            # CRITICAL: Restore sink to nested_task BEFORE passing to iterator
+            # Sink needs to execute per iteration in the worker
+            if sink_block is not None:
+                step_config_copy["sink"] = sink_block
+                logger.critical(f"PUBLISHER.publish_step: Restored sink to nested_task for iterator step '{step_name}'")
             
             iterator_context = {
                 "collection": collection,

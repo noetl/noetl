@@ -1629,6 +1629,12 @@ async def _process_transitions(execution_id: int) -> None:
                         if loop_block is not None:
                             logger.info(f"ORCHESTRATOR: Step '{to_step}' has loop attribute, initiating server-side iteration")
                             
+                            # CRITICAL: Restore sink to step_config BEFORE passing to nested_task
+                            # Sink needs to execute per iteration in the worker
+                            if sink_block is not None:
+                                step_config["sink"] = sink_block
+                                logger.critical(f"ORCHESTRATOR: Restored sink to nested_task for iterator step '{to_step}'")
+                            
                             # Emit iterator_started event (server-side only, not from worker)
                             from noetl.server.api.broker.schema import EventEmitRequest
                             
@@ -2036,20 +2042,74 @@ async def _process_iterator_started(
     
     logger.info(f"ORCHESTRATOR: Enqueueing {len(batches)} iteration jobs for execution {execution_id}")
     
+    # Get workload from parent execution for iteration context
+    parent_workload = {}
+    try:
+        async with get_pool_connection() as conn:
+            result = await conn.execute(
+                "SELECT data FROM noetl.workload WHERE execution_id = %s",
+                (execution_id,)
+            )
+            workload_row = await result.fetchone()
+            logger.critical(f"ORCHESTRATOR: Raw workload_row type: {type(workload_row)}, value: {workload_row}")
+            
+            if workload_row:
+                # fetchone returns a dict-like Row object with 'data' key
+                if isinstance(workload_row, dict) and 'data' in workload_row:
+                    workload_data = workload_row['data']
+                else:
+                    # Fallback: try index access for tuple-like results
+                    workload_data = workload_row[0] if len(workload_row) > 0 else {}
+                    
+                logger.critical(f"ORCHESTRATOR: Extracted workload_data type: {type(workload_data)}, keys: {list(workload_data.keys()) if isinstance(workload_data, dict) else 'not a dict'}")
+                
+                # CRITICAL: Extract nested 'workload' key if present
+                if isinstance(workload_data, dict) and 'workload' in workload_data and isinstance(workload_data['workload'], dict):
+                    parent_workload = workload_data['workload']
+                    logger.critical(f"ORCHESTRATOR: Extracted nested workload with keys: {list(parent_workload.keys())}")
+                elif isinstance(workload_data, dict):
+                    parent_workload = workload_data
+                    logger.critical(f"ORCHESTRATOR: Using workload_data directly with keys: {list(parent_workload.keys())}")
+                else:
+                    logger.warning(f"ORCHESTRATOR: workload_data is not a dict: {type(workload_data)}")
+            else:
+                logger.warning(f"ORCHESTRATOR: No workload found for execution {execution_id}")
+                
+            logger.critical(f"ORCHESTRATOR: Final parent_workload keys: {list(parent_workload.keys()) if isinstance(parent_workload, dict) else type(parent_workload)}")
+    except Exception as e:
+        logger.error(f"ORCHESTRATOR: Failed to fetch workload for execution {execution_id}: {e}", exc_info=True)
+        parent_workload = {}
+    
     # Enqueue iteration jobs
     queue_ids = []
     for batch in batches:
-        # Build iteration task config - inject element into nested_task
-        iteration_task = dict(nested_task)
-        
         # Build context with element data accessible via iterator variable name
         # For example, if iterator_name='endpoint', templates can use {{ endpoint.name }}
+        # CRITICAL: Include workload so sink templates can access {{ workload.* }}
         iteration_context = {
             iterator_name: batch.get('element'),  # Single element for non-chunked
             '_iteration_index': batch['index'],
             '_iterator_name': iterator_name,
-            '_total_iterations': len(batches)
+            '_total_iterations': len(batches),
+            'workload': parent_workload  # Include workload for sink templates
         }
+        
+        # Build iteration task config - inject element into nested_task
+        iteration_task = dict(nested_task)
+        
+        # CRITICAL: Render sink auth template if present, so worker receives fully-resolved credential key
+        if 'sink' in iteration_task and isinstance(iteration_task['sink'], dict):
+            sink_auth = iteration_task['sink'].get('auth')
+            if isinstance(sink_auth, str) and '{{' in sink_auth:
+                try:
+                    from noetl.core.dsl.render import render_template
+                    from jinja2 import Environment
+                    jinja_env = Environment()
+                    rendered_auth = render_template(jinja_env, sink_auth, iteration_context)
+                    iteration_task['sink']['auth'] = rendered_auth
+                    logger.critical(f"ORCHESTRATOR: Rendered sink auth from '{sink_auth}' to '{rendered_auth}' for iteration {batch['index']}")
+                except Exception as e:
+                    logger.error(f"ORCHESTRATOR: Failed to render sink auth template: {e}", exc_info=True)
         
         # If chunked, provide elements array
         if 'elements' in batch:
