@@ -1632,13 +1632,38 @@ async def _process_transitions(execution_id: int) -> None:
                             # Emit iterator_started event (server-side only, not from worker)
                             from noetl.server.api.broker.schema import EventEmitRequest
                             
+                            # Render collection template if it's a string (Jinja2 template)
+                            collection_raw = loop_block.get("collection", [])
+                            if isinstance(collection_raw, str):
+                                from noetl.core.dsl.render import render_template
+                                from jinja2 import BaseLoader, Environment
+                                
+                                # Build full render context with step results
+                                render_ctx = {"workload": eval_ctx.get("workload", {})}
+                                
+                                # Add all step results to render context
+                                result_rows = await OrchestratorQueries.get_step_results(int(execution_id))
+                                for res_row in result_rows:
+                                    if res_row["node_name"] and res_row["result"]:
+                                        result_value = res_row["result"]
+                                        if isinstance(result_value, dict) and "data" in result_value:
+                                            result_value = result_value["data"]
+                                        render_ctx[res_row["node_name"]] = result_value
+                                
+                                logger.critical(f"ORCHESTRATOR: Rendering collection template '{collection_raw}' with context keys: {list(render_ctx.keys())}")
+                                env = Environment(loader=BaseLoader())
+                                collection = render_template(env, collection_raw, render_ctx)
+                                logger.critical(f"ORCHESTRATOR: Rendered collection type={type(collection).__name__}, length={len(collection) if isinstance(collection, (list, str)) else 'N/A'}")
+                            else:
+                                collection = collection_raw
+                            
                             # Build iterator context with collection metadata
                             iterator_context = {
-                                "collection": loop_block.get("collection", []),
+                                "collection": collection,
                                 "iterator_name": loop_block.get("element", "item"),
                                 "mode": loop_block.get("mode", "sequential"),
                                 "nested_task": step_config,  # The actual task config to execute per iteration
-                                "total_count": len(loop_block.get("collection", [])) if isinstance(loop_block.get("collection"), list) else 0
+                                "total_count": len(collection) if isinstance(collection, list) else 0
                             }
                             
                             iterator_started_request = EventEmitRequest(

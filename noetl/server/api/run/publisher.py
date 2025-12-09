@@ -356,9 +356,29 @@ class QueuePublisher:
                         
                         collection_raw = loop_block.get("collection", [])
                         if isinstance(collection_raw, str):
-                            # Render the template with current context (contains workload variables)
+                            # Build full render context with step results for collection template
+                            from noetl.server.api.run.orchestrator import OrchestratorQueries
+                            render_ctx = {"workload": (context or {}).get("workload", {})}
+                            
+                            logger.critical(f"PUBLISHER.publish_initial_steps: About to fetch step results for execution {execution_id}")
+                            # Fetch all step results for this execution
+                            result_rows = await OrchestratorQueries.get_step_results(int(execution_id))
+                            logger.critical(f"PUBLISHER.publish_initial_steps: Fetched {len(result_rows)} step results")
+                            for res_row in result_rows:
+                                if res_row["node_name"] and res_row["result"]:
+                                    # Normalize result: if it has 'data' field, use that instead of the envelope
+                                    result_value = res_row["result"]
+                                    if isinstance(result_value, dict) and "data" in result_value:
+                                        result_value = result_value["data"]
+                                    render_ctx[res_row["node_name"]] = result_value
+                                    logger.critical(f"PUBLISHER.publish_initial_steps: Added '{res_row['node_name']}' to context")
+                            
+                            logger.critical(f"PUBLISHER.publish_initial_steps: About to render template '{collection_raw}'")
+                            logger.critical(f"PUBLISHER.publish_initial_steps: Render context keys: {list(render_ctx.keys())}")
+                            # Render the template with full context (workload + step results)
                             env = Environment(loader=BaseLoader())
-                            collection = render_template(env, collection_raw, context or {})
+                            collection = render_template(env, collection_raw, render_ctx)
+                            logger.critical(f"PUBLISHER.publish_initial_steps: Rendered collection type={type(collection).__name__}, len={len(collection) if isinstance(collection, (list, str)) else 'N/A'}")
                         else:
                             collection = collection_raw
                         
@@ -552,10 +572,35 @@ class QueuePublisher:
             from jinja2 import BaseLoader, Environment
             
             collection_raw = loop_block.get("collection", [])
+            logger.critical(f"PUBLISHER.publish_step: collection_raw = {collection_raw}, type = {type(collection_raw).__name__}")
             if isinstance(collection_raw, str):
-                # Render the template with current context (contains workload variables)
-                env = Environment(loader=BaseLoader())
-                collection = render_template(env, collection_raw, context or {})
+                try:
+                    # Build full render context with step results for collection template
+                    from noetl.server.api.run.orchestrator import OrchestratorQueries
+                    render_ctx = {"workload": (context or {}).get("workload", {})}
+                    
+                    # Fetch all step results for this execution
+                    result_rows = await OrchestratorQueries.get_step_results(int(execution_id))
+                    logger.critical(f"PUBLISHER.publish_step: Fetched {len(result_rows)} step results")
+                    for res_row in result_rows:
+                        if res_row["node_name"] and res_row["result"]:
+                            # Normalize result: if it has 'data' field, use that
+                            result_value = res_row["result"]
+                            if isinstance(result_value, dict) and "data" in result_value:
+                                result_value = result_value["data"]
+                            render_ctx[res_row["node_name"]] = result_value
+                            logger.critical(f"PUBLISHER.publish_step: Added '{res_row['node_name']}' to context")
+                    
+                    # Render the template with full context (workload + step results)
+                    logger.critical(f"PUBLISHER.publish_step: Rendering template '{collection_raw}'")
+                    logger.critical(f"PUBLISHER.publish_step: Context keys: {list(render_ctx.keys())}")
+                    env = Environment(loader=BaseLoader())
+                    collection = render_template(env, collection_raw, render_ctx)
+                    logger.critical(f"PUBLISHER.publish_step: Rendered! Type={type(collection).__name__}, len={len(collection) if isinstance(collection, (list, str)) else 'N/A'}")
+                except Exception as e:
+                    logger.critical(f"PUBLISHER.publish_step: EXCEPTION during rendering: {e}")
+                    logger.exception("Full traceback:")
+                    collection = collection_raw  # Fall back to raw template
             else:
                 collection = collection_raw
             
