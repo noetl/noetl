@@ -1,0 +1,128 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: http_pagination_v2
+  path: examples/http_pagination_v2
+  version: "2.0"
+workload:
+  api_url: https://api.example.com
+  endpoints:
+    - path: /api/v1/users
+      page_size: 100
+    - path: /api/v1/orders
+      page_size: 50
+
+workflow:
+- step: start
+  desc: Initialize workflow
+  tool:
+    kind: python
+    code: |
+      def main():
+          return {"status": "initialized"}
+  next: fetch_all_endpoints
+
+- step: fetch_all_endpoints
+  desc: Loop over endpoints with HTTP pagination
+  loop:
+    in: "{{ workload.endpoints }}"
+    iterator: endpoint
+  tool:
+    kind: http
+    method: GET
+    endpoint: "{{ workload.api_url }}{{ endpoint.path }}"
+    params:
+      page: 1
+      pageSize: "{{ endpoint.page_size }}"
+  case:
+    # Initialize aggregation when step starts
+    - when: "{{ event.name == 'step.enter' }}"
+      then:
+        set:
+          ctx:
+            pages: []
+            total_records: 0
+    
+    # Retry on 5xx errors
+    - when: >-
+        {{ event.name == 'call.done'
+           and error is defined
+           and error.status in [500, 502, 503] }}
+      then:
+        retry:
+          max_attempts: 3
+          backoff_multiplier: 2.0
+          initial_delay: 0.5
+    
+    # Collect data and paginate if more pages available
+    - when: >-
+        {{ event.name == 'call.done'
+           and response is defined
+           and response.data.paging.hasMore == true }}
+      then:
+        collect:
+          from: response.data.data
+          into: pages
+          mode: extend
+        set:
+          ctx:
+            total_records: "{{ ctx.total_records + (response.data.data | length) }}"
+        call:
+          params:
+            page: "{{ (response.data.paging.page | int) + 1 }}"
+            pageSize: "{{ response.data.paging.pageSize }}"
+    
+    # Final page: collect and move to next step
+    - when: >-
+        {{ event.name == 'call.done'
+           and response is defined
+           and not response.data.paging.hasMore }}
+      then:
+        collect:
+          from: response.data.data
+          into: pages
+          mode: extend
+        set:
+          ctx:
+            total_records: "{{ ctx.total_records + (response.data.data | length) }}"
+        result:
+          from: pages
+        next:
+          - step: validate_results
+            args:
+              pages: "{{ pages }}"
+              total_records: "{{ ctx.total_records }}"
+              endpoint: "{{ endpoint.path }}"
+
+- step: validate_results
+  desc: Validate collected data
+  tool:
+    kind: python
+    code: |
+      def main(pages, total_records, endpoint):
+          if not pages:
+              return {
+                  "valid": False,
+                  "message": f"No data collected from {endpoint}"
+              }
+          
+          return {
+              "valid": True,
+              "endpoint": endpoint,
+              "total_records": total_records,
+              "page_count": len(pages) if isinstance(pages, list) else 1,
+              "message": f"Successfully collected {total_records} records"
+          }
+  args:
+    pages: "{{ args.pages }}"
+    total_records: "{{ args.total_records }}"
+    endpoint: "{{ args.endpoint }}"
+  next: end
+
+- step: end
+  desc: End of workflow
+  tool:
+    kind: python
+    code: |
+      def main():
+          return {"status": "completed"}
