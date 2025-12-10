@@ -38,16 +38,16 @@ workflow:
       element: endpoint
       mode: sequential
     
-    retry:
+    after:
       - when: "{{ error.status in [500, 502, 503] }}"
         then:
-          max_attempts: 3
-          backoff_multiplier: 2.0
-          initial_delay: 0.5
+          retry:
+            max_attempts: 3
+            backoff_multiplier: 2.0
+            initial_delay: 0.5
       
       - when: "{{ response.paging.hasMore == true }}"
         then:
-          max_attempts: 10
           next_call:
             params:
               page: "{{ (response.paging.page | int) + 1 }}"
@@ -158,42 +158,6 @@ workflow:
           validation['message'] = \
               f"Successfully validated {len(results)} endpoints with " \
               f"{validation['total_items_fetched']} total items"
-          
-          return validation
-    next:
-      - step: end
-
-  - step: end
-    desc: Test complete
-
-                      items = [result]
-              else:
-                  items = []
-              
-              endpoint_name = workload['endpoints'][idx]['name'] if idx < len(workload['endpoints']) else f'unknown_{idx}'
-              items_count = len(items) if isinstance(items, list) else 0
-              
-              print(f"Endpoint: {endpoint_name}")
-              print(f"Items fetched: {items_count}")
-              
-              validation['endpoints_tested'].append({
-                  'endpoint': endpoint_name,
-                  'items_count': items_count
-              })
-              validation['total_items_fetched'] += items_count
-          
-          # Validation checks
-          expected_iterations = len(workload['endpoints'])
-          assert len(results) == expected_iterations, f"Expected {expected_iterations} endpoint iterations, got {len(results)}"
-          
-          # Each assessments endpoint should have 35 items (since page_size varies but total is 35)
-          for idx, endpoint_result in enumerate(validation['endpoints_tested']):
-              items_count = endpoint_result['items_count']
-              endpoint_name = endpoint_result['endpoint']
-              assert items_count == 35, f"Expected 35 items for {endpoint_name}, got {items_count}"
-          
-          validation['status'] = 'success'
-          validation['message'] = f"Successfully validated {len(results)} endpoints with {validation['total_items_fetched']} total items"
           
           return validation
     next:

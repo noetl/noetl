@@ -189,6 +189,8 @@ async def _check_execution_completion(
             )
             row = await cur.fetchone()
             pending_parents = row["pending_parents"] if row else 0
+            
+            logger.info(f"DEBUG_PENDING_PARENTS: query returned {pending_parents} for execution {execution_id}")
 
             logger.info(
                 f"Execution {execution_id}: running_actions={running_count}, pending_jobs={pending_count}, incomplete_steps={incomplete_steps}, pending_parents={pending_parents}"
