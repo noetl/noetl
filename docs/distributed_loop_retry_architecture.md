@@ -466,8 +466,9 @@ async def _process_retry_eligible_event(execution_id: int, event: Dict) -> None:
     """
     Check if failed/completed action should be retried.
     
-    For on_error: Check max_attempts, error matching, backoff
-    For on_success: Evaluate while condition, apply next_call transforms
+    Evaluates retry policies in order (first match wins):
+    - Error conditions: Check max_attempts, error matching, backoff
+    - Success conditions: Evaluate when condition, apply next_call transforms
     
     If should retry, re-enqueue job with updated config.
     """

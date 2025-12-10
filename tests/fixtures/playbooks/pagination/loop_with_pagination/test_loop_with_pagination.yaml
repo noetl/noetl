@@ -3,7 +3,7 @@ kind: Playbook
 metadata:
   name: test_loop_with_pagination
   path: tests/pagination/loop_with_pagination/loop_with_pagination
-  description: Test iterator (loop) with HTTP pagination - preserving results at each level
+  description: Test loop with HTTP pagination - single step_result after loop completes
 
 workload:
   api_url: http://paginated-api.test-server.svc.cluster.local:5555
@@ -25,58 +25,80 @@ workflow:
       - step: fetch_all_endpoints
 
   - step: fetch_all_endpoints
-    desc: Loop over endpoints with HTTP pagination via retry.on_success
+    desc: Loop over endpoints with HTTP pagination - verify single step_result after loop
     tool: http
-    loop:
-      collection: "{{ workload.endpoints }}"
-      element: endpoint
-      mode: sequential
     url: "{{ workload.api_url }}{{ endpoint.path }}"
     method: GET
     params:
       page: 1
       pageSize: "{{ endpoint.page_size }}"
+    
+    loop:
+      collection: "{{ workload.endpoints }}"
+      element: endpoint
+      mode: sequential
+    
     retry:
-      on_error:
-        when: "{{ error.status in [500, 502, 503] }}"
-        max_attempts: 3
-        backoff_multiplier: 2.0
-        initial_delay: 0.5
-      on_success:
-        while: "{{ response.paging.hasMore == true }}"
-        max_attempts: 10
-        next_call:
-          params:
-            page: "{{ (response.paging.page | int) + 1 }}"
-            pageSize: "{{ response.paging.pageSize }}"
-        collect:
-          strategy: append
-          path: data
-          into: pages
+      - when: "{{ error.status in [500, 502, 503] }}"
+        then:
+          max_attempts: 3
+          backoff_multiplier: 2.0
+          initial_delay: 0.5
+      
+      - when: "{{ response.paging.hasMore == true }}"
+        then:
+          max_attempts: 10
+          next_call:
+            params:
+              page: "{{ (response.paging.page | int) + 1 }}"
+              pageSize: "{{ response.paging.pageSize }}"
+          collect:
+            strategy: append
+            path: data
+            into: pages
+    
     next:
       - step: validate_results
 
   - step: validate_results
-    desc: Validate loop + pagination results
+    desc: Validate loop + pagination results - expect single aggregated result
     tool: python
     args:
       loop_results: "{{ fetch_all_endpoints }}"
       workload: "{{ workload }}"
     code: |
       def main(loop_results, workload):
-          # Handle different result formats - server normalizes to direct value
-          # Parent aggregation returns array of iteration results directly
-          if isinstance(loop_results, dict) and 'value' in loop_results:
-              # Unwrap {value: [...]} structure
-              results = loop_results['value']
-          elif isinstance(loop_results, list):
-              results = loop_results
-          else:
-              results = [loop_results] if loop_results else []
+          """
+          Validate loop execution produced single aggregated result.
+          
+          Expected structure:
+          {
+              "results": [
+                  [item1, item2, ...],  # Iteration 0 (endpoint 1, all pages)
+                  [item1, item2, ...],  # Iteration 1 (endpoint 2, all pages)
+                  [item1, item2, ...]   # Iteration 2 (endpoint 3, all pages)
+              ],
+              "stats": {
+                  "total": 3,
+                  "success": 3,
+                  "failed": 0
+              }
+          }
+          """
           
           print(f"Loop results type: {type(loop_results)}")
-          print(f"Results after unwrapping type: {type(results)}")
-          print(f"Number of endpoint iterations: {len(results)}")
+          print(f"Loop results keys: {loop_results.keys() if isinstance(loop_results, dict) else 'N/A'}")
+          
+          # Expect aggregated structure with results array
+          assert isinstance(loop_results, dict), f"Expected dict, got {type(loop_results)}"
+          assert 'results' in loop_results, "Expected 'results' key in aggregated loop result"
+          assert 'stats' in loop_results, "Expected 'stats' key in aggregated loop result"
+          
+          results = loop_results['results']
+          stats = loop_results['stats']
+          
+          print(f"Number of iterations: {len(results)}")
+          print(f"Stats: {stats}")
           
           validation = {
               'total_iterations': len(results),
@@ -84,20 +106,66 @@ workflow:
               'total_items_fetched': 0
           }
           
-          for idx, result in enumerate(results):
+          # Validate each iteration result (accumulated pagination data)
+          expected_iterations = len(workload['endpoints'])
+          assert len(results) == expected_iterations, \
+              f"Expected {expected_iterations} iterations, got {len(results)}"
+          
+          for idx, iteration_result in enumerate(results):
               print(f"\n=== Iteration {idx} ===")
-              print(f"Result type: {type(result)}")
+              print(f"Result type: {type(iteration_result)}")
               
-              # Result is already the array of items from pagination
-              if isinstance(result, list):
-                  items = result
-              elif isinstance(result, dict):
-                  # Might be wrapped in data/value
-                  if 'data' in result:
-                      items = result['data']
-                  elif 'value' in result:
-                      items = result['value']
+              # iteration_result should be array of items (accumulated via collect)
+              if isinstance(iteration_result, list):
+                  items = iteration_result
+              elif isinstance(iteration_result, dict):
+                  # Might be wrapped - extract data
+                  if 'data' in iteration_result:
+                      items = iteration_result['data']
+                  elif 'value' in iteration_result:
+                      items = iteration_result['value']
                   else:
+                      items = [iteration_result]
+              else:
+                  items = []
+              
+              endpoint_name = workload['endpoints'][idx]['name']
+              items_count = len(items) if isinstance(items, list) else 0
+              
+              print(f"Endpoint: {endpoint_name}")
+              print(f"Items fetched: {items_count}")
+              
+              validation['endpoints_tested'].append({
+                  'endpoint': endpoint_name,
+                  'items_count': items_count
+              })
+              validation['total_items_fetched'] += items_count
+          
+          # Each assessments endpoint should have 35 items total (paginated)
+          for endpoint_result in validation['endpoints_tested']:
+              items_count = endpoint_result['items_count']
+              endpoint_name = endpoint_result['endpoint']
+              assert items_count == 35, \
+                  f"Expected 35 items for {endpoint_name}, got {items_count}"
+          
+          # Validate stats
+          assert stats['total'] == expected_iterations, \
+              f"Stats total should be {expected_iterations}, got {stats['total']}"
+          assert stats['success'] == expected_iterations, \
+              f"All iterations should succeed, got {stats['success']}/{stats['total']}"
+          
+          validation['status'] = 'success'
+          validation['message'] = \
+              f"Successfully validated {len(results)} endpoints with " \
+              f"{validation['total_items_fetched']} total items"
+          
+          return validation
+    next:
+      - step: end
+
+  - step: end
+    desc: Test complete
+
                       items = [result]
               else:
                   items = []

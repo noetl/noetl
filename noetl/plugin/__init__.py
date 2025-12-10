@@ -28,7 +28,7 @@ from noetl.plugin.controller.playbook import execute_playbook_task
 from noetl.plugin.controller.result import process_loop_aggregation_job
 from noetl.plugin.controller.workbook import execute_workbook_task
 from noetl.plugin.runtime import (
-    RetryPolicy,
+    execute_with_retry,
     execute_task,
     execute_task_resolved,
     report_event,

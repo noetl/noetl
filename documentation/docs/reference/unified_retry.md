@@ -8,7 +8,7 @@ description: Universal retry architecture for error recovery and success-driven 
 
 ## Overview
 
-Unified retry is an architectural pattern that unifies error recovery and success-driven repetition under a single `retry` concept. Instead of treating pagination as a separate concern, we recognize that **pagination is just success-side of retry** - where successful responses trigger re-invocation with updated parameters.
+Unified retry uses a single `when`/`then` pattern for both error recovery and success-driven repetition (pagination, polling, streaming). This provides a consistent conditional structure across the entire DSL.
 
 ### Conceptual Shift
 
@@ -18,49 +18,67 @@ Unified retry is an architectural pattern that unifies error recovery and succes
 - Tool-specific iteration logic
 
 **Unified View:**
-- `retry` = "re-run the tool on error AND/OR success, with optional state updates and aggregation"
-- Pagination, polling, cursor loops, and streaming are all **"success-side retry"**
+- `retry` = array of conditional policies evaluated in order
+- Error retry, pagination, polling, and streaming all use same `when`/`then` pattern
+- **First matching policy executes** (short-circuit evaluation)
 - Universal pattern across ALL tools (HTTP, Postgres, Python, etc.)
 
-This makes retry a universal **"response handler / re-invocation controller"**.
+This makes retry a universal **"response handler / re-invocation controller"** with consistent, predictable evaluation semantics.
 
 ## Architecture
 
+### Evaluation Semantics
+
+**First Match Wins** - Retry policies evaluated in order:
+
+1. Execute action → get result or error
+2. Evaluate retry policies **in order** (top to bottom)
+3. **First policy with truthy `when` executes** (short-circuit)
+4. If no match → action completes (no retry)
+
+**Order matters** - Place specific conditions before general ones.
+
 ### Core Components
 
-#### 1. RetryPolicy (Error-Side Retry)
-- Original error retry logic
-- Expression-based conditions
+#### 1. Error Retry Policy
+- Expression-based error conditions
 - Exponential backoff with jitter
-- Backward compatible with existing configs
+- Max attempts and delay configuration
 
-#### 2. SuccessRetryPolicy (Success-Side Retry)
-- **`while`**: Continuation condition evaluated on responses
+#### 2. Success Continuation Policy
+- Continuation conditions for pagination/polling
 - **`next_call`**: Templates for building next request
 - **`collect`**: Result aggregation (append/replace/merge)
-- **`per_iteration`**: Side effects (sink, logging)
+- **`sink`**: Per-iteration side effects
 
-#### 3. UnifiedRetryPolicy (Orchestration)
-- Detects unified structure (`on_error`, `on_success`)
-- Routes execution to appropriate handler
-- Supports combining both policies
+#### 3. UnifiedRetryHandler (Orchestration)
+- Evaluates policies in order
+- Routes to error or success handler based on context
+- Supports complex multi-condition scenarios
 
 ### Execution Flow
 
 ```
 execute_with_retry()
-├── Parse retry config (bool, int, dict)
-├── Create UnifiedRetryPolicy
-└── Route based on policy:
-    ├── on_error only → _execute_with_error_retry()
+├── Parse retry config (list of when/then policies)
+├── Execute action
+├── Evaluate retry policies in order:
+│   ├── Check policy[0].when condition
+│   │   ├── If truthy → execute policy[0].then
+│   │   └── If falsy → check next policy
+│   ├── Check policy[1].when condition
+│   │   └── ...
+│   └── No match → complete
+└── Route based on matched policy:
+    ├── Error policy → _execute_with_error_retry()
     │   └── Attempt loop with backoff and error handling
     │
-    └── on_success → _execute_with_success_retry()
+    └── Success policy → _execute_with_success_retry()
         ├── Iteration loop
         ├── Execute task per iteration
-        ├── Check continuation condition (with DotDict support)
+        ├── Check continuation condition
         ├── Aggregate results
-        ├── Execute per-iteration effects
+        ├── Execute per-iteration sink (if defined)
         └── Build next request
 ```
 
@@ -84,24 +102,23 @@ The retry system automatically handles HTTP response envelopes:
     page: 1
     pageSize: 100
   
-  # Unified retry with success-side repetition
+  # Unified retry with when/then pattern
   retry:
-    on_success:
-      # Continue while API indicates more data
-      while: "{{ response.data.has_more == true }}"
-      max_attempts: 50
-      
-      # How to build next request
-      next_call:
-        params:
-          page: "{{ (response.data.page | int) + 1 }}"
-          pageSize: "{{ response.data.pageSize }}"
-      
-      # How to aggregate results
-      collect:
-        strategy: append      # append | replace | merge
-        path: data.items      # Extract from response.data.items
-        into: pages           # Store in {{ pages }}
+    - when: "{{ response.data.has_more == true }}"
+      then:
+        max_attempts: 50
+        
+        # How to build next request
+        next_call:
+          params:
+            page: "{{ (response.data.page | int) + 1 }}"
+            pageSize: "{{ response.data.pageSize }}"
+        
+        # How to aggregate results
+        collect:
+          strategy: append      # append | replace | merge
+          path: data.items      # Extract from response.data.items
+          into: pages           # Store in {{ pages }}
 ```
 
 ### Combined Error + Success Retry
@@ -115,22 +132,22 @@ The retry system automatically handles HTTP response envelopes:
   
   retry:
     # Error-side: Handle transient failures
-    on_error:
-      when: "{{ error.status in [429, 500, 502, 503] }}"
-      max_attempts: 5
-      backoff_multiplier: 2.0
-      initial_delay: 1.0
+    - when: "{{ error.status in [429, 500, 502, 503] }}"
+      then:
+        max_attempts: 5
+        backoff_multiplier: 2.0
+        initial_delay: 1.0
     
     # Success-side: Pagination
-    on_success:
-      while: "{{ response.data.has_more }}"
-      max_attempts: 100
-      next_call:
-        params:
-          page: "{{ (response.data.page | int) + 1 }}"
-      collect:
-        strategy: append
-        path: data.items
+    - when: "{{ response.data.has_more }}"
+      then:
+        max_attempts: 100
+        next_call:
+          params:
+            page: "{{ (response.data.page | int) + 1 }}"
+        collect:
+          strategy: append
+          path: data.items
 ```
 
 ### Per-Iteration Side Effects
@@ -144,20 +161,19 @@ The retry system automatically handles HTTP response envelopes:
     limit: 1000
   
   retry:
-    on_success:
-      while: "{{ response.data | length == 1000 }}"
-      max_attempts: 100
-      
-      next_call:
-        params:
-          offset: "{{ (response.offset | int) + 1000 }}"
-      
-      collect:
-        strategy: append
-        path: data.events
-      
-      # Save each page as it's fetched
-      per_iteration:
+    - when: "{{ response.data | length == 1000 }}"
+      then:
+        max_attempts: 100
+        
+        next_call:
+          params:
+            offset: "{{ (response.offset | int) + 1000 }}"
+        
+        collect:
+          strategy: append
+          path: data.events
+        
+        # Save each page as it's fetched
         sink:
           tool: postgres
           auth: pg_creds
@@ -170,22 +186,44 @@ The retry system automatically handles HTTP response envelopes:
 
 ### Backward Compatibility
 
-Legacy retry configs are automatically treated as `on_error` only:
+**Legacy syntax** - Deprecated but still supported during transition:
+
+```yaml
+# OLD FORMAT (deprecated)
+retry:
+  on_error:
+    when: "{{ error.status == 429 }}"
+    max_attempts: 3
+  on_success:
+    while: "{{ response.has_more }}"
+    next_call: ...
+
+# NEW FORMAT (recommended)
+retry:
+  - when: "{{ error.status == 429 }}"
+    then:
+      max_attempts: 3
+  - when: "{{ response.has_more }}"
+    then:
+      next_call: ...
+```
+
+**Simple legacy format** - Automatically converted:
 
 ```yaml
 # Old syntax (still works)
 retry:
   when: "{{ error.status == 429 }}"
   max_attempts: 3
-  backoff_multiplier: 2.0
 
-# Equivalent to:
+# Converted to:
 retry:
-  on_error:
-    when: "{{ error.status == 429 }}"
-    max_attempts: 3
-    backoff_multiplier: 2.0
+  - when: "{{ error.status == 429 }}"
+    then:
+      max_attempts: 3
 ```
+
+**Migration**: Use automated migration script `scripts/migrate_retry_syntax.py` to convert existing playbooks.
 
 ## Reserved Variables
 
@@ -216,53 +254,57 @@ Unified retry works with **ALL tools**, not just HTTP.
 #### Page-Based Pagination
 ```yaml
 retry:
-  on_success:
-    while: "{{ response.data.page < response.data.totalPages }}"
-    next_call:
-      params:
-        page: "{{ (response.data.page | int) + 1 }}"
-    collect:
-      strategy: append
-      path: data.items
+  - when: "{{ response.data.page < response.data.totalPages }}"
+    then:
+      max_attempts: 100
+      next_call:
+        params:
+          page: "{{ (response.data.page | int) + 1 }}"
+      collect:
+        strategy: append
+        path: data.items
 ```
 
 #### Offset-Based Pagination
 ```yaml
 retry:
-  on_success:
-    while: "{{ response.data.has_more }}"
-    next_call:
-      params:
-        offset: "{{ (response.data.offset | int) + (response.data.limit | int) }}"
-        limit: "{{ response.data.limit }}"
-    collect:
-      strategy: append
-      path: data.users
+  - when: "{{ response.data.has_more }}"
+    then:
+      max_attempts: 100
+      next_call:
+        params:
+          offset: "{{ (response.data.offset | int) + (response.data.limit | int) }}"
+          limit: "{{ response.data.limit }}"
+      collect:
+        strategy: append
+        path: data.users
 ```
 
 #### Cursor-Based Pagination
 ```yaml
 retry:
-  on_success:
-    while: "{{ response.data.nextCursor is not none }}"
-    next_call:
-      params:
-        cursor: "{{ response.data.nextCursor }}"
-    collect:
-      strategy: append
-      path: data.results
+  - when: "{{ response.data.nextCursor is not none }}"
+    then:
+      max_attempts: 100
+      next_call:
+        params:
+          cursor: "{{ response.data.nextCursor }}"
+      collect:
+        strategy: append
+        path: data.results
 ```
 
 #### URL-Based Pagination
 ```yaml
 retry:
-  on_success:
-    while: "{{ response.data.links.next is not none }}"
-    next_call:
-      url: "{{ response.data.links.next }}"
-    collect:
-      strategy: append
-      path: data.items
+  - when: "{{ response.data.links.next is not none }}"
+    then:
+      max_attempts: 100
+      next_call:
+        url: "{{ response.data.links.next }}"
+      collect:
+        strategy: append
+        path: data.items
 ```
 
 ### Postgres Cursor Pagination
@@ -281,17 +323,17 @@ retry:
     page_size: 1000
   
   retry:
-    on_success:
-      while: "{{ response | length == page_size }}"
-      max_attempts: 1000
-      
-      next_call:
-        args:
-          cursor_id: "{{ response[-1].id }}"
-          page_size: 1000
-      
-      collect:
-        strategy: append
+    - when: "{{ response | length == page_size }}"
+      then:
+        max_attempts: 1000
+        
+        next_call:
+          args:
+            cursor_id: "{{ response[-1].id }}"
+            page_size: 1000
+        
+        collect:
+          strategy: append
 ```
 
 ### Python Polling
@@ -309,16 +351,16 @@ retry:
     job_id: "{{ job_id }}"
   
   retry:
-    on_success:
-      while: "{{ response.status in ['pending', 'running'] }}"
-      max_attempts: 60
-      
-      next_call:
-        args:
-          job_id: "{{ job_id }}"  # Same input, check again
-      
-      collect:
-        strategy: replace  # Only keep latest status
+    - when: "{{ response.status in ['pending', 'running'] }}"
+      then:
+        max_attempts: 60
+        
+        next_call:
+          args:
+            job_id: "{{ job_id }}"  # Same input, check again
+        
+        collect:
+          strategy: replace  # Only keep latest status
 ```
 
 ### DuckDB Incremental Export
@@ -336,14 +378,15 @@ retry:
     batch_size: 10000
   
   retry:
-    on_success:
-      while: "{{ response | length == batch_size }}"
-      next_call:
-        args:
-          batch_id: "{{ batch_id + 1 }}"
-          batch_size: 10000
-      collect:
-        strategy: append
+    - when: "{{ response | length == batch_size }}"
+      then:
+        max_attempts: 100
+        next_call:
+          args:
+            batch_id: "{{ batch_id + 1 }}"
+            batch_size: 10000
+        collect:
+          strategy: append
 ```
 
 ## Loop Integration
@@ -364,35 +407,35 @@ Unified retry works seamlessly with the `loop` parameter for multi-endpoint pagi
     pageSize: "{{ endpoint.page_size }}"
   
   retry:
-    on_error:
-      when: "{{ error.status in [429, 500, 502, 503] }}"
-      max_attempts: 3
-      backoff_multiplier: 2.0
+    - when: "{{ error.status in [429, 500, 502, 503] }}"
+      then:
+        max_attempts: 3
+        backoff_multiplier: 2.0
     
-    on_success:
-      while: "{{ response.data.has_more == true }}"
-      max_attempts: 10
-      
-      next_call:
-        params:
-          page: "{{ (response.data.offset | int) + (response.data.limit | int) }}"
-          pageSize: "{{ response.data.limit }}"
-      
-      collect:
-        strategy: append
-        path: data.users
-        into: pages
-      
-      per_iteration:
-        sink:
-          tool: postgres
-          auth: pg_k8s
-          table: raw_data
-          mode: insert
-          args:
-            endpoint_name: "{{ endpoint.name }}"
-            page_data: "{{ page.data }}"
-            iteration: "{{ _retry.index }}"
+    - when: "{{ response.data.has_more == true }}"
+      then:
+        max_attempts: 10
+        
+        next_call:
+          params:
+            page: "{{ (response.data.offset | int) + (response.data.limit | int) }}"
+            pageSize: "{{ response.data.limit }}"
+        
+        collect:
+          strategy: append
+          path: data.users
+          into: pages
+        
+        per_iteration:
+          sink:
+            tool: postgres
+            auth: pg_k8s
+            table: raw_data
+            mode: insert
+            args:
+              endpoint_name: "{{ endpoint.name }}"
+              page_data: "{{ page.data }}"
+              iteration: "{{ _retry.index }}"
 ```
 
 ## Implementation Details
@@ -453,22 +496,22 @@ loop:
 ```yaml
 tool: http
 retry:
-  on_success:
-    while: "{{ response.data.paging.hasMore }}"
-    max_attempts: 100
-    next_call:
-      params:
-        page: "{{ (response.data.paging.page | int) + 1 }}"
-    collect:
-      strategy: append
-      path: data.data
+  - when: "{{ response.data.paging.hasMore }}"
+    then:
+      max_attempts: 100
+      next_call:
+        params:
+          page: "{{ (response.data.paging.page | int) + 1 }}"
+      collect:
+        strategy: append
+        path: data.data
 ```
 
 ### Variable Name Changes
 
 - `_loop.index` → `_retry.index`
 - `_loop.count` → `_retry.count`
-- `pagination.sink` → `retry.on_success.per_iteration.sink`
+- `pagination.sink` → `retry[].then.per_iteration.sink` (within when/then policy)
 
 ### Response Access Changes
 
@@ -476,12 +519,14 @@ With DotDict support, response access is more natural:
 
 **Before:**
 ```yaml
-while: "{{ response['data']['paging']['hasMore'] == true }}"
+retry:
+  - when: "{{ response['data']['paging']['hasMore'] == true }}"
 ```
 
 **After:**
 ```yaml
-while: "{{ response.data.paging.hasMore == true }}"
+retry:
+  - when: "{{ response.data.paging.hasMore == true }}"
 ```
 
 ## Benefits
@@ -540,9 +585,9 @@ Unified retry enables new patterns:
 
 ```yaml
 retry:
-  on_success:
-    while: "{{ response.has_more }}"
-    max_attempts: 100  # Prevent infinite loops
+  - when: "{{ response.has_more }}"
+    then:
+      max_attempts: 100  # Prevent infinite loops
 ```
 
 ### 2. Use Meaningful Variable Names
@@ -556,29 +601,33 @@ collect:
 
 ```yaml
 retry:
-  on_error:
-    when: "{{ error.status in [429, 500, 502, 503] }}"
-    max_attempts: 3
-  on_success:
-    while: "{{ response.has_more }}"
-    max_attempts: 50
+  - when: "{{ error.status in [429, 500, 502, 503] }}"
+    then:
+      max_attempts: 3
+  - when: "{{ response.has_more }}"
+    then:
+      max_attempts: 50
 ```
 
 ### 4. Save Large Results Incrementally
 
 ```yaml
 retry:
-  on_success:
-    per_iteration:
-      sink:
-        tool: postgres
-        table: raw_data  # Don't accumulate in memory
+  - when: "{{ response.has_more }}"
+    then:
+      per_iteration:
+        sink:
+          tool: postgres
+          table: raw_data  # Don't accumulate in memory
 ```
 
 ### 5. Validate Response Structure
 
 ```yaml
-while: "{{ response.data.has_more is defined and response.data.has_more == true }}"
+retry:
+  - when: "{{ response.data.has_more is defined and response.data.has_more == true }}"
+    then:
+      max_attempts: 100
 ```
 
 ## Troubleshooting
@@ -599,7 +648,10 @@ while: "{{ response.data.has_more is defined and response.data.has_more == true 
 
 **Solution:** Use safe navigation:
 ```yaml
-while: "{{ response.data.has_more is defined and response.data.has_more }}"
+retry:
+  - when: "{{ response.data.has_more is defined and response.data.has_more }}"
+    then:
+      max_attempts: 100
 ```
 
 ### Issue: Results Not Aggregating
