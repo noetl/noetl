@@ -593,23 +593,9 @@ class JobExecutor:
         result: Dict[str, Any],
         context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        # Extract retry config and attempt number for server-side retry handling
-        task_config = prepared.action_cfg
-        retry_config = task_config.retry if task_config else None
-        attempt_number = 1
+        # Retry is handled by unified when/then wrapper in retry.py
+        # No need to extract retry metadata here
         meta = {}
-        
-        if retry_config and isinstance(retry_config, dict):
-            attempt_number = retry_config.get('_attempt_number', 1)
-            
-            # Put retry details in meta
-            meta['retry'] = {
-                'has_config': True,
-                'attempt_number': attempt_number,
-                'max_attempts': retry_config.get('on_error', {}).get('max_attempts', 1),
-                'retry_type': 'on_error',
-                'will_retry': attempt_number < retry_config.get('on_error', {}).get('max_attempts', 1)
-            }
         
         extra = {
             "result": result,
@@ -627,14 +613,6 @@ class JobExecutor:
         if duration is not None:
             extra["duration"] = duration
             meta['execution'] = {'duration_seconds': duration}
-        
-        # Add retry metadata for server-side retry decision
-        if retry_config:
-            extra["data"] = {
-                "error": error_message,
-                "retry_config": retry_config,
-                "attempt_number": attempt_number
-            }
         
         if meta:
             extra['meta'] = meta
@@ -659,30 +637,9 @@ class JobExecutor:
         action_started_event_id: Optional[str],
         context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        # Extract retry config and attempt number from task config for server-side retry handling
+        # Retry is handled by unified when/then wrapper in retry.py
         extra = {}
         meta = {}
-        task_config = prepared.action_cfg
-        
-        if task_config and task_config.retry:
-            retry_config = task_config.retry
-            if retry_config:
-                # Put retry details in meta for better tracking
-                meta['retry'] = {
-                    'has_config': True,
-                    'attempt_number': retry_config.get('_attempt_number', 1),
-                    'max_attempts': retry_config.get('on_error', {}).get('max_attempts') or retry_config.get('on_success', {}).get('max_attempts'),
-                    'retry_type': 'on_error' if 'on_error' in retry_config else ('on_success' if 'on_success' in retry_config else None)
-                }
-                
-                # Include full retry_config in result for server to make retry decisions
-                # Wrap the actual result along with retry metadata
-                result_with_retry = {
-                    'result': result.get('data') if isinstance(result, dict) else result,
-                    'retry_config': retry_config,
-                    'attempt_number': retry_config.get('_attempt_number', 1)
-                }
-                result = result_with_retry
         
         # Add execution details to meta
         meta['execution'] = {

@@ -142,10 +142,24 @@ def execute_task(
 
     # Dispatch to appropriate action handler
     if task_type == "http":
-        # Check if retry.on_success is configured - this needs worker-side execution
+        # Check if retry has pagination/success-driven repeats (next_call or collect)
         retry_config = task_config.get('retry') if isinstance(task_config, dict) else None
+        needs_worker_retry = False
         
-        if retry_config and retry_config.get('on_success'):
+        if retry_config:
+            # Handle unified when/then list format
+            if isinstance(retry_config, list):
+                # Check if any policy has pagination (next_call or collect)
+                needs_worker_retry = any(
+                    'next_call' in policy.get('then', {}) or 'collect' in policy.get('then', {})
+                    for policy in retry_config
+                    if isinstance(policy, dict) and 'then' in policy
+                )
+            # Legacy formats (will be converted by execute_with_retry)
+            elif isinstance(retry_config, dict):
+                needs_worker_retry = 'on_success' in retry_config
+        
+        if needs_worker_retry:
             # Use worker-side retry wrapper for pagination/polling
             from noetl.plugin.runtime.retry import execute_with_retry
             return execute_with_retry(
