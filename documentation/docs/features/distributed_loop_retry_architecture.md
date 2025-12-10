@@ -98,12 +98,12 @@ Repeat
     nested_task:
       tool: "http"
       retry:
-        on_success:
-          while: "{{ response.paging.hasMore == true }}"
-          max_attempts: 10
-          collect:
-            strategy: "append"
-            path: "data"
+        - when: "{{ response.paging.hasMore == true }}"
+          then:
+            max_attempts: 10
+            collect:
+              strategy: "append"
+              path: "data"
 ```
 
 #### Phase 2 (⏳ Pending)
@@ -151,12 +151,12 @@ Repeat
     element: endpoint                       # Iterator variable
     mode: sequential                        # Processing mode
   retry:
-    on_success:                            # Pagination trigger
-      while: "{{ response.paging.hasMore }}"
-      max_attempts: 10
-      collect:
-        strategy: append
-        path: data
+    - when: "{{ response.paging.hasMore }}"  # Pagination trigger
+      then:
+        max_attempts: 10
+        collect:
+          strategy: append
+          path: data
 ```
 
 **Supported Processing Modes:**
@@ -274,9 +274,10 @@ Each iteration can have a `sink` block that saves results to storage:
     step: "fetch_data"
     tool: "http"
     retry_config:
-      on_error:
-        max_attempts: 3
-        backoff: exponential
+      - when: "{{ error is defined }}"
+        then:
+          max_attempts: 3
+          backoff: exponential
 
 - event: action_failed
   data:
@@ -315,11 +316,11 @@ Each iteration can have a `sink` block that saves results to storage:
         hasMore: true
         page: 1
     retry_config:
-      on_success:
-        while: "{{ response.paging.hasMore }}"
-        next_call:
-          params:
-            page: "{{ response.paging.page + 1 }}"
+      - when: "{{ response.paging.hasMore }}"
+        then:
+          next_call:
+            params:
+              page: "{{ response.paging.page + 1 }}"
     attempt_number: 1
 
 # Server evaluates: hasMore = true, continue
@@ -359,15 +360,15 @@ Each retry attempt can save its result independently:
     page: 1
     pageSize: 100
   retry:
-    on_success:
-      while: "{{ response.paging.hasMore }}"
-      max_attempts: 100
-      next_call:
-        params:
-          page: "{{ response.paging.page + 1 }}"
-      collect:
-        strategy: append
-        path: data
+    - when: "{{ response.paging.hasMore }}"
+      then:
+        max_attempts: 100
+        next_call:
+          params:
+            page: "{{ response.paging.page + 1 }}"
+        collect:
+          strategy: append
+          path: data
   sink:
     tool: postgres
     table: raw_data
@@ -411,11 +412,11 @@ Loop and retry are **completely independent wrappers** that can be combined:
   tool: http
   url: "{{ api_url }}/data"
   retry:
-    on_success:
-      while: "{{ response.paging.hasMore }}"
-      next_call:
-        params:
-          page: "{{ response.paging.page + 1 }}"
+    - when: "{{ response.paging.hasMore }}"
+      then:
+        next_call:
+          params:
+            page: "{{ response.paging.page + 1 }}"
 ```
 
 ### Loop With Retry (Nested)
@@ -429,11 +430,11 @@ Loop and retry are **completely independent wrappers** that can be combined:
     collection: "{{ endpoints }}"
     element: endpoint
   retry:
-    on_success:
-      while: "{{ response.paging.hasMore }}"
-      next_call:
-        params:
-          page: "{{ response.paging.page + 1 }}"
+    - when: "{{ response.paging.hasMore }}"
+      then:
+        next_call:
+          params:
+            page: "{{ response.paging.page + 1 }}"
 ```
 
 **Execution flow for nested loop+retry:**
@@ -624,12 +625,14 @@ Events sent to server API include:
   },
   "data": {
     "result": {...},
-    "retry_config": {
-      "on_success": {
-        "while": "{{ response.paging.hasMore }}",
-        "max_attempts": 100
+    "retry_config": [
+      {
+        "when": "{{ response.paging.hasMore }}",
+        "then": {
+          "max_attempts": 100
+        }
       }
-    },
+    ],
     "attempt_number": 1
   },
   "meta": {

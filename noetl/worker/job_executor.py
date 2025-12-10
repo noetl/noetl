@@ -719,15 +719,47 @@ class JobExecutor:
         if not isinstance(normalized, dict):
             normalized = {"value": normalized}
         status = self._extract_step_status(result)
-        event = self._build_event_payload(
-            prepared,
-            event_type="step_result",
-            status=status,
-            node_type=node_type,
-            duration=duration,
-            result=normalized,
-            parent_event_override=action_started_event_id or prepared.parent_event_id,
-        )
+        
+        # Check if this is a loop iteration by looking for iterator metadata in job_meta
+        iterator_meta = prepared.job_meta.get('iterator') if prepared.job_meta else None
+        is_loop_iteration = bool(iterator_meta and isinstance(iterator_meta, dict))
+        
+        if is_loop_iteration:
+            # This is a loop iteration - emit iteration_completed instead of step_result
+            iteration_meta = {
+                'iteration_index': iterator_meta.get('iteration_index', 0),
+                'total_iterations': iterator_meta.get('total_iterations', 0),
+                'iterator_name': iterator_meta.get('iterator_name', 'item'),
+                'mode': iterator_meta.get('mode', 'sequential'),
+                'parent_execution_id': iterator_meta.get('parent_execution_id'),
+            }
+            
+            event = self._build_event_payload(
+                prepared,
+                event_type="iteration_completed",
+                status=status,
+                node_type=node_type,
+                duration=duration,
+                result=normalized,
+                parent_event_override=action_started_event_id or prepared.parent_event_id,
+                meta=iteration_meta,
+            )
+            logger.info(
+                f"Emitting iteration_completed for {prepared.node_name} "
+                f"(iteration {iteration_meta['iteration_index']}/{iteration_meta['total_iterations']})"
+            )
+        else:
+            # Normal step - emit step_result
+            event = self._build_event_payload(
+                prepared,
+                event_type="step_result",
+                status=status,
+                node_type=node_type,
+                duration=duration,
+                result=normalized,
+                parent_event_override=action_started_event_id or prepared.parent_event_id,
+            )
+        
         await self._emit_event(event)
 
     async def _emit_event(

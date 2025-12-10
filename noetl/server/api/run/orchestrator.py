@@ -23,6 +23,7 @@ from typing import Any, Dict, Optional
 import yaml
 from jinja2 import Environment, TemplateSyntaxError, UndefinedError
 from psycopg.rows import dict_row
+from psycopg.types.json import Json
 
 from noetl.core.db.pool import get_pool_connection, get_snowflake_id
 from noetl.core.logger import setup_logger
@@ -170,20 +171,18 @@ async def _check_execution_completion(
             row = await cur.fetchone()
             incomplete_steps = row["incomplete_steps"] if row else 0
             
-            # Check for parent steps with completed iterations but no parent action_completed yet
-            # This prevents premature completion when iterations finish but parent aggregation pending
+            # Check for parent iterators that have completed iterations but no iterator_completed yet
+            # This prevents premature completion when iterations finish but iterator aggregation pending
             await cur.execute(
                 """
-                SELECT COUNT(DISTINCT SUBSTRING(node_name FROM '^(.+)_iter_')) as pending_parents
+                SELECT COUNT(*) as pending_parents
                 FROM noetl.event e1
                 WHERE e1.execution_id = %(execution_id)s
-                  AND e1.event_type = 'action_completed'
-                  AND e1.node_name LIKE '%%_iter_%%'
+                  AND e1.event_type = 'iterator_started'
                   AND NOT EXISTS (
                       SELECT 1 FROM noetl.event e2
                       WHERE e2.execution_id = e1.execution_id
-                        AND e2.node_name = SUBSTRING(e1.node_name FROM '^(.+)_iter_')
-                        AND e2.event_type = 'action_completed'
+                        AND e2.event_type = 'iterator_completed'
                   )
                 """,
                 {"execution_id": int(execution_id)},
@@ -501,6 +500,7 @@ async def evaluate_execution(
                 "step_result",
                 "step_end",
                 "step_completed",
+                "iterator_completed",  # Allow loop completion to trigger workflow continuation
             ):
                 # First check if success retry should happen
                 async with get_pool_connection() as conn:
@@ -2171,8 +2171,8 @@ async def _process_iteration_completed(
     
     # Count total and completed iterations for parent
     async with get_pool_connection() as conn:
+        # Check how many iteration jobs exist for this parent
         async with conn.cursor() as cur:
-            # Check how many iteration jobs exist for this parent
             await cur.execute(
                 """
                 SELECT COUNT(*) as total
@@ -2182,12 +2182,12 @@ async def _process_iteration_completed(
                 (parent_execution_id,)
             )
             row = await cur.fetchone()
-            total_iterations = row[0] if row else 0
+            total_iterations = row['total'] if row else 0
             
             # Check how many have completed
             await cur.execute(
                 """
-                SELECT COUNT(DISTINCT execution_id) as completed
+                SELECT COUNT(*) as completed
                 FROM noetl.event
                 WHERE parent_execution_id = %s
                 AND event_type = 'iteration_completed'
@@ -2196,21 +2196,21 @@ async def _process_iteration_completed(
                 (parent_execution_id,)
             )
             row = await cur.fetchone()
-        completed_iterations = row[0] if row else 0
+            completed_iterations = row['completed'] if row else 0
         
         logger.info(
             f"ORCHESTRATOR: Iterator progress - {completed_iterations}/{total_iterations} iterations"
         )
         
-        async with conn.cursor() as cur:
-            # If all iterations complete, emit iterator_completed
-            if completed_iterations >= total_iterations and total_iterations > 0:
-                logger.info(f"ORCHESTRATOR: All iterations complete for parent {parent_execution_id}")
-                
+        # If all iterations complete, emit iterator_completed
+        if completed_iterations >= total_iterations and total_iterations > 0:
+            logger.info(f"ORCHESTRATOR: All iterations complete for parent {parent_execution_id}")
+            
+            async with conn.cursor() as cur:
                 # Gather results from all iterations in order
                 await cur.execute(
                     """
-                    SELECT data, meta
+                    SELECT result, meta
                     FROM noetl.event
                     WHERE parent_execution_id = %s
                     AND event_type = 'iteration_completed'
@@ -2221,12 +2221,14 @@ async def _process_iteration_completed(
                 
                 results = []
                 async for row in cur:
-                    event_data = row[0] if isinstance(row[0], dict) else json.loads(row[0] or '{}')
-                    results.append(event_data.get('result'))
+                    result_col = row['result']
+                    result_data = result_col if isinstance(result_col, dict) else json.loads(result_col or '{}')
+                    results.append(result_data)
                 
-                # Emit iterator_completed event
+            # Emit iterator_completed event
+            async with conn.cursor() as cur:
                 now = datetime.now(timezone.utc)
-                completed_event_id = get_snowflake_id()
+                completed_event_id = await get_snowflake_id()
                 
                 # Get parent event details
                 await cur.execute(
@@ -2242,44 +2244,45 @@ async def _process_iteration_completed(
                 )
                 parent_event = await cur.fetchone()
             
-            if parent_event:
-                # Build comprehensive metadata for iterator completion
-                completion_meta = {
-                    'total_iterations': total_iterations,
-                    'completed_iterations': completed_iterations,
-                    'success_rate': completed_iterations / total_iterations if total_iterations > 0 else 0,
-                    'completed_at': now.isoformat()
-                }
-                
-                await conn.execute(
-                    """
-                    INSERT INTO noetl.event (
-                        event_id, execution_id, catalog_id, parent_event_id,
-                        event_type, node_id, node_name, node_type,
-                        status, context, data, meta, created_at
+                if parent_event:
+                    # Build comprehensive metadata for iterator completion
+                    completion_meta = {
+                        'total_iterations': total_iterations,
+                        'completed_iterations': completed_iterations,
+                        'success_rate': completed_iterations / total_iterations if total_iterations > 0 else 0,
+                        'completed_at': now.isoformat()
+                    }
+                    
+                    # Insert iterator_completed event
+                    await cur.execute(
+                        """
+                        INSERT INTO noetl.event (
+                            event_id, execution_id, catalog_id, parent_event_id,
+                            event_type, node_id, node_name, node_type,
+                            status, context, result, meta, created_at
+                        )
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        """,
+                        (
+                            completed_event_id,
+                            parent_execution_id,
+                            parent_event['catalog_id'],
+                            parent_event['event_id'],  # parent iterator_started event_id
+                            'iterator_completed',
+                            parent_event['node_id'],
+                            parent_event['node_name'],
+                            'iterator',
+                            'COMPLETED',
+                            Json({}),
+                            Json({'results': results}),
+                            Json(completion_meta),
+                            now
+                        )
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    """,
-                    (
-                        completed_event_id,
-                        parent_execution_id,
-                        parent_event[0],  # catalog_id
-                        parent_event[3],  # parent iterator_started event_id
-                        'iterator_completed',
-                        parent_event[1],  # node_id
-                        parent_event[2],  # node_name
-                        'iterator',
-                        'COMPLETED',
-                        json.dumps({}),
-                        json.dumps({'results': results}),
-                        json.dumps(completion_meta),
-                        now
+                    
+                    logger.info(
+                        f"ORCHESTRATOR: Emitted iterator_completed for parent {parent_execution_id}"
                     )
-                )
-                
-                logger.info(
-                    f"ORCHESTRATOR: Emitted iterator_completed for parent {parent_execution_id}"
-                )
                 
                 # Trigger orchestration for parent to continue workflow
                 await evaluate_execution(
