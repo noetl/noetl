@@ -45,15 +45,16 @@ def start_worker_service(
     """
     
     if v2:
-        # Start v2 worker
-        logger.info("Starting worker v2 (event-driven architecture)")
-        from noetl.worker.worker_v2 import run_worker_v2_sync
+        # Start v2 worker with NATS
+        logger.info("Starting worker v2 (event-driven NATS architecture)")
+        from noetl.worker.v2_worker_nats import run_worker_v2_sync
         
-        # Get server URL from settings
+        # Get configuration
         settings = get_settings()
-        server_url = settings.server_api_url or "http://localhost:8000"
+        nats_url = os.getenv("NATS_URL", "nats://noetl:noetl@localhost:30422")
+        server_url = settings.server_api_url or "http://localhost:8082"
         
-        run_worker_v2_sync(server_url=server_url)
+        run_worker_v2_sync(nats_url=nats_url, server_url=server_url)
         return
 
     # Start v1 worker (existing implementation)

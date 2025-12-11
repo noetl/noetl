@@ -6,6 +6,7 @@ No backward compatibility.
 """
 
 import logging
+import os
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field
 from typing import Any, Optional
@@ -15,6 +16,7 @@ from psycopg.types.json import Json
 from noetl.core.dsl.v2.models import Event, Command
 from noetl.core.dsl.v2.engine import ControlFlowEngine, PlaybookRepo, StateStore
 from noetl.core.db.pool import get_pool_connection, get_snowflake_id
+from noetl.core.messaging import NATSCommandPublisher
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +26,7 @@ router = APIRouter(prefix="/v2", tags=["v2"])
 _playbook_repo: Optional[PlaybookRepo] = None
 _state_store: Optional[StateStore] = None
 _engine: Optional[ControlFlowEngine] = None
+_nats_publisher: Optional[NATSCommandPublisher] = None
 
 
 def get_engine():
@@ -36,6 +39,19 @@ def get_engine():
         _engine = ControlFlowEngine(_playbook_repo, _state_store)
     
     return _engine
+
+
+async def get_nats_publisher():
+    """Get or initialize NATS publisher."""
+    global _nats_publisher
+    
+    if _nats_publisher is None:
+        nats_url = os.getenv("NATS_URL", "nats://noetl:noetl@nats.nats.svc.cluster.local:4222")
+        _nats_publisher = NATSCommandPublisher(nats_url=nats_url)
+        await _nats_publisher.connect()
+        logger.info(f"NATS publisher initialized: {nats_url}")
+    
+    return _nats_publisher
 
 
 # ============================================================================
@@ -107,7 +123,13 @@ async def start_execution(req: StartExecutionRequest) -> StartExecutionResponse:
             catalog_id
         )
         
-        # Enqueue commands to database
+        # Get NATS publisher
+        nats_pub = await get_nats_publisher()
+        
+        # Server URL for worker API calls
+        server_url = os.getenv("SERVER_API_URL", "http://noetl.noetl.svc.cluster.local:8082")
+        
+        # Enqueue commands to database and publish to NATS
         async with get_pool_connection() as conn:
             async with conn.cursor() as cur:
                 for command in commands:
@@ -133,6 +155,15 @@ async def start_execution(req: StartExecutionRequest) -> StartExecutionResponse:
                         datetime.now(timezone.utc),
                         datetime.now(timezone.utc)
                     ))
+                    
+                    # Publish notification to NATS
+                    await nats_pub.publish_command(
+                        execution_id=int(execution_id),
+                        queue_id=queue_id,
+                        step=command.step,
+                        server_url=server_url
+                    )
+                    
                 await conn.commit()
         
         return StartExecutionResponse(
@@ -171,7 +202,13 @@ async def handle_event(req: EventRequest) -> EventResponse:
         # Process event through engine
         commands = await engine.handle_event(event)
         
-        # Enqueue generated commands
+        # Get NATS publisher
+        nats_pub = await get_nats_publisher()
+        
+        # Server URL for worker API calls
+        server_url = os.getenv("SERVER_API_URL", "http://noetl.noetl.svc.cluster.local:8082")
+        
+        # Enqueue generated commands and publish to NATS
         async with get_pool_connection() as conn:
             async with conn.cursor() as cur:
                 for command in commands:
@@ -209,6 +246,15 @@ async def handle_event(req: EventRequest) -> EventResponse:
                         datetime.now(timezone.utc),
                         datetime.now(timezone.utc)
                     ))
+                    
+                    # Publish notification to NATS
+                    await nats_pub.publish_command(
+                        execution_id=int(command.execution_id),
+                        queue_id=queue_id,
+                        step=command.step,
+                        server_url=server_url
+                    )
+                    
                 await conn.commit()
         
         return EventResponse(
