@@ -1,4 +1,4 @@
-apiVersion: noetl.io/v1
+apiVersion: noetl.io/v2
 kind: Playbook
 
 metadata:
@@ -11,17 +11,28 @@ workload:
 workflow:
   - step: start
     desc: Start data transfer pipeline
+    tool:
+      kind: python
+      code: |
+        def main():
+            return {"status": "initialized"}
     next:
       - step: verify_pg_data
   - step: verify_pg_data
     desc: Verify data was transferred to PostgreSQL
-    tool: postgres
-    auth: "{{ workload.pg_auth }}"
-    command: |
-      SELECT 
-        COUNT(*) as row_count,
-      FROM patient_info;
+    tool:
+      kind: postgres
+      auth: "{{ workload.pg_auth }}"
+      command: |
+        SELECT 
+          COUNT(*) as row_count,
+        FROM patient_info;
     next:
       - step: end
   - step: end
     desc: End data transfer test pipeline
+    tool:
+      kind: python
+      code: |
+        def main():
+            return {"status": "completed"}
