@@ -1,696 +1,553 @@
 """
-NoETL DSL v2 Control Flow Engine
+NoETL V2 Execution Engine
 
-Server-side event-driven orchestration that:
-- Receives events from workers
-- Evaluates case/when/then rules with Jinja2
-- Executes actions (call, retry, collect, sink, set, result, next, fail, skip)
-- Generates Command objects for queue table
+Event-driven control flow engine that:
+1. Consumes events from workers
+2. Evaluates case/when/then rules  
+3. Emits commands to queue table
+4. Maintains execution state
+
+No backward compatibility - pure v2 implementation.
 """
 
 import logging
 from typing import Any, Optional
-from jinja2 import Environment, Template, TemplateSyntaxError, UndefinedError
-from .models import (
-    Event, Command, Playbook, Step, ToolCall, CaseEntry,
-    ToolSpec
-)
-from .parser import DSLParser
+from datetime import datetime, timezone
+from jinja2 import Template, Environment, StrictUndefined
+from psycopg.types.json import Json
+
+from noetl.core.dsl.v2.models import Event, Command, Playbook, Step, CaseEntry, ToolCall
+from noetl.core.db.pool import get_pool_connection, get_snowflake_id
 
 logger = logging.getLogger(__name__)
 
 
-# ============================================================================
-# State Management
-# ============================================================================
-
 class ExecutionState:
-    """
-    Manages state for a single execution.
+    """Tracks state of a playbook execution."""
     
-    Tracks:
-    - Current step
-    - Context variables (set via 'set' action)
-    - Step results
-    - Loop state (iterator values, indices)
-    - Workflow status
-    """
-    
-    def __init__(self, execution_id: str):
+    def __init__(self, execution_id: str, playbook: Playbook, payload: dict[str, Any], catalog_id: Optional[int] = None):
         self.execution_id = execution_id
+        self.playbook = playbook
+        self.payload = payload
+        self.catalog_id = catalog_id  # Store catalog_id for event persistence
         self.current_step: Optional[str] = None
-        self.context: dict[str, Any] = {}
+        self.variables: dict[str, Any] = {}
         self.step_results: dict[str, Any] = {}
-        self.loop_state: dict[str, Any] = {}
-        self.workflow_status: str = "running"
-        self.last_response: Optional[dict[str, Any]] = None
-        self.last_error: Optional[dict[str, Any]] = None
-    
-    def update_from_event(self, event: Event):
-        """Update state based on event."""
-        if event.step:
-            self.current_step = event.step
+        self.completed_steps: set[str] = set()
+        self.failed = False
+        self.completed = False
         
-        # Extract response/error from payload
-        if "response" in event.payload:
-            self.last_response = event.payload["response"]
+        # Initialize workload variables
+        if playbook.workload:
+            self.variables.update(playbook.workload)
         
-        if "error" in event.payload:
-            self.last_error = event.payload["error"]
+        # Merge payload
+        self.variables.update(payload)
     
-    def set_context(self, key: str, value: Any):
-        """Set context variable."""
-        self.context[key] = value
+    def get_step(self, step_name: str) -> Optional[Step]:
+        """Get step by name."""
+        for step in self.playbook.workflow:
+            if step.step == step_name:
+                return step
+        return None
     
-    def set_step_result(self, step: str, result: Any):
-        """Set step result."""
-        self.step_results[step] = result
+    def set_current_step(self, step_name: str):
+        """Set current executing step."""
+        self.current_step = step_name
     
-    def get_jinja_context(self, workload: dict[str, Any], args: Optional[dict[str, Any]], event: Event) -> dict[str, Any]:
-        """
-        Build Jinja2 context for template evaluation.
-        
-        Includes:
-        - workload: global variables
-        - args: step input arguments
-        - ctx: context variables
-        - event: current event with event.name
-        - response: last response (for call.done)
-        - error: last error (for call.done)
-        - step_results: all step results
-        - loop: loop state
-        """
+    def mark_step_completed(self, step_name: str, result: Any = None):
+        """Mark step as completed and store result."""
+        self.completed_steps.add(step_name)
+        if result is not None:
+            self.step_results[step_name] = result
+            self.variables[step_name] = result
+    
+    def is_step_completed(self, step_name: str) -> bool:
+        """Check if step is completed."""
+        return step_name in self.completed_steps
+    
+    def get_render_context(self, event: Event) -> dict[str, Any]:
+        """Get context for Jinja2 rendering."""
         context = {
-            "workload": workload,
-            "args": args or {},
-            "ctx": self.context,
             "event": {
                 "name": event.name,
-                "step": event.step,
                 "payload": event.payload,
+                "step": event.step,
+                "timestamp": event.timestamp.isoformat() if event.timestamp else None,
             },
             "execution_id": self.execution_id,
+            "workload": self.variables,
+            "vars": self.variables,
+            **self.variables,  # Make variables accessible at top level
         }
         
-        # Add response/error for call.done events
-        if self.last_response:
-            context["response"] = self.last_response
-        
-        if self.last_error:
-            context["error"] = self.last_error
-        
-        # Add step results
-        context.update(self.step_results)
-        
-        # Add loop state
-        if self.loop_state:
-            context["loop"] = self.loop_state
+        # Add event-specific data
+        if "response" in event.payload:
+            context["response"] = event.payload["response"]
+        if "error" in event.payload:
+            context["error"] = event.payload["error"]
+        if "result" in event.payload:
+            context["result"] = event.payload["result"]
         
         return context
 
 
-class StateStore:
-    """
-    State storage interface.
-    In-memory for now, can be Redis/DB for production.
-    """
-    
-    def __init__(self):
-        self._states: dict[str, ExecutionState] = {}
-    
-    def get(self, execution_id: str) -> ExecutionState:
-        """Get or create execution state."""
-        if execution_id not in self._states:
-            self._states[execution_id] = ExecutionState(execution_id)
-        return self._states[execution_id]
-    
-    def set(self, execution_id: str, state: ExecutionState):
-        """Store execution state."""
-        self._states[execution_id] = state
-    
-    def delete(self, execution_id: str):
-        """Delete execution state."""
-        self._states.pop(execution_id, None)
-
-
-# ============================================================================
-# Playbook Repository
-# ============================================================================
-
 class PlaybookRepo:
-    """
-    Playbook storage and retrieval.
-    Handles playbook registration and lookup by execution_id.
-    """
+    """Repository for loading playbooks from catalog."""
     
     def __init__(self):
-        self._playbooks: dict[str, Playbook] = {}
-        self._execution_to_playbook: dict[str, str] = {}
-        self.parser = DSLParser()
+        self._cache: dict[str, Playbook] = {}
     
-    def register(self, playbook: Playbook, execution_id: str):
-        """Register playbook for an execution."""
-        playbook_key = playbook.metadata["name"]
-        self._playbooks[playbook_key] = playbook
-        self._execution_to_playbook[execution_id] = playbook_key
+    async def load_playbook(self, path: str) -> Optional[Playbook]:
+        """Load playbook from catalog by path."""
+        # Check cache first
+        if path in self._cache:
+            return self._cache[path]
+        
+        async with get_pool_connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute("""
+                    SELECT content, layout 
+                    FROM noetl.catalog 
+                    WHERE path = %s 
+                    ORDER BY version DESC 
+                    LIMIT 1
+                """, (path,))
+                row = await cur.fetchone()
+            
+                if not row:
+                    logger.error(f"Playbook not found: {path}")
+                    return None
+                
+                # Parse YAML content
+                import yaml
+                content_dict = yaml.safe_load(row["content"])
+                
+                # Validate it's v2
+                if content_dict.get("apiVersion") != "noetl.io/v2":
+                    logger.error(f"Playbook {path} is not v2 format")
+                    return None
+                
+                # Parse into Pydantic model
+                playbook = Playbook(**content_dict)
+                self._cache[path] = playbook
+                return playbook
+
+
+class StateStore:
+    """Stores and retrieves execution state."""
     
-    def get_by_execution(self, execution_id: str) -> Optional[Playbook]:
-        """Get playbook by execution_id."""
-        playbook_key = self._execution_to_playbook.get(execution_id)
-        if playbook_key:
-            return self._playbooks.get(playbook_key)
+    def __init__(self):
+        self._memory_cache: dict[str, ExecutionState] = {}
+    
+    async def save_state(self, state: ExecutionState):
+        """Save execution state."""
+        self._memory_cache[state.execution_id] = state
+        
+        # Persist to workload table
+        state_data = {
+            "variables": state.variables,
+            "step_results": state.step_results,
+            "current_step": state.current_step,
+            "completed_steps": list(state.completed_steps),
+            "failed": state.failed,
+            "completed": state.completed,
+        }
+        
+        async with get_pool_connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute("""
+                    INSERT INTO noetl.workload (execution_id, data, created_at)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT (execution_id) 
+                    DO UPDATE SET data = %s
+                """, (
+                    int(state.execution_id), 
+                    Json(state_data),
+                    datetime.now(timezone.utc),
+                    Json(state_data)
+                ))
+            await conn.commit()
+    
+    async def load_state(self, execution_id: str) -> Optional[ExecutionState]:
+        """Load execution state."""
+        # Check memory first
+        if execution_id in self._memory_cache:
+            return self._memory_cache[execution_id]
+        
+        # TODO: Load from database if needed
         return None
     
-    def get_by_key(self, playbook_key: str) -> Optional[Playbook]:
-        """Get playbook by key."""
-        return self._playbooks.get(playbook_key)
-    
-    def list_playbooks(self) -> list[str]:
-        """List all registered playbook keys."""
-        return list(self._playbooks.keys())
+    def get_state(self, execution_id: str) -> Optional[ExecutionState]:
+        """Get state from memory cache (sync)."""
+        return self._memory_cache.get(execution_id)
 
-
-# ============================================================================
-# Control Flow Engine
-# ============================================================================
 
 class ControlFlowEngine:
     """
-    Event-driven control flow orchestration.
+    V2 Control Flow Engine.
     
-    Responsibilities:
-    1. Load playbook & execution state
-    2. Build Jinja2 context from event
-    3. Evaluate case/when/then rules
-    4. Execute actions (call, retry, collect, sink, set, result, next, fail, skip)
-    5. Generate Command objects for queue table
+    Processes events and applies case/when/then rules to determine next actions.
+    Pure event-driven architecture with no backward compatibility.
     """
     
     def __init__(self, playbook_repo: PlaybookRepo, state_store: StateStore):
         self.playbook_repo = playbook_repo
         self.state_store = state_store
-        self.jinja_env = Environment()
+        self.jinja_env = Environment(undefined=StrictUndefined)
     
-    def handle_event(self, event: Event) -> list[Command]:
-        """
-        Handle event and generate commands.
-        
-        Args:
-            event: Event from worker or internal
+    def _render_template(self, template_str: str, context: dict[str, Any]) -> Any:
+        """Render Jinja2 template."""
+        try:
+            template = self.jinja_env.from_string(template_str)
+            result = template.render(**context)
             
-        Returns:
-            List of commands to insert into queue table
-        """
-        logger.info(f"Handling event: {event.execution_id} / {event.name} / {event.step}")
-        
-        # Load playbook
-        playbook = self.playbook_repo.get_by_execution(event.execution_id)
-        if not playbook:
-            logger.error(f"Playbook not found for execution {event.execution_id}")
-            return []
-        
-        # Load/update state
-        state = self.state_store.get(event.execution_id)
-        state.update_from_event(event)
-        
-        # Handle workflow.start - initialize with start step
-        if event.name == "workflow.start":
-            return self._handle_workflow_start(event, playbook, state)
-        
-        # Get current step
-        if not event.step:
-            logger.warning(f"Event {event.name} has no step")
-            return []
-        
-        step = self._get_step(playbook, event.step)
-        if not step:
-            logger.error(f"Step {event.step} not found in playbook")
-            return []
-        
-        # Build Jinja context
-        workload = playbook.workload or {}
-        args = step.args or {}
-        jinja_context = state.get_jinja_context(workload, args, event)
-        
-        # Evaluate case rules
-        commands = []
-        if step.case:
-            commands = self._evaluate_case_rules(step, jinja_context, state, event)
-        
-        # If no case rules fired and step is complete (step.exit), use structural next
-        if not commands and event.name == "step.exit" and step.next:
-            commands = self._handle_structural_next(step, state, jinja_context)
-        
-        return commands
+            # Try to parse as boolean for conditions
+            if result.lower() in ("true", "false"):
+                return result.lower() == "true"
+            
+            return result
+        except Exception as e:
+            logger.error(f"Template rendering error: {e}")
+            logger.error(f"Template: {template_str}")
+            logger.error(f"Context keys: {list(context.keys())}")
+            raise
     
-    def _handle_workflow_start(self, event: Event, playbook: Playbook, state: ExecutionState) -> list[Command]:
-        """Handle workflow.start event - generate command for 'start' step."""
-        start_step = self._get_step(playbook, "start")
-        if not start_step:
-            logger.error("No 'start' step found in playbook")
-            return []
-        
-        # Generate command for start step
-        return [self._create_command(
-            execution_id=event.execution_id,
-            step=start_step.step,
-            tool=start_step.tool,
-            args=start_step.args
-        )]
+    def _evaluate_condition(self, when_expr: str, context: dict[str, Any]) -> bool:
+        """Evaluate when condition."""
+        try:
+            # Render the condition
+            result = self._render_template(when_expr, context)
+            
+            # Convert to boolean
+            if isinstance(result, bool):
+                return result
+            if isinstance(result, str):
+                return result.lower() in ("true", "1", "yes")
+            return bool(result)
+        except Exception as e:
+            logger.error(f"Condition evaluation error: {e}")
+            logger.error(f"Condition: {when_expr}")
+            return False
     
-    def _evaluate_case_rules(
+    async def _process_then_actions(
         self, 
-        step: Step, 
-        jinja_context: dict[str, Any], 
-        state: ExecutionState,
-        event: Event
-    ) -> list[Command]:
-        """
-        Evaluate case entries and execute matched then actions.
-        
-        Returns commands generated from actions.
-        """
-        commands = []
-        
-        for i, case_entry in enumerate(step.case):
-            # Evaluate when condition
-            try:
-                condition_result = self._evaluate_jinja(case_entry.when, jinja_context)
-            except Exception as e:
-                logger.error(f"Error evaluating case[{i}].when: {e}")
-                continue
-            
-            if not condition_result:
-                continue
-            
-            logger.info(f"Case rule {i} matched for step {step.step}")
-            
-            # Execute then actions
-            then_commands = self._execute_actions(
-                case_entry.then,
-                step,
-                state,
-                jinja_context,
-                event
-            )
-            commands.extend(then_commands)
-            
-            # Stop after first match (can be made configurable)
-            break
-        
-        return commands
-    
-    def _execute_actions(
-        self,
         then_block: dict | list,
-        step: Step,
         state: ExecutionState,
-        jinja_context: dict[str, Any],
         event: Event
     ) -> list[Command]:
-        """
-        Execute actions from then block.
-        
-        Supported actions:
-        - call: Re-invoke tool with overrides
-        - retry: Retry last call with backoff
-        - collect: Aggregate data
-        - sink: Write to external storage
-        - set: Update context
-        - result: Set step result
-        - next: Transition to other steps
-        - fail: Mark as failed
-        - skip: Mark as skipped
-        """
-        commands = []
+        """Process actions in a then block."""
+        commands: list[Command] = []
         
         # Normalize to list
         actions = then_block if isinstance(then_block, list) else [then_block]
+        
+        context = state.get_render_context(event)
         
         for action in actions:
             if not isinstance(action, dict):
                 continue
             
-            # Call action
-            if "call" in action:
-                cmd = self._action_call(action["call"], step, state, jinja_context, event)
-                if cmd:
-                    commands.append(cmd)
+            # Handle different action types
+            if "next" in action:
+                # Transition to next step(s)
+                next_items = action["next"]
+                if not isinstance(next_items, list):
+                    next_items = [next_items]
+                
+                for next_item in next_items:
+                    if isinstance(next_item, str):
+                        # Simple step name
+                        target_step = next_item
+                        args = {}
+                    elif isinstance(next_item, dict):
+                        # {step: name, args: {...}}
+                        target_step = next_item.get("step")
+                        args = next_item.get("args", {})
+                        
+                        # Render args
+                        rendered_args = {}
+                        for key, value in args.items():
+                            if isinstance(value, str) and "{{" in value:
+                                rendered_args[key] = self._render_template(value, context)
+                            else:
+                                rendered_args[key] = value
+                        args = rendered_args
+                    else:
+                        continue
+                    
+                    # Get target step definition
+                    step_def = state.get_step(target_step)
+                    if not step_def:
+                        logger.error(f"Target step not found: {target_step}")
+                        continue
+                    
+                    # Create command for target step
+                    command = self._create_command_for_step(
+                        state, step_def, args
+                    )
+                    if command:
+                        commands.append(command)
             
-            # Retry action
-            elif "retry" in action:
-                cmd = self._action_retry(action["retry"], step, state, event)
-                if cmd:
-                    commands.append(cmd)
-            
-            # Collect action
-            elif "collect" in action:
-                self._action_collect(action["collect"], state, jinja_context)
-            
-            # Sink action
-            elif "sink" in action:
-                cmd = self._action_sink(action["sink"], state, jinja_context, event)
-                if cmd:
-                    commands.append(cmd)
-            
-            # Set action
             elif "set" in action:
-                self._action_set(action["set"], state, jinja_context)
+                # Set variables
+                set_data = action["set"]
+                for key, value in set_data.items():
+                    if isinstance(value, str) and "{{" in value:
+                        state.variables[key] = self._render_template(value, context)
+                    else:
+                        state.variables[key] = value
             
-            # Result action
             elif "result" in action:
-                self._action_result(action["result"], step, state, jinja_context)
+                # Set step result
+                result_spec = action["result"]
+                if isinstance(result_spec, dict) and "from" in result_spec:
+                    from_key = result_spec["from"]
+                    if from_key in state.variables:
+                        state.mark_step_completed(event.step, state.variables[from_key])
+                else:
+                    state.mark_step_completed(event.step, result_spec)
             
-            # Next action
-            elif "next" in action:
-                next_commands = self._action_next(action["next"], state, jinja_context, event)
-                commands.extend(next_commands)
-            
-            # Fail action
             elif "fail" in action:
-                self._action_fail(action["fail"], state)
+                # Mark execution as failed
+                state.failed = True
+                logger.info(f"Execution {state.execution_id} marked as failed")
             
-            # Skip action
-            elif "skip" in action:
-                self._action_skip(action["skip"], state)
+            elif "collect" in action:
+                # Collect data into context variable
+                collect_spec = action["collect"]
+                from_path = collect_spec.get("from")
+                into_var = collect_spec.get("into")
+                mode = collect_spec.get("mode", "append")
+                
+                if from_path and into_var:
+                    # Get source data
+                    if isinstance(from_path, str) and "{{" in from_path:
+                        source_data = self._render_template(from_path, context)
+                    else:
+                        source_data = from_path
+                    
+                    # Initialize target if needed
+                    if into_var not in state.variables:
+                        state.variables[into_var] = []
+                    
+                    # Collect based on mode
+                    if mode == "append":
+                        if not isinstance(state.variables[into_var], list):
+                            state.variables[into_var] = [state.variables[into_var]]
+                        state.variables[into_var].append(source_data)
+                    elif mode == "extend":
+                        if isinstance(source_data, list):
+                            state.variables[into_var].extend(source_data)
+                        else:
+                            state.variables[into_var].append(source_data)
         
         return commands
     
-    def _action_call(
-        self, 
-        call_config: dict, 
-        step: Step, 
-        state: ExecutionState, 
-        jinja_context: dict[str, Any],
-        event: Event
-    ) -> Optional[Command]:
-        """Re-invoke tool with parameter overrides."""
-        # Render overrides
-        rendered_overrides = self._render_dict(call_config, jinja_context)
-        
-        # Merge with original tool config
-        tool_config = step.tool.model_dump(exclude={"kind"}, by_alias=True)
-        tool_config.update(rendered_overrides)
-        
-        return self._create_command(
-            execution_id=event.execution_id,
-            step=step.step,
-            tool=step.tool,
-            args=step.args,
-            metadata={"action": "call", "overrides": rendered_overrides}
-        )
-    
-    def _action_retry(
-        self, 
-        retry_config: dict, 
-        step: Step, 
+    def _create_command_for_step(
+        self,
         state: ExecutionState,
-        event: Event
+        step: Step,
+        args: dict[str, Any]
     ) -> Optional[Command]:
-        """Retry last call with backoff."""
-        max_attempts = retry_config.get("max_attempts", 3)
-        backoff_multiplier = retry_config.get("backoff_multiplier", 2.0)
-        initial_delay = retry_config.get("initial_delay", 0.5)
+        """Create a command to execute a step."""
+        # Build tool config
+        tool_config = {}
         
-        current_attempt = event.attempt
-        if current_attempt >= max_attempts:
-            logger.warning(f"Max retry attempts ({max_attempts}) reached for {step.step}")
-            return None
+        # Get all tool attributes except 'kind'
+        for key, value in step.tool.__dict__.items():
+            if key != "kind" and not key.startswith("_"):
+                tool_config[key] = value
         
-        backoff_delay = initial_delay * (backoff_multiplier ** (current_attempt - 1))
+        # Merge with step args
+        if step.args:
+            tool_config.update(step.args)
         
-        return self._create_command(
-            execution_id=event.execution_id,
+        # Merge with transition args
+        tool_config.update(args)
+        
+        command = Command(
+            execution_id=state.execution_id,
             step=step.step,
-            tool=step.tool,
-            args=step.args,
-            attempt=current_attempt + 1,
-            backoff=backoff_delay,
-            max_attempts=max_attempts,
-            metadata={"action": "retry"}
+            tool=ToolCall(
+                kind=step.tool.kind,
+                config=tool_config
+            ),
+            args=tool_config,
+            attempt=1,
+            priority=0
         )
-    
-    def _action_collect(self, collect_config: dict, state: ExecutionState, jinja_context: dict[str, Any]):
-        """Collect data into context."""
-        from_path = collect_config.get("from", "")
-        into_var = collect_config.get("into", "")
-        mode = collect_config.get("mode", "append")
         
-        # Evaluate from path
-        try:
-            value = self._evaluate_jinja(from_path, jinja_context)
-        except Exception as e:
-            logger.error(f"Error evaluating collect.from: {e}")
+        return command
+    
+    async def handle_event(self, event: Event) -> list[Command]:
+        """
+        Handle an event and return commands to enqueue.
+        
+        This is the core engine method called by the API.
+        """
+        commands: list[Command] = []
+        
+        # Load execution state
+        state = self.state_store.get_state(event.execution_id)
+        if not state:
+            logger.error(f"Execution state not found: {event.execution_id}")
+            return commands
+        
+        # Get current step
+        if not event.step:
+            logger.error("Event missing step name")
+            return commands
+        
+        step_def = state.get_step(event.step)
+        if not step_def:
+            logger.error(f"Step not found: {event.step}")
+            return commands
+        
+        # Update current step
+        state.set_current_step(event.step)
+        
+        # Get render context
+        context = state.get_render_context(event)
+        
+        # Process case rules
+        if step_def.case:
+            for case_entry in step_def.case:
+                # Evaluate condition
+                if self._evaluate_condition(case_entry.when, context):
+                    logger.info(f"Case matched: {case_entry.when}")
+                    
+                    # Process then actions
+                    new_commands = await self._process_then_actions(
+                        case_entry.then,
+                        state,
+                        event
+                    )
+                    commands.extend(new_commands)
+                    
+                    # First match wins
+                    break
+        
+        # If step.exit event and no case matched, use structural next
+        if event.name == "step.exit" and step_def.next and not commands:
+            # Handle structural next
+            next_items = step_def.next
+            if isinstance(next_items, str):
+                next_items = [next_items]
+            
+            for next_item in next_items:
+                if isinstance(next_item, str):
+                    target_step = next_item
+                elif isinstance(next_item, dict):
+                    target_step = next_item.get("step")
+                else:
+                    continue
+                
+                step_def = state.get_step(target_step)
+                if step_def:
+                    command = self._create_command_for_step(state, step_def, {})
+                    if command:
+                        commands.append(command)
+        
+        # Save state
+        await self.state_store.save_state(state)
+        
+        # Persist event to database
+        await self._persist_event(event, state)
+        
+        return commands
+    
+    async def _persist_event(self, event: Event, state: ExecutionState):
+        """Persist event to database."""
+        # Use catalog_id from state, or lookup from existing events
+        catalog_id = state.catalog_id
+        
+        if not catalog_id:
+            # Fallback: lookup from existing events
+            async with get_pool_connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute("""
+                        SELECT catalog_id FROM noetl.event 
+                        WHERE execution_id = %s 
+                        LIMIT 1
+                    """, (int(event.execution_id),))
+                    result = await cur.fetchone()
+                    catalog_id = result['catalog_id'] if result else None
+        
+        if not catalog_id:
+            logger.error(f"Cannot persist event - no catalog_id for execution {event.execution_id}")
             return
         
-        # Get current value
-        current = state.context.get(into_var)
-        
-        # Apply mode
-        if mode == "append":
-            if current is None:
-                current = []
-            if isinstance(current, list):
-                current.append(value)
-        elif mode == "extend":
-            if current is None:
-                current = []
-            if isinstance(current, list) and isinstance(value, list):
-                current.extend(value)
-        elif mode == "merge":
-            if current is None:
-                current = {}
-            if isinstance(current, dict) and isinstance(value, dict):
-                current.update(value)
-        else:
-            current = value
-        
-        state.set_context(into_var, current)
+        async with get_pool_connection() as conn:
+            async with conn.cursor() as cur:
+                # Generate event_id
+                event_id = await get_snowflake_id()
+                
+                await cur.execute("""
+                    INSERT INTO noetl.event (
+                        execution_id, catalog_id, event_id, event_type,
+                        node_id, node_name, status, context, result, 
+                        error, stack_trace, worker_id, created_at
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """, (
+                    int(event.execution_id),
+                    catalog_id,
+                    event_id,
+                    event.name,
+                    event.step,
+                    event.step,
+                    "COMPLETED" if event.name == "step.exit" else "RUNNING",
+                    Json(event.payload.get("context")) if event.payload.get("context") else None,
+                    Json(event.payload.get("result")) if event.payload.get("result") else None,
+                    Json(event.payload.get("error")) if event.payload.get("error") else None,
+                    event.payload.get("stack_trace"),
+                    event.worker_id,
+                    event.timestamp or datetime.now(timezone.utc)
+                ))
+            await conn.commit()
     
-    def _action_sink(
-        self, 
-        sink_config: dict, 
-        state: ExecutionState, 
-        jinja_context: dict[str, Any],
-        event: Event
-    ) -> Optional[Command]:
-        """Write data to external sink."""
-        # Render sink config
-        rendered_config = self._render_dict(sink_config, jinja_context)
-        
-        # Extract tool config
-        tool_data = rendered_config.get("tool", {})
-        if not tool_data or "kind" not in tool_data:
-            logger.error("Sink action missing tool.kind")
-            return None
-        
-        tool_spec = ToolSpec(**tool_data)
-        
-        return self._create_command(
-            execution_id=event.execution_id,
-            step=f"_sink_{event.step}",
-            tool=tool_spec,
-            args=rendered_config.get("args"),
-            metadata={"action": "sink", "source_step": event.step}
-        )
-    
-    def _action_set(self, set_config: dict, state: ExecutionState, jinja_context: dict[str, Any]):
-        """Set context variables."""
-        rendered = self._render_dict(set_config, jinja_context)
-        
-        # Handle nested ctx
-        if "ctx" in rendered:
-            for key, value in rendered["ctx"].items():
-                state.set_context(key, value)
-        else:
-            for key, value in rendered.items():
-                state.set_context(key, value)
-    
-    def _action_result(self, result_config: dict, step: Step, state: ExecutionState, jinja_context: dict[str, Any]):
-        """Set step result."""
-        from_path = result_config.get("from", "")
-        
-        if from_path:
-            try:
-                result_value = self._evaluate_jinja(from_path, jinja_context)
-            except Exception as e:
-                logger.error(f"Error evaluating result.from: {e}")
-                return
-        else:
-            result_value = self._render_dict(result_config, jinja_context)
-        
-        state.set_step_result(step.step, result_value)
-    
-    def _action_next(
-        self, 
-        next_config: list, 
-        state: ExecutionState, 
-        jinja_context: dict[str, Any],
-        event: Event
-    ) -> list[Command]:
-        """Generate commands for next step transitions."""
-        commands = []
-        
-        for target in next_config:
-            if isinstance(target, str):
-                target_step = target
-                target_args = None
-            elif isinstance(target, dict):
-                target_step = target.get("step")
-                target_args = target.get("args")
-            else:
-                continue
-            
-            if not target_step:
-                continue
-            
-            # Render args
-            rendered_args = None
-            if target_args:
-                rendered_args = self._render_dict(target_args, jinja_context)
-            
-            # Get target step from playbook
-            playbook = self.playbook_repo.get_by_execution(event.execution_id)
-            if not playbook:
-                continue
-            
-            next_step = self._get_step(playbook, target_step)
-            if not next_step:
-                logger.warning(f"Target step {target_step} not found")
-                continue
-            
-            commands.append(self._create_command(
-                execution_id=event.execution_id,
-                step=next_step.step,
-                tool=next_step.tool,
-                args=rendered_args or next_step.args
-            ))
-        
-        return commands
-    
-    def _action_fail(self, fail_config: dict, state: ExecutionState):
-        """Mark step/workflow as failed."""
-        state.workflow_status = "failed"
-        logger.info(f"Workflow {state.execution_id} marked as failed")
-    
-    def _action_skip(self, skip_config: dict, state: ExecutionState):
-        """Mark step as skipped."""
-        logger.info(f"Step {state.current_step} marked as skipped")
-    
-    def _handle_structural_next(self, step: Step, state: ExecutionState, jinja_context: dict[str, Any]) -> list[Command]:
-        """Handle structural next transitions."""
-        if not step.next:
-            return []
-        
-        commands = []
-        next_steps = []
-        
-        if isinstance(step.next, str):
-            next_steps = [step.next]
-        elif isinstance(step.next, list):
-            next_steps = step.next
-        
-        for next_item in next_steps:
-            if isinstance(next_item, str):
-                target_step = next_item
-            elif isinstance(next_item, dict):
-                target_step = next_item.get("step")
-            else:
-                continue
-            
-            if not target_step:
-                continue
-            
-            # Get target step from playbook
-            playbook = self.playbook_repo.get_by_execution(state.execution_id)
-            if not playbook:
-                continue
-            
-            next_step_obj = self._get_step(playbook, target_step)
-            if not next_step_obj:
-                continue
-            
-            commands.append(self._create_command(
-                execution_id=state.execution_id,
-                step=next_step_obj.step,
-                tool=next_step_obj.tool,
-                args=next_step_obj.args
-            ))
-        
-        return commands
-    
-    def _create_command(
+    async def start_execution(
         self,
-        execution_id: str,
-        step: str,
-        tool: ToolSpec,
-        args: Optional[dict[str, Any]] = None,
-        attempt: int = 1,
-        priority: int = 0,
-        backoff: Optional[float] = None,
-        max_attempts: Optional[int] = None,
-        metadata: Optional[dict[str, Any]] = None
-    ) -> Command:
-        """Create Command object."""
-        tool_call = ToolCall(
-            kind=tool.kind,
-            config=tool.model_dump(exclude={"kind"}, by_alias=True)
+        playbook_path: str,
+        payload: dict[str, Any],
+        catalog_id: Optional[int] = None
+    ) -> tuple[str, list[Command]]:
+        """
+        Start a new playbook execution.
+        
+        Returns (execution_id, initial_commands).
+        """
+        # Generate execution ID
+        execution_id = str(await get_snowflake_id())
+        
+        # Load playbook
+        playbook = await self.playbook_repo.load_playbook(playbook_path)
+        if not playbook:
+            raise ValueError(f"Playbook not found: {playbook_path}")
+        
+        # Create execution state with catalog_id
+        state = ExecutionState(execution_id, playbook, payload, catalog_id)
+        await self.state_store.save_state(state)
+        
+        # Find start step
+        start_step = state.get_step("start")
+        if not start_step:
+            raise ValueError("Playbook must have a 'start' step")
+        
+        # Emit workflow_initialized event
+        init_event = Event(
+            execution_id=execution_id,
+            step="start",
+            name="workflow_initialized",
+            payload={"workload": state.variables},
+            timestamp=datetime.now(timezone.utc)
         )
         
-        return Command(
-            execution_id=execution_id,
-            step=step,
-            tool=tool_call,
-            args=args,
-            attempt=attempt,
-            priority=priority,
-            backoff=backoff,
-            max_attempts=max_attempts,
-            metadata=metadata or {}
-        )
-    
-    def _get_step(self, playbook: Playbook, step_name: str) -> Optional[Step]:
-        """Get step by name from playbook."""
-        for step in playbook.workflow:
-            if step.step == step_name:
-                return step
-        return None
-    
-    def _evaluate_jinja(self, template_str: str, context: dict[str, Any]) -> Any:
-        """Evaluate Jinja2 template expression."""
-        try:
-            template = self.jinja_env.from_string("{{ " + template_str + " }}")
-            result = template.render(context)
-            
-            # Try to evaluate as Python literal
-            import ast
-            try:
-                return ast.literal_eval(result)
-            except (ValueError, SyntaxError):
-                return result
-        except (TemplateSyntaxError, UndefinedError) as e:
-            logger.error(f"Jinja evaluation error: {e}")
-            raise
-    
-    def _render_dict(self, data: dict, context: dict[str, Any]) -> dict[str, Any]:
-        """Recursively render all string values in dict with Jinja2."""
-        result = {}
-        for key, value in data.items():
-            if isinstance(value, str):
-                try:
-                    template = self.jinja_env.from_string(value)
-                    result[key] = template.render(context)
-                except (TemplateSyntaxError, UndefinedError):
-                    result[key] = value
-            elif isinstance(value, dict):
-                result[key] = self._render_dict(value, context)
-            elif isinstance(value, list):
-                result[key] = [
-                    self._render_dict(item, context) if isinstance(item, dict)
-                    else template.render(context) if isinstance(item, str)
-                    else item
-                    for item in value
-                ]
-            else:
-                result[key] = value
-        return result
+        await self._persist_event(init_event, state)
+        
+        # Create initial command for start step
+        start_command = self._create_command_for_step(state, start_step, payload)
+        
+        commands = [start_command] if start_command else []
+        
+        return execution_id, commands
