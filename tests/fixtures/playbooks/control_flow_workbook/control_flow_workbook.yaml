@@ -1,4 +1,4 @@
-apiVersion: noetl.io/v1
+apiVersion: noetl.io/v2
 kind: Playbook
 
 metadata:
@@ -11,74 +11,128 @@ workload:
 # A tiny workbook with a python action that evaluates a flag.
 workbook:
   - name: compute_flag
-    tool: python
+    tool:
+      kind: python
+      code: |
+        def main(temperature_c):
+            is_hot = float(temperature_c) >= 25.0
+            msg = "hot" if is_hot else "cold"
+            return {"is_hot": is_hot, "message": msg}
+      args:
+        temperature_c: null
     assert:
       expects:
         - temperature_c
       returns:
         - is_hot
         - message
-    code: |
-      def main(temperature_c):
-          is_hot = float(temperature_c) >= 25.0
-          msg = "hot" if is_hot else "cold"
-          return {"is_hot": is_hot, "message": msg}
 
 workflow:
   - step: start
     desc: "Begin"
-    next:
-      - step: eval_flag
+    tool:
+      kind: python
+      code: |
+        def main():
+            return {"status": "initialized"}
+    
+    case:
+      - when: "{{ event.name == 'step.exit' }}"
+        then:
+          next:
+            - step: eval_flag
 
   - step: eval_flag
     desc: "Call workbook action to compute is_hot"
-    tool: workbook # must resolve to workbook entry below
-    name: compute_flag # reference by name (resolver should match workbook[].name)
-    args:
-      temperature_c: "{{ workload.temperature_c }}"
-    next:
-      - when: "{{ result.is_hot == true }}"
-        step: hot_path
-      - when: "{{ result.is_hot == false }}"
-        step: cold_path
+    tool:
+      kind: workbook
+      name: compute_flag
+      args:
+        temperature_c: "{{ workload.temperature_c }}"
+    
+    case:
+      - when: "{{ event.name == 'call.done' and response is defined and response.is_hot == true }}"
+        then:
+          next:
+            - step: hot_path
+      
+      - when: "{{ event.name == 'call.done' and response is defined and response.is_hot == false }}"
+        then:
+          next:
+            - step: cold_path
 
   - step: hot_path
     desc: "Hot branch; fan out to two steps in PARALLEL"
-    tool: router
-    # Two next steps with no 'when' => must run in parallel
-    next:
-      - step: hot_task_a
-      - step: hot_task_b
+    tool:
+      kind: python
+      code: |
+        def main():
+            return {"status": "routing_to_parallel"}
+    
+    case:
+      - when: "{{ event.name == 'step.exit' }}"
+        then:
+          next:
+            - step: hot_task_a
+            - step: hot_task_b
 
   - step: hot_task_a
-    tool: python
-    code: |
-      def main():
-          return {"who": "A"}
-    next:
-      - step: end
+    tool:
+      kind: python
+      code: |
+        def main():
+            return {"who": "A"}
+    
+    case:
+      - when: "{{ event.name == 'call.done' and response is defined }}"
+        then:
+          next:
+            - step: end
 
   - step: hot_task_b
-    tool: python
-    code: |
-      def main():
-          return {"who": "B"}
-    next:
-      - step: end
+    tool:
+      kind: python
+      code: |
+        def main():
+            return {"who": "B"}
+    
+    case:
+      - when: "{{ event.name == 'call.done' and response is defined }}"
+        then:
+          next:
+            - step: end
 
   - step: cold_path
     desc: "Cold branch single continuation"
-    tool: router
-    next:
-      - step: cold_task
+    tool:
+      kind: python
+      code: |
+        def main():
+            return {"status": "routing_to_cold"}
+    
+    case:
+      - when: "{{ event.name == 'step.exit' }}"
+        then:
+          next:
+            - step: cold_task
 
   - step: cold_task
-    tool: python
-    code: |
-      def main():
-          return {"who": "C"}
-    next:
-      - step: end
+    tool:
+      kind: python
+      code: |
+        def main():
+            return {"who": "C"}
+    
+    case:
+      - when: "{{ event.name == 'call.done' and response is defined }}"
+        then:
+          next:
+            - step: end
 
   - step: end
     desc: "Finish"
+    tool:
+      kind: python
+      code: |
+        def main():
+            return {"status": "complete"}

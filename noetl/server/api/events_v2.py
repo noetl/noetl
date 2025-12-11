@@ -1,209 +1,214 @@
 """
-NoETL v2 Event API - Server-side event processing endpoint.
+NoETL Server Event API (v2)
 
-Server receives events from workers and internal components,
-processes them through the control flow engine, and generates commands.
+POST /api/v2/events endpoint that:
+- Receives events from workers
+- Calls ControlFlowEngine.handle_event()
+- Inserts generated commands into queue table
+- Server is the ONLY component that writes to queue table
 """
 
-from typing import List
-
-from fastapi import APIRouter, HTTPException, status
+import logging
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
+from typing import Any, Optional
+from datetime import datetime
 
-from noetl.core.logger import setup_logger
+from noetl.core.dsl.v2.models import Event, Command
 from noetl.core.dsl.v2.engine import ControlFlowEngine, PlaybookRepo, StateStore
-from noetl.core.dsl.v2.models import Event as V2Event, Command as V2Command
+from noetl.core.config import get_db_pool
 
-logger = setup_logger(__name__, include_location=True)
-
-# Initialize engine components (in production, these would be dependency-injected)
-playbook_repo = PlaybookRepo()
-state_store = StateStore()
-engine = ControlFlowEngine(playbook_repo, state_store)
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v2", tags=["events-v2"])
 
+# Global engine components (initialized on startup)
+_playbook_repo: Optional[PlaybookRepo] = None
+_state_store: Optional[StateStore] = None
+_engine: Optional[ControlFlowEngine] = None
 
-# ============================================================================
-# Request/Response Schemas
-# ============================================================================
 
-
-class EventSubmitRequest(BaseModel):
-    """Request schema for event submission."""
+def initialize_engine():
+    """Initialize engine components."""
+    global _playbook_repo, _state_store, _engine
     
+    if _playbook_repo is None:
+        _playbook_repo = PlaybookRepo()
+    
+    if _state_store is None:
+        _state_store = StateStore()
+    
+    if _engine is None:
+        _engine = ControlFlowEngine(_playbook_repo, _state_store)
+    
+    return _engine, _playbook_repo
+
+
+# ============================================================================
+# Request/Response Models
+# ============================================================================
+
+class EventRequest(BaseModel):
+    """Request body for POST /api/v2/events."""
     execution_id: str = Field(..., description="Execution identifier")
-    step: str | None = Field(None, description="Step name")
-    name: str = Field(..., description="Event name (e.g., 'step.enter', 'call.done')")
-    payload: dict = Field(default_factory=dict, description="Event payload")
-    worker_id: str | None = Field(None, description="Worker identifier")
+    step: Optional[str] = Field(None, description="Step name")
+    name: str = Field(..., description="Event name (step.enter, call.done, etc.)")
+    payload: dict[str, Any] = Field(default_factory=dict, description="Event payload")
+    worker_id: Optional[str] = Field(None, description="Worker ID")
     attempt: int = Field(default=1, description="Attempt number")
 
 
-class CommandResponse(BaseModel):
-    """Response schema for generated command."""
-    
-    execution_id: str
-    step: str
-    tool_kind: str
-    args: dict | None = None
-    attempt: int = 1
-
-
-class EventProcessResponse(BaseModel):
-    """Response schema for event processing."""
-    
-    status: str = Field(..., description="Processing status")
+class EventResponse(BaseModel):
+    """Response for POST /api/v2/events."""
+    status: str = Field(..., description="Status (ok, error)")
     commands_generated: int = Field(..., description="Number of commands generated")
-    commands: List[CommandResponse] = Field(default_factory=list, description="Generated commands")
-    message: str | None = Field(None, description="Optional message")
+    message: Optional[str] = Field(None, description="Optional message")
 
 
 # ============================================================================
-# Endpoints
+# API Endpoints
 # ============================================================================
 
-
-@router.post("/events", response_model=EventProcessResponse)
-async def submit_event(request: EventSubmitRequest) -> EventProcessResponse:
+@router.post("/events", response_model=EventResponse)
+async def receive_event(event_req: EventRequest) -> EventResponse:
     """
-    Submit an event for processing.
+    Receive event from worker or internal component.
     
-    Workers and internal components submit events here.
-    The engine evaluates DSL rules and generates commands for the queue.
+    Flow:
+    1. Deserialize to Event model
+    2. Call ControlFlowEngine.handle_event()
+    3. Insert generated commands into queue table
+    4. Return ACK
     
-    Args:
-        request: Event data
-        
-    Returns:
-        EventProcessResponse with generated commands
+    This is the ONLY way commands enter the queue table.
+    Workers NEVER write to queue directly.
     """
     try:
-        logger.info(
-            f"Received event: execution={request.execution_id}, "
-            f"step={request.step}, name={request.name}"
+        # Initialize engine if needed
+        engine, _ = initialize_engine()
+        
+        # Create Event object
+        event = Event(
+            execution_id=event_req.execution_id,
+            step=event_req.step,
+            name=event_req.name,
+            payload=event_req.payload,
+            timestamp=datetime.utcnow(),
+            worker_id=event_req.worker_id,
+            attempt=event_req.attempt
         )
         
-        # Convert to v2 Event model
-        event = V2Event(
-            execution_id=request.execution_id,
-            step=request.step,
-            name=request.name,
-            payload=request.payload,
-            worker_id=request.worker_id,
-            attempt=request.attempt,
-        )
+        logger.info(f"Received event: {event.execution_id} / {event.name} / {event.step}")
         
-        # Process through engine
+        # Process event through engine
         commands = engine.handle_event(event)
         
-        # Convert commands to response format
-        command_responses = [
-            CommandResponse(
-                execution_id=cmd.execution_id,
-                step=cmd.step,
-                tool_kind=cmd.tool.kind,
-                args=cmd.args,
-                attempt=cmd.attempt,
-            )
-            for cmd in commands
-        ]
+        logger.info(f"Generated {len(commands)} commands")
         
-        # Insert commands into queue (placeholder - implement queue insertion)
-        await _insert_commands_to_queue(commands)
+        # Insert commands into queue table
+        if commands:
+            await _insert_commands_to_queue(commands)
         
-        logger.info(
-            f"Event processed: {len(commands)} command(s) generated "
-            f"for execution {request.execution_id}"
-        )
-        
-        return EventProcessResponse(
-            status="processed",
+        return EventResponse(
+            status="ok",
             commands_generated=len(commands),
-            commands=command_responses,
-            message=f"Event processed successfully, {len(commands)} command(s) queued",
+            message=f"Processed event {event.name}"
         )
-        
+    
     except Exception as e:
-        logger.exception(f"Error processing event: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to process event: {str(e)}",
-        )
+        logger.error(f"Error processing event: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error processing event: {str(e)}")
 
 
-@router.get("/health")
-async def health_check():
-    """Health check endpoint for v2 event API."""
-    return {
-        "status": "healthy",
-        "service": "noetl-v2-event-api",
-        "engine": "ready",
-    }
+@router.post("/playbooks/register")
+async def register_playbook(
+    playbook_yaml: str = Field(..., description="Playbook YAML content"),
+    execution_id: str = Field(..., description="Execution ID")
+) -> dict[str, str]:
+    """
+    Register playbook for an execution.
+    
+    This should be called before starting workflow execution
+    to associate a playbook with an execution_id.
+    """
+    try:
+        engine, playbook_repo = initialize_engine()
+        
+        from noetl.core.dsl.v2.parser import DSLParser
+        parser = DSLParser()
+        
+        # Parse playbook
+        playbook = parser.parse(playbook_yaml)
+        
+        # Register
+        playbook_repo.register(playbook, execution_id)
+        
+        logger.info(f"Registered playbook {playbook.metadata['name']} for execution {execution_id}")
+        
+        return {
+            "status": "ok",
+            "playbook": playbook.metadata["name"],
+            "execution_id": execution_id
+        }
+    
+    except Exception as e:
+        logger.error(f"Error registering playbook: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error registering playbook: {str(e)}")
 
 
 # ============================================================================
-# Queue Operations (Server is ONLY writer)
+# Queue Table Operations
 # ============================================================================
 
-
-async def _insert_commands_to_queue(commands: List[V2Command]) -> None:
+async def _insert_commands_to_queue(commands: list[Command]):
     """
     Insert commands into queue table.
     
-    This is the ONLY place where queue table is written.
-    Workers NEVER write directly to queue.
-    
-    Args:
-        commands: List of Command objects to insert
-    """
-    if not commands:
-        return
-    
-    # TODO: Implement actual database insertion
-    # For now, log the commands
-    for cmd in commands:
-        logger.info(
-            f"QUEUE INSERT: execution={cmd.execution_id}, "
-            f"step={cmd.step}, tool={cmd.tool.kind}, attempt={cmd.attempt}"
-        )
-        
-        # In production, insert into noetl.queue table:
-        # INSERT INTO noetl.queue (
-        #   execution_id, step, tool_kind, tool_config, args, 
-        #   context, attempt, status, created_at
-        # ) VALUES (...)
-    
-    logger.debug(f"Inserted {len(commands)} command(s) into queue")
-
-
-# ============================================================================
-# Engine Management (for testing/admin)
-# ============================================================================
-
-
-@router.post("/engine/register-playbook")
-async def register_playbook(playbook_yaml: str):
-    """
-    Register a playbook in the engine.
-    
-    Admin/testing endpoint to load playbooks into the engine.
-    In production, this would sync from catalog.
+    This is the ONLY place where queue table is written to.
+    Uses async psycopg connection pool.
     """
     try:
-        from noetl.core.dsl.v2.parser import parse_playbook_yaml
+        # Get connection pool
+        pool = get_db_pool()
         
-        playbook = parse_playbook_yaml(playbook_yaml)
-        playbook_repo.register(playbook)
+        async with pool.connection() as conn:
+            async with conn.cursor() as cur:
+                for command in commands:
+                    # Convert command to queue record
+                    record = command.to_queue_record()
+                    
+                    # Build INSERT statement
+                    columns = list(record.keys())
+                    placeholders = ", ".join([f"${i+1}" for i in range(len(columns))])
+                    column_names = ", ".join(columns)
+                    
+                    sql = f"""
+                        INSERT INTO noetl.queue ({column_names})
+                        VALUES ({placeholders})
+                    """
+                    
+                    values = [record[col] for col in columns]
+                    
+                    await cur.execute(sql, values)
+                
+                await conn.commit()
         
-        return {
-            "status": "registered",
-            "name": playbook.metadata.name,
-            "path": playbook.metadata.path,
-        }
+        logger.info(f"Inserted {len(commands)} commands into queue table")
+    
     except Exception as e:
-        logger.exception(f"Failed to register playbook: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid playbook: {str(e)}",
-        )
+        logger.error(f"Error inserting commands to queue: {e}", exc_info=True)
+        raise
+
+
+# ============================================================================
+# Health Check
+# ============================================================================
+
+@router.get("/health")
+async def health_check() -> dict[str, str]:
+    """Health check for v2 event API."""
+    try:
+        engine, _ = initialize_engine()
+        return {"status": "ok", "component": "events-v2"}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}

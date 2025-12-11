@@ -1,4 +1,4 @@
-apiVersion: noetl.io/v1
+apiVersion: noetl.io/v2
 kind: Playbook
 metadata:
   name: python_retry_exception
@@ -11,31 +11,42 @@ workload:
 workflow:
   - step: start
     desc: Run Python code that fails initially then succeeds
-    tool: python
-    code: |
+    tool:
+      kind: python
+      code: |
+        
+        def main():
+            import random
+            # Simulate random failures for testing retry
+            rand_val = random.randint(1, 100)
+            
+            if rand_val < 70:  # 70% chance of failure
+                raise Exception(f"Random failure (value: {rand_val})")
+            
+            return {
+                'success': True,
+                'message': f'Success after retry (value: {rand_val})',
+                'data': {'value': rand_val}
+            }
+    
+    case:
+      - when: "{{ event.name == 'call.error' and error is defined }}"
+        then:
+          retry:
+            max_attempts: 5
+            initial_delay: 0.2
+            backoff_multiplier: 1.5
+            max_delay: 2.0
       
-      def main():
-          import random
-          # Simulate random failures for testing retry
-          rand_val = random.randint(1, 100)
-          
-          if rand_val < 70:  # 70% chance of failure
-              raise Exception(f"Random failure (value: {rand_val})")
-          
-          return {
-              'success': True,
-              'message': f'Success after retry (value: {rand_val})',
-              'data': {'value': rand_val}
-          }
-    retry:
-      max_attempts: 5
-      initial_delay: 0.2
-      backoff_multiplier: 1.5
-      max_delay: 2.0
-      # Retry when there's an error
-      retry_when: "{{ error != None }}"
-    next:
-      - step: end
+      - when: "{{ event.name == 'call.done' and response is defined }}"
+        then:
+          next:
+            - step: end
         
   - step: end
     desc: End workflow
+    tool:
+      kind: python
+      code: |
+        def main():
+            return {"status": "complete"}

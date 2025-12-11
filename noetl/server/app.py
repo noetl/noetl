@@ -18,11 +18,16 @@ from noetl.core.db.pool import init_pool, close_pool
 from noetl.core.logger import setup_logger
 from noetl.server.api import router as api_router
 from noetl.server.middleware import catch_exceptions_middleware
+
+# Import v2 event API
+from noetl.server.api.events_v2 import router as events_v2_router
+
 logger = setup_logger(__name__, include_location=True)
 
 
 router = APIRouter()
 router.include_router(api_router)
+router.include_router(events_v2_router)
 
 
 def create_app() -> FastAPI:

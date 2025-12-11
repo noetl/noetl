@@ -1,237 +1,313 @@
 """
-NoETL v2 Worker Executor - Command execution only, NO queue writing.
+NoETL Worker Executor (v2)
 
-Workers:
-1. Poll queue for Command records
-2. Execute commands based on tool.kind
-3. Emit events back to server
-4. NEVER directly update queue table
+Pure execution worker that:
+- Polls queue table for commands
+- Executes commands by tool.kind
+- Posts events back to server
+- NEVER updates queue table directly
 """
 
-from __future__ import annotations
-
-import asyncio
-import json
-import time
-from typing import Any, Dict, Optional
-
+import logging
 import httpx
-from jinja2 import BaseLoader, Environment, StrictUndefined
+import asyncio
+from typing import Any, Optional
+from datetime import datetime
+import json
 
-from noetl.core.logger import setup_logger
-from noetl.core.dsl.v2.models import Command, EventName
+from noetl.core.dsl.v2.models import Command, ToolCall, Event
+from noetl.core.config import get_config
 
-logger = setup_logger(__name__, include_location=True)
+logger = logging.getLogger(__name__)
 
+
+# ============================================================================
+# Queue Poller
+# ============================================================================
+
+class QueuePollerV2:
+    """
+    Polls queue table for pending commands.
+    Uses FOR UPDATE SKIP LOCKED for concurrency.
+    """
+    
+    def __init__(self, poll_interval: float = 1.0):
+        self.poll_interval = poll_interval
+        self._running = False
+    
+    async def start(self, executor: 'WorkerExecutorV2'):
+        """Start polling loop."""
+        self._running = True
+        logger.info("Queue poller v2 started")
+        
+        while self._running:
+            try:
+                command = await self._poll_queue()
+                
+                if command:
+                    # Execute command
+                    await executor.execute_command(command)
+                else:
+                    # No commands, wait before next poll
+                    await asyncio.sleep(self.poll_interval)
+            
+            except Exception as e:
+                logger.error(f"Error in poll loop: {e}", exc_info=True)
+                await asyncio.sleep(self.poll_interval)
+    
+    def stop(self):
+        """Stop polling loop."""
+        self._running = False
+        logger.info("Queue poller v2 stopped")
+    
+    async def _poll_queue(self) -> Optional[Command]:
+        """
+        Poll queue for next pending command.
+        Uses FOR UPDATE SKIP LOCKED for concurrency.
+        """
+        try:
+            from noetl.core.config import get_db_pool
+            pool = get_db_pool()
+            
+            async with pool.connection() as conn:
+                async with conn.cursor() as cur:
+                    # Get next pending command
+                    sql = """
+                        SELECT 
+                            execution_id, step, tool_kind, tool_config,
+                            args, attempt, priority, backoff, max_attempts, metadata
+                        FROM noetl.queue
+                        WHERE status = 'pending'
+                        ORDER BY priority DESC, created_at ASC
+                        LIMIT 1
+                        FOR UPDATE SKIP LOCKED
+                    """
+                    
+                    await cur.execute(sql)
+                    row = await cur.fetchone()
+                    
+                    if not row:
+                        return None
+                    
+                    # Parse row to Command
+                    command = Command(
+                        execution_id=row[0],
+                        step=row[1],
+                        tool=ToolCall(kind=row[2], config=row[3]),
+                        args=row[4],
+                        attempt=row[5],
+                        priority=row[6],
+                        backoff=row[7],
+                        max_attempts=row[8],
+                        metadata=row[9]
+                    )
+                    
+                    # Mark as processing
+                    update_sql = """
+                        UPDATE noetl.queue
+                        SET status = 'processing', started_at = NOW()
+                        WHERE execution_id = $1 AND step = $2
+                    """
+                    await cur.execute(update_sql, [command.execution_id, command.step])
+                    await conn.commit()
+                    
+                    return command
+        
+        except Exception as e:
+            logger.error(f"Error polling queue: {e}", exc_info=True)
+            return None
+
+
+# ============================================================================
+# Worker Executor
+# ============================================================================
 
 class WorkerExecutorV2:
-    """Execute commands and emit events."""
+    """
+    Executes commands from queue by tool.kind.
+    Posts events back to server.
     
-    def __init__(
-        self,
-        worker_id: str,
-        server_url: str,
-        http_client: Optional[httpx.AsyncClient] = None,
-    ):
+    Supported tool kinds:
+    - http: HTTP requests
+    - postgres: SQL execution
+    - duckdb: DuckDB queries
+    - python: Python code execution
+    - workbook: Workbook task invocation
+    """
+    
+    def __init__(self, worker_id: str, server_url: str):
         self.worker_id = worker_id
-        self.server_url = server_url.rstrip("/")
-        self.http_client = http_client or httpx.AsyncClient(timeout=60.0)
-        self._jinja = Environment(loader=BaseLoader(), undefined=StrictUndefined)
-        self._jinja.filters["tojson"] = lambda v: json.dumps(v, ensure_ascii=False)
+        self.server_url = server_url
+        self.http_client = httpx.AsyncClient(timeout=30.0)
     
-    async def execute_command(self, command: Command) -> None:
+    async def execute_command(self, command: Command):
         """
-        Execute a command and emit events.
+        Execute command by tool.kind and emit events.
         
-        Args:
-            command: Command to execute
+        Flow:
+        1. Emit step.enter event
+        2. Execute tool
+        3. Emit call.done event (with response or error)
+        4. Emit step.exit event if step is complete
         """
-        start_time = time.time()
+        logger.info(f"Executing command: {command.execution_id} / {command.step} / {command.tool.kind}")
         
         try:
-            logger.info(
-                f"Worker {self.worker_id}: Executing command "
-                f"execution={command.execution_id}, step={command.step}, "
-                f"tool={command.tool.kind}, attempt={command.attempt}"
-            )
-            
-            # Emit step.enter event
+            # Emit step.enter
             await self._emit_event(
                 execution_id=command.execution_id,
                 step=command.step,
-                name=EventName.STEP_ENTER.value,
-                payload={"tool_kind": command.tool.kind, "attempt": command.attempt},
+                name="step.enter",
+                payload={"tool": command.tool.kind, "args": command.args}
             )
             
-            # Execute based on tool.kind
-            result = await self._execute_tool(command)
+            # Execute by tool.kind
+            response = None
+            error = None
             
-            # Emit call.done event with result
-            elapsed = time.time() - start_time
+            try:
+                if command.tool.kind == "http":
+                    response = await self._execute_http(command)
+                elif command.tool.kind == "postgres":
+                    response = await self._execute_postgres(command)
+                elif command.tool.kind == "duckdb":
+                    response = await self._execute_duckdb(command)
+                elif command.tool.kind == "python":
+                    response = await self._execute_python(command)
+                elif command.tool.kind == "workbook":
+                    response = await self._execute_workbook(command)
+                else:
+                    error = {"message": f"Unsupported tool kind: {command.tool.kind}"}
+            
+            except Exception as exec_error:
+                error = {
+                    "message": str(exec_error),
+                    "type": type(exec_error).__name__
+                }
+                logger.error(f"Execution error: {exec_error}", exc_info=True)
+            
+            # Emit call.done
+            payload = {}
+            if response is not None:
+                payload["response"] = response
+            if error is not None:
+                payload["error"] = error
+            
             await self._emit_event(
                 execution_id=command.execution_id,
                 step=command.step,
-                name=EventName.CALL_DONE.value,
-                payload={
-                    "response": result,
-                    "elapsed": elapsed,
-                    "attempt": command.attempt,
-                },
+                name="call.done",
+                payload=payload,
+                attempt=command.attempt
             )
             
-            # Emit step.exit event
+            # Emit step.exit (server will decide next steps)
             await self._emit_event(
                 execution_id=command.execution_id,
                 step=command.step,
-                name=EventName.STEP_EXIT.value,
-                payload={"result": result, "elapsed": elapsed},
+                name="step.exit",
+                payload={"status": "completed" if error is None else "failed"}
             )
-            
-            logger.info(
-                f"Worker {self.worker_id}: Command completed "
-                f"for step '{command.step}' in {elapsed:.2f}s"
-            )
-            
-        except Exception as e:
-            elapsed = time.time() - start_time
-            logger.exception(
-                f"Worker {self.worker_id}: Command failed "
-                f"for step '{command.step}': {e}"
-            )
-            
-            # Emit call.done with error
-            await self._emit_event(
-                execution_id=command.execution_id,
-                step=command.step,
-                name=EventName.CALL_DONE.value,
-                payload={
-                    "error": {
-                        "message": str(e),
-                        "type": type(e).__name__,
-                        "status": getattr(e, "status_code", None),
-                    },
-                    "elapsed": elapsed,
-                    "attempt": command.attempt,
-                },
-            )
-    
-    async def _execute_tool(self, command: Command) -> Dict[str, Any]:
-        """
-        Execute a tool based on kind.
         
-        Args:
-            command: Command with tool configuration
+        except Exception as e:
+            logger.error(f"Error executing command: {e}", exc_info=True)
             
-        Returns:
-            Tool execution result
-        """
-        tool_kind = command.tool.kind
+            # Try to emit error event
+            try:
+                await self._emit_event(
+                    execution_id=command.execution_id,
+                    step=command.step,
+                    name="call.done",
+                    payload={"error": {"message": str(e), "type": type(e).__name__}}
+                )
+            except:
+                pass
+    
+    async def _execute_http(self, command: Command) -> dict[str, Any]:
+        """Execute HTTP request."""
         config = command.tool.config
         
-        if tool_kind == "http":
-            return await self._execute_http(config, command.args)
-        elif tool_kind in ["postgres", "duckdb"]:
-            return await self._execute_sql(tool_kind, config, command.args)
-        elif tool_kind == "python":
-            return await self._execute_python(config, command.args)
-        elif tool_kind == "workbook":
-            return await self._execute_workbook(config, command.args)
-        else:
-            raise ValueError(f"Unknown tool kind: {tool_kind}")
-    
-    async def _execute_http(
-        self, config: Dict[str, Any], args: Optional[Dict[str, Any]]
-    ) -> Dict[str, Any]:
-        """Execute HTTP request."""
-        method = config.get("method", "GET").upper()
-        url = config.get("endpoint") or config.get("url")
+        method = config.get("method", "GET")
+        endpoint = config.get("endpoint", config.get("url"))
         headers = config.get("headers", {})
         params = config.get("params", {})
-        data = config.get("data") or config.get("payload")
+        body = config.get("body")
         
-        if not url:
-            raise ValueError("HTTP tool requires 'endpoint' or 'url'")
+        logger.info(f"HTTP {method} {endpoint}")
         
-        logger.debug(f"HTTP {method} {url}")
-        
-        # Execute request
         response = await self.http_client.request(
             method=method,
-            url=url,
+            url=endpoint,
             headers=headers,
             params=params,
-            json=data if data and method in ["POST", "PUT", "PATCH"] else None,
+            json=body if body else None
         )
         
-        # Parse response
-        try:
-            response_data = response.json()
-        except Exception:
-            response_data = response.text
-        
         return {
-            "id": response.headers.get("x-request-id", "unknown"),
             "status": response.status_code,
-            "data": response_data,
             "headers": dict(response.headers),
+            "data": response.json() if response.headers.get("content-type", "").startswith("application/json") else response.text
         }
     
-    async def _execute_sql(
-        self, tool_kind: str, config: Dict[str, Any], args: Optional[Dict[str, Any]]
-    ) -> Dict[str, Any]:
-        """Execute SQL command."""
-        command = config.get("command") or config.get("query")
+    async def _execute_postgres(self, command: Command) -> dict[str, Any]:
+        """Execute PostgreSQL query."""
+        config = command.tool.config
+        
+        query = config.get("command", config.get("query"))
         auth = config.get("auth")
         
-        if not command:
-            raise ValueError("SQL tool requires 'command' or 'query'")
+        logger.info(f"Postgres query: {query[:100]}...")
         
-        logger.debug(f"{tool_kind.upper()}: {command[:100]}...")
-        
-        # TODO: Implement actual SQL execution
+        # TODO: Implement actual postgres execution
         # For now, return placeholder
         return {
-            "status": "success",
-            "tool": tool_kind,
+            "status": "executed",
             "rows_affected": 0,
-            "message": f"SQL execution placeholder for {tool_kind}",
+            "result": []
         }
     
-    async def _execute_python(
-        self, config: Dict[str, Any], args: Optional[Dict[str, Any]]
-    ) -> Any:
+    async def _execute_duckdb(self, command: Command) -> dict[str, Any]:
+        """Execute DuckDB query."""
+        config = command.tool.config
+        
+        query = config.get("command", config.get("query"))
+        
+        logger.info(f"DuckDB query: {query[:100]}...")
+        
+        # TODO: Implement actual duckdb execution
+        return {
+            "status": "executed",
+            "result": []
+        }
+    
+    async def _execute_python(self, command: Command) -> dict[str, Any]:
         """Execute Python code."""
+        config = command.tool.config
+        
         code = config.get("code")
         
-        if not code:
-            raise ValueError("Python tool requires 'code'")
+        logger.info(f"Python code: {code[:100] if code else 'N/A'}...")
         
-        logger.debug(f"Python: {code[:100]}...")
-        
-        # TODO: Implement actual Python execution
-        # For now, return placeholder
+        # TODO: Implement actual python execution
+        # Need to create safe execution environment
         return {
-            "status": "success",
-            "message": "Python execution placeholder",
+            "status": "executed",
+            "result": None
         }
     
-    async def _execute_workbook(
-        self, config: Dict[str, Any], args: Optional[Dict[str, Any]]
-    ) -> Any:
+    async def _execute_workbook(self, command: Command) -> dict[str, Any]:
         """Execute workbook task."""
-        task_name = config.get("task")
-        task_args = config.get("with", {})
+        config = command.tool.config
         
-        if not task_name:
-            raise ValueError("Workbook tool requires 'task'")
+        task_name = config.get("task", config.get("name"))
         
-        logger.debug(f"Workbook task: {task_name}")
+        logger.info(f"Workbook task: {task_name}")
         
         # TODO: Implement workbook task execution
         return {
-            "status": "success",
+            "status": "executed",
             "task": task_name,
-            "message": "Workbook execution placeholder",
+            "result": None
         }
     
     async def _emit_event(
@@ -239,16 +315,12 @@ class WorkerExecutorV2:
         execution_id: str,
         step: str,
         name: str,
-        payload: Dict[str, Any],
-    ) -> None:
+        payload: dict[str, Any],
+        attempt: int = 1
+    ):
         """
         Emit event to server.
-        
-        Args:
-            execution_id: Execution identifier
-            step: Step name
-            name: Event name
-            payload: Event payload
+        POST to /api/v2/events.
         """
         event_data = {
             "execution_id": execution_id,
@@ -256,85 +328,42 @@ class WorkerExecutorV2:
             "name": name,
             "payload": payload,
             "worker_id": self.worker_id,
+            "attempt": attempt
         }
         
         try:
             response = await self.http_client.post(
                 f"{self.server_url}/api/v2/events",
-                json=event_data,
-                timeout=10.0,
+                json=event_data
             )
-            response.raise_for_status()
-            logger.debug(f"Event emitted: {name} for step '{step}'")
+            
+            if response.status_code != 200:
+                logger.error(f"Error emitting event: {response.status_code} {response.text}")
+        
         except Exception as e:
-            logger.error(f"Failed to emit event: {e}")
-            # Don't raise - event emission failures shouldn't stop execution
+            logger.error(f"Error posting event to server: {e}", exc_info=True)
+    
+    async def close(self):
+        """Close resources."""
+        await self.http_client.aclose()
 
 
-class QueuePollerV2:
-    """Poll queue for commands to execute."""
+# ============================================================================
+# Helper Functions
+# ============================================================================
+
+async def run_worker_v2(worker_id: str, server_url: str):
+    """
+    Run v2 worker.
     
-    def __init__(
-        self,
-        worker_id: str,
-        server_url: str,
-        executor: WorkerExecutorV2,
-        poll_interval: float = 1.0,
-    ):
-        self.worker_id = worker_id
-        self.server_url = server_url.rstrip("/")
-        self.executor = executor
-        self.poll_interval = poll_interval
-        self.http_client = httpx.AsyncClient(timeout=60.0)
-        self._running = False
+    Args:
+        worker_id: Worker identifier
+        server_url: Server URL (e.g., http://localhost:8000)
+    """
+    executor = WorkerExecutorV2(worker_id=worker_id, server_url=server_url)
+    poller = QueuePollerV2(poll_interval=1.0)
     
-    async def start(self) -> None:
-        """Start polling loop."""
-        self._running = True
-        logger.info(f"Worker {self.worker_id}: Starting queue poller")
-        
-        while self._running:
-            try:
-                # Poll for available command
-                command = await self._poll_queue()
-                
-                if command:
-                    # Execute command
-                    await self.executor.execute_command(command)
-                else:
-                    # No commands available, wait before next poll
-                    await asyncio.sleep(self.poll_interval)
-                    
-            except Exception as e:
-                logger.exception(f"Error in polling loop: {e}")
-                await asyncio.sleep(self.poll_interval)
-    
-    def stop(self) -> None:
-        """Stop polling loop."""
-        self._running = False
-        logger.info(f"Worker {self.worker_id}: Stopping queue poller")
-    
-    async def _poll_queue(self) -> Optional[Command]:
-        """
-        Poll queue for next command.
-        
-        Returns:
-            Command to execute, or None if queue is empty
-        """
-        try:
-            # TODO: Implement actual queue polling from database
-            # For now, return None (no commands)
-            
-            # In production, query:
-            # SELECT * FROM noetl.queue
-            # WHERE status = 'pending'
-            # AND (assigned_worker_id IS NULL OR assigned_worker_id = %(worker_id)s)
-            # ORDER BY priority DESC, created_at ASC
-            # LIMIT 1
-            # FOR UPDATE SKIP LOCKED
-            
-            return None
-            
-        except Exception as e:
-            logger.error(f"Failed to poll queue: {e}")
-            return None
+    try:
+        await poller.start(executor)
+    finally:
+        await executor.close()

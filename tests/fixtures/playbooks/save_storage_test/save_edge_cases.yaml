@@ -1,4 +1,4 @@
-apiVersion: noetl.io/v1
+apiVersion: noetl.io/v2
 kind: Playbook
 metadata:
   name: save_edge_cases
@@ -17,278 +17,318 @@ workflow:
   # Setup: Create tables
   - step: start
     desc: "Create test tables for edge cases"
-    tool: postgres
-    auth: "{{ workload.pg_auth }}"
-    command: |
-      -- Create table for mixed data types test
-      CREATE TABLE IF NOT EXISTS test_mixed_types (
-        execution_id VARCHAR,
-        string_field VARCHAR,
-        integer_field INTEGER,
-        float_field DOUBLE PRECISION,
-        boolean_field BOOLEAN,
-        null_field VARCHAR,
-        datetime_field VARCHAR,
-        list_field TEXT,
-        dict_field TEXT,
-        decimal_field DOUBLE PRECISION
-      );
-      
-      -- Create table for special characters test
-      CREATE TABLE IF NOT EXISTS test_special_chars (
-        execution_id VARCHAR,
-        quotes VARCHAR,
-        unicode TEXT,
-        sql_injection TEXT,
-        newlines TEXT,
-        backslashes TEXT,
-        json_string TEXT
-      );
-    next:
-      - step: test_mixed_types
+    tool:
+      kind: postgres
+      auth: "{{ workload.pg_auth }}"
+      command: |
+        -- Create table for mixed data types test
+        CREATE TABLE IF NOT EXISTS test_mixed_types (
+          execution_id VARCHAR,
+          string_field VARCHAR,
+          integer_field INTEGER,
+          float_field DOUBLE PRECISION,
+          boolean_field BOOLEAN,
+          null_field VARCHAR,
+          datetime_field VARCHAR,
+          list_field TEXT,
+          dict_field TEXT,
+          decimal_field DOUBLE PRECISION
+        );
+        
+        -- Create table for special characters test
+        CREATE TABLE IF NOT EXISTS test_special_chars (
+          execution_id VARCHAR,
+          quotes VARCHAR,
+          unicode TEXT,
+          sql_injection TEXT,
+          newlines TEXT,
+          backslashes TEXT,
+          json_string TEXT
+        );
+    
+    case:
+      - when: "{{ event.name == 'call.done' and response is defined }}"
+        then:
+          next:
+            - step: test_mixed_types
 
   # Test mixed data types
   - step: test_mixed_types
     desc: "Test save with mixed data types"
-    tool: python
-    code: |
-      def main(input_data):
-          import datetime
-          import decimal
-          
-          mixed_data = { 
-            "string_field": "test_string",
-            "integer_field": 12345,
-            "float_field": 3.14159,
-            "boolean_field": True,
-            "null_field": None,
-            "datetime_field": datetime.datetime.now().isoformat(),
-            "list_field": [1, 2, 3, "mixed", True],
-            "dict_field": {"nested": "value", "count": 42},
-            "decimal_field": float(decimal.Decimal("99.99"))
-          }
-          
-          return mixed_data
-    args:
-      input_data: {}
-    sink:
-      tool: postgres
-      table: test_mixed_types
-      auth: "{{ workload.pg_auth }}"
-      mode: insert
+    tool:
+      kind: python
+      code: |
+        def main(input_data):
+            import datetime
+            import decimal
+            
+            mixed_data = { 
+              "string_field": "test_string",
+              "integer_field": 12345,
+              "float_field": 3.14159,
+              "boolean_field": True,
+              "null_field": None,
+              "datetime_field": datetime.datetime.now().isoformat(),
+              "list_field": [1, 2, 3, "mixed", True],
+              "dict_field": {"nested": "value", "count": 42},
+              "decimal_field": float(decimal.Decimal("99.99"))
+            }
+            
+            return mixed_data
       args:
-        execution_id: "{{ execution_id }}"
-        string_field: "{{ data.string_field }}"
-        integer_field: "{{ data.integer_field }}"
-        float_field: "{{ data.float_field }}"
-        boolean_field: "{{ data.boolean_field }}"
-        null_field: "{{ data.null_field }}"
-        datetime_field: "{{ data.datetime_field }}"
-        list_field: "{{ data.list_field | tojson }}"
-        dict_field: "{{ data.dict_field | tojson }}"
-        decimal_field: "{{ data.decimal_field }}"
-    next:
-      - step: test_special_characters
+        input_data: {}
+    
+    case:
+      - when: "{{ event.name == 'call.done' and response is defined }}"
+        then:
+          sink:
+            tool: postgres
+            table: test_mixed_types
+            auth: "{{ workload.pg_auth }}"
+            mode: insert
+            args:
+              execution_id: "{{ execution_id }}"
+              string_field: "{{ response.string_field }}"
+              integer_field: "{{ response.integer_field }}"
+              float_field: "{{ response.float_field }}"
+              boolean_field: "{{ response.boolean_field }}"
+              null_field: "{{ response.null_field }}"
+              datetime_field: "{{ response.datetime_field }}"
+              list_field: "{{ response.list_field | tojson }}"
+              dict_field: "{{ response.dict_field | tojson }}"
+              decimal_field: "{{ response.decimal_field }}"
+          next:
+            - step: test_special_characters
 
   # Test special characters and unicode
   - step: test_special_characters
     desc: "Test save with special characters and unicode"
-    tool: python
-    code: |
-      def main(input_data):
-          special_data = {
-              "quotes": "This has 'single' and \"double\" quotes",
-              "unicode": "Unicode: αβγδε, 中文, 🚀🌟",
-              "sql_injection": "'; DROP TABLE test; --",
-              "newlines": "Line 1\nLine 2\r\nLine 3",
-              "backslashes": "C:\\path\\to\\file",
-              "json_string": '{"embedded": "json", "value": 123}'
-          }
-          
-          return special_data
-    args:
-      input_data: "{{ test_mixed_types }}"
-    sink:
-      tool: postgres
-      table: test_special_chars
-      mode: insert
-      auth: "{{ workload.pg_auth }}"
+    tool:
+      kind: python
+      code: |
+        def main(input_data):
+            special_data = {
+                "quotes": "This has 'single' and \"double\" quotes",
+                "unicode": "Unicode: αβγδε, 中文, 🚀🌟",
+                "sql_injection": "'; DROP TABLE test; --",
+                "newlines": "Line 1\nLine 2\r\nLine 3",
+                "backslashes": "C:\\path\\to\\file",
+                "json_string": '{"embedded": "json", "value": 123}'
+            }
+            
+            return special_data
       args:
-        execution_id: "{{ execution_id }}"
-        quotes: "{{ data.quotes }}"
-        unicode: "{{ data.unicode }}"
-        sql_injection: "{{ data.sql_injection }}"
-        newlines: "{{ data.newlines }}"
-        backslashes: "{{ data.backslashes }}"
-        json_string: "{{ data.json_string }}"
-    next:
-      - step: test_empty_data
+        input_data: "{{ test_mixed_types }}"
+    
+    case:
+      - when: "{{ event.name == 'call.done' and response is defined }}"
+        then:
+          sink:
+            tool: postgres
+            table: test_special_chars
+            mode: insert
+            auth: "{{ workload.pg_auth }}"
+            args:
+              execution_id: "{{ execution_id }}"
+              quotes: "{{ response.quotes }}"
+              unicode: "{{ response.unicode }}"
+              sql_injection: "{{ response.sql_injection }}"
+              newlines: "{{ response.newlines }}"
+              backslashes: "{{ response.backslashes }}"
+              json_string: "{{ response.json_string }}"
+          next:
+            - step: test_empty_data
 
   # Test empty and null data scenarios
   - step: test_empty_data
     desc: "Test save with empty and null data"
-    tool: python
-    code: |
-      def main(input_data):
-          empty_scenarios = {
-              "empty_string": "",
-              "empty_list": [],
-              "empty_dict": {},
-              "zero_value": 0,
-              "false_value": False,
-              "none_value": None
-          }
-          
-          return empty_scenarios
-    args:
-      input_data: "{{ test_special_characters }}"
-    sink:
-      tool: python
+    tool:
+      kind: python
       code: |
-        def main(data):
-            import json
+        def main(input_data):
+            empty_scenarios = {
+                "empty_string": "",
+                "empty_list": [],
+                "empty_dict": {},
+                "zero_value": 0,
+                "false_value": False,
+                "none_value": None
+            }
             
-            # Handle empty/null data gracefully
-            processed = {}
-            for key, value in data.items():
-                  if value is None:
-                      processed[key] = "NULL_VALUE"
-                  elif value == "":
-                      processed[key] = "EMPTY_STRING"
-                  elif value == []:
-                      processed[key] = "EMPTY_LIST"
-                  elif value == {}:
-                      processed[key] = "EMPTY_DICT"
-                  else:
-                      processed[key] = value
-              
-              result = {
-                  "original_data": data,
-                  "processed_data": processed,
-                  "processing_notes": "Handled empty/null values"
-              }
-              
-              print(f"Empty data processing: {json.dumps(result, indent=2)}")
-              return result
-    next:
-      - step: test_large_payload
+            return empty_scenarios
+      args:
+        input_data: "{{ test_special_characters }}"
+    
+    case:
+      - when: "{{ event.name == 'call.done' and response is defined }}"
+        then:
+          sink:
+            tool: python
+            code: |
+              def main(data):
+                  import json
+                  
+                  # Handle empty/null data gracefully
+                  processed = {}
+                  for key, value in data.items():
+                      if value is None:
+                          processed[key] = "NULL_VALUE"
+                      elif value == "":
+                          processed[key] = "EMPTY_STRING"
+                      elif value == []:
+                          processed[key] = "EMPTY_LIST"
+                      elif value == {}:
+                          processed[key] = "EMPTY_DICT"
+                      else:
+                          processed[key] = value
+                  
+                  result = {
+                      "original_data": data,
+                      "processed_data": processed,
+                      "processing_notes": "Handled empty/null values"
+                  }
+                  
+                  print(f"Empty data processing: {json.dumps(result, indent=2)}")
+                  return result
+          next:
+            - step: test_large_payload
 
   # Test large payload handling
   - step: test_large_payload
     desc: "Test save with large data payload"
-    tool: python
-    code: |
-      def main(input_data):
-          # Generate moderately large dataset
-          large_data = {
-              "metadata": {
-                  "test_type": "large_payload",
-                  "record_count": 100
-              },
-              "records": []
-          }
-          
-          for i in range(100):
-              record = {
-                  "id": i + 1,
-                  "name": f"Test Record {i + 1}",
-                  "description": f"This is a test record with ID {i + 1} " * 5,  # Repeat for size
-                  "data_field": f"data_value_{i}",
-                  "large_text": "Lorem ipsum dolor sit amet " * 20  # Large text field
-              }
-              large_data["records"].append(record)
-          
-          return large_data
-    args:
-      input_data: "{{ test_empty_data }}"
-    sink:
-      tool: duckdb
-      commands: |
-        -- Create table for large dataset
-        CREATE OR REPLACE TABLE test_large_payload (
-          test_type VARCHAR,
-          record_count INTEGER,
-          execution_id VARCHAR,
-          created_at TIMESTAMP
-        );
-        
-        -- Insert test record
-        INSERT INTO test_large_payload 
-        VALUES ('large_payload_test', {{ data.metadata.record_count }}, '{{ execution_id }}', NOW());
-        
-        -- Query results
-        SELECT * FROM test_large_payload WHERE execution_id = '{{ execution_id }}';
-    next:
-      - step: test_error_recovery
+    tool:
+      kind: python
+      code: |
+        def main(input_data):
+            # Generate moderately large dataset
+            large_data = {
+                "metadata": {
+                    "test_type": "large_payload",
+                    "record_count": 100
+                },
+                "records": []
+            }
+            
+            for i in range(100):
+                record = {
+                    "id": i + 1,
+                    "name": f"Test Record {i + 1}",
+                    "description": f"This is a test record with ID {i + 1} " * 5,  # Repeat for size
+                    "data_field": f"data_value_{i}",
+                    "large_text": "Lorem ipsum dolor sit amet " * 20  # Large text field
+                }
+                large_data["records"].append(record)
+            
+            return large_data
+      args:
+        input_data: "{{ test_empty_data }}"
+    
+    case:
+      - when: "{{ event.name == 'call.done' and response is defined }}"
+        then:
+          sink:
+            tool: duckdb
+            commands: |
+              -- Create table for large dataset
+              CREATE OR REPLACE TABLE test_large_payload (
+                test_type VARCHAR,
+                record_count INTEGER,
+                execution_id VARCHAR,
+                created_at TIMESTAMP
+              );
+              
+              -- Insert test record
+              INSERT INTO test_large_payload 
+              VALUES ('large_payload_test', {{ response.metadata.record_count }}, '{{ execution_id }}', NOW());
+              
+              -- Query results
+              SELECT * FROM test_large_payload WHERE execution_id = '{{ execution_id }}';
+          next:
+            - step: test_error_recovery
 
   # Test error recovery scenarios
   - step: test_error_recovery
     desc: "Test save error handling and recovery"
-    tool: python
-    code: |
-      def main():
-          # Data that might cause issues but should be handled gracefully            
-          potentially_problematic = {
-              "valid_field": "this should work",
-              "test_execution": "completed",
-              "recovery_test": True
-          }
-          
-          return potentially_problematic
-    sink:
-      tool: http
-      endpoint: "https://httpbin.org/status/200"
-      method: POST
-      headers:
-        Content-Type: "application/json"
-        X-Test-Type: "error-recovery"
-      payload:
-        test_execution: "{{ data.test_execution }}"
-        valid_field: "{{ data.valid_field }}"
-        recovery_test: "{{ data.recovery_test }}"
-        execution_id: "{{ execution_id }}"
-    next:
-      - step: test_completion_summary
+    tool:
+      kind: python
+      code: |
+        def main():
+            # Data that might cause issues but should be handled gracefully            
+            potentially_problematic = {
+                "valid_field": "this should work",
+                "test_execution": "completed",
+                "recovery_test": True
+            }
+            
+            return potentially_problematic
+    
+    case:
+      - when: "{{ event.name == 'call.done' and response is defined }}"
+        then:
+          sink:
+            tool: http
+            endpoint: "https://httpbin.org/status/200"
+            method: POST
+            headers:
+              Content-Type: "application/json"
+              X-Test-Type: "error-recovery"
+            payload:
+              test_execution: "{{ response.test_execution }}"
+              valid_field: "{{ response.valid_field }}"
+              recovery_test: "{{ response.recovery_test }}"
+              execution_id: "{{ execution_id }}"
+          next:
+            - step: test_completion_summary
 
   # Final summary
   - step: test_completion_summary
     desc: "Summarize edge case testing results"
-    tool: python
-    code: |
-      def main():              
-          summary = {
-              "edge_case_tests_completed": [
-                  "mixed_data_types",
-                  "special_characters_unicode",
-                  "empty_null_data",
-                  "large_payload",
-                  "error_recovery"
-              ],
-              "storage_types_tested": [
-                  "postgres",
-                  "python", 
-                  "duckdb",
-                  "http"
-              ],
-              "test_status": "completed"
-          }
-          
-          return summary
-    sink:
-      tool: python
+    tool:
+      kind: python
       code: |
-        def main(data):
-            import json
+        def main():              
             summary = {
-                "edge_case_tests": data.get("edge_case_tests_completed", []),
-                "storage_types": data.get("storage_types_tested", []),
-                "status": data.get("test_status")
+                "edge_case_tests_completed": [
+                    "mixed_data_types",
+                    "special_characters_unicode",
+                    "empty_null_data",
+                    "large_payload",
+                    "error_recovery"
+                ],
+                "storage_types_tested": [
+                    "postgres",
+                    "python", 
+                    "duckdb",
+                    "http"
+                ],
+                "test_status": "completed"
             }
-            print(f"Test Summary: {json.dumps(summary, indent=2)}")
+            
             return summary
-    next:
-      - step: end
+    
+    case:
+      - when: "{{ event.name == 'call.done' and response is defined }}"
+        then:
+          sink:
+            tool: python
+            code: |
+              def main(data):
+                  import json
+                  summary = {
+                      "edge_case_tests": data.get("edge_case_tests_completed", []),
+                      "storage_types": data.get("storage_types_tested", []),
+                      "status": data.get("test_status")
+                  }
+                  print(f"Test Summary: {json.dumps(summary, indent=2)}")
+                  return summary
+          next:
+            - step: end
 
   # End
   - step: end
     desc: "Edge case testing completed"
+    tool:
+      kind: python
+      code: |
+        def main():
+            return {"status": "complete"}
