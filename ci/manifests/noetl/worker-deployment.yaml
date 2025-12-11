@@ -35,8 +35,8 @@ spec:
         - name: worker
           image: image_name:image_tag
           imagePullPolicy: IfNotPresent
-          command: ["noetl"]
-          args: ["worker", "start"]
+          command: ["python"]
+          args: ["-m", "noetl.cli.ctl", "worker", "start", "--v2"]
           envFrom:
             - configMapRef:
                 name: noetl-config
@@ -51,6 +51,10 @@ spec:
               value: "cpu"
             - name: NOETL_WORKER_POOL_NAME
               value: "worker-cpu-01-k8s"
+            - name: NATS_URL
+              value: "nats://noetl:noetl@nats.nats.svc.cluster.local:4222"
+            - name: SERVER_API_URL
+              value: "http://noetl.noetl.svc.cluster.local:8082"
           volumeMounts:
             - name: noetl-data
               mountPath: /opt/noetl/data
