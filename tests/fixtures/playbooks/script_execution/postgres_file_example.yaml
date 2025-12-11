@@ -1,4 +1,4 @@
-apiVersion: noetl.io/v1
+apiVersion: noetl.io/v2
 kind: Playbook
 metadata:
   name: postgres_file_script_example
@@ -11,37 +11,66 @@ workload:
 workflow:
   - step: start
     desc: Start workflow
-    next:
-      - step: run_postgres_from_file
+    tool:
+      kind: python
+      code: |
+        def main():
+            return {"status": "initialized"}
+    
+    case:
+      - when: "{{ event.name == 'step.exit' }}"
+        then:
+          next:
+            - step: run_postgres_from_file
 
   - step: run_postgres_from_file
     desc: Execute SQL script from local file
-    tool: postgres
-    auth: "{{ workload.pg_auth }}"
-    script:
-      uri: "{{ workload.script_path }}"
-      source:
-        type: file
-    next:
-      - step: verify_records
+    tool:
+      kind: postgres
+      auth: "{{ workload.pg_auth }}"
+      script:
+        uri: "{{ workload.script_path }}"
+        source:
+          type: file
+    
+    case:
+      - when: "{{ event.name == 'call.done' and response is defined }}"
+        then:
+          next:
+            - step: verify_records
 
   - step: verify_records
     desc: Verify table was created and populated
-    tool: postgres
-    auth: "{{ workload.pg_auth }}"
-    command: |
-      SELECT * FROM public.script_test ORDER BY id;
-    next:
-      - step: cleanup
+    tool:
+      kind: postgres
+      auth: "{{ workload.pg_auth }}"
+      command: |
+        SELECT * FROM public.script_test ORDER BY id;
+    
+    case:
+      - when: "{{ event.name == 'call.done' and response is defined }}"
+        then:
+          next:
+            - step: cleanup
 
   - step: cleanup
     desc: Clean up test table
-    tool: postgres
-    auth: "{{ workload.pg_auth }}"
-    command: |
-      DROP TABLE IF EXISTS public.script_test;
-    next:
-      - step: end
+    tool:
+      kind: postgres
+      auth: "{{ workload.pg_auth }}"
+      command: |
+        DROP TABLE IF EXISTS public.script_test;
+    
+    case:
+      - when: "{{ event.name == 'call.done' and response is defined }}"
+        then:
+          next:
+            - step: end
 
   - step: end
     desc: End workflow
+    tool:
+      kind: python
+      code: |
+        def main():
+            return {"status": "complete"}

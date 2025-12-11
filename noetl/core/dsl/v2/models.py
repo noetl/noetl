@@ -1,365 +1,275 @@
 """
-NoETL DSL v2 Models - Clean event-driven execution model.
+NoETL DSL v2 Models
 
-NO BACKWARD COMPATIBILITY with v1.
+Complete redesign with:
+- tool.kind pattern for tool configuration
+- Step-level case/when/then for event-driven control flow  
+- Step-level loop for iteration
+- Event-driven architecture (no backward compatibility)
 """
 
-from __future__ import annotations
-
+from pydantic import BaseModel, Field, field_validator
+from typing import Any, Literal, Optional
 from datetime import datetime
-from enum import Enum
-from typing import Any, Dict, List, Optional, Union
-
-from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 # ============================================================================
-# EVENT AND COMMAND MODELS (Runtime)
+# Event Model - Internal events emitted during step execution
 # ============================================================================
-
-
-class EventName(str, Enum):
-    """Standard event names emitted during execution."""
-    
-    STEP_ENTER = "step.enter"
-    CALL_DONE = "call.done"
-    STEP_EXIT = "step.exit"
-    WORKER_DONE = "worker.done"
-    WORKFLOW_START = "workflow.start"
-    WORKFLOW_END = "workflow.end"
-
 
 class Event(BaseModel):
-    """Event emitted during execution flow."""
+    """
+    Event emitted during workflow execution.
     
+    Event names:
+    - step.enter: Before step starts
+    - call.done: After tool call completes (success or error)
+    - step.exit: When step is done (result known)
+    - loop.item: On each loop iteration
+    - loop.done: When loop completes
+    - workflow.start: Workflow begins
+    - workflow.end: Workflow completes
+    """
     execution_id: str = Field(..., description="Execution identifier")
-    step: Optional[str] = Field(None, description="Step name that emitted this event")
-    name: str = Field(..., description="Event name (e.g., 'step.enter', 'call.done')")
-    payload: Dict[str, Any] = Field(
-        default_factory=dict,
-        description="Event payload: response, error, timing, metadata"
-    )
-    created_at: Optional[datetime] = Field(None, description="Event timestamp")
-    worker_id: Optional[str] = Field(None, description="Worker that emitted the event")
+    step: Optional[str] = Field(None, description="Step name that emitted the event")
+    name: str = Field(..., description="Event name (step.enter, call.done, step.exit, etc.)")
+    payload: dict[str, Any] = Field(default_factory=dict, description="Event data (response, error, metadata)")
+    timestamp: datetime = Field(default_factory=datetime.utcnow, description="Event timestamp")
+    worker_id: Optional[str] = Field(None, description="Worker that executed the command")
     attempt: int = Field(default=1, description="Attempt number for retries")
-    
-    model_config = {"extra": "allow"}
-
-
-class ToolCall(BaseModel):
-    """Tool invocation specification."""
-    
-    kind: str = Field(..., description="Tool type: http, postgres, python, workbook, etc.")
-    config: Dict[str, Any] = Field(
-        default_factory=dict,
-        description="Tool-specific configuration (method, endpoint, command, code, etc.)"
-    )
-    
-    model_config = {"extra": "allow"}
-
-
-class Command(BaseModel):
-    """Command to be executed by a worker."""
-    
-    execution_id: str = Field(..., description="Execution identifier")
-    step: str = Field(..., description="Step name to execute")
-    tool: ToolCall = Field(..., description="Tool configuration")
-    args: Optional[Dict[str, Any]] = Field(None, description="Input arguments for this step/tool")
-    context: Optional[Dict[str, Any]] = Field(None, description="Execution context (loop state, etc.)")
-    attempt: int = Field(default=1, description="Attempt number for retries")
-    priority: int = Field(default=0, description="Execution priority")
-    
-    model_config = {"extra": "allow"}
 
 
 # ============================================================================
-# DSL MODELS (Playbook Structure)
+# Tool Specification - tool.kind pattern
 # ============================================================================
 
+class ToolSpec(BaseModel):
+    """
+    Tool configuration with tool.kind pattern.
+    All execution-specific fields live under tool.
+    """
+    kind: Literal["http", "postgres", "duckdb", "python", "workbook", "playbooks", "secrets", "iterator"] = Field(
+        ..., description="Tool type"
+    )
+    # Tool-specific fields stored as flexible dict
+    # Each kind validated in engine based on requirements
+    
+    class Config:
+        extra = "allow"  # Allow additional fields for tool-specific config
+    
+    def model_post_init(self, __context):
+        """Capture all extra fields as tool config."""
+        # Store all non-kind fields for tool execution
+        pass
+
+
+# ============================================================================
+# Loop Model - Step-level looping
+# ============================================================================
 
 class Loop(BaseModel):
     """Step-level loop configuration."""
+    in_: str = Field(..., alias="in", description="Jinja expression for collection to iterate over")
+    iterator: str = Field(..., description="Variable name for each item")
+    mode: Literal["sequential", "parallel", "async"] = Field(default="sequential", description="Execution mode")
     
-    in_: Union[str, List[Any]] = Field(..., alias="in", description="Collection expression or list")
-    iterator: str = Field(..., description="Variable name for current item")
-    mode: str = Field(default="sequential", description="Execution mode: sequential, async")
-    
-    model_config = {"populate_by_name": True, "extra": "allow"}
-    
-    @field_validator("iterator")
-    @classmethod
-    def validate_iterator(cls, v: str) -> str:
-        if not v or not v.strip():
-            raise ValueError("Iterator name cannot be empty")
-        return v.strip()
+    class Config:
+        populate_by_name = True
 
 
-class ActionCall(BaseModel):
-    """Re-invoke the step's tool with optional overrides."""
-    
-    params: Optional[Dict[str, Any]] = Field(None, description="Override parameters for HTTP")
-    endpoint: Optional[str] = Field(None, description="Override endpoint for HTTP")
-    command: Optional[str] = Field(None, description="Override command for SQL tools")
-    data: Optional[Dict[str, Any]] = Field(None, description="Override data/payload")
-    
-    model_config = {"extra": "allow"}
+# ============================================================================
+# Actions - Used inside case.then blocks
+# ============================================================================
 
-
-class ActionRetry(BaseModel):
-    """Retry configuration for failed calls."""
-    
-    max_attempts: int = Field(default=3, description="Maximum retry attempts")
-    backoff_multiplier: float = Field(default=2.0, description="Backoff multiplier between attempts")
-    initial_delay: float = Field(default=0.5, description="Initial delay in seconds")
-    
-    @field_validator("max_attempts")
-    @classmethod
-    def validate_max_attempts(cls, v: int) -> int:
-        if v < 1:
-            raise ValueError("max_attempts must be at least 1")
-        return v
-
-
-class ActionCollect(BaseModel):
-    """Aggregate data into step context."""
-    
-    from_: str = Field(..., alias="from", description="Source path expression (e.g., 'response.data')")
-    into: str = Field(..., description="Target variable name")
-    mode: str = Field(default="append", description="Collection mode: append, extend, replace")
-    
-    model_config = {"populate_by_name": True}
-
-
-class ActionSink(BaseModel):
-    """Write data to external sink."""
-    
-    tool: Dict[str, Any] = Field(..., description="Sink tool configuration with tool.kind")
-    args: Optional[Dict[str, Any]] = Field(None, description="Arguments for sink operation")
-    
-    @field_validator("tool")
-    @classmethod
-    def validate_tool_has_kind(cls, v: Dict[str, Any]) -> Dict[str, Any]:
-        if "kind" not in v:
-            raise ValueError("Sink tool must have 'kind' field")
-        return v
-
-
-class ActionSet(BaseModel):
-    """Set context variables."""
-    
-    ctx: Optional[Dict[str, Any]] = Field(None, description="Context variables to set")
-    flags: Optional[Dict[str, Any]] = Field(None, description="Flags to set")
-    
-    model_config = {"extra": "allow"}
-
-
-class ActionResult(BaseModel):
-    """Set step result payload."""
-    
-    from_: str = Field(..., alias="from", description="Source expression for result")
-    
-    model_config = {"populate_by_name": True}
-
-
-class ActionNext(BaseModel):
-    """Conditional transition to next step(s)."""
-    
+class NextTarget(BaseModel):
+    """Target for next transition."""
     step: str = Field(..., description="Target step name")
-    args: Optional[Dict[str, Any]] = Field(None, description="Arguments to pass to next step")
+    args: Optional[dict[str, Any]] = Field(None, description="Arguments to pass to target step")
 
 
-class ActionFail(BaseModel):
-    """Mark step/workflow as failed."""
-    
-    message: str = Field(..., description="Failure message")
-    fail_workflow: bool = Field(default=False, description="Whether to fail entire workflow")
+# Action types - keeping as simple dicts for flexibility
+# The engine will validate structure when processing
 
 
-class ActionSkip(BaseModel):
-    """Mark step as skipped."""
-    
-    reason: Optional[str] = Field(None, description="Skip reason")
-
+# ============================================================================
+# ThenBlock - Action container for case.then
+# ============================================================================
 
 class ThenBlock(BaseModel):
-    """Actions to execute when case condition is true."""
+    """
+    Action block inside case.then.
+    Flexible structure to support all action types.
+    """
+    # Store raw actions - will be processed by engine
+    raw_actions: list[dict[str, Any]] | dict[str, Any] = Field(..., alias="actions_data")
     
-    call: Optional[ActionCall] = Field(None, description="Re-invoke tool")
-    retry: Optional[ActionRetry] = Field(None, description="Retry configuration")
-    collect: Optional[ActionCollect] = Field(None, description="Collect data")
-    sink: Optional[ActionSink] = Field(None, description="Write to sink")
-    set: Optional[ActionSet] = Field(None, description="Set context variables")
-    result: Optional[ActionResult] = Field(None, description="Set step result")
-    next: Optional[List[ActionNext]] = Field(None, description="Transition to next steps")
-    fail: Optional[ActionFail] = Field(None, description="Fail step/workflow")
-    skip: Optional[ActionSkip] = Field(None, description="Skip step")
+    class Config:
+        extra = "allow"
+        populate_by_name = True
     
-    model_config = {"extra": "allow"}
-    
-    @model_validator(mode="after")
-    def validate_at_least_one_action(self) -> ThenBlock:
-        """Ensure at least one action is specified."""
-        actions = [
-            self.call, self.retry, self.collect, self.sink,
-            self.set, self.result, self.next, self.fail, self.skip
-        ]
-        if not any(action is not None for action in actions):
-            raise ValueError("ThenBlock must have at least one action")
-        return self
+    @classmethod
+    def from_data(cls, data: dict | list):
+        """Create ThenBlock from raw data."""
+        if isinstance(data, list):
+            return cls(raw_actions=data)
+        else:
+            return cls(raw_actions=[data])
 
+
+# ============================================================================
+# CaseEntry - Conditional rule with when/then
+# ============================================================================
 
 class CaseEntry(BaseModel):
-    """Conditional case with when/then structure."""
-    
+    """
+    Conditional behavior rule.
+    Evaluated against event context with Jinja2.
+    """
     when: str = Field(..., description="Jinja2 condition expression")
-    then: ThenBlock = Field(..., description="Actions to execute when condition is true")
-    
-    @field_validator("when")
-    @classmethod
-    def validate_when(cls, v: str) -> str:
-        if not v or not v.strip():
-            raise ValueError("when condition cannot be empty")
-        return v.strip()
+    then: dict[str, Any] | list[dict[str, Any]] = Field(..., description="Actions to execute when condition is true")
 
 
-class ToolSpec(BaseModel):
-    """Tool configuration with kind-specific fields."""
-    
-    kind: str = Field(..., description="Tool type: http, postgres, python, workbook, etc.")
-    
-    # HTTP fields
-    method: Optional[str] = Field(None, description="HTTP method")
-    endpoint: Optional[str] = Field(None, description="HTTP endpoint")
-    url: Optional[str] = Field(None, description="HTTP URL (alternative to endpoint)")
-    headers: Optional[Dict[str, Any]] = Field(None, description="HTTP headers")
-    params: Optional[Dict[str, Any]] = Field(None, description="HTTP query parameters")
-    data: Optional[Any] = Field(None, description="HTTP request body")
-    payload: Optional[Dict[str, Any]] = Field(None, description="HTTP payload (alternative to data)")
-    
-    # SQL fields (postgres, duckdb, etc.)
-    auth: Optional[str] = Field(None, description="Authentication credential reference")
-    command: Optional[str] = Field(None, description="SQL command")
-    query: Optional[str] = Field(None, description="SQL query (alternative to command)")
-    
-    # Python fields
-    code: Optional[str] = Field(None, description="Python code to execute")
-    
-    # Workbook fields
-    task: Optional[str] = Field(None, description="Workbook task name")
-    with_: Optional[Dict[str, Any]] = Field(None, alias="with", description="Task arguments")
-    
-    # Playbook fields
-    path: Optional[str] = Field(None, description="Sub-playbook path")
-    return_step: Optional[str] = Field(None, description="Return step name")
-    
-    model_config = {"populate_by_name": True, "extra": "allow"}
-    
-    @field_validator("kind")
-    @classmethod
-    def validate_kind(cls, v: str) -> str:
-        if not v or not v.strip():
-            raise ValueError("Tool kind cannot be empty")
-        return v.strip()
-
+# ============================================================================
+# Step Model - Workflow node
+# ============================================================================
 
 class Step(BaseModel):
-    """Step definition in workflow."""
+    """
+    Workflow step with event-driven control flow.
     
-    step: str = Field(..., description="Step name")
+    Step-level attributes:
+    - step: name (identifier)
+    - desc: description
+    - args: input arguments (from previous steps)
+    - loop: iteration config
+    - tool: execution config (tool.kind pattern)
+    - case: event-driven conditional rules
+    - next: structural default next step(s)
+    """
+    step: str = Field(..., description="Step name (unique identifier)")
     desc: Optional[str] = Field(None, description="Step description")
-    args: Optional[Dict[str, Any]] = Field(None, description="Input arguments")
-    loop: Optional[Loop] = Field(None, description="Step-level loop configuration")
-    tool: ToolSpec = Field(..., description="Tool configuration")
-    case: Optional[List[CaseEntry]] = Field(None, description="Conditional behavior rules")
-    next: Optional[Union[str, List[str]]] = Field(None, description="Unconditional next step(s)")
+    args: Optional[dict[str, Any]] = Field(None, description="Input arguments for this step")
+    loop: Optional[Loop] = Field(None, description="Loop configuration")
+    tool: ToolSpec = Field(..., description="Tool configuration with tool.kind")
+    case: Optional[list[CaseEntry]] = Field(None, description="Event-driven conditional rules")
+    next: Optional[str | list[str] | list[dict[str, str]]] = Field(
+        None, 
+        description="Structural default next step(s) - unconditional"
+    )
     
-    @field_validator("step")
+    @field_validator("next", mode="before")
     @classmethod
-    def validate_step_name(cls, v: str) -> str:
-        if not v or not v.strip():
-            raise ValueError("Step name cannot be empty")
-        return v.strip()
-    
-    @model_validator(mode="after")
-    def validate_next_format(self) -> Step:
-        """Validate that next doesn't contain conditional structures."""
-        if isinstance(self.next, dict):
-            if any(k in self.next for k in ["when", "then", "else"]):
-                raise ValueError(
-                    "Step-level 'next' must be unconditional. "
-                    "Use 'case' with 'then.next' for conditional transitions."
-                )
-        return self
+    def normalize_next(cls, v):
+        """Normalize next field - reject old when/then/else patterns."""
+        if v is None:
+            return None
+        
+        # If it's a list, check for old patterns
+        if isinstance(v, list):
+            for item in v:
+                if isinstance(item, dict):
+                    # Reject old conditional patterns
+                    if "when" in item or "then" in item or "else" in item:
+                        raise ValueError(
+                            "Conditional 'next' with when/then/else is not allowed. "
+                            "Use case/when/then for conditional transitions."
+                        )
+                    # Allow simple {step: name} format
+                    if "step" not in item:
+                        raise ValueError(f"Invalid next entry: {item}. Expected {{step: name}}")
+        
+        return v
 
 
-class Metadata(BaseModel):
-    """Playbook metadata."""
-    
-    name: str = Field(..., description="Playbook name")
-    path: str = Field(..., description="Catalog path")
-    version: Optional[str] = Field(None, description="Playbook version")
-    
-    model_config = {"extra": "allow"}
+# ============================================================================
+# Workload and Workbook Models
+# ============================================================================
 
-
-class Workbook(BaseModel):
-    """Named reusable task definition."""
-    
+class WorkbookTask(BaseModel):
+    """Reusable task definition."""
     name: str = Field(..., description="Task name")
     tool: ToolSpec = Field(..., description="Tool configuration")
-    sink: Optional[ActionSink] = Field(None, description="Optional sink for task result")
-    
-    model_config = {"extra": "allow"}
+    sink: Optional[dict[str, Any]] = Field(None, description="Optional sink configuration")
 
+
+# ============================================================================
+# Playbook Model - Complete workflow definition
+# ============================================================================
 
 class Playbook(BaseModel):
-    """Complete playbook definition v2."""
+    """
+    Complete workflow definition (v2).
     
-    apiVersion: str = Field(default="noetl.io/v2", description="API version")
-    kind: str = Field(default="Playbook", description="Resource kind")
-    metadata: Metadata = Field(..., description="Playbook metadata")
-    workload: Optional[Dict[str, Any]] = Field(None, description="Global variables")
-    workbook: Optional[List[Workbook]] = Field(None, description="Named reusable tasks")
-    workflow: List[Step] = Field(..., description="Workflow steps")
+    Structure:
+    - apiVersion: noetl.io/v2
+    - kind: Playbook
+    - metadata: name, path, labels
+    - workload: global variables
+    - workbook: reusable tasks (optional)
+    - workflow: execution flow (must have 'start' step)
+    """
+    apiVersion: Literal["noetl.io/v2"] = Field(..., description="API version")
+    kind: Literal["Playbook"] = Field(..., description="Resource kind")
+    metadata: dict[str, Any] = Field(..., description="Metadata (name, path, labels)")
+    workload: Optional[dict[str, Any]] = Field(None, description="Global workflow variables")
+    workbook: Optional[list[WorkbookTask]] = Field(None, description="Reusable tasks")
+    workflow: list[Step] = Field(..., description="Workflow steps")
     
-    @field_validator("apiVersion")
+    @field_validator("workflow")
     @classmethod
-    def validate_api_version(cls, v: str) -> str:
-        if not v.startswith("noetl.io/"):
-            raise ValueError("apiVersion must start with 'noetl.io/'")
-        return v
-    
-    @model_validator(mode="after")
-    def validate_workflow_has_start(self) -> Playbook:
+    def validate_workflow(cls, v):
         """Ensure workflow has a 'start' step."""
-        step_names = [step.step for step in self.workflow]
+        step_names = [step.step for step in v]
         if "start" not in step_names:
             raise ValueError("Workflow must have a step named 'start'")
-        return self
+        return v
     
-    @model_validator(mode="after")
-    def validate_step_references(self) -> Playbook:
-        """Validate that next step references exist."""
-        step_names = set(step.step for step in self.workflow)
-        
-        for step in self.workflow:
-            # Check unconditional next
-            if step.next:
-                next_steps = [step.next] if isinstance(step.next, str) else step.next
-                for next_step in next_steps:
-                    if next_step not in step_names and next_step != "end":
-                        raise ValueError(
-                            f"Step '{step.step}' references non-existent step '{next_step}'"
-                        )
-            
-            # Check case-based next
-            if step.case:
-                for case_entry in step.case:
-                    if case_entry.then.next:
-                        for action_next in case_entry.then.next:
-                            if action_next.step not in step_names and action_next.step != "end":
-                                raise ValueError(
-                                    f"Step '{step.step}' case references non-existent step '{action_next.step}'"
-                                )
-        
-        return self
+    @field_validator("metadata")
+    @classmethod
+    def validate_metadata(cls, v):
+        """Ensure metadata has required fields."""
+        if "name" not in v:
+            raise ValueError("Metadata must include 'name'")
+        return v
+
+
+# ============================================================================
+# Command Model - Queue table entry
+# ============================================================================
+
+class ToolCall(BaseModel):
+    """Tool invocation details."""
+    kind: str = Field(..., description="Tool kind (http, postgres, python, etc.)")
+    config: dict[str, Any] = Field(default_factory=dict, description="Tool-specific configuration")
+
+
+class Command(BaseModel):
+    """
+    Command to be executed by worker.
+    Written to queue table by server after evaluating events.
+    """
+    execution_id: str = Field(..., description="Execution identifier")
+    step: str = Field(..., description="Step name")
+    tool: ToolCall = Field(..., description="Tool invocation details")
+    args: Optional[dict[str, Any]] = Field(None, description="Step input arguments")
+    attempt: int = Field(default=1, description="Attempt number for retries")
+    priority: int = Field(default=0, description="Command priority (higher = more urgent)")
+    backoff: Optional[float] = Field(None, description="Retry backoff delay in seconds")
+    max_attempts: Optional[int] = Field(None, description="Maximum retry attempts")
+    metadata: dict[str, Any] = Field(default_factory=dict, description="Additional metadata")
+    
+    def to_queue_record(self) -> dict[str, Any]:
+        """Convert to queue table record format."""
+        return {
+            "execution_id": self.execution_id,
+            "step": self.step,
+            "tool_kind": self.tool.kind,
+            "tool_config": self.tool.config,
+            "args": self.args or {},
+            "attempt": self.attempt,
+            "priority": self.priority,
+            "backoff": self.backoff,
+            "max_attempts": self.max_attempts,
+            "metadata": self.metadata,
+            "status": "pending",
+        }

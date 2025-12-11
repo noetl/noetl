@@ -109,6 +109,9 @@ workflow:                 # Execution flow (required, must have 'start' step)
   - `tool: workbook` - References named task from workbook section by `name` attribute
   - Direct action tools: `python`, `http`, `postgres`, `duckdb`, `playbook`, `iterator`
 - **Conditional Flow**: Steps use `next` with optional `when` conditions and `then` arrays for routing
+  - `next:` - Provides default/fallback routing edges; always evaluated when present
+  - `case:` - Optional conditional routing (v2 DSL); when conditions don't match, engine falls back to `next:` field
+  - **Pattern**: Use `next:` for unconditional default flow, `case:` for event-driven or conditional branching
 - **Iterator**: `tool: iterator` loops over collections with `collection`, `element`, and `mode` (sequential/async) attributes
 - **HTTP Pagination**: `loop.pagination` enables automatic page continuation with `continue_while`, `next_page`, and `merge_strategy` attributes
   ```yaml

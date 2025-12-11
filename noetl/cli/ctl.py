@@ -18,10 +18,11 @@ logger = setup_logger(__name__, include_location=True)
 
 cli_app = typer.Typer()
 
-# from noetl.server import create_app
+# Server management
 server_app = typer.Typer()
 cli_app.add_typer(server_app, name="server")
 
+# Worker management (v1 and v2)
 worker_app = typer.Typer()
 cli_appprefix = "worker"
 cli_app.add_typer(worker_app, name=cli_appprefix)
@@ -33,10 +34,29 @@ cli_app.add_typer(db_app, name="db")
 
 @worker_app.command("start")
 def start_worker_service(
-    max_workers: int = typer.Option(None, "--max-workers", "-m", help="Maximum number of worker threads")
+    max_workers: int = typer.Option(None, "--max-workers", "-m", help="Maximum number of worker threads"),
+    v2: bool = typer.Option(False, "--v2", help="Use v2 worker architecture (event-driven)")
 ):
-    """Start the queue worker pool that polls the server queue API."""
+    """
+    Start the queue worker pool.
+    
+    Use --v2 flag to enable the new event-driven v2 worker architecture.
+    v2 workers poll the queue directly and emit events to the server.
+    """
+    
+    if v2:
+        # Start v2 worker
+        logger.info("Starting worker v2 (event-driven architecture)")
+        from noetl.worker.worker_v2 import run_worker_v2_sync
+        
+        # Get server URL from settings
+        settings = get_settings()
+        server_url = settings.server_api_url or "http://localhost:8000"
+        
+        run_worker_v2_sync(server_url=server_url)
+        return
 
+    # Start v1 worker (existing implementation)
     from noetl.core.config import _settings, get_worker_settings
     import noetl.core.config as core_config
     core_config._settings = None

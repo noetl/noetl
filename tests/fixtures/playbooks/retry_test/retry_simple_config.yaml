@@ -1,4 +1,4 @@
-apiVersion: noetl.io/v1
+apiVersion: noetl.io/v2
 kind: Playbook
 metadata:
   name: retry_simple_config
@@ -12,57 +12,90 @@ workload:
 workflow:
   - step: start
     desc: Fetch URL and retry on 5xx status codes
-    next:
-      - step: boolean_retry
+    tool:
+      kind: python
+      code: |
+        def main():
+            return {"status": "initialized"}
+    
+    case:
+      - when: "{{ event.name == 'step.exit' }}"
+        then:
+          next:
+            - step: boolean_retry
+  
   - step: boolean_retry
     desc: Simple on_error retry with defaults
-    tool: http
-    method: GET
-    url: "{{ workload.api_url }}/api/v1/flaky"
-    params:
-      page: 1
-      fail_on: "{{ workload.fail_on_page }}"
-    retry:
-      on_error:
-        when: "{{ error.status in [500, 502, 503] }}"
-        max_attempts: 3
-        initial_delay: 0.5
-    next:
-      - step: integer_retry
+    tool:
+      kind: http
+      method: GET
+      url: "{{ workload.api_url }}/api/v1/flaky"
+      params:
+        page: 1
+        fail_on: "{{ workload.fail_on_page }}"
+    
+    case:
+      - when: "{{ event.name == 'call.error' and error.status in [500, 502, 503] }}"
+        then:
+          retry:
+            max_attempts: 3
+            initial_delay: 0.5
+      
+      - when: "{{ event.name == 'call.done' and response is defined }}"
+        then:
+          next:
+            - step: integer_retry
         
   - step: integer_retry
     desc: Retry with custom max attempts
-    tool: http
-    method: GET
-    url: "{{ workload.api_url }}/api/v1/flaky"
-    params:
-      page: 1
-      fail_on: "{{ workload.fail_on_page }}"
-    retry:
-      on_error:
-        when: "{{ error.status in [500, 502, 503] }}"
-        max_attempts: 5
-        initial_delay: 0.5
-    next:
-      - step: full_config_retry
+    tool:
+      kind: http
+      method: GET
+      url: "{{ workload.api_url }}/api/v1/flaky"
+      params:
+        page: 1
+        fail_on: "{{ workload.fail_on_page }}"
+    
+    case:
+      - when: "{{ event.name == 'call.error' and error.status in [500, 502, 503] }}"
+        then:
+          retry:
+            max_attempts: 5
+            initial_delay: 0.5
+      
+      - when: "{{ event.name == 'call.done' and response is defined }}"
+        then:
+          next:
+            - step: full_config_retry
       
   - step: full_config_retry
     desc: Full configuration retry with backoff
-    tool: http
-    method: GET
-    url: "{{ workload.api_url }}/api/v1/flaky"
-    params:
-      page: 1
-      fail_on: "{{ workload.fail_on_page }}"
-    retry:
-      on_error:
-        when: "{{ error.status in [500, 502, 503] }}"
-        max_attempts: 3
-        initial_delay: 0.5
-        backoff_multiplier: 2.0
-        max_delay: 10.0
-    next:
-      - step: end
+    tool:
+      kind: http
+      method: GET
+      url: "{{ workload.api_url }}/api/v1/flaky"
+      params:
+        page: 1
+        fail_on: "{{ workload.fail_on_page }}"
+    
+    case:
+      - when: "{{ event.name == 'call.error' and error.status in [500, 502, 503] }}"
+        then:
+          retry:
+            max_attempts: 3
+            initial_delay: 0.5
+            backoff_multiplier: 2.0
+            max_delay: 10.0
+      
+      - when: "{{ event.name == 'call.done' and response is defined }}"
+        then:
+          next:
+            - step: end
         
   - step: end
     desc: End workflow
+    tool:
+      kind: python
+      code: |
+        def main():
+            return {"status": "complete"}

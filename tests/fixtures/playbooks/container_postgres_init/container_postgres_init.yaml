@@ -1,4 +1,4 @@
-apiVersion: noetl.io/v1
+apiVersion: noetl.io/v2
 kind: Playbook
 
 metadata:
@@ -21,145 +21,154 @@ workload:
 workflow:
   - step: start
     desc: "Start container-based PostgreSQL initialization"
+    tool:
+      kind: python
+      code: |
+        def main():
+            return {"status": "initialized"}
     next:
       - step: verify_postgres_connection
 
   - step: verify_postgres_connection
     desc: "Verify PostgreSQL connection before container execution"
-    tool: postgres
-    auth: "{{ workload.pg_auth }}"
-    command: |
-      SELECT version();
+    tool:
+      kind: postgres
+      auth: "{{ workload.pg_auth }}"
+      command: |
+        SELECT version();
     next:
       - step: run_schema_creation
 
   - step: run_schema_creation
     desc: "Execute schema creation via container job"
-    tool: container
-    runtime:
-      provider: kubernetes
-      namespace: "{{ workload.namespace }}"
-      image: "{{ workload.image }}"
-      command: ["/bin/bash", "/workspace/init_schema.sh"]
-      serviceAccountName: noetl-worker
-      backoffLimit: 0
-      activeDeadlineSeconds: 600
-      cleanup: true
-      resources:
-        limits:
-          cpu: "500m"
-          memory: 512Mi
-        requests:
-          cpu: "100m"
-          memory: 128Mi
-    env:
-          cpu: "100m"
-          memory: 128Mi
-    env:
-      PGHOST: postgres.postgres.svc.cluster.local
-      PGPORT: "5432"
-      PGDATABASE: demo_noetl
-      PGUSER: "demo"
-      PGPASSWORD: "demo"
-      EXECUTION_ID: "{{ execution_id }}"
+    tool:
+      kind: container
+      runtime:
+        provider: kubernetes
+        namespace: "{{ workload.namespace }}"
+        image: "{{ workload.image }}"
+        command: ["/bin/bash", "/workspace/init_schema.sh"]
+        serviceAccountName: noetl-worker
+        backoffLimit: 0
+        activeDeadlineSeconds: 600
+        cleanup: true
+        resources:
+          limits:
+            cpu: "500m"
+            memory: 512Mi
+          requests:
+            cpu: "100m"
+            memory: 128Mi
+      env:
+        PGHOST: postgres.postgres.svc.cluster.local
+        PGPORT: "5432"
+        PGDATABASE: demo_noetl
+        PGUSER: "demo"
+        PGPASSWORD: "demo"
+        EXECUTION_ID: "{{ execution_id }}"
     next:
       - step: run_table_creation
 
   - step: run_table_creation
     desc: "Create test tables via container job with SQL scripts"
-    tool: container
-    runtime:
-      provider: kubernetes
-      namespace: "{{ workload.namespace }}"
-      image: "{{ workload.image }}"
-      command: ["/bin/bash", "/workspace/create_tables.sh"]
-      serviceAccountName: noetl-worker
-      backoffLimit: 0
-      activeDeadlineSeconds: 600
-      cleanup: true
-      resources:
-        limits:
-          cpu: "500m"
-          memory: 512Mi
-        requests:
-          cpu: "100m"
-          memory: 128Mi
-    env:
-      PGHOST: postgres.postgres.svc.cluster.local
-      PGPORT: "5432"
-      PGDATABASE: demo_noetl
-      PGUSER: "demo"
-      PGPASSWORD: "demo"
-      EXECUTION_ID: "{{ execution_id }}"
-      SCHEMA_NAME: container_test
+    tool:
+      kind: container
+      runtime:
+        provider: kubernetes
+        namespace: "{{ workload.namespace }}"
+        image: "{{ workload.image }}"
+        command: ["/bin/bash", "/workspace/create_tables.sh"]
+        serviceAccountName: noetl-worker
+        backoffLimit: 0
+        activeDeadlineSeconds: 600
+        cleanup: true
+        resources:
+          limits:
+            cpu: "500m"
+            memory: 512Mi
+          requests:
+            cpu: "100m"
+            memory: 128Mi
+      env:
+        PGHOST: postgres.postgres.svc.cluster.local
+        PGPORT: "5432"
+        PGDATABASE: demo_noetl
+        PGUSER: "demo"
+        PGPASSWORD: "demo"
+        EXECUTION_ID: "{{ execution_id }}"
+        SCHEMA_NAME: container_test
     next:
       - step: seed_test_data
 
   - step: seed_test_data
     desc: "Seed test data via container job"
-    tool: container
-    runtime:
-      provider: kubernetes
-      namespace: "{{ workload.namespace }}"
-      image: "{{ workload.image }}"
-      command: ["/bin/bash", "/workspace/seed_data.sh"]
-      serviceAccountName: noetl-worker
-      backoffLimit: 0
-      activeDeadlineSeconds: 600
-      cleanup: true
-      resources:
-        limits:
-          cpu: "500m"
-          memory: 512Mi
-        requests:
-          cpu: "100m"
-          memory: 128Mi
-    env:
-      PGHOST: postgres.postgres.svc.cluster.local
-      PGPORT: "5432"
-      PGDATABASE: demo_noetl
-      PGUSER: "demo"
-      PGPASSWORD: "demo"
-      EXECUTION_ID: "{{ execution_id }}"
-      SCHEMA_NAME: container_test
+    tool:
+      kind: container
+      runtime:
+        provider: kubernetes
+        namespace: "{{ workload.namespace }}"
+        image: "{{ workload.image }}"
+        command: ["/bin/bash", "/workspace/seed_data.sh"]
+        serviceAccountName: noetl-worker
+        backoffLimit: 0
+        activeDeadlineSeconds: 600
+        cleanup: true
+        resources:
+          limits:
+            cpu: "500m"
+            memory: 512Mi
+          requests:
+            cpu: "100m"
+            memory: 128Mi
+      env:
+        PGHOST: postgres.postgres.svc.cluster.local
+        PGPORT: "5432"
+        PGDATABASE: demo_noetl
+        PGUSER: "demo"
+        PGPASSWORD: "demo"
+        EXECUTION_ID: "{{ execution_id }}"
+        SCHEMA_NAME: container_test
     next:
       - step: verify_data
 
   - step: verify_data
     desc: "Verify data was created successfully"
-    tool: postgres
-    auth: "{{ workload.pg_auth }}"
-    command: |
-      SELECT 
-        schemaname,
-        tablename,
-        pg_size_pretty(pg_total_relation_size(schemaname||'.'||tablename)) AS size
-      FROM pg_tables 
-      WHERE schemaname = 'container_test'
-      ORDER BY tablename;
-      
-      SELECT COUNT(*) as customer_count FROM container_test.customers;
-      SELECT COUNT(*) as order_count FROM container_test.orders;
-      SELECT COUNT(*) as product_count FROM container_test.products;
+    tool:
+      kind: postgres
+      auth: "{{ workload.pg_auth }}"
+      command: |
+        SELECT 
+          schemaname,
+          tablename,
+          pg_size_pretty(pg_total_relation_size(schemaname||'.'||tablename)) AS size
+        FROM pg_tables 
+        WHERE schemaname = 'container_test'
+        ORDER BY tablename;
+        
+        SELECT COUNT(*) as customer_count FROM container_test.customers;
+        SELECT COUNT(*) as order_count FROM container_test.orders;
+        SELECT COUNT(*) as product_count FROM container_test.products;
     next:
       - step: cleanup_test_data
 
   - step: cleanup_test_data
     desc: "Clean up test schema (optional - disable in production)"
-    tool: postgres
-    auth: "{{ workload.pg_auth }}"
-    command: |
-      DROP SCHEMA IF EXISTS container_test CASCADE;
+    tool:
+      kind: postgres
+      auth: "{{ workload.pg_auth }}"
+      command: |
+        DROP SCHEMA IF EXISTS container_test CASCADE;
     next:
       - step: end
 
   - step: end
     desc: "Container-based PostgreSQL initialization complete"
-    tool: end
-    sink:
-      tool: event_log
-      args:
-        status: "success"
-        message: "{{ workload.message }}"
-        schema_created: "container_test"
-        execution_id: "{{ execution_id }}"
+    tool:
+      kind: python
+      code: |
+        def main():
+            return {
+                "status": "success",
+                "message": "Container-based PostgreSQL initialization complete",
+                "schema_created": "container_test"
+            }
