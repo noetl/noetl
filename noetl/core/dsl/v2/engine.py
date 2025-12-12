@@ -417,6 +417,94 @@ class ControlFlowEngine:
                             state.variables[into_var].extend(source_data)
                         else:
                             state.variables[into_var].append(source_data)
+            
+            elif "call" in action:
+                # Call/invoke a step with new arguments
+                call_spec = action["call"]
+                target_step = call_spec.get("step")
+                args = call_spec.get("args", {})
+                
+                if not target_step:
+                    logger.warning("Call action missing 'step' attribute")
+                    continue
+                
+                # Render args
+                rendered_args = {}
+                for key, value in args.items():
+                    if isinstance(value, str) and "{{" in value:
+                        rendered_args[key] = self._render_template(value, context)
+                    else:
+                        rendered_args[key] = value
+                
+                # Get target step definition
+                step_def = state.get_step(target_step)
+                if not step_def:
+                    logger.error(f"Call target step not found: {target_step}")
+                    continue
+                
+                # Create command for target step
+                command = self._create_command_for_step(state, step_def, rendered_args)
+                if command:
+                    commands.append(command)
+                    logger.info(f"Call action: invoking step {target_step}")
+            
+            elif "retry" in action:
+                # Retry current step with optional backoff
+                retry_spec = action["retry"]
+                delay = retry_spec.get("delay", 0)
+                max_attempts = retry_spec.get("max_attempts", 3)
+                backoff = retry_spec.get("backoff", "linear")  # linear, exponential
+                
+                # Get current step
+                step_def = state.get_step(event.step)
+                if not step_def:
+                    logger.error(f"Retry: current step not found: {event.step}")
+                    continue
+                
+                # Create retry command with updated attempt tracking
+                command = self._create_command_for_step(state, step_def, {})
+                if command:
+                    # Set retry metadata
+                    command.max_attempts = max_attempts
+                    command.retry_delay = delay
+                    command.retry_backoff = backoff
+                    commands.append(command)
+                    logger.info(f"Retry action: re-attempting step {event.step}")
+            
+            elif "sink" in action:
+                # Persist step result to storage backend
+                sink_spec = action["sink"]
+                backend = sink_spec.get("backend", "postgres")
+                table = sink_spec.get("table")
+                data_source = sink_spec.get("from", "{{ result }}")
+                
+                if not table:
+                    logger.warning("Sink action missing 'table' attribute")
+                    continue
+                
+                # Render data source
+                if isinstance(data_source, str) and "{{" in data_source:
+                    data = self._render_template(data_source, context)
+                else:
+                    data = data_source
+                
+                # Create sink command (uses special sink tool kind)
+                sink_command = Command(
+                    execution_id=state.execution_id,
+                    step=f"{event.step}_sink",
+                    tool=ToolCall(
+                        kind="sink",
+                        config={
+                            "backend": backend,
+                            "table": table,
+                            "data": data,
+                            "connection": sink_spec.get("connection")
+                        }
+                    ),
+                    args={}
+                )
+                commands.append(sink_command)
+                logger.info(f"Sink action: persisting to {backend}.{table}")
         
         return commands
     

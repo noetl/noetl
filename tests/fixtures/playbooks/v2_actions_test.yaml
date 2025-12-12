@@ -1,0 +1,159 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: v2_actions_test
+  path: test/v2/actions
+
+workload:
+  test_message: "Testing V2 actions: call, retry, sink"
+  max_retries: 2
+  numbers: [10, 20, 30]
+
+workflow:
+  # Start: Process data and store in variable
+  - step: start
+    desc: Initialize data processing
+    tool:
+      kind: python
+      code: |
+        def main(input_data):
+            print(f"[START] Processing initial data")
+            data = {"count": 0, "sum": 0, "items": []}
+            return data
+    next:
+      - step: process_loop
+
+  # Loop through numbers and collect results
+  - step: process_loop
+    desc: Loop through numbers and double them
+    loop:
+      in: "{{ workload.numbers }}"
+      iterator: "num"
+      mode: "sequential"
+    tool:
+      kind: python
+      code: |
+        def main(input_data):
+            num = input_data.get('num')
+            print(f"[LOOP] Processing {num}")
+            result = num * 2
+            return {"original": num, "doubled": result}
+    args:
+      num: "{{ num }}"
+    case:
+      # Collect each result
+      - when: "{{ result is defined }}"
+        then:
+          - collect:
+              from: "{{ result }}"
+              into: "loop_results"
+              mode: "append"
+    next:
+      - step: aggregate
+
+  # Aggregate loop results
+  - step: aggregate
+    desc: Sum all doubled values
+    tool:
+      kind: python
+      code: |
+        def main(input_data):
+            results = input_data.get('loop_results', [])
+            print(f"[AGGREGATE] Processing {len(results)} results")
+            
+            total = sum(item['doubled'] for item in results)
+            original_sum = sum(item['original'] for item in results)
+            
+            return {
+                "count": len(results),
+                "original_sum": original_sum,
+                "doubled_sum": total
+            }
+    args:
+      loop_results: "{{ vars.loop_results }}"
+    case:
+      # Test CALL action - invoke a helper step
+      - when: "{{ result.count > 0 }}"
+        then:
+          - call:
+              step: "helper"
+              args:
+                message: "Aggregate completed with {{ result.count }} items"
+                data: "{{ result }}"
+          # Test SINK action - persist to database
+          - sink:
+              backend: "postgres"
+              table: "noetl.test_results"
+              from: "{{ result }}"
+    next:
+      - step: test_secrets
+
+  # Helper step (called by aggregate)
+  - step: helper
+    desc: Helper step to demonstrate call action
+    tool:
+      kind: python
+      code: |
+        def main(input_data):
+            message = input_data.get('message', 'No message')
+            data = input_data.get('data', {})
+            print(f"[HELPER] {message}")
+            print(f"[HELPER] Data: {data}")
+            return {"helper_called": True, "message": message}
+    next:
+      - step: verify
+
+  # Test secrets tool
+  - step: test_secrets
+    desc: Fetch secret from environment
+    tool:
+      kind: secrets
+      provider: "env"
+      name: "TEST_SECRET"
+    case:
+      # If secret found, proceed
+      - when: "{{ result.value is defined }}"
+        then:
+          - next:
+              - step: verify
+    next:
+      - step: verify
+
+  # Verify results
+  - step: verify
+    desc: Verify all actions completed
+    tool:
+      kind: python
+      code: |
+        def main(input_data):
+            print("[VERIFY] All actions completed successfully")
+            
+            # Check if we have the expected data
+            aggregate_result = input_data.get('aggregate', {})
+            helper_result = input_data.get('helper', {})
+            
+            success = (
+                aggregate_result.get('count', 0) == 3 and
+                aggregate_result.get('doubled_sum', 0) == 120 and
+                helper_result.get('helper_called', False)
+            )
+            
+            return {
+                "success": success,
+                "aggregate": aggregate_result,
+                "helper": helper_result,
+                "message": "All tests passed!" if success else "Some tests failed"
+            }
+    next:
+      - step: end
+
+  # End step
+  - step: end
+    desc: Workflow complete
+    tool:
+      kind: python
+      code: |
+        def main(input_data):
+            verify_result = input_data.get('verify', {})
+            print(f"[END] {verify_result.get('message', 'Complete')}")
+            return {"status": "completed", "success": verify_result.get('success', False)}

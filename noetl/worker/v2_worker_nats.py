@@ -234,6 +234,14 @@ class V2Worker:
             return await self._execute_postgres(config, args)
         elif tool_kind == "duckdb":
             return await self._execute_duckdb(config, args)
+        elif tool_kind == "workbook":
+            return await self._execute_workbook(config, args)
+        elif tool_kind == "playbook":
+            return await self._execute_playbook(config, args)
+        elif tool_kind == "secrets":
+            return await self._execute_secrets(config, args)
+        elif tool_kind == "sink":
+            return await self._execute_sink(config, args)
         else:
             raise NotImplementedError(f"Tool kind '{tool_kind}' not implemented")
     
@@ -333,6 +341,143 @@ class V2Worker:
                 return {"status": "ok", "rowcount": len(result.fetchall())}
         finally:
             conn.close()
+    
+    async def _execute_workbook(self, config: dict, args: dict) -> Any:
+        """Execute a named task from the workbook section."""
+        task_name = config.get("name")
+        if not task_name:
+            raise ValueError("Workbook execution requires 'name' in config")
+        
+        # Get workbook task definition from catalog
+        # In V2, workbook tasks are stored in playbook.workbook section
+        # For now, return error - requires catalog access
+        raise NotImplementedError("Workbook tool execution requires catalog integration")
+    
+    async def _execute_playbook(self, config: dict, args: dict) -> Any:
+        """Execute a sub-playbook."""
+        path = config.get("path")
+        return_step = config.get("return_step")
+        
+        if not path:
+            raise ValueError("Playbook execution requires 'path' in config")
+        
+        # Call server to start sub-playbook execution
+        if not self._http_client:
+            raise RuntimeError("HTTP client not initialized")
+        
+        # Get server URL from config or environment
+        server_url = os.getenv("SERVER_API_URL", "http://noetl.noetl.svc.cluster.local:8082")
+        
+        response = await self._http_client.post(
+            f"{server_url}/api/v2/execute",
+            json={"path": path, "payload": args},
+            timeout=30.0
+        )
+        response.raise_for_status()
+        result = response.json()
+        
+        execution_id = result.get("execution_id")
+        
+        # TODO: Wait for sub-playbook completion and return result
+        # For now, return execution info
+        return {
+            "status": "started",
+            "execution_id": execution_id,
+            "path": path,
+            "return_step": return_step
+        }
+    
+    async def _execute_secrets(self, config: dict, args: dict) -> Any:
+        """Fetch secrets/credentials from secret manager."""
+        secret_name = config.get("name")
+        provider = config.get("provider", "env")  # env, aws, gcp, azure
+        
+        if not secret_name:
+            raise ValueError("Secrets execution requires 'name' in config")
+        
+        if provider == "env":
+            # Read from environment variable
+            import os
+            value = os.getenv(secret_name)
+            if value is None:
+                raise ValueError(f"Secret not found in environment: {secret_name}")
+            return {"value": value}
+        else:
+            raise NotImplementedError(f"Secret provider '{provider}' not implemented")
+    
+    async def _execute_sink(self, config: dict, args: dict) -> Any:
+        """Persist data to storage backend."""
+        backend = config.get("backend", "postgres")
+        table = config.get("table")
+        data = config.get("data")
+        connection = config.get("connection")
+        
+        if not table:
+            raise ValueError("Sink execution requires 'table' in config")
+        if not data:
+            raise ValueError("Sink execution requires 'data' in config")
+        
+        if backend == "postgres":
+            # Use postgres plugin to insert data
+            from noetl.core.db.pool import get_pool_connection
+            
+            async with get_pool_connection() as conn:
+                async with conn.cursor() as cur:
+                    # Normalize data to list of dicts
+                    rows = data if isinstance(data, list) else [data]
+                    
+                    if not rows:
+                        return {"status": "ok", "rows_inserted": 0}
+                    
+                    # Get column names from first row
+                    columns = list(rows[0].keys())
+                    placeholders = ", ".join(["%s"] * len(columns))
+                    columns_str = ", ".join(columns)
+                    
+                    # Build INSERT statement
+                    query = f"INSERT INTO {table} ({columns_str}) VALUES ({placeholders})"
+                    
+                    # Execute for each row
+                    for row in rows:
+                        values = [row.get(col) for col in columns]
+                        await cur.execute(query, values)
+                    
+                    return {"status": "ok", "rows_inserted": len(rows)}
+        
+        elif backend == "duckdb":
+            # Use duckdb to insert data
+            import duckdb
+            
+            # Create connection
+            db_path = config.get("database", ":memory:")
+            conn = duckdb.connect(db_path)
+            
+            try:
+                # Normalize data
+                rows = data if isinstance(data, list) else [data]
+                
+                if not rows:
+                    return {"status": "ok", "rows_inserted": 0}
+                
+                # Get column names
+                columns = list(rows[0].keys())
+                placeholders = ", ".join(["?"] * len(columns))
+                columns_str = ", ".join(columns)
+                
+                # Build INSERT statement
+                query = f"INSERT INTO {table} ({columns_str}) VALUES ({placeholders})"
+                
+                # Execute for each row
+                for row in rows:
+                    values = [row.get(col) for col in columns]
+                    conn.execute(query, values)
+                
+                return {"status": "ok", "rows_inserted": len(rows)}
+            finally:
+                conn.close()
+        
+        else:
+            raise NotImplementedError(f"Sink backend '{backend}' not implemented")
     
     async def _emit_event(
         self,
