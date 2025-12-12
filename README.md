@@ -47,8 +47,6 @@ This architecture enables domain-centric, AI-informed orchestration: the Server 
 
 ### NoETL Semantic Execution Pipeline (Embeddings + Qdrant + LLM)
 
-![NoETL Semantic Execution Pipeline](https://raw.githubusercontent.com/noetl/noetl/main/docs/images/semantic.png)
-
 ```
                             ┌──────────────────────────────┐
                             │        Business User UI      │
@@ -159,6 +157,8 @@ This architecture enables domain-centric, AI-informed orchestration: the Server 
      - Recommendations (Fix missing credential, Increase batch size)
      - Workflow optimization (Parallelize steps X and Y)
      - Auto-generated steps / retry logic adjustments
+
+![NoETL Semantic Execution Pipeline](docs/images/semantic.png)
 
 ## AI & Domain Data-Driven Design
 
