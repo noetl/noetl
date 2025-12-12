@@ -247,6 +247,8 @@ class V2Worker:
     
     async def _execute_python(self, config: dict, args: dict) -> Any:
         """Execute Python code."""
+        import inspect
+        
         code = config.get("code", "")
         
         if not code:
@@ -258,7 +260,19 @@ class V2Worker:
         
         # Call main() if it exists
         if "main" in namespace and callable(namespace["main"]):
-            result = namespace["main"](args)
+            main_func = namespace["main"]
+            sig = inspect.signature(main_func)
+            
+            # Call with args if function accepts parameters, otherwise call without
+            if len(sig.parameters) > 0:
+                result = main_func(args)
+            else:
+                result = main_func()
+            
+            # Await if it's a coroutine
+            if inspect.iscoroutine(result):
+                result = await result
+            
             return result
         
         return {"status": "ok"}
