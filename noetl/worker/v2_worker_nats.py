@@ -266,6 +266,11 @@ class V2Worker:
         if not url:
             raise ValueError("HTTP tool requires 'url' or 'endpoint' in config")
         
+        # Debug logging
+        logger.info(f"HTTP {method} request to URL: {url}")
+        logger.info(f"  Headers: {headers}")
+        logger.info(f"  Params: {params}")
+        
         # Make request
         response = await self._http_client.request(
             method=method,
