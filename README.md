@@ -106,17 +106,17 @@ This architecture enables domain-centric, AI-informed orchestration: the Server 
          │  (OpenAI / Local Model)    │
          │----------------------------│
          │ - Root-cause analysis      │
-         │ - Explain execution flows   │
+         │ - Explain execution flows  │
          │ - Recommend next actions   │
          │ - Optimize retries/loops   │
-         │ - Generate workflow steps   │
+         │ - Generate workflow steps  │
          └───────────────┬────────────┘
                          │
                          ▼
               ┌───────────────────────────┐
               │  Insights / AI Assistant  │
               │ - Why did this fail?      │
-              │ - Show similar workflows   │
+              │ - Show similar workflows  │
               │ - Predict bottlenecks     │
               │ - Recommend improvements  │
               └───────────────────────────┘
