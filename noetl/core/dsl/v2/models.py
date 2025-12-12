@@ -256,6 +256,8 @@ class Command(BaseModel):
     priority: int = Field(default=0, description="Command priority (higher = more urgent)")
     backoff: Optional[float] = Field(None, description="Retry backoff delay in seconds")
     max_attempts: Optional[int] = Field(None, description="Maximum retry attempts")
+    retry_delay: Optional[float] = Field(None, description="Initial retry delay in seconds")
+    retry_backoff: Optional[str] = Field(None, description="Retry backoff strategy: linear or exponential")
     metadata: dict[str, Any] = Field(default_factory=dict, description="Additional metadata")
     
     def to_queue_record(self) -> dict[str, Any]:
