@@ -378,13 +378,41 @@ class V2Worker:
         
         execution_id = result.get("execution_id")
         
-        # TODO: Wait for sub-playbook completion and return result
-        # For now, return execution info
+        # Poll for sub-playbook completion if return_step is specified
+        if return_step:
+            max_wait = config.get("timeout", 300)  # Default 5 minutes
+            poll_interval = 2  # seconds
+            elapsed = 0
+            
+            while elapsed < max_wait:
+                await asyncio.sleep(poll_interval)
+                elapsed += poll_interval
+                
+                # Check execution status
+                status_response = await self._http_client.get(
+                    f"{server_url}/api/v2/executions/{execution_id}/status",
+                    timeout=10.0
+                )
+                
+                if status_response.status_code == 200:
+                    status_data = status_response.json()
+                    state = status_data.get("status")
+                    
+                    if state in ["completed", "failed", "error"]:
+                        # Get result from return_step
+                        if state == "completed" and return_step:
+                            return status_data.get("steps", {}).get(return_step, {})
+                        return status_data
+            
+            # Timeout - return what we have
+            logger.warning(f"Sub-playbook {execution_id} timed out after {max_wait}s")
+        
+        # Async execution - return execution info immediately
         return {
             "status": "started",
             "execution_id": execution_id,
             "path": path,
-            "return_step": return_step
+            "async": return_step is None
         }
     
     async def _execute_secrets(self, config: dict, args: dict) -> Any:
