@@ -43,18 +43,40 @@ def start_worker_service(
     Use --v2 flag to enable the new event-driven v2 worker architecture.
     v2 workers poll the queue directly and emit events to the server.
     """
+    import sys
+    sys.stderr.write(f"=== START_WORKER_SERVICE v2={v2} ===\n")
+    sys.stderr.flush()
     
     if v2:
+        sys.stderr.write("=== V2 BRANCH ENTERED ===\n")
+        sys.stderr.flush()
         # Start v2 worker with NATS
         logger.info("Starting worker v2 (event-driven NATS architecture)")
-        from noetl.worker.v2_worker_nats import run_worker_v2_sync
-        
-        # Get configuration
-        settings = get_settings()
-        nats_url = os.getenv("NATS_URL", "nats://noetl:noetl@localhost:30422")
-        server_url = settings.server_api_url or "http://localhost:8082"
-        
-        run_worker_v2_sync(nats_url=nats_url, server_url=server_url)
+        try:
+            sys.stderr.write("=== IMPORTING V2 WORKER ===\n")
+            sys.stderr.flush()
+            from noetl.worker.v2_worker_nats import run_worker_v2_sync
+            
+            sys.stderr.write("=== GETTING SETTINGS ===\n")
+            sys.stderr.flush()
+            # Get configuration
+            settings = get_settings()
+            nats_url = os.getenv("NATS_URL", "nats://noetl:noetl@localhost:30422")
+            server_url = settings.server_api_url or os.getenv("SERVER_API_URL", "http://localhost:8082")
+            
+            sys.stderr.write(f"=== CALLING run_worker_v2_sync NATS={nats_url} ===\n")
+            sys.stderr.flush()
+            logger.info(f"Configuration: NATS={nats_url}, Server={server_url}")
+            
+            run_worker_v2_sync(nats_url=nats_url, server_url=server_url)
+            
+            sys.stderr.write("=== run_worker_v2_sync RETURNED ===\n")
+            sys.stderr.flush()
+        except Exception as e:
+            sys.stderr.write(f"=== EXCEPTION: {e} ===\n")
+            sys.stderr.flush()
+            logger.error(f"Failed to start V2 worker: {e}", exc_info=True)
+            raise
         return
 
     # Start v1 worker (existing implementation)

@@ -148,6 +148,8 @@ class NATSCommandSubscriber:
         if not self._js:
             raise RuntimeError("Not connected to NATS")
         
+        print(f"Starting subscribe for {self.subject}", flush=True)
+        
         async def message_handler(msg):
             """Handle incoming NATS message."""
             try:
@@ -168,10 +170,35 @@ class NATSCommandSubscriber:
                 await msg.nak()
         
         try:
+            # First ensure stream exists
+            try:
+                print("Checking if stream NOETL_COMMANDS exists...", flush=True)
+                await self._js.stream_info("NOETL_COMMANDS")
+                print("Stream exists", flush=True)
+            except Exception as stream_err:
+                print(f"Stream check error: {stream_err}", flush=True)
+                print("Creating stream NOETL_COMMANDS...", flush=True)
+                # Create stream if it doesn't exist
+                from nats.js.api import StreamConfig
+                await self._js.add_stream(
+                    StreamConfig(
+                        name="NOETL_COMMANDS",
+                        subjects=["noetl.commands"],
+                        retention="limits",
+                        max_age=3600  # 1 hour
+                    )
+                )
+                print("Stream created", flush=True)
+                logger.info("Created stream: NOETL_COMMANDS")
+            
             # Create pull consumer if it doesn't exist
             try:
+                print(f"Checking consumer {self.consumer_name}...", flush=True)
                 await self._js.consumer_info("NOETL_COMMANDS", self.consumer_name)
-            except Exception:
+                print("Consumer exists", flush=True)
+            except Exception as consumer_err:
+                print(f"Consumer check error: {consumer_err}", flush=True)
+                print(f"Creating consumer {self.consumer_name}...", flush=True)
                 await self._js.add_consumer(
                     stream="NOETL_COMMANDS",
                     config=nats.js.api.ConsumerConfig(
@@ -181,17 +208,21 @@ class NATSCommandSubscriber:
                         ack_wait=30  # 30 seconds to process and ack
                     )
                 )
+                print("Consumer created", flush=True)
                 logger.info(f"Created consumer: {self.consumer_name}")
             
             # Subscribe with pull consumer
+            print("Creating pull subscription...", flush=True)
             self._subscription = await self._js.pull_subscribe(
                 self.subject,
                 durable=self.consumer_name
             )
             
+            print(f"Subscribed to {self.subject}", flush=True)
             logger.info(f"Subscribed to {self.subject} with consumer {self.consumer_name}")
             
             # Start message fetch loop
+            print("Starting fetch loop...", flush=True)
             while True:
                 try:
                     messages = await self._subscription.fetch(batch=1, timeout=5)
@@ -199,13 +230,18 @@ class NATSCommandSubscriber:
                         await message_handler(msg)
                 except asyncio.TimeoutError:
                     # No messages, continue polling
+                    print(".", end="", flush=True)  # Heartbeat
                     continue
                 except Exception as e:
+                    print(f"\nFetch error: {e}", flush=True)
                     logger.error(f"Error fetching messages: {e}")
                     await asyncio.sleep(1)
             
         except Exception as e:
-            logger.error(f"Failed to subscribe: {e}")
+            print(f"Subscribe failed: {e}", flush=True)
+            logger.error(f"Failed to subscribe: {e}", exc_info=True)
+            import traceback
+            traceback.print_exc()
             raise
     
     async def close(self):

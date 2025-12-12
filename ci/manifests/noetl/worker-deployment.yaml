@@ -35,8 +35,15 @@ spec:
         - name: worker
           image: image_name:image_tag
           imagePullPolicy: IfNotPresent
-          command: ["python"]
-          args: ["-m", "noetl.cli.ctl", "worker", "start", "--v2"]
+          command: 
+            - /opt/noetl/.venv/bin/python3
+            - -u
+            - -m
+            - noetl.main
+          args:
+            - worker
+            - start
+            - --v2
           envFrom:
             - configMapRef:
                 name: noetl-config

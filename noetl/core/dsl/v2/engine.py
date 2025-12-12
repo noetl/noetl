@@ -79,6 +79,7 @@ class ExecutionState:
             "workload": self.variables,
             "vars": self.variables,
             **self.variables,  # Make variables accessible at top level
+            **self.step_results,  # Make step results accessible (e.g., {{ process }})
         }
         
         # Add event-specific data
@@ -199,6 +200,15 @@ class ControlFlowEngine:
     def _render_template(self, template_str: str, context: dict[str, Any]) -> Any:
         """Render Jinja2 template."""
         try:
+            # Check if this is a simple variable reference like {{ varname }}
+            # If so, return the actual object instead of string representation
+            import re
+            simple_var_match = re.match(r'^\{\{\s*(\w+)\s*\}\}$', template_str.strip())
+            if simple_var_match:
+                var_name = simple_var_match.group(1)
+                if var_name in context:
+                    return context[var_name]
+            
             template = self.jinja_env.from_string(template_str)
             result = template.render(**context)
             
@@ -351,29 +361,58 @@ class ControlFlowEngine:
         args: dict[str, Any]
     ) -> Optional[Command]:
         """Create a command to execute a step."""
-        # Build tool config
-        tool_config = {}
+        # Build tool config - extract all fields from ToolSpec
+        tool_dict = step.tool.model_dump()
+        tool_config = {k: v for k, v in tool_dict.items() if k != "kind"}
         
-        # Get all tool attributes except 'kind'
-        for key, value in step.tool.__dict__.items():
-            if key != "kind" and not key.startswith("_"):
-                tool_config[key] = value
-        
-        # Merge with step args
+        # Build args separately - for step inputs
+        step_args = {}
         if step.args:
-            tool_config.update(step.args)
+            step_args.update(step.args)
         
-        # Merge with transition args
-        tool_config.update(args)
+        # Merge transition args
+        step_args.update(args)
+        
+        # Get render context for Jinja2 templates
+        context = state.get_render_context(Event(
+            execution_id=state.execution_id,
+            step=step.step,
+            name="command_creation",
+            payload={}
+        ))
+        
+        # Render Jinja2 templates in tool config
+        rendered_tool_config = {}
+        for key, value in tool_config.items():
+            if isinstance(value, str) and "{{" in value:
+                try:
+                    rendered_tool_config[key] = self._render_template(value, context)
+                except Exception as e:
+                    logger.warning(f"Failed to render tool config {key}: {e}")
+                    rendered_tool_config[key] = value
+            else:
+                rendered_tool_config[key] = value
+        
+        # Render Jinja2 templates in args
+        rendered_args = {}
+        for key, value in step_args.items():
+            if isinstance(value, str) and "{{" in value:
+                try:
+                    rendered_args[key] = self._render_template(value, context)
+                except Exception as e:
+                    logger.warning(f"Failed to render arg {key}: {e}")
+                    rendered_args[key] = value
+            else:
+                rendered_args[key] = value
         
         command = Command(
             execution_id=state.execution_id,
             step=step.step,
             tool=ToolCall(
                 kind=step.tool.kind,
-                config=tool_config
+                config=rendered_tool_config  # Tool-specific config (code, url, query, etc.)
             ),
-            args=tool_config,
+            args=rendered_args,  # Rendered step input arguments
             attempt=1,
             priority=0
         )
@@ -406,6 +445,11 @@ class ControlFlowEngine:
         
         # Update current step
         state.set_current_step(event.step)
+        
+        # Store step result if this is a step.exit event
+        if event.name == "step.exit" and "result" in event.payload:
+            state.mark_step_completed(event.step, event.payload["result"])
+            logger.debug(f"Stored result for step {event.step}")
         
         # Get render context
         context = state.get_render_context(event)
