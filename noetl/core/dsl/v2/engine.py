@@ -226,13 +226,57 @@ class StateStore:
             await conn.commit()
     
     async def load_state(self, execution_id: str) -> Optional[ExecutionState]:
-        """Load execution state."""
+        """Load execution state from memory or reconstruct from events."""
         # Check memory first
         if execution_id in self._memory_cache:
             return self._memory_cache[execution_id]
         
-        # TODO: Load from database if needed
-        return None
+        # Reconstruct state from events in database
+        async with self.db_pool.connection() as conn:
+            async with conn.cursor() as cur:
+                # Get playbook info
+                await cur.execute("""
+                    SELECT catalog_id, node_id
+                    FROM noetl.event
+                    WHERE execution_id = %s
+                    ORDER BY event_id
+                    LIMIT 1
+                """, (int(execution_id),))
+                
+                result = await cur.fetchone()
+                if not result:
+                    return None
+                
+                catalog_id = result['catalog_id']
+                
+                # Load playbook
+                playbook = await self.playbook_repo.load_playbook_by_id(catalog_id)
+                if not playbook:
+                    return None
+                
+                # Create new state
+                state = ExecutionState(execution_id, playbook, {}, catalog_id)
+                
+                # Replay events to rebuild state
+                await cur.execute("""
+                    SELECT node_id, event_type, context, result
+                    FROM noetl.event
+                    WHERE execution_id = %s
+                    ORDER BY event_id
+                """, (int(execution_id),))
+                
+                async for row in cur:
+                    node_id = row['node_id']
+                    event_type = row['event_type']
+                    result_data = row.get('result')
+                    
+                    # Restore step results
+                    if event_type == 'step.exit' and result_data:
+                        state.mark_step_completed(node_id, result_data)
+                
+                # Cache and return
+                self._memory_cache[execution_id] = state
+                return state
     
     def get_state(self, execution_id: str) -> Optional[ExecutionState]:
         """Get state from memory cache (sync)."""
