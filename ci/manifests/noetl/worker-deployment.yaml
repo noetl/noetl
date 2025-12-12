@@ -35,7 +35,7 @@ spec:
         - name: worker
           image: image_name:image_tag
           imagePullPolicy: IfNotPresent
-          command: 
+          command:
             - /opt/noetl/.venv/bin/python3
             - -u
             - -m

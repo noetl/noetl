@@ -188,6 +188,43 @@ class PlaybookRepo:
                 playbook = Playbook(**content_dict)
                 self._cache[path] = playbook
                 return playbook
+    
+    async def load_playbook_by_id(self, catalog_id: int) -> Optional[Playbook]:
+        """Load playbook from catalog by ID."""
+        # Check if we have it in cache
+        cache_key = f"id:{catalog_id}"
+        if cache_key in self._cache:
+            return self._cache[cache_key]
+        
+        async with get_pool_connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute("""
+                    SELECT content, layout, path
+                    FROM noetl.catalog 
+                    WHERE catalog_id = %s
+                """, (catalog_id,))
+                row = await cur.fetchone()
+            
+                if not row:
+                    logger.error(f"Playbook not found: catalog_id={catalog_id}")
+                    return None
+                
+                # Parse YAML content
+                import yaml
+                content_dict = yaml.safe_load(row["content"])
+                
+                # Validate it's v2
+                if content_dict.get("apiVersion") != "noetl.io/v2":
+                    logger.error(f"Playbook catalog_id={catalog_id} is not v2 format")
+                    return None
+                
+                # Parse into Pydantic model
+                playbook = Playbook(**content_dict)
+                self._cache[cache_key] = playbook
+                # Also cache by path for consistency
+                if row.get("path"):
+                    self._cache[row["path"]] = playbook
+                return playbook
 
 
 class StateStore:
