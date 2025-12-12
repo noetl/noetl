@@ -28,7 +28,7 @@ workflow:
     tool:
       kind: postgres
       auth: "{{ workload.pg_auth }}"
-      command: |
+      query: |
         CREATE TABLE IF NOT EXISTS simple_test_flat (
           test_id VARCHAR(255) PRIMARY KEY,
           test_name VARCHAR(255),
@@ -48,7 +48,7 @@ workflow:
     tool:
       kind: postgres
       auth: "{{ workload.pg_auth }}"
-      command: |
+      query: |
         CREATE TABLE IF NOT EXISTS simple_test_nested (
           test_id VARCHAR(255) PRIMARY KEY,
           test_name VARCHAR(255),
@@ -68,7 +68,7 @@ workflow:
     tool:
       kind: postgres
       auth: "{{ workload.pg_auth }}"
-      command: |
+      query: |
         CREATE TABLE IF NOT EXISTS test_summary (
           id SERIAL PRIMARY KEY,
           summary_type VARCHAR(255),

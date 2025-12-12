@@ -723,11 +723,11 @@ def manage_catalog(
             if host is None or port is None:
                 logger.error("Error: --host and --port are required for this client command")
                 raise typer.Exit(code=1)
-            url = f"http://{host}:{port}/api/run/playbook"
+            url = f"http://{host}:{port}/api/v2/execute"
             headers = {"Content-Type": "application/json"}
             data = {
                 "path": path,
-                "args": input_payload,
+                "payload": input_payload,
                 "merge": merge
             }
 
@@ -922,9 +922,9 @@ def run_playbook(
     This is an alias for 'noetl execute playbook'.
 
     Equivalent REST call:
-      curl -X POST http://{host}:{port}/api/run/playbook \
+      curl -X POST http://{host}:{port}/api/v2/execute \
            -H "Content-Type: application/json" \
-           -d '{"path": "<playbook_path>", "args": {...}}'
+           -d '{"path": "<playbook_path>", "payload": {...}}'
 
     Example:
       noetl run "tests/fixtures/playbooks/weather/weather_loop_example" --host localhost --port 8082
@@ -947,8 +947,8 @@ def run_playbook(
                 typer.echo(f"Failed to parse --payload JSON: {e}")
                 raise typer.Exit(code=1)
 
-        url = f"http://{host}:{port}/api/run/playbook"
-        body = {"path": playbook_id, "args": parameters, "merge": merge}
+        url = f"http://{host}:{port}/api/v2/execute"
+        body = {"path": playbook_id, "payload": parameters}
         if not json_only:
             typer.echo(f"POST {url}")
         resp = requests.post(url, json=body)
@@ -1028,9 +1028,9 @@ def execute_playbook_by_name(
     Execute a registered playbook by name against a running NoETL server.
 
     Equivalent REST call:
-      curl -X POST http://{host}:{port}/api/run/playbook \
+      curl -X POST http://{host}:{port}/api/v2/execute \
            -H "Content-Type: application/json" \
-           -d '{"path": "<playbook_path>", "args": {...}}'
+           -d '{"path": "<playbook_path>", "payload": {...}}'
 
     Example:
       noetl execute playbook "tests/fixtures/playbooks/weather/weather_loop_example" --host localhost --port 8082
@@ -1053,9 +1053,9 @@ def execute_playbook_by_name(
                 typer.echo(f"Failed to parse --payload JSON: {e}")
                 raise typer.Exit(code=1)
 
-        url = f"http://{host}:{port}/api/run/playbook"
+        url = f"http://{host}:{port}/api/v2/execute"
         logger.info(f"POST {url}")
-        body = {"path": playbook_id, "args": parameters, "merge": merge}
+        body = {"path": playbook_id, "payload": parameters}
         if not json_only:
             typer.echo(f"POST {url}")
         resp = requests.post(url, json=body)
