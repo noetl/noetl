@@ -847,17 +847,20 @@ async def _dispatch_first_step(execution_id: str) -> None:
     """
     Publish first workflow step to queue for worker execution.
 
-    Process:
-    1. Query workflow table for step where step_name = 'start'
-    2. Create actionable task (job) in queue table
-    3. Worker will pick it up, execute, and report result via event endpoint
-
-    TODO: Implement workflow query and queue publishing
+    Note: V2 DSL implementation handles workflow initialization differently.
+    The V2 system automatically dispatches the 'start' step via the execute API
+    and uses NATS messaging for worker coordination. This function is kept for
+    backward compatibility but is not used in V2 playbook execution.
+    
+    For V2 playbooks:
+    1. Execute API creates workflow_initialized event
+    2. Orchestrator evaluates next steps from workflow definition
+    3. QueuePublisher publishes steps to queue
+    4. Workers receive commands via NATS and execute
+    5. Workers report back via v2/events endpoint
     """
-    logger.info(f"Dispatching first step for execution {execution_id}")
-    # TODO: Query workflow table to find 'start' step
-    # TODO: Use QueuePublisher to publish step to queue
-    # Workers will execute and report results back via /api/v1/event/emit
+    logger.info(f"Dispatching first step for execution {execution_id} (V1 compatibility mode)")
+    # V2 DSL handles this through evaluate_execution flow
     pass
 
 

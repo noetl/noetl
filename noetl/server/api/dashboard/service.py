@@ -28,33 +28,77 @@ class DashboardService:
         """
         Get dashboard statistics.
         
-        This is a placeholder implementation that returns zero counts.
-        In production, this should query the database for actual statistics.
+        Queries the database for real-time execution and playbook statistics.
         
         Returns:
             DashboardStatsResponse with statistics
         """
         try:
-            # TODO: Implement actual statistics queries
-            # Example queries:
-            # - SELECT COUNT(*) FROM noetl.event WHERE event_type = 'execution_start'
-            # - SELECT COUNT(*) FROM noetl.catalog WHERE kind = 'Playbook'
-            # - SELECT COUNT(*) FROM noetl.event WHERE status = 'running'
+            from noetl.core.db.pool import get_pool_connection
+            
+            async with get_pool_connection() as conn:
+                async with conn.cursor() as cur:
+                    # Count total unique executions
+                    await cur.execute("""
+                        SELECT COUNT(DISTINCT execution_id) as total
+                        FROM noetl.event
+                    """)
+                    row = await cur.fetchone()
+                    total_executions = row["total"] if row else 0
+                    
+                    # Count successful executions (have workflow_completed event)
+                    await cur.execute("""
+                        SELECT COUNT(DISTINCT execution_id) as total
+                        FROM noetl.event
+                        WHERE event_type = 'workflow_completed'
+                        AND status = 'COMPLETED'
+                    """)
+                    row = await cur.fetchone()
+                    successful_executions = row["total"] if row else 0
+                    
+                    # Count failed executions (have step_failed or error status)
+                    await cur.execute("""
+                        SELECT COUNT(DISTINCT execution_id) as total
+                        FROM noetl.event
+                        WHERE event_type IN ('step.exit', 'workflow_completed')
+                        AND status IN ('FAILED', 'ERROR')
+                    """)
+                    row = await cur.fetchone()
+                    failed_executions = row["total"] if row else 0
+                    
+                    # Count total playbooks in catalog
+                    await cur.execute("""
+                        SELECT COUNT(*) as total
+                        FROM noetl.catalog
+                        WHERE kind = 'Playbook'
+                    """)
+                    row = await cur.fetchone()
+                    total_playbooks = row["total"] if row else 0
+                    
+                    # Count active workflows (executions with RUNNING status in last hour)
+                    await cur.execute("""
+                        SELECT COUNT(DISTINCT execution_id) as total
+                        FROM noetl.event
+                        WHERE status = 'RUNNING'
+                        AND created_at > NOW() - INTERVAL '1 hour'
+                    """)
+                    row = await cur.fetchone()
+                    active_workflows = row["total"] if row else 0
             
             return DashboardStatsResponse(
                 status="ok",
                 stats={
-                    "total_executions": 0,
-                    "successful_executions": 0,
-                    "failed_executions": 0,
-                    "total_playbooks": 0,
-                    "active_workflows": 0
+                    "total_executions": total_executions,
+                    "successful_executions": successful_executions,
+                    "failed_executions": failed_executions,
+                    "total_playbooks": total_playbooks,
+                    "active_workflows": active_workflows
                 },
-                total_executions=0,
-                successful_executions=0,
-                failed_executions=0,
-                total_playbooks=0,
-                active_workflows=0
+                total_executions=total_executions,
+                successful_executions=successful_executions,
+                failed_executions=failed_executions,
+                total_playbooks=total_playbooks,
+                active_workflows=active_workflows
             )
         except Exception as e:
             logger.error(f"Error getting dashboard stats: {e}")
@@ -74,22 +118,52 @@ class DashboardService:
         """
         Get dashboard widgets configuration.
         
-        This is a placeholder implementation that returns an empty list.
-        In production, this should return configured widgets with their data.
+        Returns widget configurations for the dashboard UI.
+        Widgets are statically defined based on common monitoring needs.
         
         Returns:
             DashboardWidgetsResponse with widgets
         """
         try:
-            # TODO: Implement actual widget retrieval
-            # Example widgets:
-            # - Execution trend chart
-            # - Recent executions table
-            # - Success rate metric
-            # - Resource utilization graphs
+            # Define standard dashboard widgets
+            widgets = [
+                {
+                    "id": "execution_stats",
+                    "type": "metric",
+                    "title": "Execution Statistics",
+                    "description": "Overview of execution counts and success rates"
+                },
+                {
+                    "id": "recent_executions",
+                    "type": "table",
+                    "title": "Recent Executions",
+                    "description": "List of most recent playbook executions",
+                    "config": {"limit": 10}
+                },
+                {
+                    "id": "execution_trend",
+                    "type": "chart",
+                    "title": "Execution Trend",
+                    "description": "Execution volume over time",
+                    "config": {"timeRange": "24h", "chartType": "line"}
+                },
+                {
+                    "id": "success_rate",
+                    "type": "metric",
+                    "title": "Success Rate",
+                    "description": "Percentage of successful executions"
+                },
+                {
+                    "id": "active_playbooks",
+                    "type": "list",
+                    "title": "Active Playbooks",
+                    "description": "Playbooks with recent execution activity",
+                    "config": {"limit": 5}
+                }
+            ]
             
             return DashboardWidgetsResponse(
-                widgets=[]
+                widgets=widgets
             )
         except Exception as e:
             logger.error(f"Error getting dashboard widgets: {e}")
