@@ -236,20 +236,20 @@ Together, these principles give NoETL a clear stance:
                                             ▼
                                 ┌──────────────────────┐
                                 │     NoETL Server     │
-                                │ - Validates playbook │
-                                │ - Creates workload   │
-                                │ - Publishes commands │
-                                └─────────────┬────────┘
-                                          │  (NATS JetStream)
-                                          ▼
-     ┌───────────────────────────┐     ┌-───────────────────────────┐
+               _________________│ - Validates playbook │
+              |                 │ - Creates workload   │
+              |                 │ - Publishes commands │
+              |                 └─────────────┬────────┘
+              │(NATS JetStream)               | 
+              |                               | 
+     ┌────────▼──────────────────┐     ┌-─────▼─────────────────────┐
      │       JetStream           │     │        NoETL Workers       │
-     │  - NOETL_COMMANDS Stream  │◀────│ - Pull commands            │
-     │                           │────▶│ - Run tools / tasks        │
-     └───────────┬──────────────-┘     │ - Emit results + logs      │
-                 │                     └──────────-┬────────────────┘
-                 │ (event log messages)            │
-                 ▼                                 │
+     │                           │     │ - Pull commands            │
+     │  - NOETL_COMMANDS Stream  │────▶│ - Run tools / tasks        │
+     └──────────────────────────-┘     │ - Emit results + logs      │
+                                       └──────────-┬────────────────┘
+                               (event log messages)│
+                                                   │
       ┌─────────────────────────────┐              │
       │ NoETL Server Event Handler  │◀─────────────┘
       │ - Collects events           |
