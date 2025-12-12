@@ -1,0 +1,57 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: v2_http_test
+  path: test/v2/http
+
+workload:
+  test_message: "Testing V2 HTTP tool"
+  api_url: "http://noetl.noetl.svc.cluster.local:8082"
+
+workflow:
+  - step: start
+    desc: Fetch health status from NoETL API
+    tool:
+      kind: http
+      method: GET
+      url: "{{ workload.api_url }}/api/health"
+    next:
+      - step: process
+
+  - step: process
+    desc: Process API response
+    tool:
+      kind: python
+      code: |
+        def main(input_data):
+            import json
+            print(f"[PROCESS] Processing HTTP response")
+            print(f"[PROCESS] Status: {input_data.get('status_code')}")
+            
+            body = input_data.get('body', {})
+            if isinstance(body, dict):
+                status = body.get('status', 'unknown')
+                print(f"[PROCESS] Health status: {status}")
+                
+                return {
+                    "status": "success",
+                    "health_status": status,
+                    "api_reachable": True
+                }
+            
+            return {"status": "error", "message": "Invalid response format"}
+    args:
+      status_code: "{{ start.status_code }}"
+      body: "{{ start.body }}"
+    next:
+      - step: end
+
+  - step: end
+    desc: Complete
+    tool:
+      kind: python
+      code: |
+        def main(input_data):
+            print("[END] HTTP test completed successfully!")
+            print(f"[END] API health: {input_data.get('health_status', 'N/A')}")
+            return {"status": "completed"}

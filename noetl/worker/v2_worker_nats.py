@@ -59,24 +59,20 @@ class V2Worker:
             consumer_name=f"worker-{self.worker_id}"
         )
         
+        print(f"Worker {self.worker_id} starting...", flush=True)
+        print(f"NATS URL: {self.nats_url}", flush=True)
         logger.info(f"Worker {self.worker_id} starting...")
         logger.info(f"NATS URL: {self.nats_url}")
         
-        try:
-            # Connect to NATS
-            await self._nats_subscriber.connect()
-            
-            # Subscribe to command notifications
-            logger.info(f"Subscribing to command notifications...")
-            await self._nats_subscriber.subscribe(self._handle_command_notification)
-            
-        except KeyboardInterrupt:
-            logger.info("Worker interrupted by user")
-        except Exception as e:
-            logger.error(f"Worker error: {e}", exc_info=True)
-            raise
-        finally:
-            await self.cleanup()
+        # Connect to NATS
+        print("Connecting to NATS...", flush=True)
+        await self._nats_subscriber.connect()
+        print("Connected to NATS", flush=True)
+        
+        # Subscribe to command notifications (this should never return)
+        print("Subscribing to command notifications...", flush=True)
+        logger.info(f"Subscribing to command notifications...")
+        await self._nats_subscriber.subscribe(self._handle_command_notification)
     
     async def cleanup(self):
         """Cleanup resources."""
@@ -128,12 +124,12 @@ class V2Worker:
             response = await self._http_client.post(
                 f"{server_url.rstrip('/')}/api/postgres/execute",
                 json={
-                    "query": """
+                    "procedure": """
                         UPDATE noetl.queue
                         SET status = 'running', 
-                            worker_id = $1,
+                            worker_id = %s,
                             updated_at = NOW()
-                        WHERE queue_id = $2
+                        WHERE queue_id = %s
                           AND status = 'queued'
                         RETURNING queue_id, execution_id, node_id, action, context
                     """,
@@ -349,6 +345,12 @@ async def run_v2_worker(
     server_url: Optional[str] = None
 ):
     """Run a V2 worker instance."""
+    # Initialize database pool for postgres tool execution
+    from noetl.core.db.pool import init_pool, close_pool
+    from noetl.core.common import get_pgdb_connection
+    await init_pool(get_pgdb_connection())
+    logger.info("Database pool initialized")
+    
     worker = V2Worker(
         worker_id=worker_id,
         nats_url=nats_url,
@@ -356,14 +358,16 @@ async def run_v2_worker(
     )
     
     try:
-        await worker.start()
+        await worker.start()  # Should run forever
     except KeyboardInterrupt:
         logger.info("Worker interrupted by user")
-        worker.stop()
     except Exception as e:
         logger.error(f"Worker error: {e}", exc_info=True)
-        worker.stop()
         raise
+    finally:
+        await worker.cleanup()
+        await close_pool()
+        logger.info("Worker cleanup complete")
 
 
 def run_worker_v2_sync(
@@ -376,14 +380,64 @@ def run_worker_v2_sync(
     Generates worker ID and runs async worker in event loop.
     """
     import uuid
+    import sys
     
-    # Get from environment or use defaults
-    nats_url = os.getenv("NATS_URL", nats_url)
-    server_url = server_url or os.getenv("SERVER_API_URL", "http://noetl.noetl.svc.cluster.local:8082")
+    # Write to stderr BEFORE any other imports that might redirect stdout
+    sys.stderr.write("=== WORKER ENTRY POINT ===\n")
+    sys.stderr.flush()
     
-    worker_id = f"worker-{uuid.uuid4().hex[:8]}"
-    logger.info(f"Starting V2 worker with ID: {worker_id}")
-    logger.info(f"NATS URL: {nats_url}")
-    logger.info(f"Server URL: {server_url}")
+    print("=== V2 Worker Starting ===", flush=True)
+    sys.stdout.flush()
+    sys.stderr.flush()
     
-    asyncio.run(run_v2_worker(worker_id, nats_url, server_url))
+    try:
+        
+        # Get from environment or use defaults
+        nats_url = os.getenv("NATS_URL", nats_url)
+        server_url = server_url or os.getenv("SERVER_API_URL", "http://noetl.noetl.svc.cluster.local:8082")
+        
+        worker_id = f"worker-{uuid.uuid4().hex[:8]}"
+        
+        with open("/tmp/worker_config.txt", "w") as f:
+            f.write(f"Worker ID: {worker_id}\n")
+            f.write(f"NATS URL: {nats_url}\n")
+            f.write(f"Server URL: {server_url}\n")
+            f.flush()
+        
+        print(f"Worker ID: {worker_id}", flush=True)
+        print(f"NATS URL: {nats_url}", flush=True)
+        print(f"Server URL: {server_url}", flush=True)
+        
+        logger.info(f"Starting V2 worker with ID: {worker_id}")
+        logger.info(f"NATS URL: {nats_url}")
+        logger.info(f"Server URL: {server_url}")
+        
+        with open("/tmp/worker_before_run.txt", "w") as f:
+            f.write(f"About to call asyncio.run at {datetime.now()}\n")
+            f.flush()
+        
+        asyncio.run(run_v2_worker(worker_id, nats_url, server_url))
+        
+        with open("/tmp/worker_after_run.txt", "w") as f:
+            f.write(f"asyncio.run returned at {datetime.now()}\n")
+            f.flush()
+        
+    except KeyboardInterrupt:
+        with open("/tmp/worker_interrupt.txt", "w") as f:
+            f.write(f"Interrupted at {datetime.now()}\n")
+            f.flush()
+        print("Worker interrupted by user", flush=True)
+        logger.info("Worker interrupted by user")
+        sys.exit(0)
+    except Exception as e:
+        with open("/tmp/worker_error.txt", "w") as f:
+            f.write(f"Error at {datetime.now()}: {e}\n")
+            import traceback
+            f.write(traceback.format_exc())
+            f.flush()
+        
+        print(f"Worker failed: {e}", flush=True)
+        logger.error(f"Worker failed to start: {e}", exc_info=True)
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)

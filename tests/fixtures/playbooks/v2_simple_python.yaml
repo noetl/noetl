@@ -1,0 +1,35 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: v2_simple_python_test
+  path: test/v2/simple_python
+  description: Simple Python test for V2 worker
+
+workload:
+  message: "Hello from V2"
+
+workflow:
+  - step: start
+    tool:
+      kind: python
+      code: |
+        def main(input_data):
+            message = input_data.get('message', 'default')
+            print(f"Processing: {message}")
+            return {
+                "status": "success", 
+                "message": message,
+                "timestamp": "2025-12-11"
+            }
+    args:
+      message: "{{ workload.message }}"
+    next:
+      - step: end
+  
+  - step: end
+    tool:
+      kind: python
+      code: |
+        def main(input_data):
+            return {"status": "completed"}
+    desc: Workflow complete
