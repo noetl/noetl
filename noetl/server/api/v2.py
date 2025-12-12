@@ -224,6 +224,12 @@ async def handle_event(req: EventRequest) -> EventResponse:
                     if not result:
                         logger.warning(f"No catalog_id found for execution {req.execution_id}")
                     
+                    # Delete any existing queue entry for this execution+node (for loop iterations)
+                    await cur.execute("""
+                        DELETE FROM noetl.queue
+                        WHERE execution_id = %s AND node_id = %s
+                    """, (int(command.execution_id), command.step))
+                    
                     # Insert command into queue
                     queue_id = await get_snowflake_id()
                     await cur.execute("""

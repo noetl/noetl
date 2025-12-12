@@ -9,11 +9,156 @@ __NoETL__ is an automation framework for Data Mash and MLOps orchestration.
 
 The following diagram illustrates the main parts and intent of the NoETL system:
 
-![NoETL System Diagram](docs/images/NoETL.png)
+![NoETL System Diagram](docs/images/NoETL@820w.png)
 
 - **Server**: orchestration + API endpoints (catalog, credentials, tasks, events)
 - **Worker**: background worker pool, no HTTP endpoints
 - **Noetl CLI**: manages worker pools and server lifecycle
+
+### Architecture
+
+The following component view shows how NoETL is structured and how requests/data flow between parts of the system:
+
+![NoETL Components](docs/images/NoETL-components-v2@820w.png)
+
+- Gateway/API
+  - External entrypoint that exposes the public HTTP API used by CLIs, UIs, and integrations.
+  - Handles authn/z and forwards requests to the Server.
+- Orchestrator Server
+  - Schedules and supervises workflow executions, manages retries/backoff, and records events.
+  - Provides CRUD APIs for catalog (playbooks, tools), credentials, tasks, and events.
+- Worker Pools
+  - Stateless/background executors that run workflow steps and tools (HTTP, SQL engines, vector DBs, Python, etc.).
+  - Scaled horizontally; no inbound HTTP endpoints.
+- Scheduler & Queues
+  - Internal priority queues for tasks, with resource-aware scheduling (CPU/GPU pools, concurrency limits).
+  - Handles fan-out/fan-in and back-pressure across workflows, inspired by Petri nets.
+- Catalog & Credentials
+  - Catalog stores playbooks, versions, schemas, and tool definitions.
+  - Credentials vault keeps connection configs and tokens with scoped access for steps.
+- Event Bus and Telemetry
+  - Every step emits structured events (start/finish/errors, durations, resource usage).
+  - Events are exported to analytics backends (e.g., ClickHouse, VictoriaMetrics/Logs) and vector stores (e.g., Qdrant) for AI-assisted optimization and semantic search.
+- Storage/Compute Integrations
+  - Connectors for warehouses (DuckDB, Postgres, ClickHouse), files/lakes, vector DBs, and external services.
+  - Results and artifacts are published as domain data products in a mesh/lakehouse.
+
+This architecture enables domain-centric, AI-informed orchestration: the Server coordinates state and scheduling; Workers execute steps; telemetry and embeddings feed back into policies that optimize routing, hardware selection, and retry strategies over time.
+
+### NoETL Semantic Execution Pipeline (Embeddings + Qdrant + LLM)
+
+![NoETL Semantic Execution Pipeline](https://raw.githubusercontent.com/noetl/noetl/main/docs/images/semantic.png)
+
+```
+                            ┌──────────────────────────────┐
+                            │        Business User UI      │
+                            │ (GraphQL/Gateway/API Client) │
+                            └───────────────┬──────────────┘
+                                            │
+                                            ▼
+                                ┌──────────────────────┐
+                                │     NoETL Server     │
+                                │ - Validates playbook │
+                                │ - Creates workload   │
+                                │ - Publishes commands │
+                                └─────────────┬────────┘
+                                              │  (NATS JetStream)
+                                              ▼
+     ┌───────────────────────────┐     ┌-───────────────────────────┐
+     │       JetStream           │     │        NoETL Workers       │
+     │  - NOETL_COMMANDS Stream  │◀────│ - Pull commands            │
+     │  - Execution Events       │────▶│ - Run tools / tasks        │
+     └───────────┬──────────────-┘     │ - Emit results + logs      │
+                 │                     └──────────-┬────────────────┘
+                 │ (event log messages)            │
+                 ▼                                 │
+      ┌─────────────────────────────┐              │
+      │ NoETL Server Event Handler  │◀─────────────┘
+      │ - Collects events           │
+      │ - Normalizes + indexes      │
+      │ - Stores metadata           │
+      └──────────────┬──────────────┘
+                     │
+                     ▼
+   ┌──────────────────────────────────────────────────┐
+   │            Embedding + Semantic Layer            │
+   │--------------------------------------------------│
+   │                                                  │
+   │ 1. Convert events/workloads/logs to embeddings   │
+   │      using local/OpenAI embedding models         │
+   │                                                  │
+   │ 2. Store vectors in Qdrant (vector database)     │
+   │      - Similar executions                        │
+   │      - Error clusters                            │
+   │      - Semantic search index                     │
+   │                                                  │
+   └───────────────┬──────────────────────────────────┘
+                   │
+                   ▼
+     ┌────────────────────────────────────────┐
+     │              Qdrant Vector DB          │
+     │ - Annoy/HNSW vector search             │
+     │ - Top-K nearest neighbors              │
+     │ - Semantic relevance ranking           │
+     └───────────────┬────────────────────────┘
+                     │ (retrieved context)
+                     ▼
+         ┌────────────────────────────┐
+         │            LLM             │
+         │  (OpenAI / Local Model)    │
+         │----------------------------│
+         │ - Root-cause analysis      │
+         │ - Explain execution flows   │
+         │ - Recommend next actions   │
+         │ - Optimize retries/loops   │
+         │ - Generate workflow steps   │
+         └───────────────┬────────────┘
+                         │
+                         ▼
+              ┌───────────────────────────┐
+              │  Insights / AI Assistant  │
+              │ - Why did this fail?      │
+              │ - Show similar workflows   │
+              │ - Predict bottlenecks     │
+              │ - Recommend improvements  │
+              └───────────────────────────┘
+```
+
+#### How the Components Work Together
+
+1. NoETL Server
+   - Validates the playbook
+   - Creates workload instance
+   - Publishes initial commands into JetStream
+
+2. NoETL Workers
+   - Pull tasks from `NOETL_COMMANDS` NATS JetStreams
+   - Execute tasks (python, http, postgres, etc.)
+   - Emit detailed events back to Control Plane API
+
+3. Event Processor
+   - Normalizes events (`task_start`, `task_end`, `error`, `retries`)
+   - Builds structured execution trace
+
+4. Embedding Pipeline
+   - For each execution event:
+     - Extract message text, error descriptions, metadata
+     - Convert to embedding vectors
+     - Store vectors in Qdrant with metadata reference
+
+5. Semantic Search (Qdrant)
+   - Enables:
+     - Find similar failures
+     - Cluster executions by behavior
+     - Show similar playbooks
+     - Detect anomalies
+
+6. LLM Reasoning Layer
+   - Retrieves the top-k relevant context from Qdrant and produces:
+     - Explanations (Why this step failed?)
+     - Recommendations (Fix missing credential, Increase batch size)
+     - Workflow optimization (Parallelize steps X and Y)
+     - Auto-generated steps / retry logic adjustments
 
 ## AI & Domain Data-Driven Design
 
