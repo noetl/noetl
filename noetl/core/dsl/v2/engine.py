@@ -37,6 +37,9 @@ class ExecutionState:
         self.failed = False
         self.completed = False
         
+        # Loop state tracking
+        self.loop_state: dict[str, dict[str, Any]] = {}  # step_name -> {collection, index, item, mode}
+        
         # Initialize workload variables
         if playbook.workload:
             self.variables.update(playbook.workload)
@@ -66,8 +69,49 @@ class ExecutionState:
         """Check if step is completed."""
         return step_name in self.completed_steps
     
+    def init_loop(self, step_name: str, collection: list[Any], iterator: str, mode: str = "sequential"):
+        """Initialize loop state for a step."""
+        self.loop_state[step_name] = {
+            "collection": collection,
+            "iterator": iterator,
+            "index": 0,
+            "mode": mode,
+            "completed": False
+        }
+        logger.debug(f"Initialized loop for step {step_name}: {len(collection)} items, mode={mode}")
+    
+    def get_next_loop_item(self, step_name: str) -> tuple[Any, int] | None:
+        """Get next item from loop. Returns (item, index) or None if done."""
+        if step_name not in self.loop_state:
+            return None
+        
+        state = self.loop_state[step_name]
+        if state["completed"]:
+            return None
+        
+        collection = state["collection"]
+        index = state["index"]
+        
+        if index >= len(collection):
+            state["completed"] = True
+            return None
+        
+        item = collection[index]
+        state["index"] = index + 1
+        return (item, index)
+    
+    def is_loop_done(self, step_name: str) -> bool:
+        """Check if loop is completed."""
+        if step_name not in self.loop_state:
+            return True
+        return self.loop_state[step_name]["completed"]
+    
     def get_render_context(self, event: Event) -> dict[str, Any]:
-        """Get context for Jinja2 rendering."""
+        """Get context for Jinja2 rendering.
+        
+        Loop variables are added to state.variables in _create_command_for_step,
+        so they will be available via **self.variables spread below.
+        """
         context = {
             "event": {
                 "name": event.name,
@@ -78,9 +122,20 @@ class ExecutionState:
             "execution_id": self.execution_id,
             "workload": self.variables,
             "vars": self.variables,
-            **self.variables,  # Make variables accessible at top level
+            **self.variables,  # Make variables accessible at top level (includes loop vars)
             **self.step_results,  # Make step results accessible (e.g., {{ process }})
         }
+        
+        # Add loop metadata context if step has active loop
+        if event.step and event.step in self.loop_state:
+            loop_state = self.loop_state[event.step]
+            context["loop"] = {
+                "index": loop_state["index"] - 1 if loop_state["index"] > 0 else 0,  # Current item index
+                "first": loop_state["index"] == 1,
+                "length": len(loop_state["collection"]),
+                "done": loop_state["completed"]
+            }
+            # Note: Iterator variable itself (e.g., {{ num }}) comes from state.variables
         
         # Add event-specific data
         if "response" in event.payload:
@@ -200,14 +255,25 @@ class ControlFlowEngine:
     def _render_template(self, template_str: str, context: dict[str, Any]) -> Any:
         """Render Jinja2 template."""
         try:
-            # Check if this is a simple variable reference like {{ varname }}
-            # If so, return the actual object instead of string representation
+            # Check if this is a simple variable reference like {{ varname }} or {{ obj.attr }}
+            # If so, evaluate and return the actual object instead of string representation
             import re
-            simple_var_match = re.match(r'^\{\{\s*(\w+)\s*\}\}$', template_str.strip())
+            simple_var_match = re.match(r'^\{\{\s*([\w.]+)\s*\}\}$', template_str.strip())
             if simple_var_match:
-                var_name = simple_var_match.group(1)
-                if var_name in context:
-                    return context[var_name]
+                var_path = simple_var_match.group(1)
+                # Navigate dot notation: workload.numbers → context['workload']['numbers']
+                value = context
+                for part in var_path.split('.'):
+                    if isinstance(value, dict) and part in value:
+                        value = value[part]
+                    elif hasattr(value, part):
+                        value = getattr(value, part)
+                    else:
+                        # Path doesn't resolve, fall back to Jinja rendering
+                        break
+                else:
+                    # Successfully navigated full path
+                    return value
             
             template = self.jinja_env.from_string(template_str)
             result = template.render(**context)
@@ -361,6 +427,49 @@ class ControlFlowEngine:
         args: dict[str, Any]
     ) -> Optional[Command]:
         """Create a command to execute a step."""
+        # Debug: Check if step has loop
+        logger.warning(f"[CREATE-CMD] Step {step.step} has loop? {step.loop is not None}")
+        if step.loop:
+            logger.warning(f"[CREATE-CMD] Loop config: in={step.loop.in_}, iterator={step.loop.iterator}, mode={step.loop.mode}")
+        
+        # Check if step has loop configuration
+        if step.loop and step.step not in state.loop_state:
+            # Initialize loop on first encounter
+            context = state.get_render_context(Event(
+                execution_id=state.execution_id,
+                step=step.step,
+                name="loop_init",
+                payload={}
+            ))
+            
+            # Render collection expression
+            collection_expr = step.loop.in_
+            collection = self._render_template(collection_expr, context)
+            
+            if not isinstance(collection, list):
+                logger.warning(f"Loop collection is not a list: {type(collection)}, converting")
+                collection = list(collection) if hasattr(collection, '__iter__') else [collection]
+            
+            state.init_loop(step.step, collection, step.loop.iterator, step.loop.mode)
+            logger.info(f"Initialized loop for {step.step} with {len(collection)} items")
+        
+        # If step has loop, check for next item
+        if step.loop:
+            next_item = state.get_next_loop_item(step.step)
+            if next_item is None:
+                # Loop completed
+                logger.info(f"[LOOP] Loop completed for step {step.step}")
+                return None  # No command, will generate loop.done event
+            
+            item, index = next_item
+            logger.info(f"[LOOP] Creating command for loop iteration {index} of step {step.step}, item={item}")
+            
+            # CRITICAL: Add loop variables to state.variables for Jinja2 template rendering
+            # Do NOT add to args dict - let templates {{ num }} be rendered from context
+            state.variables[step.loop.iterator] = item
+            state.variables["loop_index"] = index
+            logger.info(f"[LOOP] Added to state.variables: {step.loop.iterator}={item}, loop_index={index}")
+        
         # Build tool config - extract all fields from ToolSpec
         tool_dict = step.tool.model_dump()
         tool_config = {k: v for k, v in tool_dict.items() if k != "kind"}
@@ -381,6 +490,13 @@ class ControlFlowEngine:
             payload={}
         ))
         
+        # Debug: Log loop variables in context
+        if step.loop:
+            logger.warning(f"[LOOP-DEBUG] Step {step.step} render context keys: {list(context.keys())}")
+            logger.warning(f"[LOOP-DEBUG] Iterator '{step.loop.iterator}' value in context: {context.get(step.loop.iterator, 'NOT FOUND')}")
+            logger.warning(f"[LOOP-DEBUG] loop_index value in context: {context.get('loop_index', 'NOT FOUND')}")
+            logger.warning(f"[LOOP-DEBUG] state.variables: {state.variables}")
+        
         # Render Jinja2 templates in tool config
         rendered_tool_config = {}
         for key, value in tool_config.items():
@@ -398,7 +514,10 @@ class ControlFlowEngine:
         for key, value in step_args.items():
             if isinstance(value, str) and "{{" in value:
                 try:
-                    rendered_args[key] = self._render_template(value, context)
+                    rendered_value = self._render_template(value, context)
+                    rendered_args[key] = rendered_value
+                    if step.loop:
+                        logger.warning(f"[LOOP-DEBUG] Rendered arg '{key}': '{value}' → '{rendered_value}'")
                 except Exception as e:
                     logger.warning(f"Failed to render arg {key}: {e}")
                     rendered_args[key] = value
@@ -451,6 +570,29 @@ class ControlFlowEngine:
             state.mark_step_completed(event.step, event.payload["result"])
             logger.debug(f"Stored result for step {event.step}")
         
+        # Handle loop.item events - continue loop iteration
+        if event.name == "loop.item" and step_def.loop:
+            logger.debug(f"Processing loop.item event for {event.step}")
+            command = self._create_command_for_step(state, step_def, {})
+            if command:
+                commands.append(command)
+                logger.debug(f"Created command for next loop iteration")
+            else:
+                # Loop completed, would emit loop.done below
+                logger.debug(f"Loop iteration complete, will check for loop.done")
+        
+        # Check if step has completed loop - emit loop.done event
+        if step_def.loop and event.name == "step.exit":
+            if not state.is_loop_done(event.step):
+                # More items to process - emit loop.item event
+                logger.debug(f"Loop has more items, creating next command")
+                command = self._create_command_for_step(state, step_def, {})
+                if command:
+                    commands.append(command)
+            else:
+                # Loop done - would transition to next step via structural next
+                logger.info(f"Loop completed for step {event.step}")
+        
         # Get render context
         context = state.get_render_context(event)
         
@@ -474,24 +616,26 @@ class ControlFlowEngine:
         
         # If step.exit event and no case matched, use structural next
         if event.name == "step.exit" and step_def.next and not commands:
-            # Handle structural next
-            next_items = step_def.next
-            if isinstance(next_items, str):
-                next_items = [next_items]
-            
-            for next_item in next_items:
-                if isinstance(next_item, str):
-                    target_step = next_item
-                elif isinstance(next_item, dict):
-                    target_step = next_item.get("step")
-                else:
-                    continue
+            # Only proceed to next if loop is done (or no loop)
+            if not step_def.loop or state.is_loop_done(event.step):
+                # Handle structural next
+                next_items = step_def.next
+                if isinstance(next_items, str):
+                    next_items = [next_items]
                 
-                step_def = state.get_step(target_step)
-                if step_def:
-                    command = self._create_command_for_step(state, step_def, {})
-                    if command:
-                        commands.append(command)
+                for next_item in next_items:
+                    if isinstance(next_item, str):
+                        target_step = next_item
+                    elif isinstance(next_item, dict):
+                        target_step = next_item.get("step")
+                    else:
+                        continue
+                    
+                    next_step_def = state.get_step(target_step)
+                    if next_step_def:
+                        command = self._create_command_for_step(state, next_step_def, {})
+                        if command:
+                            commands.append(command)
         
         # Save state
         await self.state_store.save_state(state)
