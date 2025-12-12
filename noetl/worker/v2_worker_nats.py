@@ -302,7 +302,32 @@ class V2Worker:
     
     async def _execute_duckdb(self, config: dict, args: dict) -> Any:
         """Execute DuckDB query."""
-        raise NotImplementedError("DuckDB execution not yet implemented")
+        import duckdb
+        
+        query = config.get("query") or config.get("sql")
+        database = config.get("database", ":memory:")
+        
+        if not query:
+            raise ValueError("DuckDB tool requires 'query' or 'sql' in config")
+        
+        # Connect to database (can be :memory: or file path)
+        conn = duckdb.connect(database)
+        
+        try:
+            # Execute query
+            result = conn.execute(query, args if args else None)
+            
+            # Check if query returns results
+            if result.description:
+                # Fetch all rows and convert to list of dicts
+                columns = [desc[0] for desc in result.description]
+                rows = result.fetchall()
+                return [dict(zip(columns, row)) for row in rows]
+            else:
+                # For DML operations (INSERT, UPDATE, DELETE)
+                return {"status": "ok", "rowcount": len(result.fetchall())}
+        finally:
+            conn.close()
     
     async def _emit_event(
         self,
