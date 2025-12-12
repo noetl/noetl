@@ -37,19 +37,25 @@ def normalize_step(step: Dict[str, Any]) -> Dict[str, Any]:
     # Shallow copy for safety (callers typically pass transient dicts)
     out = dict(step)
 
-    # 1) Validate 'data' is not used on step definition
-    # 'data' is reserved for results (outputs), not inputs
-    # TODO: Enable strict validation after migration period
-    # if "data" in out and not _is_allowed_data_context(out):
-    #     raise ValueError(
-    #         f"Step definition cannot have 'data' field - use 'args' for inputs. "
-    #         f"'data' is reserved for step results (outputs): STEP.<name>.data, LAST.data, THIS.data"
-    #     )
-    
-    # Migration support: if 'data' exists and no 'args', convert data → args
-    if "data" in out and "args" not in out:
-        # Treat 'data' as legacy input args
-        out["args"] = out.pop("data")
+    # 1) Migrate legacy 'data' field to 'args' if present
+    # 'data' was used in V1 for inputs, but V2 uses 'args' for inputs
+    # and reserves 'data' for accessing step results in templates (e.g., {{ step_name.data }})
+    if "data" in out and not _is_allowed_data_context(out):
+        # Migration support: if 'data' exists and no 'args', convert data → args with warning
+        if "args" not in out:
+            logger.warning(
+                f"Step definition uses deprecated 'data' field - converting to 'args'. "
+                f"Please update playbooks: use 'args' for step inputs. "
+                f"'data' is used in templates to access step results: {{ step_name.data }}"
+            )
+            out["args"] = out.pop("data")
+        else:
+            # If both exist, it's ambiguous - remove 'data' and warn
+            logger.warning(
+                f"Step has both 'data' and 'args' - removing 'data'. "
+                f"Use 'args' for step inputs. Access results via {{ step_name.data }} in templates."
+            )
+            out.pop("data")
 
     # 2) Normalize aliases -> args
     merged: Dict[str, Any] = {}
