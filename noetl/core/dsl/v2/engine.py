@@ -25,17 +25,24 @@ logger = logging.getLogger(__name__)
 class ExecutionState:
     """Tracks state of a playbook execution."""
     
-    def __init__(self, execution_id: str, playbook: Playbook, payload: dict[str, Any], catalog_id: Optional[int] = None):
+    def __init__(self, execution_id: str, playbook: Playbook, payload: dict[str, Any], catalog_id: Optional[int] = None, parent_execution_id: Optional[int] = None):
         self.execution_id = execution_id
         self.playbook = playbook
         self.payload = payload
         self.catalog_id = catalog_id  # Store catalog_id for event persistence
+        self.parent_execution_id = parent_execution_id  # Track parent execution for sub-playbooks
         self.current_step: Optional[str] = None
         self.variables: dict[str, Any] = {}
+        self.last_event_id: Optional[int] = None  # Track last persisted event ID
+        self.step_event_ids: dict[str, int] = {}  # Track last event per step
         self.step_results: dict[str, Any] = {}
         self.completed_steps: set[str] = set()
         self.failed = False
         self.completed = False
+        
+        # Event tracking for parent_event_id
+        self.last_event_id: Optional[int] = None  # Track last event_id for parent linkage
+        self.step_event_ids: dict[str, int] = {}  # step_name -> last event_id for that step
         
         # Loop state tracking
         self.loop_state: dict[str, dict[str, Any]] = {}  # step_name -> {collection, index, item, mode}
@@ -835,6 +842,42 @@ class ControlFlowEngine:
             logger.error(f"Cannot persist event - no catalog_id for execution {event.execution_id}")
             return
         
+        # Determine parent_event_id
+        parent_event_id = None
+        if event.step:
+            # For step events, parent is the last event in this step
+            parent_event_id = state.step_event_ids.get(event.step)
+        if not parent_event_id:
+            # Otherwise, parent is the last event overall
+            parent_event_id = state.last_event_id
+        
+        # Calculate duration for completion events (step.exit)
+        # Set to 0 for other events to avoid NULL/undefined in UI
+        duration_ms = 0
+        event_timestamp = event.timestamp or datetime.now(timezone.utc)
+        
+        if event.name == "step.exit" and event.step:
+            # Query for the corresponding step.enter event
+            async with get_pool_connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute("""
+                        SELECT created_at FROM noetl.event 
+                        WHERE execution_id = %s 
+                          AND node_id = %s 
+                          AND event_type = 'step.enter'
+                        ORDER BY event_id DESC
+                        LIMIT 1
+                    """, (int(event.execution_id), event.step))
+                    enter_event = await cur.fetchone()
+                    if enter_event and enter_event['created_at']:
+                        start_time = enter_event['created_at']
+                        # Ensure both timestamps are timezone-aware for subtraction
+                        if start_time.tzinfo is None:
+                            start_time = start_time.replace(tzinfo=timezone.utc)
+                        if event_timestamp.tzinfo is None:
+                            event_timestamp = event_timestamp.replace(tzinfo=timezone.utc)
+                        duration_ms = int((event_timestamp - start_time).total_seconds() * 1000)
+        
         async with get_pool_connection() as conn:
             async with conn.cursor() as cur:
                 # Generate event_id
@@ -842,14 +885,16 @@ class ControlFlowEngine:
                 
                 await cur.execute("""
                     INSERT INTO noetl.event (
-                        execution_id, catalog_id, event_id, event_type,
+                        execution_id, catalog_id, event_id, parent_event_id, parent_execution_id, event_type,
                         node_id, node_name, status, context, result, 
-                        error, stack_trace, worker_id, created_at
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        error, stack_trace, worker_id, duration, created_at
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """, (
                     int(event.execution_id),
                     catalog_id,
                     event_id,
+                    parent_event_id,
+                    state.parent_execution_id,
                     event.name,
                     event.step,
                     event.step,
@@ -859,18 +904,31 @@ class ControlFlowEngine:
                     Json(event.payload.get("error")) if event.payload.get("error") else None,
                     event.payload.get("stack_trace"),
                     event.worker_id,
-                    event.timestamp or datetime.now(timezone.utc)
+                    duration_ms,
+                    event_timestamp
                 ))
             await conn.commit()
+        
+        # Update tracking for next event
+        state.last_event_id = event_id
+        if event.step:
+            state.step_event_ids[event.step] = event_id
     
     async def start_execution(
         self,
         playbook_path: str,
         payload: dict[str, Any],
-        catalog_id: Optional[int] = None
+        catalog_id: Optional[int] = None,
+        parent_execution_id: Optional[int] = None
     ) -> tuple[str, list[Command]]:
         """
         Start a new playbook execution.
+        
+        Args:
+            playbook_path: Path to playbook in catalog
+            payload: Input data for execution
+            catalog_id: Optional catalog ID
+            parent_execution_id: Optional parent execution ID for sub-playbooks
         
         Returns (execution_id, initial_commands).
         """
@@ -882,8 +940,8 @@ class ControlFlowEngine:
         if not playbook:
             raise ValueError(f"Playbook not found: {playbook_path}")
         
-        # Create execution state with catalog_id
-        state = ExecutionState(execution_id, playbook, payload, catalog_id)
+        # Create execution state with catalog_id and parent_execution_id
+        state = ExecutionState(execution_id, playbook, payload, catalog_id, parent_execution_id)
         await self.state_store.save_state(state)
         
         # Find start step

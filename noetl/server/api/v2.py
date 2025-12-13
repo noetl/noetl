@@ -8,7 +8,7 @@ No backward compatibility.
 import logging
 import os
 from fastapi import APIRouter, HTTPException, Depends
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from typing import Any, Optional
 from datetime import datetime, timezone
 from psycopg.types.json import Json
@@ -60,8 +60,16 @@ async def get_nats_publisher():
 
 class StartExecutionRequest(BaseModel):
     """Request to start playbook execution."""
-    path: str = Field(..., description="Playbook catalog path")
+    path: Optional[str] = Field(None, description="Playbook catalog path")
+    catalog_id: Optional[int] = Field(None, description="Catalog ID (alternative to path)")
     payload: dict[str, Any] = Field(default_factory=dict, description="Input payload")
+    parent_execution_id: Optional[int] = Field(None, description="Parent execution ID for sub-playbooks")
+    
+    @model_validator(mode='after')
+    def validate_path_or_catalog_id(self):
+        if not self.path and not self.catalog_id:
+            raise ValueError("Either 'path' or 'catalog_id' must be provided")
+        return self
 
 
 class StartExecutionResponse(BaseModel):
@@ -100,27 +108,40 @@ async def start_execution(req: StartExecutionRequest) -> StartExecutionResponse:
     try:
         engine = get_engine()
         
-        # Get catalog_id first
+        # Get catalog_id and path
         async with get_pool_connection() as conn:
             async with conn.cursor() as cur:
-                await cur.execute("""
-                    SELECT catalog_id FROM noetl.catalog 
-                    WHERE path = %s 
-                    ORDER BY version DESC 
-                    LIMIT 1
-                """, (req.path,))
-                result = await cur.fetchone()
-                
-                if not result:
-                    raise HTTPException(status_code=404, detail=f"Playbook not found: {req.path}")
-                
-                catalog_id = result['catalog_id']
+                if req.catalog_id:
+                    # Get path from catalog_id
+                    await cur.execute("""
+                        SELECT path, catalog_id FROM noetl.catalog 
+                        WHERE catalog_id = %s
+                    """, (req.catalog_id,))
+                    result = await cur.fetchone()
+                    if not result:
+                        raise HTTPException(status_code=404, detail=f"Playbook not found with catalog_id: {req.catalog_id}")
+                    path = result['path']
+                    catalog_id = result['catalog_id']
+                else:
+                    # Get catalog_id from path
+                    await cur.execute("""
+                        SELECT catalog_id, path FROM noetl.catalog 
+                        WHERE path = %s 
+                        ORDER BY version DESC 
+                        LIMIT 1
+                    """, (req.path,))
+                    result = await cur.fetchone()
+                    if not result:
+                        raise HTTPException(status_code=404, detail=f"Playbook not found: {req.path}")
+                    catalog_id = result['catalog_id']
+                    path = result['path']
         
         # Start execution (creates state, returns initial commands)
         execution_id, commands = await engine.start_execution(
-            req.path,
+            path,
             req.payload,
-            catalog_id
+            catalog_id,
+            req.parent_execution_id
         )
         
         # Get NATS publisher
@@ -139,8 +160,8 @@ async def start_execution(req: StartExecutionRequest) -> StartExecutionResponse:
                         INSERT INTO noetl.queue (
                             queue_id, execution_id, catalog_id, node_id,
                             action, context, status, priority, attempts,
-                            max_attempts, created_at, updated_at
-                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            max_attempts, parent_execution_id, created_at, updated_at
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """, (
                         queue_id,
                         int(execution_id),
@@ -152,6 +173,7 @@ async def start_execution(req: StartExecutionRequest) -> StartExecutionResponse:
                         command.priority,
                         0,
                         command.max_attempts or 3,
+                        req.parent_execution_id,
                         datetime.now(timezone.utc),
                         datetime.now(timezone.utc)
                     ))
@@ -212,17 +234,27 @@ async def handle_event(req: EventRequest) -> EventResponse:
         async with get_pool_connection() as conn:
             async with conn.cursor() as cur:
                 for command in commands:
-                    # Get catalog_id from execution
+                    # Get catalog_id, parent_execution_id, and triggering event details
                     await cur.execute("""
-                        SELECT catalog_id FROM noetl.event 
+                        SELECT catalog_id, parent_execution_id, event_id, parent_event_id
+                        FROM noetl.event 
                         WHERE execution_id = %s 
+                        ORDER BY event_id DESC
                         LIMIT 1
                     """, (int(req.execution_id),))
                     result = await cur.fetchone()
                     
-                    catalog_id = result['catalog_id'] if result else 1
                     if not result:
-                        logger.warning(f"No catalog_id found for execution {req.execution_id}")
+                        logger.warning(f"No events found for execution {req.execution_id}")
+                        catalog_id = 1
+                        parent_execution_id = None
+                        triggering_event_id = None
+                        triggering_parent_event_id = None
+                    else:
+                        catalog_id = result['catalog_id']
+                        parent_execution_id = result['parent_execution_id']
+                        triggering_event_id = result['event_id']
+                        triggering_parent_event_id = result['parent_event_id']
                     
                     # Delete any existing queue entry for this execution+node (for loop iterations)
                     await cur.execute("""
@@ -236,8 +268,9 @@ async def handle_event(req: EventRequest) -> EventResponse:
                         INSERT INTO noetl.queue (
                             queue_id, execution_id, catalog_id, node_id,
                             action, context, status, priority, attempts,
-                            max_attempts, created_at, updated_at
-                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            max_attempts, parent_execution_id, parent_event_id, 
+                            event_id, created_at, updated_at
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """, (
                         queue_id,
                         int(command.execution_id),
@@ -249,6 +282,9 @@ async def handle_event(req: EventRequest) -> EventResponse:
                         command.priority,
                         0,
                         command.max_attempts or 3,
+                        parent_execution_id,
+                        triggering_parent_event_id,
+                        triggering_event_id,
                         datetime.now(timezone.utc),
                         datetime.now(timezone.utc)
                     ))
