@@ -144,6 +144,19 @@ async def start_execution(req: StartExecutionRequest) -> StartExecutionResponse:
             req.parent_execution_id
         )
         
+        # Get workflow_initialized event_id for tracing
+        workflow_init_event_id = None
+        async with get_pool_connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute("""
+                    SELECT event_id FROM noetl.event
+                    WHERE execution_id = %s AND event_type = 'workflow_initialized'
+                    ORDER BY event_id DESC LIMIT 1
+                """, (int(execution_id),))
+                result = await cur.fetchone()
+                if result:
+                    workflow_init_event_id = result['event_id']
+        
         # Get NATS publisher
         nats_pub = await get_nats_publisher()
         
@@ -160,8 +173,9 @@ async def start_execution(req: StartExecutionRequest) -> StartExecutionResponse:
                         INSERT INTO noetl.queue (
                             queue_id, execution_id, catalog_id, node_id,
                             action, context, status, priority, attempts,
-                            max_attempts, parent_execution_id, created_at, updated_at
-                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            max_attempts, parent_execution_id, event_id,
+                            node_type, meta, created_at, updated_at
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """, (
                         queue_id,
                         int(execution_id),
@@ -174,6 +188,19 @@ async def start_execution(req: StartExecutionRequest) -> StartExecutionResponse:
                         0,
                         command.max_attempts or 3,
                         req.parent_execution_id,
+                        workflow_init_event_id,
+                        command.tool.kind,
+                        Json({
+                            "playbook_path": path,
+                            "catalog_id": catalog_id,
+                            "triggered_by": "start_execution",
+                            "workflow_init_event_id": workflow_init_event_id,
+                            "parent_execution_id": req.parent_execution_id,
+                            "step": command.step,
+                            "tool": command.tool.kind,
+                            "priority": command.priority,
+                            "metadata": command.metadata
+                        }),
                         datetime.now(timezone.utc),
                         datetime.now(timezone.utc)
                     ))
@@ -269,8 +296,8 @@ async def handle_event(req: EventRequest) -> EventResponse:
                             queue_id, execution_id, catalog_id, node_id,
                             action, context, status, priority, attempts,
                             max_attempts, parent_execution_id, parent_event_id, 
-                            event_id, created_at, updated_at
-                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            event_id, node_type, meta, created_at, updated_at
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """, (
                         queue_id,
                         int(command.execution_id),
@@ -285,6 +312,20 @@ async def handle_event(req: EventRequest) -> EventResponse:
                         parent_execution_id,
                         triggering_parent_event_id,
                         triggering_event_id,
+                        command.tool.kind,
+                        Json({
+                            "catalog_id": catalog_id,
+                            "triggered_by": "event_handler",
+                            "triggering_event_id": triggering_event_id,
+                            "parent_event_id": triggering_parent_event_id,
+                            "parent_execution_id": parent_execution_id,
+                            "step": command.step,
+                            "tool": command.tool.kind,
+                            "priority": command.priority,
+                            "metadata": command.metadata,
+                            "event_type": event.name,
+                            "event_step": event.step
+                        }),
                         datetime.now(timezone.utc),
                         datetime.now(timezone.utc)
                     ))

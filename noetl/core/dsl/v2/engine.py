@@ -813,6 +813,26 @@ class ControlFlowEngine:
                         if command:
                             commands.append(command)
         
+        # Check for workflow completion (only emit once)
+        if event.name == "step.exit" and not commands and not state.completed:
+            # No more commands to execute - workflow is complete
+            state.completed = True
+            completion_status = "failed" if event.payload.get("status") == "failed" else "completed"
+            completion_event = Event(
+                execution_id=event.execution_id,
+                step=event.step,
+                name=f"workflow_{completion_status}",
+                payload={
+                    "final_step": event.step,
+                    "status": completion_status,
+                    "result": event.payload.get("result")
+                },
+                timestamp=datetime.now(timezone.utc)
+            )
+            # Persist completion event
+            await self._persist_event(completion_event, state)
+            logger.info(f"Workflow {completion_status}: execution_id={event.execution_id}, final_step={event.step}")
+        
         # Save state
         await self.state_store.save_state(state)
         
