@@ -13,8 +13,8 @@ tasks:
     env:
       DOCKER_BUILDKIT: "0"
     cmds:
-      - echo "{{.IMAGE_TAG}}" > .noetl_last_build_tag.txt
       - docker build {{.CACHE}} -t {{.REGISTRY}}/{{.IMAGE_NAME}}:{{.IMAGE_TAG}} -f docker/noetl/dev/Dockerfile .
+      - echo "{{.IMAGE_TAG}}" > .noetl_last_build_tag.txt
 
   docker:local:images-clear:
     desc: Clear all docker images

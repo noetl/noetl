@@ -320,7 +320,27 @@ const ExecutionDetail: React.FC = () => {
       title: "Duration",
       dataIndex: "duration",
       key: "duration",
-      render: (d: number) => `${d}s`,
+      render: (d: number) => {
+        if (!d || d === 0) return "-";
+        
+        // Duration is in milliseconds
+        if (d < 1000) {
+          return `${d.toFixed(0)}ms`;
+        } else if (d < 60000) {
+          // Less than 60 seconds
+          return `${(d / 1000).toFixed(2)}s`;
+        } else if (d < 3600000) {
+          // Less than 60 minutes
+          const minutes = Math.floor(d / 60000);
+          const seconds = ((d % 60000) / 1000).toFixed(0);
+          return `${minutes}m ${seconds}s`;
+        } else {
+          // 60 minutes or more
+          const hours = Math.floor(d / 3600000);
+          const minutes = Math.floor((d % 3600000) / 60000);
+          return `${hours}h ${minutes}m`;
+        }
+      },
     },
   ];
   console.log('Rendering ExecutionDetail for execution:', execution);

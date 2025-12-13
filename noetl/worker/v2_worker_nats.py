@@ -168,6 +168,9 @@ class V2Worker:
         tool_kind = command["tool_kind"]
         context = command["context"]
         
+        # Store execution_id for sub-playbook calls
+        self._current_execution_id = execution_id
+        
         tool_config = context.get("tool_config", {})
         args = context.get("args", {})
         
@@ -217,6 +220,49 @@ class V2Worker:
                 "call.done",
                 {"error": str(e)}
             )
+            
+            # Emit step.exit with error status
+            await self._emit_event(
+                server_url,
+                execution_id,
+                step,
+                "step.exit",
+                {
+                    "status": "failed",
+                    "error": str(e),
+                    "error_type": type(e).__name__
+                }
+            )
+            
+            # Update queue status to failed
+            try:
+                await self._update_queue_status(queue_id, "failed", str(e))
+            except Exception as update_err:
+                logger.error(f"Failed to update queue status: {update_err}")
+    
+    async def _update_queue_status(self, queue_id: int, status: str, error: str = None):
+        """Update queue item status."""
+        async with get_pool_connection() as conn:
+            async with conn.cursor() as cur:
+                if error:
+                    await cur.execute("""
+                        UPDATE noetl.queue
+                        SET status = %s,
+                            updated_at = NOW(),
+                            context = jsonb_set(
+                                COALESCE(context, '{}'::jsonb),
+                                '{error}',
+                                to_jsonb(%s::text)
+                            )
+                        WHERE queue_id = %s
+                    """, (status, error, queue_id))
+                else:
+                    await cur.execute("""
+                        UPDATE noetl.queue
+                        SET status = %s, updated_at = NOW()
+                        WHERE queue_id = %s
+                    """, (status, queue_id))
+            await conn.commit()
     
     async def _execute_tool(
         self,
@@ -310,10 +356,10 @@ class V2Worker:
     
     async def _execute_postgres(self, config: dict, args: dict) -> Any:
         """Execute Postgres query."""
-        query = config.get("query") or config.get("sql")
+        query = config.get("query") or config.get("sql") or config.get("command")
         
         if not query:
-            raise ValueError("Postgres tool requires 'query' or 'sql' in config")
+            raise ValueError("Postgres tool requires 'query', 'sql', or 'command' in config")
         
         async with get_pool_connection() as conn:
             async with conn.cursor() as cur:
@@ -382,9 +428,16 @@ class V2Worker:
         # Get server URL from config or environment
         server_url = os.getenv("SERVER_API_URL", "http://noetl.noetl.svc.cluster.local:8082")
         
+        # Get current execution_id to pass as parent
+        parent_execution_id = getattr(self, '_current_execution_id', None)
+        
+        payload = {"path": path, "payload": args}
+        if parent_execution_id:
+            payload["parent_execution_id"] = parent_execution_id
+        
         response = await self._http_client.post(
             f"{server_url}/api/v2/execute",
-            json={"path": path, "payload": args},
+            json=payload,
             timeout=30.0
         )
         response.raise_for_status()
