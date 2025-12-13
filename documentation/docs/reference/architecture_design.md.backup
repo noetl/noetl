@@ -1,4 +1,4 @@
-**Architecture design patterns:**
+**Architecture assumptions:**
 
 * `worker` → pure background worker pool, **no HTTP endpoints**.
 
@@ -14,19 +14,21 @@ DSL docs & examples live in files like:
 
 * examples embedded in `README.md`
 
-## **Architecture Overview**
+We want to:
 
-1. Step-level **`case/when/then`** is the single conditional mechanism.
+1. Introduce step-level **`case/when/then`** as the single conditional mechanism.
 
-2. **`next`** is structural and unconditional in the schema; all conditional transitions are in `case.then.next`.
+2. **Remove** step-level `when`.
 
-3. For transitions, `args` is used. Data for the next step is passed only via `args`.
+3. **Normalize `next`**: structural & unconditional in the schema; all conditional transitions move into `case.then.next`.
 
-4. `sink` is usable as an action inside `then` (like `collect`).
+4. For transitions, **replace `with` with `args`**. Data for the next step is passed only via `args`.
 
-5. A **server-side DSL control-flow engine** consumes events and emits commands into the queue.
+5. Make `sink` usable as an action inside `then` (like `collect`).
 
-6. Workers send **events** only; no "update queue" APIs.
+6. Implement a **server-side DSL control-flow engine** that consumes events and emits commands into the queue.
+
+7. Remove any “update queue” APIs used by workers; workers send **events** only.
 
 ## **1\. DSL: step-level `case` with `when` / `then`**
 
@@ -133,19 +135,19 @@ All step-level decision logic is expressed via `case` entries.
 
 ## **2\. `next` semantics \+ `args` for transitions**
 
-**Current implementation:**
+We currently have:
 
 * `next` in the spec as “next step name(s)”.
 
 * In examples like `weather_loop_example.yaml`, `next` entries also use `when / then / else` and `with`.
 
-The **`next`** field has the following behavior:
+We want:
 
 * `next` in schema: **unconditional**, structural.
 
-* **Conditional transitions** are expressed via **`case`**.
+* **Conditional transitions** expressed via **`case`**.
 
-* When passing data to another step during a transition, **`args`** is used.
+* When passing data to another step during a transition, use **`args`**, not `with`.
 
 ### **2.1 Schema-level `next`**
 
@@ -177,6 +179,8 @@ Rules:
   * `step` (required): name of the target step.
 
   * `args` (optional, object): values to inject into the target step’s context/args.
+
+`with` is reserved for step-level inputs (e.g. workbook/python steps) only, not for cross-step transitions.
 
 ### **2.3 Transition Patterns**
 
@@ -224,13 +228,12 @@ Steps that branch based on previous results use `case`-based transitions with `a
 Example for a workbook step:
 
 `- step: fetch_and_evaluate`  
-  `tool:` 
-    `kind: workbook`  
-    `name: evaluate_weather_directly`  
-    `args:`  
-        `city: "{{ args.city }}"`  
-        `base_url: "{{ args.base_url }}"`  
-        `threshold: "{{ args.temperature_threshold }}"`
+  `type: workbook`  
+  `name: evaluate_weather_directly`  
+  `with:`  
+    `city: "{{ args.city }}"`  
+    `base_url: "{{ args.base_url }}"`  
+    `threshold: "{{ args.temperature_threshold }}"`
 
 Here:
 
@@ -560,7 +563,7 @@ Add:
 
 ---
 
-Implement these changes incrementally:
+Please implement these changes incrementally:
 
 1. Update DSL models & schema (`case`, `next`, `args`, removal of step-level `when` and `next.when/then/else`).
 
@@ -572,7 +575,11 @@ Implement these changes incrementally:
 
 5. Add tests for parsing and control flow.
 
-##### **"step" level attribues \- "case" belongs to step or "tool"?**
+##### **You said:**
+
+regarding the "step" level attribues \- "case" belongs to step or "tool"? same question about the "loop". Do we need to move attribues of "tool" under the tool object?
+
+Short answer:
 
 * **`case` should belong to the *step*** (control-flow of the node).
 
@@ -694,11 +701,11 @@ Much cleaner than burying `loop` inside the tool.
 
 ---
 
-## **3\. Should tool attributes be under a `tool` object?**
+## **3\. Should tool attributes move under a `tool` object?**
 
 Here it **does** help to group things.
 
-If we have have:
+Right now you often have:
 
 `- step: fetch_all_endpoints`  
   `tool: http`  
@@ -720,7 +727,7 @@ This mixes three layers:
 
 Long-term this gets messy (name collisions, harder parsing, harder codegen).
 
-strongly recommended a canonical shape like:
+I’d strongly recommend a canonical shape like:
 
 `- step: fetch_all_endpoints`  
   `desc: Loop over endpoints with HTTP pagination`  
@@ -773,6 +780,21 @@ strongly recommended a canonical shape like:
 
 * `tool.headers`, `tool.params`, `tool.body`, `tool.timeout`, auth, etc.
 
+You can still support sugar for author ergonomics if you want:
+
+`# sugar`  
+`tool: http`  
+`url: ...`  
+`method: GET`
+
+`# normalized form in engine`  
+`tool:`  
+  `kind: http`  
+  `url: ...`  
+  `method: GET`
+
+But internally and in the spec, having **one place** that defines tool config makes the control-flow engine simpler:
+
 * The server-side engine can take `(step, tool, case, loop)` and generate commands easily.
 
 * Workers see a `Command` with a `tool` struct they understand, without needing to know about `case`/`loop`.
@@ -818,6 +840,18 @@ Putting `case` or `loop` under `tool` would blur that boundary and make the engi
 * **Keep `loop` as a step-level attribute.**
 
 * **Move HTTP/DB/Python-specific attributes under `tool`**, with `tool.kind` (or `tool.type`) indicating which worker pool executes it.
+
+If you want, next step I can sketch a *canonical* step schema (JSON Schema / Pydantic) with:
+
+* `StepCore` (step graph stuff),
+
+* `ToolSpec` (per-kind shape via `kind: Literal["http", "postgres", ...]`),
+
+* and how `case`/`loop` plug into the server’s event → command engine.
+
+##### **You said:**
+
+let's use tool.kind update entire instruction and i will pass it to copilot. Add no backward compatability \- copilit should generate completely new code.
 
 Here’s a fresh, self-contained Copilot prompt you can paste into VS Code.  
  I’ve baked in `tool.kind`, step-level `case`/`loop`, `args` for transitions, and **no backward compatibility**.
@@ -1034,7 +1068,7 @@ Important:
 
 1.4 STEP NEXT vs NEXT ACTION
 
-The current design:
+We want:
 
 * Structural `next` at step level: simple default edges, unconditional.
 
@@ -1127,7 +1161,7 @@ Implement a core set of actions (extendable):
 
   * Mark step (and maybe workflow) as failed or skipped.
 
-The old “rule/case/run” model is not supported; this new `case/when/then` model is used.
+NO need to support old “rule/case/run” model; just implement this new `case/when/then` model.
 
 ---
 
@@ -1276,7 +1310,7 @@ Refactor worker.py to:
 
 3. POST the Event to the server’s /api/events endpoint.
 
-Workers do not:
+Workers MUST NOT:
 
 * Call “update queue” endpoints.
 
@@ -1308,7 +1342,7 @@ Parser:
 
 * Implement a clean YAML → v2 model parser.
 
-* Existing examples (weather\_loop\_example.yaml, amadeus\_ai\_api.yaml) have been migrated to the new schema; the old layout is not supported.
+* Assume that existing examples (weather\_loop\_example.yaml, amadeus\_ai\_api.yaml) will be migrated to the new schema; you do NOT need to support the old layout.
 
 * Remove support for:
 
@@ -1405,3 +1439,4 @@ That gives you a very clear story:
 * `case` \= optional override / branching logic.
 
 * `next` \= default unconditional edges that always work, even when `case` is completely absent.
+
