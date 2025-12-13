@@ -28,6 +28,52 @@ DSL docs & examples live in files like:
 
 6. Workers send **events** only; no "update queue" APIs.
 
+7. **Variable extraction** via `vars:` block at step level stores values in `vars_cache` table, accessible as `{{ vars.var_name }}`.
+
+## **Variable Management**
+
+**Two mechanisms for variable handling**:
+
+1. **`vars:` block** (step-level, declarative):
+   - Extracts values from step results AFTER execution completes
+   - Stored in `noetl.vars_cache` database table
+   - Accessible in templates as `{{ vars.var_name }}`
+   - REST API: `/api/vars/{execution_id}` for external access
+   - Example:
+     ```yaml
+     - step: fetch_user
+       tool: postgres
+       query: "SELECT user_id, email FROM users WHERE id = 1"
+       vars:
+         user_id: "{{ result[0].user_id }}"
+         email: "{{ result[0].email }}"
+     
+     - step: send_email
+       tool: http
+       endpoint: "https://api.example.com/send"
+       payload:
+         to: "{{ vars.email }}"
+         subject: "Hello user {{ vars.user_id }}"
+     ```
+
+2. **`set:` action** (inside `case.then` blocks, event-driven):
+   - Mutates runtime context during event processing
+   - Used with `ctx:` for step-specific state
+   - Temporary, in-memory only (not persisted to database)
+   - Example:
+     ```yaml
+     case:
+       - when: "{{ event.name == 'step.enter' }}"
+         then:
+           set:
+             ctx:
+               pages: []  # Initialize accumulator
+     ```
+
+**Key Differences**:
+- **`vars:`** = Persistent database storage, accessible across all steps via templates and REST API
+- **`set:`** = Ephemeral runtime context, exists only during current step execution
+
 ## **1\. DSL: step-level `case` with `when` / `then`**
 
 ### **1.1 Step shape**

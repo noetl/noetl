@@ -3,11 +3,17 @@
 ## Status: ✅ FULLY IMPLEMENTED AND TESTED
 
 **Implementation Date**: December 2025  
-**Test Execution**: 508176494351351907 (successful - 4 variables extracted)
+**Test Execution**: 508176494351351907 (successful - 4 variables extracted)  
+**REST API**: `/api/vars/*` endpoints available for variable management
 
 ## Feature Overview
 
-The `vars` block feature enables declarative extraction of values from step execution results. Variables are automatically stored and become accessible in subsequent workflow steps through template syntax.
+The `vars` block feature enables declarative extraction of values from step execution results. Variables are automatically stored in the `vars_cache` database table and become accessible in subsequent workflow steps through template syntax.
+
+**Architecture**:
+- **Server**: Direct database access via `VarsCache` service (pool connections)
+- **Workers**: REST API access (`/api/vars/{execution_id}`) - NO direct database connections
+- **Database**: `noetl.vars_cache` table with execution-scoped isolation
 
 ## Design Decisions
 
@@ -140,6 +146,82 @@ async def _process_step_vars(
             source_step=step_name
         )
         logger.info(f"✓ Stored {count} variables from step '{step_name}'")
+```
+
+## REST API Access
+
+Variables are accessed via REST API for external systems and workers.
+
+### API Endpoints
+
+**Base Path**: `/api/vars`
+
+| Method | Endpoint | Description | Access Tracking |
+|--------|----------|-------------|-----------------|
+| GET | `/api/vars/{execution_id}` | List all variables with metadata | No (bulk read) |
+| GET | `/api/vars/{execution_id}/{var_name}` | Get single variable | Yes (increments count) |
+| POST | `/api/vars/{execution_id}` | Set/update multiple variables | No |
+| DELETE | `/api/vars/{execution_id}/{var_name}` | Delete variable | No |
+
+### Example Usage
+
+**Get all variables**:
+```bash
+curl http://noetl-server:8080/api/vars/507861119290048685
+```
+
+Response:
+```json
+{
+  "execution_id": 507861119290048685,
+  "variables": {
+    "user_id": {
+      "value": 12345,
+      "type": "step_result",
+      "source_step": "fetch_user",
+      "created_at": "2025-12-13T10:00:00Z",
+      "accessed_at": "2025-12-13T10:01:00Z",
+      "access_count": 5
+    }
+  },
+  "count": 1
+}
+```
+
+**Set variables**:
+```bash
+curl -X POST http://noetl-server:8080/api/vars/507861119290048685 \
+  -H "Content-Type: application/json" \
+  -d '{
+    "variables": {"config_timeout": 60, "retry_enabled": true},
+    "var_type": "user_defined",
+    "source_step": "manual_config"
+  }'
+```
+
+### Worker Access Pattern
+
+Workers must use REST API for variable access:
+
+```python
+import httpx
+import os
+
+SERVER_URL = os.getenv("NOETL_SERVER_URL", "http://localhost:8080")
+
+async def load_variables(execution_id: int) -> dict:
+    """Load all variables via REST API."""
+    async with httpx.AsyncClient() as client:
+        response = await client.get(f"{SERVER_URL}/api/vars/{execution_id}")
+        response.raise_for_status()
+        data = response.json()
+        return {name: var["value"] for name, var in data["variables"].items()}
+```
+
+**Configuration**:
+```bash
+# Set server URL for workers
+export NOETL_SERVER_URL="http://noetl-server:8080"
 ```
 
 ## DSL Syntax
