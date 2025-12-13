@@ -355,13 +355,51 @@ class V2Worker:
         }
     
     async def _execute_postgres(self, config: dict, args: dict) -> Any:
-        """Execute Postgres query."""
+        """Execute Postgres query with auth resolution."""
         query = config.get("query") or config.get("sql") or config.get("command")
+        auth_spec = config.get("auth")
         
         if not query:
             raise ValueError("Postgres tool requires 'query', 'sql', or 'command' in config")
         
-        async with get_pool_connection() as conn:
+        # If no auth specified, use default connection
+        if not auth_spec:
+            async with get_pool_connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(query, args if args else None)
+                    
+                    # Check if query returns results
+                    if cur.description:
+                        results = await cur.fetchall()
+                        return [dict(row) for row in results]
+                    else:
+                        await conn.commit()
+                        return {"status": "ok", "rowcount": cur.rowcount}
+        
+        # Resolve credentials via server API
+        from noetl.worker.secrets import fetch_credential_by_key
+        credential = fetch_credential_by_key(auth_spec)
+        
+        if not credential or not credential.get("data"):
+            raise ValueError(f"Failed to resolve credential: {auth_spec}")
+        
+        # Extract connection parameters
+        cred_data = credential.get("data", {})
+        host = cred_data.get("db_host") or cred_data.get("host")
+        port = cred_data.get("db_port") or cred_data.get("port") or 5432
+        user = cred_data.get("db_user") or cred_data.get("user") or cred_data.get("username")
+        password = cred_data.get("db_password") or cred_data.get("password")
+        database = cred_data.get("db_name") or cred_data.get("database") or cred_data.get("dbname")
+        
+        if not all([host, user, password, database]):
+            raise ValueError(f"Incomplete Postgres credentials for: {auth_spec}")
+        
+        # Create connection string
+        import psycopg
+        conn_string = f"host={host} port={port} user={user} password={password} dbname={database}"
+        
+        # Execute with credential-specific connection
+        async with await psycopg.AsyncConnection.connect(conn_string) as conn:
             async with conn.cursor() as cur:
                 await cur.execute(query, args if args else None)
                 
