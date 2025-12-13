@@ -1,0 +1,50 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: simple_loop_test
+  path: test/simple_loop
+  version: "2.0"
+
+workload:
+  numbers:
+    - value: 10
+      name: "ten"
+    - value: 20
+      name: "twenty"
+    - value: 30
+      name: "thirty"
+
+workflow:
+  - step: start
+    desc: Start workflow
+    tool:
+      kind: python
+      code: |
+        def main():
+            return {"status": "started"}
+    next: loop_test
+  
+  - step: loop_test
+    desc: Loop over numbers and print
+    loop:
+      in: "{{ workload.numbers }}"
+      iterator: num
+    tool:
+      kind: python
+      code: |
+        def main(num):
+            print(f"Processing: {num}")
+            return {
+                "value": num["value"],
+                "name": num["name"],
+                "doubled": num["value"] * 2
+            }
+    next: end
+  
+  - step: end
+    desc: End workflow
+    tool:
+      kind: python
+      code: |
+        def main():
+            return {"status": "completed"}
