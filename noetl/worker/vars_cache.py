@@ -8,14 +8,16 @@ Provides execution-scoped variable storage with cache-like behavior:
 - Auto-cleanup on execution completion
 
 Pattern follows auth_cache.py implementation.
+Database access uses pool connection pattern (noetl.core.db.pool).
 """
 
 from typing import Any, Dict, Optional
 from datetime import datetime, timezone
 
 from psycopg.rows import dict_row
+from psycopg.types.json import Json
 
-from noetl.core.common import get_async_db_connection
+from noetl.core.db.pool import get_pool_connection
 from noetl.core.logger import setup_logger
 
 logger = setup_logger(__name__, include_location=True)
@@ -53,7 +55,7 @@ class VarsCache:
             None if variable not found
         """
         try:
-            async with get_async_db_connection() as conn:
+            async with get_pool_connection() as conn:
                 async with conn.cursor(row_factory=dict_row) as cur:
                     # Retrieve and update access tracking in one query
                     await cur.execute(
@@ -62,8 +64,8 @@ class VarsCache:
                         SET 
                             access_count = access_count + 1,
                             accessed_at = NOW()
-                        WHERE execution_id = %s 
-                          AND var_name = %s
+                        WHERE execution_id = %(execution_id)s 
+                          AND var_name = %(var_name)s
                         RETURNING 
                             var_value as value,
                             var_type as type,
@@ -72,10 +74,9 @@ class VarsCache:
                             accessed_at,
                             access_count
                         """,
-                        (execution_id, var_name)
+                        {"execution_id": execution_id, "var_name": var_name}
                     )
                     row = await cur.fetchone()
-                    await conn.commit()
                     
                     if row:
                         logger.debug(
@@ -112,17 +113,9 @@ class VarsCache:
             var_type: Variable classification (user_defined, step_result, computed, iterator_state)
             source_step: Step name that set/updated the variable
         """
-        import json
-        
         try:
-            async with get_async_db_connection() as conn:
+            async with get_pool_connection() as conn:
                 async with conn.cursor() as cur:
-                    # Convert value to JSONB
-                    if not isinstance(var_value, str):
-                        var_value_json = json.dumps(var_value)
-                    else:
-                        var_value_json = json.dumps(var_value)
-                    
                     await cur.execute(
                         """
                         INSERT INTO noetl.vars_cache (
@@ -135,7 +128,14 @@ class VarsCache:
                             accessed_at,
                             access_count
                         ) VALUES (
-                            %s, %s, %s, %s::jsonb, %s, NOW(), NOW(), 0
+                            %(execution_id)s, 
+                            %(var_name)s, 
+                            %(var_type)s, 
+                            %(var_value)s, 
+                            %(source_step)s, 
+                            NOW(), 
+                            NOW(), 
+                            0
                         )
                         ON CONFLICT (execution_id, var_name)
                         DO UPDATE SET
@@ -144,9 +144,14 @@ class VarsCache:
                             source_step = EXCLUDED.source_step,
                             accessed_at = NOW()
                         """,
-                        (execution_id, var_name, var_type, var_value_json, source_step)
+                        {
+                            "execution_id": execution_id,
+                            "var_name": var_name,
+                            "var_type": var_type,
+                            "var_value": Json(var_value),
+                            "source_step": source_step
+                        }
                     )
-                    await conn.commit()
                     
                     logger.debug(
                         f"VAR: Cached variable '{var_name}' "
@@ -172,16 +177,16 @@ class VarsCache:
             Empty dict if no variables found
         """
         try:
-            async with get_async_db_connection() as conn:
+            async with get_pool_connection() as conn:
                 async with conn.cursor(row_factory=dict_row) as cur:
                     await cur.execute(
                         """
                         SELECT var_name, var_value
                         FROM noetl.vars_cache
-                        WHERE execution_id = %s
+                        WHERE execution_id = %(execution_id)s
                         ORDER BY created_at
                         """,
-                        (execution_id,)
+                        {"execution_id": execution_id}
                     )
                     rows = await cur.fetchall()
                     
@@ -221,7 +226,7 @@ class VarsCache:
             }
         """
         try:
-            async with get_async_db_connection() as conn:
+            async with get_pool_connection() as conn:
                 async with conn.cursor(row_factory=dict_row) as cur:
                     await cur.execute(
                         """
@@ -234,10 +239,10 @@ class VarsCache:
                             accessed_at,
                             access_count
                         FROM noetl.vars_cache
-                        WHERE execution_id = %s
+                        WHERE execution_id = %(execution_id)s
                         ORDER BY created_at
                         """,
-                        (execution_id,)
+                        {"execution_id": execution_id}
                     )
                     rows = await cur.fetchall()
                     
@@ -269,17 +274,16 @@ class VarsCache:
             True if variable was deleted, False if not found
         """
         try:
-            async with get_async_db_connection() as conn:
+            async with get_pool_connection() as conn:
                 async with conn.cursor() as cur:
                     await cur.execute(
                         """
                         DELETE FROM noetl.vars_cache
-                        WHERE execution_id = %s AND var_name = %s
+                        WHERE execution_id = %(execution_id)s AND var_name = %(var_name)s
                         """,
-                        (execution_id, var_name)
+                        {"execution_id": execution_id, "var_name": var_name}
                     )
                     deleted = cur.rowcount > 0
-                    await conn.commit()
                     
                     if deleted:
                         logger.debug(f"VAR: Deleted variable '{var_name}' (execution {execution_id})")
@@ -308,17 +312,16 @@ class VarsCache:
             Number of variables deleted
         """
         try:
-            async with get_async_db_connection() as conn:
+            async with get_pool_connection() as conn:
                 async with conn.cursor() as cur:
                     await cur.execute(
                         """
                         DELETE FROM noetl.vars_cache
-                        WHERE execution_id = %s
+                        WHERE execution_id = %(execution_id)s
                         """,
-                        (execution_id,)
+                        {"execution_id": execution_id}
                     )
                     count = cur.rowcount
-                    await conn.commit()
                     
                     logger.info(f"VAR: Cleaned up {count} variables for execution {execution_id}")
                     return count
@@ -346,17 +349,14 @@ class VarsCache:
         Returns:
             Number of variables set
         """
-        import json
-        
         if not variables:
             return 0
             
         try:
-            async with get_async_db_connection() as conn:
+            async with get_pool_connection() as conn:
                 async with conn.cursor() as cur:
                     count = 0
                     for var_name, var_value in variables.items():
-                        var_value_json = json.dumps(var_value)
                         await cur.execute(
                             """
                             INSERT INTO noetl.vars_cache (
@@ -369,7 +369,14 @@ class VarsCache:
                                 accessed_at,
                                 access_count
                             ) VALUES (
-                                %s, %s, %s, %s::jsonb, %s, NOW(), NOW(), 0
+                                %(execution_id)s, 
+                                %(var_name)s, 
+                                %(var_type)s, 
+                                %(var_value)s, 
+                                %(source_step)s, 
+                                NOW(), 
+                                NOW(), 
+                                0
                             )
                             ON CONFLICT (execution_id, var_name)
                             DO UPDATE SET
@@ -378,11 +385,16 @@ class VarsCache:
                                 source_step = EXCLUDED.source_step,
                                 accessed_at = NOW()
                             """,
-                            (execution_id, var_name, var_type, var_value_json, source_step)
+                            {
+                                "execution_id": execution_id,
+                                "var_name": var_name,
+                                "var_type": var_type,
+                                "var_value": Json(var_value),
+                                "source_step": source_step
+                            }
                         )
                         count += 1
                     
-                    await conn.commit()
                     logger.debug(
                         f"VAR: Set {count} variables "
                         f"(execution {execution_id}, type={var_type}, source={source_step})"
