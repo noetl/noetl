@@ -96,6 +96,14 @@ tasks:
     cmds:
       - task: cache:local:clear-all
 
+  noetl:local:redeploy:
+    desc: Build NoETL image, load to kind, and redeploy (complete redeploy workflow)
+    aliases: [rdn, redeploy-noetl, rebuild-deploy]
+    cmds:
+      - task: docker:local:noetl-image-build
+      - kind load docker-image local/noetl:$(cat .noetl_last_build_tag.txt) --name noetl
+      - task: noetl:k8s:deploy
+
   kind:local:create:
     desc: Create Kind Kubernetes cluster
     aliases: [cluster-create, create-cluster]
