@@ -93,7 +93,7 @@ async def get_execution(execution_id: str):
                    duration
             FROM noetl.event
             WHERE execution_id = %(execution_id)s
-            ORDER BY created_at
+            ORDER BY event_id
             """, {"execution_id": execution_id})
             rows = await cursor.fetchall()
             if rows:

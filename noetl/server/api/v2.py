@@ -144,18 +144,18 @@ async def start_execution(req: StartExecutionRequest) -> StartExecutionResponse:
             req.parent_execution_id
         )
         
-        # Get workflow_initialized event_id for tracing
-        workflow_init_event_id = None
+        # Get playbook_initialized event_id for tracing
+        playbook_init_event_id = None
         async with get_pool_connection() as conn:
             async with conn.cursor() as cur:
                 await cur.execute("""
                     SELECT event_id FROM noetl.event
-                    WHERE execution_id = %s AND event_type = 'workflow_initialized'
+                    WHERE execution_id = %s AND event_type = 'playbook_initialized'
                     ORDER BY event_id DESC LIMIT 1
                 """, (int(execution_id),))
                 result = await cur.fetchone()
                 if result:
-                    workflow_init_event_id = result['event_id']
+                    playbook_init_event_id = result['event_id']
         
         # Get NATS publisher
         nats_pub = await get_nats_publisher()
@@ -188,13 +188,13 @@ async def start_execution(req: StartExecutionRequest) -> StartExecutionResponse:
                         0,
                         command.max_attempts or 3,
                         req.parent_execution_id,
-                        workflow_init_event_id,
+                        playbook_init_event_id,
                         command.tool.kind,
                         Json({
                             "playbook_path": path,
                             "catalog_id": catalog_id,
                             "triggered_by": "start_execution",
-                            "workflow_init_event_id": workflow_init_event_id,
+                            "playbook_init_event_id": playbook_init_event_id,
                             "parent_execution_id": req.parent_execution_id,
                             "step": command.step,
                             "tool": command.tool.kind,

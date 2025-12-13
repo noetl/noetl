@@ -813,31 +813,87 @@ class ControlFlowEngine:
                         if command:
                             commands.append(command)
         
-        # Check for workflow completion (only emit once)
-        if event.name == "step.exit" and not commands and not state.completed:
-            # No more commands to execute - workflow is complete
+        # Check for completion (only emit once) - prepare completion events but persist after current event
+        # Completion triggers when step.exit occurs with no commands generated AND step has no routing
+        # This handles explicit terminal steps (no next/case blocks) only
+        # OR when a step fails with no error handler (no commands generated despite having routing)
+        completion_events = []
+        logger.info(f"=== COMPLETION CHECK === event={event.name}, step={event.step}, commands={len(commands)}, completed={state.completed}, has_next={bool(step_def.next if step_def else False)}, has_case={bool(step_def.case if step_def else False)}, has_error={bool(event.payload.get('error'))}")
+        
+        # Check if step failed
+        has_error = event.payload.get("error") is not None
+        
+        # Only trigger completion if:
+        # 1. step.exit event
+        # 2. No commands generated
+        # 3. EITHER: Step has NO next or case blocks (true terminal step)
+        #    OR: Step failed with no error handling (has error but no commands)
+        # 4. Not already completed
+        is_terminal_step = step_def and not step_def.next and not step_def.case
+        is_failed_with_no_handler = has_error and not commands
+        
+        if event.name == "step.exit" and not commands and (is_terminal_step or is_failed_with_no_handler) and not state.completed:
+            # No more commands to execute - workflow and playbook are complete (or failed)
             state.completed = True
-            completion_status = "failed" if event.payload.get("status") == "failed" else "completed"
-            completion_event = Event(
+            # Check if step failed by looking at error in payload
+            from noetl.core.dsl.v2.models import LifecycleEventPayload
+            completion_status = "failed" if has_error else "completed"
+            
+            # Persist current event FIRST to get its event_id for parent_event_id
+            await self._persist_event(event, state)
+            
+            # Now create completion events with current event as parent
+            # This ensures proper ordering: step.exit -> workflow_completion -> playbook_completion
+            current_event_id = state.last_event_id
+            
+            # First, prepare workflow completion event
+            workflow_completion_event = Event(
                 execution_id=event.execution_id,
-                step=event.step,
+                step="workflow",
                 name=f"workflow_{completion_status}",
-                payload={
-                    "final_step": event.step,
-                    "status": completion_status,
-                    "result": event.payload.get("result")
-                },
-                timestamp=datetime.now(timezone.utc)
+                payload=LifecycleEventPayload(
+                    status=completion_status,
+                    final_step=event.step,
+                    result=event.payload.get("result"),
+                    error=event.payload.get("error")
+                ).model_dump(),
+                timestamp=datetime.now(timezone.utc),
+                parent_event_id=current_event_id
             )
-            # Persist completion event
-            await self._persist_event(completion_event, state)
-            logger.info(f"Workflow {completion_status}: execution_id={event.execution_id}, final_step={event.step}")
+            completion_events.append(workflow_completion_event)
+            logger.info(f"Workflow {completion_status}: execution_id={event.execution_id}, final_step={event.step}, parent_event_id={current_event_id}")
+            
+            # Then, prepare playbook completion event as final lifecycle event (parent is workflow_completion)
+            # We'll set parent after persisting workflow_completion
+            playbook_completion_event = Event(
+                execution_id=event.execution_id,
+                step=state.playbook.metadata.get("path", "playbook"),
+                name=f"playbook_{completion_status}",
+                payload=LifecycleEventPayload(
+                    status=completion_status,
+                    final_step=event.step,
+                    result=event.payload.get("result"),
+                    error=event.payload.get("error")
+                ).model_dump(),
+                timestamp=datetime.now(timezone.utc),
+                parent_event_id=None  # Will be set after workflow_completion is persisted
+            )
+            completion_events.append(playbook_completion_event)
+            logger.info(f"Playbook {completion_status}: execution_id={event.execution_id}, final_step={event.step}")
         
         # Save state
         await self.state_store.save_state(state)
         
-        # Persist event to database
-        await self._persist_event(event, state)
+        # Persist current event to database (if not already done for completion case)
+        if not completion_events:
+            await self._persist_event(event, state)
+        
+        # Persist completion events in order with proper parent_event_id chain
+        for i, completion_event in enumerate(completion_events):
+            if i > 0:
+                # Set parent to previous completion event
+                completion_event.parent_event_id = state.last_event_id
+            await self._persist_event(completion_event, state)
         
         return commands
     
@@ -863,15 +919,18 @@ class ControlFlowEngine:
             return
         
         # Determine parent_event_id
-        parent_event_id = None
-        if event.step:
-            # For step events, parent is the last event in this step
-            parent_event_id = state.step_event_ids.get(event.step)
-        if not parent_event_id:
-            # Otherwise, parent is the last event overall
-            parent_event_id = state.last_event_id
+        # Use event.parent_event_id if explicitly set (for completion events)
+        # Otherwise, use default logic based on step or last event
+        parent_event_id = event.parent_event_id
+        if parent_event_id is None:
+            if event.step:
+                # For step events, parent is the last event in this step
+                parent_event_id = state.step_event_ids.get(event.step)
+            if not parent_event_id:
+                # Otherwise, parent is the last event overall
+                parent_event_id = state.last_event_id
         
-        # Calculate duration for completion events (step.exit)
+        # Calculate duration for completion events
         # Set to 0 for other events to avoid NULL/undefined in UI
         duration_ms = 0
         event_timestamp = event.timestamp or datetime.now(timezone.utc)
@@ -891,6 +950,30 @@ class ControlFlowEngine:
                     enter_event = await cur.fetchone()
                     if enter_event and enter_event['created_at']:
                         start_time = enter_event['created_at']
+                        # Ensure both timestamps are timezone-aware for subtraction
+                        if start_time.tzinfo is None:
+                            start_time = start_time.replace(tzinfo=timezone.utc)
+                        if event_timestamp.tzinfo is None:
+                            event_timestamp = event_timestamp.replace(tzinfo=timezone.utc)
+                        duration_ms = int((event_timestamp - start_time).total_seconds() * 1000)
+        
+        elif "completed" in event.name or "failed" in event.name:
+            # For workflow/playbook completion events, calculate total duration from workflow_initialized
+            async with get_pool_connection() as conn:
+                async with conn.cursor() as cur:
+                    # Determine which initialization event to use based on completion type
+                    init_event_type = "workflow_initialized" if "workflow_" in event.name else "playbook_initialized"
+                    
+                    await cur.execute("""
+                        SELECT created_at FROM noetl.event 
+                        WHERE execution_id = %s 
+                          AND event_type = %s
+                        ORDER BY event_id ASC
+                        LIMIT 1
+                    """, (int(event.execution_id), init_event_type))
+                    init_event = await cur.fetchone()
+                    if init_event and init_event['created_at']:
+                        start_time = init_event['created_at']
                         # Ensure both timestamps are timezone-aware for subtraction
                         if start_time.tzinfo is None:
                             start_time = start_time.replace(tzinfo=timezone.utc)
@@ -918,7 +1001,7 @@ class ControlFlowEngine:
                     event.name,
                     event.step,
                     event.step,
-                    "COMPLETED" if event.name == "step.exit" else "RUNNING",
+                    "FAILED" if "failed" in event.name else "COMPLETED" if ("step.exit" == event.name or "completed" in event.name) else "RUNNING",
                     Json(event.payload.get("context")) if event.payload.get("context") else None,
                     Json(event.payload.get("result")) if event.payload.get("result") else None,
                     Json(event.payload.get("error")) if event.payload.get("error") else None,
@@ -969,16 +1052,36 @@ class ControlFlowEngine:
         if not start_step:
             raise ValueError("Playbook must have a 'start' step")
         
-        # Emit workflow_initialized event
-        init_event = Event(
+        # Emit playbook_initialized event (playbook loaded and validated)
+        from noetl.core.dsl.v2.models import LifecycleEventPayload
+        playbook_init_event = Event(
             execution_id=execution_id,
-            step="start",
-            name="workflow_initialized",
-            payload={"workload": state.variables},
+            step=playbook_path,
+            name="playbook_initialized",
+            payload=LifecycleEventPayload(
+                status="initialized",
+                final_step=None,
+                result={"workload": state.variables, "playbook_path": playbook_path}
+            ).model_dump(),
             timestamp=datetime.now(timezone.utc)
         )
         
-        await self._persist_event(init_event, state)
+        await self._persist_event(playbook_init_event, state)
+        
+        # Emit workflow_initialized event (workflow execution starting)
+        workflow_init_event = Event(
+            execution_id=execution_id,
+            step="workflow",
+            name="workflow_initialized",
+            payload=LifecycleEventPayload(
+                status="initialized",
+                final_step=None,
+                result={"first_step": "start", "playbook_path": playbook_path}
+            ).model_dump(),
+            timestamp=datetime.now(timezone.utc)
+        )
+        
+        await self._persist_event(workflow_init_event, state)
         
         # Create initial command for start step
         start_command = self._create_command_for_step(state, start_step, payload)

@@ -9,8 +9,65 @@ Complete redesign with:
 """
 
 from pydantic import BaseModel, Field, field_validator
-from typing import Any, Literal, Optional
+from typing import Any, Literal, Optional, Union
 from datetime import datetime
+
+
+# ============================================================================
+# Event Payload Models - Typed payloads for different event types
+# ============================================================================
+
+class StepEnterPayload(BaseModel):
+    """Payload for step.enter event."""
+    args: dict[str, Any] = Field(default_factory=dict, description="Step input arguments")
+    context: Optional[dict[str, Any]] = Field(None, description="Execution context")
+
+
+class CallDonePayload(BaseModel):
+    """Payload for call.done event (tool execution result)."""
+    result: Any = Field(None, description="Tool execution result")
+    error: Optional[Union[str, dict[str, Any]]] = Field(None, description="Error details if tool failed (string or dict)")
+    duration_ms: Optional[int] = Field(None, description="Tool execution duration in milliseconds")
+
+
+class StepExitPayload(BaseModel):
+    """Payload for step.exit event."""
+    result: Any = Field(None, description="Final step result")
+    error: Optional[Union[str, dict[str, Any]]] = Field(None, description="Error details if step failed (string or dict)")
+    context: Optional[dict[str, Any]] = Field(None, description="Updated execution context")
+
+
+class LifecycleEventPayload(BaseModel):
+    """Payload for lifecycle events (workflow/playbook initialized/completed/failed)."""
+    status: str = Field(..., description="Status: initialized, completed, failed")
+    final_step: Optional[str] = Field(None, description="Final step name (for completion events)")
+    result: Any = Field(None, description="Final result (for completion events)")
+    error: Optional[Union[str, dict[str, Any]]] = Field(None, description="Error details (for failed events, string or dict)")
+
+
+class LoopItemPayload(BaseModel):
+    """Payload for loop.item event."""
+    item: Any = Field(..., description="Current loop item")
+    index: int = Field(..., description="Loop iteration index")
+    iterator: str = Field(..., description="Iterator variable name")
+
+
+class LoopDonePayload(BaseModel):
+    """Payload for loop.done event."""
+    iterations: int = Field(..., description="Total number of iterations")
+    results: list[Any] = Field(default_factory=list, description="Results from all iterations")
+
+
+# Union type for all event payloads (for type hints, not runtime validation)
+EventPayload = Union[
+    StepEnterPayload,
+    CallDonePayload, 
+    StepExitPayload,
+    LifecycleEventPayload,
+    LoopItemPayload,
+    LoopDonePayload,
+    dict[str, Any]  # Runtime: always dict
+]
 
 
 # ============================================================================
@@ -27,16 +84,21 @@ class Event(BaseModel):
     - step.exit: When step is done (result known)
     - loop.item: On each loop iteration
     - loop.done: When loop completes
-    - workflow.start: Workflow begins
-    - workflow.end: Workflow completes
+    - playbook_initialized: Playbook execution begins
+    - playbook_completed: Playbook execution succeeds
+    - playbook_failed: Playbook execution fails
+    - workflow_initialized: Workflow begins
+    - workflow_completed: Workflow completes successfully
+    - workflow_failed: Workflow fails
     """
     execution_id: str = Field(..., description="Execution identifier")
     step: Optional[str] = Field(None, description="Step name that emitted the event")
     name: str = Field(..., description="Event name (step.enter, call.done, step.exit, etc.)")
-    payload: dict[str, Any] = Field(default_factory=dict, description="Event data (response, error, metadata)")
+    payload: dict[str, Any] = Field(default_factory=dict, description="Event data (response, error, metadata) - always dict at runtime")
     timestamp: datetime = Field(default_factory=datetime.utcnow, description="Event timestamp")
     worker_id: Optional[str] = Field(None, description="Worker that executed the command")
     attempt: int = Field(default=1, description="Attempt number for retries")
+    parent_event_id: Optional[int] = Field(None, description="Parent event ID for ordering")
 
 
 # ============================================================================
