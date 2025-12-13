@@ -674,31 +674,15 @@ class ControlFlowEngine:
             logger.warning(f"[LOOP-DEBUG] state.variables: {state.variables}")
         
         # Render Jinja2 templates in tool config
-        rendered_tool_config = {}
-        for key, value in tool_config.items():
-            if isinstance(value, str) and "{{" in value:
-                try:
-                    rendered_tool_config[key] = self._render_template(value, context)
-                except Exception as e:
-                    logger.warning(f"Failed to render tool config {key}: {e}")
-                    rendered_tool_config[key] = value
-            else:
-                rendered_tool_config[key] = value
+        # CRITICAL: Use recursive render_template to handle nested dicts/lists like params: {latitude: "{{ city.lat }}"}
+        from noetl.core.dsl.render import render_template as recursive_render
+        from jinja2 import Environment, BaseLoader
         
-        # Render Jinja2 templates in args
-        rendered_args = {}
-        for key, value in step_args.items():
-            if isinstance(value, str) and "{{" in value:
-                try:
-                    rendered_value = self._render_template(value, context)
-                    rendered_args[key] = rendered_value
-                    if step.loop:
-                        logger.warning(f"[LOOP-DEBUG] Rendered arg '{key}': '{value}' → '{rendered_value}'")
-                except Exception as e:
-                    logger.warning(f"Failed to render arg {key}: {e}")
-                    rendered_args[key] = value
-            else:
-                rendered_args[key] = value
+        env = Environment(loader=BaseLoader())
+        rendered_tool_config = recursive_render(env, tool_config, context)
+        
+        # Render Jinja2 templates in args (also use recursive rendering for nested structures)
+        rendered_args = recursive_render(env, step_args, context)
         
         command = Command(
             execution_id=state.execution_id,

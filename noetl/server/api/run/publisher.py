@@ -577,7 +577,10 @@ class QueuePublisher:
             from noetl.core.dsl.render import render_template
             from jinja2 import BaseLoader, Environment
             
-            collection_raw = loop_block.get("collection", [])
+            # Support BOTH old format (in/iterator) and new format (collection/element)
+            collection_raw = loop_block.get("collection") or loop_block.get("in", [])
+            iterator_name = loop_block.get("element") or loop_block.get("iterator", "item")
+            
             logger.critical(f"PUBLISHER.publish_step: collection_raw = {collection_raw}, type = {type(collection_raw).__name__}")
             if isinstance(collection_raw, str):
                 try:
@@ -618,7 +621,7 @@ class QueuePublisher:
             
             iterator_context = {
                 "collection": collection,
-                "iterator_name": loop_block.get("element", "item"),
+                "iterator_name": iterator_name,
                 "mode": loop_block.get("mode", "sequential"),
                 "nested_task": step_config_copy,  # The actual task config to execute per iteration
                 "total_count": len(collection) if isinstance(collection, list) else 0

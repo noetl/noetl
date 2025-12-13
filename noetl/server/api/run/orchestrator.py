@@ -2102,19 +2102,23 @@ async def _process_iterator_started(
         # Build iteration task config - inject element into nested_task
         iteration_task = dict(nested_task)
         
-        # CRITICAL: Render sink auth template if present, so worker receives fully-resolved credential key
-        if 'sink' in iteration_task and isinstance(iteration_task['sink'], dict):
-            sink_auth = iteration_task['sink'].get('auth')
-            if isinstance(sink_auth, str) and '{{' in sink_auth:
-                try:
-                    from noetl.core.dsl.render import render_template
-                    from jinja2 import Environment
-                    jinja_env = Environment()
-                    rendered_auth = render_template(jinja_env, sink_auth, iteration_context)
-                    iteration_task['sink']['auth'] = rendered_auth
-                    logger.critical(f"ORCHESTRATOR: Rendered sink auth from '{sink_auth}' to '{rendered_auth}' for iteration {batch['index']}")
-                except Exception as e:
-                    logger.error(f"ORCHESTRATOR: Failed to render sink auth template: {e}", exc_info=True)
+        # CRITICAL: Render ALL templates in iteration_task with iteration_context
+        # This ensures params like {{ city.lat }} are resolved before sending to worker
+        from noetl.core.dsl.render import render_template
+        from jinja2 import BaseLoader, Environment
+        
+        try:
+            env = Environment(loader=BaseLoader())
+            iteration_task = render_template(env, iteration_task, iteration_context)
+            logger.info(
+                f"ORCHESTRATOR: Rendered iteration task for batch {batch['index']}, "
+                f"element={batch.get('element')}"
+            )
+        except Exception as e:
+            logger.error(
+                f"ORCHESTRATOR: Failed to render iteration task templates: {e}",
+                exc_info=True
+            )
         
         # If chunked, provide elements array
         if 'elements' in batch:
