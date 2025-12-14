@@ -543,21 +543,40 @@ class ControlFlowEngine:
                 max_attempts = retry_spec.get("max_attempts", 3)
                 backoff = retry_spec.get("backoff", "linear")  # linear, exponential
                 
+                # Get current attempt from event.meta or event.attempt (fallback)
+                current_attempt = 1
+                if event.meta and "attempt" in event.meta:
+                    current_attempt = event.meta["attempt"]
+                elif event.attempt:
+                    current_attempt = event.attempt
+                
+                # Check if max attempts exceeded
+                if current_attempt >= max_attempts:
+                    logger.warning(
+                        f"[RETRY-EXHAUSTED] Step {event.step} has reached max retry attempts "
+                        f"({current_attempt}/{max_attempts}). Skipping retry action."
+                    )
+                    continue
+                
                 # Get current step
                 step_def = state.get_step(event.step)
                 if not step_def:
                     logger.error(f"Retry: current step not found: {event.step}")
                     continue
                 
-                # Create retry command with updated attempt tracking
+                # Create retry command with incremented attempt counter
                 command = self._create_command_for_step(state, step_def, {})
                 if command:
-                    # Set retry metadata
+                    # Increment attempt counter
+                    command.attempt = current_attempt + 1
                     command.max_attempts = max_attempts
                     command.retry_delay = delay
                     command.retry_backoff = backoff
                     commands.append(command)
-                    logger.info(f"Retry action: re-attempting step {event.step}")
+                    logger.info(
+                        f"[RETRY-ACTION] Re-attempting step {event.step} "
+                        f"(attempt {command.attempt}/{max_attempts})"
+                    )
             
             elif "sink" in action:
                 # Persist step result to storage backend
