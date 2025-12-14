@@ -172,16 +172,17 @@ async def start_execution(req: StartExecutionRequest) -> StartExecutionResponse:
                     queue_id = await get_snowflake_id()
                     await cur.execute("""
                         INSERT INTO noetl.queue (
-                            queue_id, execution_id, catalog_id, node_id,
+                            queue_id, execution_id, catalog_id, node_id, node_name,
                             action, context, status, priority, attempts,
                             max_attempts, parent_execution_id, event_id,
                             node_type, meta, created_at, updated_at
-                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """, (
                         queue_id,
                         int(execution_id),
                         catalog_id,
                         command.step,
+                        command.step,  # node_name = node_id for V2 DSL
                         command.tool.kind,
                         Json({"tool_config": command.tool.config, "args": command.args}),
                         "queued",
