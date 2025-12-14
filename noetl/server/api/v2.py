@@ -85,6 +85,7 @@ class EventRequest(BaseModel):
     step: str = Field(..., description="Step name")
     name: str = Field(..., description="Event name (step.enter, call.done, step.exit)")
     payload: dict[str, Any] = Field(default_factory=dict, description="Event data")
+    meta: Optional[dict[str, Any]] = Field(None, description="Event metadata")
     worker_id: Optional[str] = Field(None, description="Worker ID")
 
 
@@ -237,15 +238,39 @@ async def handle_event(req: EventRequest) -> EventResponse:
     try:
         engine = get_engine()
         
-        # Create Event
+        # Get current attempt from queue table and store in meta
+        attempt = 1
+        try:
+            async with get_pool_connection() as conn:
+                result = await conn.fetchrow(
+                    """
+                    SELECT attempts 
+                    FROM noetl.queue 
+                    WHERE execution_id = $1 AND node_name = $2
+                    ORDER BY queue_id DESC 
+                    LIMIT 1
+                    """,
+                    int(req.execution_id),
+                    req.step
+                )
+                if result and result["attempts"]:
+                    attempt = result["attempts"]
+        except Exception as e:
+            logger.warning(f"Could not fetch attempt from queue: {e}, using default attempt=1")
+        
+        # Create Event with attempt in meta
+        event_meta = req.meta or {}
+        event_meta["attempt"] = attempt
+        
         event = Event(
             execution_id=req.execution_id,
             step=req.step,
             name=req.name,
             payload=req.payload,
+            meta=event_meta,
             timestamp=datetime.now(timezone.utc),
             worker_id=req.worker_id,
-            attempt=1
+            attempt=attempt  # Keep for in-memory processing
         )
         
         # Process event through engine
