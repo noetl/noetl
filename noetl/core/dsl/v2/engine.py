@@ -730,8 +730,35 @@ class ControlFlowEngine:
             state.mark_step_completed(event.step, event.payload["result"])
             logger.debug(f"Stored result for step {event.step}")
         
+        # Get render context (needed for case evaluation and other logic)
+        context = state.get_render_context(event)
+        
+        # CRITICAL: Process case rules FIRST for ALL events (not just step.exit)
+        # This allows steps to react to call.done, call.error, and other mid-step events
+        if step_def.case:
+            logger.debug(f"[CASE-EVAL] Step {event.step} has {len(step_def.case)} case rules, evaluating for event {event.name}")
+            for idx, case_entry in enumerate(step_def.case):
+                # Evaluate condition
+                if self._evaluate_condition(case_entry.when, context):
+                    logger.info(f"[CASE-MATCH] Step {event.step}, event {event.name}: matched case {idx}: {case_entry.when}")
+                    
+                    # Process then actions
+                    new_commands = await self._process_then_actions(
+                        case_entry.then,
+                        state,
+                        event
+                    )
+                    commands.extend(new_commands)
+                    logger.info(f"[CASE-MATCH] Generated {len(new_commands)} commands from case rule")
+                    
+                    # First match wins - don't evaluate remaining cases
+                    break
+                else:
+                    logger.debug(f"[CASE-EVAL] Case {idx} did not match: {case_entry.when}")
+        
         # Handle loop.item events - continue loop iteration
-        if event.name == "loop.item" and step_def.loop:
+        # Only process if case didn't generate commands
+        if not commands and event.name == "loop.item" and step_def.loop:
             logger.debug(f"Processing loop.item event for {event.step}")
             command = self._create_command_for_step(state, step_def, {})
             if command:
@@ -742,7 +769,8 @@ class ControlFlowEngine:
                 logger.debug(f"Loop iteration complete, will check for loop.done")
         
         # Check if step has completed loop - emit loop.done event
-        if step_def.loop and event.name == "step.exit":
+        # Only process if case didn't generate commands
+        if not commands and step_def.loop and event.name == "step.exit":
             if not state.is_loop_done(event.step):
                 # More items to process - emit loop.item event
                 logger.debug(f"Loop has more items, creating next command")
@@ -753,31 +781,11 @@ class ControlFlowEngine:
                 # Loop done - would transition to next step via structural next
                 logger.info(f"Loop completed for step {event.step}")
         
-        # Get render context
-        context = state.get_render_context(event)
-        
-        # Process case rules
-        if step_def.case:
-            for case_entry in step_def.case:
-                # Evaluate condition
-                if self._evaluate_condition(case_entry.when, context):
-                    logger.info(f"Case matched: {case_entry.when}")
-                    
-                    # Process then actions
-                    new_commands = await self._process_then_actions(
-                        case_entry.then,
-                        state,
-                        event
-                    )
-                    commands.extend(new_commands)
-                    
-                    # First match wins
-                    break
-        
-        # If step.exit event and no case matched, use structural next
+        # If step.exit event and no case/loop matched, use structural next as fallback
         if event.name == "step.exit" and step_def.next and not commands:
             # Only proceed to next if loop is done (or no loop)
             if not step_def.loop or state.is_loop_done(event.step):
+                logger.info(f"[STRUCTURAL-NEXT] No case matched for step.exit, using structural next: {step_def.next}")
                 # Handle structural next
                 next_items = step_def.next
                 if isinstance(next_items, str):
@@ -796,6 +804,8 @@ class ControlFlowEngine:
                         command = self._create_command_for_step(state, next_step_def, {})
                         if command:
                             commands.append(command)
+                            logger.info(f"[STRUCTURAL-NEXT] Created command for step {target_step}")
+
         
         # Check for completion (only emit once) - prepare completion events but persist after current event
         # Completion triggers when step.exit occurs with no commands generated AND step has no routing
