@@ -164,6 +164,7 @@ class V2Worker:
     async def _execute_command(self, command: dict, server_url: str):
         """Execute a command and emit events."""
         execution_id = command["execution_id"]
+        queue_id = command["queue_id"]  # Extract queue_id for error handling
         step = command["step"]
         tool_kind = command["tool_kind"]
         context = command["context"]
@@ -173,6 +174,18 @@ class V2Worker:
         
         tool_config = context.get("tool_config", {})
         args = context.get("args", {})
+        
+        # CRITICAL: Merge tool_config.args with top-level args
+        # In V2 DSL, step args are often defined within the tool block
+        # e.g., tool: {kind: python, args: {name: "value"}, script: {...}}
+        # The engine puts these in tool_config.args, but the worker needs them in args
+        if "args" in tool_config:
+            # Merge with top-level args taking precedence
+            merged_args = {**tool_config["args"], **args}
+            args = merged_args
+            logger.error(f"DEBUG: Merged args from tool_config.args: {args}")
+        else:
+            logger.error(f"DEBUG: No args in tool_config, using top-level args: {args}")
         
         logger.info(f"Executing {step} (tool={tool_kind}) for execution {execution_id}")
         
