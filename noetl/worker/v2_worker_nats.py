@@ -323,11 +323,20 @@ class V2Worker:
             main_func = namespace["main"]
             sig = inspect.signature(main_func)
             
-            # Call with args if function accepts parameters, otherwise call without
-            if len(sig.parameters) > 0:
-                result = main_func(args)
-            else:
+            # Determine how to call the function based on its signature
+            if len(sig.parameters) == 0:
+                # No parameters: call without args
                 result = main_func()
+            elif any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
+                # Has **kwargs: unpack args as keyword arguments
+                result = main_func(**args)
+            elif all(isinstance(args, dict) and (p.name in args or p.default != inspect.Parameter.empty) 
+                     for p in sig.parameters.values() if p.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)):
+                # All parameters can be satisfied by args dict keys or have defaults: unpack kwargs
+                result = main_func(**args)
+            else:
+                # Pass args dict as single parameter (backward compatibility)
+                result = main_func(args)
             
             # Await if it's a coroutine
             if inspect.iscoroutine(result):
