@@ -284,27 +284,104 @@ class V2Worker:
         args: dict,
         step: str
     ) -> Any:
-        """Execute tool based on kind."""
+        """
+        Execute tool using noetl/plugin/* implementations.
+        
+        This delegates to the mature plugin system which includes:
+        - Script loading (GCS, S3, HTTP, file)
+        - Authentication resolution and caching
+        - Pagination and retry logic
+        - Event callbacks for progress tracking
+        - Template rendering
+        - Error handling
+        """
+        # Import plugin executors
+        from noetl.plugin import (
+            execute_python_task,
+            execute_http_task,
+            execute_postgres_task,
+            execute_duckdb_task,
+            execute_secrets_task,
+            execute_sink_task,
+            execute_workbook_task,
+            execute_playbook_task,
+        )
+        from jinja2 import Environment, BaseLoader
+        
+        # Create minimal context for plugin execution
+        # Plugins expect: task_config, context, jinja_env
+        # V2 worker provides: config, args
+        context = {"args": args, "step": step}
+        jinja_env = Environment(loader=BaseLoader())
+        
+        # Map V2 config format to plugin task_config format
+        # Plugins use different field names than V2 DSL
+        task_config = {**config, "args": args, "name": step}
+        
         if tool_kind == "python":
-            return await self._execute_python(config, args)
+            # Use plugin's execute_python_task which includes:
+            # - Script loading (GCS/S3/HTTP/file)
+            # - Base64 code support
+            # - Kwargs unpacking
+            # - Error handling
+            result = execute_python_task(task_config, context, jinja_env, args)
+            # Normalize result - plugin returns dict, may need to extract 'data' or 'result'
+            if isinstance(result, dict):
+                return result.get('data', result.get('result', result))
+            return result
+            
         elif tool_kind == "http":
-            return await self._execute_http(config, args)
+            # Use plugin's execute_http_task which includes:
+            # - Auth resolution and credential caching
+            # - Pagination support
+            # - Template rendering
+            # - Response processing
+            task_with = args  # Plugin uses 'task_with' for rendered params
+            result = await execute_http_task(task_config, context, jinja_env, task_with)
+            # Normalize result
+            if isinstance(result, dict):
+                return result.get('data', result)
+            return result
+            
         elif tool_kind == "postgres":
-            return await self._execute_postgres(config, args)
+            # Use plugin's execute_postgres_task
+            result = await execute_postgres_task(task_config, context, jinja_env, args)
+            return result.get('data', result) if isinstance(result, dict) else result
+            
         elif tool_kind == "duckdb":
-            return await self._execute_duckdb(config, args)
-        elif tool_kind == "workbook":
-            return await self._execute_workbook(config, args)
-        elif tool_kind == "playbook":
-            return await self._execute_playbook(config, args)
+            # Use plugin's execute_duckdb_task
+            result = await execute_duckdb_task(task_config, context, jinja_env, args)
+            return result.get('data', result) if isinstance(result, dict) else result
+            
         elif tool_kind == "secrets":
-            return await self._execute_secrets(config, args)
+            # Use plugin's execute_secrets_task
+            result = await execute_secrets_task(task_config, context, jinja_env)
+            return result
+            
         elif tool_kind == "sink":
-            return await self._execute_sink(config, args)
+            # Use plugin's execute_sink_task
+            result = await execute_sink_task(task_config, context, jinja_env)
+            return result
+            
+        elif tool_kind == "workbook":
+            # Use plugin's execute_workbook_task
+            result = await execute_workbook_task(task_config, context, jinja_env, args)
+            return result
+            
+        elif tool_kind == "playbook":
+            # Use plugin's execute_playbook_task
+            result = await execute_playbook_task(task_config, context, jinja_env, args)
+            return result
+            
         elif tool_kind == "container":
+            # Container execution - keep inline for now as it's V2-specific
             return await self._execute_container(config, args)
+            
         elif tool_kind == "script":
+            # Script loading is now handled by python plugin via 'script' field
+            # This is a legacy fallback
             return await self._execute_script(config, args)
+            
         else:
             raise NotImplementedError(f"Tool kind '{tool_kind}' not implemented")
     
