@@ -295,10 +295,20 @@ class V2Worker:
         """Execute Python code."""
         import inspect
         
+        # Priority: script > code_b64 > code
         code = config.get("code", "")
         
+        # Handle script attribute (external code loading)
+        if "script" in config:
+            from noetl.worker.script_loader import load_script_content
+            script_config = config["script"]
+            code = await load_script_content(script_config)
+        elif "code_b64" in config:
+            import base64
+            code = base64.b64decode(config["code_b64"]).decode("utf-8")
+        
         if not code:
-            raise ValueError("Python tool requires 'code' in config")
+            raise ValueError("Python tool requires 'code', 'code_b64', or 'script' in config")
         
         # Execute code
         namespace = {"args": args}
