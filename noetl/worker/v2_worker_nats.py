@@ -111,7 +111,7 @@ class V2Worker:
             await self._execute_command(command, server_url)
             
         except Exception as e:
-            logger.error(f"Error handling command notification: {e}", exc_info=True)
+            logger.exception(f"Error handling command notification: {e}")
     
     async def _fetch_command(self, server_url: str, queue_id: int) -> Optional[dict]:
         """
@@ -158,7 +158,7 @@ class V2Worker:
             return None
             
         except Exception as e:
-            logger.error(f"Failed to fetch command {queue_id}: {e}")
+            logger.exception(f"Failed to fetch command {queue_id}: {e}")
             return None
     
     async def _execute_command(self, command: dict, server_url: str):
