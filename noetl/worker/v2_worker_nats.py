@@ -288,6 +288,10 @@ class V2Worker:
             return await self._execute_secrets(config, args)
         elif tool_kind == "sink":
             return await self._execute_sink(config, args)
+        elif tool_kind == "container":
+            return await self._execute_container(config, args)
+        elif tool_kind == "script":
+            return await self._execute_script(config, args)
         else:
             raise NotImplementedError(f"Tool kind '{tool_kind}' not implemented")
     
@@ -621,6 +625,21 @@ class V2Worker:
         
         else:
             raise NotImplementedError(f"Sink backend '{backend}' not implemented")
+    
+    async def _execute_container(self, config: dict, args: dict) -> Any:
+        """Execute code in a container (Kubernetes Job)."""
+        raise NotImplementedError(
+            "Container execution is not yet implemented in V2 worker. "
+            "This feature requires Kubernetes Job creation and monitoring. "
+            "Please use Python/HTTP tools or submit a feature request."
+        )
+    
+    async def _execute_script(self, config: dict, args: dict) -> Any:
+        """Execute external script (deprecated - use Python with script attribute)."""
+        raise NotImplementedError(
+            "Script tool kind is deprecated. Use 'python' tool kind with 'script' attribute instead. "
+            "Example: tool: {kind: python, script: {uri: 'gs://bucket/script.py', source: {type: gcs, auth: credential}}}"
+        )
     
     async def _emit_event(
         self,
