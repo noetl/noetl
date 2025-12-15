@@ -232,6 +232,7 @@ See `tests/fixtures/playbooks/script_execution/` and `docs/script_attribute_desi
 - `taskfile.yml` - Main task automation with included taskfiles for tests and monitoring
 - `ci/taskfile/` - Specialized taskfiles for testing, troubleshooting, and observability
 - `ci/taskfile/test-server.yml` - Pagination test server lifecycle management
+- `ci/kind/config.yaml` - **Kind cluster configuration with NodePort mappings** (DO NOT use port-forward, ports are permanently mapped here)
 - `tests/taskfile/noetltest.yml` - Test task definitions
 - `docker/` - Container build scripts for all components
 - `docker/test-server/` - Pagination test server Dockerfile

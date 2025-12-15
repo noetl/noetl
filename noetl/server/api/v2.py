@@ -35,7 +35,7 @@ def get_engine():
     
     if _engine is None:
         _playbook_repo = PlaybookRepo()
-        _state_store = StateStore()
+        _state_store = StateStore(_playbook_repo)  # Pass playbook_repo for event sourcing
         _engine = ControlFlowEngine(_playbook_repo, _state_store)
     
     return _engine

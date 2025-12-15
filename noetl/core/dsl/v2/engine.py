@@ -66,11 +66,13 @@ class ExecutionState:
         self.current_step = step_name
     
     def mark_step_completed(self, step_name: str, result: Any = None):
-        """Mark step as completed and store result."""
+        """Mark step as completed and store result in memory and vars_cache."""
         self.completed_steps.add(step_name)
         if result is not None:
             self.step_results[step_name] = result
             self.variables[step_name] = result
+            # Also persist to vars_cache for rendering in subsequent steps
+            # This is done async in the engine after calling mark_step_completed
     
     def is_step_completed(self, step_name: str) -> bool:
         """Check if step is completed."""
@@ -237,8 +239,9 @@ class PlaybookRepo:
 class StateStore:
     """Stores and retrieves execution state."""
     
-    def __init__(self):
+    def __init__(self, playbook_repo: 'PlaybookRepo'):
         self._memory_cache: dict[str, ExecutionState] = {}
+        self.playbook_repo = playbook_repo
     
     async def save_state(self, state: ExecutionState):
         """Save execution state."""
@@ -275,10 +278,10 @@ class StateStore:
         if execution_id in self._memory_cache:
             return self._memory_cache[execution_id]
         
-        # Reconstruct state from events in database
-        async with self.db_pool.connection() as conn:
+        # Reconstruct state from events in database using event sourcing
+        async with get_pool_connection() as conn:
             async with conn.cursor() as cur:
-                # Get playbook info
+                # Get playbook info from first event
                 await cur.execute("""
                     SELECT catalog_id, node_id
                     FROM noetl.event
@@ -291,7 +294,7 @@ class StateStore:
                 if not result:
                     return None
                 
-                catalog_id = result['catalog_id']
+                catalog_id = result[0]  # First column
                 
                 # Load playbook
                 playbook = await self.playbook_repo.load_playbook_by_id(catalog_id)
@@ -301,22 +304,23 @@ class StateStore:
                 # Create new state
                 state = ExecutionState(execution_id, playbook, {}, catalog_id)
                 
-                # Replay events to rebuild state
+                # Replay events to rebuild state (event sourcing)
                 await cur.execute("""
-                    SELECT node_id, event_type, context, result
+                    SELECT node_name, event_type, result
                     FROM noetl.event
                     WHERE execution_id = %s
                     ORDER BY event_id
                 """, (int(execution_id),))
                 
-                async for row in cur:
-                    node_id = row['node_id']
-                    event_type = row['event_type']
-                    result_data = row.get('result')
+                rows = await cur.fetchall()
+                for row in rows:
+                    node_name = row[0]
+                    event_type = row[1]
+                    result_data = row[2]
                     
-                    # Restore step results
+                    # Restore step results from step.exit events
                     if event_type == 'step.exit' and result_data:
-                        state.mark_step_completed(node_id, result_data)
+                        state.mark_step_completed(node_name, result_data)
                 
                 # Cache and return
                 self._memory_cache[execution_id] = state
@@ -685,6 +689,15 @@ class ControlFlowEngine:
             payload={}
         ))
         
+        # Debug: Log state for verify_result step
+        if step.step == "verify_result":
+            logger.error(f"DEBUG: Creating command for verify_result")
+            logger.error(f"DEBUG: state.step_results keys: {list(state.step_results.keys())}")
+            logger.error(f"DEBUG: state.variables keys: {list(state.variables.keys())}")
+            logger.error(f"DEBUG: step_args: {step_args}")
+            if 'run_python_from_gcs' in state.step_results:
+                logger.error(f"DEBUG: run_python_from_gcs result: {state.step_results['run_python_from_gcs']}")
+        
         # Debug: Log loop variables in context
         if step.loop:
             logger.warning(f"[LOOP-DEBUG] Step {step.step} render context keys: {list(context.keys())}")
@@ -725,8 +738,8 @@ class ControlFlowEngine:
         """
         commands: list[Command] = []
         
-        # Load execution state
-        state = self.state_store.get_state(event.execution_id)
+        # Load execution state (from memory cache or reconstruct from events)
+        state = await self.state_store.load_state(event.execution_id)
         if not state:
             logger.error(f"Execution state not found: {event.execution_id}")
             return commands
@@ -747,7 +760,13 @@ class ControlFlowEngine:
         # Store step result if this is a step.exit event
         if event.name == "step.exit" and "result" in event.payload:
             state.mark_step_completed(event.step, event.payload["result"])
-            logger.debug(f"Stored result for step {event.step}")
+            logger.debug(f"Stored result for step {event.step} in state")
+        
+        # CRITICAL: For call.done events, temporarily add response to state
+        # This allows subsequent steps to access the result before step.exit
+        if event.name == "call.done" and "response" in event.payload:
+            state.mark_step_completed(event.step, event.payload["response"])
+            logger.debug(f"Temporarily stored call.done response for step {event.step} in state")
         
         # Get render context (needed for case evaluation and other logic)
         context = state.get_render_context(event)
