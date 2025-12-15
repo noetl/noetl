@@ -245,7 +245,7 @@ Together, these principles give NoETL a clear stance:
      ┌────────▼──────────────────┐     ┌-─────▼─────────────────────┐
      │       JetStream           │     │        NoETL Workers       │
      │                           │     │ - Pull commands            │
-     │  - NOETL_COMMANDS Stream  │────▶│ - Run tools / tasks        │
+     │  - NOETL_COMMANDS Stream  │◀────│ - Run tools / tasks        │
      └──────────────────────────-┘     │ - Emit results + logs      │
                                        └──────────-┬────────────────┘
                                (event log messages)│
