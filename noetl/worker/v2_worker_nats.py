@@ -346,33 +346,57 @@ class V2Worker:
             return result
             
         elif tool_kind == "postgres":
-            # Use plugin's execute_postgres_task
-            result = await execute_postgres_task(task_config, context, jinja_env, args)
+            # Use plugin's execute_postgres_task (sync function - run in executor)
+            loop = asyncio.get_running_loop()
+            result = await loop.run_in_executor(
+                None, 
+                lambda: execute_postgres_task(task_config, context, jinja_env, args)
+            )
             return result.get('data', result) if isinstance(result, dict) else result
             
         elif tool_kind == "duckdb":
-            # Use plugin's execute_duckdb_task
-            result = await execute_duckdb_task(task_config, context, jinja_env, args)
+            # Use plugin's execute_duckdb_task (sync function - run in executor)
+            loop = asyncio.get_running_loop()
+            result = await loop.run_in_executor(
+                None,
+                lambda: execute_duckdb_task(task_config, context, jinja_env, args)
+            )
             return result.get('data', result) if isinstance(result, dict) else result
             
         elif tool_kind == "secrets":
-            # Use plugin's execute_secrets_task
-            result = await execute_secrets_task(task_config, context, jinja_env)
+            # Use plugin's execute_secrets_task (sync function - run in executor)
+            loop = asyncio.get_running_loop()
+            result = await loop.run_in_executor(
+                None,
+                lambda: execute_secrets_task(task_config, context, jinja_env)
+            )
             return result
             
         elif tool_kind == "sink":
-            # Use plugin's execute_sink_task
-            result = await execute_sink_task(task_config, context, jinja_env)
+            # Use plugin's execute_sink_task (sync function - run in executor)
+            loop = asyncio.get_running_loop()
+            result = await loop.run_in_executor(
+                None,
+                lambda: execute_sink_task(task_config, context, jinja_env)
+            )
             return result
             
         elif tool_kind == "workbook":
-            # Use plugin's execute_workbook_task
-            result = await execute_workbook_task(task_config, context, jinja_env, args)
+            # Use plugin's execute_workbook_task (sync function - run in executor)
+            loop = asyncio.get_running_loop()
+            result = await loop.run_in_executor(
+                None,
+                lambda: execute_workbook_task(task_config, context, jinja_env, args)
+            )
             return result
             
         elif tool_kind == "playbook":
-            # Use plugin's execute_playbook_task
-            result = await execute_playbook_task(task_config, context, jinja_env, args)
+            # Use plugin's execute_playbook_task (sync function - run in executor)
+            loop = asyncio.get_running_loop()
+            result = await loop.run_in_executor(
+                None,
+                lambda: execute_playbook_task(task_config, context, jinja_env, args)
+            )
             return result
             
         elif tool_kind == "container":
