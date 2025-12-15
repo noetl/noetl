@@ -6,7 +6,8 @@ metadata:
   description: Test simplified retry configuration options
 
 workload:
-  test_url: https://httpbin.org/get
+  api_url: http://paginated-api.test-server.svc.cluster.local:5555
+  fail_on_page: "1"
   
 workflow:
   - step: start
@@ -14,36 +15,52 @@ workflow:
     next:
       - step: boolean_retry
   - step: boolean_retry
-    desc: Simple boolean retry (uses defaults)
+    desc: Simple on_error retry with defaults
     tool: http
     method: GET
-    url: "{{ workload.test_url }}"
-    retry: true
+    url: "{{ workload.api_url }}/api/v1/flaky"
+    params:
+      page: 1
+      fail_on: "{{ workload.fail_on_page }}"
+    retry:
+      on_error:
+        when: "{{ error.status in [500, 502, 503] }}"
+        max_attempts: 3
+        initial_delay: 0.5
     next:
       - step: integer_retry
         
   - step: integer_retry
-    desc: Integer retry (max attempts only)
+    desc: Retry with custom max attempts
     tool: http
     method: GET
-    url: "{{ workload.test_url }}"
-    retry: 5
+    url: "{{ workload.api_url }}/api/v1/flaky"
+    params:
+      page: 1
+      fail_on: "{{ workload.fail_on_page }}"
+    retry:
+      on_error:
+        when: "{{ error.status in [500, 502, 503] }}"
+        max_attempts: 5
+        initial_delay: 0.5
     next:
       - step: full_config_retry
       
   - step: full_config_retry
-    desc: Full configuration retry
+    desc: Full configuration retry with backoff
     tool: http
     method: GET
-    url: "{{ workload.test_url }}"
+    url: "{{ workload.api_url }}/api/v1/flaky"
+    params:
+      page: 1
+      fail_on: "{{ workload.fail_on_page }}"
     retry:
-      max_attempts: 3
-      initial_delay: 0.5
-      backoff_multiplier: 2.0
-      max_delay: 10.0
-      jitter: true
-      retry_when: "{{ status_code >= 500 }}"
-      stop_when: "{{ status_code == 200 }}"
+      on_error:
+        when: "{{ error.status in [500, 502, 503] }}"
+        max_attempts: 3
+        initial_delay: 0.5
+        backoff_multiplier: 2.0
+        max_delay: 10.0
     next:
       - step: end
         

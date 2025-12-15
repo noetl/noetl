@@ -91,7 +91,7 @@ def execute_task(
     context: Dict[str, Any],
     jinja_env: Environment,
     args: Optional[Dict[str, Any]] = None,
-    log_event_callback: Optional[Callable] = None,
+    event_callback: Optional[Callable] = None
 ) -> Dict[str, Any]:
     """
     Execute a task based on its declared tool.
@@ -109,7 +109,7 @@ def execute_task(
         context: Execution context
         jinja_env: Jinja2 environment for template rendering
         args: Task arguments/parameters
-        log_event_callback: Optional callback for logging events
+        event_callback: Optional callback for emitting iterator/loop events
 
     Returns:
         Task execution result
@@ -118,9 +118,6 @@ def execute_task(
         ValueError: If task tool is unknown or not supported
     """
     # Import plugin executors here to avoid circular imports
-    from noetl.plugin.controller.iterator import (
-        execute_loop_task as execute_iterator_task,
-    )
     from noetl.plugin.controller.playbook import execute_playbook_task
     from noetl.plugin.controller.workbook import execute_workbook_task
     from noetl.plugin.shared.secrets import execute_secrets_task
@@ -136,19 +133,6 @@ def execute_task(
         execute_snowflake_transfer_action,
     )
 
-    # Check if this step has loop configuration (iterator pattern)
-    # If so, delegate to iterator executor regardless of tool type
-    logger.critical(f"EXECUTION.execute_task: task='{task_name}', checking for loop attribute")
-    logger.critical(f"EXECUTION.execute_task: task_config keys = {list(task_config.keys())}")
-    if 'loop' in task_config:
-        logger.critical(f"EXECUTION.execute_task: LOOP DETECTED! loop={task_config.get('loop')}")
-        logger.critical(f"EXECUTION.execute_task: Routing to iterator executor")
-        logger.debug(f"Executing task '{task_name}' with loop configuration")
-        wrapped_context = _wrap_context_results(context)
-        return execute_iterator_task(
-            task_config, wrapped_context, jinja_env, args or {}, log_event_callback
-        )
-    
     task_type, raw_type = _resolve_task_type(task_config)
 
     logger.debug(f"Executing task '{task_name}' of tool '{task_type}'")
@@ -158,71 +142,72 @@ def execute_task(
 
     # Dispatch to appropriate action handler
     if task_type == "http":
-        # HTTP plugin is async for credential caching support
-        # Check if we're already in an async context
+        # Check if retry.on_success is configured - this needs worker-side execution
+        retry_config = task_config.get('retry') if isinstance(task_config, dict) else None
+        
+        if retry_config and retry_config.get('on_success'):
+            # Use worker-side retry wrapper for pagination/polling
+            from noetl.plugin.runtime.retry import execute_with_retry
+            return execute_with_retry(
+                lambda cfg, ctx, env, a: asyncio.run(execute_http_task(cfg, ctx, env, a or {})),
+                task_config,
+                task_name,
+                wrapped_context,
+                jinja_env,
+                args
+            )
+        # HTTP plugin is async - run directly without retry wrapper
+        # on_error retry is handled server-side through event-driven control loop
         try:
             loop = asyncio.get_running_loop()
-            # Already in async context - cannot use asyncio.run()
-            # Create a task and get result synchronously using run_until_complete on a new thread
             import concurrent.futures
             with concurrent.futures.ThreadPoolExecutor() as pool:
                 future = pool.submit(
-                    lambda: asyncio.run(execute_http_task(
-                        task_config, wrapped_context, jinja_env, args or {}, log_event_callback
-                    ))
+                    lambda: asyncio.run(execute_http_task(task_config, wrapped_context, jinja_env, args or {}))
                 )
                 return future.result()
         except RuntimeError:
-            # No running loop - safe to use asyncio.run()
-            return asyncio.run(execute_http_task(
-                task_config, wrapped_context, jinja_env, args or {}, log_event_callback
-            ))
+            return asyncio.run(execute_http_task(task_config, wrapped_context, jinja_env, args or {}))
     elif task_type == "python":
         return execute_python_task(
-            task_config, wrapped_context, jinja_env, args or {}, log_event_callback
+            task_config, wrapped_context, jinja_env, args or {}
         )
     elif task_type == "duckdb":
         return execute_duckdb_task(
-            task_config, wrapped_context, jinja_env, args or {}, log_event_callback
+            task_config, wrapped_context, jinja_env, args or {}
         )
     elif task_type == "container":
         # Lazy import to avoid optional deps unless needed
         from noetl.plugin.tools.container import execute_container_task
         return execute_container_task(
-            task_config, wrapped_context, jinja_env, args or {}, log_event_callback
+            task_config, wrapped_context, jinja_env, args or {}
         )
     elif task_type == "postgres":
         return execute_postgres_task(
-            task_config, wrapped_context, jinja_env, args or {}, log_event_callback
-        )
-    elif task_type == "container":
-        # Lazy import to avoid optional deps unless needed
-        from noetl.plugin.tools.container import execute_container_task
-        return execute_container_task(
-            task_config, wrapped_context, jinja_env, args or {}, log_event_callback
+            task_config, wrapped_context, jinja_env, args or {}
         )
     elif task_type == "snowflake":
         return execute_snowflake_task(
-            task_config, wrapped_context, jinja_env, args or {}, log_event_callback
+            task_config, wrapped_context, jinja_env, args or {}
         )
     elif task_type == "snowflake_transfer":
         return execute_snowflake_transfer_action(
-            task_config, wrapped_context, jinja_env, args or {}, log_event_callback
+            task_config, wrapped_context, jinja_env, args or {}
         )
     elif task_type == "transfer":
         # Generic transfer executor - infers direction from source/target types
         return execute_transfer_action(
-            task_config, wrapped_context, jinja_env, args or {}, log_event_callback
+            task_config, wrapped_context, jinja_env, args or {}
         )
     elif task_type == "secrets":
         # For secrets, we need to get the secret_manager from context or somewhere
         secret_manager = wrapped_context.get("secret_manager")
         return execute_secrets_task(
-            task_config, wrapped_context, secret_manager, args or {}, log_event_callback
+            task_config, wrapped_context, secret_manager, args or {}
         )
     elif task_type == "playbook":
         return execute_playbook_task(
-            task_config, wrapped_context, jinja_env, args or {}, log_event_callback
+            task_config, wrapped_context, jinja_env, args or {}
         )
     elif task_type == "workbook":
         # Workbook tasks need async execution for catalog access
@@ -231,18 +216,17 @@ def execute_task(
             task_config,
             wrapped_context,
             jinja_env,
-            args,
-            log_event_callback,
+            args
         )
     elif task_type == 'sink':
         return execute_sink_task(
-            task_config, wrapped_context, jinja_env, args or {}, log_event_callback
+            task_config, wrapped_context, jinja_env, args or {}
         )
     else:
         raise ValueError(
             f"Unknown task tool '{raw_type}'. "
             f"Available tools: http, python, duckdb, postgres, container, snowflake, snowflake_transfer, transfer, secrets, playbook, workbook, save. "
-            f"Note: Use 'loop:' attribute to iterate over collections, not 'tool: iterator'."
+            f"Note: 'loop:' attribute is handled server-side for distributed iteration."
         )
 
 
@@ -251,8 +235,7 @@ def _execute_workbook_async(
     task_config: Dict[str, Any],
     context: Dict[str, Any],
     jinja_env: Environment,
-    args: Optional[Dict[str, Any]],
-    log_event_callback: Optional[Callable],
+    args: Optional[Dict[str, Any]]
 ) -> Dict[str, Any]:
     """
     Execute workbook task with proper async handling.
@@ -266,7 +249,6 @@ def _execute_workbook_async(
         context: Execution context
         jinja_env: Jinja2 environment
         args: Task arguments
-        log_event_callback: Optional event logging callback
 
     Returns:
         Task execution result
@@ -280,7 +262,7 @@ def _execute_workbook_async(
         asyncio.set_event_loop(loop)
 
     return loop.run_until_complete(
-        execute_workbook_task(task_config, context, jinja_env, args, log_event_callback)
+        execute_workbook_task(task_config, context, jinja_env, args)
     )
 
 
@@ -289,8 +271,7 @@ def execute_task_resolved(
     task_name: str,
     context: Dict[str, Any],
     jinja_env: Environment,
-    args: Optional[Dict[str, Any]] = None,
-    log_event_callback: Optional[Callable] = None,
+    args: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     """
     Execute a task with resolved configuration.
@@ -303,11 +284,10 @@ def execute_task_resolved(
         context: Execution context
         jinja_env: Jinja2 environment for template rendering
         args: Task arguments
-        log_event_callback: Optional callback for logging events
 
     Returns:
         Task execution result
     """
     return execute_task(
-        task_config, task_name, context, jinja_env, args, log_event_callback
+        task_config, task_name, context, jinja_env, args
     )

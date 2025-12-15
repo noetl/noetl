@@ -30,28 +30,29 @@ router = APIRouter()
 
 
 @router.post("/events", response_model=EventEmitResponse)
-async def emit_event_legacy(payload: EventEmitRequest):
-    """Worker compatibility endpoint - POST /api/events."""
-    return await emit_event(payload)
-
-
-@router.post("/event/emit", response_model=EventEmitResponse)
 async def emit_event(payload: EventEmitRequest):
-    """Emit event and trigger orchestration."""
+    """
+    Emit event and trigger orchestration.
+    
+    Single unified endpoint for all event emissions (workers and internal).
+    Replaces both /api/events and /api/event/emit for consistency.
+    """
     try:
-        logger.debug(f"EMIT EVENT: execution_id={payload.execution_id}, type={payload.event_type}")
+        logger.info(f"EMIT_EVENT: execution_id={payload.execution_id}, type={payload.event_type}, node={payload.node_name}")
         result = await EventService.emit_event(payload)
+        logger.info(f"EVENT_STORED: event_id={result.event_id}, triggering orchestration")
         await evaluate_execution(
             execution_id=payload.execution_id,
             trigger_event_type=payload.event_type,
             trigger_event_id=result.event_id
         )
+        logger.info(f"ORCHESTRATION_TRIGGERED: execution_id={payload.execution_id}, event_id={result.event_id}")
         return result
     except ValueError as e:
         logger.error(f"Validation error emitting event: {e}")
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        logger.error(f"Error emitting event: {e}")
+        logger.exception(f"Error emitting event for execution_id={payload.execution_id}, event_type={payload.event_type}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

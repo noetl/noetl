@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import datetime
 import time
 import traceback
 from typing import Any, Awaitable, Callable, Dict, Optional, Union
@@ -288,7 +289,9 @@ class JobExecutor:
                     err_msg,
                     tb_text,
                     result,
+                    context=self._sanitize_context_for_event(exec_ctx) if exec_ctx and isinstance(exec_ctx, dict) else None,
                 )
+                
                 await self._emit_event(error_event)
                 emitted_error = True
                 raise TaskExecutionError(
@@ -301,7 +304,9 @@ class JobExecutor:
                 action_duration,
                 result,
                 action_started_event_id,
+                context=self._sanitize_context_for_event(exec_ctx) if exec_ctx and isinstance(exec_ctx, dict) else None,
             )
+            
             await self._emit_event(complete_event)
 
             await self._emit_step_result(
@@ -323,7 +328,9 @@ class JobExecutor:
                 f"{type(exc).__name__}: {exc}",
                 tb_text,
                 {"error": str(exc), "stack_trace": tb_text},
+                context=self._sanitize_context_for_event(exec_ctx) if exec_ctx and isinstance(exec_ctx, dict) else None,
             )
+            
             if not emitted_error:
                 await self._emit_event(error_event)
             raise
@@ -478,6 +485,62 @@ class JobExecutor:
         if upper in legacy_map:
             return legacy_map[upper]
         raise ValueError(f"Unsupported step result status: {raw_status}")
+    
+    def _sanitize_context_for_event(self, context: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Sanitize execution context for event storage.
+        
+        Removes sensitive data and limits size to prevent bloat.
+        Keeps execution state needed for workflow continuation.
+        
+        Args:
+            context: Full execution context
+            
+        Returns:
+            Sanitized context safe for event storage
+        """
+        if not context or not isinstance(context, dict):
+            return {}
+        
+        # Start with copy to avoid modifying original
+        sanitized = {}
+        
+        # Include essential execution state
+        safe_keys = [
+            'execution_id', 'job_id', 'catalog_id',
+            'workload',  # Workflow variables
+            'vars',  # Extracted variables
+        ]
+        
+        for key in safe_keys:
+            if key in context:
+                value = context[key]
+                # Limit size of large objects
+                if isinstance(value, dict) and len(str(value)) > 10000:
+                    sanitized[key] = {'_truncated': True, '_size': len(str(value))}
+                elif isinstance(value, list) and len(str(value)) > 10000:
+                    sanitized[key] = {'_truncated': True, '_size': len(value)}
+                else:
+                    sanitized[key] = value
+        
+        # Add step results summary (not full data)
+        step_results = {}
+        for key, value in context.items():
+            # Skip internal keys and already captured keys
+            if key.startswith('_') or key in safe_keys:
+                continue
+            # Capture step results metadata
+            if isinstance(value, dict) and ('status' in value or 'data' in value):
+                step_results[key] = {
+                    'has_data': 'data' in value,
+                    'status': value.get('status'),
+                    'data_type': type(value.get('data')).__name__ if 'data' in value else None
+                }
+        
+        if step_results:
+            sanitized['_step_results'] = step_results
+        
+        return sanitized
 
     def _base_event(self, prepared: PreparedJob) -> Dict[str, Any]:
         event = {
@@ -528,14 +591,57 @@ class JobExecutor:
         error_message: str,
         stack_trace: str,
         result: Dict[str, Any],
+        context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
+        # Extract retry config and attempt number for server-side retry handling
+        task_config = prepared.action_cfg
+        retry_config = task_config.retry if task_config else None
+        attempt_number = 1
+        meta = {}
+        
+        if retry_config and isinstance(retry_config, dict):
+            attempt_number = retry_config.get('_attempt_number', 1)
+            
+            # Put retry details in meta
+            meta['retry'] = {
+                'has_config': True,
+                'attempt_number': attempt_number,
+                'max_attempts': retry_config.get('on_error', {}).get('max_attempts', 1),
+                'retry_type': 'on_error',
+                'will_retry': attempt_number < retry_config.get('on_error', {}).get('max_attempts', 1)
+            }
+        
         extra = {
             "result": result,
             "error": error_message,
             "stack_trace": stack_trace,
         }
+        
+        # Add error details to meta
+        meta['error'] = {
+            'message': (error_message[:500] if error_message else "Unknown error"),  # Truncate for meta
+            'has_stack_trace': bool(stack_trace),
+            'failed_at': datetime.datetime.now(datetime.timezone.utc).isoformat()
+        }
+        
         if duration is not None:
             extra["duration"] = duration
+            meta['execution'] = {'duration_seconds': duration}
+        
+        # Add retry metadata for server-side retry decision
+        if retry_config:
+            extra["data"] = {
+                "error": error_message,
+                "retry_config": retry_config,
+                "attempt_number": attempt_number
+            }
+        
+        if meta:
+            extra['meta'] = meta
+        
+        if context:
+            extra['context'] = context
+        
         return self._build_event_payload(
             prepared,
             event_type="action_failed",
@@ -551,7 +657,45 @@ class JobExecutor:
         duration: float,
         result: Dict[str, Any],
         action_started_event_id: Optional[str],
+        context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
+        # Extract retry config and attempt number from task config for server-side retry handling
+        extra = {}
+        meta = {}
+        task_config = prepared.action_cfg
+        
+        if task_config and task_config.retry:
+            retry_config = task_config.retry
+            if retry_config:
+                # Put retry details in meta for better tracking
+                meta['retry'] = {
+                    'has_config': True,
+                    'attempt_number': retry_config.get('_attempt_number', 1),
+                    'max_attempts': retry_config.get('on_error', {}).get('max_attempts') or retry_config.get('on_success', {}).get('max_attempts'),
+                    'retry_type': 'on_error' if 'on_error' in retry_config else ('on_success' if 'on_success' in retry_config else None)
+                }
+                
+                # Include full retry_config in result for server to make retry decisions
+                # Wrap the actual result along with retry metadata
+                result_with_retry = {
+                    'result': result.get('data') if isinstance(result, dict) else result,
+                    'retry_config': retry_config,
+                    'attempt_number': retry_config.get('_attempt_number', 1)
+                }
+                result = result_with_retry
+        
+        # Add execution details to meta
+        meta['execution'] = {
+            'duration_seconds': duration,
+            'completed_at': datetime.datetime.now(datetime.timezone.utc).isoformat()
+        }
+        
+        if meta:
+            extra['meta'] = meta
+        
+        if context:
+            extra['context'] = context
+        
         return self._build_event_payload(
             prepared,
             event_type="action_completed",
@@ -560,6 +704,7 @@ class JobExecutor:
             duration=duration,
             result=result,
             parent_event_override=action_started_event_id,
+            **extra
         )
 
     async def _emit_step_result(

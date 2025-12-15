@@ -135,6 +135,14 @@ class QueueService:
                 if metadata:
                     meta.update(metadata)
                 
+                # Convert parent_execution_id to int if provided
+                parent_execution_id_int = None
+                if parent_execution_id:
+                    try:
+                        parent_execution_id_int = QueueService.normalize_execution_id(parent_execution_id)
+                    except (ValueError, TypeError):
+                        logger.warning(f"Invalid parent_execution_id: {parent_execution_id}, setting to None")
+                
                 # Build INSERT query with all fields including meta
                 await cur.execute(
                     """
@@ -143,13 +151,13 @@ class QueueService:
                         node_id, node_name, node_type,
                         action, context, status, priority,
                         attempts, max_attempts, available_at,
-                        parent_event_id, event_id, meta, created_at, updated_at
+                        parent_execution_id, parent_event_id, event_id, meta, created_at, updated_at
                     ) VALUES (
                         %(queue_id)s, %(execution_id)s, %(catalog_id)s,
                         %(node_id)s, %(node_name)s, %(node_type)s,
                         %(action)s, %(context)s, %(status)s, %(priority)s,
                         %(attempts)s, %(max_attempts)s, %(available_at)s,
-                        %(parent_event_id)s, %(event_id)s, %(meta)s, %(created_at)s, %(updated_at)s
+                        %(parent_execution_id)s, %(parent_event_id)s, %(event_id)s, %(meta)s, %(created_at)s, %(updated_at)s
                     )
                     ON CONFLICT (execution_id, node_id) DO NOTHING
                     RETURNING queue_id
@@ -169,6 +177,7 @@ class QueueService:
                         "max_attempts": max_attempts,
                         "available_at": available_at,
                         "parent_event_id": parent_event_id,
+                        "parent_execution_id": parent_execution_id_int,
                         "event_id": event_id,
                         "meta": json.dumps(meta) if meta else None,
                         "created_at": datetime.now(timezone.utc),
@@ -960,10 +969,11 @@ class QueueService:
                     UPDATE noetl.queue
                     SET status='queued', worker_id=NULL, lease_until=NULL
                     WHERE status='leased' AND lease_until IS NOT NULL AND lease_until < now()
-                    RETURNING id
+                    RETURNING queue_id
                     """
                 )
                 rows = await cur.fetchall()
                 await conn.commit()
         
         return ReapResponse(reclaimed=len(rows))
+

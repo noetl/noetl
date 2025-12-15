@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.8.0](https://github.com/noetl/noetl/compare/v1.7.1...v1.8.0) (2025-12-09)
+
+### Features
+
+* implement Amadeus AI chat interface with GraphQL integration and CORS support ([aa6cde2](https://github.com/noetl/noetl/commit/aa6cde227ef3da7620536d1731903a939b59446f))
+* **orchestration:** enhance loop execution logic and unify event handling ([c5e32bd](https://github.com/noetl/noetl/commit/c5e32bd65762209413260b1e14309855b48a2a59))
+* **orchestration:** implement dynamic template rendering for collections ([d074dca](https://github.com/noetl/noetl/commit/d074dca699363c09f9786e7c59aeff8f1dfed8b1))
+* **retry:** enhance retry configuration and testing with detailed conditions ([c20a20d](https://github.com/noetl/noetl/commit/c20a20d7cb2a8cfadc184649bd008383a2d7e0d2))
+
+### Bug Fixes
+
+* add critical analysis and fix proposal for loop completion bug ([e535186](https://github.com/noetl/noetl/commit/e535186ee2bb4741dbed287202c26e46b4a2fa6c))
+* enhance sink restoration, workload handling, and template rendering ([e6331ce](https://github.com/noetl/noetl/commit/e6331cedb482982609dcf709f93aee424b090038))
+* handle None error messages in job execution metadata ([4253e0a](https://github.com/noetl/noetl/commit/4253e0a815f2041ead63fee85ecb70c86f3d34d7))
+* Increase HTTP client timeout to 120s to support complex template rendering ([8845358](https://github.com/noetl/noetl/commit/8845358372b5ae9808135fac2d9f5808a9b00fac))
+* streamline content, focus on key workflows and usage scenarios with semantic-release. ([389d64d](https://github.com/noetl/noetl/commit/389d64d26062665c7140b84564ee54787d194c70))
+* Test Semantic Release with branch protection rule ([48317d4](https://github.com/noetl/noetl/commit/48317d433c0b2a9c2dc20af49073150c0b7feb5a))
+* **tests:** update `regression_dashboard.ipynb` to convert RecordBatchReader to Table before writing parquet file ([79f5ea4](https://github.com/noetl/noetl/commit/79f5ea4509531f884a93019218decbd8b28344fc))
+* update application configuration in env.example for router port and base URL ([aaa1fb9](https://github.com/noetl/noetl/commit/aaa1fb95a55dccfbda1ffe4079797c0b2bc1318d))
+* update title and header to reflect Cybx AI branding ([3611bb6](https://github.com/noetl/noetl/commit/3611bb6f0248197aad8164667812c2bd43af3deb))
+
 ## [1.7.1](https://github.com/noetl/noetl/compare/v1.7.0...v1.7.1) (2025-12-05)
 
 ### Bug Fixes

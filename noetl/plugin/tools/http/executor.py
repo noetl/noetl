@@ -34,12 +34,14 @@ async def execute_http_task(
     """
     Execute an HTTP task with async authentication resolution and credential caching.
 
+    Supports pagination via 'pagination' configuration block at task level.
+
     Args:
         task_config: The task configuration
         context: The context to use for rendering templates
         jinja_env: The Jinja2 environment for template rendering
         task_with: The rendered 'with' parameters dictionary
-        log_event_callback: A callback function to log events
+        log_event_callback: Optional callback for logging events (used by sink operations)
 
     Returns:
         A dictionary of the task result
@@ -58,8 +60,11 @@ async def execute_http_task(
     logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Generated task_id={task_id}")
     logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Task name={task_name}")
     logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Start time={start_time.isoformat()}")
+    
+    # Standard HTTP execution (pagination/polling now handled by unified retry system)
 
     try:
+            
         logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Rendering HTTP task configuration")
         method = task_config.get('method', 'GET').upper()
         logger.debug(f"HTTP.EXECUTE_HTTP_TASK: HTTP method={method}")
@@ -102,15 +107,6 @@ async def execute_http_task(
         timeout = task_config.get('timeout', 30)
         logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Timeout={timeout}")
 
-        event_id = None
-        if log_event_callback:
-            logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Writing task_start event log")
-            event_id = log_event_callback(
-                'task_start', task_id, task_name, 'http',
-                'in_progress', 0, context, None,
-                {'method': method, 'endpoint': endpoint, 'with_params': task_with}, None
-            )
-
         try:
             # Check for local domain mocking
             if _should_mock_request(endpoint):
@@ -118,8 +114,7 @@ async def execute_http_task(
                 mock_data = create_mock_response(endpoint, method, params, payload, data_map)
                 return _complete_task(
                     task_id, task_name, start_time, 'success', mock_data,
-                    method, endpoint, task_with, context, event_id, log_event_callback,
-                    mocked=True
+                    method, endpoint, task_with, mocked=True
                 )
 
             # Execute the actual HTTP request
@@ -154,7 +149,7 @@ async def execute_http_task(
 
                 return _complete_task(
                     task_id, task_name, start_time, result['status'], result.get('data'),
-                    method, endpoint, task_with, context, event_id, log_event_callback
+                    method, endpoint, task_with
                 )
 
         except httpx.HTTPStatusError as e:
@@ -170,8 +165,7 @@ async def execute_http_task(
                 mock_data['data']['error'] = error_msg
                 return _complete_task(
                     task_id, task_name, start_time, 'success', mock_data,
-                    method, endpoint, task_with, context, event_id, log_event_callback,
-                    mocked=True
+                    method, endpoint, task_with, mocked=True
                 )
             raise Exception(error_msg)
         except httpx.TimeoutException as e:
@@ -185,14 +179,6 @@ async def execute_http_task(
         end_time = datetime.datetime.now()
         duration = (end_time - start_time).total_seconds()
         logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Task duration={duration} seconds (error path)")
-
-        if log_event_callback:
-            logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Writing task_error event log")
-            log_event_callback(
-                'task_error', task_id, task_name, 'http',
-                'error', duration, context, None,
-                {'error': error_msg, 'with_params': task_with}, event_id
-            )
 
         result = {
             'id': task_id,
@@ -328,13 +314,10 @@ def _complete_task(
     method: str,
     endpoint: str,
     task_with: Dict[str, Any],
-    context: Dict[str, Any],
-    event_id: Optional[str],
-    log_event_callback: Optional[Callable],
     mocked: bool = False
 ) -> Dict[str, Any]:
     """
-    Complete task execution and log results.
+    Complete task execution and return result envelope.
     
     Args:
         task_id: Task identifier
@@ -345,27 +328,14 @@ def _complete_task(
         method: HTTP method
         endpoint: Target endpoint
         task_with: Task with parameters
-        context: Execution context
-        event_id: Event identifier
-        log_event_callback: Event logging callback
         mocked: Whether response was mocked
-        
+
     Returns:
         Task result dictionary
     """
     end_time = datetime.datetime.now()
     duration = (end_time - start_time).total_seconds()
     logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Task duration={duration} seconds")
-
-    if log_event_callback:
-        logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Writing task_complete event log")
-        meta = {'method': method, 'endpoint': endpoint, 'with_params': task_with}
-        if mocked:
-            meta['mocked'] = True
-        log_event_callback(
-            'task_complete', task_id, task_name, 'http',
-            status, duration, context, data, meta, event_id
-        )
 
     result = {'id': task_id, 'status': status, 'data': data}
     logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Returning result={result}")
