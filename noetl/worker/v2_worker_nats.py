@@ -297,7 +297,6 @@ class V2Worker:
         """
         # Import plugin executors
         from noetl.plugin import (
-            execute_python_task,
             execute_http_task,
             execute_postgres_task,
             execute_duckdb_task,
@@ -306,6 +305,8 @@ class V2Worker:
             execute_workbook_task,
             execute_playbook_task,
         )
+        # Import async version of Python executor
+        from noetl.plugin.tools.python import execute_python_task_async
         from jinja2 import Environment, BaseLoader
         
         # Create minimal context for plugin execution
@@ -319,12 +320,13 @@ class V2Worker:
         task_config = {**config, "args": args, "name": step}
         
         if tool_kind == "python":
-            # Use plugin's execute_python_task which includes:
+            # Use plugin's execute_python_task_async (not the sync wrapper!)
+            # This includes:
             # - Script loading (GCS/S3/HTTP/file)
             # - Base64 code support
             # - Kwargs unpacking
             # - Error handling
-            result = execute_python_task(task_config, context, jinja_env, args)
+            result = await execute_python_task_async(task_config, context, jinja_env, args)
             # Normalize result - plugin returns dict, may need to extract 'data' or 'result'
             if isinstance(result, dict):
                 return result.get('data', result.get('result', result))

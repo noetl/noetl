@@ -261,8 +261,8 @@ See `tests/fixtures/playbooks/script_execution/` and `docs/script_attribute_desi
   - User: `noetl` / Password: `noetl` (NoETL metadata schema)
   - Schema: `noetl` (for NoETL system tables: catalog, event, queue, etc.)
 - **NoETL API for Postgres Queries**:
-  - Endpoint: `POST http://localhost:30082/api/postgres/execute`
-  - Documentation: `http://localhost:30082/docs#/default/execute_postgres_api_postgres_execute_post`
+  - Endpoint: `POST http://localhost:8082/api/postgres/execute` (NOT 30082!)
+  - Documentation: `http://localhost:8082/docs#/default/execute_postgres_api_postgres_execute_post`
   - **Use this REST API instead of running `psql` commands directly**
   - Request body examples:
     ```json
@@ -291,6 +291,17 @@ See `tests/fixtures/playbooks/script_execution/` and `docs/script_attribute_desi
 - Local: Direct Python execution with file-based logs
 - Docker: Containerized with environment-based configuration
 - Kubernetes: Helm charts with unified observability stack (Grafana, VictoriaMetrics, ClickHouse)
+
+**Kind Cluster Port Mappings (CRITICAL):**
+- **Port mappings are PERMANENT** - defined in `ci/kind/config.yaml`
+- **DO NOT use `kubectl port-forward`** - ports are already mapped to localhost
+- **Use localhost ports directly**: 
+  - NoETL API: `http://localhost:8082` (maps to NodePort 30082)
+  - Postgres: `localhost:54321` (maps to NodePort 30321)
+  - ClickHouse HTTP: `localhost:30123` (maps to NodePort 30123)
+  - Test Server: `localhost:30555` (maps to NodePort 30555)
+- See `ci/kind/config.yaml` for complete port mapping list
+- After rebuilding containers, ports remain the same - no need to re-map
 
 **Observability Stack:**
 - **ClickHouse**: Column-oriented database for logs, metrics, and traces (OpenTelemetry format)
