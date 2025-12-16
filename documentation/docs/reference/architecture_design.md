@@ -1147,16 +1147,16 @@ Implement a core set of actions (extendable):
   * Write data to an external sink; reuse existing semantics from v1 sink blocks, but now callable as an action.
 
   * Example:
-
+```
      sink:  
      tool:  
      kind: postgres  
-     auth: "{{ workload.pg\_auth }}"  
+     auth: "{{ workload.pg_auth }}"  
      command: |  
      INSERT INTO events (...)  
      args:  
      value: "{{ result.value }}"
-
+```
 * set:
 
   * Mutate context (ctx, flags, counters, etc.).
