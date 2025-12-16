@@ -507,7 +507,7 @@ async with get_pool_connection() as conn:
 - ❌ NO `get_async_db_connection()` usage
 - ❌ NO tuple parameters `%s` with `(value,)`
 - ❌ NO manual `commit()` calls (pool handles automatically)
-       
+  ```     
        Args:
            execution_id: Execution ID
            vars_config: Variables to set/update
@@ -538,10 +538,11 @@ async with get_pool_connection() as conn:
                var_type='user_defined',
                source_step=step_name
            )
-   ```  Get all variables for execution as flat dict.
-        Returns: {var_name: var_value, ...}
-        """
-    
+  ```
+
+Get all variables for execution as flat dict. Returns: `{var_name: var_value, ...}`
+
+  ```python
     @staticmethod
     async def delete_var(
         var_name: str,
@@ -552,7 +553,7 @@ async with get_pool_connection() as conn:
     @staticmethod
     async def cleanup_execution(execution_id: int) -> int:
         """Delete all variables for execution. Returns count deleted."""
-```
+  ```
 
 **Additional API endpoints** (`noetl/server/api/vars/`):
 - `endpoint.py`: REST API for external variable management
