@@ -133,6 +133,7 @@ CREATE TABLE IF NOT EXISTS noetl.credential (
     name TEXT NOT NULL UNIQUE,
     type TEXT NOT NULL,
     data_encrypted TEXT NOT NULL,
+    schema JSONB,
     meta JSONB,
     tags TEXT[],
     description TEXT,
@@ -431,6 +432,7 @@ CREATE TABLE IF NOT EXISTS noetl.keychain (
     execution_id BIGINT,
     parent_execution_id BIGINT,
     data_encrypted TEXT NOT NULL,
+    schema JSONB,
     expires_at TIMESTAMPTZ NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     accessed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -447,7 +449,7 @@ CREATE INDEX IF NOT EXISTS idx_keychain_name ON noetl.keychain (keychain_name);
 CREATE INDEX IF NOT EXISTS idx_keychain_catalog ON noetl.keychain (catalog_id);
 CREATE INDEX IF NOT EXISTS idx_keychain_name_catalog ON noetl.keychain (keychain_name, catalog_id);
 
-COMMENT ON TABLE noetl.keychain IS 'Caches decrypted credentials and tokens with TTL, scoped to playbook catalog';
+COMMENT ON TABLE noetl.keychain IS 'Caches decrypted credentials and tokens with TTL, scoped to playbook catalog. Schema field defines expected data structure for validation.';
 COMMENT ON COLUMN noetl.keychain.cache_key IS 'Unique cache key: <keychain_name>:<catalog_id>:<execution_id> for local scope, <keychain_name>:<catalog_id>:global for global tokens';
 COMMENT ON COLUMN noetl.keychain.keychain_name IS 'Name of the keychain entry defined in playbook (e.g., amadeus_token, postgres_creds)';
 COMMENT ON COLUMN noetl.keychain.catalog_id IS 'References the playbook catalog entry that defined this keychain';
