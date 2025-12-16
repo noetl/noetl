@@ -9,7 +9,7 @@ metadata:
 workload:
   execution_id: '{{ job.uuid }}'
   pg_auth: pg_local
-  oauth_cred: google_oauth
+  gcp_auth: google_oauth
   openai_secret_path: projects/1014428265962/secrets/openai-api-key/versions/1
   amadeus_key_path: projects/1014428265962/secrets/api-key-test-api-amadeus-com/versions/1
   amadeus_secret_path: projects/1014428265962/secrets/api-secret-test-api-amadeus-com/versions/1
@@ -20,7 +20,7 @@ keychain:
     kind: secret_manager
     provider: gcp
     scope: global
-    auth: google_oauth
+    auth: "{{ workload.gcp_auth }}"
     map:
       api_key: '{{ workload.openai_secret_path }}'
 
@@ -28,10 +28,10 @@ keychain:
     kind: secret_manager
     provider: gcp
     scope: global
-    auth: google_oauth
+    auth: "{{ workload.gcp_auth }}"
     map:
-      client_id_key: '{{ workload.amadeus_key_path }}'
-      client_secret_key: '{{ workload.amadeus_secret_path }}'
+      client_id: '{{ workload.amadeus_key_path }}'
+      client_secret: '{{ workload.amadeus_secret_path }}'
 
   - name: amadeus_token
     kind: oauth2
@@ -43,8 +43,8 @@ keychain:
       Content-Type: application/x-www-form-urlencoded
     data:
       grant_type: client_credentials
-      client_id: '{{ keychain.amadeus_credentials.client_id_key }}'
-      client_secret: '{{ keychain.amadeus_credentials.client_secret_key }}'
+      client_id: '{{ keychain.amadeus_credentials.client_id }}'
+      client_secret: '{{ keychain.amadeus_credentials.client_secret }}'
 
 workflow:
 - step: start
