@@ -37,6 +37,10 @@ def add_b64encode_filter(env: Environment) -> Environment:
     # Provide a tojson filter for templates that need JSON stringification
     if 'tojson' not in env.filters:
         env.filters['tojson'] = lambda obj: json.dumps(obj, cls=DateTimeEncoder)
+    # Provide encrypt_secret filter for caching sensitive data
+    if 'encrypt_secret' not in env.filters:
+        from noetl.core.secret import encrypt_json
+        env.filters['encrypt_secret'] = lambda s: encrypt_json(json.loads(s) if isinstance(s, str) else s)
     return env
 
 

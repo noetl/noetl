@@ -15,6 +15,37 @@ workload:
   amadeus_secret_path: projects/1014428265962/secrets/api-secret-test-api-amadeus-com/versions/1
   query: I want a one-way flight from SFO to JFK on March 15, 2026 for 1 adult
 
+keychain:
+  - name: amadeus_credentials
+    kind: secret_manager
+    provider: gcp
+    scope: global
+    auth: google_oauth
+    map:
+      client_id_key: '{{ workload.amadeus_key_path }}'
+      client_secret_key: '{{ workload.amadeus_secret_path }}'
+
+  - name: openai_token
+    kind: secret_manager
+    provider: gcp
+    scope: global
+    auth: google_oauth
+    map:
+      api_key: '{{ workload.openai_secret_path }}'
+
+  - name: amadeus_token
+    kind: oauth2
+    scope: global
+    auto_renew: true
+    endpoint: https://test.api.amadeus.com/v1/security/oauth2/token
+    method: POST
+    headers:
+      Content-Type: application/x-www-form-urlencoded
+    data:
+      grant_type: client_credentials
+      client_id: '{{ keychain.amadeus_credentials.client_id }}'
+      client_secret: '{{ keychain.amadeus_credentials.client_secret }}'
+
 workflow:
 - step: start
   desc: Initialize workflow and create database tables
@@ -45,28 +76,6 @@ workflow:
         details JSONB
       );
   next:
-  - step: get_amadeus_token
-
-- step: get_amadeus_token
-  desc: Get Amadeus API access token using OAuth2 client credentials
-  tool:
-    kind: http
-    method: POST
-    endpoint: https://test.api.amadeus.com/v1/security/oauth2/token
-    headers:
-      Content-Type: application/x-www-form-urlencoded
-    auth:
-      amadeus:
-        type: oauth2_client_credentials
-        provider: secret_manager
-        client_id_key: '{{ workload.amadeus_key_path }}'
-        client_secret_key: '{{ workload.amadeus_secret_path }}'
-        oauth_credential: '{{ workload.oauth_cred }}'
-    data:
-      grant_type: client_credentials
-      client_id: '{{ auth.amadeus.client_id }}'
-      client_secret: '{{ auth.amadeus.client_secret }}'
-  next:
   - step: translate_query_to_amadeus
 
 - step: translate_query_to_amadeus
@@ -75,12 +84,8 @@ workflow:
     kind: http
     method: POST
     endpoint: https://api.openai.com/v1/chat/completions
-    auth:
-      openai:
-        type: bearer
-        provider: secret_manager
-        key: '{{ workload.openai_secret_path }}'
-        oauth_credential: '{{ workload.oauth_cred }}'
+    headers:
+      Authorization: "Bearer {{ keychain.openai_token.api_key }}"
     payload:
       model: gpt-4o-mini
       messages:
@@ -197,7 +202,7 @@ workflow:
     endpoint: https://test.api.amadeus.com{{ parse_openai_response.endpoint }}
     params: '{{ parse_openai_response.params }}'
     headers:
-      Authorization: Bearer {{ get_amadeus_token.data.access_token }}
+      Authorization: "Bearer {{ keychain.amadeus_token.access_token }}"
   case:
     # Retry on 5xx server errors
     - when: "{{ event.name == 'call.done' and error is defined and error.status in [500, 502, 503] }}"
@@ -235,12 +240,8 @@ workflow:
     kind: http
     method: POST
     endpoint: https://api.openai.com/v1/chat/completions
-    auth:
-      openai:
-        type: bearer
-        provider: secret_manager
-        key: '{{ workload.openai_secret_path }}'
-        oauth_credential: '{{ workload.oauth_cred }}'
+    headers:
+      Authorization: "Bearer {{ keychain.openai_token.api_key }}"
     payload:
       model: gpt-4o-mini
       messages:
