@@ -331,7 +331,7 @@ async def handle_event(req: EventRequest) -> EventResponse:
                         command.step,
                         command.step,  # node_name = node_id for V2 DSL
                         command.tool.kind,
-                        Json({"tool_config": command.tool.config, "args": command.args}),
+                        Json({"tool_config": command.tool.config, "args": command.args, "render_context": command.render_context}),
                         "queued",
                         command.priority,
                         0,

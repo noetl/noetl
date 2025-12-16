@@ -17,7 +17,6 @@ import os
 from typing import Optional, Any
 from datetime import datetime, timezone
 
-from noetl.core.db.pool import get_pool_connection
 from noetl.core.logger import setup_logger
 from noetl.core.messaging import NATSCommandSubscriber
 
@@ -190,6 +189,10 @@ class V2Worker:
         
         logger.info(f"Executing {step} (tool={tool_kind}) for execution {execution_id}")
         
+        # Ensure execution_id is in render_context for keychain resolution
+        if "execution_id" not in render_context:
+            render_context["execution_id"] = execution_id
+        
         try:
             # Emit step.enter event
             await self._emit_event(
@@ -248,35 +251,8 @@ class V2Worker:
                 }
             )
             
-            # Update queue status to failed
-            try:
-                await self._update_queue_status(queue_id, "failed", str(e))
-            except Exception as update_err:
-                logger.error(f"Failed to update queue status: {update_err}")
-    
-    async def _update_queue_status(self, queue_id: int, status: str, error: str = None):
-        """Update queue item status."""
-        async with get_pool_connection() as conn:
-            async with conn.cursor() as cur:
-                if error:
-                    await cur.execute("""
-                        UPDATE noetl.queue
-                        SET status = %s,
-                            updated_at = NOW(),
-                            context = jsonb_set(
-                                COALESCE(context, '{}'::jsonb),
-                                '{error}',
-                                to_jsonb(%s::text)
-                            )
-                        WHERE queue_id = %s
-                    """, (status, error, queue_id))
-                else:
-                    await cur.execute("""
-                        UPDATE noetl.queue
-                        SET status = %s, updated_at = NOW()
-                        WHERE queue_id = %s
-                    """, (status, queue_id))
-            await conn.commit()
+            # Queue status is managed by server via events
+            # Worker does NOT update queue table directly
     
     async def _execute_tool(
         self,
@@ -314,6 +290,13 @@ class V2Worker:
         # Use render_context from engine (includes workload, step results, execution_id, etc.)
         # This allows plugins to render Jinja2 templates with full state
         context = render_context if render_context else {"args": args, "step": step}
+        
+        logger.info(f"WORKER: Initial context keys: {list(context.keys())}")
+        logger.info(f"WORKER: execution_id in context: {context.get('execution_id')}")
+        logger.info(f"WORKER: catalog_id in context: {context.get('catalog_id')}")
+        
+        # Note: catalog_id should come from server in render_context
+        # Worker does NOT query noetl database - only executes tool steps
         
         # Add job metadata to context for {{ job.uuid }} templates
         if "job" not in context:
@@ -512,7 +495,11 @@ class V2Worker:
         
         # If no auth specified, use default connection
         if not auth_spec:
-            async with get_pool_connection() as conn:
+            from noetl.core.common import get_pgdb_connection
+            import psycopg
+            
+            conn_params = get_pgdb_connection()
+            async with await psycopg.AsyncConnection.connect(**conn_params) as conn:
                 async with conn.cursor() as cur:
                     await cur.execute(query, args if args else None)
                     
@@ -700,9 +687,11 @@ class V2Worker:
         
         if backend == "postgres":
             # Use postgres plugin to insert data
-            from noetl.core.db.pool import get_pool_connection
+            from noetl.core.common import get_pgdb_connection
+            import psycopg
             
-            async with get_pool_connection() as conn:
+            conn_params = get_pgdb_connection()
+            async with await psycopg.AsyncConnection.connect(**conn_params) as conn:
                 async with conn.cursor() as cur:
                     # Normalize data to list of dicts
                     rows = data if isinstance(data, list) else [data]
@@ -816,11 +805,8 @@ async def run_v2_worker(
     server_url: Optional[str] = None
 ):
     """Run a V2 worker instance."""
-    # Initialize database pool for postgres tool execution
-    from noetl.core.db.pool import init_pool, close_pool
-    from noetl.core.common import get_pgdb_connection
-    await init_pool(get_pgdb_connection())
-    logger.info("Database pool initialized")
+    # No database pool initialization - worker uses direct connections per step
+    logger.info("V2 Worker uses direct database connections (no pool)")
     
     worker = V2Worker(
         worker_id=worker_id,
@@ -837,7 +823,6 @@ async def run_v2_worker(
         raise
     finally:
         await worker.cleanup()
-        await close_pool()
         logger.info("Worker cleanup complete")
 
 

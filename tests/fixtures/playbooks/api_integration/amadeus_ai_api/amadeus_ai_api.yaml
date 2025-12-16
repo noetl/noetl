@@ -16,6 +16,14 @@ workload:
   query: I want a one-way flight from SFO to JFK on March 15, 2026 for 1 adult
 
 keychain:
+  - name: openai_token
+    kind: secret_manager
+    provider: gcp
+    scope: global
+    auth: google_oauth
+    map:
+      api_key: '{{ workload.openai_secret_path }}'
+
   - name: amadeus_credentials
     kind: secret_manager
     provider: gcp
@@ -24,14 +32,6 @@ keychain:
     map:
       client_id_key: '{{ workload.amadeus_key_path }}'
       client_secret_key: '{{ workload.amadeus_secret_path }}'
-
-  - name: openai_token
-    kind: secret_manager
-    provider: gcp
-    scope: global
-    auth: google_oauth
-    map:
-      api_key: '{{ workload.openai_secret_path }}'
 
   - name: amadeus_token
     kind: oauth2
@@ -43,8 +43,8 @@ keychain:
       Content-Type: application/x-www-form-urlencoded
     data:
       grant_type: client_credentials
-      client_id: '{{ keychain.amadeus_credentials.client_id }}'
-      client_secret: '{{ keychain.amadeus_credentials.client_secret }}'
+      client_id: '{{ keychain.amadeus_credentials.client_id_key }}'
+      client_secret: '{{ keychain.amadeus_credentials.client_secret_key }}'
 
 workflow:
 - step: start
