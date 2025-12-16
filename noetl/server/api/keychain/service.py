@@ -210,7 +210,7 @@ class KeychainService:
                     await cursor.execute(
                         """
                         INSERT INTO noetl.keychain (
-                            cache_key, keychain_name, catalog_id, data_encrypted, 
+                            cache_key, keychain_name, catalog_id, data_encrypted, schema,
                             credential_type, cache_type, execution_id, parent_execution_id, 
                             scope_type, expires_at, created_at, accessed_at, access_count,
                             auto_renew, renew_config
@@ -219,6 +219,7 @@ class KeychainService:
                         )
                         ON CONFLICT (cache_key) DO UPDATE
                         SET data_encrypted = EXCLUDED.data_encrypted,
+                            schema = EXCLUDED.schema,
                             credential_type = EXCLUDED.credential_type,
                             cache_type = EXCLUDED.cache_type,
                             execution_id = EXCLUDED.execution_id,
@@ -230,7 +231,7 @@ class KeychainService:
                             renew_config = EXCLUDED.renew_config
                         """,
                         (
-                            cache_key, keychain_name, catalog_id, encrypted_data,
+                            cache_key, keychain_name, catalog_id, encrypted_data, None,
                             credential_type, cache_type, execution_id, parent_execution_id,
                             scope_type, expires_at, auto_renew, encrypted_renew_config
                         )
