@@ -174,6 +174,7 @@ class V2Worker:
         
         tool_config = context.get("tool_config", {})
         args = context.get("args", {})
+        render_context = context.get("render_context", {})  # Full render context from engine
         
         # CRITICAL: Merge tool_config.args with top-level args
         # In V2 DSL, step args are often defined within the tool block
@@ -200,7 +201,7 @@ class V2Worker:
             )
             
             # Execute tool
-            response = await self._execute_tool(tool_kind, tool_config, args, step)
+            response = await self._execute_tool(tool_kind, tool_config, args, step, render_context)
             
             # Emit call.done event
             await self._emit_event(
@@ -282,7 +283,8 @@ class V2Worker:
         tool_kind: str,
         config: dict,
         args: dict,
-        step: str
+        step: str,
+        render_context: dict
     ) -> Any:
         """
         Execute tool using noetl/plugin/* implementations.
@@ -309,10 +311,17 @@ class V2Worker:
         from noetl.plugin.tools.python import execute_python_task_async
         from jinja2 import Environment, BaseLoader
         
-        # Create minimal context for plugin execution
-        # Plugins expect: task_config, context, jinja_env
-        # V2 worker provides: config, args
-        context = {"args": args, "step": step}
+        # Use render_context from engine (includes workload, step results, execution_id, etc.)
+        # This allows plugins to render Jinja2 templates with full state
+        context = render_context if render_context else {"args": args, "step": step}
+        
+        # Add job metadata to context for {{ job.uuid }} templates
+        if "job" not in context:
+            context["job"] = {
+                "uuid": context.get("execution_id", ""),
+                "execution_id": context.get("execution_id", "")
+            }
+        
         jinja_env = Environment(loader=BaseLoader())
         
         # Map V2 config format to plugin task_config format

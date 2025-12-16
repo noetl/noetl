@@ -314,6 +314,7 @@ class Command(BaseModel):
     step: str = Field(..., description="Step name")
     tool: ToolCall = Field(..., description="Tool invocation details")
     args: Optional[dict[str, Any]] = Field(None, description="Step input arguments")
+    render_context: dict[str, Any] = Field(default_factory=dict, description="Full render context for Jinja2 templates (workload, step results, vars)")
     attempt: int = Field(default=1, description="Attempt number for retries")
     priority: int = Field(default=0, description="Command priority (higher = more urgent)")
     backoff: Optional[float] = Field(None, description="Retry backoff delay in seconds")
