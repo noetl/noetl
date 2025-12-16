@@ -15,6 +15,7 @@ import datetime
 from typing import Dict
 from jinja2 import Environment
 from noetl.core.logger import setup_logger
+from noetl.worker.keychain_resolver import populate_keychain_context
 
 from .auth import resolve_postgres_auth, validate_and_render_connection_params
 from .command import escape_task_with_params, decode_base64_commands, render_and_split_commands
@@ -150,6 +151,18 @@ async def _execute_postgres_task_async(
     start_time = datetime.datetime.now()
 
     try:
+        # Step 0: Populate keychain context FIRST before any template rendering
+        catalog_id = context.get('catalog_id')
+        if catalog_id:
+            execution_id = context.get('execution_id')
+            context = await populate_keychain_context(
+                task_config=task_config,
+                context=context,
+                catalog_id=catalog_id,
+                execution_id=execution_id
+            )
+            logger.debug(f"POSTGRES: Keychain context populated: {list(context.get('keychain', {}).keys())}")
+        
         # Step 1: Resolve authentication
         task_config, task_with = resolve_postgres_auth(task_config, task_with, jinja_env, context)
 

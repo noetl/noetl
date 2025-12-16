@@ -16,6 +16,7 @@ from noetl.core.dsl.render import render_template
 from noetl.core.logger import setup_logger
 from noetl.plugin.shared.auth.resolver import resolve_auth_map
 from noetl.worker.auth_compatibility import transform_credentials_to_auth, validate_auth_transition
+from noetl.worker.keychain_resolver import populate_keychain_context
 
 from .auth import build_auth_headers
 from .request import build_request_args, redact_sensitive_headers
@@ -64,6 +65,20 @@ async def execute_http_task(
     # Standard HTTP execution (pagination/polling now handled by unified retry system)
 
     try:
+        # STEP 1: Populate keychain context FIRST before any template rendering
+        # This resolves {{ keychain.* }} references from the keychain API
+        catalog_id = context.get('catalog_id')
+        if catalog_id:
+            execution_id = context.get('execution_id')
+            context = await populate_keychain_context(
+                task_config=task_config,
+                context=context,
+                catalog_id=catalog_id,
+                execution_id=execution_id
+            )
+            logger.debug(f"HTTP: Keychain context populated: {list(context.get('keychain', {}).keys())}")
+        else:
+            logger.warning("HTTP: No catalog_id in context, skipping keychain resolution")
             
         logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Rendering HTTP task configuration")
         method = task_config.get('method', 'GET').upper()

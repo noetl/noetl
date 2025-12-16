@@ -121,6 +121,8 @@ class ExecutionState:
         Loop variables are added to state.variables in _create_command_for_step,
         so they will be available via **self.variables spread below.
         """
+        logger.info(f"ENGINE: get_render_context called, catalog_id={self.catalog_id}, execution_id={self.execution_id}")
+        
         context = {
             "event": {
                 "name": event.name,
@@ -129,6 +131,7 @@ class ExecutionState:
                 "timestamp": event.timestamp.isoformat() if event.timestamp else None,
             },
             "execution_id": self.execution_id,
+            "catalog_id": self.catalog_id,  # Add catalog_id for keychain resolution
             "job": {
                 "uuid": self.execution_id,
                 "execution_id": self.execution_id,
