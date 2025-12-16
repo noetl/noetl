@@ -129,6 +129,11 @@ class ExecutionState:
                 "timestamp": event.timestamp.isoformat() if event.timestamp else None,
             },
             "execution_id": self.execution_id,
+            "job": {
+                "uuid": self.execution_id,
+                "execution_id": self.execution_id,
+                "id": self.execution_id
+            },
             "workload": self.variables,
             "vars": self.variables,
             **self.variables,  # Make variables accessible at top level (includes loop vars)
@@ -724,6 +729,7 @@ class ControlFlowEngine:
                 config=rendered_tool_config  # Tool-specific config (code, url, query, etc.)
             ),
             args=rendered_args,  # Rendered step input arguments
+            render_context=context,  # Pass full context for plugin template rendering
             attempt=1,
             priority=0
         )
