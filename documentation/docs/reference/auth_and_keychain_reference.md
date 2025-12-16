@@ -84,14 +84,26 @@ Credentials are stored in the `noetl.credential` table:
 
 ```sql
 CREATE TABLE noetl.credential (
-    credential_id BIGSERIAL PRIMARY KEY,
-    credential_key VARCHAR(255) UNIQUE NOT NULL,
-    credential_type VARCHAR(50) NOT NULL,
-    data JSONB NOT NULL,
-    created_at TIMESTAMP DEFAULT NOW(),
-    updated_at TIMESTAMP DEFAULT NOW()
+    id BIGINT PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    type TEXT NOT NULL,
+    data_encrypted TEXT NOT NULL,
+    schema JSONB,
+    meta JSONB,
+    tags TEXT[],
+    description TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 ```
+
+**Key Fields:**
+- `name` - Unique credential identifier (e.g., `pg_prod`, `google_oauth`)
+- `type` - Credential type (postgres, oauth2, bearer, api_key, etc.)
+- `data_encrypted` - Encrypted credential data (client_id, client_secret, etc.)
+- `schema` - Optional JSON schema definition for validation
+- `meta` - Additional metadata (version, owner, environment)
+- `tags` - Searchable tags for organization
 
 **Credential Types:**
 - `postgres` - Database credentials (host, port, user, password, database)
@@ -126,31 +138,42 @@ The keychain system provides dynamic token caching with scope-based access contr
 
 ```sql
 CREATE TABLE noetl.keychain (
-    keychain_id BIGSERIAL PRIMARY KEY,
-    cache_key VARCHAR(512) UNIQUE NOT NULL,
-    keychain_name VARCHAR(255) NOT NULL,
-    catalog_id BIGINT,
+    cache_key TEXT PRIMARY KEY,
+    keychain_name TEXT NOT NULL,
+    catalog_id BIGINT NOT NULL REFERENCES noetl.catalog(catalog_id),
+    credential_type TEXT NOT NULL,
+    cache_type TEXT NOT NULL CHECK (cache_type IN ('secret', 'token')),
+    scope_type TEXT NOT NULL CHECK (scope_type IN ('local', 'global', 'shared')),
     execution_id BIGINT,
     parent_execution_id BIGINT,
-    data BYTEA NOT NULL,
-    credential_type VARCHAR(50),
-    cache_type VARCHAR(50) DEFAULT 'token',
-    scope_type VARCHAR(50) DEFAULT 'global',
-    expires_at TIMESTAMP,
-    created_at TIMESTAMP DEFAULT NOW(),
-    updated_at TIMESTAMP DEFAULT NOW(),
-    accessed_at TIMESTAMP DEFAULT NOW(),
+    data_encrypted TEXT NOT NULL,
+    schema JSONB,
+    expires_at TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    accessed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     access_count INTEGER DEFAULT 0,
-    auto_renew BOOLEAN DEFAULT FALSE,
-    renew_config BYTEA,
-    CONSTRAINT fk_catalog FOREIGN KEY (catalog_id) 
-        REFERENCES noetl.catalog(catalog_id) ON DELETE CASCADE,
-    INDEX idx_keychain_catalog (catalog_id),
-    INDEX idx_keychain_execution (execution_id),
-    INDEX idx_keychain_name (keychain_name),
-    INDEX idx_keychain_expires (expires_at)
+    auto_renew BOOLEAN DEFAULT false,
+    renew_config JSONB
 );
+
+-- Indexes
+CREATE INDEX idx_keychain_name_catalog ON noetl.keychain(keychain_name, catalog_id);
+CREATE INDEX idx_keychain_execution ON noetl.keychain(execution_id);
+CREATE INDEX idx_keychain_expires ON noetl.keychain(expires_at) WHERE auto_renew = true;
 ```
+
+**Key Fields:**
+- `cache_key` - Composite key: `{keychain_name}:{catalog_id}:{scope_qualifier}`
+- `keychain_name` - Logical name from playbook (e.g., `amadeus_token`)
+- `catalog_id` - Links to playbook catalog entry
+- `credential_type` - Type of credential used (oauth2, secret_manager, bearer)
+- `cache_type` - Either `secret` (static) or `token` (refreshable)
+- `scope_type` - Access scope: `local`, `global`, or `shared`
+- `data_encrypted` - Encrypted token/secret data
+- `schema` - Optional validation schema for token structure
+- `expires_at` - Expiration timestamp (UTC)
+- `auto_renew` - Whether to automatically renew on expiration
+- `renew_config` - Configuration for automatic token renewal
 
 ### Keychain Playbook Section
 
@@ -392,6 +415,344 @@ Keychain entries support three scope types that control access and lifetime.
 | `catalog` | Same playbook | Until expires | `{name}:{catalog}:catalog` | TTL expiration |
 | `local` | Execution + children | Execution OR expires | `{name}:{catalog}:{exec_id}` | Execution completion |
 | `shared` | Execution tree | Root completion OR expires | `{name}:{catalog}:shared:{exec_id}` | Root completion |
+
+---
+
+## Schema Validation
+
+Both the `credential` and `keychain` tables support optional schema definitions to validate the structure of stored data.
+
+### Schema Format
+
+Schema definitions use JSON format with the following structure:
+
+```json
+{
+  "fields": ["field1", "field2", "field3"],
+  "required": ["field1", "field2"],
+  "types": {
+    "field1": "string",
+    "field2": "integer",
+    "field3": "boolean"
+  },
+  "description": "Human-readable description of the credential type"
+}
+```
+
+### Common Schema Examples
+
+#### OAuth2 Client Credentials
+
+```json
+{
+  "fields": ["client_id", "client_secret", "token_url"],
+  "required": ["client_id", "client_secret"],
+  "types": {
+    "client_id": "string",
+    "client_secret": "string",
+    "token_url": "string"
+  },
+  "description": "OAuth2 client credentials for token-based authentication"
+}
+```
+
+#### PostgreSQL Database
+
+```json
+{
+  "fields": ["db_host", "db_port", "db_user", "db_password", "db_name"],
+  "required": ["db_host", "db_user", "db_password", "db_name"],
+  "types": {
+    "db_host": "string",
+    "db_port": "integer",
+    "db_user": "string",
+    "db_password": "string",
+    "db_name": "string"
+  },
+  "description": "PostgreSQL database connection credentials"
+}
+```
+
+#### Bearer Token
+
+```json
+{
+  "fields": ["access_token", "token_type", "expires_in"],
+  "required": ["access_token"],
+  "types": {
+    "access_token": "string",
+    "token_type": "string",
+    "expires_in": "integer"
+  },
+  "description": "Bearer token for API authentication"
+}
+```
+
+#### API Key
+
+```json
+{
+  "fields": ["api_key", "api_secret"],
+  "required": ["api_key"],
+  "types": {
+    "api_key": "string",
+    "api_secret": "string"
+  },
+  "description": "API key and optional secret for service authentication"
+}
+```
+
+### Schema Validation Benefits
+
+**Data Integrity:** Validate credential structure before storage to catch configuration errors early.
+
+**Clear Error Messages:** Get specific feedback about missing or incorrect fields:
+```
+Error: Missing required field 'client_secret' in OAuth2 credentials
+Error: Field 'db_port' must be of type integer, got string
+```
+
+**Custom Credential Types:** Support any authentication system by defining custom schemas:
+```json
+{
+  "fields": ["tenant_id", "subscription_key", "region", "endpoint"],
+  "required": ["tenant_id", "subscription_key"],
+  "types": {
+    "tenant_id": "string",
+    "subscription_key": "string",
+    "region": "string",
+    "endpoint": "string"
+  },
+  "description": "Azure Cognitive Services credentials"
+}
+```
+
+**Self-Documentation:** Schema definitions serve as documentation for what fields are expected.
+
+### Using Schemas in Playbooks
+
+When registering credentials with schemas:
+
+```yaml
+# Register via API (example)
+POST /api/credentials
+{
+  "name": "azure_cognitive",
+  "type": "custom",
+  "data": {
+    "tenant_id": "abc-123",
+    "subscription_key": "secret123",
+    "region": "eastus",
+    "endpoint": "https://eastus.api.cognitive.microsoft.com"
+  },
+  "schema": {
+    "fields": ["tenant_id", "subscription_key", "region", "endpoint"],
+    "required": ["tenant_id", "subscription_key"],
+    "types": {
+      "tenant_id": "string",
+      "subscription_key": "string",
+      "region": "string",
+      "endpoint": "string"
+    }
+  }
+}
+```
+
+In keychain entries, schemas are automatically extracted from the credential definition or can be specified explicitly.
+
+### Validation Behavior
+
+**On Storage (POST/PUT):**
+- System validates data against schema before storing
+- Returns 400 error with specific field-level errors if validation fails
+- Prevents storing malformed credentials
+
+**On Retrieval (GET):**
+- System validates cached data against schema
+- Logs warnings if cached data doesn't match schema
+- Helps detect data corruption or schema evolution issues
+
+**Optional Validation:**
+- Schema field is optional - credentials without schemas work normally
+- Useful for legacy credentials or dynamic credential types
+- Add schemas incrementally as you refactor existing credentials
+
+### Validation Implementation
+
+#### Python Validation Function
+
+```python
+from typing import Dict, Any, List, Tuple
+
+def validate_schema(data: Dict[str, Any], schema: Dict[str, Any]) -> Tuple[bool, List[str]]:
+    """
+    Validate data against schema definition.
+    
+    Args:
+        data: Credential or token data to validate
+        schema: Schema definition with fields, required, types
+        
+    Returns:
+        (is_valid, error_messages)
+        
+    Example:
+        >>> data = {"client_id": "abc123"}
+        >>> schema = {
+        ...     "fields": ["client_id", "client_secret"],
+        ...     "required": ["client_id", "client_secret"]
+        ... }
+        >>> validate_schema(data, schema)
+        (False, ['Missing required field: client_secret'])
+    """
+    errors = []
+    
+    # Check required fields
+    for field in schema.get('required', []):
+        if field not in data:
+            errors.append(f"Missing required field: {field}")
+    
+    # Check field types
+    types_map = {
+        'string': str,
+        'integer': int,
+        'boolean': bool,
+        'number': (int, float),
+        'array': list,
+        'object': dict
+    }
+    
+    for field, expected_type_str in schema.get('types', {}).items():
+        if field in data:
+            expected_type = types_map.get(expected_type_str)
+            if expected_type and not isinstance(data[field], expected_type):
+                actual_type = type(data[field]).__name__
+                errors.append(
+                    f"Field '{field}' must be {expected_type_str}, got {actual_type}"
+                )
+    
+    # Check for unexpected fields (optional, configurable)
+    allowed_fields = set(schema.get('fields', []))
+    if allowed_fields:
+        unexpected = set(data.keys()) - allowed_fields
+        if unexpected:
+            errors.append(f"Unexpected fields: {', '.join(unexpected)}")
+    
+    return len(errors) == 0, errors
+```
+
+#### Integration Points
+
+**1. Credential API** (`noetl/server/api/credential/endpoint.py`):
+
+```python
+@router.post("/")
+async def create_credential(credential: CredentialCreate):
+    # Validate against schema if provided
+    if credential.schema:
+        is_valid, errors = validate_schema(credential.data, credential.schema)
+        if not is_valid:
+            raise HTTPException(
+                status_code=400,
+                detail={"message": "Credential validation failed", "errors": errors}
+            )
+    
+    # Store credential
+    return await service.create_credential(credential)
+```
+
+**2. Keychain Service** (`noetl/server/api/keychain/service.py`):
+
+```python
+async def set_keychain_entry(
+    keychain_name: str,
+    catalog_id: int,
+    token_data: Dict[str, Any],
+    schema: Optional[Dict[str, Any]] = None,
+    **kwargs
+):
+    # Validate against schema if provided
+    if schema:
+        is_valid, errors = validate_schema(token_data, schema)
+        if not is_valid:
+            logger.error(f"Token validation failed: {errors}")
+            raise ValueError(f"Token validation failed: {', '.join(errors)}")
+    
+    # Store token
+    await self._store_keychain_entry(...)
+```
+
+**3. Worker Keychain Resolver** (`noetl/worker/keychain_resolver.py`):
+
+```python
+async def resolve_keychain_entries(keychain_section, catalog_id, ...):
+    for entry in keychain_entries:
+        result = await fetch_keychain(entry.name, catalog_id)
+        
+        if result.get('schema'):
+            # Validate resolved data against schema
+            is_valid, errors = validate_schema(
+                result.get('data', {}),
+                result['schema']
+            )
+            if not is_valid:
+                logger.warning(
+                    f"KEYCHAIN: Entry '{entry.name}' failed schema validation: {errors}"
+                )
+```
+
+### Error Message Examples
+
+**Missing Required Field:**
+```
+Error: Missing required field: 'client_secret'
+Expected fields: client_id, client_secret, token_url
+Provided fields: client_id, token_url
+```
+
+**Type Mismatch:**
+```
+Error: Field 'db_port' must be integer, got string
+Value: "5432" (string)
+Expected: 5432 (integer)
+```
+
+**Unexpected Fields:**
+```
+Error: Unexpected fields: extra_field, unknown_param
+Allowed fields: client_id, client_secret, token_url
+```
+
+### Additional Use Cases
+
+**Custom Cloud Provider:**
+```json
+{
+  "fields": ["tenant_id", "subscription_key", "region", "endpoint"],
+  "required": ["tenant_id", "subscription_key"],
+  "types": {
+    "tenant_id": "string",
+    "subscription_key": "string",
+    "region": "string",
+    "endpoint": "string"
+  },
+  "description": "Azure Cognitive Services credentials"
+}
+```
+
+**Multi-Region Configuration:**
+```json
+{
+  "fields": ["primary_key", "secondary_key", "primary_region", "secondary_region"],
+  "required": ["primary_key", "primary_region"],
+  "types": {
+    "primary_key": "string",
+    "secondary_key": "string",
+    "primary_region": "string",
+    "secondary_region": "string"
+  },
+  "description": "Multi-region API credentials with failover"
+}
+```
 
 ---
 
