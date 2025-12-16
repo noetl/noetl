@@ -419,36 +419,45 @@ CREATE TABLE IF NOT EXISTS noetl.dentry (
 CREATE INDEX IF NOT EXISTS idx_dentry_parent ON noetl.dentry(parent_id);
 CREATE INDEX IF NOT EXISTS idx_dentry_kind ON noetl.dentry(kind);
 
--- Auth Cache
+-- Keychain
 -- Stores decrypted credentials and tokens with TTL for playbook execution scope
-CREATE TABLE IF NOT EXISTS noetl.auth_cache (
+CREATE TABLE IF NOT EXISTS noetl.keychain (
     cache_key TEXT PRIMARY KEY,
-    credential_name TEXT NOT NULL,
+    keychain_name TEXT NOT NULL,
+    catalog_id BIGINT NOT NULL REFERENCES noetl.catalog(catalog_id),
     credential_type TEXT NOT NULL,
     cache_type TEXT NOT NULL CHECK (cache_type IN ('secret', 'token')),
-    scope_type TEXT NOT NULL CHECK (scope_type IN ('execution', 'global')),
+    scope_type TEXT NOT NULL CHECK (scope_type IN ('local', 'global', 'shared')),
     execution_id BIGINT,
     parent_execution_id BIGINT,
     data_encrypted TEXT NOT NULL,
     expires_at TIMESTAMPTZ NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     accessed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    access_count INTEGER DEFAULT 0
+    access_count INTEGER DEFAULT 0,
+    auto_renew BOOLEAN DEFAULT false,
+    renew_config JSONB
 );
 
-CREATE INDEX IF NOT EXISTS idx_auth_cache_execution ON noetl.auth_cache (execution_id) WHERE execution_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_auth_cache_parent_execution ON noetl.auth_cache (parent_execution_id) WHERE parent_execution_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_auth_cache_expires ON noetl.auth_cache (expires_at);
-CREATE INDEX IF NOT EXISTS idx_auth_cache_type ON noetl.auth_cache (cache_type, scope_type);
-CREATE INDEX IF NOT EXISTS idx_auth_cache_credential ON noetl.auth_cache (credential_name);
+CREATE INDEX IF NOT EXISTS idx_keychain_execution ON noetl.keychain (execution_id) WHERE execution_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_keychain_parent_execution ON noetl.keychain (parent_execution_id) WHERE parent_execution_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_keychain_expires ON noetl.keychain (expires_at);
+CREATE INDEX IF NOT EXISTS idx_keychain_type ON noetl.keychain (cache_type, scope_type);
+CREATE INDEX IF NOT EXISTS idx_keychain_name ON noetl.keychain (keychain_name);
+CREATE INDEX IF NOT EXISTS idx_keychain_catalog ON noetl.keychain (catalog_id);
+CREATE INDEX IF NOT EXISTS idx_keychain_name_catalog ON noetl.keychain (keychain_name, catalog_id);
 
-COMMENT ON TABLE noetl.auth_cache IS 'Caches decrypted credentials and tokens with TTL';
-COMMENT ON COLUMN noetl.auth_cache.cache_key IS 'Unique cache key: <credential_name>:<execution_id> for execution scope, <credential_name>:global:<token_type> for global tokens';
-COMMENT ON COLUMN noetl.auth_cache.cache_type IS 'secret: raw credential data, token: derived authentication token (OAuth, JWT, etc.)';
-COMMENT ON COLUMN noetl.auth_cache.scope_type IS 'execution: limited to playbook execution and sub-playbooks, global: shared across all executions until token expires';
-COMMENT ON COLUMN noetl.auth_cache.execution_id IS 'Execution scope: credential tied to this execution and its sub-playbooks';
-COMMENT ON COLUMN noetl.auth_cache.parent_execution_id IS 'Top-level execution ID for cleanup when parent completes';
-COMMENT ON COLUMN noetl.auth_cache.expires_at IS 'TTL: execution-scoped expires when playbook completes, global expires based on token expiration';
+COMMENT ON TABLE noetl.keychain IS 'Caches decrypted credentials and tokens with TTL, scoped to playbook catalog';
+COMMENT ON COLUMN noetl.keychain.cache_key IS 'Unique cache key: <keychain_name>:<catalog_id>:<execution_id> for local scope, <keychain_name>:<catalog_id>:global for global tokens';
+COMMENT ON COLUMN noetl.keychain.keychain_name IS 'Name of the keychain entry defined in playbook (e.g., amadeus_token, postgres_creds)';
+COMMENT ON COLUMN noetl.keychain.catalog_id IS 'References the playbook catalog entry that defined this keychain';
+COMMENT ON COLUMN noetl.keychain.cache_type IS 'secret: raw credential data, token: derived authentication token (OAuth, JWT, etc.)';
+COMMENT ON COLUMN noetl.keychain.scope_type IS 'local: limited to playbook execution and sub-playbooks, global: shared across all executions until token expires, shared: shared within execution tree';
+COMMENT ON COLUMN noetl.keychain.execution_id IS 'Execution scope: credential tied to this execution and its sub-playbooks';
+COMMENT ON COLUMN noetl.keychain.parent_execution_id IS 'Top-level execution ID for cleanup when parent completes';
+COMMENT ON COLUMN noetl.keychain.expires_at IS 'TTL: local-scoped expires when playbook completes, global expires based on token expiration';
+COMMENT ON COLUMN noetl.keychain.auto_renew IS 'If true, automatically renew token when expired using renew_config';
+COMMENT ON COLUMN noetl.keychain.renew_config IS 'Configuration for automatic token renewal (endpoint, method, auth, etc.)';
 
 -- Snowflake-like id helpers
 CREATE SEQUENCE IF NOT EXISTS noetl.snowflake_seq;
