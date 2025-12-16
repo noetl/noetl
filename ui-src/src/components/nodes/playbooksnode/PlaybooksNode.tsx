@@ -72,8 +72,18 @@ function PlaybooksNodeInternal({ id, data = {} }: NodeProps<Node<PlaybooksData>>
 
     return (
         <div className="PlaybooksNode" onDoubleClick={openEditor}>
-            <Handle type="target" position={Position.Left} />
-            <Handle type="source" position={Position.Right} />
+            <Handle
+                type="target"
+                position={Position.Left}
+                className="flow-node-handle flow-node-handle-target"
+                title="Connect from another node"
+            />
+            <Handle
+                type="source"
+                position={Position.Right}
+                className="flow-node-handle flow-node-handle-source"
+                title="Connect to another node"
+            />
             <div className="PlaybooksNode__header">
                 <span className="PlaybooksNode__header-text">📘 playbook</span>
                 <div className="PlaybooksNode__header-buttons">

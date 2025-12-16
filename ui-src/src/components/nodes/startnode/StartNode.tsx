@@ -56,7 +56,12 @@ function StartNodeInternal({ id, data = {} }: NodeProps<Node<StartNodeData>>) {
 
     return (
         <div className="StartNode" onDoubleClick={openEditor}>
-            <Handle type="source" position={Position.Right} />
+            <Handle
+                type="source"
+                position={Position.Right}
+                className="flow-node-handle flow-node-handle-source"
+                title="Start connection - drag to another node"
+            />
             <div className="StartNode__header">
                 <span className="StartNode__header-text">🚀 start</span>
                 <div className="StartNode__header-buttons">

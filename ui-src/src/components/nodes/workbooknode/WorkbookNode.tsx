@@ -59,8 +59,18 @@ function WorkbookNodeInternal({ id, data = {} }: NodeProps<Node<WorkbookData>>) 
 
     return (
         <div className="WorkbookNode" onDoubleClick={openEditor}>
-            <Handle type="target" position={Position.Left} />
-            <Handle type="source" position={Position.Right} />
+            <Handle
+                type="target"
+                position={Position.Left}
+                className="flow-node-handle flow-node-handle-target"
+                title="Connect from another node"
+            />
+            <Handle
+                type="source"
+                position={Position.Right}
+                className="flow-node-handle flow-node-handle-source"
+                title="Connect to another node"
+            />
             <div className="WorkbookNode__header">
                 <span className="WorkbookNode__header-text">📊 workbook</span>
                 <div className="WorkbookNode__header-buttons">

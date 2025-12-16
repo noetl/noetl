@@ -107,8 +107,18 @@ function PostgresNodeInternal({ id, data = {} }: NodeProps<Node<PostgresData>>) 
 
     return (
         <div className="PostgresNode" onDoubleClick={openEditor}>
-            <Handle type="target" position={Position.Left} />
-            <Handle type="source" position={Position.Right} />
+            <Handle
+                type="target"
+                position={Position.Left}
+                className="flow-node-handle flow-node-handle-target"
+                title="Connect from another node"
+            />
+            <Handle
+                type="source"
+                position={Position.Right}
+                className="flow-node-handle flow-node-handle-source"
+                title="Connect to another node"
+            />
             <div className="PostgresNode__header">
                 <span className="PostgresNode__header-text">🐘 postgres</span>
                 <div className="PostgresNode__header-buttons">

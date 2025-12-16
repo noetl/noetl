@@ -16,6 +16,19 @@
     overflow: hidden;
 }
 
+/* Connection helper animation */
+@keyframes slideDown {
+    from {
+        transform: translateX(-50%) translateY(-20px);
+        opacity: 0;
+    }
+
+    to {
+        transform: translateX(-50%) translateY(0);
+        opacity: 1;
+    }
+}
+
 .flow-content-container {
     flex: 1;
     display: flex;
@@ -107,6 +120,19 @@
 
 .flow-node.unselected {
     box-shadow: 0 4px 12px rgba(17, 24, 39, .06);
+}
+
+/* Highlight nodes when in connection mode */
+.react-flow__connecting .flow-node {
+    border-color: #3b82f6;
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+}
+
+/* Dragging over state */
+.react-flow-wrapper.dragging-over {
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.05) 0%, rgba(37, 99, 235, 0.05) 100%);
+    border-color: #3b82f6 !important;
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2) !important;
 }
 
 /* type-to-accent map */
@@ -440,43 +466,215 @@
     background: #fff !important;
 }
 
-/* Edges — smooth & crisp */
+/* Enhanced edges with elegant, thin styling */
 .flow-edge-solid {
-    stroke: #a0aec0;
-    stroke-width: 2;
+    stroke: #94a3b8;
+    stroke-width: 1.5;
     stroke-dasharray: none;
 }
 
-/* Rectangular connection handles */
+/* Make edges easier to click */
+.react-flow__edge-path {
+    cursor: pointer !important;
+    stroke-width: 1.5;
+}
+
+/* Invisible hitbox for easier edge selection */
+.react-flow__edge-interaction {
+    stroke-width: 20 !important;
+    cursor: pointer !important;
+}
+
+/* Ensure edge is selectable */
+.react-flow__edge {
+    pointer-events: all !important;
+    cursor: pointer !important;
+}
+
+.react-flow__edge.selectable {
+    cursor: pointer !important;
+}
+
+.react-flow__edge.selectable:focus,
+.react-flow__edge.selectable:focus-visible {
+    outline: none !important;
+}
+
+/* Edge hover effect */
+.react-flow__edge:hover .react-flow__edge-path {
+    stroke: #3b82f6 !important;
+    stroke-width: 2.5 !important;
+}
+
+/* Selected edge styling */
+.react-flow__edge.selected .react-flow__edge-path {
+    stroke: #2563eb !important;
+    stroke-width: 2.5 !important;
+}
+
+/* Connection line animation */
+@keyframes dash {
+    to {
+        stroke-dashoffset: -24;
+    }
+}
+
+.react-flow__connectionline path {
+    stroke: #3b82f6 !important;
+    stroke-width: 2 !important;
+    stroke-dasharray: 8, 4;
+    animation: dash 1s linear infinite;
+    filter: drop-shadow(0 0 2px rgba(59, 130, 246, 0.3));
+}
+
+/* Edge markers */
+.react-flow__edge .react-flow__edge-path {
+    stroke-linecap: round;
+}
+
+/* Remove button styling for edges */
+.react-flow__edge-removebutton {
+    width: 24px !important;
+    height: 24px !important;
+    background: #ef4444 !important;
+    border-radius: 50% !important;
+    border: 3px solid white !important;
+    box-shadow: 0 2px 8px rgba(239, 68, 68, 0.5) !important;
+    transition: all 0.2s !important;
+    cursor: pointer !important;
+    fill: white !important;
+    opacity: 0 !important;
+    pointer-events: all !important;
+    display: block !important;
+    z-index: 1000 !important;
+}
+
+.react-flow__edge.selected .react-flow__edge-removebutton,
+.react-flow__edge:hover .react-flow__edge-removebutton {
+    opacity: 1 !important;
+    display: block !important;
+}
+
+.react-flow__edge-removebutton:hover {
+    background: #dc2626;
+    transform: scale(1.25);
+    box-shadow: 0 4px 16px rgba(220, 38, 38, 0.7);
+}
+
+.react-flow__edge-removebutton svg {
+    width: 12px;
+    height: 12px;
+}
+
+/* Enhanced connection handles for better UX */
 .flow-node-handle {
-    width: 4px !important;
+    width: 16px !important;
     height: 16px !important;
-    border-radius: 2px !important;
-    background: #cbd5e1 !important;
-    border: 1px solid #94a3b8 !important;
+    border-radius: 50% !important;
+    background: #3b82f6 !important;
+    border: 2px solid #ffffff !important;
+    opacity: 0.6;
+    box-shadow: 0 2px 8px rgba(59, 130, 246, 0.4), 0 0 0 0 rgba(59, 130, 246, 0.3);
+    transition: opacity .2s ease, transform .2s ease, background .2s ease, box-shadow .3s ease;
+    cursor: grab !important;
+    z-index: 10;
+    pointer-events: all !important;
+}
+
+.flow-node-handle:active {
+    cursor: grabbing !important;
+}
+
+/* Show handles more prominently on node hover */
+.flow-node:hover .flow-node-handle,
+.flow-node.selected .flow-node-handle {
     opacity: 1;
-    box-shadow: none;
-    transition: background .15s, transform .15s;
 }
 
+/* Handle hover effect */
 .flow-node-handle:hover {
-    background: #94a3b8 !important;
+    background: #2563eb !important;
+    box-shadow: 0 4px 16px rgba(37, 99, 235, 0.6), 0 0 0 4px rgba(59, 130, 246, 0.2);
+    border-color: #dbeafe !important;
 }
 
+.flow-node-handle-target:hover {
+    transform: scale(1.3) !important;
+}
+
+.flow-node-handle-source:hover {
+    transform: scale(1.3) !important;
+}
+
+/* Always show handles when connecting */
+.react-flow__connecting .flow-node-handle,
+.react-flow__connectionline .flow-node-handle {
+    opacity: 1 !important;
+}
+
+/* Handle positioning - centered for 16px size */
 .flow-node-handle-target {
-    left: -3px !important;
+    left: -8px !important;
     top: 50% !important;
-    transform: translateY(-50%) !important;
+    margin-top: -8px !important;
+    transform: none !important;
 }
 
 .flow-node-handle-source {
-    right: -3px !important;
+    right: -8px !important;
     top: 50% !important;
-    transform: translateY(-50%) !important;
+    margin-top: -8px !important;
+    transform: none !important;
 }
 
-.flow-node.selected .flow-node-handle {
-    border-color: #94a3b8 !important;
+/* Pulsing animation for handles when in connection mode */
+@keyframes handlePulse {
+
+    0%,
+    100% {
+        transform: scale(1);
+        box-shadow: 0 2px 8px rgba(59, 130, 246, 0.4);
+    }
+
+    50% {
+        transform: scale(1.15);
+        box-shadow: 0 4px 16px rgba(59, 130, 246, 0.6);
+    }
+}
+
+@keyframes handlePulseSource {
+
+    0%,
+    100% {
+        transform: scale(1);
+        box-shadow: 0 2px 8px rgba(59, 130, 246, 0.4);
+    }
+
+    50% {
+        transform: scale(1.15);
+        box-shadow: 0 4px 16px rgba(59, 130, 246, 0.6);
+    }
+}
+
+.react-flow__connecting .flow-node-handle-target {
+    animation: handlePulse 1.5s ease-in-out infinite;
+}
+
+.react-flow__connecting .flow-node-handle-source:not(.react-flow__handle-connecting) {
+    animation: handlePulseSource 1.5s ease-in-out infinite;
+}
+
+/* Valid connection target highlight */
+.flow-node-handle.react-flow__handle-valid {
+    background: #10b981 !important;
+    box-shadow: 0 4px 20px rgba(16, 185, 129, 0.7), 0 0 0 4px rgba(16, 185, 129, 0.2) !important;
+    transform: scale(1.3) !important;
+}
+
+/* Invalid connection target */
+.flow-node-handle.react-flow__handle-connecting {
+    background: #f59e0b !important;
+    box-shadow: 0 2px 8px rgba(245, 158, 11, 0.5) !important;
 }
 
 /* Read-only (disabled) inputs inside nodes: improve legibility */

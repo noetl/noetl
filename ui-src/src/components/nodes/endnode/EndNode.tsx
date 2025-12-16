@@ -56,7 +56,12 @@ function EndNodeInternal({ id, data = {} }: NodeProps<Node<EndNodeData>>) {
 
     return (
         <div className="EndNode" onDoubleClick={openEditor}>
-            <Handle type="target" position={Position.Left} />
+            <Handle
+                type="target"
+                position={Position.Left}
+                className="flow-node-handle flow-node-handle-target"
+                title="Connect to end the flow"
+            />
             <div className="EndNode__header">
                 <span className="EndNode__header-text">🏁 end</span>
                 <div className="EndNode__header-buttons">

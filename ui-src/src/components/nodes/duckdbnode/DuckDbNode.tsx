@@ -67,8 +67,18 @@ function DuckDbNodeInternal({ id, data = {} }: NodeProps<Node<DuckDbData>>) {
 
     return (
         <div className="DuckDbNode" onDoubleClick={openEditor}>
-            <Handle type="target" position={Position.Left} />
-            <Handle type="source" position={Position.Right} />
+            <Handle
+                type="target"
+                position={Position.Left}
+                className="flow-node-handle flow-node-handle-target"
+                title="Connect from another node"
+            />
+            <Handle
+                type="source"
+                position={Position.Right}
+                className="flow-node-handle flow-node-handle-source"
+                title="Connect to another node"
+            />
             <div className="DuckDbNode__header">
                 <span className="DuckDbNode__header-text">🦆 duckdb</span>
                 <div className="DuckDbNode__header-buttons">

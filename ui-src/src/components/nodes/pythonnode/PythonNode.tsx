@@ -71,8 +71,18 @@ function PythonNodeInternal({ id, data = {} }: NodeProps<Node<PythonData>>) {
 
     return (
         <div className="PythonNode" onDoubleClick={openEditor}>
-            <Handle type="target" position={Position.Left} />
-            <Handle type="source" position={Position.Right} />
+            <Handle
+                type="target"
+                position={Position.Left}
+                className="flow-node-handle flow-node-handle-target"
+                title="Connect from another node"
+            />
+            <Handle
+                type="source"
+                position={Position.Right}
+                className="flow-node-handle flow-node-handle-source"
+                title="Connect to another node"
+            />
             <div className="PythonNode__header">
                 <span className="PythonNode__header-text">🐍 python</span>
                 <div className="PythonNode__header-buttons">
