@@ -66,11 +66,12 @@ class CredentialService:
                 async with conn.cursor(row_factory=dict_row) as cursor:
                     await cursor.execute(
                         """
-                        INSERT INTO credential(name, type, data_encrypted, meta, tags, description)
-                        VALUES (%(name)s, %(type)s, %(data_encrypted)s, %(meta)s, %(tags)s, %(description)s)
+                        INSERT INTO noetl.credential(name, type, data_encrypted, schema, meta, tags, description)
+                        VALUES (%(name)s, %(type)s, %(data_encrypted)s, %(schema)s, %(meta)s, %(tags)s, %(description)s)
                         ON CONFLICT(name) DO UPDATE SET
                           type=EXCLUDED.type,
                           data_encrypted=EXCLUDED.data_encrypted,
+                          schema=EXCLUDED.schema,
                           meta=EXCLUDED.meta,
                           tags=EXCLUDED.tags,
                           description=EXCLUDED.description,
@@ -81,6 +82,7 @@ class CredentialService:
                             "name": request.name,
                             "type": request.type,
                             "data_encrypted": enc,
+                            "schema": None,
                             "meta": Json(request.meta) if request.meta is not None else None,
                             "tags": request.tags,
                             "description": request.description,
@@ -148,7 +150,7 @@ class CredentialService:
             where_clause = (" WHERE " + " AND ".join(conditions)) if conditions else ""
             sql = f"""
                 SELECT id, name, type, meta, tags, description, created_at, updated_at
-                FROM credential
+                FROM noetl.credential
                 {where_clause}
                 ORDER BY name ASC
             """
@@ -225,7 +227,7 @@ class CredentialService:
                         await cursor.execute(
                             """
                             SELECT id, name, type, data_encrypted, meta, tags, description, created_at, updated_at
-                            FROM credential
+                            FROM noetl.credential
                             WHERE id = %(id)s
                             """,
                             {"id": int(identifier)}
@@ -234,7 +236,7 @@ class CredentialService:
                         await cursor.execute(
                             """
                             SELECT id, name, type, data_encrypted, meta, tags, description, created_at, updated_at
-                            FROM credential
+                            FROM noetl.credential
                             WHERE name = %(name)s
                             """,
                             {"name": identifier}
@@ -348,7 +350,7 @@ class CredentialService:
                     if by_id:
                         await cursor.execute(
                             """
-                            DELETE FROM credential
+                            DELETE FROM noetl.credential
                             WHERE id = %(id)s
                             RETURNING id, name
                             """,
@@ -357,7 +359,7 @@ class CredentialService:
                     else:
                         await cursor.execute(
                             """
-                            DELETE FROM credential
+                            DELETE FROM noetl.credential
                             WHERE name = %(name)s
                             RETURNING id, name
                             """,
@@ -417,12 +419,12 @@ class CredentialService:
                             async with _conn.cursor() as _cur:
                                 if isinstance(cred_ref, int) or (isinstance(cred_ref, str) and cred_ref.isdigit()):
                                     await _cur.execute(
-                                        "SELECT data_encrypted FROM credential WHERE id = %s",
+                                        "SELECT data_encrypted FROM noetl.credential WHERE id = %s",
                                         (int(cred_ref),)
                                     )
                                 else:
                                     await _cur.execute(
-                                        "SELECT data_encrypted FROM credential WHERE name = %s",
+                                        "SELECT data_encrypted FROM noetl.credential WHERE name = %s",
                                         (str(cred_ref),)
                                     )
                                 _row = await _cur.fetchone()
@@ -483,11 +485,12 @@ class CredentialService:
                         async with conn2.cursor() as cursor2:
                             await cursor2.execute(
                                 """
-                                INSERT INTO credential(name, type, data_encrypted, meta, tags, description)
-                                VALUES (%s, %s, %s, %s, %s, %s)
+                                INSERT INTO noetl.credential(name, type, data_encrypted, schema, meta, tags, description)
+                                VALUES (%s, %s, %s, %s, %s, %s, %s)
                                 ON CONFLICT(name) DO UPDATE SET
                                   type=EXCLUDED.type,
                                   data_encrypted=EXCLUDED.data_encrypted,
+                                  schema=EXCLUDED.schema,
                                   meta=EXCLUDED.meta,
                                   tags=EXCLUDED.tags,
                                   description=EXCLUDED.description,
@@ -497,6 +500,7 @@ class CredentialService:
                                     name,
                                     store_type,
                                     enc,
+                                    None,
                                     Json(request.store_meta) if request.store_meta is not None else None,
                                     tags_norm,
                                     request.store_description
