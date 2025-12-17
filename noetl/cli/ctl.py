@@ -985,7 +985,7 @@ def plan_schedule(
     """
     try:
         from noetl.core.common import ordered_yaml_load
-        from noetl.scheduler import build_plan, CpSatScheduler
+        from noetl.core.scheduler import build_plan, CpSatScheduler
         with open(path, "r", encoding="utf-8") as f:
             playbook = ordered_yaml_load(f)
         cap_dict = {}
