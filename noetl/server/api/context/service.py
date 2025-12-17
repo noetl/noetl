@@ -205,7 +205,14 @@ async def build_rendering_context(
     base_ctx["context"] = base_ctx["work"]
     if isinstance(workload, dict):
         try:
+            # Protected fields that should not be overwritten by workload
+            protected_fields = {"execution_id", "catalog_id", "job_id"}
+            # Save protected values
+            protected_values = {k: base_ctx.get(k) for k in protected_fields if k in base_ctx}
+            # Merge workload
             base_ctx.update(workload)
+            # Restore protected values
+            base_ctx.update(protected_values)
         except (TypeError, ValueError) as e:
             logger.warning(f"Could not update context with workload: {e}")
 
