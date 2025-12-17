@@ -56,7 +56,7 @@ Key fields:
 ## Execution flow
 
 1. Worker validates `runtime` + `script` sections and renders templates via `render_template`.
-2. Script content resolved through `noetl.plugin.shared.script.resolve_script`.
+2. Script content resolved through `noetl.tools.shared.script.resolve_script`.
 3. Worker ensures Kubernetes credentials by loading in-cluster config first, falling back to local kubeconfig.
 4. A ConfigMap stores the rendered script (and any `runtime.files`). A Kubernetes Job is created with:
    - Label `noetl.step=<step-name>` and `noetl.execution=<execution_id>`.

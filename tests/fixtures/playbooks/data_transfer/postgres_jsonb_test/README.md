@@ -243,6 +243,6 @@ async with await AsyncConnection.connect(conn_string) as conn:
 
 ## Related Files
 - `postgres_jsonb_test.yaml` - Main test playbook (297 lines)
-- `/noetl/plugin/tools/postgres/execution.py` - Postgres execution with direct connections
-- `/noetl/plugin/tools/postgres/command.py` - SQL command parsing and rendering
+- `/noetl/tools/tools/postgres/execution.py` - Postgres execution with direct connections
+- `/noetl/tools/tools/postgres/command.py` - SQL command parsing and rendering
 - `/noetl/core/db/pool.py` - Server-side pool (separate from worker connections)

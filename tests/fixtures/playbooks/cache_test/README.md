@@ -93,22 +93,22 @@ WHERE execution_id = 507861119290048685;
 
 ### Code Changes
 
-1. **`noetl/plugin/shared/auth/utils.py`**:
+1. **`noetl/tools/shared/auth/utils.py`**:
    - Made `fetch_secret_manager_value()` async
    - Added cache lookup before Secret Manager API call
    - Added cache storage after successful fetch
    - 1-hour TTL with execution-scoped isolation
 
-2. **`noetl/plugin/shared/auth/resolver.py`**:
+2. **`noetl/tools/shared/auth/resolver.py`**:
    - Made `resolve_auth_map()` async
    - Added execution_id extraction and int conversion
    - Supports multi-value secrets (oauth2_client_credentials)
 
-3. **`noetl/plugin/tools/http/executor.py`**:
+3. **`noetl/tools/tools/http/executor.py`**:
    - Made `_process_authentication_with_context()` async
    - Updated to await async auth resolution
 
-4. **`noetl/plugin/runtime/execution.py`**:
+4. **`noetl/tools/runtime/execution.py`**:
    - Added asyncio.run() bridge for HTTP tasks
    - Event loop detection prevents "already running" errors
 

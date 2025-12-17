@@ -4,7 +4,7 @@ This directory contains test playbooks demonstrating retry functionality for dif
 
 ## Overview
 
-NoETL supports configurable retry logic for all task types. The retry mechanism is implemented at the execution orchestration level (`noetl/plugin/tool/execution.py`) and wraps individual plugin executors, making it task-type agnostic.
+NoETL supports configurable retry logic for all task types. The retry mechanism is implemented at the execution orchestration level (`noetl/tools/tool/execution.py`) and wraps individual plugin executors, making it task-type agnostic.
 
 ## Retry Configuration
 
@@ -94,8 +94,8 @@ task playbook:local:execute PLAYBOOK_PATH=tests/retry/http_status_code
 
 ## Implementation Details
 
-- Retry logic is in `noetl/plugin/tool/retry.py`
-- Execution wrapper is in `noetl/plugin/tool/execution.py`
+- Retry logic is in `noetl/tools/tool/retry.py`
+- Execution wrapper is in `noetl/tools/tool/execution.py`
 - Individual action plugins (http, python, postgres, etc.) are unaware of retry
 - Retry evaluation uses Jinja2 template engine for flexible conditions
 - Exponential backoff with optional jitter prevents thundering herd

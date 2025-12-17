@@ -560,7 +560,7 @@ Get all variables for execution as flat dict. Returns: `{var_name: var_value, ..
 - `schema.py`: Pydantic models for API requests/responsesschema.py`: Pydantic models
 ### Phase 5: Iterator Integration
 
-**Modify `noetl/plugin/tools/iterator/executor.py`**:
+**Modify `noetl/tools/tools/iterator/executor.py`**:
 
 1. Auto-populate iterator state variables:
    ```python
@@ -657,7 +657,7 @@ Get all variables for execution as flat dict. Returns: `{var_name: var_value, ..
 
 ### Phase 5: Iterator Integration
 
-**Modify `noetl/plugin/tools/iterator/executor.py`**:
+**Modify `noetl/tools/tools/iterator/executor.py`**:
 
 1. Auto-populate iterator state variables:
    ```python

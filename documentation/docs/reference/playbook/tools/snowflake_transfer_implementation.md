@@ -6,7 +6,7 @@ Added chunked data transfer capabilities to the NoETL Snowflake plugin, enabling
 
 ## What Was Implemented
 
-### 1. Transfer Module (`noetl/plugin/snowflake/transfer.py`)
+### 1. Transfer Module (`noetl/tools/snowflake/transfer.py`)
 
 New module providing core data transfer functionality:
 
@@ -26,7 +26,7 @@ New module providing core data transfer functionality:
   - Handles dates, decimals, and special types
   - Safe conversion between database formats
 
-### 2. Enhanced Executor (`noetl/plugin/snowflake/executor.py`)
+### 2. Enhanced Executor (`noetl/tools/snowflake/executor.py`)
 
 Extended the existing Snowflake executor:
 
@@ -115,7 +115,7 @@ Updated `ci/taskfile/test.yml`:
 ### Basic Transfer (Snowflake → PostgreSQL)
 
 ```python
-from noetl.plugin.snowflake import execute_snowflake_transfer_task
+from noetl.tools.snowflake import execute_snowflake_transfer_task
 from jinja2 import Environment
 
 task_config = {
@@ -155,7 +155,7 @@ result = execute_snowflake_transfer_task(
   desc: Transfer data from Snowflake to PostgreSQL
   tool: python
   code: |
-    from noetl.plugin.snowflake import execute_snowflake_transfer_task
+    from noetl.tools.snowflake import execute_snowflake_transfer_task
     from jinja2 import Environment
     
     def main(input_data):
@@ -330,7 +330,7 @@ Handles common type mismatches:
 ## Files Modified/Created
 
 ### Created Files
-1. `noetl/plugin/snowflake/transfer.py` - Transfer module
+1. `noetl/tools/snowflake/transfer.py` - Transfer module
 2. `tests/fixtures/credentials/sf_test.json` - Test credential
 3. `tests/fixtures/credentials/sf_test.json.template` - Credential template
 4. `tests/fixtures/playbooks/snowflake_transfer/snowflake_transfer.yaml` - Test playbook
@@ -338,8 +338,8 @@ Handles common type mismatches:
 6. `tests/fixtures/playbooks/snowflake_transfer/test_validation.sh` - Validation script
 
 ### Modified Files
-1. `noetl/plugin/snowflake/__init__.py` - Export new function
-2. `noetl/plugin/snowflake/executor.py` - Add transfer executor
+1. `noetl/tools/snowflake/__init__.py` - Export new function
+2. `noetl/tools/snowflake/executor.py` - Add transfer executor
 3. `ci/taskfile/test.yml` - Add credential registration
 
 ## Dependencies

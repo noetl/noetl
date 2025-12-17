@@ -62,18 +62,18 @@ Adds `loop.pagination` block to HTTP actions, enabling automatic continuation ba
 
 ### Modified Files
 
-1. **noetl/plugin/controller/iterator/config.py**
+1. **noetl/tools/controller/iterator/config.py**
    - Added `extract_pagination_config()` function
    - Extracts and validates pagination block from loop config
    - Returns `pagination_config` in config dict
    - Validates required fields and merge strategy
 
-2. **noetl/plugin/controller/iterator/executor.py**
+2. **noetl/tools/controller/iterator/executor.py**
    - Added pagination detection in `execute_loop_task()`
    - Delegates to pagination executor when `pagination_config` present
    - Returns paginated results as task result
 
-3. **noetl/plugin/controller/iterator/pagination.py** (NEW)
+3. **noetl/tools/controller/iterator/pagination.py** (NEW)
    - Main pagination orchestrator
    - `execute_paginated_http()` - Main execution function
    - `execute_with_retry()` - Retry logic per request

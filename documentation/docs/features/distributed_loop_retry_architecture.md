@@ -658,12 +658,12 @@ Events sent to server API include:
 
 **Implemented Components:**
 
-1. **Event Callback Integration** (`noetl/plugin/runtime/execution.py`)
+1. **Event Callback Integration** (`noetl/tools/runtime/execution.py`)
    - Added `event_callback` parameter to `execute_task()`
    - Passes callback to `execute_iterator_task()`
    - Worker-side sync→async event emission bridge
 
-2. **Iterator Executor** (`noetl/plugin/controller/iterator/executor.py`)
+2. **Iterator Executor** (`noetl/tools/controller/iterator/executor.py`)
    - Collection analysis (count, metadata extraction)
    - `iterator_started` event emission with full context
    - Nested task configuration included in event
