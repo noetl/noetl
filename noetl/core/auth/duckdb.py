@@ -5,7 +5,7 @@ DuckDB-specific authentication functions.
 from typing import Dict, List, Any
 
 from noetl.core.logger import setup_logger
-from noetl.utils.auth_normalize import as_mapping
+from noetl.core.utils.auth_normalize import as_mapping
 
 logger = setup_logger(__name__, include_location=True)
 

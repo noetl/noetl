@@ -10,7 +10,7 @@ import requests
 from typing import Optional
 
 from noetl.core.common import ordered_yaml_load
-from noetl.scheduler import build_plan
+from noetl.core.scheduler import build_plan
 
 CASE_DIR = Path(__file__).parent / "fixtures" / "playbooks" / "control_flow_workbook"
 PB_PATH = CASE_DIR / "control_flow_workbook.yaml"
