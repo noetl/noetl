@@ -873,7 +873,7 @@ async def _process_step_vars(
     """
     Process vars block from step definition after step completes.
     
-    If step has a 'vars' block, render the templates and store in vars_cache.
+    If step has a 'vars' block, render the templates and store in transient.
     
     Example step definition:
         - step: fetch_data
@@ -936,10 +936,10 @@ async def _process_step_vars(
             logger.debug(f"No vars successfully rendered for step '{step_name}'")
             return
         
-        # Store vars in vars_cache using worker's VarsCache class
-        from noetl.worker.vars_cache import VarsCache
+        # Store vars in transient using worker's TransientVars class
+        from noetl.worker.transient import TransientVars
         
-        count = await VarsCache.set_multiple(
+        count = await TransientVars.set_multiple(
             variables=rendered_vars,
             execution_id=execution_id,
             var_type="step_result",

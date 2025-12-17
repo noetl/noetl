@@ -1,8 +1,8 @@
 apiVersion: noetl.io/v2
 kind: Playbook
 metadata:
-  name: test_vars_cache
-  path: test/vars_cache
+  name: test_transient
+  path: test/transient
 
 workload:
   execution_id: '{{ job.uuid }}'
@@ -10,7 +10,7 @@ workload:
 
 workflow:
 - step: start
-  desc: Test vars_cache functionality
+  desc: Test transient functionality
   tool:
     kind: python
     code: |
@@ -29,11 +29,11 @@ workflow:
     kind: python
     code: |
       async def main():
-          from noetl.worker.vars_cache import VarsCache
+          from noetl.worker.transient import TransientVars
           execution_id = int(context.get('execution_id'))
           
           # Set individual variables
-          await VarsCache.set_cached(
+          await TransientVars.set_cached(
               var_name="counter",
               var_value=0,
               execution_id=execution_id,
@@ -41,7 +41,7 @@ workflow:
               source_step="test_set_var"
           )
           
-          await VarsCache.set_cached(
+          await TransientVars.set_cached(
               var_name="status",
               var_value="initialized",
               execution_id=execution_id,
@@ -49,7 +49,7 @@ workflow:
               source_step="test_set_var"
           )
           
-          await VarsCache.set_cached(
+          await TransientVars.set_cached(
               var_name="config",
               var_value={"timeout": 30, "retries": 3},
               execution_id=execution_id,
@@ -71,16 +71,16 @@ workflow:
     kind: python
     code: |
       async def main():
-          from noetl.worker.vars_cache import VarsCache
+          from noetl.worker.transient import TransientVars
           execution_id = int(context.get('execution_id'))
           
           # Get individual variable
-          counter = await VarsCache.get_cached("counter", execution_id)
-          status = await VarsCache.get_cached("status", execution_id)
-          config = await VarsCache.get_cached("config", execution_id)
+          counter = await TransientVars.get_cached("counter", execution_id)
+          status = await TransientVars.get_cached("status", execution_id)
+          config = await TransientVars.get_cached("config", execution_id)
           
           # Get all variables
-          all_vars = await VarsCache.get_all_vars(execution_id)
+          all_vars = await TransientVars.get_all_vars(execution_id)
           
           return {
               "status": "success",
@@ -108,11 +108,11 @@ workflow:
     kind: python
     code: |
       async def main():
-          from noetl.worker.vars_cache import VarsCache
+          from noetl.worker.transient import TransientVars
           execution_id = int(context.get('execution_id'))
         
         # Update counter
-        await VarsCache.set_cached(
+        await TransientVars.set_cached(
             var_name="counter",
             var_value=1,
             execution_id=execution_id,
@@ -121,7 +121,7 @@ workflow:
         )
         
         # Update status
-        await VarsCache.set_cached(
+        await TransientVars.set_cached(
             var_name="status",
             var_value="processing",
             execution_id=execution_id,
@@ -130,8 +130,8 @@ workflow:
         )
         
         # Get updated values
-        counter = await VarsCache.get_cached("counter", execution_id)
-        status = await VarsCache.get_cached("status", execution_id)
+        counter = await TransientVars.get_cached("counter", execution_id)
+        status = await TransientVars.get_cached("status", execution_id)
         
         return {
             "status": "success",
@@ -155,7 +155,7 @@ workflow:
     kind: python
     code: |
       async def main():
-          from noetl.worker.vars_cache import VarsCache
+          from noetl.worker.transient import TransientVars
           execution_id = int(context.get('execution_id'))
           
           # Set multiple variables at once
@@ -166,7 +166,7 @@ workflow:
               "bulk_var_4": {"nested": "object"}
           }
           
-          count = await VarsCache.set_multiple(
+          count = await TransientVars.set_multiple(
               variables=vars_to_set,
               execution_id=execution_id,
               var_type="computed",
@@ -174,7 +174,7 @@ workflow:
           )
           
           # Get all vars with metadata
-          all_with_meta = await VarsCache.get_all_vars_with_metadata(execution_id)
+          all_with_meta = await TransientVars.get_all_vars_with_metadata(execution_id)
           
           return {
               "status": "success",
@@ -197,17 +197,17 @@ workflow:
     kind: python
     code: |
       async def main():
-          from noetl.worker.vars_cache import VarsCache
+          from noetl.worker.transient import TransientVars
           execution_id = int(context.get('execution_id'))
           
           # Delete single variable
-          deleted = await VarsCache.delete_var("bulk_var_1", execution_id)
+          deleted = await TransientVars.delete_var("bulk_var_1", execution_id)
           
           # Verify deletion
-          deleted_var = await VarsCache.get_cached("bulk_var_1", execution_id)
+          deleted_var = await TransientVars.get_cached("bulk_var_1", execution_id)
           
           # Get remaining vars
-          all_vars = await VarsCache.get_all_vars(execution_id)
+          all_vars = await TransientVars.get_all_vars(execution_id)
           
           return {
               "status": "success",

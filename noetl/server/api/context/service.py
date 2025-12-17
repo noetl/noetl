@@ -18,7 +18,7 @@ from noetl.core.logger import setup_logger
 from noetl.server.api.broker.service import EventService
 from noetl.server.api.catalog import get_catalog_service
 from noetl.server.api.catalog.service import CatalogService
-from noetl.worker.vars_cache import VarsCache
+from noetl.worker.transient import TransientVars
 
 logger = setup_logger(__name__, include_location=True)
 
@@ -134,18 +134,18 @@ async def build_rendering_context(
         "results": results,
     }
 
-    # Add vars namespace from VarsCache if execution_id available
+    # Add vars namespace from TransientVars if execution_id available
     execution_id = None
     if isinstance(extra_context, dict):
         execution_id = extra_context.get("execution_id")
     
     if execution_id:
         try:
-            vars_data = await VarsCache.get_all_vars(execution_id)
+            vars_data = await TransientVars.get_all_vars(execution_id)
             base_ctx["vars"] = vars_data
-            logger.info(f"✓ Loaded {len(vars_data)} variables from vars_cache for execution {execution_id}")
+            logger.info(f"✓ Loaded {len(vars_data)} variables from transient for execution {execution_id}")
         except Exception as e:
-            logger.warning(f"Failed to load vars_cache for execution {execution_id}: {e}")
+            logger.warning(f"Failed to load transient for execution {execution_id}: {e}")
             base_ctx["vars"] = {}
     else:
         logger.info("No execution_id in extra_context, vars namespace will be empty")

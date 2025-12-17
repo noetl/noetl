@@ -14,7 +14,7 @@ workload:
   
   # Skip playbooks with known issues
   skip_playbooks:
-    - test/vars_cache  # datetime serialization issue in VarsCache (internal API test)
+    - test/transient  # datetime serialization issue in TransientVars (internal API test)
     - tests/script_execution/python_file  # relative path issue
     - tests/script_execution/postgres_file  # relative path issue
     - tests/script_execution/postgres_s3  # missing S3 credentials
@@ -98,7 +98,7 @@ workflow:
     next:
       - step: vars_test/test_vars_block
   
-  # SKIPPED: test/vars_cache - asyncio not defined error
+  # SKIPPED: test/transient - asyncio not defined error
   
   - step: vars_test/test_vars_block
     tool:
@@ -130,7 +130,7 @@ workflow:
     next:
       - step: test/cache_simple
 
-  # SKIPPED: test/vars_cache - datetime serialization issue
+  # SKIPPED: test/transient - datetime serialization issue
 
   # === CACHE TESTS ===
   - step: test/cache_simple

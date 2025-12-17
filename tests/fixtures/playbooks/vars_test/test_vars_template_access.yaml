@@ -8,11 +8,11 @@ metadata:
   version: 1.0.0
   labels:
     test: true
-    feature: vars_cache
+    feature: transient
     phase: 2
 
 # Test scenario:
-# 1. Set multiple variables using VarsCache
+# 1. Set multiple variables using TransientVars
 # 2. Use {{ vars.var_name }} in subsequent step data
 # 3. Verify template rendering works with vars namespace
 
@@ -40,7 +40,7 @@ workflow:
       kind: python
       code: |
         async def main():
-            from noetl.worker.vars_cache import VarsCache
+            from noetl.worker.transient import TransientVars
             execution_id = int(context.get('execution_id'))
             
             # Set multiple variables
@@ -53,7 +53,7 @@ workflow:
                 }
             }
             
-            count = await VarsCache.set_multiple(
+            count = await TransientVars.set_multiple(
                 variables=variables,
                 execution_id=execution_id,
                 var_type="user_defined",

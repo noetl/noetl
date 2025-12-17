@@ -70,7 +70,7 @@ DSL docs & examples live in files like:
 
 6. Workers send **events** only; no "update queue" APIs.
 
-7. **Variable extraction** via `vars:` block at step level stores values in `vars_cache` table, accessible as `{{ vars.var_name }}`.
+7. **Variable extraction** via `vars:` block at step level stores values in `transient` table, accessible as `{{ vars.var_name }}`.
 
 ## **Variable Management**
 
@@ -78,7 +78,7 @@ DSL docs & examples live in files like:
 
 1. **`vars:` block** (step-level, declarative):
    - Extracts values from step results AFTER execution completes
-   - Stored in `noetl.vars_cache` database table
+   - Stored in `noetl.transient` database table
    - Accessible in templates as `{{ vars.var_name }}`
    - REST API: `/api/vars/{execution_id}` for external access
    - Example:

@@ -66,12 +66,12 @@ class ExecutionState:
         self.current_step = step_name
     
     def mark_step_completed(self, step_name: str, result: Any = None):
-        """Mark step as completed and store result in memory and vars_cache."""
+        """Mark step as completed and store result in memory and transient."""
         self.completed_steps.add(step_name)
         if result is not None:
             self.step_results[step_name] = result
             self.variables[step_name] = result
-            # Also persist to vars_cache for rendering in subsequent steps
+            # Also persist to transient for rendering in subsequent steps
             # This is done async in the engine after calling mark_step_completed
     
     def is_step_completed(self, step_name: str) -> bool:

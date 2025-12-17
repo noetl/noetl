@@ -94,13 +94,13 @@ workflow:
       kind: python
       code: |
         def main():
-            from noetl.worker.vars_cache import VarsCache
+            from noetl.worker.transient import TransientVars
             import asyncio
             
             execution_id = int(context.get('execution_id'))
             
             # Get all vars
-            all_vars = asyncio.run(VarsCache.get_all_vars(execution_id))
+            all_vars = asyncio.run(TransientVars.get_all_vars(execution_id))
             
             # Check expected vars
             checks = {

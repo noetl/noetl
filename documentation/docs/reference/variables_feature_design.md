@@ -11,7 +11,7 @@ Add dynamic variable assignment and access during playbook execution. Variables 
 **Key Features**:
 - Declarative variable extraction from step results via `vars` block
 - Template-based value extraction using `{{ result.field }}` syntax
-- Automatic storage in `vars_cache` table with `var_type='step_result'`
+- Automatic storage in `transient` table with `var_type='step_result'`
 - Access in subsequent steps via `{{ vars.var_name }}` templates
 - Direct step name references (no wrapper objects needed)
 - **REST API access** for variable management (no direct worker database access)
@@ -20,20 +20,20 @@ Add dynamic variable assignment and access during playbook execution. Variables 
 
 **Database Access Pattern**: 
 - ✅ **Workers**: Access variables via REST API (`/api/vars/{execution_id}`)
-- ✅ **Server**: Direct database access via `VarsCache` service using pool connections
+- ✅ **Server**: Direct database access via `TransientVars` service using pool connections
 - ❌ **Workers**: NO direct PostgreSQL connections for variables
 
 **Implementation Files**:
 - Database schema: `noetl/database/ddl/postgres/schema_ddl.sql`
-- Service layer: `noetl/worker/vars_cache.py` (uses `get_pool_connection()`)
+- Service layer: `noetl/worker/transient.py` (uses `get_pool_connection()`)
 - REST API: `noetl/server/api/vars/endpoint.py`
 - Pydantic models: `noetl/server/api/vars/schema.py`
 
-## Table Design: `vars_cache`
+## Table Design: `transient`
 
 **Naming Pattern**: Following `auth_cache` pattern for consistency
 
-**Implementation**: Table created as `vars_cache` in schema
+**Implementation**: Table created as `transient` in schema
 
 **Rationale**:
 - Follows `auth_cache` naming convention
@@ -44,7 +44,7 @@ Add dynamic variable assignment and access during playbook execution. Variables 
 ## Schema Design
 
 ```sql
-CREATE TABLE noetl.vars_cache (
+CREATE TABLE noetl.transient (
   execution_id BIGINT NOT NULL,
   var_name TEXT NOT NULL,
   var_type TEXT NOT NULL DEFAULT 'user_defined',
@@ -56,13 +56,13 @@ CREATE TABLE noetl.vars_cache (
   PRIMARY KEY (execution_id, var_name)
 );
 
-CREATE INDEX idx_vars_cache_execution ON noetl.vars_cache(execution_id);
-CREATE INDEX idx_vars_cache_source ON noetl.vars_cache(source_step);
-CREATE INDEX idx_vars_cache_type ON noetl.vars_cache(var_type);
+CREATE INDEX idx_transient_execution ON noetl.transient(execution_id);
+CREATE INDEX idx_transient_source ON noetl.transient(source_step);
+CREATE INDEX idx_transient_type ON noetl.transient(var_type);
 
 -- Type constraint
-ALTER TABLE noetl.vars_cache 
-ADD CONSTRAINT vars_cache_type_check 
+ALTER TABLE noetl.transient 
+ADD CONSTRAINT transient_type_check 
 CHECK (var_type IN ('user_defined', 'step_result', 'computed', 'iterator_state'));
 ```
 
@@ -439,14 +439,14 @@ workflow:
 ### ✅ Completed Components
 
 **1. Database Schema** (`noetl/database/ddl/postgres/schema_ddl.sql`)
-- Table `noetl.vars_cache` created with:
+- Table `noetl.transient` created with:
   - Primary key: `(execution_id, var_name)`
   - Columns: `var_type`, `var_value` (JSONB), `source_step`, `created_at`, `accessed_at`, `access_count`
   - CHECK constraint: `var_type IN ('user_defined', 'step_result', 'computed', 'iterator_state')`
   - Indexes on: `execution_id`, `var_type`, `source_step`
 
-**2. Service Layer** (`noetl/worker/vars_cache.py`)
-- `VarsCache` class with methods:
+**2. Service Layer** (`noetl/worker/transient.py`)
+- `TransientVars` class with methods:
   - `get_cached()` - Retrieve variable with access tracking
   - `set_cached()` - Store/update single variable
   - `get_all_vars()` - Bulk load all variables (flat dict)
@@ -492,7 +492,7 @@ from psycopg.types.json import Json
 async with get_pool_connection() as conn:
     async with conn.cursor(row_factory=dict_row) as cursor:
         await cursor.execute(
-            "INSERT INTO vars_cache (var_name, var_value) VALUES (%(name)s, %(value)s)",
+            "INSERT INTO transient (var_name, var_value) VALUES (%(name)s, %(value)s)",
             {"name": "my_var", "value": Json({"data": 123})}
         )
         row = await cursor.fetchone()
@@ -515,11 +515,11 @@ async with get_pool_connection() as conn:
            step_result: Step result for 'this' context
            jinja_env: Jinja2 environment for template rendering
        """
-       from noetl.worker.vars_cache import VarsCache
+       from noetl.worker.transient import TransientVars
        from noetl.core.dsl.render import render_template
        
        # Load current vars for template context
-       current_vars = await VarsCache.get_all_vars(execution_id)
+       current_vars = await TransientVars.get_all_vars(execution_id)
        
        # Build context with vars + step result
        context = {
@@ -531,7 +531,7 @@ async with get_pool_connection() as conn:
        # Render and update each variable
        for var_name, var_value_template in vars_config.items():
            rendered_value = render_template(jinja_env, var_value_template, context)
-           await VarsCache.set_cached(
+           await TransientVars.set_cached(
                var_name=var_name,
                var_value=rendered_value,
                execution_id=execution_id,
@@ -564,24 +564,24 @@ Get all variables for execution as flat dict. Returns: `{var_name: var_value, ..
 
 1. Auto-populate iterator state variables:
    ```python
-   from noetl.worker.vars_cache import VarsCache
+   from noetl.worker.transient import TransientVars
    
    # Set iterator state variables
-   await VarsCache.set_cached(
+   await TransientVars.set_cached(
        var_name=f"{step_name}_index",
        var_value=iteration_index,
        execution_id=execution_id,
        var_type="iterator_state",
        source_step=step_name
    )
-   await VarsCache.set_cached(
+   await TransientVars.set_cached(
        var_name=f"{step_name}_item",
        var_value=current_item,
        execution_id=execution_id,
        var_type="iterator_state",
        source_step=step_name
    )
-   await VarsCache.set_cached(
+   await TransientVars.set_cached(
        var_name=f"{step_name}_count",
        var_value=items_processed,
        execution_id=execution_id,
@@ -807,9 +807,9 @@ workflow:
   - when: "{{ this.status == 'error' and vars.retry_count >= vars.max_retries }}"
     then:
     - step: failure
-## Comparison: vars_cache vs auth_cache
+## Comparison: transient vs auth_cache
 
-| Feature | auth_cache | vars_cache |
+| Feature | auth_cache | transient |
 |---------|-----------|-----------|
 | **Purpose** | Credential caching | Runtime variables |
 | **Scope** | execution_id | execution_id |
@@ -826,8 +826,8 @@ workflow:
 
 1. **Consistency**: Both use same *_cache pattern
 2. **Proven**: auth_cache implementation is tested and working
-3. **Clear separation**: auth_cache = external secrets, vars_cache = runtime state
-4. **Similar API**: VarsCache mirrors AuthCache methods
+3. **Clear separation**: auth_cache = external secrets, transient = runtime state
+4. **Similar API**: TransientVars mirrors AuthCache methods
 5. **Unified cleanup**: Both cleaned up on execution completion
 ```yaml
 workload:

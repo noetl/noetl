@@ -4,7 +4,7 @@
 
 Use the `vars` block to **extract and store values AFTER step execution** from a step's result for reuse in subsequent steps.
 
-Variables are stored in the `vars_cache` database table and accessed via:
+Variables are stored in the `transient` database table and accessed via:
 - **Template syntax**: `{{ vars.var_name }}` in playbook YAML
 - **REST API**: `/api/vars/{execution_id}` for external access
 
@@ -231,7 +231,7 @@ vars:
 **Check variable storage**:
 ```sql
 SELECT var_name, var_value, source_step, created_at
-FROM vars_cache
+FROM transient
 WHERE execution_id = <your_execution_id>
 ORDER BY created_at;
 ```

@@ -23,7 +23,7 @@ from noetl.core.logger import setup_logger
 logger = setup_logger(__name__, include_location=True)
 
 
-class VarsCache:
+class TransientVars:
     """
     Variable cache service for execution-scoped runtime variables.
     
@@ -60,7 +60,7 @@ class VarsCache:
                     # Retrieve and update access tracking in one query
                     await cur.execute(
                         """
-                        UPDATE noetl.vars_cache
+                        UPDATE noetl.transient
                         SET 
                             access_count = access_count + 1,
                             accessed_at = NOW()
@@ -118,7 +118,7 @@ class VarsCache:
                 async with conn.cursor() as cur:
                     await cur.execute(
                         """
-                        INSERT INTO noetl.vars_cache (
+                        INSERT INTO noetl.transient (
                             execution_id,
                             var_name,
                             var_type,
@@ -182,7 +182,7 @@ class VarsCache:
                     await cur.execute(
                         """
                         SELECT var_name, var_value
-                        FROM noetl.vars_cache
+                        FROM noetl.transient
                         WHERE execution_id = %(execution_id)s
                         ORDER BY created_at
                         """,
@@ -238,7 +238,7 @@ class VarsCache:
                             created_at,
                             accessed_at,
                             access_count
-                        FROM noetl.vars_cache
+                        FROM noetl.transient
                         WHERE execution_id = %(execution_id)s
                         ORDER BY created_at
                         """,
@@ -278,7 +278,7 @@ class VarsCache:
                 async with conn.cursor() as cur:
                     await cur.execute(
                         """
-                        DELETE FROM noetl.vars_cache
+                        DELETE FROM noetl.transient
                         WHERE execution_id = %(execution_id)s AND var_name = %(var_name)s
                         """,
                         {"execution_id": execution_id, "var_name": var_name}
@@ -316,7 +316,7 @@ class VarsCache:
                 async with conn.cursor() as cur:
                     await cur.execute(
                         """
-                        DELETE FROM noetl.vars_cache
+                        DELETE FROM noetl.transient
                         WHERE execution_id = %(execution_id)s
                         """,
                         {"execution_id": execution_id}
@@ -359,7 +359,7 @@ class VarsCache:
                     for var_name, var_value in variables.items():
                         await cur.execute(
                             """
-                            INSERT INTO noetl.vars_cache (
+                            INSERT INTO noetl.transient (
                                 execution_id,
                                 var_name,
                                 var_type,
