@@ -1454,11 +1454,35 @@ async def _process_transitions(execution_id: int) -> None:
                     else:
                         next_step_type = next_step_tool.strip().lower()
 
-                    # If it's an "end" step, just emit step_completed and skip
+                    # If it's an "end" step, emit step_completed and skip enqueue
                     if next_step_type == "end":
                         logger.info(
-                            f"Next step '{to_step}' is end step, skipping enqueue"
+                            f"Next step '{to_step}' is end step, emitting step_completed and skipping enqueue"
                         )
+                        
+                        # Emit step_completed for the end step so workflow knows it terminated
+                        from noetl.server.api.broker.schema import EventEmitRequest
+                        
+                        end_step_request = EventEmitRequest(
+                            execution_id=str(execution_id),
+                            catalog_id=catalog_id,
+                            event_type="step_completed",
+                            status="COMPLETED",
+                            node_id=to_step,
+                            node_name=to_step,
+                            node_type="end",
+                            parent_event_id=step_completed_event_id,
+                        )
+                        try:
+                            await EventService.emit_event(end_step_request)
+                            logger.info(
+                                f"Emitted step_completed for end step '{to_step}'"
+                            )
+                        except Exception as e:
+                            logger.exception(
+                                f"Error emitting step_completed for end step '{to_step}': {e}"
+                            )
+                        
                         continue
 
                     # If it's a router (no type or type="router"), emit step_completed and process its transitions

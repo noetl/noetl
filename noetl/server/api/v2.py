@@ -241,6 +241,59 @@ async def start_execution(req: StartExecutionRequest) -> StartExecutionResponse:
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/commands/{event_id}")
+async def get_command_details(event_id: int):
+    """
+    Get command details from command.issued event.
+    
+    Workers call this endpoint to fetch the full command configuration
+    after claiming a command via command.claimed event.
+    
+    Returns:
+        Command details including tool config, args, and render context
+    """
+    try:
+        async with get_pool_connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute("""
+                    SELECT 
+                        execution_id,
+                        node_name as step,
+                        node_type as tool_kind,
+                        context,
+                        meta
+                    FROM noetl.event
+                    WHERE event_id = %s AND event_type = 'command.issued'
+                """, (event_id,))
+                
+                row = await cur.fetchone()
+                if not row:
+                    logger.error(f"Command.issued event not found for event_id={event_id}")
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"Command.issued event not found for event_id={event_id}"
+                    )
+                
+                # Row is a DictRow: {execution_id, step, tool_kind, context, meta}
+                logger.info(f"Fetched command for event_id={event_id}: step={row['step']}, tool={row['tool_kind']}")
+                
+                # Return command structure expected by worker
+                return {
+                    "execution_id": row['execution_id'],
+                    "node_id": row['step'],
+                    "node_name": row['step'],
+                    "action": row['tool_kind'],
+                    "context": row['context'],
+                    "meta": row['meta']
+                }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to fetch command details: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/events", response_model=EventResponse)
 async def handle_event(req: EventRequest) -> EventResponse:
     """
@@ -369,6 +422,20 @@ async def handle_event(req: EventRequest) -> EventResponse:
                 step=command.step,
                 server_url=server_url
             )
+        
+        # Trigger orchestrator for transition processing if this is a completion event
+        # This allows step_completed events to be emitted and workflow to progress/complete
+        if event.name == "command.completed":
+            from ..run import evaluate_execution
+            try:
+                logger.info(f"[ORCHESTRATOR] Triggering orchestrator for command.completed event in execution {event.execution_id}")
+                await evaluate_execution(
+                    execution_id=str(event.execution_id),
+                    trigger_event_type="command.completed",
+                    trigger_event_id=None  # We don't have the persisted event_id yet in v2 flow
+                )
+            except Exception as e:
+                logger.exception(f"Error triggering orchestrator for execution {event.execution_id}: {e}")
         
         return EventResponse(
             status="ok",

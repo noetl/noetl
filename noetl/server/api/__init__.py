@@ -24,7 +24,8 @@ async def api_health():
 
 # Include all sub-routers
 router.include_router(context.router)
-router.include_router(broker.router)  # Event handler (was event package)
+# DISABLED: Legacy v1 event endpoint - replaced by /api/v2/events
+# router.include_router(broker.router)  # Event handler (was event package)
 router.include_router(catalog.router)
 router.include_router(execution.router)
 router.include_router(credential.router)

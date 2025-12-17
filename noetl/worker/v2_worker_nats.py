@@ -173,60 +173,26 @@ class V2Worker:
     
     async def _fetch_command_details(self, server_url: str, event_id: int) -> Optional[dict]:
         """
-        Fetch command details from command.issued event.
+        Fetch command details from server API.
         
-        The event payload contains all the information needed to execute:
-        - tool_config
-        - args
-        - render_context
+        Uses the /api/v2/commands/{event_id} endpoint to get command configuration
+        from the command.issued event.
         """
         try:
-            # Query the command.issued event
-            response = await self._http_client.post(
-                f"{server_url.rstrip('/')}/api/postgres/execute",
-                json={
-                    "query": """
-                        SELECT 
-                            execution_id,
-                            node_name as step,
-                            node_type as tool_kind,
-                            context,
-                            meta
-                        FROM noetl.event
-                        WHERE event_id = %s AND event_type = 'command.issued'
-                    """,
-                    "parameters": [event_id],
-                    "schema": "noetl"
-                }
+            response = await self._http_client.get(
+                f"{server_url.rstrip('/')}/api/v2/commands/{event_id}"
             )
             
-            if response.status_code != 200:
-                logger.error(f"[EVENT] Failed to query command.issued event: {response.status_code}")
-                return None
-            
-            result = response.json()
-            if not result.get("result") or len(result["result"]) == 0:
+            if response.status_code == 404:
                 logger.error(f"[EVENT] No command.issued event found for event_id={event_id}")
                 return None
             
-            row = result["result"][0]
-            execution_id = row[0]
-            step = row[1]
-            tool_kind = row[2]
-            context = row[3]  # Contains tool_config, args, render_context
-            meta = row[4]     # Contains command_id, priority, etc.
+            if response.status_code != 200:
+                logger.error(f"[EVENT] Failed to fetch command details: {response.status_code} - {response.text}")
+                return None
             
-            # Reconstruct command structure
-            command = {
-                "execution_id": execution_id,
-                "node_id": step,
-                "node_name": step,
-                "action": tool_kind,
-                "context": context,
-                "meta": meta
-            }
-            
-            logger.info(f"[EVENT] Fetched command details: step={step}, tool={tool_kind}")
+            command = response.json()
+            logger.info(f"[EVENT] Fetched command details: step={command.get('node_name')}, tool={command.get('action')}")
             return command
             
         except Exception as e:
