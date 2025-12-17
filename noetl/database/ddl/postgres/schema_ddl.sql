@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS noetl.workload (
 
 -- Variables Cache
 -- Stores runtime variables for playbook execution scope with access tracking
-CREATE TABLE IF NOT EXISTS noetl.vars_cache (
+CREATE TABLE IF NOT EXISTS noetl.transient (
     execution_id BIGINT NOT NULL,
     var_name TEXT NOT NULL,
     var_type TEXT NOT NULL CHECK (var_type IN ('user_defined', 'step_result', 'computed', 'iterator_state')),
@@ -42,16 +42,16 @@ CREATE TABLE IF NOT EXISTS noetl.vars_cache (
     PRIMARY KEY (execution_id, var_name)
 );
 
-CREATE INDEX IF NOT EXISTS idx_vars_cache_type ON noetl.vars_cache (var_type);
-CREATE INDEX IF NOT EXISTS idx_vars_cache_source ON noetl.vars_cache (source_step);
-CREATE INDEX IF NOT EXISTS idx_vars_cache_execution ON noetl.vars_cache (execution_id);
+CREATE INDEX IF NOT EXISTS idx_transient_type ON noetl.transient (var_type);
+CREATE INDEX IF NOT EXISTS idx_transient_source ON noetl.transient (source_step);
+CREATE INDEX IF NOT EXISTS idx_transient_execution ON noetl.transient (execution_id);
 
-COMMENT ON TABLE noetl.vars_cache IS 'Execution-scoped variables for playbook runtime with cache tracking';
-COMMENT ON COLUMN noetl.vars_cache.var_type IS 'step_result: result from a step, user_defined: explicit variable, computed: derived value, iterator_state: iterator loop state';
-COMMENT ON COLUMN noetl.vars_cache.var_value IS 'Variable value stored as JSONB (supports any type)';
-COMMENT ON COLUMN noetl.vars_cache.source_step IS 'Step name that produced this variable';
-COMMENT ON COLUMN noetl.vars_cache.access_count IS 'Number of times this variable has been accessed';
-COMMENT ON COLUMN noetl.vars_cache.accessed_at IS 'Last time this variable was read';
+COMMENT ON TABLE noetl.transient IS 'Execution-scoped variables for playbook runtime with cache tracking';
+COMMENT ON COLUMN noetl.transient.var_type IS 'step_result: result from a step, user_defined: explicit variable, computed: derived value, iterator_state: iterator loop state';
+COMMENT ON COLUMN noetl.transient.var_value IS 'Variable value stored as JSONB (supports any type)';
+COMMENT ON COLUMN noetl.transient.source_step IS 'Step name that produced this variable';
+COMMENT ON COLUMN noetl.transient.access_count IS 'Number of times this variable has been accessed';
+COMMENT ON COLUMN noetl.transient.accessed_at IS 'Last time this variable was read';
 
 -- Event
 CREATE TABLE IF NOT EXISTS noetl.event (

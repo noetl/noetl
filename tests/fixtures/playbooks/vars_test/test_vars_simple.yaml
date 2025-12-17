@@ -9,7 +9,7 @@ workload:
 
 workflow:
 - step: start
-  desc: Simple vars_cache test
+  desc: Simple transient test
   tool:
     kind: python
     code: |
@@ -28,12 +28,12 @@ workflow:
     kind: python
     code: |
       async def main():
-          from noetl.worker.vars_cache import VarsCache
+          from noetl.worker.transient import TransientVars
           
           execution_id = int(context.get('execution_id'))
           
           # Set variable
-          await VarsCache.set_cached(
+          await TransientVars.set_cached(
               var_name="test_counter",
               var_value=42,
               execution_id=execution_id,
@@ -57,12 +57,12 @@ workflow:
     kind: python
     code: |
       async def main():
-          from noetl.worker.vars_cache import VarsCache
+          from noetl.worker.transient import TransientVars
           
           execution_id = int(context.get('execution_id'))
           
           # Get variable
-          result = await VarsCache.get_cached(
+          result = await TransientVars.get_cached(
               var_name="test_counter",
               execution_id=execution_id
           )

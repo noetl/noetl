@@ -95,7 +95,7 @@ workbook:
   - **in** (array|string): Collection to iterate over
   - **iterator** (string): Variable name for current item
   - **mode** (string): `sequential` or `async`
-- **vars** (object, optional): Variable extraction block - extracts values from step result and stores in `vars_cache` database
+- **vars** (object, optional): Variable extraction block - extracts values from step result and stores in `transient` database
 - **case** (array, optional): Event-driven conditional routing
   - **when** (string): Jinja2 condition to evaluate
   - **then** (object): Actions when condition matches
@@ -130,7 +130,7 @@ workbook:
 **Behavior**:
 - Executes AFTER step completes successfully
 - Templates use `{{ result.field }}` to access current step's result
-- Variables stored in `noetl.vars_cache` database table with `var_type='step_result'`
+- Variables stored in `noetl.transient` database table with `var_type='step_result'`
 - Accessible in all subsequent steps via `{{ vars.variable_name }}`
 - Also accessible via REST API: `GET /api/vars/{execution_id}/{var_name}`
 
@@ -181,7 +181,7 @@ workbook:
 ```
 
 **Storage Details**:
-- Table: `noetl.vars_cache`
+- Table: `noetl.transient`
 - Primary Key: `(execution_id, var_name)`
 - Columns: `var_type`, `var_value` (JSONB), `source_step`, `created_at`, `accessed_at`, `access_count`
 - Automatic cleanup when execution completes
@@ -841,7 +841,7 @@ During workflow execution, multiple namespaces are available in Jinja2 templates
 
 **3. Extracted Variables** (via `vars:` block):
 - `{{ vars.var_name }}` - Persistent variables extracted from step results
-- Stored in `vars_cache` database table
+- Stored in `transient` database table
 - Accessible via REST API: `/api/vars/{execution_id}`
 - Example:
   ```yaml
@@ -886,7 +886,7 @@ During workflow execution, completed step results are available in subsequent st
 |-----------|-------|-------------|----------------|----------|
 | `workload:` | Global | Immutable after start | `{{ workload.field }}` | Static configuration |
 | Step results | Execution | In-memory only | `{{ step_name.field }}` | Passing data between adjacent steps |
-| `vars:` block | Execution | Database (`vars_cache`) | `{{ vars.var_name }}` or REST API | Extracted values for reuse |
+| `vars:` block | Execution | Database (`transient`) | `{{ vars.var_name }}` or REST API | Extracted values for reuse |
 | `context:` | Global | Runtime mutable | `{{ context.field }}` | Runtime state (deprecated - use `vars:`) |
 
 **Recommendation**: Use `vars:` block for extracting and persisting values that need to be:

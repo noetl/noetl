@@ -8,12 +8,12 @@
 
 ## Feature Overview
 
-The `vars` block feature enables declarative extraction of values from step execution results. Variables are automatically stored in the `vars_cache` database table and become accessible in subsequent workflow steps through template syntax.
+The `vars` block feature enables declarative extraction of values from step execution results. Variables are automatically stored in the `transient` database table and become accessible in subsequent workflow steps through template syntax.
 
 **Architecture**:
-- **Server**: Direct database access via `VarsCache` service (pool connections)
+- **Server**: Direct database access via `TransientVars` service (pool connections)
 - **Workers**: REST API access (`/api/vars/{execution_id}`) - NO direct database connections
-- **Database**: `noetl.vars_cache` table with execution-scoped isolation
+- **Database**: `noetl.transient` table with execution-scoped isolation
 
 ## Design Decisions
 
@@ -33,7 +33,7 @@ The `vars` block feature enables declarative extraction of values from step exec
 
 ### 2. Variable Type: `step_result`
 
-**Decision**: Store extracted variables with `var_type='step_result'` in `vars_cache` table.
+**Decision**: Store extracted variables with `var_type='step_result'` in `transient` table.
 
 **Rationale**:
 - Aligns with existing database constraint: `CHECK (var_type IN ('user_defined', 'step_result', 'computed', 'iterator_state'))`
@@ -91,7 +91,7 @@ The `vars` block feature enables declarative extraction of values from step exec
 3. Orchestrator calls _process_step_vars()
    a. Extracts vars dict from step definition
    b. Renders each template using eval_ctx (with 'result' pointing to current step)
-   c. Stores rendered variables via VarsCache.set_multiple()
+   c. Stores rendered variables via TransientVars.set_multiple()
    d. Logs success/error for each variable
 4. Orchestrator evaluates next transitions
 5. Subsequent steps load vars into template context
@@ -137,9 +137,9 @@ async def _process_step_vars(
         except Exception as e:
             logger.error(f"✗ Failed to render var '{var_name}': {e}")
     
-    # Store in vars_cache
+    # Store in transient
     if rendered_vars:
-        count = await VarsCache.set_multiple(
+        count = await TransientVars.set_multiple(
             variables=rendered_vars,
             execution_id=execution_id,
             var_type="step_result",
@@ -288,10 +288,10 @@ export NOETL_SERVER_URL="http://noetl-server:8080"
 
 ## Database Schema
 
-**Table**: `vars_cache`
+**Table**: `transient`
 
 ```sql
-CREATE TABLE vars_cache (
+CREATE TABLE transient (
     execution_id BIGINT NOT NULL,
     var_name VARCHAR(255) NOT NULL,
     var_type VARCHAR(50) NOT NULL CHECK (var_type IN (
@@ -348,7 +348,7 @@ async def build_rendering_context(
     # Load stored variables
     execution_id = extra_context.get("execution_id")
     if execution_id:
-        vars_data = await VarsCache.get_all_vars(execution_id)
+        vars_data = await TransientVars.get_all_vars(execution_id)
         base_ctx["vars"] = vars_data
         logger.info(f"✓ Loaded {len(vars_data)} variables")
     
@@ -360,7 +360,7 @@ async def build_rendering_context(
 - **Design Document**: `docs/variables_feature_design.md` - Complete feature design and rationale
 - **DSL Specification**: `docs/dsl_spec.md` - Vars block syntax and template namespace
 - **Test Playbook**: `tests/fixtures/playbooks/vars_test/test_vars_block.yaml` - Working example
-- **VarsCache API**: `noetl/server/api/context/vars_cache.py` - Storage layer implementation
+- **TransientVars API**: `noetl/server/api/context/transient.py` - Storage layer implementation
 
 ## Future Enhancements (Not Implemented)
 
@@ -384,7 +384,7 @@ async def build_rendering_context(
 - Existing playbooks continue to work without modification
 - `vars` block is optional
 - No changes to existing template syntax
-- VarsCache table already existed and migrated from `execution_variable`
+- TransientVars table already existed and migrated from `execution_variable`
 
 ## Conclusion
 
