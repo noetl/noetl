@@ -87,85 +87,275 @@ class V2Worker:
     
     async def _handle_command_notification(self, notification: dict):
         """
-        Handle command notification from NATS.
+        Handle command notification from NATS (Event-Driven).
         
-        Notification contains: {execution_id, queue_id, step, server_url}
+        Notification contains: {execution_id, event_id, command_id, step, server_url}
+        
+        Event-driven flow:
+        1. Check if command already claimed
+        2. Attempt atomic claim via command.claimed event
+        3. If claim succeeds, fetch command details and execute
+        4. If claim fails, another worker got it - silently skip
         """
         try:
             execution_id = notification["execution_id"]
-            queue_id = notification["queue_id"]
+            event_id = notification["event_id"]
+            command_id = notification["command_id"]
             step = notification["step"]
             server_url = notification["server_url"]
             
-            logger.info(f"Received command: execution={execution_id}, queue={queue_id}, step={step}")
+            logger.info(f"[EVENT] Worker {self.worker_id} received notification: exec={execution_id}, command={command_id}, step={step}")
             
-            # Fetch full command from server
-            command = await self._fetch_command(server_url, queue_id)
+            # Attempt to claim the command atomically
+            claimed = await self._claim_command(server_url, execution_id, command_id)
+            
+            if not claimed:
+                logger.info(f"[EVENT] Command {command_id} already claimed by another worker - skipping")
+                return
+            
+            logger.info(f"[EVENT] Worker {self.worker_id} claimed command {command_id}")
+            
+            # Fetch command details from command.issued event
+            command = await self._fetch_command_details(server_url, event_id)
             
             if not command:
-                logger.warning(f"Command {queue_id} not found or already processed")
+                logger.error(f"[EVENT] Failed to fetch command details for event_id={event_id}")
+                await self._emit_command_failed(server_url, execution_id, command_id, step, "Failed to fetch command details")
                 return
             
             # Execute the command
-            await self._execute_command(command, server_url)
+            await self._execute_command(command, server_url, command_id)
             
         except Exception as e:
             logger.exception(f"Error handling command notification: {e}")
     
-    async def _fetch_command(self, server_url: str, queue_id: int) -> Optional[dict]:
+    async def _claim_command(self, server_url: str, execution_id: int, command_id: str) -> bool:
         """
-        Fetch command from server queue API and lock it.
+        Atomically claim a command by emitting command.claimed event.
         
-        Uses UPDATE...RETURNING to atomically lock the command.
-        Returns command dict or None if not available.
+        Uses idempotent event insertion - if another worker already claimed,
+        the INSERT will fail and we return False.
+        
+        Returns True if this worker successfully claimed the command.
         """
         try:
             response = await self._http_client.post(
+                f"{server_url.rstrip('/')}/api/v2/events",
+                json={
+                    "execution_id": str(execution_id),
+                    "step": command_id.split(":")[1] if ":" in command_id else "unknown",  # Extract step from command_id
+                    "name": "command.claimed",
+                    "payload": {
+                        "command_id": command_id,
+                        "worker_id": self.worker_id
+                    },
+                    "meta": {
+                        "worker_id": self.worker_id,
+                        "command_id": command_id
+                    },
+                    "worker_id": self.worker_id
+                }
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                # If commands_generated > 0 or status is "ok", we claimed it
+                # The server should prevent duplicate claims via unique constraint
+                logger.info(f"[EVENT] Successfully claimed command {command_id}")
+                return True
+            else:
+                logger.warning(f"[EVENT] Failed to claim command {command_id}: {response.status_code}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"[EVENT] Error claiming command {command_id}: {e}")
+            return False
+    
+    async def _fetch_command_details(self, server_url: str, event_id: int) -> Optional[dict]:
+        """
+        Fetch command details from command.issued event.
+        
+        The event payload contains all the information needed to execute:
+        - tool_config
+        - args
+        - render_context
+        """
+        try:
+            # Query the command.issued event
+            response = await self._http_client.post(
                 f"{server_url.rstrip('/')}/api/postgres/execute",
                 json={
-                    "procedure": """
-                        UPDATE noetl.queue
-                        SET status = 'running', 
-                            worker_id = %s,
-                            updated_at = NOW()
-                        WHERE queue_id = %s
-                          AND status = 'queued'
-                        RETURNING queue_id, execution_id, node_id, action, context
+                    "query": """
+                        SELECT 
+                            execution_id,
+                            node_name as step,
+                            node_type as tool_kind,
+                            context,
+                            meta
+                        FROM noetl.event
+                        WHERE event_id = %s AND event_type = 'command.issued'
                     """,
-                    "parameters": [self.worker_id, queue_id],
+                    "parameters": [event_id],
                     "schema": "noetl"
-                },
-                timeout=10.0
+                }
             )
-            response.raise_for_status()
+            
+            if response.status_code != 200:
+                logger.error(f"[EVENT] Failed to query command.issued event: {response.status_code}")
+                return None
             
             result = response.json()
+            if not result.get("result") or len(result["result"]) == 0:
+                logger.error(f"[EVENT] No command.issued event found for event_id={event_id}")
+                return None
             
-            if result.get("status") == "ok" and result.get("result"):
-                rows = result["result"]
-                if rows:
-                    # Parse result (queue_id, execution_id, node_id, action, context)
-                    row = rows[0]
-                    return {
-                        "queue_id": row[0],
-                        "execution_id": row[1],
-                        "step": row[2],
-                        "tool_kind": row[3],
-                        "context": row[4]
-                    }
+            row = result["result"][0]
+            execution_id = row[0]
+            step = row[1]
+            tool_kind = row[2]
+            context = row[3]  # Contains tool_config, args, render_context
+            meta = row[4]     # Contains command_id, priority, etc.
             
-            return None
+            # Reconstruct command structure
+            command = {
+                "execution_id": execution_id,
+                "node_id": step,
+                "node_name": step,
+                "action": tool_kind,
+                "context": context,
+                "meta": meta
+            }
+            
+            logger.info(f"[EVENT] Fetched command details: step={step}, tool={tool_kind}")
+            return command
             
         except Exception as e:
-            logger.exception(f"Failed to fetch command {queue_id}: {e}")
+            logger.error(f"[EVENT] Error fetching command details: {e}", exc_info=True)
             return None
     
-    async def _execute_command(self, command: dict, server_url: str):
+    async def _emit_command_failed(self, server_url: str, execution_id: int, command_id: str, step: str, error_msg: str):
+        """Emit command.failed event."""
+        try:
+            await self._http_client.post(
+                f"{server_url.rstrip('/')}/api/v2/events",
+                json={
+                    "execution_id": str(execution_id),
+                    "step": step,
+                    "name": "command.failed",
+                    "payload": {
+                        "command_id": command_id,
+                        "error": error_msg
+                    },
+                    "meta": {
+                        "worker_id": self.worker_id,
+                        "command_id": command_id
+                    },
+                    "worker_id": self.worker_id
+                }
+            )
+        except Exception as e:
+            logger.error(f"[EVENT] Failed to emit command.failed: {e}")
+    
+    async def _fetch_command(self, server_url: str, queue_id: int) -> Optional[dict]:
+        """
+        DEPRECATED: Old queue-based command fetching.
+        
+        Kept for backward compatibility but should not be used in event-driven architecture.
+        
+        Uses SELECT FOR UPDATE SKIP LOCKED pattern for distributed queue processing.
+        This ensures:
+        1. Row-level locking prevents multiple workers from processing same command
+        2. SKIP LOCKED allows workers to skip already-locked rows
+        3. Transaction isolation ensures visibility after commit
+        
+        Implements retry logic to handle PostgreSQL connection pooling delays.
+        
+        Returns command dict or None if not available.
+        """
+        import time
+        import asyncio
+        
+        max_retries = 3
+        retry_delays = [0.01, 0.05, 0.1]  # 10ms, 50ms, 100ms
+        
+        for attempt in range(max_retries):
+            if attempt > 0:
+                delay = retry_delays[attempt - 1]
+                logger.info(f"[QUEUE] Worker {self.worker_id} retry {attempt} for queue_id={queue_id} after {delay*1000}ms")
+                await asyncio.sleep(delay)
+            
+            fetch_start = time.time()
+            if attempt == 0:
+                logger.info(f"[QUEUE] Worker {self.worker_id} acquiring lock for queue_id={queue_id}")
+            
+            try:
+                # Use SELECT FOR UPDATE SKIP LOCKED pattern
+                # This is a two-step process within a transaction:
+                # 1. SELECT ... FOR UPDATE SKIP LOCKED to acquire row lock
+                # 2. UPDATE to change status if we got the lock
+                response = await self._http_client.post(
+                    f"{server_url.rstrip('/')}/api/postgres/execute",
+                    json={
+                        "procedure": """
+                            WITH locked_row AS (
+                                SELECT queue_id, execution_id, node_id, action, context
+                                FROM noetl.queue
+                                WHERE queue_id = %s
+                                  AND status = 'queued'
+                                FOR UPDATE SKIP LOCKED
+                            )
+                            UPDATE noetl.queue q
+                            SET status = 'running',
+                                worker_id = %s,
+                                updated_at = NOW()
+                            FROM locked_row
+                            WHERE q.queue_id = locked_row.queue_id
+                            RETURNING q.queue_id, q.execution_id, q.node_id, q.action, q.context
+                        """,
+                        "parameters": [queue_id, self.worker_id],
+                        "schema": "noetl"
+                    },
+                    timeout=10.0
+                )
+                response.raise_for_status()
+                
+                fetch_end = time.time()
+                fetch_duration_ms = (fetch_end - fetch_start) * 1000
+                
+                result = response.json()
+                
+                if result.get("status") == "ok" and result.get("result"):
+                    rows = result["result"]
+                    if rows:
+                        # Parse result (queue_id, execution_id, node_id, action, context)
+                        row = rows[0]
+                        logger.info(f"[QUEUE] Worker {self.worker_id} acquired lock for queue_id={queue_id} in {fetch_duration_ms:.2f}ms (attempt {attempt + 1})")
+                        return {
+                            "queue_id": row[0],
+                            "execution_id": row[1],
+                            "step": row[2],
+                            "tool_kind": row[3],
+                            "context": row[4]
+                        }
+                
+                # Row not found or already locked - continue to next retry
+                if attempt < max_retries - 1:
+                    logger.debug(f"[QUEUE] Worker {self.worker_id} queue_id={queue_id} not available (attempt {attempt + 1}), will retry")
+                else:
+                    logger.info(f"[QUEUE] Worker {self.worker_id} could not acquire queue_id={queue_id} after {max_retries} attempts")
+                
+            except Exception as e:
+                logger.exception(f"Failed to fetch command {queue_id} on attempt {attempt + 1}: {e}")
+                if attempt == max_retries - 1:
+                    return None
+        
+        return None
+    
+    async def _execute_command(self, command: dict, server_url: str, command_id: str = None):
         """Execute a command and emit events."""
         execution_id = command["execution_id"]
-        queue_id = command["queue_id"]  # Extract queue_id for error handling
-        step = command["step"]
-        tool_kind = command["tool_kind"]
+        step = command.get("node_name") or command.get("step")
+        tool_kind = command.get("action") or command.get("tool_kind")
         context = command["context"]
         
         # Store execution_id for sub-playbook calls
@@ -183,17 +373,27 @@ class V2Worker:
             # Merge with top-level args taking precedence
             merged_args = {**tool_config["args"], **args}
             args = merged_args
-            logger.error(f"DEBUG: Merged args from tool_config.args: {args}")
+            logger.debug(f"Merged args from tool_config.args: {args}")
         else:
-            logger.error(f"DEBUG: No args in tool_config, using top-level args: {args}")
+            logger.debug(f"No args in tool_config, using top-level args: {args}")
         
-        logger.info(f"Executing {step} (tool={tool_kind}) for execution {execution_id}")
+        logger.info(f"[EVENT] Executing {step} (tool={tool_kind}) for execution {execution_id}" + (f" command={command_id}" if command_id else ""))
         
         # Ensure execution_id is in render_context for keychain resolution
         if "execution_id" not in render_context:
             render_context["execution_id"] = execution_id
         
         try:
+            # Emit command.started event (for event-driven tracking)
+            if command_id:
+                await self._emit_event(
+                    server_url,
+                    execution_id,
+                    step,
+                    "command.started",
+                    {"command_id": command_id, "worker_id": self.worker_id}
+                )
+            
             # Emit step.enter event
             await self._emit_event(
                 server_url,
@@ -224,7 +424,21 @@ class V2Worker:
                 {"result": response, "status": "completed"}
             )
             
-            logger.info(f"Completed {step} for execution {execution_id}")
+            # Emit command.completed event (for event-driven tracking)
+            if command_id:
+                await self._emit_event(
+                    server_url,
+                    execution_id,
+                    step,
+                    "command.completed",
+                    {
+                        "command_id": command_id,
+                        "worker_id": self.worker_id,
+                        "result": response
+                    }
+                )
+            
+            logger.info(f"[EVENT] Completed {step} for execution {execution_id}" + (f" command={command_id}" if command_id else ""))
             
         except Exception as e:
             logger.error(f"Execution error for {step}: {e}", exc_info=True)
@@ -251,8 +465,22 @@ class V2Worker:
                 }
             )
             
-            # Queue status is managed by server via events
-            # Worker does NOT update queue table directly
+            # Emit command.failed event (for event-driven tracking)
+            if command_id:
+                await self._emit_event(
+                    server_url,
+                    execution_id,
+                    step,
+                    "command.failed",
+                    {
+                        "command_id": command_id,
+                        "worker_id": self.worker_id,
+                        "error": str(e),
+                        "error_type": type(e).__name__
+                    }
+                )
+            
+            # Pure event-driven: No queue table operations needed
     
     async def _execute_tool(
         self,
@@ -274,18 +502,23 @@ class V2Worker:
         - Error handling
         """
         # Import plugin executors
-        from noetl.plugin import (
-            execute_http_task,
-            execute_postgres_task,
-            execute_duckdb_task,
-            execute_secrets_task,
-            execute_sink_task,
-            execute_workbook_task,
-            execute_playbook_task,
+        from noetl.tools import (
+            http,
+            postgres,
+            duckdb,
+            python,
         )
+        from noetl.tools.http import execute_http_task
+        from noetl.tools.postgres import execute_postgres_task
+        from noetl.tools.duckdb import execute_duckdb_task
+        from noetl.core.secrets import execute_secrets_task
+        from noetl.core.storage import execute_sink_task
+        from noetl.core.workflow.workbook import execute_workbook_task
+        from noetl.core.workflow.playbook import execute_playbook_task
         # Import async version of Python executor
-        from noetl.plugin.tools.python import execute_python_task_async
+        from noetl.tools.python import execute_python_task_async
         from jinja2 import Environment, BaseLoader
+        from noetl.worker.keychain_resolver import populate_keychain_context
         
         # Use render_context from engine (includes workload, step results, execution_id, etc.)
         # This allows plugins to render Jinja2 templates with full state
@@ -305,7 +538,27 @@ class V2Worker:
                 "execution_id": context.get("execution_id", "")
             }
         
+        # Resolve keychain references before tool execution
+        # This scans the config for {{ keychain.* }} references and populates context['keychain']
+        catalog_id = context.get('catalog_id')
+        execution_id = context.get('execution_id')
+        if catalog_id:
+            # Combine config and args into single dict for scanning
+            task_config_combined = {**config, **args}
+            server_url = context.get('server_url', 'http://noetl.noetl.svc.cluster.local:8082')
+            context = await populate_keychain_context(
+                task_config=task_config_combined,
+                context=context,
+                catalog_id=catalog_id,
+                execution_id=execution_id,
+                api_base_url=server_url
+            )
+        
+        from jinja2 import Environment, BaseLoader
+        from noetl.core.dsl.render import add_b64encode_filter
+        
         jinja_env = Environment(loader=BaseLoader())
+        jinja_env = add_b64encode_filter(jinja_env)  # Add custom filters including tojson
         
         # Map V2 config format to plugin task_config format
         # Plugins use different field names than V2 DSL

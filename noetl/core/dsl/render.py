@@ -34,9 +34,36 @@ def add_b64encode_filter(env: Environment) -> Environment:
     """
     if 'b64encode' not in env.filters:
         env.filters['b64encode'] = lambda s: base64.b64encode(s.encode('utf-8')).decode('utf-8') if isinstance(s, str) else base64.b64encode(str(s).encode('utf-8')).decode('utf-8')
+    
     # Provide a tojson filter for templates that need JSON stringification
     if 'tojson' not in env.filters:
-        env.filters['tojson'] = lambda obj: json.dumps(obj, cls=DateTimeEncoder)
+        def tojson_filter(obj):
+            """Custom tojson filter that unwraps TaskResultProxy objects and handles Undefined."""
+            from jinja2 import Undefined
+            
+            # Handle Jinja2 Undefined objects
+            if isinstance(obj, Undefined):
+                return 'null'
+            
+            # Recursively unwrap TaskResultProxy objects
+            def unwrap_proxies(value):
+                """Recursively unwrap all TaskResultProxy objects in nested structures."""
+                if hasattr(value, '_data'):
+                    # TaskResultProxy - unwrap and recurse
+                    return unwrap_proxies(value._data)
+                elif isinstance(value, dict):
+                    # Recursively unwrap dict values
+                    return {k: unwrap_proxies(v) for k, v in value.items()}
+                elif isinstance(value, (list, tuple)):
+                    # Recursively unwrap list/tuple items
+                    return type(value)(unwrap_proxies(item) for item in value)
+                else:
+                    return value
+            
+            obj = unwrap_proxies(obj)
+            return json.dumps(obj, cls=DateTimeEncoder)
+        env.filters['tojson'] = tojson_filter
+    
     # Provide encrypt_secret filter for caching sensitive data
     if 'encrypt_secret' not in env.filters:
         from noetl.core.secret import encrypt_json

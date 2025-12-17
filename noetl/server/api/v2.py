@@ -164,58 +164,71 @@ async def start_execution(req: StartExecutionRequest) -> StartExecutionResponse:
         # Server URL for worker API calls
         server_url = os.getenv("SERVER_API_URL", "http://noetl.noetl.svc.cluster.local:8082")
         
-        # Enqueue commands to database and publish to NATS
+        # Emit command.issued events instead of queue table insertion
+        command_events = []  # Store (event_id, command) for NATS publishing after commit
         async with get_pool_connection() as conn:
             async with conn.cursor() as cur:
                 for command in commands:
-                    # Insert into queue
-                    queue_id = await get_snowflake_id()
+                    # Generate unique command ID
+                    command_id = f"{execution_id}:{command.step}:{await get_snowflake_id()}"
+                    event_id = await get_snowflake_id()
+                    
+                    # Insert command.issued event
                     await cur.execute("""
-                        INSERT INTO noetl.queue (
-                            queue_id, execution_id, catalog_id, node_id, node_name,
-                            action, context, status, priority, attempts,
-                            max_attempts, parent_execution_id, event_id,
-                            node_type, meta, created_at, updated_at
-                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        INSERT INTO noetl.event (
+                            event_id, execution_id, catalog_id, event_type,
+                            node_id, node_name, node_type, status,
+                            context, meta, parent_event_id, parent_execution_id,
+                            created_at
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """, (
-                        queue_id,
+                        event_id,
                         int(execution_id),
                         catalog_id,
+                        "command.issued",
                         command.step,
-                        command.step,  # node_name = node_id for V2 DSL
+                        command.step,
                         command.tool.kind,
-                        Json({"tool_config": command.tool.config, "args": command.args, "render_context": command.render_context}),
-                        "queued",
-                        command.priority,
-                        0,
-                        command.max_attempts or 3,
-                        req.parent_execution_id,
-                        playbook_init_event_id,
-                        command.tool.kind,
+                        "pending",
                         Json({
+                            "tool_config": command.tool.config,
+                            "args": command.args or {},
+                            "render_context": command.render_context
+                        }),
+                        Json({
+                            "command_id": command_id,
+                            "step": command.step,
+                            "tool_kind": command.tool.kind,
+                            "priority": command.priority,
+                            "max_attempts": command.max_attempts or 3,
+                            "attempt": 1,
                             "playbook_path": path,
                             "catalog_id": catalog_id,
-                            "triggered_by": "start_execution",
-                            "playbook_init_event_id": playbook_init_event_id,
-                            "parent_execution_id": req.parent_execution_id,
-                            "step": command.step,
-                            "tool": command.tool.kind,
-                            "priority": command.priority,
                             "metadata": command.metadata
                         }),
-                        datetime.now(timezone.utc),
+                        playbook_init_event_id,
+                        req.parent_execution_id,
                         datetime.now(timezone.utc)
                     ))
                     
-                    # Publish notification to NATS
-                    await nats_pub.publish_command(
-                        execution_id=int(execution_id),
-                        queue_id=queue_id,
-                        step=command.step,
-                        server_url=server_url
-                    )
+                    # Store for NATS publishing after commit
+                    command_events.append((event_id, command_id, command))
+                    logger.info(f"[EVENT] Emitted command.issued event_id={event_id} command_id={command_id} step={command.step} exec={execution_id}")
                     
                 await conn.commit()
+                logger.info(f"[EVENT] Committed {len(command_events)} command.issued events for exec={execution_id}")
+        
+        # Publish NATS notifications immediately after commit
+        # Workers will claim commands by emitting command.claimed events
+        for event_id, command_id, command in command_events:
+            logger.info(f"[NATS] Publishing notification for event_id={event_id} command_id={command_id} step={command.step}")
+            await nats_pub.publish_command(
+                execution_id=int(execution_id),
+                event_id=event_id,
+                command_id=command_id,
+                step=command.step,
+                server_url=server_url
+            )
         
         return StartExecutionResponse(
             execution_id=execution_id,
@@ -235,34 +248,17 @@ async def handle_event(req: EventRequest) -> EventResponse:
     
     Workers send events here after completing actions.
     Engine evaluates case/when/then rules and generates next commands.
+    
+    Pure event-driven - no queue table operations needed.
     """
     try:
         engine = get_engine()
         
-        # Get current attempt from queue table and store in meta
-        attempt = 1
-        try:
-            async with get_pool_connection() as conn:
-                result = await conn.fetchrow(
-                    """
-                    SELECT attempts 
-                    FROM noetl.queue 
-                    WHERE execution_id = $1 AND node_name = $2
-                    ORDER BY queue_id DESC 
-                    LIMIT 1
-                    """,
-                    int(req.execution_id),
-                    req.step
-                )
-                if result and result["attempts"]:
-                    attempt = result["attempts"]
-        except Exception as e:
-            logger.warning(f"Could not fetch attempt from queue: {e}, using default attempt=1")
-        
-        # Create Event with attempt in meta
+        # Build event metadata
         event_meta = req.meta or {}
-        event_meta["attempt"] = attempt
+        attempt = event_meta.get("attempt", 1)
         
+        # Create Event
         event = Event(
             execution_id=req.execution_id,
             step=req.step,
@@ -271,10 +267,10 @@ async def handle_event(req: EventRequest) -> EventResponse:
             meta=event_meta,
             timestamp=datetime.now(timezone.utc),
             worker_id=req.worker_id,
-            attempt=attempt  # Keep for in-memory processing
+            attempt=attempt
         )
         
-        # Process event through engine
+        # Process event through engine to generate next commands
         commands = await engine.handle_event(event)
         
         # Get NATS publisher
@@ -283,7 +279,8 @@ async def handle_event(req: EventRequest) -> EventResponse:
         # Server URL for worker API calls
         server_url = os.getenv("SERVER_API_URL", "http://noetl.noetl.svc.cluster.local:8082")
         
-        # Enqueue generated commands and publish to NATS
+        # Emit command.issued events instead of queue table insertion
+        command_events = []  # Store (event_id, command_id, command) for NATS publishing after commit
         async with get_pool_connection() as conn:
             async with conn.cursor() as cur:
                 for command in commands:
@@ -309,63 +306,69 @@ async def handle_event(req: EventRequest) -> EventResponse:
                         triggering_event_id = result['event_id']
                         triggering_parent_event_id = result['parent_event_id']
                     
-                    # Delete any existing queue entry for this execution+node (for loop iterations)
-                    await cur.execute("""
-                        DELETE FROM noetl.queue
-                        WHERE execution_id = %s AND node_id = %s
-                    """, (int(command.execution_id), command.step))
+                    # Generate unique command ID
+                    command_id = f"{command.execution_id}:{command.step}:{await get_snowflake_id()}"
+                    event_id = await get_snowflake_id()
                     
-                    # Insert command into queue
-                    queue_id = await get_snowflake_id()
+                    # Insert command.issued event
                     await cur.execute("""
-                        INSERT INTO noetl.queue (
-                            queue_id, execution_id, catalog_id, node_id, node_name,
-                            action, context, status, priority, attempts,
-                            max_attempts, parent_execution_id, parent_event_id, 
-                            event_id, node_type, meta, created_at, updated_at
-                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        INSERT INTO noetl.event (
+                            event_id, execution_id, catalog_id, event_type,
+                            node_id, node_name, node_type, status,
+                            context, meta, parent_event_id, parent_execution_id,
+                            created_at
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """, (
-                        queue_id,
+                        event_id,
                         int(command.execution_id),
                         catalog_id,
+                        "command.issued",
                         command.step,
-                        command.step,  # node_name = node_id for V2 DSL
+                        command.step,
                         command.tool.kind,
-                        Json({"tool_config": command.tool.config, "args": command.args, "render_context": command.render_context}),
-                        "queued",
-                        command.priority,
-                        0,
-                        command.max_attempts or 3,
-                        parent_execution_id,
-                        triggering_parent_event_id,
-                        triggering_event_id,
-                        command.tool.kind,
+                        "pending",
                         Json({
+                            "tool_config": command.tool.config,
+                            "args": command.args or {},
+                            "render_context": command.render_context
+                        }),
+                        Json({
+                            "command_id": command_id,
+                            "step": command.step,
+                            "tool_kind": command.tool.kind,
+                            "priority": command.priority,
+                            "max_attempts": command.max_attempts or 3,
+                            "attempt": 1,
                             "catalog_id": catalog_id,
                             "triggered_by": "event_handler",
                             "triggering_event_id": triggering_event_id,
-                            "parent_event_id": triggering_parent_event_id,
-                            "parent_execution_id": parent_execution_id,
-                            "step": command.step,
-                            "tool": command.tool.kind,
-                            "priority": command.priority,
                             "metadata": command.metadata,
                             "event_type": event.name,
                             "event_step": event.step
                         }),
-                        datetime.now(timezone.utc),
+                        triggering_event_id,
+                        parent_execution_id,
                         datetime.now(timezone.utc)
                     ))
                     
-                    # Publish notification to NATS
-                    await nats_pub.publish_command(
-                        execution_id=int(command.execution_id),
-                        queue_id=queue_id,
-                        step=command.step,
-                        server_url=server_url
-                    )
+                    # Store for NATS publishing after commit
+                    command_events.append((event_id, command_id, command))
+                    logger.info(f"[EVENT] Emitted command.issued event_id={event_id} command_id={command_id} step={command.step} exec={command.execution_id}")
                     
                 await conn.commit()
+                logger.info(f"[EVENT] Committed {len(command_events)} command.issued events for exec={event.execution_id}")
+        
+        # Publish NATS notifications immediately after commit
+        # Workers will claim commands by emitting command.claimed events
+        for event_id, command_id, command in command_events:
+            logger.info(f"[NATS] Publishing notification for event_id={event_id} command_id={command_id} step={command.step}")
+            await nats_pub.publish_command(
+                execution_id=int(command.execution_id),
+                event_id=event_id,
+                command_id=command_id,
+                step=command.step,
+                server_url=server_url
+            )
         
         return EventResponse(
             status="ok",

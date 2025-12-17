@@ -1,3 +1,5 @@
+# NoETL Architecture 
+
 **Architecture design patterns:**
 
 * `worker` → pure background worker pool, **no HTTP endpoints**.
@@ -13,6 +15,46 @@ DSL docs & examples live in files like:
 * `docs/examples/weather_loop_example.yaml`
 
 * examples embedded in `README.md`
+
+## System Components and Responsibilities
+
+- API Server: Hosts REST APIs (catalog, events, queue, context rendering, health). It evaluates DSL control flow, records runtime status, and enqueues work for workers.
+- Catalog: Stores playbooks (content, metadata, versions) and serves them to the server.
+- Event Log: Persists execution events (execution start, step start/complete, action started/completed, errors). Used to reconstruct state and decide next steps.
+- Queue: Lightweight job queue (backed by DB). Stores jobs for workers to lease and report completion/failure.
+- Workers: Poll for jobs, render context deterministically via server, execute actions, and emit events back to the server.
+- Broker Engine:
+  - Server-side evaluator: Computes next actionable steps from event history and playbook content and enqueues jobs.
+  - Local broker runner: Implements step execution primitives (loops, transitions) for local/agent-style runs.
+
+## Server–Worker Lifecycle (High Level)
+
+1) Register/Load Playbook (optional): A client registers a YAML playbook in the catalog.
+2) Start Execution: A client triggers execution; the server writes initial events with input context and playbook metadata.
+3) Evaluate Next Steps: The server reconstructs state from the event log, renders conditions and parameters, and picks the next actionable step(s). Skipped steps emit events without creating jobs.
+4) Enqueue Jobs: For each actionable step, the server enqueues a job with the resolved node/action and input context.
+5) Workers Execute: Workers lease jobs, request server-side context rendering, execute the task, emit events, and mark jobs complete/fail.
+6) Advance Workflow: On completion, the server reevaluates state to schedule subsequent steps until the workflow ends.
+
+## Core Database Entities (Conceptual)
+
+- catalog: Playbook resources with content and versions.
+- event_log: All execution events with input contexts and results per node/step/action.
+- queue: Jobs for workers (execution_id, node_id, action spec, input_context, status, attempts, worker_id, lease_until, etc.).
+- runtime: Registrations/heartbeats for server and worker pools.
+
+## Templating and Broker
+
+- Deterministic templating happens on the server; workers request a server-rendered view of context and task configuration to minimize divergence.
+- Conditions (pass/when) are evaluated by the broker/evaluator to select branches and skip steps.
+- Local broker provides primitives: execute_step, looping, end_loop aggregation, and get_next_steps.
+
+## Reliability and Scaling Notes
+
+- Queue leasing uses DB-level locking to avoid contention.
+- Leases/heartbeats allow workers to extend or fail jobs; the server can reap expired leases.
+- Idempotency is recommended for steps and actions; the event log is the source of truth for progression.
+- Horizontal scaling is achieved by adding worker processes/nodes; the server remains stateless aside from the database.
 
 ## **Architecture Overview**
 
@@ -42,18 +84,22 @@ DSL docs & examples live in files like:
    - Example:
      ```yaml
      - step: fetch_user
-       tool: postgres
-       query: "SELECT user_id, email FROM users WHERE id = 1"
+       tool:
+         kind: postgres
+         auth: "{{ workload.pg_auth }}"
+         command: "SELECT user_id, email FROM users WHERE id = 1"
        vars:
          user_id: "{{ result[0].user_id }}"
          email: "{{ result[0].email }}"
-     
+
      - step: send_email
-       tool: http
-       endpoint: "https://api.example.com/send"
-       payload:
-         to: "{{ vars.email }}"
-         subject: "Hello user {{ vars.user_id }}"
+       tool:
+         kind: http
+         method: POST
+         endpoint: "https://api.example.com/send"
+         payload:
+           to: "{{ vars.email }}"
+           subject: "Hello user {{ vars.user_id }}"
      ```
 
 2. **`set:` action** (inside `case.then` blocks, event-driven):
@@ -165,11 +211,28 @@ The engine emits **internal events** per step and sets:
 
 First pass: support at least:
 
-* `step.enter` – right before step starts.
+* `step.enter` – right before step starts (before loop begins, if present).
 
-* `call.done` – after each tool call (success or error).
+* `call.done` – after each tool call (success or error). For looped steps, fires once per iteration.
 
-* `step.exit` – when the step is about to finish (result known).
+* `step.exit` – when the step is about to finish (after ALL loop iterations complete or loop breaks early).
+
+**Loop Event Semantics:**
+
+For steps with a `loop`:
+1. `step.enter` fires once at the beginning
+2. `call.done` fires N times (once per item in the collection)
+3. `step.exit` fires once when:
+   - All iterations complete normally, OR
+   - A `case.then.next` action breaks the loop early
+
+**Iterator Variable Scope:**
+
+The loop `iterator` variable (e.g., `{{ city }}`) is available:
+- ✅ In `tool` configuration (endpoint, params, query, etc.)
+- ✅ In `case.when` conditions during loop execution
+- ✅ In `collect`, `set`, `sink` actions during loop execution
+- ❌ NOT in `next.args` (transitions happen at step boundary, after loop completes)
 
 Later we can expand (`loop.item`, `loop.done`, etc.), but design `case` to work generically with `event.name`.
 
@@ -206,15 +269,6 @@ In the DSL spec (`dsl_spec.md`), `next` supports:
 ### **2.2 `next` as an action in `then`, with `args`**
 
 Under `case[*].then`, the **`next` action** has this structure:
-
-`then:`  
-  `next:`  
-    `- step: city_loop`  
-      `args:`  
-        `city: "{{ workload.city }}"`  
-        `threshold: "{{ workload.temperature_threshold }}"`
-
-Rules:
 
 * `next` under `then` is an **action**, distinct from the structural `next` attribute.
 
@@ -268,17 +322,6 @@ Steps that branch based on previous results use `case`-based transitions with `a
 * `args` is used exclusively for cross-step parameter passing in **`next` actions**.
 
 Example for a workbook step:
-
-`- step: fetch_and_evaluate`  
-  `tool:` 
-    `kind: workbook`  
-    `name: evaluate_weather_directly`  
-    `args:`  
-        `city: "{{ args.city }}"`  
-        `base_url: "{{ args.base_url }}"`  
-        `threshold: "{{ args.temperature_threshold }}"`
-
-Here:
 
 * Previous step’s `case.then.next[*].args` populates `args` for this step.
 
@@ -434,50 +477,13 @@ CREATE TABLE noetl.auth_cache (
 
 **Implementation Standards:**
 
-All database operations in credential service MUST follow these patterns:
+All database operations in credential service MUST follow these patterns (described conceptually, without code):
 
-```python
-from noetl.core.db.pool import get_pool_connection
-from psycopg.rows import dict_row
-
-# Always use async pool connections
-async with get_pool_connection() as conn:
-    async with conn.cursor(row_factory=dict_row) as cursor:
-        # Use dict parameters for all queries
-        await cursor.execute(
-            """
-            INSERT INTO noetl.auth_cache (
-                cache_key, credential_name, credential_type,
-                cache_type, scope_type, execution_id, parent_execution_id,
-                data_encrypted, expires_at, created_at, accessed_at, access_count
-            )
-            VALUES (
-                %(cache_key)s, %(credential_name)s, %(credential_type)s,
-                %(cache_type)s, %(scope_type)s, %(execution_id)s, %(parent_execution_id)s,
-                %(data_encrypted)s, %(expires_at)s, NOW(), NOW(), 0
-            )
-            ON CONFLICT (cache_key) DO UPDATE
-            SET data_encrypted = EXCLUDED.data_encrypted,
-                accessed_at = NOW(),
-                access_count = noetl.auth_cache.access_count + 1,
-                expires_at = EXCLUDED.expires_at
-            """,
-            {
-                "cache_key": name,
-                "credential_name": name,
-                "credential_type": cred_type,
-                "cache_type": "secret",
-                "scope_type": "execution" if execution_id else "global",
-                "execution_id": execution_id,
-                "parent_execution_id": parent_execution_id,
-                "data_encrypted": encrypted_data,
-                "expires_at": datetime.now(timezone.utc) + timedelta(hours=1)
-            }
-        )
-        # Use dict row access
-        row = await cursor.fetchone()
-        value = row["column_name"]
-```
+- Use the shared async DB pool helper from the core package for all DB access.
+- Use dictionary parameters for queries, not positional parameters.
+- Use a dictionary-style row factory for cursor results and access fields by column name.
+- Do not perform manual commits; rely on the pool/transaction management.
+- Do not use low-level connection helpers directly from server code.
 
 **Key Requirements:**
 * ONLY use `get_pool_connection()` from `noetl.core.db.pool`
@@ -496,16 +502,7 @@ async with get_pool_connection() as conn:
 
 ### **5.3 Worker Credential Resolution**
 
-Workers fetch credentials during execution via `noetl/worker/secrets.py`:
-
-```python
-def fetch_credential_by_key(key: str) -> Dict:
-    url = f"{server_base}/credentials/{key}?include_data=true"
-    # Optional: pass execution_id for scoped caching
-    # url += f"&execution_id={current_execution_id}"
-    response = httpx.get(url)
-    return response.json()['data']
-```
+Workers fetch credentials during execution via the worker secrets module by calling the server’s credential API (e.g., `GET /credentials/{key}?include_data=true`). Optionally, workers may pass `execution_id` (and `parent_execution_id`) to enable execution‑scoped caching.
 
 Future enhancement: Workers can optionally pass `execution_id` and `parent_execution_id` query parameters to enable execution-scoped credential caching, preventing cross-execution credential leakage.
 
@@ -920,53 +917,6 @@ The control-flow engine should be aware of loop context (iterator variable, inde
 1.2 TOOL CONFIG: tool.kind
 
 Every executable step MUST have:
-
-`tool:`  
-  `kind: http | postgres | duckdb | python | workbook | playbooks | secrets | etc.`  
-  `# plus kind-specific fields`
-
-Examples:
-
-HTTP step:
-
-`tool:`  
-  `kind: http`  
-  `method: GET`  
-  `endpoint: "https://httpbin.org/get"`  
-  `headers:`  
-    `X-Job-Id: "{{ workload.jobId }}"`  
-  `params:`  
-    `page: "{{ args.page | default(1) }}"`
-
-Postgres step:
-
-`tool:`  
-  `kind: postgres`  
-  `auth: "{{ workload.pg_auth }}"`  
-  `command: |`  
-    `INSERT INTO api_events (execution_id, payload)`  
-    `VALUES ({{ job.uuid }}, $json${{ result | tojson }}$json$::jsonb);`
-
-Python step:
-
-`tool:`  
-  `kind: python`  
-  `code: |`  
-    `def main(city, threshold):`  
-        `...`  
-        `return {"city": city["name"], "alert": alert}`  
-  `# Inputs come from step.args`
-
-Workbook step:
-
-`tool:`  
-  `kind: workbook`  
-  `task: evaluate_weather_directly`  
-  `with:`  
-    `city: "{{ args.city }}"`  
-    `threshold: "{{ args.threshold }}"`
-
-Rules:
 
 * REMOVE old `type:` at step level – the new code should NOT use `type: http|python|...` on steps.
 

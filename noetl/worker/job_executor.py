@@ -106,7 +106,7 @@ class JobExecutor:
             return
 
         if prepared.action_type == "result_aggregation":
-            from noetl.plugin.controller.result import process_loop_aggregation_job
+            from noetl.core.workflow.result import process_loop_aggregation_job
 
             await process_loop_aggregation_job(job.model_dump())
             return
@@ -409,7 +409,7 @@ class JobExecutor:
         except Exception:
             exec_ctx_with_result = exec_ctx
 
-        from noetl.plugin.shared.storage import execute_sink_task as _do_sink
+        from noetl.core.storage import execute_sink_task as _do_sink
 
         sink_payload = {"sink": inline_sink}
         logger.critical(f"INLINE_SINK: About to call execute_sink_task with inline_sink type: {type(inline_sink)}")
@@ -722,7 +722,7 @@ class JobExecutor:
     async def _emit_event(
         self, event_data: Union[Dict[str, Any], EventPayload]
     ) -> Dict[str, Any]:
-        from noetl.plugin.runtime import report_event_async
+        from noetl.core.runtime import report_event_async
 
         payload = (
             event_data.model_dump(exclude_none=True)

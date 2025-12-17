@@ -1,11 +1,11 @@
-"""Backward compatible proxy to the refactored DuckDB plugin."""
+"""Backward compatible proxy to the refactored DuckDB tool."""
 
 from importlib import import_module
 import sys
 
-from noetl.plugin.tools.duckdb import *  # noqa: F401,F403
+from noetl.tools.duckdb import *  # noqa: F401,F403
 
-_BASE = "noetl.plugin.tools.duckdb"
+_BASE = "noetl.tools.duckdb"
 _SUBMODULES = [
 	"auth",
 	"cloud",

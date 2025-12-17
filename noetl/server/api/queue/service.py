@@ -144,6 +144,12 @@ class QueueService:
                         logger.warning(f"Invalid parent_execution_id: {parent_execution_id}, setting to None")
                 
                 # Build INSERT query with all fields including meta
+                from psycopg.types.json import Json
+                
+                # DEBUG LOGGING
+                logger.critical(f"DEBUG QUEUE: context type={type(context)}, is_dict={isinstance(context, dict)}")
+                logger.critical(f"DEBUG QUEUE: meta type={type(meta)}, is_dict={isinstance(meta, dict) if meta else 'None'}")
+                
                 await cur.execute(
                     """
                     INSERT INTO noetl.queue (
@@ -170,7 +176,7 @@ class QueueService:
                         "node_name": node_name or node_id,
                         "node_type": node_type,
                         "action": action if isinstance(action, str) else json.dumps(action),
-                        "context": json.dumps(context) if isinstance(context, dict) else context,
+                        "context": Json(context) if isinstance(context, dict) else (Json({}) if context is None else context),
                         "status": status,
                         "priority": priority,
                         "attempts": 0,
@@ -179,7 +185,7 @@ class QueueService:
                         "parent_event_id": parent_event_id,
                         "parent_execution_id": parent_execution_id_int,
                         "event_id": event_id,
-                        "meta": json.dumps(meta) if meta else None,
+                        "meta": Json(meta) if meta else None,
                         "created_at": datetime.now(timezone.utc),
                         "updated_at": datetime.now(timezone.utc)
                     }

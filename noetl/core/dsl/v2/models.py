@@ -58,6 +58,46 @@ class LoopDonePayload(BaseModel):
     results: list[Any] = Field(default_factory=list, description="Results from all iterations")
 
 
+class CommandIssuedPayload(BaseModel):
+    """Payload for command.issued event."""
+    command_id: str = Field(..., description="Unique command identifier")
+    step: str = Field(..., description="Step name")
+    tool_kind: str = Field(..., description="Tool type")
+    tool_config: dict[str, Any] = Field(default_factory=dict, description="Tool configuration")
+    args: dict[str, Any] = Field(default_factory=dict, description="Step arguments")
+    render_context: dict[str, Any] = Field(default_factory=dict, description="Render context for templates")
+    priority: int = Field(default=0, description="Command priority")
+    max_attempts: int = Field(default=3, description="Maximum retry attempts")
+
+
+class CommandClaimedPayload(BaseModel):
+    """Payload for command.claimed event."""
+    command_id: str = Field(..., description="Command identifier")
+    worker_id: str = Field(..., description="Worker that claimed the command")
+    claim_timestamp: datetime = Field(default_factory=datetime.utcnow, description="When command was claimed")
+
+
+class CommandStartedPayload(BaseModel):
+    """Payload for command.started event."""
+    command_id: str = Field(..., description="Command identifier")
+    worker_id: str = Field(..., description="Worker executing the command")
+
+
+class CommandCompletedPayload(BaseModel):
+    """Payload for command.completed event."""
+    command_id: str = Field(..., description="Command identifier")
+    worker_id: str = Field(..., description="Worker that completed the command")
+    result: Any = Field(None, description="Command result")
+
+
+class CommandFailedPayload(BaseModel):
+    """Payload for command.failed event."""
+    command_id: str = Field(..., description="Command identifier")
+    worker_id: str = Field(..., description="Worker that failed the command")
+    error: Union[str, dict[str, Any]] = Field(..., description="Error details")
+    attempts: int = Field(..., description="Number of attempts made")
+
+
 # Union type for all event payloads (for type hints, not runtime validation)
 EventPayload = Union[
     StepEnterPayload,
@@ -66,6 +106,11 @@ EventPayload = Union[
     LifecycleEventPayload,
     LoopItemPayload,
     LoopDonePayload,
+    CommandIssuedPayload,
+    CommandClaimedPayload,
+    CommandStartedPayload,
+    CommandCompletedPayload,
+    CommandFailedPayload,
     dict[str, Any]  # Runtime: always dict
 ]
 
@@ -84,6 +129,11 @@ class Event(BaseModel):
     - step.exit: When step is done (result known)
     - loop.item: On each loop iteration
     - loop.done: When loop completes
+    - command.issued: Server generated command for worker
+    - command.claimed: Worker claimed command for execution
+    - command.started: Worker started executing command
+    - command.completed: Worker completed command successfully
+    - command.failed: Worker failed to complete command after retries
     - playbook_initialized: Playbook execution begins
     - playbook_completed: Playbook execution succeeds
     - playbook_failed: Playbook execution fails
@@ -93,7 +143,7 @@ class Event(BaseModel):
     """
     execution_id: str = Field(..., description="Execution identifier")
     step: Optional[str] = Field(None, description="Step name that emitted the event")
-    name: str = Field(..., description="Event name (step.enter, call.done, step.exit, etc.)")
+    name: str = Field(..., description="Event name (step.enter, call.done, step.exit, command.*, etc.)")
     payload: dict[str, Any] = Field(default_factory=dict, description="Event data (response, error, metadata) - always dict at runtime")
     timestamp: datetime = Field(default_factory=datetime.utcnow, description="Event timestamp")
     worker_id: Optional[str] = Field(None, description="Worker that executed the command")
@@ -267,6 +317,7 @@ class Playbook(BaseModel):
     - kind: Playbook
     - metadata: name, path, labels
     - workload: global variables
+    - keychain: credential/token definitions (optional)
     - workbook: reusable tasks (optional)
     - workflow: execution flow (must have 'start' step)
     """
@@ -274,6 +325,7 @@ class Playbook(BaseModel):
     kind: Literal["Playbook"] = Field(..., description="Resource kind")
     metadata: dict[str, Any] = Field(..., description="Metadata (name, path, labels)")
     workload: Optional[dict[str, Any]] = Field(None, description="Global workflow variables")
+    keychain: Optional[list[dict[str, Any]]] = Field(None, description="Keychain definitions for credentials and tokens")
     workbook: Optional[list[WorkbookTask]] = Field(None, description="Reusable tasks")
     workflow: list[Step] = Field(..., description="Workflow steps")
     

@@ -80,7 +80,13 @@ async def expand_workbook_reference(
     if not isinstance(step_config, dict):
         return step_config
 
-    step_tool = step_config.get("tool", "").lower()
+    tool_raw = step_config.get("tool", "")
+    # Handle both string tool names and dict tool definitions
+    if isinstance(tool_raw, dict):
+        step_tool = (tool_raw.get("kind") or tool_raw.get("type") or "").lower()
+    else:
+        step_tool = tool_raw.lower() if isinstance(tool_raw, str) else str(tool_raw).lower()
+    
     if step_tool != "workbook":
         return step_config
 
@@ -331,7 +337,11 @@ class QueuePublisher:
                     # 1. For iterator steps (OLD format): nested 'task' block (contains {{ item }} templates)
                     # 2. For loop steps (NEW format): 'loop' block AND nested tool config (contains {{ item }} templates)
                     # 3. For all steps: 'sink' block (contains {{ result }} templates)
-                    step_tool = (step_cfg.get("tool") or "").lower()
+                    tool_raw = step_cfg.get("tool") or ""
+                    if isinstance(tool_raw, dict):
+                        step_tool = (tool_raw.get("kind") or tool_raw.get("type") or "").lower()
+                    else:
+                        step_tool = tool_raw.lower() if isinstance(tool_raw, str) else str(tool_raw).lower()
                     is_iterator_old = step_tool == "iterator"
                     has_loop_new = "loop" in step_cfg
                     
@@ -664,7 +674,11 @@ class QueuePublisher:
                 raise
         
         #3. For OLD iterator format: preserve nested 'task' block
-        step_tool = (step_config_copy.get("tool") or "").lower()
+        tool_raw = step_config_copy.get("tool") or ""
+        if isinstance(tool_raw, dict):
+            step_tool = (tool_raw.get("kind") or tool_raw.get("type") or "").lower()
+        else:
+            step_tool = tool_raw.lower() if isinstance(tool_raw, str) else str(tool_raw).lower()
         task_block = None
         if step_tool == "iterator":
             task_block = step_config_copy.pop("task", None)

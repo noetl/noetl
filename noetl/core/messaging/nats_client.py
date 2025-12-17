@@ -65,21 +65,26 @@ class NATSCommandPublisher:
     async def publish_command(
         self,
         execution_id: int,
-        queue_id: int,
+        event_id: int,
+        command_id: str,
         step: str,
         server_url: str
     ):
         """
         Publish command notification to NATS.
         
-        Workers will receive this and fetch full command from queue API.
+        Event-driven approach:
+        - event_id: Points to command.issued event with full command details
+        - command_id: Unique identifier for atomic claiming
+        - Workers claim by emitting command.claimed event (idempotent)
         """
         if not self._js:
             raise RuntimeError("Not connected to NATS")
         
         message = {
             "execution_id": execution_id,
-            "queue_id": queue_id,
+            "event_id": event_id,
+            "command_id": command_id,
             "step": step,
             "server_url": server_url
         }
@@ -90,7 +95,7 @@ class NATSCommandPublisher:
                 self.subject,
                 json.dumps(message).encode()
             )
-            logger.debug(f"Published command notification: {message}")
+            logger.debug(f"Published command notification: event_id={event_id} command_id={command_id}")
             
         except Exception as e:
             logger.error(f"Failed to publish command: {e}")

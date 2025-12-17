@@ -265,20 +265,10 @@ class StateStore:
             "completed": state.completed,
         }
         
-        async with get_pool_connection() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute("""
-                    INSERT INTO noetl.workload (execution_id, data, created_at)
-                    VALUES (%s, %s, %s)
-                    ON CONFLICT (execution_id) 
-                    DO UPDATE SET data = %s
-                """, (
-                    int(state.execution_id), 
-                    Json(state_data),
-                    datetime.now(timezone.utc),
-                    Json(state_data)
-                ))
-            await conn.commit()
+        # Pure event-driven: State is fully reconstructable from events
+        # No need to persist to workload table - it's redundant with event log
+        # Just keep in memory cache for performance
+        logger.debug(f"State cached in memory for execution {state.execution_id}")
     
     async def load_state(self, execution_id: str) -> Optional[ExecutionState]:
         """Load execution state from memory or reconstruct from events."""
@@ -1087,6 +1077,22 @@ class ControlFlowEngine:
         # Create execution state with catalog_id and parent_execution_id
         state = ExecutionState(execution_id, playbook, payload, catalog_id, parent_execution_id)
         await self.state_store.save_state(state)
+        
+        # Process keychain section before workflow starts
+        if playbook.keychain and catalog_id:
+            logger.info(f"ENGINE: Processing keychain section with {len(playbook.keychain)} entries")
+            from noetl.server.keychain_processor import process_keychain_section
+            try:
+                keychain_data = await process_keychain_section(
+                    keychain_section=playbook.keychain,
+                    catalog_id=catalog_id,
+                    execution_id=int(execution_id),
+                    workload_vars=state.variables
+                )
+                logger.info(f"ENGINE: Keychain processing complete, created {len(keychain_data)} entries")
+            except Exception as e:
+                logger.error(f"ENGINE: Failed to process keychain section: {e}")
+                # Don't fail execution, keychain errors will surface when workers try to resolve
         
         # Find start step
         start_step = state.get_step("start")
