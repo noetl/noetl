@@ -146,7 +146,7 @@ class ScalableQueueWorkerPool:
             self._process_pool.shutdown(wait=False)
 
         try:
-            from noetl.plugin.tools.postgres.pool import close_all_plugin_pools
+            from noetl.tools.postgres.pool import close_all_plugin_pools
 
             await close_all_plugin_pools()
             logger.info("All plugin connection pools closed")

@@ -215,7 +215,7 @@ class KeychainService:
                             scope_type, expires_at, created_at, accessed_at, access_count,
                             auto_renew, renew_config
                         ) VALUES (
-                            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now(), now(), 0, %s, %s
+                            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now(), now(), 0, %s, %s
                         )
                         ON CONFLICT (cache_key) DO UPDATE
                         SET data_encrypted = EXCLUDED.data_encrypted,
