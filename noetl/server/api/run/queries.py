@@ -146,7 +146,7 @@ class OrchestratorQueries:
     @staticmethod
     async def get_completed_steps_without_step_completed(execution_id: int) -> List[str]:
         """
-        Get steps with action_completed but no step_completed event.
+        Get steps with action_completed (v1) or command.completed (v2) but no step_completed event.
         
         This includes:
         1. Normal successful steps without step_completed
@@ -156,7 +156,7 @@ class OrchestratorQueries:
             SELECT DISTINCT node_name
             FROM noetl.event
             WHERE execution_id = %(execution_id)s
-              AND event_type = 'action_completed'
+              AND event_type IN ('action_completed', 'command.completed')
               AND node_name NOT IN (
                   SELECT node_name FROM noetl.event
                   WHERE execution_id = %(execution_id)s AND event_type = 'step_completed'
@@ -214,13 +214,13 @@ class OrchestratorQueries:
     
     @staticmethod
     async def get_action_completed_meta(execution_id: int, node_name: str) -> Optional[Dict[str, Any]]:
-        """Get meta from action_completed event for parent_event_id extraction."""
+        """Get meta from action_completed (v1) or command.completed (v2) event for parent_event_id extraction."""
         query = """
             SELECT meta
             FROM noetl.event
             WHERE execution_id = %(execution_id)s
               AND node_name = %(node_name)s
-              AND event_type = 'action_completed'
+              AND event_type IN ('action_completed', 'command.completed')
             ORDER BY created_at DESC
             LIMIT 1
         """
