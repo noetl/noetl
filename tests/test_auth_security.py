@@ -12,9 +12,9 @@ import tempfile
 import os
 from pathlib import Path
 
-from noetl.plugin.postgres import execute_postgres_task
-from noetl.plugin.http import execute_http_task
-from noetl.plugin.duckdb import execute_duckdb_task
+from noetl.tools.postgres import execute_postgres_task
+from noetl.tools.http import execute_http_task
+from noetl.tools.duckdb import execute_duckdb_task
 
 import pytest
 from unittest.mock import patch, MagicMock
@@ -41,9 +41,9 @@ class TestAuthSecurity:
         # Add handler to relevant loggers
         loggers = [
             logging.getLogger("noetl.worker.auth_resolver"),
-            logging.getLogger("noetl.plugin.postgres"),
-            logging.getLogger("noetl.plugin.http"),
-            logging.getLogger("noetl.plugin.duckdb")
+            logging.getLogger("noetl.tools.postgres"),
+            logging.getLogger("noetl.tools.http"),
+            logging.getLogger("noetl.tools.duckdb")
         ]
         
         for logger in loggers:
@@ -55,9 +55,9 @@ class TestAuthSecurity:
         # Remove log handler
         loggers = [
             logging.getLogger("noetl.worker.auth_resolver"),
-            logging.getLogger("noetl.plugin.postgres"),
-            logging.getLogger("noetl.plugin.http"),
-            logging.getLogger("noetl.plugin.duckdb")
+            logging.getLogger("noetl.tools.postgres"),
+            logging.getLogger("noetl.tools.http"),
+            logging.getLogger("noetl.tools.duckdb")
         ]
         
         for logger in loggers:
@@ -132,7 +132,7 @@ class TestAuthSecurity:
         # Non-sensitive information should be logged (for debugging)
         assert "db.example.com" in log_content or log_content == "", "Host info should be in logs or logs should be minimal"
     
-    @patch('noetl.plugin.postgres.psycopg.connect')
+    @patch('noetl.tools.postgres.psycopg.connect')
     def test_postgres_connection_string_redaction(self, mock_connect):
         """Test that Postgres connection strings are redacted in logs."""
         mock_conn = MagicMock()

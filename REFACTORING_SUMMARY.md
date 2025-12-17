@@ -106,7 +106,7 @@ from noetl.core.runtime import sql_split, report_event
 The `noetl/tools/__init__.py` file now serves as a **backward compatibility layer** that:
 - Imports from new locations (noetl.tools, noetl.core.*)
 - Re-exports everything with old names
-- Allows existing code to continue using `from noetl.plugin import X`
+- Allows existing code to continue using `from noetl.tools import X`
 - Maintains the REGISTRY for dynamic tool lookup
 
 This means **all existing code continues to work** without modification while we transition to the new structure.
@@ -127,7 +127,7 @@ All critical imports have been tested and verified:
 ✅ from noetl.worker.v2_worker_nats import V2Worker
 
 # Test backward compatibility works
-✅ from noetl.plugin import (execute_http_task, execute_postgres_task, ...)
+✅ from noetl.tools import (execute_http_task, execute_postgres_task, ...)
 ```
 
 ## Cleanup Tasks

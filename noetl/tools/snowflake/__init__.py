@@ -12,7 +12,7 @@ This package provides Snowflake database task execution capabilities with:
 - Chunked data transfer between Snowflake and PostgreSQL
 
 Usage:
-    from noetl.plugin.tools.snowflake import execute_snowflake_task, execute_snowflake_transfer_task
+    from noetl.tools.tools.snowflake import execute_snowflake_task, execute_snowflake_transfer_task
     
     # Execute SQL commands
     result = execute_snowflake_task(

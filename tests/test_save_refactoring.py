@@ -4,7 +4,7 @@ Test cases for sink structure functionality (new flattened structure only).
 import pytest
 from jinja2 import Environment
 
-from noetl.plugin.shared.storage import execute_sink_task
+from noetl.tools.shared.storage import execute_sink_task
 
 
 class TestSinkStructure:

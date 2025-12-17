@@ -7,7 +7,7 @@ import sys
 sys.path.insert(0, '/Users/akuksin/projects/noetl/noetl')
 
 from jinja2 import Environment
-from noetl.plugin.runtime.retry import execute_with_retry
+from noetl.tools.runtime.retry import execute_with_retry
 
 # Mock executor function
 call_count = 0
