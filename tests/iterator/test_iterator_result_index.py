@@ -1,5 +1,5 @@
 from jinja2 import Environment
-from noetl.plugin import execute_task
+from noetl.tools import execute_task
 
 
 def test_iterator_exposes_result_index_in_body():

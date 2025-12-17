@@ -7,7 +7,7 @@ systems (Google Cloud Secret Manager, AWS Secrets Manager, etc.) through
 a secret_manager instance provided at runtime.
 
 Usage:
-    from noetl.plugin.secret import execute_secrets_task
+    from noetl.tools.secret import execute_secrets_task
     
     result = execute_secrets_task(
         task_config={

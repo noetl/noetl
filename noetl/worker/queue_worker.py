@@ -154,7 +154,7 @@ class QueueWorker:
             logger.critical(f"WORKER._run_action: loop block = {action_cfg.get('loop')}")
         
         # All tools (including Python) must go through execute_task to support iterator/loop handling
-        from noetl.plugin import execute_task
+        from noetl.tools import execute_task
         
         # Create event callback for iterator executor
         # This is a sync function that will be called from the thread pool

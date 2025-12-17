@@ -6,7 +6,7 @@ import pytest
 from jinja2 import Environment
 from kubernetes.config.config_exception import ConfigException
 
-from noetl.plugin.tools.container import execute_container_task
+from noetl.tools.tools.container import execute_container_task
 
 
 def _build_context():
@@ -35,12 +35,12 @@ def _pod(exit_code=0):
     return SimpleNamespace(metadata=metadata, status=status)
 
 
-@patch("noetl.plugin.tools.container.executor.resolve_script", return_value="#!/bin/bash\necho hi\n")
-@patch("noetl.plugin.tools.container.executor.client.BatchV1Api")
-@patch("noetl.plugin.tools.container.executor.client.CoreV1Api")
-@patch("noetl.plugin.tools.container.executor.time.sleep", lambda *_args, **_kwargs: None)
-@patch("noetl.plugin.tools.container.executor.config.load_incluster_config")
-@patch("noetl.plugin.tools.container.executor.config.load_kube_config")
+@patch("noetl.tools.tools.container.executor.resolve_script", return_value="#!/bin/bash\necho hi\n")
+@patch("noetl.tools.tools.container.executor.client.BatchV1Api")
+@patch("noetl.tools.tools.container.executor.client.CoreV1Api")
+@patch("noetl.tools.tools.container.executor.time.sleep", lambda *_args, **_kwargs: None)
+@patch("noetl.tools.tools.container.executor.config.load_incluster_config")
+@patch("noetl.tools.tools.container.executor.config.load_kube_config")
 def test_execute_container_success(
     mock_kube_config,
     mock_incluster_config,
@@ -93,12 +93,12 @@ def test_execute_container_success(
     core_api.create_namespaced_config_map.assert_called_once()
 
 
-@patch("noetl.plugin.tools.container.executor.resolve_script", return_value="#!/bin/bash\nexit 1\n")
-@patch("noetl.plugin.tools.container.executor.client.BatchV1Api")
-@patch("noetl.plugin.tools.container.executor.client.CoreV1Api")
-@patch("noetl.plugin.tools.container.executor.time.sleep", lambda *_args, **_kwargs: None)
-@patch("noetl.plugin.tools.container.executor.config.load_incluster_config")
-@patch("noetl.plugin.tools.container.executor.config.load_kube_config")
+@patch("noetl.tools.tools.container.executor.resolve_script", return_value="#!/bin/bash\nexit 1\n")
+@patch("noetl.tools.tools.container.executor.client.BatchV1Api")
+@patch("noetl.tools.tools.container.executor.client.CoreV1Api")
+@patch("noetl.tools.tools.container.executor.time.sleep", lambda *_args, **_kwargs: None)
+@patch("noetl.tools.tools.container.executor.config.load_incluster_config")
+@patch("noetl.tools.tools.container.executor.config.load_kube_config")
 def test_execute_container_failure_returns_error(
     mock_kube_config,
     mock_incluster_config,

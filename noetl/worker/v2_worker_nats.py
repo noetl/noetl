@@ -457,9 +457,9 @@ class V2Worker:
         render_context: dict
     ) -> Any:
         """
-        Execute tool using noetl/plugin/* implementations.
+        Execute tool using noetl/tools/* implementations.
         
-        This delegates to the mature plugin system which includes:
+        This delegates to the mature tool system which includes:
         - Script loading (GCS, S3, HTTP, file)
         - Authentication resolution and caching
         - Pagination and retry logic
@@ -467,7 +467,7 @@ class V2Worker:
         - Template rendering
         - Error handling
         """
-        # Import plugin executors
+        # Import tool executors
         from noetl.tools import (
             http,
             postgres,
