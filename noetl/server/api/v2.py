@@ -426,7 +426,7 @@ async def handle_event(req: EventRequest) -> EventResponse:
         # Trigger orchestrator for transition processing if this is a completion event
         # This allows step_completed events to be emitted and workflow to progress/complete
         if event.name == "command.completed":
-            from ..run import evaluate_execution
+            from .run import evaluate_execution
             try:
                 logger.info(f"[ORCHESTRATOR] Triggering orchestrator for command.completed event in execution {event.execution_id}")
                 await evaluate_execution(
