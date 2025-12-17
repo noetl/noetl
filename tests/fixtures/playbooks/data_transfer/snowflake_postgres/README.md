@@ -309,9 +309,9 @@ The transfer executor automatically detects the transfer direction based on sour
 ## References
 
 - **Transfer Tool Documentation**: `docs/tools/transfer.md`
-- **Snowflake Plugin**: `noetl/plugin/tools/snowflake/`
-- **Postgres Plugin**: `noetl/plugin/tools/postgres/`
-- **Transfer Executor**: `noetl/plugin/tools/transfer/executor.py`
+- **Snowflake Plugin**: `noetl/tools/tools/snowflake/`
+- **Postgres Plugin**: `noetl/tools/tools/postgres/`
+- **Transfer Executor**: `noetl/tools/tools/transfer/executor.py`
 - **Credential Management**: `docs/credentials.md`
 
 ## Test Results

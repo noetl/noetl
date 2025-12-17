@@ -56,10 +56,10 @@ All imports have been updated throughout the codebase:
 
 #### Old Imports:
 ```python
-from noetl.plugin.tools.python import execute_python_task
-from noetl.plugin.shared.script import resolve_script
-from noetl.plugin.controller.playbook import execute_playbook_task
-from noetl.plugin.runtime import sql_split, report_event
+from noetl.tools.tools.python import execute_python_task
+from noetl.tools.shared.script import resolve_script
+from noetl.tools.controller.playbook import execute_playbook_task
+from noetl.tools.runtime import sql_split, report_event
 ```
 
 #### New Imports:
@@ -73,7 +73,7 @@ from noetl.core.runtime import sql_split, report_event
 ### 3. Files Updated
 
 **Critical Files:**
-- ✅ `noetl/plugin/__init__.py` - Backward compatibility layer
+- ✅ `noetl/tools/__init__.py` - Backward compatibility layer
 - ✅ `noetl/worker/v2_worker_nats.py` - Worker imports
 - ✅ `noetl/worker/queue_worker.py` - Legacy worker imports
 - ✅ `noetl/worker/job_executor.py` - Job executor imports
@@ -99,11 +99,11 @@ from noetl.core.runtime import sql_split, report_event
 - ✅ `noetl/core/runtime/execution.py` - All tool imports updated
 
 **Compatibility Shims:**
-- ✅ `noetl/plugin/duckdb/__init__.py` - Updated to point to noetl.tools.duckdb
+- ✅ `noetl/tools/duckdb/__init__.py` - Updated to point to noetl.tools.duckdb
 
 ### 4. Backward Compatibility
 
-The `noetl/plugin/__init__.py` file now serves as a **backward compatibility layer** that:
+The `noetl/tools/__init__.py` file now serves as a **backward compatibility layer** that:
 - Imports from new locations (noetl.tools, noetl.core.*)
 - Re-exports everything with old names
 - Allows existing code to continue using `from noetl.plugin import X`
@@ -138,12 +138,12 @@ The following directories can be safely removed once all tests pass:
 
 ```bash
 # These are now empty or contain only compatibility shims
-rm -rf noetl/plugin/controller/
-rm -rf noetl/plugin/runtime/
-rm -rf noetl/plugin/shared/script/
-rm -rf noetl/plugin/shared/secrets/
-rm -rf noetl/plugin/shared/storage/
-# Keep noetl/plugin/shared/auth/ temporarily (files were copied, not moved)
+rm -rf noetl/tools/controller/
+rm -rf noetl/tools/runtime/
+rm -rf noetl/tools/shared/script/
+rm -rf noetl/tools/shared/secrets/
+rm -rf noetl/tools/shared/storage/
+# Keep noetl/tools/shared/auth/ temporarily (files were copied, not moved)
 ```
 
 ⚠️ **CRITICAL**: Do NOT remove these until:
@@ -190,21 +190,21 @@ Quick reference for updating code:
 
 | Old Path | New Path |
 |----------|----------|
-| `noetl.plugin.tools.python` | `noetl.tools.python` |
-| `noetl.plugin.tools.http` | `noetl.tools.http` |
-| `noetl.plugin.tools.postgres` | `noetl.tools.postgres` |
-| `noetl.plugin.tools.duckdb` | `noetl.tools.duckdb` |
-| `noetl.plugin.tools.snowflake` | `noetl.tools.snowflake` |
-| `noetl.plugin.tools.transfer` | `noetl.tools.transfer` |
-| `noetl.plugin.tools.container` | `noetl.tools.container` |
-| `noetl.plugin.shared.script` | `noetl.core.script` |
-| `noetl.plugin.shared.secrets` | `noetl.core.secrets` |
-| `noetl.plugin.shared.storage` | `noetl.core.storage` |
-| `noetl.plugin.shared.auth` | `noetl.core.auth` |
-| `noetl.plugin.controller.playbook` | `noetl.core.workflow.playbook` |
-| `noetl.plugin.controller.workbook` | `noetl.core.workflow.workbook` |
-| `noetl.plugin.controller.result` | `noetl.core.workflow.result` |
-| `noetl.plugin.runtime` | `noetl.core.runtime` |
+| `noetl.tools.tools.python` | `noetl.tools.python` |
+| `noetl.tools.tools.http` | `noetl.tools.http` |
+| `noetl.tools.tools.postgres` | `noetl.tools.postgres` |
+| `noetl.tools.tools.duckdb` | `noetl.tools.duckdb` |
+| `noetl.tools.tools.snowflake` | `noetl.tools.snowflake` |
+| `noetl.tools.tools.transfer` | `noetl.tools.transfer` |
+| `noetl.tools.tools.container` | `noetl.tools.container` |
+| `noetl.tools.shared.script` | `noetl.core.script` |
+| `noetl.tools.shared.secrets` | `noetl.core.secrets` |
+| `noetl.tools.shared.storage` | `noetl.core.storage` |
+| `noetl.tools.shared.auth` | `noetl.core.auth` |
+| `noetl.tools.controller.playbook` | `noetl.core.workflow.playbook` |
+| `noetl.tools.controller.workbook` | `noetl.core.workflow.workbook` |
+| `noetl.tools.controller.result` | `noetl.core.workflow.result` |
+| `noetl.tools.runtime` | `noetl.core.runtime` |
 
 ## Next Steps
 

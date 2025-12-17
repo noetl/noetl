@@ -8,7 +8,7 @@ NoETL is a workflow automation framework for data processing and MLOps orchestra
 - **Server** (`noetl/server/`): FastAPI-based orchestration engine with REST APIs for catalog, events, queue, and execution coordination
 - **Worker** (`noetl/worker/`): Polling workers that lease jobs from PostgreSQL queue and execute tasks
 - **CLI** (`noetl/cli/ctl.py`): Typer-based command interface managing server/worker lifecycle
-- **Plugins** (`noetl/plugin/`): Extensible action executors (http, postgres, duckdb, python, secrets, etc.)
+- **Plugins** (`noetl/tools/`): Extensible action executors (http, postgres, duckdb, python, secrets, etc.)
 - **Observability** (`ci/manifests/clickhouse/`): ClickHouse-based observability stack with OpenTelemetry schema for logs, metrics, and traces
 
 **Data Flow:**
@@ -210,7 +210,7 @@ script:
 
 See `tests/fixtures/playbooks/script_execution/` and `docs/script_attribute_design.md` for complete details.
 
-**Plugin Development** (`noetl/plugin/`):
+**Plugin Development** (`noetl/tools/`):
 - Inherit from base classes in `base.py`
 - Use `report_event()` for execution tracking
 - Follow type-specific patterns in existing plugins (http.py, postgres.py, etc.)
@@ -226,7 +226,7 @@ See `tests/fixtures/playbooks/script_execution/` and `docs/script_attribute_desi
 - `noetl/core/dsl/` - Playbook parsing, validation, and rendering
 - `noetl/server/api/event/processing.py` - Server-side execution coordination
 - `noetl/server/api/broker/core.py` - Execution engine
-- `noetl/plugin/` - All action type implementations
+- `noetl/tools/` - All action type implementations
 
 **Development Infrastructure:**
 - `taskfile.yml` - Main task automation with included taskfiles for tests and monitoring

@@ -367,7 +367,7 @@ grep "SAVE.POSTGRES: rendered_data=" logs/worker.log | tail -1
 
 1. **Worker Detection**: When HTTP action completes, worker checks for `save` block in action config
 2. **Context Preparation**: Worker creates context with `result` variable containing HTTP response
-3. **Save Executor**: Calls `execute_save_task()` from `noetl.plugin.shared.storage`
+3. **Save Executor**: Calls `execute_save_task()` from `noetl.tools.shared.storage`
 4. **Config Extraction**: Parses `save` block structure (flat vs nested, storage type)
 5. **Storage Delegation**: Routes to `handle_postgres_storage()` for postgres saves
 6. **Statement Rendering**: Renders Jinja2 template in `statement` field with execution context

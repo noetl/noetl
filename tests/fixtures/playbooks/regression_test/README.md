@@ -849,7 +849,7 @@ test_passed = all([
 
 ```bash
 # 1. Make code changes
-vim noetl/plugin/tools/duckdb/config.py
+vim noetl/tools/tools/duckdb/config.py
 
 # 2. Build and deploy
 task docker-build-noetl

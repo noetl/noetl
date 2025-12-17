@@ -53,7 +53,7 @@ target:
 
 The `transfer` executor validates configuration by checking `source.get('type')` and `target.get('type')`. Using `tool:` instead causes validation error: "source.type is required".
 
-**Code Reference** (`noetl/plugin/tools/transfer/executor.py`, line 281):
+**Code Reference** (`noetl/tools/tools/transfer/executor.py`, line 281):
 ```python
 source_type = source_config.get('type', '').lower()
 if not source_type:
@@ -398,12 +398,12 @@ All criteria met:
   - Key learnings and patterns
 
 ### Related Files
-- **`noetl/plugin/tools/transfer/executor.py`**
+- **`noetl/tools/tools/transfer/executor.py`**
   - Transfer tool implementation
   - Direction detection logic
   - Type validation and routing
 
-- **`noetl/plugin/tools/snowflake/transfer.py`**
+- **`noetl/tools/tools/snowflake/transfer.py`**
   - Snowflake-specific transfer functions
   - Type conversion and connection handling
 

@@ -4,17 +4,17 @@ NoETL provides a retry mechanism for all task types, allowing tasks to be automa
 
 ## Overview
 
-The retry logic is implemented at the execution orchestration level (`noetl/plugin/tool/execution.py`), making it available to all action types without requiring individual plugin implementations. This design keeps retry logic abstract and reusable across all task types.
+The retry logic is implemented at the execution orchestration level (`noetl/tools/tool/execution.py`), making it available to all action types without requiring individual plugin implementations. This design keeps retry logic abstract and reusable across all task types.
 
 ## Architecture
 
 ### Implementation Location
 
-- **Retry Module**: `/noetl/plugin/tool/retry.py`
+- **Retry Module**: `/noetl/tools/tool/retry.py`
   - Contains `RetryPolicy` class for configuration and evaluation
   - Contains `execute_with_retry()` wrapper function
 
-- **Execution Module**: `/noetl/plugin/tool/execution.py`
+- **Execution Module**: `/noetl/tools/tool/execution.py`
   - Integrates retry wrapper around all plugin executors
   - No changes needed in individual action type plugins
 

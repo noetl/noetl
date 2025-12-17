@@ -3,9 +3,9 @@
 ## Pre-Deployment Checklist
 
 ### Code Review
-- [x] Config extraction in `noetl/plugin/controller/iterator/config.py`
-- [x] Pagination executor in `noetl/plugin/controller/iterator/pagination.py`
-- [x] Iterator executor delegation in `noetl/plugin/controller/iterator/executor.py`
+- [x] Config extraction in `noetl/tools/controller/iterator/config.py`
+- [x] Pagination executor in `noetl/tools/controller/iterator/pagination.py`
+- [x] Iterator executor delegation in `noetl/tools/controller/iterator/executor.py`
 - [x] Async HTTP executor integration
 - [x] Error handling for all edge cases
 - [x] Logging at appropriate levels

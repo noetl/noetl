@@ -442,7 +442,7 @@ Unified retry works seamlessly with the `loop` parameter for multi-endpoint pagi
 
 ### File Locations
 
-- **Core Logic:** `noetl/plugin/runtime/retry.py`
+- **Core Logic:** `noetl/tools/runtime/retry.py`
 - **Classes:**
   - `DotDict` - Enables Jinja2 dot notation for dict access
   - `RetryPolicy` - Error-side retry

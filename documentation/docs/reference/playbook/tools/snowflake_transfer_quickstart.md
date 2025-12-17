@@ -7,7 +7,7 @@ Enables efficient, memory-friendly data transfer between Snowflake and PostgreSQ
 ## Files Created
 
 ```
-noetl/plugin/snowflake/
+noetl/tools/snowflake/
 ├── transfer.py                          # NEW: Core transfer logic
 ├── executor.py                          # MODIFIED: Added transfer task executor
 └── __init__.py                          # MODIFIED: Export transfer function
@@ -83,7 +83,7 @@ task noetltest:playbook-execute -- \
 - step: transfer_sf_to_pg
   tool: python
   code: |
-    from noetl.plugin.snowflake import execute_snowflake_transfer_task
+    from noetl.tools.snowflake import execute_snowflake_transfer_task
     from jinja2 import Environment
     
     def main(input_data):
@@ -122,7 +122,7 @@ task noetltest:playbook-execute -- \
 - step: transfer_pg_to_sf
   tool: python
   code: |
-    from noetl.plugin.snowflake import execute_snowflake_transfer_task
+    from noetl.tools.snowflake import execute_snowflake_transfer_task
     from jinja2 import Environment
     
     def main(input_data):
@@ -324,7 +324,7 @@ def execute_snowflake_transfer_task(
 
 - **Full Guide**: `tests/fixtures/playbooks/snowflake_transfer/README.md`
 - **Implementation**: `docs/snowflake_transfer_implementation.md`
-- **Code**: `noetl/plugin/snowflake/transfer.py`
+- **Code**: `noetl/tools/snowflake/transfer.py`
 - **Test Playbook**: `tests/fixtures/playbooks/snowflake_transfer/snowflake_transfer.yaml`
 
 ## Support

@@ -9,7 +9,7 @@ This test validates the HTTP iterator with per-item save pattern - a critical wo
 ## Bugs Fixed
 
 ### 1. **Critical: Unreachable Save Code**
-**File**: `noetl/plugin/controller/iterator/execution.py` (lines 268-336)
+**File**: `noetl/tools/controller/iterator/execution.py` (lines 268-336)
 
 **Problem**: Save execution code had incorrect indentation (8 spaces instead of 4), making it part of an `except Exception: pass` block and therefore unreachable.
 
@@ -20,7 +20,7 @@ try:
 except Exception:
     pass
         # These lines had 8-space indentation - unreachable!
-        from noetl.plugin.shared.storage import execute_save_task
+        from noetl.tools.shared.storage import execute_save_task
         save_result = _do_save(...)
 ```
 
@@ -32,7 +32,7 @@ if isinstance(nested_result, dict):
     ctx_for_save["result"] = nested_result
 
 try:
-    from noetl.plugin.shared.storage import execute_save_task
+    from noetl.tools.shared.storage import execute_save_task
     save_result = _do_save(...)
 except Exception as e:
     raise  # Proper error propagation
@@ -41,7 +41,7 @@ except Exception as e:
 **Impact**: Iterator save operations now execute correctly with 3/3 records saved.
 
 ### 2. **DateTime Serialization Error**
-**File**: `noetl/plugin/tools/postgres/execution.py` (function `_fetch_result_rows`)
+**File**: `noetl/tools/tools/postgres/execution.py` (function `_fetch_result_rows`)
 
 **Problem**: PostgreSQL queries returning datetime/date/time objects caused JSON serialization errors.
 
@@ -393,12 +393,12 @@ Perfect for catching iterator + HTTP + save integration bugs!
 ## Files Modified
 
 ### Core Fixes
-1. **`noetl/plugin/controller/iterator/execution.py`**
+1. **`noetl/tools/controller/iterator/execution.py`**
    - Fixed indentation bug (lines 268-336)
    - Removed `except Exception: pass` anti-pattern
    - Proper error propagation
 
-2. **`noetl/plugin/tools/postgres/execution.py`**
+2. **`noetl/tools/tools/postgres/execution.py`**
    - Added datetime/date/time serialization
    - Import `from datetime import datetime, date, time`
    - Convert to ISO format strings
@@ -408,10 +408,10 @@ Perfect for catching iterator + HTTP + save integration bugs!
    - Added `args:` support in conditional then blocks (lines 156-160)
    - Priority order: args → data → with
 
-4. **`noetl/plugin/tools/http/request.py`** (earlier fix)
+4. **`noetl/tools/tools/http/request.py`** (earlier fix)
    - Fixed empty dict params fallback
 
-5. **`noetl/plugin/tools/http/executor.py`** (earlier fix)
+5. **`noetl/tools/tools/http/executor.py`** (earlier fix)
    - Fixed exception handling in URL validation
 
 ### Test Files
