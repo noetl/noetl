@@ -404,7 +404,7 @@ class V2Worker:
                     step,
                     "step.exit",
                     {
-                        "status": "failed",
+                        "status": "FAILED",  # Uppercase to match database status values
                         "error": tool_error,
                         "result": response
                     }
