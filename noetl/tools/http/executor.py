@@ -70,11 +70,13 @@ async def execute_http_task(
         catalog_id = context.get('catalog_id')
         if catalog_id:
             execution_id = context.get('execution_id')
+            server_url = context.get('server_url', 'http://noetl.noetl.svc.cluster.local:8082')
             context = await populate_keychain_context(
                 task_config=task_config,
                 context=context,
                 catalog_id=catalog_id,
-                execution_id=execution_id
+                execution_id=execution_id,
+                api_base_url=server_url
             )
             logger.debug(f"HTTP: Keychain context populated: {list(context.get('keychain', {}).keys())}")
         else:
