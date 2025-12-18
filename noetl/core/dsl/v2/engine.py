@@ -823,8 +823,12 @@ class ControlFlowEngine:
         
         # If step.exit event and no case/loop matched, use structural next as fallback
         if event.name == "step.exit" and step_def.next and not commands:
-            # Only proceed to next if loop is done (or no loop)
-            if not step_def.loop or state.is_loop_done(event.step):
+            # Check if step failed - don't process next if it did
+            step_status = event.payload.get("status", "").upper()
+            if step_status == "FAILED":
+                logger.info(f"[STRUCTURAL-NEXT] Step {event.step} failed, skipping structural next")
+            # Only proceed to next if loop is done (or no loop) and step didn't fail
+            elif not step_def.loop or state.is_loop_done(event.step):
                 logger.info(f"[STRUCTURAL-NEXT] No case matched for step.exit, using structural next: {step_def.next}")
                 # Handle structural next
                 next_items = step_def.next
