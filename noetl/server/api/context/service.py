@@ -201,6 +201,16 @@ async def build_rendering_context(
                     else:
                         base_ctx[step_nm] = val
 
+    # Merge extra context FIRST (before workload) to establish protected system fields
+    if isinstance(extra_context, dict):
+        try:
+            # DEBUG: Log execution_id from extra_context
+            if "execution_id" in extra_context:
+                logger.info(f"[CONTEXT] execution_id from extra_context: {extra_context['execution_id']} (type: {type(extra_context['execution_id']).__name__})")
+            base_ctx.update(extra_context)
+        except (TypeError, ValueError, KeyError) as e:
+            logger.warning(f"Could not update context with extra_context: {e}")
+
     # Back-compat: expose workload fields at top level
     base_ctx["context"] = base_ctx["work"]
     if isinstance(workload, dict):
@@ -209,17 +219,24 @@ async def build_rendering_context(
             protected_fields = {"execution_id", "catalog_id", "job_id"}
             # Save protected values
             protected_values = {k: base_ctx.get(k) for k in protected_fields if k in base_ctx}
+            # DEBUG: Log what we're protecting
+            if protected_values:
+                logger.info(f"[CONTEXT] Protecting fields: {list(protected_values.keys())} with values: {protected_values}")
+            if "execution_id" in workload:
+                logger.warning(f"[CONTEXT] workload contains execution_id={workload['execution_id']}, will be overridden by protected value")
             # Merge workload
             base_ctx.update(workload)
             # Restore protected values
             base_ctx.update(protected_values)
+            # DEBUG: Verify execution_id after restore
+            if "execution_id" in base_ctx:
+                logger.info(f"[CONTEXT] After restore, execution_id={base_ctx['execution_id']} (type: {type(base_ctx['execution_id']).__name__})")
         except (TypeError, ValueError) as e:
             logger.warning(f"Could not update context with workload: {e}")
 
-    # Merge extra context
+    # Ensure job.uuid exists (after all merges)
     if isinstance(extra_context, dict):
         try:
-            base_ctx.update(extra_context)
             # Ensure job.uuid exists
             job_obj = base_ctx.get("job")
             if isinstance(job_obj, dict) and "uuid" not in job_obj:

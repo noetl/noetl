@@ -7,7 +7,6 @@ metadata:
   version: "2.0"
 
 workload:
-  execution_id: '{{ job.uuid }}'
   pg_auth: pg_local
   gcp_auth: google_oauth
   openai_secret_path: projects/1014428265962/secrets/openai-api-key/versions/1
