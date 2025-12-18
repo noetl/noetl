@@ -1054,6 +1054,15 @@ class ControlFlowEngine:
                     context_data["catalog_id"] = catalog_id
                     context_data["root_event_id"] = state.root_event_id
                 
+                # Determine status: Use payload status if provided, otherwise infer from event name
+                payload_status = event.payload.get("status")
+                if payload_status:
+                    # Worker explicitly set status - use it (handles errors properly)
+                    status = payload_status.upper() if isinstance(payload_status, str) else str(payload_status).upper()
+                else:
+                    # Fallback to event name-based status for events without explicit status
+                    status = "FAILED" if "failed" in event.name else "COMPLETED" if ("step.exit" == event.name or "completed" in event.name) else "RUNNING"
+                
                 await cur.execute("""
                     INSERT INTO noetl.event (
                         execution_id, catalog_id, event_id, parent_event_id, parent_execution_id, event_type,
@@ -1069,7 +1078,7 @@ class ControlFlowEngine:
                     event.name,
                     event.step,
                     event.step,
-                    "FAILED" if "failed" in event.name else "COMPLETED" if ("step.exit" == event.name or "completed" in event.name) else "RUNNING",
+                    status,
                     Json(context_data) if context_data else None,
                     Json(event.payload.get("result")) if event.payload.get("result") else None,
                     Json(event.payload.get("error")) if event.payload.get("error") else None,
