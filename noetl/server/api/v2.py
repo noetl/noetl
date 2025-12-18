@@ -146,14 +146,14 @@ async def start_execution(req: StartExecutionRequest) -> StartExecutionResponse:
             req.parent_execution_id
         )
         
-        # Get playbook_initialized event_id for tracing (root event)
+        # Get playbook.initialized event_id for tracing (root event)
         playbook_init_event_id = None
         root_event_id = None
         async with get_pool_connection() as conn:
             async with conn.cursor() as cur:
                 await cur.execute("""
                     SELECT event_id FROM noetl.event
-                    WHERE execution_id = %s AND event_type = 'playbook_initialized'
+                    WHERE execution_id = %s AND event_type = 'playbook.initialized'
                     ORDER BY event_id ASC LIMIT 1
                 """, (int(execution_id),))
                 result = await cur.fetchone()

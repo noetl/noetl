@@ -111,8 +111,8 @@ async def get_execution(execution_id: str):
                     
                     events.append(event_data)
 
-                # V2 workflow_initialized event has the playbook info
-                execution_item = next((e for e in events if e.get("event_type") == "workflow_initialized"), None)
+                # V2 workflow.initialized event has the playbook info
+                execution_item = next((e for e in events if e.get("event_type") == "workflow.initialized"), None)
                 if execution_item is None:
                     # Fallback: use first event
                     execution_item = events[0] if events else None

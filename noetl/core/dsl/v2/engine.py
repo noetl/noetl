@@ -45,7 +45,7 @@ class ExecutionState:
         self.step_event_ids: dict[str, int] = {}  # step_name -> last event_id for that step
         
         # Root event tracking for traceability
-        self.root_event_id: Optional[int] = None  # First event (playbook_initialized) for full trace
+        self.root_event_id: Optional[int] = None  # First event (playbook.initialized) for full trace
         
         # Loop state tracking
         self.loop_state: dict[str, dict[str, Any]] = {}  # step_name -> {collection, index, item, mode}
@@ -888,7 +888,7 @@ class ControlFlowEngine:
             workflow_completion_event = Event(
                 execution_id=event.execution_id,
                 step="workflow",
-                name=f"workflow_{completion_status}",
+                name=f"workflow.{completion_status}",
                 payload=LifecycleEventPayload(
                     status=completion_status,
                     final_step=event.step,
@@ -906,7 +906,7 @@ class ControlFlowEngine:
             playbook_completion_event = Event(
                 execution_id=event.execution_id,
                 step=state.playbook.metadata.get("path", "playbook"),
-                name=f"playbook_{completion_status}",
+                name=f"playbook.{completion_status}",
                 payload=LifecycleEventPayload(
                     status=completion_status,
                     final_step=event.step,
@@ -1164,12 +1164,12 @@ class ControlFlowEngine:
         if not start_step:
             raise ValueError("Playbook must have a 'start' step")
         
-        # Emit playbook_initialized event (playbook loaded and validated)
+        # Emit playbook.initialized event (playbook loaded and validated)
         from noetl.core.dsl.v2.models import LifecycleEventPayload
         playbook_init_event = Event(
             execution_id=execution_id,
             step=playbook_path,
-            name="playbook_initialized",
+            name="playbook.initialized",
             payload=LifecycleEventPayload(
                 status="initialized",
                 final_step=None,
@@ -1180,11 +1180,11 @@ class ControlFlowEngine:
         
         await self._persist_event(playbook_init_event, state)
         
-        # Emit workflow_initialized event (workflow execution starting)
+        # Emit workflow.initialized event (workflow execution starting)
         workflow_init_event = Event(
             execution_id=execution_id,
             step="workflow",
-            name="workflow_initialized",
+            name="workflow.initialized",
             payload=LifecycleEventPayload(
                 status="initialized",
                 final_step=None,

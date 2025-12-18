@@ -86,7 +86,7 @@ def test_playbook(yaml_path, description, wait_time=3):
         # Check final result
         if events:
             last_event = events[-1]
-            if last_event[0] == 'playbook_completed' and not has_error:
+            if last_event[0] == 'playbook.completed' and not has_error:
                 print(f"\n✅ PASSED: {description}")
                 return True
             else:
