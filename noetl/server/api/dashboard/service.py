@@ -60,7 +60,7 @@ class DashboardService:
                     await cur.execute("""
                         SELECT COUNT(DISTINCT execution_id) as total
                         FROM noetl.event
-                        WHERE event_type IN ('step.exit', 'workflow_completed')
+                        WHERE event_type IN ('step.exit', 'workflow.completed')
                         AND status IN ('FAILED', 'ERROR')
                     """)
                     row = await cur.fetchone()

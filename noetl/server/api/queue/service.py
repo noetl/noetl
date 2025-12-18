@@ -649,7 +649,7 @@ class QueueService:
     @staticmethod
     async def _emit_final_failure_events(job_info: Dict[str, Any]) -> None:
         """
-        Emit step_failed and playbook_failed events when a job permanently fails.
+        Emit step_failed and playbook.failed events when a job permanently fails.
         
         Args:
             job_info: Job dictionary with execution_id, node_id, context, etc.

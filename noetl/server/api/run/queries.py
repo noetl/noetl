@@ -81,7 +81,7 @@ class OrchestratorQueries:
                 SELECT MAX(created_at) as last_failure
                 FROM noetl.event
                 WHERE execution_id = %(execution_id)s
-                  AND event_type IN ('playbook_failed', 'workflow_failed')
+                  AND event_type IN ('playbook.failed', 'workflow.failed')
             ),
             success_after_failure AS (
                 SELECT COUNT(*) as success_count

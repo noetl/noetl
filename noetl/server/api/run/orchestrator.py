@@ -291,7 +291,7 @@ async def _check_execution_completion(
                     },
                 )
                 logger.info(
-                    f"Emitted workflow_completed event_id={workflow_event_id} for execution {execution_id}"
+                    f"Emitted workflow.completed event_id={workflow_event_id} for execution {execution_id}"
                 )
 
                 # Then emit playbook_completed event

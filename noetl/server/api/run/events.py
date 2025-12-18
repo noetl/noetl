@@ -398,7 +398,7 @@ class ExecutionEventEmitter:
                         "catalog_id": catalog_id,
                         "event_id": event_id,
                         "parent_event_id": parent_event_id,
-                        "event_type": "workflow_initialized",
+                        "event_type": "workflow.initialized",
                         "node_id": "workflow",
                         "node_name": "workflow",
                         "node_type": "workflow",
