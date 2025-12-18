@@ -124,7 +124,7 @@ async def _process_secret_manager(
     
     # Fetch credential to get auth data (should contain OAuth token or service account info)
     cred_response = await client.get(
-        f"{api_base_url}/api/credential/{auth_name}",
+        f"{api_base_url}/api/credentials/{auth_name}",
         params={"include_data": "true"}
     )
     if cred_response.status_code != 200:

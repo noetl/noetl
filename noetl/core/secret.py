@@ -103,10 +103,28 @@ def obtain_gcp_token(
         try:
             if isinstance(credentials_info, str):
                 credentials_info = json.loads(credentials_info)
-            creds = service_account.Credentials.from_service_account_info(
-                credentials_info, scopes=scopes
-            )
-            source = "inline"
+            
+            # Check credential type
+            cred_type = credentials_info.get('type')
+            
+            if cred_type == 'authorized_user':
+                # User credentials (gcloud auth login)
+                from google.oauth2.credentials import Credentials as UserCredentials
+                creds = UserCredentials(
+                    token=None,
+                    refresh_token=credentials_info.get('refresh_token'),
+                    token_uri='https://oauth2.googleapis.com/token',
+                    client_id=credentials_info.get('client_id'),
+                    client_secret=credentials_info.get('client_secret'),
+                    scopes=scopes
+                )
+                source = "inline_user"
+            else:
+                # Service account credentials
+                creds = service_account.Credentials.from_service_account_info(
+                    credentials_info, scopes=scopes
+                )
+                source = "inline_sa"
         except Exception as e:
             raise RuntimeError(f"Failed to create credentials from info dict: {e}")
     
