@@ -162,21 +162,17 @@ async def start_execution(req: StartExecutionRequest) -> StartExecutionResponse:
                     
                     if keychain_section:
                         logger.info(f"V2: Processing keychain section with {len(keychain_section)} entries for execution {execution_id}")
-                        try:
-                            # Build merged workload for template rendering
-                            base_workload = playbook_dict.get('workload', {})
-                            merged_workload = {**base_workload, **(req.payload or {})}
-                            
-                            keychain_data = await process_keychain_section(
-                                keychain_section=keychain_section,
-                                catalog_id=catalog_id,
-                                execution_id=int(execution_id),
-                                workload_vars=merged_workload
-                            )
-                            logger.info(f"V2: Keychain processing complete, created {len(keychain_data)} entries for execution {execution_id}")
-                        except Exception as e:
-                            logger.error(f"V2: Failed to process keychain section for execution {execution_id}: {e}", exc_info=True)
-                            # Don't fail execution, keychain errors will surface when workers try to resolve
+                        # Build merged workload for template rendering
+                        base_workload = playbook_dict.get('workload', {})
+                        merged_workload = {**base_workload, **(req.payload or {})}
+                        
+                        keychain_data = await process_keychain_section(
+                            keychain_section=keychain_section,
+                            catalog_id=catalog_id,
+                            execution_id=int(execution_id),
+                            workload_vars=merged_workload
+                        )
+                        logger.info(f"V2: Keychain processing complete, created {len(keychain_data)} entries for execution {execution_id}")
         
         # Get playbook_initialized event_id for tracing (root event)
         playbook_init_event_id = None

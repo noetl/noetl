@@ -63,39 +63,35 @@ async def process_keychain_section(
             
             logger.info(f"KEYCHAIN_PROCESSOR: Processing entry '{entry_name}' (kind: {entry_kind})")
             
-            try:
-                if entry_kind == 'secret_manager':
-                    data = await _process_secret_manager(entry, workload_vars, keychain_data, client, api_base_url)
-                elif entry_kind == 'oauth2':
-                    data = await _process_oauth2(entry, workload_vars, keychain_data, client)
-                elif entry_kind == 'bearer':
-                    data = await _process_bearer(entry, workload_vars, keychain_data)
-                elif entry_kind == 'static':
-                    data = await _process_static(entry, workload_vars, keychain_data)
-                else:
-                    logger.warning(f"KEYCHAIN_PROCESSOR: Unknown kind '{entry_kind}' for entry '{entry_name}'")
-                    continue
+            if entry_kind == 'secret_manager':
+                data = await _process_secret_manager(entry, workload_vars, keychain_data, client, api_base_url)
+            elif entry_kind == 'oauth2':
+                data = await _process_oauth2(entry, workload_vars, keychain_data, client)
+            elif entry_kind == 'bearer':
+                data = await _process_bearer(entry, workload_vars, keychain_data)
+            elif entry_kind == 'static':
+                data = await _process_static(entry, workload_vars, keychain_data)
+            else:
+                logger.warning(f"KEYCHAIN_PROCESSOR: Unknown kind '{entry_kind}' for entry '{entry_name}'")
+                continue
+            
+            if data:
+                # Store in keychain table
+                success = await _store_keychain_entry(
+                    client=client,
+                    api_base_url=api_base_url,
+                    catalog_id=catalog_id,
+                    execution_id=execution_id,
+                    keychain_name=entry_name,
+                    token_data=data,
+                    entry_def=entry
+                )
                 
-                if data:
-                    # Store in keychain table
-                    success = await _store_keychain_entry(
-                        client=client,
-                        api_base_url=api_base_url,
-                        catalog_id=catalog_id,
-                        execution_id=execution_id,
-                        keychain_name=entry_name,
-                        token_data=data,
-                        entry_def=entry
-                    )
-                    
-                    if success:
-                        keychain_data[entry_name] = data
-                        logger.info(f"KEYCHAIN_PROCESSOR: Successfully stored entry '{entry_name}'")
-                    else:
-                        logger.error(f"KEYCHAIN_PROCESSOR: Failed to store entry '{entry_name}'")
-                        
-            except Exception as e:
-                logger.error(f"KEYCHAIN_PROCESSOR: Error processing entry '{entry_name}': {e}")
+                if success:
+                    keychain_data[entry_name] = data
+                    logger.info(f"KEYCHAIN_PROCESSOR: Successfully stored entry '{entry_name}'")
+                else:
+                    raise RuntimeError(f"KEYCHAIN_PROCESSOR: Failed to store entry '{entry_name}' in database")
     
     logger.info(f"KEYCHAIN_PROCESSOR: Completed processing {len(keychain_data)}/{len(keychain_section)} entries")
     return keychain_data
@@ -122,7 +118,7 @@ async def _process_secret_manager(
     # Render auth reference
     env = Environment(undefined=StrictUndefined)
     auth_template = env.from_string(str(auth_ref))
-    auth_name = auth_template.render(**workload_vars, keychain=keychain_data)
+    auth_name = auth_template.render(workload=workload_vars, keychain=keychain_data)
     
     logger.info(f"KEYCHAIN_PROCESSOR: Fetching secrets from {provider} using auth '{auth_name}'")
     
@@ -147,15 +143,11 @@ async def _process_secret_manager(
         # Use noetl.core.secret.obtain_gcp_token to get fresh token
         from noetl.core.secret import obtain_gcp_token
         cred_data = cred.get('data', {})
-        try:
-            token_result = obtain_gcp_token(
-                scopes=["https://www.googleapis.com/auth/cloud-platform"],
-                credentials_info=cred_data
-            )
-            access_token = token_result.get('access_token')
-        except Exception as e:
-            logger.error(f"KEYCHAIN_PROCESSOR: Failed to obtain GCP token: {e}")
-            return None
+        token_result = obtain_gcp_token(
+            scopes=["https://www.googleapis.com/auth/cloud-platform"],
+            credentials_info=cred_data
+        )
+        access_token = token_result.get('access_token')
     
     if not access_token:
         logger.error(f"KEYCHAIN_PROCESSOR: No access token available in credential '{auth_name}'")
@@ -174,34 +166,25 @@ async def _process_secret_manager(
         url = f"https://secretmanager.googleapis.com/v1/{secret_path}:access"
         headers = {"Authorization": f"Bearer {access_token}"}
         
+        response = await client.get(url, headers=headers, timeout=10.0)
+        response.raise_for_status()
+        data = response.json()
+        
+        # Decode base64 payload
+        payload_data = data.get('payload', {}).get('data', '')
+        if not payload_data:
+            raise ValueError(f"KEYCHAIN_PROCESSOR: Empty payload for secret '{key}'")
+        
+        secret_value = base64.b64decode(payload_data).decode('UTF-8')
+        
+        # Try to parse as JSON
         try:
-            response = await client.get(url, headers=headers, timeout=10.0)
-            response.raise_for_status()
-            data = response.json()
+            import json
+            result_data[key] = json.loads(secret_value)
+        except:
+            result_data[key] = secret_value
             
-            # Decode base64 payload
-            payload_data = data.get('payload', {}).get('data', '')
-            if payload_data:
-                secret_value = base64.b64decode(payload_data).decode('UTF-8')
-                
-                # Try to parse as JSON
-                try:
-                    import json
-                    result_data[key] = json.loads(secret_value)
-                except:
-                    result_data[key] = secret_value
-                    
-                logger.info(f"KEYCHAIN_PROCESSOR: Successfully fetched secret '{key}'")
-            else:
-                logger.warning(f"KEYCHAIN_PROCESSOR: Empty payload for secret '{key}'")
-                result_data[key] = None
-                
-        except httpx.HTTPError as e:
-            logger.error(f"KEYCHAIN_PROCESSOR: HTTP error fetching secret '{key}': {e}")
-            result_data[key] = None
-        except Exception as e:
-            logger.error(f"KEYCHAIN_PROCESSOR: Error fetching secret '{key}': {e}")
-            result_data[key] = None
+        logger.info(f"KEYCHAIN_PROCESSOR: Successfully fetched secret '{key}'")
     
     return result_data
 
@@ -244,22 +227,17 @@ async def _process_oauth2(
     logger.info(f"KEYCHAIN_PROCESSOR: Making OAuth2 request to {rendered_endpoint}")
     
     # Make OAuth2 request
-    try:
-        response = await client.request(
-            method=method,
-            url=rendered_endpoint,
-            headers=rendered_headers,
-            data=rendered_data
-        )
-        response.raise_for_status()
-        
-        token_data = response.json()
-        logger.info(f"KEYCHAIN_PROCESSOR: OAuth2 request successful, got token")
-        return token_data
-        
-    except Exception as e:
-        logger.error(f"KEYCHAIN_PROCESSOR: OAuth2 request failed: {e}")
-        return None
+    response = await client.request(
+        method=method,
+        url=rendered_endpoint,
+        headers=rendered_headers,
+        data=rendered_data
+    )
+    response.raise_for_status()
+    
+    token_data = response.json()
+    logger.info(f"KEYCHAIN_PROCESSOR: OAuth2 request successful, got token")
+    return token_data
 
 
 async def _process_bearer(
@@ -356,19 +334,13 @@ async def _store_keychain_entry(
         'renew_config': renew_config
     }
     
-    try:
-        response = await client.post(
-            f"{api_base_url}/api/keychain/{catalog_id}/{keychain_name}",
-            json=payload
-        )
-        
-        if response.status_code == 200:
-            logger.debug(f"KEYCHAIN_PROCESSOR: Stored keychain entry '{keychain_name}'")
-            return True
-        else:
-            logger.error(f"KEYCHAIN_PROCESSOR: Failed to store '{keychain_name}': {response.status_code} - {response.text}")
-            return False
-            
-    except Exception as e:
-        logger.error(f"KEYCHAIN_PROCESSOR: Error storing '{keychain_name}': {e}")
-        return False
+    response = await client.post(
+        f"{api_base_url}/api/keychain/{catalog_id}/{keychain_name}",
+        json=payload
+    )
+    
+    if response.status_code != 200:
+        raise RuntimeError(f"KEYCHAIN_PROCESSOR: Failed to store '{keychain_name}': {response.status_code} - {response.text}")
+    
+    logger.debug(f"KEYCHAIN_PROCESSOR: Stored keychain entry '{keychain_name}'")
+    return True
