@@ -163,16 +163,17 @@ class NATSCommandSubscriber:
                 
                 logger.debug(f"Received command notification: {data}")
                 
-                # Call the callback
-                await callback(data)
-                
-                # Acknowledge message
+                # Acknowledge message IMMEDIATELY to prevent redelivery
+                # Command claiming is handled via database events (atomic)
+                # If this worker doesn't claim it, another will
                 await msg.ack()
+                
+                # Call the callback (may take long time, but message already ack'd)
+                await callback(data)
                 
             except Exception as e:
                 logger.error(f"Error processing message: {e}", exc_info=True)
-                # NAK to requeue
-                await msg.nak()
+                # Message already ack'd, so just log the error
         
         try:
             # First ensure stream exists
@@ -209,8 +210,8 @@ class NATSCommandSubscriber:
                     config=nats.js.api.ConsumerConfig(
                         durable_name=self.consumer_name,
                         ack_policy="explicit",
-                        max_deliver=3,
-                        ack_wait=30  # 30 seconds to process and ack
+                        max_deliver=1,  # Only deliver once since we ack immediately
+                        ack_wait=300  # 5 minutes (high because we ack immediately anyway)
                     )
                 )
                 print("Consumer created", flush=True)
