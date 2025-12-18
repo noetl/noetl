@@ -145,6 +145,39 @@ async def start_execution(req: StartExecutionRequest) -> StartExecutionResponse:
             req.parent_execution_id
         )
         
+        # Process keychain section before workers start
+        # Load playbook to get keychain section
+        from noetl.server.keychain_processor import process_keychain_section
+        async with get_pool_connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute("""
+                    SELECT content FROM noetl.catalog 
+                    WHERE catalog_id = %s
+                """, (catalog_id,))
+                result = await cur.fetchone()
+                if result and result['content']:
+                    import yaml
+                    playbook_dict = yaml.safe_load(result['content'])
+                    keychain_section = playbook_dict.get('keychain')
+                    
+                    if keychain_section:
+                        logger.info(f"V2: Processing keychain section with {len(keychain_section)} entries for execution {execution_id}")
+                        try:
+                            # Build merged workload for template rendering
+                            base_workload = playbook_dict.get('workload', {})
+                            merged_workload = {**base_workload, **(req.payload or {})}
+                            
+                            keychain_data = await process_keychain_section(
+                                keychain_section=keychain_section,
+                                catalog_id=catalog_id,
+                                execution_id=int(execution_id),
+                                workload_vars=merged_workload
+                            )
+                            logger.info(f"V2: Keychain processing complete, created {len(keychain_data)} entries for execution {execution_id}")
+                        except Exception as e:
+                            logger.error(f"V2: Failed to process keychain section for execution {execution_id}: {e}", exc_info=True)
+                            # Don't fail execution, keychain errors will surface when workers try to resolve
+        
         # Get playbook_initialized event_id for tracing (root event)
         playbook_init_event_id = None
         root_event_id = None
