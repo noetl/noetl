@@ -220,7 +220,7 @@ async def start_execution(req: StartExecutionRequest) -> StartExecutionResponse:
                         command.step,
                         command.step,
                         command.tool.kind,
-                        "pending",
+                        "PENDING",
                         Json(context_data),
                         Json(meta),
                         playbook_init_event_id,
@@ -396,7 +396,7 @@ async def handle_event(req: EventRequest) -> EventResponse:
                         command.step,
                         command.step,
                         command.tool.kind,
-                        "pending",
+                        "PENDING",
                         Json({
                             "tool_config": command.tool.config,
                             "args": command.args or {},
