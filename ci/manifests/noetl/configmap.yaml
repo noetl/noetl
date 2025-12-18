@@ -31,6 +31,8 @@ data:
   NOETL_RUNTIME_OFFLINE_SECONDS: "60"
   NOETL_DISABLE_METRICS: "true"
   NOETL_SERVER_METRICS_INTERVAL: "60"
+  NOETL_VICTORIALOGS_URL: "http://vmlogs-single-server.vmlogs.svc.cluster.local:9428"
+  NOETL_LOG_FORMAT: "victorialogs"
   POSTGRES_USER: "demo"
   POSTGRES_DB: "demo_noetl"
   POSTGRES_HOST: "postgres.postgres.svc.cluster.local"

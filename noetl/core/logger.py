@@ -1,4 +1,5 @@
 from datetime import datetime
+import os
 import re
 import sys
 import json
@@ -8,6 +9,7 @@ from typing import Dict, TYPE_CHECKING
 import traceback
 
 from noetl.core.logging_context import ContextFilter, LoggingContext
+from noetl.core.victorialogs_handler import VictoriaLogsHandler
 
 if TYPE_CHECKING:
     from noetl.core.dsl.schema import DatabaseSchema
@@ -235,6 +237,60 @@ class CustomFormatter(logging.Formatter):
         return formatted_log
 
 
+class VictoriaLogsFormatter(logging.Formatter):
+    def format(self, record):
+        level_name = LOG_SEVERITY.get(record.levelname, record.levelname)
+
+        if hasattr(record, "scope"):
+            scope_highlight = f"{record.scope}"
+        else:
+            scope_highlight = ""
+
+        vs_code_navigation = f"{record.pathname}:{record.lineno}"
+        
+        location = f"{vs_code_navigation}\n"
+
+        metadata_line = f"[{level_name}] {scope_highlight} {location}".strip()
+
+        if isinstance(record.msg, (dict, list)):
+            message = str(record.msg)
+        else:
+            message = str(record.msg)
+
+        message_split = message.splitlines()
+        if len(message_split) > 1:
+            message_line = f"     Message: {message_split[0]}"
+            for line in message_split[1:]:
+                message_line += f"\n             {line}"
+        else:
+            message_line = f"     Message: {message}" #.strip()
+
+        extra_items = [
+            f"{key}: {stringify_extra(value)}"
+            for key, value in record.__dict__.items()
+            if key not in [
+                "msg", "args", "levelname", "levelno", "pathname",
+                "filename", "module", "exc_info", "exc_text", "stack_info",
+                "lineno", "funcName", "created", "msecs", "relativeCreated",
+                "thread", "threadName", "process", "processName", "scope", "name", "taskName"
+            ]
+        ]
+        extra_info = ""
+        if extra_items:
+            extra_info = f"\n     {' '.join(extra_items)}"
+        formatted_log = f"{metadata_line}\n{message_line}{extra_info}"
+        if record.exc_info:
+            try:
+                # for vescode clickable stack traces from logs files
+                format_exception = traceback.format_exception(record.exc_info[0], record.exc_info[1], record.exc_info[2])
+                for i in range(len(format_exception)):
+                    format_exception[i] = re.sub(r'File "([^"]+)", line (\d+),', r'File "\1:\2"', format_exception[i])
+                format_exception = "".join(format_exception)
+            except Exception as e:
+                format_exception += "\n" + self.formatException(record.exc_info)
+            formatted_log += f"\n{format_exception}"
+        return formatted_log
+
 class JSONFormatter(logging.Formatter):
     def format(self, record):
         log_dict = {
@@ -258,14 +314,25 @@ def setup_logger(name: str, include_location=False, use_json=False):
     logging.setLoggerClass(CustomLogger)
     logger = logging.getLogger(name)
     logger.addFilter(ContextFilter())
-
+    use_json = os.getenv("NOETL_LOG_FORMAT", "").lower()
     if not any(isinstance(h, logging.StreamHandler) for h in logger.handlers):
-        stream_handler = logging.StreamHandler(sys.stdout)
-        stream_handler.setLevel(logging.DEBUG)
-        if use_json:
-            stream_handler.setFormatter(JSONFormatter())
+        if use_json == "victorialogs":
+            stream_handler = VictoriaLogsHandler(
+                url=os.getenv("NOETL_VICTORIALOGS_URL", "http://localhost:9428"),
+                batch_size=5,
+                flush_interval=1.0,
+                extra_fields={
+                    "app": "noetl",
+                }
+            )
+            stream_handler.setFormatter(VictoriaLogsFormatter())
         else:
-            stream_handler.setFormatter(CustomFormatter(include_location=include_location))
+            stream_handler = logging.StreamHandler(sys.stdout)
+            stream_handler.setLevel(logging.DEBUG)
+            if use_json == "json":
+                stream_handler.setFormatter(JSONFormatter())
+            else:
+                stream_handler.setFormatter(CustomFormatter(include_location=include_location))
         logger.addHandler(stream_handler)
     logger.setLevel(logging.DEBUG)
     logger.propagate = False
