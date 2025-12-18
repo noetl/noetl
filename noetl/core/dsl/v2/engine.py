@@ -746,6 +746,18 @@ class ControlFlowEngine:
             logger.error(f"Execution state not found: {event.execution_id}")
             return commands
         
+        # CRITICAL: Stop generating commands if this is a failure event
+        # command.failed or step.exit with FAILED status means execution should stop
+        if event.name == "command.failed":
+            logger.error(f"[FAILURE] Received command.failed event for step {event.step}, stopping execution")
+            return commands
+        
+        if event.name == "step.exit":
+            step_status = event.payload.get("status", "").upper()
+            if step_status == "FAILED":
+                logger.error(f"[FAILURE] Step {event.step} failed, stopping execution")
+                return commands
+        
         # Get current step
         if not event.step:
             logger.error("Event missing step name")
