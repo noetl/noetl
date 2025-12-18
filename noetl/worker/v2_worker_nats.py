@@ -372,6 +372,63 @@ class V2Worker:
             # Execute tool
             response = await self._execute_tool(tool_kind, tool_config, args, step, render_context)
             
+            # Check if tool returned error status
+            tool_error = None
+            if isinstance(response, dict):
+                if response.get('status') == 'error':
+                    tool_error = response.get('error', 'Tool returned error status')
+                # Also check nested data errors (for tools that return {data: {...}})
+                elif isinstance(response.get('data'), dict):
+                    for key, value in response['data'].items():
+                        if isinstance(value, dict) and value.get('status') == 'error':
+                            tool_error = f"{key}: {value.get('message', 'Unknown error')}"
+                            break
+            
+            if tool_error:
+                # Tool returned error - treat as failure
+                logger.error(f"Tool execution failed for {step}: {tool_error}")
+                
+                # Emit call.done with error
+                await self._emit_event(
+                    server_url,
+                    execution_id,
+                    step,
+                    "call.done",
+                    {"error": tool_error}
+                )
+                
+                # Emit step.exit with failed status
+                await self._emit_event(
+                    server_url,
+                    execution_id,
+                    step,
+                    "step.exit",
+                    {
+                        "status": "failed",
+                        "error": tool_error,
+                        "result": response
+                    }
+                )
+                
+                # Emit command.failed event
+                if command_id:
+                    await self._emit_event(
+                        server_url,
+                        execution_id,
+                        step,
+                        "command.failed",
+                        {
+                            "command_id": command_id,
+                            "worker_id": self.worker_id,
+                            "error": tool_error,
+                            "result": response
+                        }
+                    )
+                
+                logger.error(f"[EVENT] Failed {step} for execution {execution_id}" + (f" command={command_id}" if command_id else ""))
+                return  # Exit without emitting completed events
+            
+            # Tool succeeded - emit success events
             # Emit call.done event
             await self._emit_event(
                 server_url,
@@ -538,6 +595,10 @@ class V2Worker:
             # - Kwargs unpacking
             # - Error handling
             result = await execute_python_task_async(task_config, context, jinja_env, args)
+            # Check if plugin returned error status
+            if isinstance(result, dict) and result.get('status') == 'error':
+                # Keep error response intact (worker needs status field to detect error)
+                return result
             # Normalize result - plugin returns dict, may need to extract 'data' or 'result'
             if isinstance(result, dict):
                 return result.get('data', result.get('result', result))
@@ -551,6 +612,10 @@ class V2Worker:
             # - Response processing
             task_with = args  # Plugin uses 'task_with' for rendered params
             result = await execute_http_task(task_config, context, jinja_env, task_with)
+            # Check if plugin returned error status
+            if isinstance(result, dict) and result.get('status') == 'error':
+                # Keep error response intact (worker needs status field to detect error)
+                return result
             # Normalize result
             if isinstance(result, dict):
                 return result.get('data', result)
@@ -563,6 +628,10 @@ class V2Worker:
                 None, 
                 lambda: execute_postgres_task(task_config, context, jinja_env, args)
             )
+            # Check if plugin returned error status
+            if isinstance(result, dict) and result.get('status') == 'error':
+                # Keep error response intact (worker needs status field to detect error)
+                return result
             return result.get('data', result) if isinstance(result, dict) else result
             
         elif tool_kind == "duckdb":
@@ -572,6 +641,10 @@ class V2Worker:
                 None,
                 lambda: execute_duckdb_task(task_config, context, jinja_env, args)
             )
+            # Check if plugin returned error status
+            if isinstance(result, dict) and result.get('status') == 'error':
+                # Keep error response intact (worker needs status field to detect error)
+                return result
             return result.get('data', result) if isinstance(result, dict) else result
             
         elif tool_kind == "secrets":
@@ -581,7 +654,11 @@ class V2Worker:
                 None,
                 lambda: execute_secrets_task(task_config, context, jinja_env)
             )
-            return result
+            # Check if plugin returned error status
+            if isinstance(result, dict) and result.get('status') == 'error':
+                # Keep error response intact (worker needs status field to detect error)
+                return result
+            return result.get('data', result) if isinstance(result, dict) else result
             
         elif tool_kind == "sink":
             # Use plugin's execute_sink_task (sync function - run in executor)
@@ -590,7 +667,11 @@ class V2Worker:
                 None,
                 lambda: execute_sink_task(task_config, context, jinja_env)
             )
-            return result
+            # Check if plugin returned error status
+            if isinstance(result, dict) and result.get('status') == 'error':
+                # Keep error response intact (worker needs status field to detect error)
+                return result
+            return result.get('data', result) if isinstance(result, dict) else result
             
         elif tool_kind == "workbook":
             # Use plugin's execute_workbook_task (sync function - run in executor)
@@ -599,7 +680,11 @@ class V2Worker:
                 None,
                 lambda: execute_workbook_task(task_config, context, jinja_env, args)
             )
-            return result
+            # Check if plugin returned error status
+            if isinstance(result, dict) and result.get('status') == 'error':
+                # Keep error response intact (worker needs status field to detect error)
+                return result
+            return result.get('data', result) if isinstance(result, dict) else result
             
         elif tool_kind == "playbook":
             # Use plugin's execute_playbook_task (sync function - run in executor)
