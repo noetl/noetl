@@ -145,18 +145,20 @@ async def start_execution(req: StartExecutionRequest) -> StartExecutionResponse:
             req.parent_execution_id
         )
         
-        # Get playbook_initialized event_id for tracing
+        # Get playbook_initialized event_id for tracing (root event)
         playbook_init_event_id = None
+        root_event_id = None
         async with get_pool_connection() as conn:
             async with conn.cursor() as cur:
                 await cur.execute("""
                     SELECT event_id FROM noetl.event
                     WHERE execution_id = %s AND event_type = 'playbook_initialized'
-                    ORDER BY event_id DESC LIMIT 1
+                    ORDER BY event_id ASC LIMIT 1
                 """, (int(execution_id),))
                 result = await cur.fetchone()
                 if result:
                     playbook_init_event_id = result['event_id']
+                    root_event_id = result['event_id']  # First event is the root
         
         # Get NATS publisher
         nats_pub = await get_nats_publisher()
@@ -172,6 +174,34 @@ async def start_execution(req: StartExecutionRequest) -> StartExecutionResponse:
                     # Generate unique command ID
                     command_id = f"{execution_id}:{command.step}:{await get_snowflake_id()}"
                     event_id = await get_snowflake_id()
+                    
+                    # Build traceability metadata
+                    meta = {
+                        "command_id": command_id,
+                        "step": command.step,
+                        "tool_kind": command.tool.kind,
+                        "priority": command.priority,
+                        "max_attempts": command.max_attempts or 3,
+                        "attempt": 1,
+                        "playbook_path": path,
+                        "catalog_id": catalog_id,
+                        "metadata": command.metadata,
+                        # Traceability fields
+                        "execution_id": str(execution_id),
+                        "root_event_id": root_event_id,
+                        "event_chain": [root_event_id, playbook_init_event_id, event_id] if root_event_id else [event_id]
+                    }
+                    
+                    # Ensure context has traceability fields
+                    context_data = {
+                        "tool_config": command.tool.config,
+                        "args": command.args or {},
+                        "render_context": command.render_context,
+                        # Add traceability to context for easy access
+                        "execution_id": str(execution_id),
+                        "catalog_id": catalog_id,
+                        "root_event_id": root_event_id
+                    }
                     
                     # Insert command.issued event
                     await cur.execute("""
@@ -190,22 +220,8 @@ async def start_execution(req: StartExecutionRequest) -> StartExecutionResponse:
                         command.step,
                         command.tool.kind,
                         "pending",
-                        Json({
-                            "tool_config": command.tool.config,
-                            "args": command.args or {},
-                            "render_context": command.render_context
-                        }),
-                        Json({
-                            "command_id": command_id,
-                            "step": command.step,
-                            "tool_kind": command.tool.kind,
-                            "priority": command.priority,
-                            "max_attempts": command.max_attempts or 3,
-                            "attempt": 1,
-                            "playbook_path": path,
-                            "catalog_id": catalog_id,
-                            "metadata": command.metadata
-                        }),
+                        Json(context_data),
+                        Json(meta),
                         playbook_init_event_id,
                         req.parent_execution_id,
                         datetime.now(timezone.utc)

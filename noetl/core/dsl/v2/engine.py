@@ -44,6 +44,9 @@ class ExecutionState:
         self.last_event_id: Optional[int] = None  # Track last event_id for parent linkage
         self.step_event_ids: dict[str, int] = {}  # step_name -> last event_id for that step
         
+        # Root event tracking for traceability
+        self.root_event_id: Optional[int] = None  # First event (playbook_initialized) for full trace
+        
         # Loop state tracking
         self.loop_state: dict[str, dict[str, Any]] = {}  # step_name -> {collection, index, item, mode}
         
@@ -1017,12 +1020,46 @@ class ControlFlowEngine:
                 # Generate event_id
                 event_id = await get_snowflake_id()
                 
+                # Store root_event_id on first event
+                if event.name == "playbook_initialized" and state.root_event_id is None:
+                    state.root_event_id = event_id
+                
+                # Build traceability metadata
+                meta = {
+                    "execution_id": str(event.execution_id),
+                    "catalog_id": catalog_id,
+                    "root_event_id": state.root_event_id,
+                    "event_chain": [
+                        state.root_event_id,
+                        parent_event_id,
+                        event_id
+                    ] if state.root_event_id else [event_id]
+                }
+                
+                # Add parent execution link if present
+                if state.parent_execution_id:
+                    meta["parent_execution_id"] = state.parent_execution_id
+                
+                # Add step-specific metadata
+                if event.step:
+                    meta["step"] = event.step
+                    if event.step in state.step_event_ids:
+                        meta["previous_step_event_id"] = state.step_event_ids[event.step]
+                
+                # Merge with existing context metadata
+                context_data = event.payload.get("context", {})
+                if isinstance(context_data, dict):
+                    # Ensure execution_id and catalog_id are in context for easy access
+                    context_data["execution_id"] = str(event.execution_id)
+                    context_data["catalog_id"] = catalog_id
+                    context_data["root_event_id"] = state.root_event_id
+                
                 await cur.execute("""
                     INSERT INTO noetl.event (
                         execution_id, catalog_id, event_id, parent_event_id, parent_execution_id, event_type,
                         node_id, node_name, status, context, result, 
-                        error, stack_trace, worker_id, duration, created_at
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        error, stack_trace, worker_id, duration, meta, created_at
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """, (
                     int(event.execution_id),
                     catalog_id,
@@ -1033,12 +1070,13 @@ class ControlFlowEngine:
                     event.step,
                     event.step,
                     "FAILED" if "failed" in event.name else "COMPLETED" if ("step.exit" == event.name or "completed" in event.name) else "RUNNING",
-                    Json(event.payload.get("context")) if event.payload.get("context") else None,
+                    Json(context_data) if context_data else None,
                     Json(event.payload.get("result")) if event.payload.get("result") else None,
                     Json(event.payload.get("error")) if event.payload.get("error") else None,
                     event.payload.get("stack_trace"),
                     event.worker_id,
                     duration_ms,
+                    Json(meta),
                     event_timestamp
                 ))
             await conn.commit()
