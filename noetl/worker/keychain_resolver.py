@@ -208,7 +208,7 @@ async def resolve_keychain_entries(
     keychain_refs: Set[str],
     catalog_id: int,
     execution_id: Optional[int] = None,
-    api_base_url: str = "http://noetl.noetl.svc.cluster.local:8080"
+    api_base_url: str = "http://noetl.noetl.svc.cluster.local:8082"
 ) -> Dict[str, Any]:
     """
     Resolve keychain entries by calling the keychain API.
@@ -306,7 +306,7 @@ async def populate_keychain_context(
     context: Dict[str, Any],
     catalog_id: int,
     execution_id: Optional[int] = None,
-    api_base_url: str = "http://noetl.noetl.svc.cluster.local:8080"
+    api_base_url: str = "http://noetl.noetl.svc.cluster.local:8082"
 ) -> Dict[str, Any]:
     """
     Scan task config for keychain references and populate context.keychain.
