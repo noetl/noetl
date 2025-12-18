@@ -138,41 +138,13 @@ async def start_execution(req: StartExecutionRequest) -> StartExecutionResponse:
                     path = result['path']
         
         # Start execution (creates state, returns initial commands)
+        # Note: Keychain processing happens inside engine.start_execution
         execution_id, commands = await engine.start_execution(
             path,
             req.payload,
             catalog_id,
             req.parent_execution_id
         )
-        
-        # Process keychain section before workers start
-        # Load playbook to get keychain section
-        from noetl.server.keychain_processor import process_keychain_section
-        async with get_pool_connection() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute("""
-                    SELECT content FROM noetl.catalog 
-                    WHERE catalog_id = %s
-                """, (catalog_id,))
-                result = await cur.fetchone()
-                if result and result['content']:
-                    import yaml
-                    playbook_dict = yaml.safe_load(result['content'])
-                    keychain_section = playbook_dict.get('keychain')
-                    
-                    if keychain_section:
-                        logger.info(f"V2: Processing keychain section with {len(keychain_section)} entries for execution {execution_id}")
-                        # Build merged workload for template rendering
-                        base_workload = playbook_dict.get('workload', {})
-                        merged_workload = {**base_workload, **(req.payload or {})}
-                        
-                        keychain_data = await process_keychain_section(
-                            keychain_section=keychain_section,
-                            catalog_id=catalog_id,
-                            execution_id=int(execution_id),
-                            workload_vars=merged_workload
-                        )
-                        logger.info(f"V2: Keychain processing complete, created {len(keychain_data)} entries for execution {execution_id}")
         
         # Get playbook_initialized event_id for tracing (root event)
         playbook_init_event_id = None
