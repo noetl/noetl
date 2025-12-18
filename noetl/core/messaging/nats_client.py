@@ -163,17 +163,23 @@ class NATSCommandSubscriber:
                 
                 logger.debug(f"Received command notification: {data}")
                 
-                # Acknowledge message IMMEDIATELY to prevent redelivery
-                # Command claiming is handled via database events (atomic)
-                # If this worker doesn't claim it, another will
-                await msg.ack()
-                
-                # Call the callback (may take long time, but message already ack'd)
+                # Call the callback FIRST (command claiming is atomic via database)
                 await callback(data)
+                
+                # Acknowledge message AFTER successful processing
+                # This ensures exactly-once delivery: if callback fails, message is redelivered
+                await msg.ack()
+                logger.debug(f"Acknowledged message for command_id={data.get('command_id')}")
                 
             except Exception as e:
                 logger.error(f"Error processing message: {e}", exc_info=True)
-                # Message already ack'd, so just log the error
+                # NAK the message to allow redelivery (up to max_deliver limit)
+                # This ensures another worker can try processing it
+                try:
+                    await msg.nak()
+                    logger.debug(f"NAK'd message for command_id={data.get('command_id')} due to error")
+                except Exception as nak_err:
+                    logger.error(f"Failed to NAK message: {nak_err}")
         
         try:
             # First ensure stream exists
@@ -210,8 +216,10 @@ class NATSCommandSubscriber:
                     config=nats.js.api.ConsumerConfig(
                         durable_name=self.consumer_name,
                         ack_policy="explicit",
-                        max_deliver=1,  # Only deliver once since we ack immediately
-                        ack_wait=300  # 5 minutes (high because we ack immediately anyway)
+                        max_deliver=3,  # Allow 3 attempts in case of transient failures
+                        ack_wait=60,  # 60 seconds - reasonable time for worker to process and ack
+                        deliver_policy="all",  # Deliver all available messages
+                        replay_policy="instant"  # Deliver messages as fast as possible
                     )
                 )
                 print("Consumer created", flush=True)
