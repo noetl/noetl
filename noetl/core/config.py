@@ -584,6 +584,13 @@ def get_settings(reload: bool = False) -> Settings:
                 NOETL_SERVER_METRICS_INTERVAL=os.environ['NOETL_SERVER_METRICS_INTERVAL'],
                 NOETL_SERVER_LABELS=os.environ.get('NOETL_SERVER_LABELS'),
                 HOSTNAME=os.environ.get('HOSTNAME'),
+                # NATS Configuration
+                NATS_URL=os.environ.get('NATS_URL', 'nats://noetl:noetl@localhost:30422'),
+                NATS_USER=os.environ.get('NATS_USER', 'noetl'),
+                NATS_PASSWORD=os.environ.get('NATS_PASSWORD', 'noetl'),
+                NATS_STREAM=os.environ.get('NATS_STREAM', 'NOETL_COMMANDS'),
+                NATS_CONSUMER=os.environ.get('NATS_CONSUMER', 'noetl_worker_pool'),
+                NATS_SUBJECT=os.environ.get('NATS_SUBJECT', 'noetl.commands'),
             )
         except Exception as e:
             print(f"FATAL: Failed to initialize settings: {e}", file=sys.stderr)
@@ -622,3 +629,13 @@ def get_worker_settings(reload: bool = False) -> WorkerSettings:
             NOETL_MAX_WORKERS=env.get('NOETL_MAX_WORKERS', '8'),
         )
     return _worker_settings
+
+
+# Lazy-loaded settings singleton for direct import
+# Usage: from noetl.core.config import settings
+class _SettingsProxy:
+    """Proxy to lazily load settings on first access."""
+    def __getattr__(self, name):
+        return getattr(get_settings(), name)
+
+settings = _SettingsProxy()
