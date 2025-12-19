@@ -68,12 +68,12 @@ workflow:
 
   - step: process_users
     desc: "Process each user through profile scoring sub-playbook"
+    loop:
+      in: "{{ workload.users }}"
+      iterator: user
+      mode: sequential
     tool:
       kind: playbook
-      loop:
-        in: "{{ workload.users }}"
-        iterator: user
-        mode: sequential
       # Provide an explicit task identifier so nested playbook propagates correct parent_step
       task: process_users
       path: tests/fixtures/playbooks/playbook_composition/user_profile_scorer
