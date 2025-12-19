@@ -647,13 +647,14 @@ class ControlFlowEngine:
                 data = self._render_value_recursive(data_source, context)
                 
                 # Create sink command (uses special sink tool kind)
+                # Note: sink executor expects 'tool' not 'backend'
                 sink_command = Command(
                     execution_id=state.execution_id,
                     step=f"{event.step}_sink",
                     tool=ToolCall(
                         kind="sink",
                         config={
-                            "backend": backend,
+                            "tool": backend,  # executor expects 'tool' field
                             "table": table,
                             "data": data,
                             "auth": sink_spec.get("auth")
