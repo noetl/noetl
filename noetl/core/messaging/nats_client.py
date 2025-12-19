@@ -28,11 +28,12 @@ class NATSCommandPublisher:
     
     def __init__(
         self,
-        nats_url: str = "nats://noetl:noetl@localhost:30422",
-        subject: str = "noetl.commands"
+        nats_url: Optional[str] = None,
+        subject: Optional[str] = None
     ):
-        self.nats_url = nats_url
-        self.subject = subject
+        from noetl.core.config import settings
+        self.nats_url = nats_url or settings.nats_url
+        self.subject = subject or settings.nats_subject
         self._nc: Optional[NATSClient] = None
         self._js: Optional[JetStreamContext] = None
     
@@ -43,18 +44,19 @@ class NATSCommandPublisher:
             self._js = self._nc.jetstream()
             
             # Ensure stream exists
+            from noetl.core.config import settings
             try:
-                await self._js.stream_info("NOETL_COMMANDS")
-                logger.info("Using existing NOETL_COMMANDS stream")
+                await self._js.stream_info(settings.nats_stream)
+                logger.info(f"Using existing {settings.nats_stream} stream")
             except Exception:
                 # Create stream if it doesn't exist
                 await self._js.add_stream(
-                    name="NOETL_COMMANDS",
-                    subjects=["noetl.commands"],
+                    name=settings.nats_stream,
+                    subjects=[settings.nats_subject],
                     max_age=3600,  # 1 hour retention
                     storage="file"
                 )
-                logger.info("Created NOETL_COMMANDS stream")
+                logger.info(f"Created {settings.nats_stream} stream")
             
             logger.info(f"Connected to NATS at {self.nats_url}")
             
@@ -117,13 +119,14 @@ class NATSCommandSubscriber:
     
     def __init__(
         self,
-        nats_url: str = "nats://noetl:noetl@localhost:30422",
-        subject: str = "noetl.commands",
+        nats_url: Optional[str] = None,
+        subject: Optional[str] = None,
         consumer_name: Optional[str] = None
     ):
-        self.nats_url = nats_url
-        self.subject = subject
-        self.consumer_name = consumer_name or "noetl-worker-pool"
+        from noetl.core.config import settings
+        self.nats_url = nats_url or settings.nats_url
+        self.subject = subject or settings.nats_subject
+        self.consumer_name = consumer_name or settings.nats_consumer
         self._nc: Optional[NATSClient] = None
         self._js: Optional[JetStreamContext] = None
         self._subscription = None
@@ -183,36 +186,37 @@ class NATSCommandSubscriber:
         
         try:
             # First ensure stream exists
+            from noetl.core.config import settings
             try:
-                print("Checking if stream NOETL_COMMANDS exists...", flush=True)
-                await self._js.stream_info("NOETL_COMMANDS")
+                print(f"Checking if stream {settings.nats_stream} exists...", flush=True)
+                await self._js.stream_info(settings.nats_stream)
                 print("Stream exists", flush=True)
             except Exception as stream_err:
                 print(f"Stream check error: {stream_err}", flush=True)
-                print("Creating stream NOETL_COMMANDS...", flush=True)
+                print(f"Creating stream {settings.nats_stream}...", flush=True)
                 # Create stream if it doesn't exist
                 from nats.js.api import StreamConfig
                 await self._js.add_stream(
                     StreamConfig(
-                        name="NOETL_COMMANDS",
-                        subjects=["noetl.commands"],
+                        name=settings.nats_stream,
+                        subjects=[settings.nats_subject],
                         retention="limits",
                         max_age=3600  # 1 hour
                     )
                 )
                 print("Stream created", flush=True)
-                logger.info("Created stream: NOETL_COMMANDS")
+                logger.info(f"Created stream: {settings.nats_stream}")
             
             # Create pull consumer if it doesn't exist
             try:
                 print(f"Checking consumer {self.consumer_name}...", flush=True)
-                await self._js.consumer_info("NOETL_COMMANDS", self.consumer_name)
+                await self._js.consumer_info(settings.nats_stream, self.consumer_name)
                 print("Consumer exists", flush=True)
             except Exception as consumer_err:
                 print(f"Consumer check error: {consumer_err}", flush=True)
                 print(f"Creating consumer {self.consumer_name}...", flush=True)
                 await self._js.add_consumer(
-                    stream="NOETL_COMMANDS",
+                    stream=settings.nats_stream,
                     config=nats.js.api.ConsumerConfig(
                         durable_name=self.consumer_name,
                         ack_policy="explicit",

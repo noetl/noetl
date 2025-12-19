@@ -39,11 +39,12 @@ class V2Worker:
     def __init__(
         self,
         worker_id: str,
-        nats_url: str = "nats://noetl:noetl@nats.nats.svc.cluster.local:4222",
+        nats_url: Optional[str] = None,
         server_url: Optional[str] = None
     ):
+        from noetl.core.config import settings
         self.worker_id = worker_id
-        self.nats_url = nats_url
+        self.nats_url = nats_url or settings.nats_url
         self.server_url = server_url  # Fallback, usually comes from notification
         self._running = False
         self._http_client: Optional[httpx.AsyncClient] = None
@@ -51,11 +52,13 @@ class V2Worker:
     
     async def start(self):
         """Start the worker NATS subscription."""
+        from noetl.core.config import settings
         self._running = True
         self._http_client = httpx.AsyncClient(timeout=30.0)
         self._nats_subscriber = NATSCommandSubscriber(
             nats_url=self.nats_url,
-            consumer_name=f"worker-{self.worker_id}"
+            subject=settings.nats_subject,
+            consumer_name=settings.nats_consumer
         )
         
         print(f"Worker {self.worker_id} starting...", flush=True)

@@ -167,6 +167,14 @@ class Settings(BaseModel):
     # Schema validation / ensure flag (renamed from NOETL_SCHEMA_ENSURE)
     schema_validate: bool = Field(..., alias="NOETL_SCHEMA_VALIDATE")
 
+    # NATS Configuration
+    nats_url: str = Field(default="nats://noetl:noetl@localhost:30422", alias="NATS_URL")
+    nats_user: str = Field(default="noetl", alias="NATS_USER")
+    nats_password: str = Field(default="noetl", alias="NATS_PASSWORD")
+    nats_stream: str = Field(default="NOETL_COMMANDS", alias="NATS_STREAM")
+    nats_consumer: str = Field(default="noetl_worker_pool", alias="NATS_CONSUMER")
+    nats_subject: str = Field(default="noetl.commands", alias="NATS_SUBJECT")
+
     # Server identity and base URL (required)
     server_url: str = Field(..., alias="NOETL_SERVER_URL")
     server_name: str = Field(..., alias="NOETL_SERVER_NAME")
