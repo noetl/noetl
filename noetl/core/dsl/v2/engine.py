@@ -525,6 +525,14 @@ class ControlFlowEngine:
                     else:
                         continue
                     
+                    # Auto-inject loop_results when transitioning from loop.done event
+                    # The loop step acts as an aggregator, and its result should be passed as loop_results
+                    if event.name == "loop.done" and event.step in state.step_results:
+                        loop_result = state.step_results[event.step]
+                        if "loop_results" not in args:
+                            args["loop_results"] = loop_result
+                            logger.info(f"Auto-injected loop_results for {target_step} from loop step {event.step}")
+                    
                     # Get target step definition
                     step_def = state.get_step(target_step)
                     if not step_def:
