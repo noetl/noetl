@@ -71,7 +71,7 @@ workflow:
           sink:
             backend: postgres
             table: public.iterator_save_test
-            connection: "{{ workload.pg_auth }}"
+            auth: "{{ workload.pg_auth }}"
             from:
               id: "{{ execution_id }}:{{ response.item_name }}"
               execution_id: "{{ execution_id }}"
