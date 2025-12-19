@@ -922,16 +922,18 @@ class ControlFlowEngine:
         
         # Store step result if this is a step.exit event
         if event.name == "step.exit" and "result" in event.payload:
+            logger.info(f"[LOOP_DEBUG] step.exit with result for {event.step}, step_def.loop={step_def.loop}, in_loop_state={event.step in state.loop_state}")
             # If in a loop, add iteration result to aggregation (for ALL iterations)
             if step_def.loop and event.step in state.loop_state:
                 # Check if loop aggregation already finalized (loop_done happened)
                 loop_state = state.loop_state[event.step]
+                logger.info(f"[LOOP_DEBUG] Loop state: completed={loop_state.get('completed')}, finalized={loop_state.get('aggregation_finalized')}, results_count={len(loop_state.get('results', []))}")
                 if not loop_state.get("aggregation_finalized", False):
                     failed = event.payload.get("status", "").upper() == "FAILED"
                     state.add_loop_result(event.step, event.payload["result"], failed=failed)
                     logger.info(f"Added iteration result to loop aggregation for step {event.step}")
                 else:
-                    logger.debug(f"Loop aggregation already finalized for {event.step}, skipping result storage")
+                    logger.info(f"Loop aggregation already finalized for {event.step}, skipping result storage")
             else:
                 # Not in loop or loop done - store as normal step result
                 state.mark_step_completed(event.step, event.payload["result"])
