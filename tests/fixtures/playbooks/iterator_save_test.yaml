@@ -69,13 +69,10 @@ workflow:
       - when: "{{ event.name == 'call.done' and response is defined }}"
         then:
           sink:
-            tool:
-              kind: postgres
-              auth: "{{ workload.pg_auth }}"
+            backend: postgres
             table: public.iterator_save_test
-            mode: upsert
-            key: id
-            args:
+            connection: "{{ workload.pg_auth }}"
+            from:
               id: "{{ execution_id }}:{{ response.item_name }}"
               execution_id: "{{ execution_id }}"
               item_name: "{{ response.item_name }}"
