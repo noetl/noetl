@@ -52,6 +52,8 @@ spec:
           env:
             - name: NOETL_RUN_MODE
               value: "worker"
+            - name: NOETL_WORKER_MODE
+              value: "true"
             - name: NOETL_SERVER_URL
               value: "http://noetl.noetl.svc.cluster.local:8082"
             - name: NOETL_WORKER_POOL_RUNTIME

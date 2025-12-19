@@ -262,7 +262,16 @@ class ExecutionPlanner:
                 return tool  # Actionable start with explicit tool
             return "router"  # Router start without tool
         if step_name == "end":
-            return "end"
+            tool = step.get("tool")
+            if tool:
+                # End step with tool - should be executed like any other step
+                if isinstance(tool, dict):
+                    result = tool.get("kind") or tool.get("type") or "unknown"
+                    logger.debug(f"PLANNER: step=end, tool is dict, extracted kind={result}")
+                    return result
+                logger.debug(f"PLANNER: step=end, tool is string={tool}")
+                return tool  # Actionable end with explicit tool
+            return "end"  # Terminal end without tool
 
         tool = step.get("tool")
         if tool:

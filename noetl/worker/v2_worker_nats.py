@@ -428,40 +428,63 @@ class V2Worker:
                 logger.error(f"[EVENT] Failed {step} for execution {execution_id}" + (f" command={command_id}" if command_id else ""))
                 return  # Exit without emitting completed events
             
-            # Tool succeeded - emit success events
-            # Emit call.done event
-            await self._emit_event(
-                server_url,
-                execution_id,
-                step,
-                "call.done",
-                {"response": response}
-            )
-            
-            # Emit step.exit event
-            await self._emit_event(
-                server_url,
-                execution_id,
-                step,
-                "step.exit",
-                {"result": response, "status": "completed"}
-            )
-            
-            # Emit command.completed event (for event-driven tracking)
-            if command_id:
+            # Tool succeeded - emit success events with error recovery
+            try:
+                # Emit call.done event
                 await self._emit_event(
                     server_url,
                     execution_id,
                     step,
-                    "command.completed",
-                    {
-                        "command_id": command_id,
-                        "worker_id": self.worker_id,
-                        "result": response
-                    }
+                    "call.done",
+                    {"response": response}
                 )
-            
-            logger.info(f"[EVENT] Completed {step} for execution {execution_id}" + (f" command={command_id}" if command_id else ""))
+                
+                # Emit step.exit event
+                await self._emit_event(
+                    server_url,
+                    execution_id,
+                    step,
+                    "step.exit",
+                    {"result": response, "status": "completed"}
+                )
+                
+                # Emit command.completed event (for event-driven tracking)
+                if command_id:
+                    await self._emit_event(
+                        server_url,
+                        execution_id,
+                        step,
+                        "command.completed",
+                        {
+                            "command_id": command_id,
+                            "worker_id": self.worker_id,
+                            "result": response
+                        }
+                    )
+                
+                logger.info(f"[EVENT] Completed {step} for execution {execution_id}" + (f" command={command_id}" if command_id else ""))
+                
+            except Exception as emit_error:
+                # Event emission failed - try to report failure
+                logger.error(f"Failed to emit success events for {step}: {emit_error}", exc_info=True)
+                try:
+                    # Attempt to emit command.failed to mark execution as failed
+                    if command_id:
+                        await self._emit_event(
+                            server_url,
+                            execution_id,
+                            step,
+                            "command.failed",
+                            {
+                                "command_id": command_id,
+                                "worker_id": self.worker_id,
+                                "error": f"Event emission failed: {str(emit_error)}"
+                            }
+                        )
+                except Exception as recovery_error:
+                    logger.error(f"Failed to emit recovery failure event: {recovery_error}", exc_info=True)
+                # Re-raise so the command handler knows it failed
+                raise emit_error
             
         except Exception as e:
             logger.error(f"Execution error for {step}: {e}", exc_info=True)
@@ -1109,8 +1132,12 @@ async def run_v2_worker(
     server_url: Optional[str] = None
 ):
     """Run a V2 worker instance."""
-    # No database pool initialization - worker uses direct connections per step
-    logger.info("V2 Worker uses direct database connections (no pool)")
+    # Set environment variable to indicate worker context (for TransientVars API routing)
+    os.environ["NOETL_WORKER_MODE"] = "true"
+    
+    # No database pool initialization - worker uses server API for all noetl schema access
+    # Only tool steps (postgres, duckdb) access external databases with their own credentials
+    logger.info("V2 Worker uses server API for variables, events, and context (no direct DB access)")
     
     worker = V2Worker(
         worker_id=worker_id,

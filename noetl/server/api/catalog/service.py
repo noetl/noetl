@@ -13,6 +13,9 @@ from psycopg.types.json import Json
 from noetl.core.db.pool import get_pool_connection
 from noetl.server.api.catalog.schema import CatalogEntries
 from .schema import CatalogEntry, CatalogEntries
+from noetl.core.logger import setup_logger
+
+logger = setup_logger(__name__, include_location=True)
 
 
 # class CatalogEntry(AppBaseModel):
@@ -176,6 +179,21 @@ class CatalogService:
         resource_data = yaml.safe_load(content) or {}
         path = (resource_data.get("metadata") or {}).get("path") or resource_data.get("path") or (
             resource_data.get("metadata") or {}).get("name") or resource_data.get("name") or "unknown"
+
+        # Inject implicit "end" step if playbook doesn't have one
+        if resource_type == "Playbook":
+            workflow = resource_data.get("workflow", [])
+            if workflow and not any(step.get("step", "").lower() == "end" for step in workflow):
+                logger.info(f"CATALOG: Injecting implicit 'end' step for playbook '{path}'")
+                workflow.append({
+                    "step": "end",
+                    "desc": "Implicit workflow aggregator (auto-injected)",
+                    "tool": {
+                        "kind": "python",
+                        "code": "def main():\n    # Implicit end step - aggregates all workflow results\n    return {'status': 'aggregated'}"
+                    }
+                })
+                resource_data["workflow"] = workflow
 
         # Get the latest version for this resource and increment it
         latest_version = await CatalogService.get_latest_version(path)

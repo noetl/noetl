@@ -99,57 +99,59 @@ workbook:
           }
 
   - name: calculate_age_factor
-    tool: python
-    assert:
-      expects:
-        - age
-      returns:
-        - age_score
-        - age_weight
-    code: |
-      def main(age):
-          # Score based on age (career stage factor, 0-10 points)
-          age_val = float(age)
-          if 25 <= age_val <= 35:
-              score = 10.0  # Prime career building years
-          elif 35 < age_val <= 45:
-              score = 8.0   # Senior contributor years
-          elif 45 < age_val <= 55:
-              score = 6.0   # Experienced veteran
-          elif age_val > 55:
-              score = 5.0   # Senior veteran
-          else:
-              score = 7.0   # Early career
-          
-          return {
-              "age_score": score,
-              "age_weight": 0.1  # 10% of total score
-          }
+    tool:
+      kind: python
+      assert:
+        expects:
+          - age
+        returns:
+          - age_score
+          - age_weight
+      code: |
+        def main(age):
+            # Score based on age (career stage factor, 0-10 points)
+            age_val = float(age)
+            if 25 <= age_val <= 35:
+                score = 10.0  # Prime career building years
+            elif 35 < age_val <= 45:
+                score = 8.0   # Senior contributor years
+            elif 45 < age_val <= 55:
+                score = 6.0   # Experienced veteran
+            elif age_val > 55:
+                score = 5.0   # Senior veteran
+            else:
+                score = 7.0   # Early career
+            
+            return {
+                "age_score": score,
+                "age_weight": 0.1  # 10% of total score
+            }
 
   - name: determine_category
-    tool: python
-    assert:
-      expects:
-        - profile_score
-        - years_experience
-      returns:
-        - score_category
-    code: |
-      def main(profile_score, years_experience):
-          score = float(profile_score)
-          experience = float(years_experience)
-          
-          # Determine category based on score and experience
-          if score >= 80 and experience >= 10:
-              category = "Executive"
-          elif score >= 65 and experience >= 7:
-              category = "Senior"
-          elif score >= 50 and experience >= 3:
-              category = "Mid-Level"
-          else:
-              category = "Junior"
-          
-          return {"score_category": category}
+    tool:
+      kind: python
+      assert:
+        expects:
+          - profile_score
+          - years_experience
+        returns:
+          - score_category
+      code: |
+        def main(profile_score, years_experience):
+            score = float(profile_score)
+            experience = float(years_experience)
+            
+            # Determine category based on score and experience
+            if score >= 80 and experience >= 10:
+                category = "Executive"
+            elif score >= 65 and experience >= 7:
+                category = "Senior"
+            elif score >= 50 and experience >= 3:
+                category = "Mid-Level"
+            else:
+                category = "Junior"
+            
+            return {"score_category": category}
 
 workflow:
   - step: start

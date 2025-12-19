@@ -2,6 +2,16 @@
 
 NoETL is a workflow automation framework for data processing and MLOps orchestration with a distributed server-worker architecture.
 
+## Documentation Standards
+
+**CRITICAL**: All documentation must go in `documentation/docs/` (Docusaurus format), NOT in `docs/` folder at project root.
+
+- **Location**: `documentation/docs/` for all new documentation
+- **Format**: Markdown with Docusaurus frontmatter (sidebar_position, etc.)
+- **Configuration**: `documentation/docusaurus.config.ts`
+- **Categories**: Use `documentation/docs/reference/`, `documentation/docs/features/`, etc.
+- **Never Create**: `docs/` folder at project root - it has been removed
+
 ## Architecture Overview
 
 **Core Components:**

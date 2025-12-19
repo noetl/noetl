@@ -1,0 +1,34 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: test_implicit_end_routing
+  path: test/test_implicit_end_routing
+
+workflow:
+- step: start
+  desc: Start workflow - router only
+  tool:
+    kind: python
+    code: |
+      def main():
+          return {"status": "started"}
+  next:
+  - step: step1
+
+- step: step1
+  desc: Execute step1 - NO next field, should implicitly route to end
+  tool:
+    kind: python
+    code: |
+      def main():
+          return {"status": "step1_complete"}
+
+# Note: step1 has NO next: field, so it should automatically route to 'end'
+
+- step: end
+  desc: End step - aggregates all workflow results
+  tool:
+    kind: python
+    code: |
+      def main():
+          return {"status": "workflow_complete"}

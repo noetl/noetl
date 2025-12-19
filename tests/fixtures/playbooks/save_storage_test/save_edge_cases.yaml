@@ -163,26 +163,27 @@ workflow:
       - when: "{{ event.name == 'call.done' and response is defined }}"
         then:
           sink:
-            tool: python
-            code: |
-              def main(data):
-                  import json
-                  
-                  # Handle empty/null data gracefully
-                  processed = {}
-                  for key, value in data.items():
-                      if value is None:
-                          processed[key] = "NULL_VALUE"
-                      elif value == "":
-                          processed[key] = "EMPTY_STRING"
-                      elif value == []:
-                          processed[key] = "EMPTY_LIST"
-                      elif value == {}:
-                          processed[key] = "EMPTY_DICT"
-                      else:
-                          processed[key] = value
-                  
-                  result = {
+            tool:
+              kind: python
+              code: |
+                def main(data):
+                    import json
+                    
+                    # Handle empty/null data gracefully
+                    processed = {}
+                    for key, value in data.items():
+                        if value is None:
+                            processed[key] = "NULL_VALUE"
+                        elif value == "":
+                            processed[key] = "EMPTY_STRING"
+                        elif value == []:
+                            processed[key] = "EMPTY_LIST"
+                        elif value == {}:
+                            processed[key] = "EMPTY_DICT"
+                        else:
+                            processed[key] = value
+                    
+                    result = {
                       "original_data": data,
                       "processed_data": processed,
                       "processing_notes": "Handled empty/null values"
@@ -310,17 +311,18 @@ workflow:
       - when: "{{ event.name == 'call.done' and response is defined }}"
         then:
           sink:
-            tool: python
-            code: |
-              def main(data):
-                  import json
-                  summary = {
-                      "edge_case_tests": data.get("edge_case_tests_completed", []),
-                      "storage_types": data.get("storage_types_tested", []),
-                      "status": data.get("test_status")
-                  }
-                  print(f"Test Summary: {json.dumps(summary, indent=2)}")
-                  return summary
+            tool:
+              kind: python
+              code: |
+                def main(data):
+                    import json
+                    summary = {
+                        "edge_case_tests": data.get("edge_case_tests_completed", []),
+                        "storage_types": data.get("storage_types_tested", []),
+                        "status": data.get("test_status")
+                    }
+                    print(f"Test Summary: {json.dumps(summary, indent=2)}")
+                    return summary
           next:
             - step: end
 

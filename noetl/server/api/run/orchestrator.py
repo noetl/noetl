@@ -116,6 +116,14 @@ async def _check_execution_completion(
     """
     async with get_pool_connection() as conn:
         async with conn.cursor() as cur:
+            # Acquire advisory lock to ensure only ONE completion check runs at a time for this execution
+            # This prevents race conditions between multiple command.completed triggers
+            await cur.execute(
+                "SELECT pg_advisory_xact_lock(hashtext(%(lock_key)s))",
+                {"lock_key": f"completion_check_{execution_id}"}
+            )
+            logger.debug(f"Acquired advisory lock for completion check of execution {execution_id}")
+            
             # Check for any running actions (action_started without corresponding action_completed)
             await cur.execute(
                 """
@@ -203,16 +211,71 @@ async def _check_execution_completion(
                 )
                 return
 
-            # No pending work - execution is complete, emit completion events
-            logger.info(f"All active work completed for execution {execution_id}, finalizing")
-
-            # Get catalog_id, catalog path, and parent_execution_id from playbook_started event
+            # Check if 'end' step has a command that's still running
+            # This prevents completing the workflow between step.exit and command.completed
             await cur.execute(
                 """
-                SELECT catalog_id, node_name as catalog_path, parent_execution_id
+                SELECT COUNT(*) as end_command_running
                 FROM noetl.event
                 WHERE execution_id = %(execution_id)s
-                  AND event_type = 'playbook_started'
+                  AND node_name = 'end'
+                  AND event_type IN ('command.claimed', 'command.started', 'call.done')
+                  AND NOT EXISTS (
+                      SELECT 1 FROM noetl.event e2
+                      WHERE e2.execution_id = %(execution_id)s
+                        AND e2.node_name = 'end'
+                        AND e2.event_type = 'command.completed'
+                  )
+                """,
+                {"execution_id": int(execution_id)},
+            )
+            row = await cur.fetchone()
+            end_command_running = row["end_command_running"] if row else 0
+            
+            if end_command_running > 0:
+                logger.debug(
+                    f"Execution {execution_id}: 'end' step command still running, waiting for command.completed"
+                )
+                return
+
+            # No pending work - check if 'end' step has completed
+            logger.info(f"All active work completed for execution {execution_id}, checking for 'end' step")
+
+            # Check if 'end' step evaluation has completed (step.exit)
+            await cur.execute(
+                """
+                SELECT COUNT(*) as end_exit
+                FROM noetl.event
+                WHERE execution_id = %(execution_id)s
+                  AND node_name = 'end'
+                  AND event_type = 'step.exit'
+                  AND status = 'COMPLETED'
+                """,
+                {"execution_id": int(execution_id)},
+            )
+            row = await cur.fetchone()
+            end_exit = row["end_exit"] if row else 0
+
+            if end_exit == 0:
+                logger.debug(
+                    f"Execution {execution_id}: 'end' step not yet evaluated, waiting"
+                )
+                return
+
+            # If we reach here, end step has completed its evaluation (step.exit exists)
+            # and if it had a command, command.completed also exists (checked earlier)
+            logger.info(
+                f"Execution {execution_id}: 'end' step fully completed, evaluating final status"
+            )
+
+            # Get catalog info
+            await cur.execute(
+                """
+                SELECT catalog_id, node_name as catalog_path, parent_execution_id, payload
+                FROM noetl.event e
+                JOIN noetl.catalog c ON e.catalog_id = c.catalog_id
+                WHERE e.execution_id = %(execution_id)s
+                  AND e.event_type = 'playbook_started'
                 LIMIT 1
                 """,
                 {"execution_id": int(execution_id)},
@@ -227,6 +290,24 @@ async def _check_execution_completion(
             catalog_id = row["catalog_id"]
             catalog_path = row["catalog_path"]
             parent_execution_id = row["parent_execution_id"]
+
+            # Evaluate all step results to determine final status
+            await cur.execute(
+                """
+                SELECT node_name, status, error
+                FROM noetl.event
+                WHERE execution_id = %(execution_id)s
+                  AND event_type IN ('step.exit', 'step_failed')
+                  AND node_name != 'end'
+                ORDER BY event_id
+                """,
+                {"execution_id": int(execution_id)},
+            )
+            step_results = await cur.fetchall()
+
+            # Check if any steps failed
+            failed_steps = [s for s in step_results if s["status"] == "FAILED"]
+            has_failures = len(failed_steps) > 0
 
             # Get parent_event_id from workflow_initialized event
             await cur.execute(
@@ -243,107 +324,225 @@ async def _check_execution_completion(
             parent_event_id = row["parent_event_id"] if row else None
 
             now = datetime.now(timezone.utc)
-            meta = {"emitted_at": now.isoformat(), "emitter": "orchestrator"}
+            meta = {
+                "emitted_at": now.isoformat(),
+                "emitter": "orchestrator",
+                "evaluated_by_end_step": True,
+                "total_steps": len(step_results),
+                "failed_steps_count": len(failed_steps)
+            }
 
             try:
-                # Emit workflow_completed event first
-                workflow_event_id = await get_snowflake_id()
-                await cur.execute(
-                    """
-                    INSERT INTO noetl.event (
-                        execution_id,
-                        catalog_id,
-                        event_id,
-                        parent_event_id,
-                        event_type,
-                        node_id,
-                        node_name,
-                        node_type,
-                        status,
-                        meta,
-                        created_at
-                    ) VALUES (
-                        %(execution_id)s,
-                        %(catalog_id)s,
-                        %(event_id)s,
-                        %(parent_event_id)s,
-                        %(event_type)s,
-                        %(node_id)s,
-                        %(node_name)s,
-                        %(node_type)s,
-                        %(status)s,
-                        %(meta)s,
-                        %(created_at)s
+                if has_failures:
+                    # Emit workflow_failed
+                    logger.info(
+                        f"Execution {execution_id}: {len(failed_steps)} step(s) failed, emitting workflow_failed"
                     )
-                    """,
-                    {
-                        "execution_id": int(execution_id),
-                        "catalog_id": catalog_id,
-                        "event_id": workflow_event_id,
-                        "parent_event_id": parent_event_id,
-                        "event_type": "workflow_completed",
-                        "node_id": "workflow",
-                        "node_name": "workflow",
-                        "node_type": "workflow",
-                        "status": "COMPLETED",
-                        "meta": json.dumps(meta),
-                        "created_at": now,
-                    },
-                )
-                logger.info(
-                    f"Emitted workflow.completed event_id={workflow_event_id} for execution {execution_id}"
-                )
-
-                # Then emit playbook_completed event
-                execution_event_id = await get_snowflake_id()
-                await cur.execute(
-                    """
-                    INSERT INTO noetl.event (
-                        execution_id,
-                        catalog_id,
-                        event_id,
-                        parent_event_id,
-                        parent_execution_id,
-                        event_type,
-                        node_id,
-                        node_name,
-                        node_type,
-                        status,
-                        meta,
-                        created_at
-                    ) VALUES (
-                        %(execution_id)s,
-                        %(catalog_id)s,
-                        %(event_id)s,
-                        %(parent_event_id)s,
-                        %(parent_execution_id)s,
-                        %(event_type)s,
-                        %(node_id)s,
-                        %(node_name)s,
-                        %(node_type)s,
-                        %(status)s,
-                        %(meta)s,
-                        %(created_at)s
+                    
+                    workflow_event_id = await get_snowflake_id()
+                    failed_step_names = [s["node_name"] for s in failed_steps]
+                    error_messages = [s.get("error", "Unknown error") for s in failed_steps]
+                    
+                    await cur.execute(
+                        """
+                        INSERT INTO noetl.event (
+                            execution_id,
+                            catalog_id,
+                            event_id,
+                            parent_event_id,
+                            event_type,
+                            node_id,
+                            node_name,
+                            node_type,
+                            status,
+                            error,
+                            meta,
+                            created_at
+                        ) VALUES (
+                            %(execution_id)s,
+                            %(catalog_id)s,
+                            %(event_id)s,
+                            %(parent_event_id)s,
+                            %(event_type)s,
+                            %(node_id)s,
+                            %(node_name)s,
+                            %(node_type)s,
+                            %(status)s,
+                            %(error)s,
+                            %(meta)s,
+                            %(created_at)s
+                        )
+                        """,
+                        {
+                            "execution_id": int(execution_id),
+                            "catalog_id": catalog_id,
+                            "event_id": workflow_event_id,
+                            "parent_event_id": parent_event_id,
+                            "event_type": "workflow_failed",
+                            "node_id": "workflow",
+                            "node_name": "workflow",
+                            "node_type": "workflow",
+                            "status": "FAILED",
+                            "error": f"Workflow failed at steps: {', '.join(failed_step_names)}",
+                            "meta": json.dumps(meta),
+                            "created_at": now,
+                        },
                     )
-                    """,
-                    {
-                        "execution_id": int(execution_id),
-                        "catalog_id": catalog_id,
-                        "event_id": execution_event_id,
-                        "parent_event_id": workflow_event_id,
-                        "parent_execution_id": int(parent_execution_id) if parent_execution_id else None,
-                        "event_type": "playbook_completed",
-                        "node_id": "playbook",
-                        "node_name": catalog_path,
-                        "node_type": "execution",
-                        "status": "COMPLETED",
-                        "meta": json.dumps(meta),
-                        "created_at": now,
-                    },
-                )
-                logger.info(
-                    f"Emitted playbook_completed event_id={execution_event_id} for execution {execution_id}"
-                )
+                    
+                    # Emit playbook_failed
+                    execution_event_id = await get_snowflake_id()
+                    await cur.execute(
+                        """
+                        INSERT INTO noetl.event (
+                            execution_id,
+                            catalog_id,
+                            event_id,
+                            parent_event_id,
+                            parent_execution_id,
+                            event_type,
+                            node_id,
+                            node_name,
+                            node_type,
+                            status,
+                            error,
+                            meta,
+                            created_at
+                        ) VALUES (
+                            %(execution_id)s,
+                            %(catalog_id)s,
+                            %(event_id)s,
+                            %(parent_event_id)s,
+                            %(parent_execution_id)s,
+                            %(event_type)s,
+                            %(node_id)s,
+                            %(node_name)s,
+                            %(node_type)s,
+                            %(status)s,
+                            %(error)s,
+                            %(meta)s,
+                            %(created_at)s
+                        )
+                        """,
+                        {
+                            "execution_id": int(execution_id),
+                            "catalog_id": catalog_id,
+                            "event_id": execution_event_id,
+                            "parent_event_id": workflow_event_id,
+                            "parent_execution_id": int(parent_execution_id) if parent_execution_id else None,
+                            "event_type": "playbook_failed",
+                            "node_id": "playbook",
+                            "node_name": catalog_path,
+                            "node_type": "execution",
+                            "status": "FAILED",
+                            "error": f"Playbook failed: {', '.join(failed_step_names[:3])}",
+                            "meta": json.dumps(meta),
+                            "created_at": now,
+                        },
+                    )
+                    logger.info(
+                        f"Emitted playbook_failed event_id={execution_event_id} for execution {execution_id}"
+                    )
+                else:
+                    # Emit workflow_completed
+                    logger.info(
+                        f"Execution {execution_id}: All steps succeeded, emitting workflow_completed"
+                    )
+                    
+                    workflow_event_id = await get_snowflake_id()
+                    await cur.execute(
+                        """
+                        INSERT INTO noetl.event (
+                            execution_id,
+                            catalog_id,
+                            event_id,
+                            parent_event_id,
+                            event_type,
+                            node_id,
+                            node_name,
+                            node_type,
+                            status,
+                            meta,
+                            created_at
+                        ) VALUES (
+                            %(execution_id)s,
+                            %(catalog_id)s,
+                            %(event_id)s,
+                            %(parent_event_id)s,
+                            %(event_type)s,
+                            %(node_id)s,
+                            %(node_name)s,
+                            %(node_type)s,
+                            %(status)s,
+                            %(meta)s,
+                            %(created_at)s
+                        )
+                        """,
+                        {
+                            "execution_id": int(execution_id),
+                            "catalog_id": catalog_id,
+                            "event_id": workflow_event_id,
+                            "parent_event_id": parent_event_id,
+                            "event_type": "workflow_completed",
+                            "node_id": "workflow",
+                            "node_name": "workflow",
+                            "node_type": "workflow",
+                            "status": "COMPLETED",
+                            "meta": json.dumps(meta),
+                            "created_at": now,
+                        },
+                    )
+                    
+                    # Emit playbook_completed
+                    execution_event_id = await get_snowflake_id()
+                    await cur.execute(
+                        """
+                        INSERT INTO noetl.event (
+                            execution_id,
+                            catalog_id,
+                            event_id,
+                            parent_event_id,
+                            parent_execution_id,
+                            event_type,
+                            node_id,
+                            node_name,
+                            node_type,
+                            status,
+                            meta,
+                            created_at
+                        ) VALUES (
+                            %(execution_id)s,
+                            %(catalog_id)s,
+                            %(event_id)s,
+                            %(parent_event_id)s,
+                            %(parent_execution_id)s,
+                            %(event_type)s,
+                            %(node_id)s,
+                            %(node_name)s,
+                            %(node_type)s,
+                            %(status)s,
+                            %(meta)s,
+                            %(created_at)s
+                        )
+                        """,
+                        {
+                            "execution_id": int(execution_id),
+                            "catalog_id": catalog_id,
+                            "event_id": execution_event_id,
+                            "parent_event_id": workflow_event_id,
+                            "parent_execution_id": int(parent_execution_id) if parent_execution_id else None,
+                            "event_type": "playbook_completed",
+                            "node_id": "playbook",
+                            "node_name": catalog_path,
+                            "node_type": "execution",
+                            "status": "COMPLETED",
+                            "meta": json.dumps(meta),
+                            "created_at": now,
+                        },
+                    )
+                    logger.info(
+                        f"Emitted playbook_completed event_id={execution_event_id} for execution {execution_id}"
+                    )
+                
                 await conn.commit()
 
             except Exception:
@@ -570,18 +769,18 @@ async def _has_failed(execution_id: int) -> bool:
 
 async def _handle_action_failure(execution_id: int, action_failed_event_id: Optional[str]) -> None:
     """
-    Handle action failure by emitting step_failed, workflow_failed, and playbook_failed events.
+    Handle action failure by routing to 'end' step for aggregation.
     
-    When a worker reports action_failed, the orchestrator must emit:
-    1. step_failed - Mark the step as failed
-    2. workflow_failed - Mark the workflow as failed
-    3. playbook_failed - Mark the playbook execution as failed
+    New failure handling flow:
+    1. Emit step_failed - Mark the step as failed
+    2. Route execution to 'end' step - Let end step aggregate and evaluate
+    3. Do NOT emit workflow_failed/playbook_failed yet - wait for end evaluation
     
     Args:
         execution_id: Execution ID
         action_failed_event_id: Event ID of the action_failed event
     """
-    logger.info(f"ORCHESTRATOR: Handling action failure for execution {execution_id}")
+    logger.info(f"ORCHESTRATOR: Handling action failure for execution {execution_id}, routing to 'end' step")
     
     # Get the failed action details and catalog info
     async with get_pool_connection() as conn:
@@ -590,7 +789,7 @@ async def _handle_action_failure(execution_id: int, action_failed_event_id: Opti
             await cur.execute(
                 """
                 SELECT e.node_name, e.node_type, e.error, e.stack_trace, e.result, e.catalog_id,
-                       c.path as catalog_path
+                       c.path as catalog_path, c.payload
                 FROM noetl.event e
                 JOIN noetl.catalog c ON e.catalog_id = c.catalog_id
                 WHERE e.execution_id = %(execution_id)s
@@ -613,21 +812,269 @@ async def _handle_action_failure(execution_id: int, action_failed_event_id: Opti
     error_message = failed_action.get("error", "Unknown error")
     catalog_id = failed_action["catalog_id"]
     catalog_path = failed_action["catalog_path"]
+    playbook_payload = failed_action.get("payload", {})
     
     logger.info(
-        f"ORCHESTRATOR: Emitting failure events for step '{step_name}' "
-        f"in execution {execution_id}"
+        f"ORCHESTRATOR: Step '{step_name}' failed in execution {execution_id}, emitting step_failed"
     )
     
-    # Emit events in a single transaction
+    # Emit step_failed event only (not workflow_failed/playbook_failed)
     async with get_pool_connection() as conn:
         async with conn.cursor() as cur:
             try:
                 now = datetime.now(timezone.utc)
-                meta = {"failed_at": now.isoformat()}
+                meta = {
+                    "failed_at": now.isoformat(),
+                    "routed_to_end": True,  # Mark that this failure routes to end
+                    "failure_reason": error_message
+                }
                 
-                # 1. Emit step_failed event
+                # Emit step_failed event
                 step_failed_event_id = await get_snowflake_id()
+                await cur.execute(
+                    """
+                    INSERT INTO noetl.event (
+                        execution_id,
+                        catalog_id,
+                        event_id,
+                        parent_event_id,
+                        event_type,
+                        node_id,
+                        node_name,
+                        node_type,
+                        status,
+                        error,
+                        meta,
+                        created_at
+                    ) VALUES (
+                        %(execution_id)s,
+                        %(catalog_id)s,
+                        %(event_id)s,
+                        %(parent_event_id)s,
+                        %(event_type)s,
+                        %(node_id)s,
+                        %(node_name)s,
+                        %(node_type)s,
+                        %(status)s,
+                        %(error)s,
+                        %(meta)s,
+                        %(created_at)s
+                    )
+                    """,
+                    {
+                        "execution_id": execution_id,
+                        "catalog_id": catalog_id,
+                        "event_id": step_failed_event_id,
+                        "parent_event_id": int(action_failed_event_id) if action_failed_event_id else None,
+                        "event_type": "step_failed",
+                        "node_id": step_name,
+                        "node_name": step_name,
+                        "node_type": "step",
+                        "status": "FAILED",
+                        "error": error_message,
+                        "meta": json.dumps(meta),
+                        "created_at": now,
+                    },
+                )
+                logger.info(
+                    f"Emitted step_failed event_id={step_failed_event_id} for execution {execution_id}"
+                )
+                
+                await conn.commit()
+                
+            except Exception:
+                await conn.rollback()
+                logger.exception(
+                    f"Error emitting step_failed event for {execution_id}"
+                )
+                return
+    
+    # Route to 'end' step for aggregation
+    logger.info(f"ORCHESTRATOR: Routing execution {execution_id} to 'end' step after failure")
+    
+    # Check if 'end' step exists in workflow (it should, due to implicit injection)
+    workflow = playbook_payload.get("workflow", [])
+    end_step = next((s for s in workflow if s.get("step", "").lower() == "end"), None)
+    
+    if not end_step:
+        logger.error(
+            f"ORCHESTRATOR: No 'end' step found in workflow for {execution_id}, "
+            f"falling back to immediate failure"
+        )
+        # Fallback: emit workflow_failed and playbook_failed
+        await _emit_immediate_failure(execution_id, catalog_id, catalog_path, step_name, error_message, step_failed_event_id)
+        return
+    
+    # Enqueue 'end' step for execution
+    try:
+        from noetl.server.api.run.publisher import QueuePublisher
+        from noetl.server.api.context.service import ContextService
+        
+        # Load execution context for end step
+        context = await ContextService.load_execution_context(str(execution_id), str(catalog_id))
+        
+        # Emit step_started for end step
+        from noetl.server.api.broker.schema import EventEmitRequest
+        end_step_started_request = EventEmitRequest(
+            execution_id=str(execution_id),
+            catalog_id=catalog_id,
+            event_type="step_started",
+            status="STARTED",
+            node_id="end",
+            node_name="end",
+            node_type="step",
+            parent_event_id=step_failed_event_id,
+        )
+        from noetl.server.api.broker.service import EventService
+        end_started_result = await EventService.emit_event(end_step_started_request)
+        
+        # Special handling for "end" step - only enqueue once all other steps are complete
+        async with await get_db_connection() as conn:
+            async with conn.cursor() as cur:
+                # Acquire advisory lock to prevent duplicate "end" enqueues
+                await cur.execute(
+                    "SELECT pg_advisory_xact_lock(hashtext(%(lock_key)s))",
+                    {"lock_key": f"end_publish_{execution_id}"}
+                )
+                logger.info(f"Acquired advisory lock for 'end' step publishing in execution {execution_id}")
+                
+                logger.info(f"Checking if 'end' step should be enqueued for execution {execution_id}")
+                
+                # Check if there are any non-end steps still running or pending
+                await cur.execute(
+                    """
+                    SELECT COUNT(*) as active_count
+                    FROM noetl.queue
+                    WHERE execution_id = %(execution_id)s
+                      AND node_name != 'end'
+                      AND status IN ('pending', 'running')
+                    """,
+                    {"execution_id": int(execution_id)}
+                )
+                active_row = await cur.fetchone()
+                active_count = active_row["active_count"] if active_row else 0
+                
+                if active_count > 0:
+                    logger.info(
+                        f"'end' step enqueue deferred: {active_count} other steps still active. "
+                        f"Will retry when those complete."
+                    )
+                    return  # Skip enqueuing end for now
+                
+                # Check if end step is already in queue (prevent duplicate enqueues)
+                await cur.execute(
+                    """
+                    SELECT COUNT(*) as end_queued
+                    FROM noetl.queue
+                    WHERE execution_id = %(execution_id)s
+                      AND node_name = 'end'
+                      AND status IN ('pending', 'running', 'completed')
+                    """,
+                    {"execution_id": int(execution_id)}
+                )
+                end_queued_row = await cur.fetchone()
+                end_queued = end_queued_row["end_queued"] if end_queued_row else 0
+                
+                if end_queued > 0:
+                    logger.info(f"'end' step already enqueued/running/completed, skipping duplicate")
+                    return
+                
+                logger.info(f"All other steps complete, enqueuing 'end' step for execution {execution_id}")
+        
+        # Publish end step to queue
+        await QueuePublisher.publish_step(
+            step_name="end",
+            step_config=end_step,
+            execution_id=str(execution_id),
+            catalog_id=catalog_id,
+            context=context,
+            parent_event_id=end_started_result.event_id
+        )
+        
+        logger.info(
+            f"ORCHESTRATOR: Successfully routed execution {execution_id} to 'end' step"
+        )
+        
+    except Exception as e:
+        logger.exception(
+            f"ORCHESTRATOR: Failed to route to 'end' step for {execution_id}: {e}"
+        )
+        # Fallback: emit workflow_failed and playbook_failed
+        await _emit_immediate_failure(execution_id, catalog_id, catalog_path, step_name, error_message, step_failed_event_id)
+
+
+async def _emit_immediate_failure(
+    execution_id: int,
+    catalog_id: int,
+    catalog_path: str,
+    step_name: str,
+    error_message: str,
+    step_failed_event_id: int
+) -> None:
+    """
+    Fallback: Emit workflow_failed and playbook_failed immediately.
+    Used when routing to 'end' step is not possible.
+    """
+    logger.warning(
+        f"ORCHESTRATOR: Emitting immediate failure for execution {execution_id} (fallback)"
+    )
+    
+    async with get_pool_connection() as conn:
+        async with conn.cursor() as cur:
+            try:
+                now = datetime.now(timezone.utc)
+                meta = {"failed_at": now.isoformat(), "fallback": True}
+                
+                # Emit workflow_failed event
+                workflow_failed_event_id = await get_snowflake_id()
+                await cur.execute(
+                    """
+                    INSERT INTO noetl.event (
+                        execution_id,
+                        catalog_id,
+                        event_id,
+                        parent_event_id,
+                        event_type,
+                        node_id,
+                        node_name,
+                        node_type,
+                        status,
+                        error,
+                        meta,
+                        created_at
+                    ) VALUES (
+                        %(execution_id)s,
+                        %(catalog_id)s,
+                        %(event_id)s,
+                        %(parent_event_id)s,
+                        %(event_type)s,
+                        %(node_id)s,
+                        %(node_name)s,
+                        %(node_type)s,
+                        %(status)s,
+                        %(error)s,
+                        %(meta)s,
+                        %(created_at)s
+                    )
+                    """,
+                    {
+                        "execution_id": execution_id,
+                        "catalog_id": catalog_id,
+                        "event_id": workflow_failed_event_id,
+                        "parent_event_id": step_failed_event_id,
+                        "event_type": "workflow_failed",
+                        "node_id": "workflow",
+                        "node_name": "workflow",
+                        "node_type": "workflow",
+                        "status": "FAILED",
+                        "error": f"Workflow failed at step '{step_name}': {error_message}",
+                        "meta": json.dumps(meta),
+                        "created_at": now,
+                    },
+                )
+                
+                # Emit playbook_failed event
+                playbook_failed_event_id = await get_snowflake_id()
                 await cur.execute(
                     """
                     INSERT INTO noetl.event (
@@ -1397,9 +1844,27 @@ async def _process_transitions(execution_id: int) -> None:
                 step_transitions = transitions_by_step.get(step_name, [])
 
                 if not step_transitions:
-                    logger.info(f"No transitions found for step '{step_name}'")
-                    # Don't check completion here - do it once after ALL steps processed
-                    continue
+                    # No explicit transitions - check if this is 'end' step
+                    if step_name.lower() == 'end':
+                        logger.info(f"Step '{step_name}' is 'end' step with no transitions - workflow terminating normally")
+                        continue
+                    
+                    # Not 'end' step and no transitions - implicitly route to 'end' for universal convergence
+                    logger.info(f"No transitions found for step '{step_name}' - implicitly routing to 'end'")
+                    
+                    # Check if workflow has 'end' step
+                    end_step_def = by_name.get('end')
+                    if not end_step_def:
+                        logger.warning(f"No 'end' step found in workflow - cannot route '{step_name}'")
+                        continue
+                    
+                    # Create implicit transition to 'end'
+                    step_transitions = [{
+                        "to_step": "end",
+                        "condition": None,
+                        "with_params": {}
+                    }]
+                    logger.info(f"Created implicit transition: {step_name} → end")
 
                 logger.info(
                     f"Evaluating {len(step_transitions)} transitions for '{step_name}'"
@@ -1454,8 +1919,12 @@ async def _process_transitions(execution_id: int) -> None:
                     else:
                         next_step_type = next_step_tool.strip().lower()
 
-                    # If it's an "end" step, emit step_completed and skip enqueue
-                    if next_step_type == "end":
+                    # Check if step has a tool definition (dict or string)
+                    has_tool = next_step_def.get("tool") is not None
+                    
+                    # If it's an "end" step WITHOUT a tool, emit step_completed and skip enqueue
+                    # If it HAS a tool, treat it like any other actionable step
+                    if next_step_type == "end" and not has_tool:
                         logger.info(
                             f"Next step '{to_step}' is end step, emitting step_completed and skipping enqueue"
                         )
@@ -1540,7 +2009,12 @@ async def _process_transitions(execution_id: int) -> None:
                                 )
                             else:
                                 router_next_type = router_next_tool.strip().lower()
-                            if router_next_type in ("router", "end", ""):
+                            
+                            # Check if step has tool definition
+                            router_has_tool = router_next_def.get("tool") is not None
+                            
+                            # Skip only control flow steps: routers and end steps WITHOUT tools
+                            if router_next_type == "router" or (router_next_type == "end" and not router_has_tool):
                                 logger.debug(
                                     f"Router next step '{router_next_step}' is control flow, skipping"
                                 )
@@ -1587,6 +2061,58 @@ async def _process_transitions(execution_id: int) -> None:
                             router_context_data.update(
                                 {k: v for k, v in eval_ctx.items() if k != "workload"}
                             )
+
+                            # Special handling for "end" step - only enqueue once all other steps are complete
+                            if router_next_step.lower() == "end":
+                                # Acquire advisory lock to prevent duplicate "end" enqueues
+                                await cur.execute(
+                                    "SELECT pg_advisory_xact_lock(hashtext(%(lock_key)s))",
+                                    {"lock_key": f"end_publish_{execution_id}"}
+                                )
+                                logger.info(f"Acquired advisory lock for 'end' step publishing in execution {execution_id}")
+                                
+                                logger.info(f"Checking if 'end' step should be enqueued for execution {execution_id}")
+                                
+                                # Check if there are any non-end steps still running or pending
+                                await cur.execute(
+                                    """
+                                    SELECT COUNT(*) as active_count
+                                    FROM noetl.queue
+                                    WHERE execution_id = %(execution_id)s
+                                      AND node_name != 'end'
+                                      AND status IN ('pending', 'running')
+                                    """,
+                                    {"execution_id": int(execution_id)}
+                                )
+                                active_row = await cur.fetchone()
+                                active_count = active_row["active_count"] if active_row else 0
+                                
+                                if active_count > 0:
+                                    logger.info(
+                                        f"'end' step enqueue deferred: {active_count} other steps still active. "
+                                        f"Will retry when those complete."
+                                    )
+                                    continue  # Skip enqueuing end for now
+                                
+                                # Check if end step is already in queue (prevent duplicate enqueues)
+                                await cur.execute(
+                                    """
+                                    SELECT COUNT(*) as end_queued
+                                    FROM noetl.queue
+                                    WHERE execution_id = %(execution_id)s
+                                      AND node_name = 'end'
+                                      AND status IN ('pending', 'running', 'completed')
+                                    """,
+                                    {"execution_id": int(execution_id)}
+                                )
+                                end_queued_row = await cur.fetchone()
+                                end_queued = end_queued_row["end_queued"] if end_queued_row else 0
+                                
+                                if end_queued > 0:
+                                    logger.info(f"'end' step already enqueued/running/completed, skipping duplicate")
+                                    continue
+                                
+                                logger.info(f"All other steps complete, enqueuing 'end' step for execution {execution_id}")
 
                             queue_id = await QueuePublisher.publish_step(
                                 execution_id=str(execution_id),
@@ -1744,6 +2270,58 @@ async def _process_transitions(execution_id: int) -> None:
                         context_data.update(
                             {k: v for k, v in eval_ctx.items() if k != "workload"}
                         )
+
+                        # Special handling for "end" step - only enqueue once all other steps are complete
+                        if to_step.lower() == "end":
+                            # Acquire advisory lock to prevent duplicate "end" enqueues
+                            await cur.execute(
+                                "SELECT pg_advisory_xact_lock(hashtext(%(lock_key)s))",
+                                {"lock_key": f"end_publish_{execution_id}"}
+                            )
+                            logger.info(f"Acquired advisory lock for 'end' step publishing in execution {execution_id}")
+                            
+                            logger.info(f"Checking if 'end' step should be enqueued for execution {execution_id}")
+                            
+                            # Check if there are any non-end steps still running or pending
+                            await cur.execute(
+                                """
+                                SELECT COUNT(*) as active_count
+                                FROM noetl.queue
+                                WHERE execution_id = %(execution_id)s
+                                  AND node_name != 'end'
+                                  AND status IN ('pending', 'running')
+                                """,
+                                {"execution_id": int(execution_id)}
+                            )
+                            active_row = await cur.fetchone()
+                            active_count = active_row["active_count"] if active_row else 0
+                            
+                            if active_count > 0:
+                                logger.info(
+                                    f"'end' step enqueue deferred: {active_count} other steps still active. "
+                                    f"Will retry when those complete."
+                                )
+                                continue  # Skip enqueuing end for now
+                            
+                            # Check if end step is already in queue (prevent duplicate enqueues)
+                            await cur.execute(
+                                """
+                                SELECT COUNT(*) as end_queued
+                                FROM noetl.queue
+                                WHERE execution_id = %(execution_id)s
+                                  AND node_name = 'end'
+                                  AND status IN ('pending', 'running', 'completed')
+                                """,
+                                {"execution_id": int(execution_id)}
+                            )
+                            end_queued_row = await cur.fetchone()
+                            end_queued = end_queued_row["end_queued"] if end_queued_row else 0
+                            
+                            if end_queued > 0:
+                                logger.info(f"'end' step already enqueued/running/completed, skipping duplicate")
+                                continue
+                            
+                            logger.info(f"All other steps complete, enqueuing 'end' step for execution {execution_id}")
 
                         queue_id = await QueuePublisher.publish_step(
                             execution_id=str(execution_id),
