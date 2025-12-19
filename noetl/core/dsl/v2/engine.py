@@ -913,14 +913,17 @@ class ControlFlowEngine:
                 logger.debug(f"Loop iteration complete, will check for loop.done")
         
         # Check if step has completed loop - emit loop.done event
-        # Only process if case didn't generate commands
-        if not commands and step_def.loop and event.name == "step.exit":
+        # Check on step.exit regardless of whether case generated commands
+        # (case may have matched call.done and generated sink/next commands)
+        if step_def.loop and event.name == "step.exit":
             if not state.is_loop_done(event.step):
-                # More items to process - emit loop.item event
-                logger.debug(f"Loop has more items, creating next command")
-                command = self._create_command_for_step(state, step_def, {})
-                if command:
-                    commands.append(command)
+                # More items to process - create next iteration command if not already created
+                # (case rules may have already created next iteration)
+                if not any(cmd.step == event.step for cmd in commands):
+                    logger.debug(f"Loop has more items, creating next command")
+                    command = self._create_command_for_step(state, step_def, {})
+                    if command:
+                        commands.append(command)
             else:
                 # Loop done - recursively process loop.done event through case matching
                 logger.info(f"Loop completed for step {event.step}, processing loop.done event")
