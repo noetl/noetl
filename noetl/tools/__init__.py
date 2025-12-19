@@ -22,6 +22,7 @@ from noetl.tools import (
     transfer,
     container,
 )
+from noetl.tools.transfer import snowflake_transfer
 
 # Import executors
 from noetl.tools.python import execute_python_task, execute_python_task_async
@@ -30,6 +31,7 @@ from noetl.tools.postgres import execute_postgres_task
 from noetl.tools.duckdb import execute_duckdb_task
 from noetl.tools.snowflake import execute_snowflake_task, execute_snowflake_transfer_task
 from noetl.tools.transfer import execute_transfer_action
+from noetl.tools.transfer.snowflake_transfer import execute_snowflake_transfer_action
 from noetl.tools.container import execute_container_task
 
 # Tool registry for dynamic lookup
@@ -40,6 +42,7 @@ REGISTRY = {
     "duckdb": duckdb,
     "snowflake": snowflake,
     "transfer": transfer,
+    "snowflake_transfer": snowflake_transfer,
     "container": container,
 }
 
@@ -51,6 +54,7 @@ __all__ = [
     "duckdb",
     "snowflake",
     "transfer",
+    "snowflake_transfer",
     "container",
     # Executors
     "execute_python_task",
@@ -61,6 +65,7 @@ __all__ = [
     "execute_snowflake_task",
     "execute_snowflake_transfer_task",
     "execute_transfer_action",
+    "execute_snowflake_transfer_action",
     "execute_container_task",
     # Registry
     "REGISTRY",

@@ -48,24 +48,6 @@ class OrchestratorQueries:
         query = f"SELECT 1 FROM noetl.event WHERE {' AND '.join(clauses)} LIMIT 1"
         return query, params
     
-    @staticmethod
-    def _build_queue_check_query(
-        execution_id: int,
-        statuses: Optional[List[str]] = None
-    ) -> Tuple[str, Dict[str, Any]]:
-        """Build query to check for queue jobs with status filter."""
-        params = {"execution_id": execution_id}
-        clauses = ["execution_id = %(execution_id)s"]
-        
-        if statuses:
-            placeholders = [f"%(status_{i})s" for i in range(len(statuses))]
-            clauses.append(f"status IN ({', '.join(placeholders)})")
-            for i, status in enumerate(statuses):
-                params[f"status_{i}"] = status
-        
-        query = f"SELECT 1 FROM noetl.queue WHERE {' AND '.join(clauses)} LIMIT 1"
-        return query, params
-    
     # ==================== Public Query Executors ====================
     
     @staticmethod
@@ -118,15 +100,8 @@ class OrchestratorQueries:
     
     @staticmethod
     async def has_pending_queue_jobs(execution_id: int) -> bool:
-        """Check if execution has pending queue jobs."""
-        query, params = OrchestratorQueries._build_queue_check_query(
-            execution_id=execution_id,
-            statuses=["queued", "active"]
-        )
-        async with get_pool_connection() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(query, params)
-                return await cur.fetchone() is not None
+        """Queue subsystem removed; always report no pending queue jobs."""
+        return False
     
     @staticmethod
     async def count_completed_steps(execution_id: int) -> int:

@@ -56,11 +56,10 @@ class ExecutionService:
         4. Build execution plan (workflow, transitions, workbook)
         5. Merge workload data
         5.5. Process keychain section (create keychain entries)
-        6. Persist workload to workload table
-        7. Emit execution start event
-        8. Persist workflow/workbook/transitions
-        9. Emit workflow initialized event
-        10. Publish initial steps to queue
+        6. Emit execution start event
+        7. Persist workflow/workbook/transitions
+        8. Emit workflow initialized event
+        9. Publish initial steps to queue
         
         Args:
             request: Validated execution request
@@ -139,15 +138,7 @@ class ExecutionService:
                 logger.error(f"EXECUTION: Failed to process keychain section: {e}", exc_info=True)
                 # Don't fail execution, keychain errors will surface when workers try to resolve
         
-        # Step 6: Persist workload to workload table
-        await ExecutionService._persist_workload(
-            execution_id,
-            catalog_entry.path,
-            catalog_entry.version,
-            merged_workload
-        )
-        
-        # Step 7: Emit execution start event
+        # Step 6: Emit execution start event
         logger.critical(f"DEBUG: BEFORE emit_execution_start")
         start_event_id = await ExecutionEventEmitter.emit_execution_start(
             execution_id=execution_id,
@@ -162,7 +153,7 @@ class ExecutionService:
         )
         logger.critical(f"DEBUG: AFTER emit_execution_start, start_event_id={start_event_id}")
         
-        # Step 8: Persist workflow/workbook/transitions
+        # Step 7: Persist workflow/workbook/transitions
         logger.critical(f"DEBUG SERVICE: About to persist workflow_steps, count={len(execution_plan.workflow_steps)}")
         logger.critical(f"DEBUG SERVICE: workflow_steps[0] keys={execution_plan.workflow_steps[0].keys() if execution_plan.workflow_steps else 'empty'}")
         try:
@@ -198,7 +189,7 @@ class ExecutionService:
             transition_count=len(execution_plan.transitions)
         )
         
-        # Step 10: Publish initial steps to queue
+        # Step 9: Publish initial steps to queue
         context = {
             "workload": merged_workload,
             "path": catalog_entry.path,
@@ -222,8 +213,8 @@ class ExecutionService:
         )
         
         logger.info(
-            f"Execution initiated: execution_id={execution_id}, "
-            f"published {len(queue_ids)} initial tasks to queue"
+            f"Execution initiated: execution_id={execution_id}, queue subsystem removed; "
+            f"initial tasks not enqueued"
         )
         
         # Build response
@@ -247,42 +238,4 @@ class ExecutionService:
         )
         logger.debug(f"Execution created: execution_id={execution_id}")
         return execution_response
-
-    @staticmethod
-    async def _persist_workload(
-        execution_id: str,
-        path: str,
-        version: str,
-        workload: Dict[str, Any]
-    ) -> None:
-        """
-        Persist workload to workload table.
-        
-        Args:
-            execution_id: Execution identifier
-            path: Playbook path
-            version: Playbook version
-            workload: Merged workload data
-        """
-        payload = {
-            'path': path,
-            'version': version,
-            'workload': workload,
-        }
-        
-        async with get_pool_connection() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(
-                    """
-                    INSERT INTO noetl.workload (execution_id, data, created_at)
-                    VALUES (%(execution_id)s, %(data)s, %(created_at)s)
-                    """,
-                    {
-                        "execution_id": execution_id,
-                        "data": json.dumps(payload),
-                        "created_at": datetime.utcnow()
-                    }
-                )
-        
-        logger.debug(f"Persisted workload for execution {execution_id}")
 

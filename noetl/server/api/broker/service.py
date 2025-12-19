@@ -353,22 +353,11 @@ class EventService:
     
     @staticmethod
     async def get_workload(execution_id: int) -> Optional[WorkloadData]:    
-        async with get_pool_connection() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(
-                    """
-                    SELECT data FROM noetl.workload
-                    WHERE execution_id = %(execution_id)s 
-                    """,
-                    {"execution_id": execution_id}
-                )
-                row = await cur.fetchone()
-                if row and row.get("data"):
-                    data = row.get("data")
-                    # Handle both string (JSON) and dict (JSONB) from PostgreSQL
-                    if isinstance(data, str):
-                        data = json.loads(data)
-                    return WorkloadData(**data)
+        logger.info(
+            "Workload table removed; EventService.get_workload returns None for execution %s",
+            execution_id,
+        )
+        return None
 
     @staticmethod
     async def get_context_workload(execution_id: int) -> Optional[Dict[str, Any]]:

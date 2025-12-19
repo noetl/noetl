@@ -11,6 +11,7 @@ No backward compatibility - pure v2 implementation.
 """
 
 import logging
+import os
 from typing import Any, Optional
 from datetime import datetime, timezone
 from jinja2 import Template, Environment, StrictUndefined
@@ -199,6 +200,9 @@ class ExecutionState:
         # Add event-specific data
         if "response" in event.payload:
             context["response"] = event.payload["response"]
+        elif "result" in event.payload:
+            # Fallback: expose result as response for templates that expect {{ response.* }} on step.exit
+            context["response"] = event.payload["result"]
         if "error" in event.payload:
             context["error"] = event.payload["error"]
         if "result" in event.payload:
@@ -534,10 +538,17 @@ class ControlFlowEngine:
         actions = then_block if isinstance(then_block, list) else [then_block]
         
         context = state.get_render_context(event)
+        max_pages_env = os.getenv("NOETL_PAGINATION_MAX_PAGES", "100")
+        try:
+            max_pages = max(1, int(max_pages_env))
+        except ValueError:
+            max_pages = 100
         
         for action in actions:
             if not isinstance(action, dict):
                 continue
+
+            handled_pagination_retry = False
             
             # Handle different action types
             if "next" in action:
@@ -612,28 +623,32 @@ class ControlFlowEngine:
                 state.failed = True
                 logger.info(f"Execution {state.execution_id} marked as failed")
             
-            elif "collect" in action:
+            if "collect" in action:
                 # Collect data for pagination accumulation
                 collect_spec = action["collect"]
                 strategy = collect_spec.get("strategy", "append")  # append, extend, replace
                 path = collect_spec.get("path")  # Path to extract from response
-                into_var = collect_spec.get("into", "_collected_pages")  # Target variable name
-                
+                into_var = collect_spec.get("into", "_collected_pages")  # Target variable name (reserved for future vars usage)
+
                 # Initialize pagination state for this step if needed
                 step_name = event.step
                 if step_name not in state.pagination_state:
                     state.pagination_state[step_name] = {
                         "collected_data": [],
-                        "iteration_count": 0
+                        "iteration_count": 0,
+                        "pending_retry": False
                     }
-                
+
                 # Extract data from response using path
-                if "result" in event.payload:
+                result_data = event.payload.get("response")
+                if result_data is None and "result" in event.payload:
                     result_data = event.payload["result"]
-                    
-                    # Navigate path to extract data
+
+                if result_data is None:
+                    logger.warning(f"[COLLECT] No response or result payload to collect for step {step_name}")
+                else:
+                    data_to_collect = result_data
                     if path and isinstance(result_data, dict):
-                        data_to_collect = result_data
                         for part in path.split("."):
                             if isinstance(data_to_collect, dict) and part in data_to_collect:
                                 data_to_collect = data_to_collect[part]
@@ -641,9 +656,7 @@ class ControlFlowEngine:
                                 logger.warning(f"Path {path} not found in result for collect")
                                 data_to_collect = None
                                 break
-                    else:
-                        data_to_collect = result_data
-                    
+
                     if data_to_collect is not None:
                         # Collect data based on strategy
                         collected = state.pagination_state[step_name]["collected_data"]
@@ -653,32 +666,60 @@ class ControlFlowEngine:
                             collected.extend(data_to_collect)
                         elif strategy == "replace":
                             state.pagination_state[step_name]["collected_data"] = [data_to_collect]
-                        
+
                         state.pagination_state[step_name]["iteration_count"] += 1
-                        logger.info(f"[COLLECT] Accumulated {len(collected)} items for step {step_name} (iteration {state.pagination_state[step_name]['iteration_count']})")
-            
-            elif "retry" in action:
-                # Retry current step with updated parameters (for pagination)
-                retry_spec = action["retry"]
-                
+                        # If this collect matched a terminal page (no retry), clear pending flag
+                        state.pagination_state[step_name]["pending_retry"] = False
+                        logger.info(
+                            f"[COLLECT] Accumulated {len(collected)} items for step {step_name} "
+                            f"(iteration {state.pagination_state[step_name]['iteration_count']})"
+                        )
+                        if state.pagination_state[step_name]["iteration_count"] >= max_pages:
+                            state.pagination_state[step_name]["pending_retry"] = False
+                            logger.warning(
+                                f"[PAGINATION] Reached max_pages={max_pages} for step {step_name}; stopping pagination retries"
+                            )
+
+            # Pagination retry (params/url/etc) can coexist with collect
+            pagination_retry_spec = action.get("retry") if isinstance(action, dict) else None
+            if pagination_retry_spec and isinstance(pagination_retry_spec, dict) and any(
+                key in pagination_retry_spec for key in ["params", "url", "method", "headers", "body", "data"]
+            ):
+                retry_spec = pagination_retry_spec
+                handled_pagination_retry = True
+
+                # Hard cap pagination retries to avoid infinite loops
+                iteration_count = state.pagination_state.get(event.step, {}).get("iteration_count", 0)
+                if iteration_count >= max_pages:
+                    state.pagination_state.setdefault(event.step, {}).setdefault("pending_retry", False)
+                    state.pagination_state[event.step]["pending_retry"] = False
+                    logger.warning(
+                        f"[PAGINATION] Skip retry for {event.step}: iteration_count={iteration_count} reached max_pages={max_pages}"
+                    )
+                    continue
+
                 # Get current step definition
                 step_def = state.get_step(event.step)
                 if not step_def:
                     logger.error(f"Cannot retry: step {event.step} not found")
                     continue
-                
+
                 # Extract updated parameters from retry spec
                 updated_args = {}
-                
+
                 # Process params field (most common for HTTP pagination)
                 if "params" in retry_spec:
                     params = retry_spec["params"]
+                    rendered_params = {}
                     for key, value in params.items():
                         if isinstance(value, str) and "{{" in value:
-                            updated_args[key] = self._render_template(value, context)
+                            rendered_params[key] = self._render_template(value, context)
                         else:
-                            updated_args[key] = value
-                
+                            rendered_params[key] = value
+
+                    # HTTP tool expects runtime pagination overrides under args['params']
+                    updated_args["params"] = rendered_params
+
                 # Process other updatable fields
                 for field in ["url", "method", "headers", "body", "data"]:
                     if field in retry_spec:
@@ -687,17 +728,33 @@ class ControlFlowEngine:
                             updated_args[field] = self._render_template(value, context)
                         else:
                             updated_args[field] = value
-                
-                # Create retry command with updated args
-                # This will execute the same step again with new parameters
-                command = self._create_command_for_step(
-                    state, step_def, updated_args
-                )
+
+                # For looped steps, keep the same item by rewinding the index before command creation
+                loop_state = state.loop_state.get(event.step)
+                rewind_applied = False
+                if loop_state and loop_state["index"] > 0:
+                    loop_state["index"] -= 1
+                    rewind_applied = True
+                    logger.info(
+                        f"[RETRY] Rewound loop index for step {event.step} to reuse current item "
+                        f"(index now {loop_state['index']})"
+                    )
+
+                # Create retry command with updated args (same step)
+                command = self._create_command_for_step(state, step_def, updated_args)
+
+                # If creation failed, restore index
+                if not command and rewind_applied and loop_state:
+                    loop_state["index"] += 1
                 if command:
+                    state.pagination_state.setdefault(event.step, {}).setdefault("pending_retry", False)
+                    state.pagination_state[event.step]["pending_retry"] = True
                     commands.append(command)
-                    logger.info(f"[RETRY] Created pagination retry command for {event.step} with updated params: {list(updated_args.keys())}")
-            
-            elif "call" in action:
+                    logger.info(
+                        f"[RETRY] Created pagination retry command for {event.step} with updated params: {list(updated_args.keys())}"
+                    )
+
+            if "call" in action:
                 # Call/invoke a step with new arguments
                 call_spec = action["call"]
                 target_step = call_spec.get("step")
@@ -727,7 +784,7 @@ class ControlFlowEngine:
                     commands.append(command)
                     logger.info(f"Call action: invoking step {target_step}")
             
-            elif "retry" in action:
+            if "retry" in action and not handled_pagination_retry:
                 # Retry current step with optional backoff
                 retry_spec = action["retry"]
                 delay = retry_spec.get("delay", 0)
@@ -1023,8 +1080,54 @@ class ControlFlowEngine:
         logger.info(f"[LOOP_DEBUG] Checking step.exit: name={event.name}, has_result={'result' in event.payload}, payload_keys={list(event.payload.keys())}")
         if event.name == "step.exit" and "result" in event.payload:
             logger.info(f"[LOOP_DEBUG] step.exit with result for {event.step}, step_def.loop={step_def.loop}, in_loop_state={event.step in state.loop_state}")
+            # Skip aggregation if a pagination retry is pending (same loop item will repeat)
+            pending_retry = state.pagination_state.get(event.step, {}).get("pending_retry", False)
+            if pending_retry:
+                logger.info(f"[LOOP_DEBUG] Pending pagination retry for {event.step}; skipping result aggregation and loop advance")
+            # If pagination collected data for this step, merge it into the current result before aggregation
+            # and reset pagination state for the next iteration/run when no retry is pending.
+            pagination_state = state.pagination_state.get(event.step)
+            if pagination_state and not pending_retry:
+                collected_data = pagination_state.get("collected_data", [])
+                if collected_data:
+                    current_result = event.payload.get("result", {})
+
+                    pagination_summary = {
+                        "pages_collected": pagination_state.get("iteration_count", 0),
+                        "all_items": collected_data,
+                    }
+
+                    flattened_items: list[Any] = []
+                    for item in collected_data:
+                        if isinstance(item, list):
+                            flattened_items.extend(item)
+                        else:
+                            flattened_items.append(item)
+
+                    if isinstance(current_result, dict):
+                        current_result["_pagination"] = pagination_summary
+                        current_result["_all_collected_items"] = flattened_items
+                    else:
+                        current_result = {
+                            "original_result": current_result,
+                            "_pagination": pagination_summary,
+                            "_all_collected_items": flattened_items,
+                        }
+
+                    event.payload["result"] = current_result
+                    logger.info(
+                        f"[PAGINATION] Merged collected pagination data into result for {event.step}: "
+                        f"{len(flattened_items)} total items over {pagination_state.get('iteration_count', 0)} pages"
+                    )
+
+                # Reset pagination state for next iteration/run to avoid bleed-over
+                state.pagination_state[event.step] = {
+                    "collected_data": [],
+                    "iteration_count": 0,
+                    "pending_retry": False,
+                }
             # If in a loop, add iteration result to aggregation (for ALL iterations)
-            if step_def.loop and event.step in state.loop_state:
+            if step_def.loop and event.step in state.loop_state and not pending_retry:
                 # Check if loop aggregation already finalized (loop_done happened)
                 loop_state = state.loop_state[event.step]
                 logger.info(f"[LOOP_DEBUG] Loop state: completed={loop_state.get('completed')}, finalized={loop_state.get('aggregation_finalized')}, results_count={len(loop_state.get('results', []))}")
@@ -1034,7 +1137,7 @@ class ControlFlowEngine:
                     logger.info(f"Added iteration result to loop aggregation for step {event.step}")
                 else:
                     logger.info(f"Loop aggregation already finalized for {event.step}, skipping result storage")
-            else:
+            elif not pending_retry:
                 # Not in loop or loop done - store as normal step result
                 state.mark_step_completed(event.step, event.payload["result"])
                 logger.debug(f"Stored result for step {event.step} in state")
@@ -1069,62 +1172,66 @@ class ControlFlowEngine:
         # Check on step.exit regardless of whether case generated commands
         # (case may have matched call.done and generated sink/next commands)
         if step_def.loop and event.name == "step.exit":
-            # Check if loop is complete by examining loop state directly
-            # Don't call get_next_loop_item as it would consume an item
-            loop_state = state.loop_state.get(event.step)
-            if loop_state and not loop_state["completed"]:
-                # Check if index >= collection length to determine completion
-                if loop_state["index"] >= len(loop_state["collection"]):
-                    loop_state["completed"] = True
-                    logger.info(f"Marked loop as completed for step {event.step}")
-            
-            if not state.is_loop_done(event.step):
-                # More items to process - create next iteration command if not already created
-                # (case rules may have already created next iteration)
-                if not any(cmd.step == event.step for cmd in commands):
-                    logger.debug(f"Loop has more items, creating next command")
-                    command = self._create_command_for_step(state, step_def, {})
-                    if command:
-                        commands.append(command)
+            pagination_retry_pending = state.pagination_state.get(event.step, {}).get("pending_retry", False)
+            if pagination_retry_pending:
+                logger.info(f"[LOOP_DEBUG] Pagination retry pending for {event.step}; skipping loop completion/next iteration")
             else:
-                # Loop done - create aggregated result and store as step result
-                logger.info(f"Loop completed for step {event.step}, creating aggregated result")
+                # Check if loop is complete by examining loop state directly
+                # Don't call get_next_loop_item as it would consume an item
+                loop_state = state.loop_state.get(event.step)
+                if loop_state and not loop_state["completed"]:
+                    # Check if index >= collection length to determine completion
+                    if loop_state["index"] >= len(loop_state["collection"]):
+                        loop_state["completed"] = True
+                        logger.info(f"Marked loop as completed for step {event.step}")
                 
-                # Mark aggregation as finalized to prevent adding more results
-                state.loop_state[event.step]["aggregation_finalized"] = True
-                
-                # Get aggregated loop results
-                loop_aggregation = state.get_loop_aggregation(event.step)
-                
-                # Check if step has pagination data to merge
-                if event.step in state.pagination_state:
-                    pagination_data = state.pagination_state[event.step]
-                    if pagination_data["collected_data"]:
-                        # Merge pagination data into aggregated result
-                        loop_aggregation["pagination"] = {
-                            "collected_items": pagination_data["collected_data"],
-                            "iteration_count": pagination_data["iteration_count"]
+                if not state.is_loop_done(event.step):
+                    # More items to process - create next iteration command if not already created
+                    # (case rules may have already created next iteration)
+                    if not any(cmd.step == event.step for cmd in commands):
+                        logger.debug(f"Loop has more items, creating next command")
+                        command = self._create_command_for_step(state, step_def, {})
+                        if command:
+                            commands.append(command)
+                else:
+                    # Loop done - create aggregated result and store as step result
+                    logger.info(f"Loop completed for step {event.step}, creating aggregated result")
+                    
+                    # Mark aggregation as finalized to prevent adding more results
+                    state.loop_state[event.step]["aggregation_finalized"] = True
+                    
+                    # Get aggregated loop results
+                    loop_aggregation = state.get_loop_aggregation(event.step)
+                    
+                    # Check if step has pagination data to merge
+                    if event.step in state.pagination_state:
+                        pagination_data = state.pagination_state[event.step]
+                        if pagination_data["collected_data"]:
+                            # Merge pagination data into aggregated result
+                            loop_aggregation["pagination"] = {
+                                "collected_items": pagination_data["collected_data"],
+                                "iteration_count": pagination_data["iteration_count"]
+                            }
+                            logger.info(f"Merged pagination data into loop result: {pagination_data['iteration_count']} iterations")
+                    
+                    # Store aggregated result as the step result
+                    # This makes it available to next steps via {{ loop_step_name }}
+                    state.mark_step_completed(event.step, loop_aggregation)
+                    logger.info(f"Stored aggregated loop result for {event.step}: {loop_aggregation['stats']}")
+                    
+                    # Process loop.done event through case matching
+                    loop_done_event = Event(
+                        execution_id=event.execution_id,
+                        step=event.step,
+                        name="loop.done",
+                        payload={
+                            "status": "completed",
+                            "iterations": state.loop_state[event.step]["index"],
+                            "result": loop_aggregation  # Include aggregated result in payload
                         }
-                        logger.info(f"Merged pagination data into loop result: {pagination_data['iteration_count']} iterations")
-                
-                # Store aggregated result as the step result
-                # This makes it available to next steps via {{ loop_step_name }}
-                state.mark_step_completed(event.step, loop_aggregation)
-                logger.info(f"Stored aggregated loop result for {event.step}: {loop_aggregation['stats']}")
-                
-                # Process loop.done event through case matching
-                loop_done_event = Event(
-                    execution_id=event.execution_id,
-                    step=event.step,
-                    name="loop.done",
-                    payload={
-                        "status": "completed",
-                        "iterations": state.loop_state[event.step]["index"],
-                        "result": loop_aggregation  # Include aggregated result in payload
-                    }
-                )
-                loop_done_commands = await self._process_case_rules(state, step_def, loop_done_event)
-                commands.extend(loop_done_commands)
+                    )
+                    loop_done_commands = await self._process_case_rules(state, step_def, loop_done_event)
+                    commands.extend(loop_done_commands)
         
         # Process vars block if present (extract variables from step result after completion)
         if event.name == "step.exit" and step_def:
@@ -1161,7 +1268,7 @@ class ControlFlowEngine:
                             logger.info(f"[STRUCTURAL-NEXT] Created command for step {target_step}")
 
         # Finalize pagination data if step.exit and no retry commands were generated
-        if event.name == "step.exit" and event.step in state.pagination_state:
+        if event.name == "step.exit" and event.step in state.pagination_state and not (step_def and step_def.loop):
             # Check if any commands were created for this step (retry)
             has_retry = any(cmd.step == event.step for cmd in commands)
             

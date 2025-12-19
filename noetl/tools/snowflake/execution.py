@@ -6,6 +6,8 @@ Supports both password-based and key-pair authentication.
 """
 
 from typing import Dict, List, Optional
+from decimal import Decimal
+from datetime import datetime, date, time
 import snowflake.connector
 from snowflake.connector import DictCursor
 from cryptography.hazmat.primitives import serialization
@@ -161,10 +163,12 @@ def execute_sql_statements(
             # Check if statement returns results (SELECT, SHOW, DESCRIBE, etc.)
             if cursor.description:
                 rows = cursor.fetchall()
+                # Normalize values for JSON serialization (Decimal, datetime, etc.)
+                serialized_rows = [_serialize_row(row) for row in rows]
                 results[statement_key] = {
                     'status': 'success',
                     'row_count': len(rows),
-                    'result': rows,
+                    'result': serialized_rows,
                     'query': statement[:200] + ('...' if len(statement) > 200 else ''),
                     'columns': [desc[0] for desc in cursor.description] if cursor.description else []
                 }
@@ -191,3 +195,17 @@ def execute_sql_statements(
             }
     
     return results
+
+
+def _serialize_value(value):
+    """Convert Snowflake values to JSON-serializable types."""
+    if isinstance(value, Decimal):
+        return float(value)
+    if isinstance(value, (datetime, date, time)):
+        return value.isoformat()
+    return value
+
+
+def _serialize_row(row: dict) -> dict:
+    """Serialize a DictCursor row to JSON-friendly types."""
+    return {k: _serialize_value(v) for k, v in row.items()}
