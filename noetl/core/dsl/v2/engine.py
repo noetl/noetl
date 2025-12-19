@@ -88,7 +88,9 @@ class ExecutionState:
             "iterator": iterator,
             "index": 0,
             "mode": mode,
-            "completed": False
+            "completed": False,
+            "results": [],  # Track iteration results for aggregation
+            "failed_count": 0  # Track failed iterations
         }
         logger.debug(f"Initialized loop for step {step_name}: {len(collection)} items, mode={mode}")
     
@@ -117,6 +119,35 @@ class ExecutionState:
         if step_name not in self.loop_state:
             return True
         return self.loop_state[step_name]["completed"]
+    
+    def add_loop_result(self, step_name: str, result: Any, failed: bool = False):
+        """Add iteration result to loop aggregation."""
+        if step_name not in self.loop_state:
+            return
+        
+        self.loop_state[step_name]["results"].append(result)
+        if failed:
+            self.loop_state[step_name]["failed_count"] += 1
+        logger.debug(f"Added iteration result to loop {step_name}: {len(self.loop_state[step_name]['results'])} total")
+    
+    def get_loop_aggregation(self, step_name: str) -> dict[str, Any]:
+        """Get aggregated loop results in standard format."""
+        if step_name not in self.loop_state:
+            return {"results": [], "stats": {"total": 0, "success": 0, "failed": 0}}
+        
+        loop_state = self.loop_state[step_name]
+        total = len(loop_state["results"])
+        failed = loop_state["failed_count"]
+        success = total - failed
+        
+        return {
+            "results": loop_state["results"],
+            "stats": {
+                "total": total,
+                "success": success,
+                "failed": failed
+            }
+        }
     
     def get_render_context(self, event: Event) -> dict[str, Any]:
         """Get context for Jinja2 rendering.
@@ -883,8 +914,15 @@ class ControlFlowEngine:
         
         # Store step result if this is a step.exit event
         if event.name == "step.exit" and "result" in event.payload:
-            state.mark_step_completed(event.step, event.payload["result"])
-            logger.debug(f"Stored result for step {event.step} in state")
+            # If in a loop, add iteration result to aggregation
+            if step_def.loop and event.step in state.loop_state and not state.is_loop_done(event.step):
+                failed = event.payload.get("status", "").upper() == "FAILED"
+                state.add_loop_result(event.step, event.payload["result"], failed=failed)
+                logger.debug(f"Added iteration result to loop aggregation for step {event.step}")
+            else:
+                # Not in loop or loop done - store as normal step result
+                state.mark_step_completed(event.step, event.payload["result"])
+                logger.debug(f"Stored result for step {event.step} in state")
         
         # CRITICAL: For call.done events, temporarily add response to state
         # This allows subsequent steps to access the result before step.exit
@@ -934,13 +972,27 @@ class ControlFlowEngine:
                     if command:
                         commands.append(command)
             else:
-                # Loop done - recursively process loop.done event through case matching
-                logger.info(f"Loop completed for step {event.step}, processing loop.done event")
+                # Loop done - create aggregated result and store as step result
+                logger.info(f"Loop completed for step {event.step}, creating aggregated result")
+                
+                # Get aggregated loop results
+                loop_aggregation = state.get_loop_aggregation(event.step)
+                
+                # Store aggregated result as the step result
+                # This makes it available to next steps via {{ loop_step_name }}
+                state.mark_step_completed(event.step, loop_aggregation)
+                logger.info(f"Stored aggregated loop result for {event.step}: {loop_aggregation['stats']}")
+                
+                # Process loop.done event through case matching
                 loop_done_event = Event(
                     execution_id=event.execution_id,
                     step=event.step,
                     name="loop.done",
-                    payload={"status": "completed", "iterations": state.loop_state[event.step]["index"]}
+                    payload={
+                        "status": "completed",
+                        "iterations": state.loop_state[event.step]["index"],
+                        "result": loop_aggregation  # Include aggregated result in payload
+                    }
                 )
                 loop_done_commands = await self._process_case_rules(state, step_def, loop_done_event)
                 commands.extend(loop_done_commands)
