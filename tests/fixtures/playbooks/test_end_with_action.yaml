@@ -1,4 +1,4 @@
-apiVersion: noetl.io/v1
+apiVersion: noetl.io/v2
 kind: Playbook
 metadata:
   name: test_end_with_action
@@ -11,41 +11,58 @@ workload:
 workflow:
   - step: start
     desc: Entry point router
-    next:
-      - step: process_data
+    tool:
+      kind: python
+      code: |
+        def main():
+            return {"status": "initialized"}
+    
+    case:
+      - when: "{{ event.name == 'step.exit' }}"
+        then:
+          next:
+            - step: process_data
   
   - step: process_data
     desc: Process data
-    tool: python
-    code: |
-      def main():
-          return {
-              'status': 'success',
-              'data': {
-                  'records_processed': 100,
-                  'temp_table': 'temp_session_12345'
-              }
-          }
-    next:
-      - step: end
-        args:
-          input_data:
-            temp_table: "{{ process_data.data.temp_table }}"
-            cleanup_required: "{{ workload.cleanup_required }}"
+    tool:
+      kind: python
+      code: |
+        def main():
+            return {
+                'status': 'success',
+                'data': {
+                    'records_processed': 100,
+                    'temp_table': 'temp_session_12345'
+                }
+            }
+    
+    case:
+      - when: "{{ event.name == 'call.done' and response is defined }}"
+        then:
+          result:
+            from: response
+          next:
+            - step: end
+              args:
+                input_data:
+                  temp_table: "{{ response.data.temp_table }}"
+                  cleanup_required: "{{ workload.cleanup_required }}"
         
   - step: end
     desc: End step with cleanup action
-    tool: python
-    code: |
-      def main(input_data):
-          temp_table = input_data.get('temp_table', 'unknown')
-          cleanup = input_data.get('cleanup_required', False)
-          
-          return {
-              'status': 'completed',
-              'message': f'Cleanup performed on {temp_table}' if cleanup else 'No cleanup needed',
-              'data': {
-                  'cleaned_up': cleanup,
-                  'table': temp_table
-              }
-          }
+    tool:
+      kind: python
+      code: |
+        def main(input_data):
+            temp_table = input_data.get('temp_table', 'unknown')
+            cleanup = input_data.get('cleanup_required', False)
+            
+            return {
+                'status': 'completed',
+                'message': f'Cleanup performed on {temp_table}' if cleanup else 'No cleanup needed',
+                'data': {
+                    'cleaned_up': cleanup,
+                    'table': temp_table
+                }
+            }

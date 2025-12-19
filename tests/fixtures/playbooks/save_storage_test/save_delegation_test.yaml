@@ -1,4 +1,4 @@
-apiVersion: noetl.io/v1
+apiVersion: noetl.io/v2
 kind: Playbook
 metadata:
   name: save_storage_delegation_test
@@ -13,103 +13,142 @@ workflow:
   # Setup: Create tables first
   - step: start
     desc: "Setup test tables"
-    next:
-      - step: create_tables
+    tool:
+      kind: python
+      code: |
+        def main():
+            return {"status": "initialized"}
+    
+    case:
+      - when: "{{ event.name == 'step.exit' }}"
+        then:
+          next:
+            - step: create_tables
   
   - step: create_tables
     desc: "Create required test tables"
-    tool: playbook
-    path: tests/fixtures/playbooks/save_storage_test/create_tables
-    args:
-      pg_auth: "{{ workload.pg_auth }}"
-    next:
-      - step: truncate_tables
+    tool:
+      kind: playbook
+      path: tests/fixtures/playbooks/save_storage_test/create_tables
+      args:
+        pg_auth: "{{ workload.pg_auth }}"
+    
+    case:
+      - when: "{{ event.name == 'call.done' and response is defined }}"
+        then:
+          next:
+            - step: truncate_tables
   
   - step: truncate_tables
     desc: "Clear test data from previous runs"
-    tool: postgres
-    auth: "{{ workload.pg_auth }}"
-    command: |
-      TRUNCATE TABLE simple_test_flat CASCADE;
-    next:
-      - step: event_test
+    tool:
+      kind: postgres
+      auth: "{{ workload.pg_auth }}"
+      command: |
+        TRUNCATE TABLE simple_test_flat CASCADE;
+    
+    case:
+      - when: "{{ event.name == 'call.done' and response is defined }}"
+        then:
+          next:
+            - step: event_test
   
   # Test 1: Event storage (default)
   - step: event_test
     desc: "Test event storage delegation"
-    tool: python
-    code: |
-      # Simple function that doesn't need input_data parameter
-      def main(**kwargs):
-          return {
-              "test": "event_storage",
-              "message": "Event storage delegation working"
-          }
-    sink:
-      tool: event
-      args: "{{ result }}"
-    next:
-      - step: postgres_test
+    tool:
+      kind: python
+      code: |
+        # Simple function that doesn't need input_data parameter
+        def main(**kwargs):
+            return {
+                "test": "event_storage",
+                "message": "Event storage delegation working"
+            }
+    
+    case:
+      - when: "{{ event.name == 'call.done' and response is defined }}"
+        then:
+          sink:
+            tool: event
+            args: "{{ response }}"
+          next:
+            - step: postgres_test
 
   # Test 2: Postgres storage delegation
   - step: postgres_test  
     desc: "Test postgres storage delegation"
-    tool: python
-    code: |
-      def main(**kwargs):
-          return {
-              "test": "postgres_storage", 
-              "message": "Postgres storage delegation working",
-              "value": 123
-          }
-    sink:
-      tool: postgres
-      table: simple_test_flat
-      auth: "{{ workload.pg_auth }}"
-      args:
-        test_id: "delegation_test"
-        test_name: "{{ result.test }}"
-        test_value: "{{ result.value }}"
-        storage_type: "delegation"
-        test_execution: "{{ execution_id }}"
-    next:
-      - step: duckdb_test
+    tool:
+      kind: python
+      code: |
+        def main(**kwargs):
+            return {
+                "test": "postgres_storage", 
+                "message": "Postgres storage delegation working",
+                "value": 123
+            }
+    
+    case:
+      - when: "{{ event.name == 'call.done' and response is defined }}"
+        then:
+          sink:
+            tool: postgres
+            table: simple_test_flat
+            auth: "{{ workload.pg_auth }}"
+            args:
+              test_id: "delegation_test"
+              test_name: "{{ response.test }}"
+              test_value: "{{ response.value }}"
+              storage_type: "delegation"
+              test_execution: "{{ execution_id }}"
+          next:
+            - step: duckdb_test
 
   # Test 3: DuckDB storage delegation
   - step: duckdb_test
     desc: "Test duckdb storage delegation"
-    tool: python
-    code: |
-      def main(**kwargs):
-          return {
-              "test": "duckdb_storage",
-              "message": "DuckDB storage delegation working"
-          }
-    sink:
-      tool: duckdb
-      commands: |
-        CREATE OR REPLACE TABLE test_duckdb AS 
-        SELECT 'delegation_test' as test_type, 'duckdb_working' as status;
-        SELECT * FROM test_duckdb;
-    next:
-      - step: http_test
+    tool:
+      kind: python
+      code: |
+        def main(**kwargs):
+            return {
+                "test": "duckdb_storage",
+                "message": "DuckDB storage delegation working"
+            }
+    
+    case:
+      - when: "{{ event.name == 'call.done' and response is defined }}"
+        then:
+          sink:
+            tool: duckdb
+            commands: |
+              CREATE OR REPLACE TABLE test_duckdb AS 
+              SELECT 'delegation_test' as test_type, 'duckdb_working' as status;
+              SELECT * FROM test_duckdb;
+          next:
+            - step: http_test
 
   # Test 4: HTTP storage delegation  
   - step: http_test
     desc: "Test http storage delegation"
-    tool: python
-    code: |
-      def main(**kwargs):
-          return {
-              "test": "http_storage",
-              "message": "HTTP storage delegation working"
-          }
-    sink:
-      tool: http
-      endpoint: "https://httpbin.org/post"
-      method: POST
-      headers:
-        Content-Type: "application/json"
-      payload:
-        test: "{{ result.test }}"
-        message: "{{ result.message }}"
+    tool:
+      kind: python
+      code: |
+        def main(**kwargs):
+            return {
+                "test": "http_storage",
+                "message": "HTTP storage delegation working"
+            }
+    
+    case:
+      - when: "{{ event.name == 'call.done' and response is defined }}"
+        then:
+          sink:
+            tool: http
+            endpoint: "https://httpbin.org/post"
+            method: POST
+            headers:
+              Content-Type: "application/json"
+            payload:
+              test: "{{ response.test }}"
+              message: "{{ response.message }}"

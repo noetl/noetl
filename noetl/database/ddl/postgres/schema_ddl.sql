@@ -20,17 +20,9 @@ CREATE TABLE IF NOT EXISTS noetl.catalog (
     UNIQUE (path, version)
 );
 
--- Workload
-CREATE TABLE IF NOT EXISTS noetl.workload (
-    execution_id BIGINT,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    data JSONB,
-    PRIMARY KEY (execution_id)
-);
-
 -- Variables Cache
 -- Stores runtime variables for playbook execution scope with access tracking
-CREATE TABLE IF NOT EXISTS noetl.vars_cache (
+CREATE TABLE IF NOT EXISTS noetl.transient (
     execution_id BIGINT NOT NULL,
     var_name TEXT NOT NULL,
     var_type TEXT NOT NULL CHECK (var_type IN ('user_defined', 'step_result', 'computed', 'iterator_state')),
@@ -42,16 +34,16 @@ CREATE TABLE IF NOT EXISTS noetl.vars_cache (
     PRIMARY KEY (execution_id, var_name)
 );
 
-CREATE INDEX IF NOT EXISTS idx_vars_cache_type ON noetl.vars_cache (var_type);
-CREATE INDEX IF NOT EXISTS idx_vars_cache_source ON noetl.vars_cache (source_step);
-CREATE INDEX IF NOT EXISTS idx_vars_cache_execution ON noetl.vars_cache (execution_id);
+CREATE INDEX IF NOT EXISTS idx_transient_type ON noetl.transient (var_type);
+CREATE INDEX IF NOT EXISTS idx_transient_source ON noetl.transient (source_step);
+CREATE INDEX IF NOT EXISTS idx_transient_execution ON noetl.transient (execution_id);
 
-COMMENT ON TABLE noetl.vars_cache IS 'Execution-scoped variables for playbook runtime with cache tracking';
-COMMENT ON COLUMN noetl.vars_cache.var_type IS 'step_result: result from a step, user_defined: explicit variable, computed: derived value, iterator_state: iterator loop state';
-COMMENT ON COLUMN noetl.vars_cache.var_value IS 'Variable value stored as JSONB (supports any type)';
-COMMENT ON COLUMN noetl.vars_cache.source_step IS 'Step name that produced this variable';
-COMMENT ON COLUMN noetl.vars_cache.access_count IS 'Number of times this variable has been accessed';
-COMMENT ON COLUMN noetl.vars_cache.accessed_at IS 'Last time this variable was read';
+COMMENT ON TABLE noetl.transient IS 'Execution-scoped variables for playbook runtime with cache tracking';
+COMMENT ON COLUMN noetl.transient.var_type IS 'step_result: result from a step, user_defined: explicit variable, computed: derived value, iterator_state: iterator loop state';
+COMMENT ON COLUMN noetl.transient.var_value IS 'Variable value stored as JSONB (supports any type)';
+COMMENT ON COLUMN noetl.transient.source_step IS 'Step name that produced this variable';
+COMMENT ON COLUMN noetl.transient.access_count IS 'Number of times this variable has been accessed';
+COMMENT ON COLUMN noetl.transient.accessed_at IS 'Last time this variable was read';
 
 -- Event
 CREATE TABLE IF NOT EXISTS noetl.event (
@@ -95,35 +87,6 @@ CREATE INDEX IF NOT EXISTS idx_event_node_name ON noetl.event (node_name);
 CREATE INDEX IF NOT EXISTS idx_event_parent_event_id ON noetl.event (parent_event_id);
 CREATE INDEX IF NOT EXISTS idx_event_parent_execution_id ON noetl.event (parent_execution_id);
 
--- Workflow/workbook/transition
-CREATE TABLE IF NOT EXISTS noetl.workflow (
-    execution_id BIGINT,
-    step_id VARCHAR,
-    step_name VARCHAR,
-    step_type VARCHAR,
-    description TEXT,
-    raw_config TEXT,
-    PRIMARY KEY (execution_id, step_id)
-);
-
-CREATE TABLE IF NOT EXISTS noetl.workbook (
-    execution_id BIGINT,
-    task_id VARCHAR,
-    task_name VARCHAR,
-    task_type VARCHAR,
-    raw_config TEXT,
-    PRIMARY KEY (execution_id, task_id)
-);
-
-CREATE TABLE IF NOT EXISTS noetl.transition (
-    execution_id BIGINT,
-    from_step VARCHAR,
-    to_step VARCHAR,
-    condition TEXT,
-    with_params TEXT,
-    PRIMARY KEY (execution_id, from_step, to_step, condition)
-);
-
 -- Legacy compatibility view for event_log
 CREATE OR REPLACE VIEW noetl.event_log AS SELECT * FROM noetl.event;
 
@@ -133,6 +96,7 @@ CREATE TABLE IF NOT EXISTS noetl.credential (
     name TEXT NOT NULL UNIQUE,
     type TEXT NOT NULL,
     data_encrypted TEXT NOT NULL,
+    schema JSONB,
     meta JSONB,
     tags TEXT[],
     description TEXT,
@@ -328,33 +292,6 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Queue
-CREATE TABLE IF NOT EXISTS noetl.queue (
-    queue_id BIGINT PRIMARY KEY,
-    execution_id BIGINT NOT NULL,
-    catalog_id BIGINT NOT NULL REFERENCES noetl.catalog(catalog_id),
-    node_id VARCHAR NOT NULL,
-    action TEXT NOT NULL,
-    context JSONB,
-    status TEXT NOT NULL DEFAULT 'queued',
-    priority INTEGER NOT NULL DEFAULT 0,
-    attempts INTEGER NOT NULL DEFAULT 0,
-    max_attempts INTEGER NOT NULL DEFAULT 5,
-    available_at TIMESTAMPTZ,
-    lease_until TIMESTAMPTZ,
-    worker_id TEXT,
-    last_heartbeat TIMESTAMPTZ,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    parent_execution_id BIGINT,
-    parent_event_id BIGINT,
-    event_id BIGINT,
-    node_name VARCHAR,
-    node_type VARCHAR,
-    meta JSONB,
-    UNIQUE(execution_id, node_id)
-);
-
 -- Schedule
 CREATE TABLE IF NOT EXISTS noetl.schedule (
     schedule_id BIGSERIAL PRIMARY KEY,
@@ -419,36 +356,46 @@ CREATE TABLE IF NOT EXISTS noetl.dentry (
 CREATE INDEX IF NOT EXISTS idx_dentry_parent ON noetl.dentry(parent_id);
 CREATE INDEX IF NOT EXISTS idx_dentry_kind ON noetl.dentry(kind);
 
--- Auth Cache
+-- Keychain
 -- Stores decrypted credentials and tokens with TTL for playbook execution scope
-CREATE TABLE IF NOT EXISTS noetl.auth_cache (
+CREATE TABLE IF NOT EXISTS noetl.keychain (
     cache_key TEXT PRIMARY KEY,
-    credential_name TEXT NOT NULL,
+    keychain_name TEXT NOT NULL,
+    catalog_id BIGINT NOT NULL REFERENCES noetl.catalog(catalog_id),
     credential_type TEXT NOT NULL,
     cache_type TEXT NOT NULL CHECK (cache_type IN ('secret', 'token')),
-    scope_type TEXT NOT NULL CHECK (scope_type IN ('execution', 'global')),
+    scope_type TEXT NOT NULL CHECK (scope_type IN ('local', 'global', 'shared')),
     execution_id BIGINT,
     parent_execution_id BIGINT,
     data_encrypted TEXT NOT NULL,
+    schema JSONB,
     expires_at TIMESTAMPTZ NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     accessed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    access_count INTEGER DEFAULT 0
+    access_count INTEGER DEFAULT 0,
+    auto_renew BOOLEAN DEFAULT false,
+    renew_config JSONB
 );
 
-CREATE INDEX IF NOT EXISTS idx_auth_cache_execution ON noetl.auth_cache (execution_id) WHERE execution_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_auth_cache_parent_execution ON noetl.auth_cache (parent_execution_id) WHERE parent_execution_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_auth_cache_expires ON noetl.auth_cache (expires_at);
-CREATE INDEX IF NOT EXISTS idx_auth_cache_type ON noetl.auth_cache (cache_type, scope_type);
-CREATE INDEX IF NOT EXISTS idx_auth_cache_credential ON noetl.auth_cache (credential_name);
+CREATE INDEX IF NOT EXISTS idx_keychain_execution ON noetl.keychain (execution_id) WHERE execution_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_keychain_parent_execution ON noetl.keychain (parent_execution_id) WHERE parent_execution_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_keychain_expires ON noetl.keychain (expires_at);
+CREATE INDEX IF NOT EXISTS idx_keychain_type ON noetl.keychain (cache_type, scope_type);
+CREATE INDEX IF NOT EXISTS idx_keychain_name ON noetl.keychain (keychain_name);
+CREATE INDEX IF NOT EXISTS idx_keychain_catalog ON noetl.keychain (catalog_id);
+CREATE INDEX IF NOT EXISTS idx_keychain_name_catalog ON noetl.keychain (keychain_name, catalog_id);
 
-COMMENT ON TABLE noetl.auth_cache IS 'Caches decrypted credentials and tokens with TTL';
-COMMENT ON COLUMN noetl.auth_cache.cache_key IS 'Unique cache key: <credential_name>:<execution_id> for execution scope, <credential_name>:global:<token_type> for global tokens';
-COMMENT ON COLUMN noetl.auth_cache.cache_type IS 'secret: raw credential data, token: derived authentication token (OAuth, JWT, etc.)';
-COMMENT ON COLUMN noetl.auth_cache.scope_type IS 'execution: limited to playbook execution and sub-playbooks, global: shared across all executions until token expires';
-COMMENT ON COLUMN noetl.auth_cache.execution_id IS 'Execution scope: credential tied to this execution and its sub-playbooks';
-COMMENT ON COLUMN noetl.auth_cache.parent_execution_id IS 'Top-level execution ID for cleanup when parent completes';
-COMMENT ON COLUMN noetl.auth_cache.expires_at IS 'TTL: execution-scoped expires when playbook completes, global expires based on token expiration';
+COMMENT ON TABLE noetl.keychain IS 'Caches decrypted credentials and tokens with TTL, scoped to playbook catalog. Schema field defines expected data structure for validation.';
+COMMENT ON COLUMN noetl.keychain.cache_key IS 'Unique cache key: <keychain_name>:<catalog_id>:<execution_id> for local scope, <keychain_name>:<catalog_id>:global for global tokens';
+COMMENT ON COLUMN noetl.keychain.keychain_name IS 'Name of the keychain entry defined in playbook (e.g., amadeus_token, postgres_creds)';
+COMMENT ON COLUMN noetl.keychain.catalog_id IS 'References the playbook catalog entry that defined this keychain';
+COMMENT ON COLUMN noetl.keychain.cache_type IS 'secret: raw credential data, token: derived authentication token (OAuth, JWT, etc.)';
+COMMENT ON COLUMN noetl.keychain.scope_type IS 'local: limited to playbook execution and sub-playbooks, global: shared across all executions until token expires, shared: shared within execution tree';
+COMMENT ON COLUMN noetl.keychain.execution_id IS 'Execution scope: credential tied to this execution and its sub-playbooks';
+COMMENT ON COLUMN noetl.keychain.parent_execution_id IS 'Top-level execution ID for cleanup when parent completes';
+COMMENT ON COLUMN noetl.keychain.expires_at IS 'TTL: local-scoped expires when playbook completes, global expires based on token expiration';
+COMMENT ON COLUMN noetl.keychain.auto_renew IS 'If true, automatically renew token when expired using renew_config';
+COMMENT ON COLUMN noetl.keychain.renew_config IS 'Configuration for automatic token renewal (endpoint, method, auth, etc.)';
 
 -- Snowflake-like id helpers
 CREATE SEQUENCE IF NOT EXISTS noetl.snowflake_seq;
@@ -467,12 +414,10 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 ALTER TABLE noetl.role ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
-ALTER TABLE noetl.workload ALTER COLUMN execution_id SET DEFAULT noetl.snowflake_id();
 ALTER TABLE noetl.catalog ALTER COLUMN catalog_id SET DEFAULT noetl.snowflake_id();
 ALTER TABLE noetl.profile ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
 ALTER TABLE noetl.session ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
 ALTER TABLE noetl.dentry ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
-ALTER TABLE noetl.queue ALTER COLUMN queue_id SET DEFAULT noetl.snowflake_id();
 ALTER TABLE noetl.schedule ALTER COLUMN schedule_id SET DEFAULT noetl.snowflake_id();
 alter table noetl.credential ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
 alter table noetl.metric ALTER COLUMN metric_id SET DEFAULT noetl.snowflake_id();

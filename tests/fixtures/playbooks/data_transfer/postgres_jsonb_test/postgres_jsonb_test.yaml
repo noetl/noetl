@@ -1,4 +1,4 @@
-apiVersion: noetl.io/v1
+apiVersion: noetl.io/v2
 kind: Playbook
 
 metadata:
@@ -41,250 +41,269 @@ workload:
 workflow:
   - step: start
     desc: Start PostgreSQL JSONB test workflow
+    tool:
+      kind: python
+      code: |
+        def main():
+            return {"status": "initialized"}
     next:
       - step: create_table
 
   # Test 1: Create table with JSONB column
   - step: create_table
     desc: Create PostgreSQL table with JSONB datatype column
-    tool: postgres
-    auth: "{{ workload.pg_auth }}"
-    command: |
-      -- Drop table if exists
-      DROP TABLE IF EXISTS public.{{ workload.test_table }};
-      
-      -- Create table with JSONB column
-      CREATE TABLE public.{{ workload.test_table }} (
-        id SERIAL PRIMARY KEY,
-        user_id INTEGER NOT NULL,
-        profile JSONB NOT NULL,
-        metadata JSONB DEFAULT '{}'::jsonb,
-        created_at TIMESTAMPTZ DEFAULT NOW(),
-        updated_at TIMESTAMPTZ DEFAULT NOW()
-      );
-      
-      -- Create GIN index on JSONB column for faster queries
-      CREATE INDEX idx_{{ workload.test_table }}_profile 
-        ON public.{{ workload.test_table }} USING GIN (profile);
-      
-      -- Create index on JSONB property
-      CREATE INDEX idx_{{ workload.test_table }}_email 
-        ON public.{{ workload.test_table }} ((profile->>'email'));
+    tool:
+      kind: postgres
+      auth: "{{ workload.pg_auth }}"
+      command: |
+        -- Drop table if exists
+        DROP TABLE IF EXISTS public.{{ workload.test_table }};
+        
+        -- Create table with JSONB column
+        CREATE TABLE public.{{ workload.test_table }} (
+          id SERIAL PRIMARY KEY,
+          user_id INTEGER NOT NULL,
+          profile JSONB NOT NULL,
+          metadata JSONB DEFAULT '{}'::jsonb,
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          updated_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        
+        -- Create GIN index on JSONB column for faster queries
+        CREATE INDEX idx_{{ workload.test_table }}_profile 
+          ON public.{{ workload.test_table }} USING GIN (profile);
+        
+        -- Create index on JSONB property
+        CREATE INDEX idx_{{ workload.test_table }}_email 
+          ON public.{{ workload.test_table }} ((profile->>'email'));
     next:
       - step: insert_jsonb_data
 
   # Test 2: Insert JSONB data
   - step: insert_jsonb_data
     desc: Insert rows with JSONB data
-    tool: python
-    args:
-      test_table: "{{ workload.test_table }}"
-      sample_json_data: "{{ workload.sample_json_data }}"
-    code: |
-      import json
-      
-      async def main(test_table, sample_json_data):
-          """Insert JSONB data into PostgreSQL."""
-          sample_data = sample_json_data or []
-          test_table = test_table or 'postgres_jsonb_test'
+    tool:
+      kind: python
+      args:
+        test_table: "{{ workload.test_table }}"
+        sample_json_data: "{{ workload.sample_json_data }}"
+      code: |
+        import json
+        
+        async def main(test_table, sample_json_data):
+            """Insert JSONB data into PostgreSQL."""
+            sample_data = sample_json_data or []
+            test_table = test_table or 'postgres_jsonb_test'
 
-          # Build SQL insert statements
-          insert_statements = []
-          for item in sample_data:
-              user_id = item['user_id']
-              profile_json = json.dumps(item['profile'])
-              metadata_json = json.dumps({
-                  'source': 'test',
-                  'version': '1.0',
-                  'timestamp': '2025-11-12T00:00:00Z'
-              })
-              
-              # Escape single quotes in JSON strings
-              profile_json_escaped = profile_json.replace("'", "''")
-              metadata_json_escaped = metadata_json.replace("'", "''")
-              
-              sql = f"""INSERT INTO public.{test_table} (user_id, profile, metadata)
-              VALUES ({user_id}, '{profile_json_escaped}'::jsonb, '{metadata_json_escaped}'::jsonb);"""
-              
-              insert_statements.append(sql)
-          
-          return {
-              'commands': '\n'.join(insert_statements),
-              'count': len(insert_statements)
-          }
+            # Build SQL insert statements
+            insert_statements = []
+            for item in sample_data:
+                user_id = item['user_id']
+                profile_json = json.dumps(item['profile'])
+                metadata_json = json.dumps({
+                    'source': 'test',
+                    'version': '1.0',
+                    'timestamp': '2025-11-12T00:00:00Z'
+                })
+                
+                # Escape single quotes in JSON strings
+                profile_json_escaped = profile_json.replace("'", "''")
+                metadata_json_escaped = metadata_json.replace("'", "''")
+                
+                sql = f"""INSERT INTO public.{test_table} (user_id, profile, metadata)
+                VALUES ({user_id}, '{profile_json_escaped}'::jsonb, '{metadata_json_escaped}'::jsonb);"""
+                
+                insert_statements.append(sql)
+            
+            return {
+                'commands': '\n'.join(insert_statements),
+                'count': len(insert_statements)
+            }
     next:
       - step: execute_inserts
 
   # Test 3: Execute the insert commands
   - step: execute_inserts
     desc: Execute JSONB insert statements
-    tool: postgres
-    auth: "{{ workload.pg_auth }}"
-    command: "{{ insert_jsonb_data.commands }}"
+    tool:
+      kind: postgres
+      auth: "{{ workload.pg_auth }}"
+      command: "{{ insert_jsonb_data.commands }}"
     next:
       - step: query_jsonb_data
 
   # Test 4: Query JSONB data with various operators
   - step: query_jsonb_data
     desc: Query and validate JSONB data using PostgreSQL JSON operators
-    tool: postgres
-    auth: "{{ workload.pg_auth }}"
-    command: |
-      -- Query 1: Select all data
-      SELECT 
-        id,
-        user_id,
-        profile,
-        profile->>'name' AS name,
-        profile->>'email' AS email,
-        profile->'preferences'->>'theme' AS theme
-      FROM public.{{ workload.test_table }}
-      ORDER BY user_id;
-      
-      -- Query 2: Filter by JSONB property
-      SELECT user_id, profile->>'name' AS name
-      FROM public.{{ workload.test_table }}
-      WHERE profile->>'email' LIKE '%@example.com'
-      ORDER BY user_id;
-      
-      -- Query 3: Query nested JSONB properties
-      SELECT 
-        user_id,
-        profile->>'name' AS name,
-        profile->'preferences'->>'theme' AS theme,
-        profile->'preferences'->'notifications' AS notifications
-      FROM public.{{ workload.test_table }}
-      WHERE profile->'preferences'->>'theme' = 'dark'
-      ORDER BY user_id;
-      
-      -- Query 4: Use JSONB contains operator
-      SELECT user_id, profile->>'name' AS name
-      FROM public.{{ workload.test_table }}
-      WHERE profile @> '{"preferences": {"notifications": true}}'::jsonb
-      ORDER BY user_id;
+    tool:
+      kind: postgres
+      auth: "{{ workload.pg_auth }}"
+      command: |
+        -- Query 1: Select all data
+        SELECT 
+          id,
+          user_id,
+          profile,
+          profile->>'name' AS name,
+          profile->>'email' AS email,
+          profile->'preferences'->>'theme' AS theme
+        FROM public.{{ workload.test_table }}
+        ORDER BY user_id;
+        
+        -- Query 2: Filter by JSONB property
+        SELECT user_id, profile->>'name' AS name
+        FROM public.{{ workload.test_table }}
+        WHERE profile->>'email' LIKE '%@example.com'
+        ORDER BY user_id;
+        
+        -- Query 3: Query nested JSONB properties
+        SELECT 
+          user_id,
+          profile->>'name' AS name,
+          profile->'preferences'->>'theme' AS theme,
+          profile->'preferences'->'notifications' AS notifications
+        FROM public.{{ workload.test_table }}
+        WHERE profile->'preferences'->>'theme' = 'dark'
+        ORDER BY user_id;
+        
+        -- Query 4: Use JSONB contains operator
+        SELECT user_id, profile->>'name' AS name
+        FROM public.{{ workload.test_table }}
+        WHERE profile @> '{"preferences": {"notifications": true}}'::jsonb
+        ORDER BY user_id;
     next:
       - step: update_jsonb_data
 
   # Test 5: Update JSONB data
   - step: update_jsonb_data
     desc: Update JSONB data using jsonb_set function
-    tool: postgres
-    auth: "{{ workload.pg_auth }}"
-    command: |
-      -- Update nested JSONB property
-      UPDATE public.{{ workload.test_table }}
-      SET 
-        profile = jsonb_set(profile, '{preferences, theme}', '"auto"'::jsonb),
-        updated_at = NOW()
-      WHERE user_id = 1;
-      
-      -- Add new property to JSONB
-      UPDATE public.{{ workload.test_table }}
-      SET 
-        profile = profile || '{"verified": true}'::jsonb,
-        updated_at = NOW()
-      WHERE user_id = 2;
-      
-      -- Query updated data
-      SELECT user_id, profile
-      FROM public.{{ workload.test_table }}
-      WHERE user_id IN (1, 2)
-      ORDER BY user_id;
+    tool:
+      kind: postgres
+      auth: "{{ workload.pg_auth }}"
+      command: |
+        -- Update nested JSONB property
+        UPDATE public.{{ workload.test_table }}
+        SET 
+          profile = jsonb_set(profile, '{preferences, theme}', '"auto"'::jsonb),
+          updated_at = NOW()
+        WHERE user_id = 1;
+        
+        -- Add new property to JSONB
+        UPDATE public.{{ workload.test_table }}
+        SET 
+          profile = profile || '{"verified": true}'::jsonb,
+          updated_at = NOW()
+        WHERE user_id = 2;
+        
+        -- Query updated data
+        SELECT user_id, profile
+        FROM public.{{ workload.test_table }}
+        WHERE user_id IN (1, 2)
+        ORDER BY user_id;
     next:
       - step: test_truncate
 
   # Test 6: Test TRUNCATE command
   - step: test_truncate
     desc: Test TRUNCATE command (should work correctly)
-    tool: postgres
-    auth: "{{ workload.pg_auth }}"
-    command: |
-      -- Insert a test row before truncate
-      INSERT INTO public.{{ workload.test_table }} (user_id, profile)
-      VALUES (99, '{"name": "Test User", "email": "test@example.com"}'::jsonb);
-      
-      -- Verify row was inserted
-      SELECT COUNT(*) as count_before_truncate
-      FROM public.{{ workload.test_table }};
-      
-      -- TRUNCATE the table
-      -- TRUNCATE TABLE public.{{ workload.test_table }};
-      
-      -- Verify table is empty
-      SELECT COUNT(*) as count_after_truncate
-      FROM public.{{ workload.test_table }};
+    tool:
+      kind: postgres
+      auth: "{{ workload.pg_auth }}"
+      command: |
+        -- Insert a test row before truncate
+        INSERT INTO public.{{ workload.test_table }} (user_id, profile)
+        VALUES (99, '{"name": "Test User", "email": "test@example.com"}'::jsonb);
+        
+        -- Verify row was inserted
+        SELECT COUNT(*) as count_before_truncate
+        FROM public.{{ workload.test_table }};
+        
+        -- TRUNCATE the table
+        -- TRUNCATE TABLE public.{{ workload.test_table }};
+        
+        -- Verify table is empty
+        SELECT COUNT(*) as count_after_truncate
+        FROM public.{{ workload.test_table }};
     next:
       - step: test_truncate_cascade
 
   # Test 7: Test TRUNCATE with non-existent table (error validation)
   - step: test_truncate_cascade
     desc: Test TRUNCATE error handling - verify table existence check
-    tool: postgres
-    auth: "{{ workload.pg_auth }}"
-    command: |
-      -- Check if table exists before truncating
-      DO $$
-      BEGIN
-        IF EXISTS (
-          SELECT FROM pg_tables 
-          WHERE schemaname = 'public' 
-          AND tablename = 'nonexistent_table_12345'
-        ) THEN
-          TRUNCATE TABLE public.nonexistent_table_12345;
-        ELSE
-          RAISE NOTICE 'Table public.nonexistent_table_12345 does not exist - skipping truncate';
-        END IF;
-      END $$;
+    tool:
+      kind: postgres
+      auth: "{{ workload.pg_auth }}"
+      command: |
+        -- Check if table exists before truncating
+        DO $$
+        BEGIN
+          IF EXISTS (
+            SELECT FROM pg_tables 
+            WHERE schemaname = 'public' 
+            AND tablename = 'nonexistent_table_12345'
+          ) THEN
+            TRUNCATE TABLE public.nonexistent_table_12345;
+          ELSE
+            RAISE NOTICE 'Table public.nonexistent_table_12345 does not exist - skipping truncate';
+          END IF;
+        END $$;
     next:
       - step: validate_and_cleanup
 
   # Test 8: Validate results and cleanup
   - step: validate_and_cleanup
     desc: Validate JSONB operations and cleanup test table
-    tool: python
-    args:
-      query_jsonb_data: "{{ query_jsonb_data }}"
-      test_truncate: "{{ test_truncate }}"
-    code: |
-      async def main(query_jsonb_data, test_truncate):
-          """Validate JSONB test results."""
-          query_result = query_jsonb_data or {}
-          truncate_result = test_truncate or {}
-          
-          # Validate query results
-          validations = {
-              'query_commands_executed': len(query_result) > 0,
-              'truncate_commands_executed': len(truncate_result) > 0
-          }
-          
-          # Check truncate results
-          if truncate_result:
-              for cmd_key, cmd_result in truncate_result.items():
-                  if 'count_before_truncate' in str(cmd_key):
-                      count_before = cmd_result.get('rows', [{}])[0].get('count_before_truncate', 0)
-                      validations['count_before_truncate'] = count_before
-                  if 'count_after_truncate' in str(cmd_key):
-                      count_after = cmd_result.get('rows', [{}])[0].get('count_after_truncate', 0)
-                      validations['count_after_truncate'] = count_after
-                      validations['truncate_successful'] = count_after == 0
-          
-          return {
-              'status': 'completed',
-              'validations': validations,
-              'message': 'JSONB test completed successfully'
-          }
+    tool:
+      kind: python
+      args:
+        query_jsonb_data: "{{ query_jsonb_data }}"
+        test_truncate: "{{ test_truncate }}"
+      code: |
+        async def main(query_jsonb_data, test_truncate):
+            """Validate JSONB test results."""
+            query_result = query_jsonb_data or {}
+            truncate_result = test_truncate or {}
+            
+            # Validate query results
+            validations = {
+                'query_commands_executed': len(query_result) > 0,
+                'truncate_commands_executed': len(truncate_result) > 0
+            }
+            
+            # Check truncate results
+            if truncate_result:
+                for cmd_key, cmd_result in truncate_result.items():
+                    if 'count_before_truncate' in str(cmd_key):
+                        count_before = cmd_result.get('rows', [{}])[0].get('count_before_truncate', 0)
+                        validations['count_before_truncate'] = count_before
+                    if 'count_after_truncate' in str(cmd_key):
+                        count_after = cmd_result.get('rows', [{}])[0].get('count_after_truncate', 0)
+                        validations['count_after_truncate'] = count_after
+                        validations['truncate_successful'] = count_after == 0
+            
+            return {
+                'status': 'completed',
+                'validations': validations,
+                'message': 'JSONB test completed successfully'
+            }
     next:
       - step: end
 
   # Test 9: Cleanup
   - step: cleanup
     desc: Drop test table
-    tool: postgres
-    auth: "{{ workload.pg_auth }}"
-    command: |
-      DROP TABLE IF EXISTS public.{{ workload.test_table }};
+    tool:
+      kind: postgres
+      auth: "{{ workload.pg_auth }}"
+      command: |
+        DROP TABLE IF EXISTS public.{{ workload.test_table }};
     next:
       - step: end
 
   - step: end
     desc: End of PostgreSQL JSONB test
+    tool:
+      kind: python
+      code: |
+        def main():
+            return {"status": "completed"}

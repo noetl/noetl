@@ -1,4 +1,4 @@
-apiVersion: noetl.io/v1
+apiVersion: noetl.io/v2
 kind: Playbook
 
 metadata:
@@ -33,64 +33,84 @@ workload:
 workflow:
   - step: start
     desc: "Initialize user profile processing"
-    next:
-      - step: setup_storage
+    tool:
+      kind: python
+      code: |
+        def main():
+            return {"status": "initialized"}
+    
+    case:
+      - when: "{{ event.name == 'step.exit' }}"
+        then:
+          next:
+            - step: setup_storage
 
   - step: setup_storage
     desc: "Ensure results table exists"
-    tool: postgres
-    auth: "{{ workload.pg_auth }}"
-    command: |
-      CREATE TABLE IF NOT EXISTS public.user_profile_results (
-        id TEXT PRIMARY KEY,
-        execution_id TEXT,
-        user_name TEXT,
-        profile_score DOUBLE PRECISION,
-        score_category TEXT,
-        processed_at TIMESTAMPTZ DEFAULT now()
-      );
-    next:
-      - step: process_users
+    tool:
+      kind: postgres
+      auth: "{{ workload.pg_auth }}"
+      command: |
+        CREATE TABLE IF NOT EXISTS public.user_profile_results (
+          id TEXT PRIMARY KEY,
+          execution_id TEXT,
+          user_name TEXT,
+          profile_score DOUBLE PRECISION,
+          score_category TEXT,
+          processed_at TIMESTAMPTZ DEFAULT now()
+        );
+    
+    case:
+      - when: "{{ event.name == 'call.done' and response is defined }}"
+        then:
+          next:
+            - step: process_users
 
   - step: process_users
     desc: "Process each user through profile scoring sub-playbook"
-    tool: playbook
     loop:
-      collection: "{{ workload.users }}"
-      element: user
+      in: "{{ workload.users }}"
+      iterator: user
       mode: sequential
-    # Provide an explicit task identifier so nested playbook propagates correct parent_step
-    task: process_users
-    path: tests/fixtures/playbooks/playbook_composition/user_profile_scorer
-    return_step: finalize_result
-    args:
-      user_data: "{{ user }}"
-      execution_context: "{{ execution_id }}"
-    sink:
+    tool:
+      kind: playbook
+      # Provide an explicit task identifier so nested playbook propagates correct parent_step
+      task: process_users
+      path: tests/fixtures/playbooks/playbook_composition/user_profile_scorer
+      return_step: finalize_result
       args:
-        id: "{{ execution_id }}:{{ user.name }}"
-        execution_id: "{{ execution_id }}"
-        user_name: "{{ user.name }}"
-        profile_score: "{{ this.profile_score or 0.0 }}"
-        score_category: "{{ this.score_category or 'unknown' }}"
-      tool: postgres
-      auth: "{{ workload.pg_auth }}"
-      table: public.user_profile_results
-      mode: upsert
-      key: id
-    next:
-      - step: validate_results
+        user_data: "{{ user }}"
+        execution_context: "{{ execution_id }}"
+    
+    case:
+      - when: "{{ event.name == 'call.done' and response is defined }}"
+        then:
+          sink:
+            args:
+              id: "{{ execution_id }}:{{ user.name }}"
+              execution_id: "{{ execution_id }}"
+              user_name: "{{ user.name }}"
+              profile_score: "{{ response.profile_score or 0.0 }}"
+              score_category: "{{ response.score_category or 'unknown' }}"
+            tool: postgres
+            auth: "{{ workload.pg_auth }}"
+            table: public.user_profile_results
+            mode: upsert
+            key: id
+          next:
+            - step: validate_results
 
   - step: validate_results
     desc: "Validate all profile scores are within expected range and categories are correct"
-    tool: python
-    args:
-      user_results: "{{ process_users.data }}"
-      expected_min_score: 0.0
-      expected_max_score: 100.0
-      valid_categories: ["Junior", "Mid-Level", "Senior", "Executive"]
-    code: |
-      def main(user_results, expected_min_score, expected_max_score, valid_categories):
+    tool:
+      kind: python
+      args:
+        user_results: "{{ process_users.data }}"
+        expected_min_score: 0.0
+        expected_max_score: 100.0
+        valid_categories: ["Junior", "Mid-Level", "Senior", "Executive"]
+      code: |
+        def main(user_results, expected_min_score, expected_max_score, valid_categories):
           # Be tolerant of early execution before loop aggregation completes.
           # If we did not receive a list of final results yet, return a tracking status
           # instead of raising an error to avoid polluting event logs.
@@ -168,37 +188,42 @@ workflow:
               "validation_details": validation_results,
               "summary": f"Processed {len(user_results)} users, {sum(1 for v in validation_results if v['valid'])} valid"
           }
-    next:
-      - step: end
+    
+    case:
+      - when: "{{ event.name == 'call.done' and response is defined }}"
+        then:
+          next:
+            - step: end
 
   - step: end
     desc: "Complete profile processing pipeline"
-    tool: python
-    args:
-      validation_result: "{{ validate_results.data }}"
-      user_count: "{{ workload.users | length }}"
-    code: |
-      def main(validation_result, user_count):
-          # Be robust to unexpected types (e.g., during early tracking states)
-          if not isinstance(validation_result, dict):
-              try:
-                  summary = str(validation_result)
-              except Exception:
-                  summary = 'N/A'
-              validation_result = {
-                  'status': 'unknown',
-                  'all_valid': False,
-                  'summary': summary
-              }
-          print(f"Pipeline completed successfully!")
-          print(f"Users processed: {user_count}")
-          print(f"Validation status: {validation_result.get('status', 'unknown')}")
-          print(f"All valid: {validation_result.get('all_valid', False)}")
-          print(f"Summary: {validation_result.get('summary', 'No summary available')}")
-          
-          return {
-              "pipeline_status": "completed",
-              "users_processed": user_count,
-              "validation_passed": validation_result.get('all_valid', False),
-              "message": "Playbook composition test completed successfully"
-          }
+    tool:
+      kind: python
+      args:
+        validation_result: "{{ validate_results.data }}"
+        user_count: "{{ workload.users | length }}"
+      code: |
+        def main(validation_result, user_count):
+            # Be robust to unexpected types (e.g., during early tracking states)
+            if not isinstance(validation_result, dict):
+                try:
+                    summary = str(validation_result)
+                except Exception:
+                    summary = 'N/A'
+                validation_result = {
+                    'status': 'unknown',
+                    'all_valid': False,
+                    'summary': summary
+                }
+            print(f"Pipeline completed successfully!")
+            print(f"Users processed: {user_count}")
+            print(f"Validation status: {validation_result.get('status', 'unknown')}")
+            print(f"All valid: {validation_result.get('all_valid', False)}")
+            print(f"Summary: {validation_result.get('summary', 'No summary available')}")
+            
+            return {
+                "pipeline_status": "completed",
+                "users_processed": user_count,
+                "validation_passed": validation_result.get('all_valid', False),
+                "message": "Playbook composition test completed successfully"
+            }

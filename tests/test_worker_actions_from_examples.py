@@ -16,7 +16,7 @@ from unittest.mock import patch
 import yaml
 from jinja2 import Environment, BaseLoader
 
-from noetl.plugin import execute_task
+from noetl.tools import execute_task
 
 
 def _jinja_env():
@@ -112,6 +112,6 @@ def test_duckdb_action_from_github_example():
     }
     env = _jinja_env()
     os.environ["NOETL_DATA_DIR"] = tempfile.mkdtemp()
-    with patch("noetl.plugin.duckdb.connections.duckdb.connect", return_value=_DummyConn()):
+    with patch("noetl.tools.duckdb.connections.duckdb.connect", return_value=_DummyConn()):
         result = execute_task(task_config, "extract_repo_metrics", context, env, task_with)
     assert result["status"] == "success"

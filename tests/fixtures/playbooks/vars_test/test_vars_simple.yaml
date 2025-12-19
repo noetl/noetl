@@ -1,68 +1,87 @@
-apiVersion: noetl.io/v1
+apiVersion: noetl.io/v2
 kind: Playbook
 metadata:
   name: test_vars_simple
   path: test/vars_simple
 
-workload:
-  execution_id: '{{ job.uuid }}'
-
 workflow:
 - step: start
-  desc: Simple vars_cache test
+  desc: Simple transient test
+  tool:
+    kind: python
+    code: |
+      def main():
+          return {"status": "initialized"}
+  
   next:
   - step: set_var
 
 - step: set_var
   desc: Set a test variable
-  tool: python
-  code: |
-    async def main():
-        from noetl.worker.vars_cache import VarsCache
-        
-        execution_id = int(context.get('execution_id'))
-        
-        # Set variable
-        await VarsCache.set_cached(
-            var_name="test_counter",
-            var_value=42,
-            execution_id=execution_id,
-            var_type="user_defined",
-            source_step="set_var"
-        )
-        
-        print(f"Set test_counter=42 for execution {execution_id}")
-        return {"status": "success", "var_set": "test_counter"}
+  tool:
+    kind: python
+    code: |
+      async def main():
+          from noetl.worker.transient import TransientVars
+          import os
+          import logging
+          
+          logger = logging.getLogger(__name__)
+          logger.info(f"DEBUG: NOETL_WORKER_MODE = {os.getenv('NOETL_WORKER_MODE')}")
+          logger.info(f"DEBUG: SERVER_API_URL = {os.getenv('SERVER_API_URL')}")
+          logger.info(f"DEBUG: context keys = {list(context.keys())}")
+          
+          execution_id = int(context.get('execution_id'))
+          
+          # Set variable
+          await TransientVars.set_cached(
+              var_name="test_counter",
+              var_value=42,
+              execution_id=execution_id,
+              var_type="user_defined",
+              source_step="set_var"
+          )
+          
+          logger.info(f"Set test_counter=42 for execution {execution_id}")
+          return {"status": "success", "var_set": "test_counter"}
+  
   next:
   - step: get_var
 
 - step: get_var
   desc: Get the variable back
-  tool: python
-  code: |
-    async def main():
-        from noetl.worker.vars_cache import VarsCache
-        
-        execution_id = int(context.get('execution_id'))
-        
-        # Get variable
-        result = await VarsCache.get_cached(
-            var_name="test_counter",
-            execution_id=execution_id
-        )
-        
-        if result:
-            print(f"Retrieved test_counter: {result}")
-            print(f"Value: {result['value']}")
-            print(f"Access count: {result['access_count']}")
-            print(f"Created: {result['created_at']}")
-            print(f"Accessed: {result['accessed_at']}")
-            return {"status": "success", "value": result["value"], "access_count": result["access_count"]}
-        else:
-            print("Variable not found!")
-            return {"status": "error", "message": "variable not found"}
+  tool:
+    kind: python
+    code: |
+      async def main():
+          from noetl.worker.transient import TransientVars
+          
+          execution_id = int(context.get('execution_id'))
+          
+          # Get variable
+          result = await TransientVars.get_cached(
+              var_name="test_counter",
+              execution_id=execution_id
+          )
+          
+          if result:
+              print(f"Retrieved test_counter: {result}")
+              print(f"Value: {result['value']}")
+              print(f"Access count: {result['access_count']}")
+              print(f"Created: {result['created_at']}")
+              print(f"Accessed: {result['accessed_at']}")
+              return {"status": "success", "value": result["value"], "access_count": result["access_count"]}
+          else:
+              print("Variable not found!")
+              return {"status": "error", "message": "variable not found"}
+  
   next:
   - step: end
 
 - step: end
   desc: Test complete
+  tool:
+    kind: python
+    code: |
+      def main():
+          return {"status": "complete"}

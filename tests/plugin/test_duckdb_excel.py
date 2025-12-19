@@ -5,10 +5,10 @@ from pathlib import Path
 import duckdb
 import pytest
 
-from noetl.plugin.tools.duckdb import excel as excel_module
-from noetl.plugin.tools.duckdb.errors import SQLExecutionError
-from noetl.plugin.tools.duckdb.excel import ExcelExportError, ExcelExportManager, parse_excel_copy_command
-from noetl.plugin.tools.duckdb.sql.execution import execute_sql_commands
+from noetl.tools.tools.duckdb import excel as excel_module
+from noetl.tools.tools.duckdb.errors import SQLExecutionError
+from noetl.tools.tools.duckdb.excel import ExcelExportError, ExcelExportManager, parse_excel_copy_command
+from noetl.tools.tools.duckdb.sql.execution import execute_sql_commands
 
 
 def test_parse_excel_copy_command_basic():

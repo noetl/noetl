@@ -55,11 +55,11 @@ class ExecutionService:
         3. Validate playbook content
         4. Build execution plan (workflow, transitions, workbook)
         5. Merge workload data
-        6. Persist workload to workload table
-        7. Emit execution start event
-        8. Persist workflow/workbook/transitions
-        9. Emit workflow initialized event
-        10. Publish initial steps to queue
+        5.5. Process keychain section (create keychain entries)
+        6. Emit execution start event
+        7. Persist workflow/workbook/transitions
+        8. Emit workflow initialized event
+        9. Publish initial steps to queue
         
         Args:
             request: Validated execution request
@@ -99,12 +99,15 @@ class ExecutionService:
         execution_id = await get_snowflake_id()
         logger.debug(f"Generated execution_id from database: {execution_id}")
         
-        # Step 3: Validate playbook content
-        try:
-            playbook = PlaybookValidator.validate_and_parse(catalog_entry.content)
-        except PlaybookValidationError as e:
-            logger.error(f"Playbook validation failed: {e}")
-            raise HTTPException(status_code=400, detail=f"Invalid playbook: {e}")
+        # Step 3: Use catalog entry payload (already validated and parsed at registration)
+        playbook = catalog_entry.payload
+        if not playbook:
+            # Fallback to parsing content if payload is None (shouldn't happen with modern catalog)
+            try:
+                playbook = PlaybookValidator.validate_and_parse(catalog_entry.content)
+            except PlaybookValidationError as e:
+                logger.error(f"Playbook validation failed: {e}")
+                raise HTTPException(status_code=400, detail=f"Invalid playbook: {e}")
         
         # Step 4: Build execution plan
         execution_plan = ExecutionPlanner.build_plan(playbook, execution_id)
@@ -118,15 +121,25 @@ class ExecutionService:
         else:
             merged_workload = {**base_workload, **args}
         
-        # Step 6: Persist workload to workload table
-        await ExecutionService._persist_workload(
-            execution_id,
-            catalog_entry.path,
-            catalog_entry.version,
-            merged_workload
-        )
+        # Step 5.5: Process keychain section before workflow starts
+        keychain_section = playbook.get('keychain')
+        if keychain_section and catalog_entry.catalog_id:
+            logger.info(f"EXECUTION: Processing keychain section with {len(keychain_section)} entries")
+            from noetl.server.keychain_processor import process_keychain_section
+            try:
+                keychain_data = await process_keychain_section(
+                    keychain_section=keychain_section,
+                    catalog_id=int(catalog_entry.catalog_id),
+                    execution_id=int(execution_id),
+                    workload_vars=merged_workload
+                )
+                logger.info(f"EXECUTION: Keychain processing complete, created {len(keychain_data)} entries")
+            except Exception as e:
+                logger.error(f"EXECUTION: Failed to process keychain section: {e}", exc_info=True)
+                # Don't fail execution, keychain errors will surface when workers try to resolve
         
-        # Step 7: Emit execution start event
+        # Step 6: Emit execution start event
+        logger.critical(f"DEBUG: BEFORE emit_execution_start")
         start_event_id = await ExecutionEventEmitter.emit_execution_start(
             execution_id=execution_id,
             catalog_id=catalog_entry.catalog_id,
@@ -138,14 +151,34 @@ class ExecutionService:
             requestor_info=requestor_info,
             metadata=request.metadata
         )
+        logger.critical(f"DEBUG: AFTER emit_execution_start, start_event_id={start_event_id}")
         
-        # Step 8: Persist workflow/workbook/transitions
-        await ExecutionEventEmitter.persist_workflow(execution_plan.workflow_steps)
-        await ExecutionEventEmitter.persist_workbook(execution_plan.workbook_tasks)
-        await ExecutionEventEmitter.persist_transitions(
-            execution_id,
-            execution_plan.transitions
-        )
+        # Step 7: Persist workflow/workbook/transitions
+        logger.critical(f"DEBUG SERVICE: About to persist workflow_steps, count={len(execution_plan.workflow_steps)}")
+        logger.critical(f"DEBUG SERVICE: workflow_steps[0] keys={execution_plan.workflow_steps[0].keys() if execution_plan.workflow_steps else 'empty'}")
+        try:
+            await ExecutionEventEmitter.persist_workflow(execution_plan.workflow_steps)
+            logger.critical(f"DEBUG SERVICE: Completed persist_workflow")
+        except Exception as e:
+            logger.critical(f"DEBUG SERVICE: Error in persist_workflow: {type(e).__name__}: {e}")
+            raise
+        
+        try:
+            await ExecutionEventEmitter.persist_workbook(execution_plan.workbook_tasks)
+            logger.critical(f"DEBUG SERVICE: Completed persist_workbook")
+        except Exception as e:
+            logger.critical(f"DEBUG SERVICE: Error in persist_workbook: {type(e).__name__}: {e}")
+            raise
+        
+        try:
+            await ExecutionEventEmitter.persist_transitions(
+                execution_id,
+                execution_plan.transitions
+            )
+            logger.critical(f"DEBUG SERVICE: Completed persist_transitions")
+        except Exception as e:
+            logger.critical(f"DEBUG SERVICE: Error in persist_transitions: {type(e).__name__}: {e}")
+            raise
         
         # Step 9: Emit workflow initialized event
         workflow_event_id = await ExecutionEventEmitter.emit_workflow_initialized(
@@ -156,7 +189,7 @@ class ExecutionService:
             transition_count=len(execution_plan.transitions)
         )
         
-        # Step 10: Publish initial steps to queue
+        # Step 9: Publish initial steps to queue
         context = {
             "workload": merged_workload,
             "path": catalog_entry.path,
@@ -180,8 +213,8 @@ class ExecutionService:
         )
         
         logger.info(
-            f"Execution initiated: execution_id={execution_id}, "
-            f"published {len(queue_ids)} initial tasks to queue"
+            f"Execution initiated: execution_id={execution_id}, queue subsystem removed; "
+            f"initial tasks not enqueued"
         )
         
         # Build response
@@ -205,42 +238,4 @@ class ExecutionService:
         )
         logger.debug(f"Execution created: execution_id={execution_id}")
         return execution_response
-
-    @staticmethod
-    async def _persist_workload(
-        execution_id: str,
-        path: str,
-        version: str,
-        workload: Dict[str, Any]
-    ) -> None:
-        """
-        Persist workload to workload table.
-        
-        Args:
-            execution_id: Execution identifier
-            path: Playbook path
-            version: Playbook version
-            workload: Merged workload data
-        """
-        payload = {
-            'path': path,
-            'version': version,
-            'workload': workload,
-        }
-        
-        async with get_pool_connection() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(
-                    """
-                    INSERT INTO noetl.workload (execution_id, data, created_at)
-                    VALUES (%(execution_id)s, %(data)s, %(created_at)s)
-                    """,
-                    {
-                        "execution_id": execution_id,
-                        "data": json.dumps(payload),
-                        "created_at": datetime.utcnow()
-                    }
-                )
-        
-        logger.debug(f"Persisted workload for execution {execution_id}")
 

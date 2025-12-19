@@ -153,7 +153,7 @@ $${{ item.title }}$$  -- Handles: It's a "special" title.
 
 The iterator automatically encodes nested task `command` fields to base64 before execution. This ensures PostgreSQL commands are properly handled when executing tasks directly within the worker process (without going through the queue publisher).
 
-The encoding happens in `noetl/plugin/controller/iterator/execution.py` via `_encode_nested_task()`.
+The encoding happens in `noetl/tools/controller/iterator/execution.py` via `_encode_nested_task()`.
 
 ### Sequential vs Async Mode
 

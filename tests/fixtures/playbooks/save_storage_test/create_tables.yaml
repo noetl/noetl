@@ -1,4 +1,4 @@
-apiVersion: noetl.io/v1
+apiVersion: noetl.io/v2
 kind: Playbook
 metadata:
   name: create_test_tables
@@ -11,54 +11,83 @@ workload:
 workflow:
   - step: start
     desc: Start table creation
-    next:
-      - step: create_flat_table
+    tool:
+      kind: python
+      code: |
+        def main():
+            return {"status": "initialized"}
+    
+    case:
+      - when: "{{ event.name == 'step.exit' }}"
+        then:
+          next:
+            - step: create_flat_table
         
   - step: create_flat_table
     desc: Create flat test table
-    tool: postgres
-    auth: "{{ workload.pg_auth }}"
-    command: |
-      CREATE TABLE IF NOT EXISTS simple_test_flat (
-        test_id VARCHAR(255) PRIMARY KEY,
-        test_name VARCHAR(255),
-        test_value INTEGER,
-        storage_type VARCHAR(255),
-        test_execution VARCHAR(255)
-      )
-    next:
-      - step: create_nested_table
+    tool:
+      kind: postgres
+      auth: "{{ workload.pg_auth }}"
+      query: |
+        CREATE TABLE IF NOT EXISTS simple_test_flat (
+          test_id VARCHAR(255) PRIMARY KEY,
+          test_name VARCHAR(255),
+          test_value INTEGER,
+          storage_type VARCHAR(255),
+          test_execution VARCHAR(255)
+        )
+    
+    case:
+      - when: "{{ event.name == 'call.done' and response is defined }}"
+        then:
+          next:
+            - step: create_nested_table
         
   - step: create_nested_table  
     desc: Create nested test table
-    tool: postgres
-    auth: "{{ workload.pg_auth }}"
-    command: |
-      CREATE TABLE IF NOT EXISTS simple_test_nested (
-        test_id VARCHAR(255) PRIMARY KEY,
-        test_name VARCHAR(255),
-        test_data JSONB,
-        storage_type VARCHAR(255),
-        test_execution VARCHAR(255)
-      )
-    next:
-      - step: create_summary_table
+    tool:
+      kind: postgres
+      auth: "{{ workload.pg_auth }}"
+      query: |
+        CREATE TABLE IF NOT EXISTS simple_test_nested (
+          test_id VARCHAR(255) PRIMARY KEY,
+          test_name VARCHAR(255),
+          test_data JSONB,
+          storage_type VARCHAR(255),
+          test_execution VARCHAR(255)
+        )
+    
+    case:
+      - when: "{{ event.name == 'call.done' and response is defined }}"
+        then:
+          next:
+            - step: create_summary_table
         
   - step: create_summary_table
     desc: Create test summary table
-    tool: postgres
-    auth: "{{ workload.pg_auth }}"
-    command: |
-      CREATE TABLE IF NOT EXISTS test_summary (
-        id SERIAL PRIMARY KEY,
-        summary_type VARCHAR(255),
-        total_records INTEGER,
-        avg_value DECIMAL(10,2),
-        test_execution VARCHAR(255),
-        created_at TIMESTAMP DEFAULT NOW()
-      )
-    next:
-      - step: end
+    tool:
+      kind: postgres
+      auth: "{{ workload.pg_auth }}"
+      query: |
+        CREATE TABLE IF NOT EXISTS test_summary (
+          id SERIAL PRIMARY KEY,
+          summary_type VARCHAR(255),
+          total_records INTEGER,
+          avg_value DECIMAL(10,2),
+          test_execution VARCHAR(255),
+          created_at TIMESTAMP DEFAULT NOW()
+        )
+    
+    case:
+      - when: "{{ event.name == 'call.done' and response is defined }}"
+        then:
+          next:
+            - step: end
         
   - step: end
     desc: Table creation completed
+    tool:
+      kind: python
+      code: |
+        def main():
+            return {"status": "complete"}

@@ -48,24 +48,6 @@ class OrchestratorQueries:
         query = f"SELECT 1 FROM noetl.event WHERE {' AND '.join(clauses)} LIMIT 1"
         return query, params
     
-    @staticmethod
-    def _build_queue_check_query(
-        execution_id: int,
-        statuses: Optional[List[str]] = None
-    ) -> Tuple[str, Dict[str, Any]]:
-        """Build query to check for queue jobs with status filter."""
-        params = {"execution_id": execution_id}
-        clauses = ["execution_id = %(execution_id)s"]
-        
-        if statuses:
-            placeholders = [f"%(status_{i})s" for i in range(len(statuses))]
-            clauses.append(f"status IN ({', '.join(placeholders)})")
-            for i, status in enumerate(statuses):
-                params[f"status_{i}"] = status
-        
-        query = f"SELECT 1 FROM noetl.queue WHERE {' AND '.join(clauses)} LIMIT 1"
-        return query, params
-    
     # ==================== Public Query Executors ====================
     
     @staticmethod
@@ -81,7 +63,7 @@ class OrchestratorQueries:
                 SELECT MAX(created_at) as last_failure
                 FROM noetl.event
                 WHERE execution_id = %(execution_id)s
-                  AND event_type IN ('playbook_failed', 'workflow_failed')
+                  AND event_type IN ('playbook.failed', 'workflow.failed')
             ),
             success_after_failure AS (
                 SELECT COUNT(*) as success_count
@@ -118,15 +100,8 @@ class OrchestratorQueries:
     
     @staticmethod
     async def has_pending_queue_jobs(execution_id: int) -> bool:
-        """Check if execution has pending queue jobs."""
-        query, params = OrchestratorQueries._build_queue_check_query(
-            execution_id=execution_id,
-            statuses=["queued", "active"]
-        )
-        async with get_pool_connection() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(query, params)
-                return await cur.fetchone() is not None
+        """Queue subsystem removed; always report no pending queue jobs."""
+        return False
     
     @staticmethod
     async def count_completed_steps(execution_id: int) -> int:
@@ -146,7 +121,7 @@ class OrchestratorQueries:
     @staticmethod
     async def get_completed_steps_without_step_completed(execution_id: int) -> List[str]:
         """
-        Get steps with action_completed but no step_completed event.
+        Get steps with action_completed (v1) or command.completed (v2) but no step_completed event.
         
         This includes:
         1. Normal successful steps without step_completed
@@ -156,7 +131,7 @@ class OrchestratorQueries:
             SELECT DISTINCT node_name
             FROM noetl.event
             WHERE execution_id = %(execution_id)s
-              AND event_type = 'action_completed'
+              AND event_type IN ('action_completed', 'command.completed')
               AND node_name NOT IN (
                   SELECT node_name FROM noetl.event
                   WHERE execution_id = %(execution_id)s AND event_type = 'step_completed'
@@ -214,13 +189,13 @@ class OrchestratorQueries:
     
     @staticmethod
     async def get_action_completed_meta(execution_id: int, node_name: str) -> Optional[Dict[str, Any]]:
-        """Get meta from action_completed event for parent_event_id extraction."""
+        """Get meta from action_completed (v1) or command.completed (v2) event for parent_event_id extraction."""
         query = """
             SELECT meta
             FROM noetl.event
             WHERE execution_id = %(execution_id)s
               AND node_name = %(node_name)s
-              AND event_type = 'action_completed'
+              AND event_type IN ('action_completed', 'command.completed')
             ORDER BY created_at DESC
             LIMIT 1
         """

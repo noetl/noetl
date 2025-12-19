@@ -1,4 +1,4 @@
-apiVersion: noetl.io/v1
+apiVersion: noetl.io/v2
 kind: Playbook
 metadata:
   name: http_retry_status_code
@@ -11,18 +11,29 @@ workload:
 workflow:
   - step: start
     desc: Fetch URL that returns 200 (changed from 503 for testing)
-    tool: http
-    method: GET
-    url: "{{ workload.test_url }}"
-    retry:
-      max_attempts: 3
-      initial_delay: 0.5
-      backoff_multiplier: 2.0
-      max_delay: 5.0
-      # Retry on specific HTTP errors
-      retry_on: ["http_error", "connection_error"]
-    next:
-      - step: end
+    tool:
+      kind: http
+      method: GET
+      url: "{{ workload.test_url }}"
+    
+    case:
+      - when: "{{ event.name == 'call.error' }}"
+        then:
+          retry:
+            max_attempts: 3
+            initial_delay: 0.5
+            backoff_multiplier: 2.0
+            max_delay: 5.0
+      
+      - when: "{{ event.name == 'call.done' and response is defined }}"
+        then:
+          next:
+            - step: end
         
   - step: end
     desc: End workflow
+    tool:
+      kind: python
+      code: |
+        def main():
+            return {"status": "complete"}

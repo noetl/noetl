@@ -1,0 +1,152 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: v2_http_test
+  path: test/v2/http
+
+workload:
+  test_message: "Testing V2 HTTP tool"
+  # Use the NoETL server ClusterIP directly (from kubectl get svc)
+  api_url: "http://10.96.86.212:8082"
+
+workflow:
+  - step: start
+    desc: Fetch health status from NoETL API using ClusterIP
+    tool:
+      kind: http
+      method: GET
+      url: "{{ workload.api_url }}/api/health"
+    next:
+      - step: process
+
+  - step: process
+    desc: Process HTTP response
+    tool:
+      kind: python
+      code: |
+        def main(input_data):
+            print(f"[PROCESS] Processing HTTP response")
+            print(f"[PROCESS] Input data type: {type(input_data).__name__}")
+            
+            # Extract HTTP response from args
+            http_response = input_data.get('http_response', {}) if isinstance(input_data, dict) else input_data
+            
+            if isinstance(http_response, dict):
+                status_code = http_response.get('status_code', 0)
+                body = http_response.get('body', {})
+                
+                print(f"[PROCESS] Status code: {status_code}")
+                print(f"[PROCESS] Body type: {type(body).__name__}")
+                print(f"[PROCESS] Body content: {body}")
+                
+                return {
+                    "status": "success",
+                    "status_code": status_code,
+                    "body": body
+                }
+            
+            return {"status": "error", "message": "Invalid HTTP response format"}
+    args:
+      http_response: "{{ start }}"
+    next:
+      - step: verify
+
+  - step: verify
+    desc: Verify HTTP response
+    tool:
+      kind: python
+      code: |
+        def main(input_data):
+            print(f"[VERIFY] Verifying HTTP test results")
+            
+            process_result = input_data.get('process_result', {})
+            
+            if isinstance(process_result, str):
+                import json, ast
+                try:
+                    process_result = json.loads(process_result)
+                except:
+                    process_result = ast.literal_eval(process_result)
+            
+            status_code = process_result.get('status_code', 0)
+            
+            print(f"[VERIFY] Status code: {status_code}")
+            
+            verification = {
+                "verified": status_code == 200,
+                "status_code": status_code,
+                "status": "passed" if status_code == 200 else "failed"
+            }
+            
+            print(f"[VERIFY] Verification: {verification['status']}")
+            return verification
+    args:
+      process_result: "{{ process }}"
+    next:
+      - step: end
+
+  - step: end
+    desc: Complete the test
+    tool:
+      kind: python
+      code: |
+        def main(input_data):
+            print(f"[END] HTTP test completed successfully!")
+            
+            verify_result = input_data.get('verify_result', {})
+            
+            if isinstance(verify_result, str):
+                import json, ast
+                try:
+                    verify_result = json.loads(verify_result)
+                except:
+                    verify_result = ast.literal_eval(verify_result)
+            
+            status = verify_result.get('status', 'unknown')
+            status_code = verify_result.get('status_code', 0)
+            
+            print(f"[END] Verification status: {status}")
+            print(f"[END] HTTP status code: {status_code}")
+            
+            return {"status": "completed", "test_passed": status == "passed"}
+    args:
+      verify_result: "{{ verify }}"
+
+
+  - step: process
+    desc: Process API response
+    tool:
+      kind: python
+      code: |
+        def main(input_data):
+            import json
+            print(f"[PROCESS] Processing HTTP response")
+            print(f"[PROCESS] Status: {input_data.get('status_code')}")
+            
+            body = input_data.get('body', {})
+            if isinstance(body, dict):
+                status = body.get('status', 'unknown')
+                print(f"[PROCESS] Health status: {status}")
+                
+                return {
+                    "status": "success",
+                    "health_status": status,
+                    "api_reachable": True
+                }
+            
+            return {"status": "error", "message": "Invalid response format"}
+    args:
+      status_code: "{{ start.status_code }}"
+      body: "{{ start.body }}"
+    next:
+      - step: end
+
+  - step: end
+    desc: Complete
+    tool:
+      kind: python
+      code: |
+        def main(input_data):
+            print("[END] HTTP test completed successfully!")
+            print(f"[END] API health: {input_data.get('health_status', 'N/A')}")
+            return {"status": "completed"}

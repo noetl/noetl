@@ -1,0 +1,38 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: script_loading_inline_test
+  path: tests/script_loading_inline
+
+workload:
+  test_code: |
+    def main():
+        return {"message": "Script loading works!", "status": "success"}
+
+workflow:
+  - step: start
+    desc: Test script loading with inline code
+    tool:
+      kind: python
+      script:
+        uri: inline
+        source:
+          type: inline
+          code: "{{ workload.test_code }}"
+      args: {}
+    
+    case:
+      - when: "{{ event.name == 'call.done' }}"
+        then:
+          next:
+            - step: end
+
+  - step: end
+    desc: End workflow
+    tool:
+      kind: python
+      code: |
+        def main(result):
+            print(f"Result: {result}")
+            assert result.get('status') == 'success', "Test failed"
+            return {"test": "passed"}

@@ -1,5 +1,5 @@
 """
-Tests for noetl.plugin.http module with real-world weather API parameters.
+Tests for noetl.tools.http module with real-world weather API parameters.
 """
 
 import pytest
@@ -8,7 +8,7 @@ import os
 from unittest.mock import Mock, patch, MagicMock
 from jinja2 import Environment, BaseLoader
 
-from noetl.plugin.http import execute_http_task
+from noetl.tools.http import execute_http_task
 
 
 class TestHttpJob:
@@ -29,7 +29,7 @@ class TestHttpJob:
         context = {}
         task_with = {}
 
-        with patch('noetl.plugin.http.httpx.Client') as mock_client:
+        with patch('noetl.tools.http.httpx.Client') as mock_client:
             mock_response = Mock()
             mock_response.status_code = 200
             mock_response.is_success = True
@@ -73,7 +73,7 @@ class TestHttpJob:
         }
         task_with = {'debug_data': context['debug_data']}
 
-        with patch('noetl.plugin.http.httpx.Client') as mock_client:
+        with patch('noetl.tools.http.httpx.Client') as mock_client:
             mock_response = Mock()
             mock_response.status_code = 200
             mock_response.is_success = True
@@ -125,7 +125,7 @@ class TestHttpJob:
         context = {}  # Empty context - templates won't render
         task_with = {}
 
-        with patch('noetl.plugin.http.httpx.Client') as mock_client:
+        with patch('noetl.tools.http.httpx.Client') as mock_client:
             # The HTTP module should handle template rendering errors gracefully
             # and pass the unrendered templates to the HTTP client
             mock_response = Mock()
@@ -179,7 +179,7 @@ class TestHttpJob:
             context = {'debug_data': city}
             task_with = {'debug_data': city}
 
-            with patch('noetl.plugin.http.httpx.Client') as mock_client:
+            with patch('noetl.tools.http.httpx.Client') as mock_client:
                 mock_response = Mock()
                 mock_response.status_code = 200
                 mock_response.is_success = True
@@ -239,7 +239,7 @@ class TestHttpJob:
         }
         task_with = context
 
-        with patch('noetl.plugin.http.httpx.Client') as mock_client:
+        with patch('noetl.tools.http.httpx.Client') as mock_client:
             mock_response = Mock()
             mock_response.status_code = 200
             mock_response.is_success = True
@@ -270,7 +270,7 @@ class TestHttpJob:
         context = {}
         task_with = {}
 
-        with patch('noetl.plugin.http.httpx.Client') as mock_client:
+        with patch('noetl.tools.http.httpx.Client') as mock_client:
             mock_response = Mock()
             mock_response.status_code = 400
             mock_response.is_success = False
@@ -299,7 +299,7 @@ class TestHttpJob:
         context = {}
         task_with = {}
 
-        with patch('noetl.plugin.http.httpx.Client') as mock_client:
+        with patch('noetl.tools.http.httpx.Client') as mock_client:
             mock_response = Mock()
             mock_response.status_code = 200
             mock_response.is_success = True
@@ -339,7 +339,7 @@ class TestHttpJob:
         context = {}
         task_with = {}
 
-        with patch('noetl.plugin.http.httpx.Client') as mock_client_class:
+        with patch('noetl.tools.http.httpx.Client') as mock_client_class:
             # Verify timeout is passed to client
             result = execute_http_task(task_config, context, self.jinja_env, task_with)
             mock_client_class.assert_called_once_with(timeout=5)
@@ -360,7 +360,7 @@ class TestHttpJob:
         }
         task_with = context
 
-        with patch('noetl.plugin.http.httpx.Client') as mock_client:
+        with patch('noetl.tools.http.httpx.Client') as mock_client:
             mock_response = Mock()
             mock_response.status_code = 200
             mock_response.is_success = True

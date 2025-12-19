@@ -96,22 +96,22 @@ Add support for paginated HTTP API calls within iterator loops, allowing automat
 
 ### Phase 1: Core Pagination Loop (Current)
 
-1. **Extend iterator config** (`noetl/plugin/controller/iterator/config.py`)
+1. **Extend iterator config** (`noetl/tools/controller/iterator/config.py`)
    - Extract `pagination` block from loop config
    - Validate pagination attributes
 
-2. **Add pagination executor** (`noetl/plugin/controller/iterator/pagination.py`)
+2. **Add pagination executor** (`noetl/tools/controller/iterator/pagination.py`)
    - New module for pagination logic
    - `execute_paginated_http()` function
    - Response inspection and continuation logic
    - Result merging strategies
 
-3. **Update iterator executor** (`noetl/plugin/controller/iterator/executor.py`)
+3. **Update iterator executor** (`noetl/tools/controller/iterator/executor.py`)
    - Detect pagination block
    - Delegate to pagination executor
    - Handle merged results
 
-4. **Add retry integration** (`noetl/plugin/controller/iterator/retry.py`)
+4. **Add retry integration** (`noetl/tools/controller/iterator/retry.py`)
    - Reuse existing retry mechanism
    - Apply retry per HTTP request
    - Exponential backoff support

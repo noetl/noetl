@@ -18,12 +18,12 @@ The Secret Manager provider extends NoETL's unified authentication system to sup
 
 ### Components
 
-1. **Auth Resolver** (`noetl/plugin/shared/auth/resolver.py`):
+1. **Auth Resolver** (`noetl/tools/shared/auth/resolver.py`):
    - Detects `provider: secret_manager` in auth configuration
    - Delegates to secret fetching utilities
    - Injects resolved credentials into template context
 
-2. **Secret Manager Utils** (`noetl/plugin/shared/auth/utils.py`):
+2. **Secret Manager Utils** (`noetl/tools/shared/auth/utils.py`):
    - `fetch_secret_manager_value()`: Main entry point for secret retrieval
    - `_fetch_google_secret()`: Google Secret Manager API integration
    - Handles OAuth token resolution and API calls
@@ -137,7 +137,7 @@ Authorization: Bearer {oauth_token}
 }
 ```
 
-**Code Implementation** (`noetl/plugin/shared/auth/utils.py`):
+**Code Implementation** (`noetl/tools/shared/auth/utils.py`):
 
 ```python
 def fetch_secret_manager_value(key, auth_type, oauth_credential, execution_id):
@@ -205,7 +205,7 @@ def _fetch_google_secret(secret_path, oauth_credential):
 
 ### Auth Resolution Logic
 
-**Code Implementation** (`noetl/plugin/shared/auth/resolver.py`):
+**Code Implementation** (`noetl/tools/shared/auth/resolver.py`):
 
 ```python
 def resolve_auth_map(step_config, task_with, jinja_env, context):
@@ -264,7 +264,7 @@ def resolve_auth_map(step_config, task_with, jinja_env, context):
 The HTTP executor injects resolved auth into template context:
 
 ```python
-# noetl/plugin/tools/http/executor.py
+# noetl/tools/tools/http/executor.py
 
 # Resolve auth BEFORE rendering data/payload
 auth_headers, resolved_auth_map = _process_authentication_with_context(...)

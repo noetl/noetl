@@ -207,32 +207,11 @@ class DatabaseSchema:
             logger.error(f"FATAL: Error creating postgres tables from canonical DDL (sync): {e}", exc_info=True)
             raise
 
-    def test_workload_table_sync(self):
-        try:
-            with self.conn.cursor() as cursor:
-                cursor.execute(f"""
-                    SELECT EXISTS (
-                        SELECT FROM information_schema.tables 
-                        WHERE table_schema = %s AND table_name = 'workload'
-                    )
-                """, (self.noetl_schema,))
-                result = cursor.fetchone()
-                table_exists = result[0] if result else False
-                if not table_exists:
-                    logger.error("FATAL: Failed to create workload table (sync).")
-                    raise ValueError("Workload table missing")
-                else:
-                    logger.info("Workload table present (sync).")
-        except Exception as e:
-            logger.error(f"FATAL: Error testing workload table (sync): {e}.", exc_info=True)
-            raise
-
     def init_database_sync(self):
         try:
             self.test_connection_sync()
             self.set_search_path_sync()
             self.create_postgres_tables_sync()
-            self.test_workload_table_sync()
             return True
         except Exception as e:
             logger.error(f"FATAL: Error initializing database (sync): {e}.", exc_info=True)
@@ -364,60 +343,6 @@ class DatabaseSchema:
             return
         except Exception as e:
             logger.error(f"FATAL: Error creating postgres tables from canonical DDL (async): {e}", exc_info=True)
-            raise
-
-    async def test_workload_table(self):
-        try:
-            async with self.conn.cursor() as cursor:
-                await cursor.execute(f"""
-                    SELECT EXISTS (
-                        SELECT FROM information_schema.tables 
-                        WHERE table_schema = %s AND table_name = 'workload'
-                    )
-                """, (self.noetl_schema,))
-                result = await cursor.fetchone()
-                table_exists = result[0] if result else False
-
-                if not table_exists:
-                    logger.error("FATAL: Failed to create workload table.")
-                    raise ValueError("Failed to create workload table")
-                else:
-                    logger.info("Workload table created (async).")
-
-                    try:
-                        test_id = get_snowflake_id()
-                        test_data = json.dumps({"test": "data"})
-                        logger.info(f"Testing workload table with test_id: {test_id}.")
-
-                        await cursor.execute(f"""
-                            INSERT INTO {self.noetl_schema}.workload (execution_id, data)
-                            VALUES (%s, %s)
-                            ON CONFLICT (execution_id) DO UPDATE
-                            SET data = EXCLUDED.data
-                        """, (test_id, test_data))
-                        await self.conn.commit()
-
-                        await cursor.execute(f"""
-                            SELECT data FROM {self.noetl_schema}.workload WHERE execution_id = %s
-                        """, (test_id,))
-                        row = await cursor.fetchone()
-                        if row and row[0] == test_data:
-                            logger.info("Tested workload table insert and select (async).")
-                        else:
-                            logger.error(f"FATAL: Failed to verify test data in workload table. Expected: {test_data}, Got: {row[0] if row else None}")
-                            raise ValueError("Workload table test failed")
-
-                        await cursor.execute(f"""
-                            DELETE FROM {self.noetl_schema}.workload WHERE execution_id = %s
-                        """, (test_id,))
-                        await self.conn.commit()
-                        logger.info("Cleaned up test data from workload table (async).")
-
-                    except Exception as e:
-                        logger.error(f"FATAL: Error testing workload table: {e}.", exc_info=True)
-                        raise
-        except Exception as e:
-            logger.error(f"FATAL: Error testing workload table: {e}.", exc_info=True)
             raise
 
     async def list_tables(self) -> List[str]:

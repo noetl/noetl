@@ -274,7 +274,9 @@ const Execution: React.FC = () => {
     const end = endTime ? moment(endTime) : moment();
     const duration = moment.duration(end.diff(start));
 
-    if (duration.asSeconds() < 60) {
+    if (duration.asSeconds() < 1) {
+      return `${Math.round(duration.asMilliseconds())}ms`;
+    } else if (duration.asSeconds() < 60) {
       return `${Math.round(duration.asSeconds())}s`;
     } else if (duration.asMinutes() < 60) {
       return `${Math.round(duration.asMinutes())}m ${Math.round(duration.asSeconds() % 60)}s`;

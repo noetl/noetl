@@ -180,9 +180,9 @@ class APIService {
     catalog_id: string,
     params?: any,
   ): Promise<ExecutionData> {
-    const response = await apiClient.post(`/run/playbook`, {
+    const response = await apiClient.post(`/v2/execute`, {
       catalog_id,
-      parameters: params || {},
+      payload: params || {},
     });
     return response.data;
   }
@@ -190,7 +190,7 @@ class APIService {
   async executePlaybookWithPayload(
     requestBody: any,
   ): Promise<{ execution_id: string }> {
-    const response = await apiClient.post("/run/playbook", requestBody);
+    const response = await apiClient.post("/v2/execute", requestBody);
     return response.data;
   }
 

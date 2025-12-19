@@ -1,0 +1,72 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: simple_http_example_v2
+  path: examples/simple_http_v2
+  labels:
+    category: example
+    version: v2
+
+workload:
+  api_url: "https://httpbin.org"
+  endpoints:
+    - path: "/get"
+      name: "test_get"
+
+workflow:
+  # Required 'start' step
+  - step: start
+    desc: "Start workflow"
+    tool:
+      kind: http
+      method: GET
+      endpoint: "{{ workload.api_url }}/get"
+      params:
+        test: "hello"
+    
+    case:
+      # On successful call, transition to process step
+      - when: "{{ event.name == 'call.done' and response is defined and response.status == 200 }}"
+        then:
+          result:
+            from: response.data
+          next:
+            - step: process
+              args:
+                data: "{{ response.data }}"
+      
+      # On error, retry
+      - when: "{{ event.name == 'call.done' and error is defined }}"
+        then:
+          retry:
+            max_attempts: 3
+            backoff_multiplier: 2.0
+            initial_delay: 0.5
+    
+    next: end  # Default if no case matches
+
+  - step: process
+    desc: "Process HTTP response"
+    tool:
+      kind: python
+      code: |
+        def main(data):
+            print(f"Processing data: {data}")
+            return {"status": "processed", "data": data}
+    
+    case:
+      - when: "{{ event.name == 'call.done' and response is defined }}"
+        then:
+          result:
+            from: response
+          next:
+            - step: end
+
+  - step: end
+    desc: "End workflow"
+    tool:
+      kind: python
+      code: |
+        def main():
+            print("Workflow complete")
+            return {"status": "done"}

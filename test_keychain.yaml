@@ -1,0 +1,39 @@
+apiVersion: noetl.io/v1
+kind: Playbook
+metadata:
+  name: keychain_test
+  path: tests/keychain_test
+workload:
+  openai_key: "{{ args.openai_key | default('sk-default-key') }}"
+  amadeus_client_id: "{{ args.amadeus_client_id | default('default-client-id') }}"
+  amadeus_client_secret: "{{ args.amadeus_client_secret | default('default-secret') }}"
+keychain:
+  - name: openai_token
+    kind: bearer
+    scope: global
+    token: "{{ workload.openai_key }}"
+  - name: amadeus_credentials
+    kind: static
+    scope: global
+    map:
+      client_id: "{{ workload.amadeus_client_id }}"
+      client_secret: "{{ workload.amadeus_client_secret }}"
+  - name: amadeus_token
+    kind: oauth2
+    scope: global
+    auto_renew: true
+    endpoint: https://test.api.amadeus.com/v1/security/oauth2/token
+    method: POST
+    headers:
+      Content-Type: application/x-www-form-urlencoded
+    data:
+      grant_type: client_credentials
+      client_id: "{{ keychain.amadeus_credentials.client_id }}"
+      client_secret: "{{ keychain.amadeus_credentials.client_secret }}"
+workflow:
+  - step: start
+    desc: Simple workflow to test keychain
+    next:
+      - step: end
+  - step: end
+    desc: End workflow

@@ -1,4 +1,4 @@
-apiVersion: noetl.io/v1
+apiVersion: noetl.io/v2
 kind: Playbook
 metadata:
   name: test_pagination_cursor
@@ -11,67 +11,95 @@ workload:
 workflow:
   - step: start
     desc: Fetch all events with cursor pagination
-    next:
-      - step: fetch_all_events
+    tool:
+      kind: python
+      code: |
+        def main():
+            return {"status": "initialized"}
+    
+    case:
+      - when: "{{ event.name == 'step.exit' }}"
+        then:
+          next:
+            - step: fetch_all_events
 
   - step: fetch_all_events
     desc: Cursor-based pagination with automatic continuation
-    tool: http
-    url: "{{ workload.api_url }}/api/v1/events"
-    method: GET
-    params:
-      limit: 10
-    retry:
-      on_success:
-        while: "{{ response.next_cursor is not none and response.next_cursor != '' }}"
-        max_attempts: 10
-        next_call:
-          params:
-            cursor: "{{ response.next_cursor }}"
-            limit: "{{ response.limit }}"
-        collect:
-          strategy: append
-          path: events
-          into: pages
-    next:
-      - step: validate_results
+    tool:
+      kind: http
+      url: "{{ workload.api_url }}/api/v1/events"
+      method: GET
+      params:
+        limit: 10
+    
+    case:
+      - when: "{{ event.name == 'call.done' and response is defined and response.next_cursor is not none and response.next_cursor != '' }}"
+        then:
+          collect:
+            strategy: append
+            path: events
+            into: pages
+          retry:
+            max_attempts: 10
+            params:
+              cursor: "{{ response.next_cursor }}"
+              limit: "{{ response.limit }}"
+      
+      - when: "{{ event.name == 'call.done' and response is defined and (response.next_cursor is none or response.next_cursor == '') }}"
+        then:
+          collect:
+            strategy: append
+            path: events
+            into: pages
+          next:
+            - step: validate_results
 
   - step: validate_results
     desc: Validate merged results
-    tool: python
-    args:
-      input_data:
-        fetch_all_events: "{{ fetch_all_events }}"
-    code: |
-      def main(input_data):
-          # Check we got all items - handle server wrapping in {'value': [items]}
-          raw_data = input_data.get('fetch_all_events', [])
-          
-          # Unwrap if server wrapped in {'value': ...}
-          if isinstance(raw_data, dict) and 'value' in raw_data:
-              data = raw_data['value']
-          elif isinstance(raw_data, dict) and 'data' in raw_data:
-              data = raw_data['data']
-          elif isinstance(raw_data, list):
-              data = raw_data
-          else:
-              data = []
-          
-          print(f"Total events fetched: {len(data)}")
-          print(f"First event: {data[0] if data else None}")
-          print(f"Last event: {data[-1] if data else None}")
-          
-          # Validate
-          assert len(data) == 35, f"Expected 35 events, got {len(data)}"
-          assert data[0]['id'] == 1, f"First event should have id=1"
-          assert data[-1]['id'] == 35, f"Last event should have id=35"
-          
-          return {
-              'status': 'success',
-              'total_events': len(data)
-          }
-    next:
-      - step: end
+    tool:
+      kind: python
+      code: |
+        def main(input_data):
+            # Check we got all items - handle server wrapping in {'value': [items]}
+            raw_data = input_data.get('fetch_all_events', [])
+            
+            # Unwrap if server wrapped in {'value': ...}
+            if isinstance(raw_data, dict) and 'value' in raw_data:
+                data = raw_data['value']
+            elif isinstance(raw_data, dict) and 'data' in raw_data:
+                data = raw_data['data']
+            elif isinstance(raw_data, list):
+                data = raw_data
+            else:
+                data = []
+            
+            print(f"Total events fetched: {len(data)}")
+            print(f"First event: {data[0] if data else None}")
+            print(f"Last event: {data[-1] if data else None}")
+            
+            # Validate
+            assert len(data) == 35, f"Expected 35 events, got {len(data)}"
+            assert data[0]['id'] == 1, f"First event should have id=1"
+            assert data[-1]['id'] == 35, f"Last event should have id=35"
+            
+            return {
+                'status': 'success',
+                'total_events': len(data)
+            }
+      args:
+        input_data:
+          fetch_all_events: "{{ fetch_all_events }}"
+    
+    case:
+      - when: "{{ event.name == 'call.done' and response is defined }}"
+        then:
+          next:
+            - step: end
 
   - step: end
     desc: Workflow complete
+    tool:
+      kind: python
+      code: |
+        def main():
+            return {"status": "complete"}

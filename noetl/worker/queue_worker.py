@@ -132,7 +132,7 @@ class QueueWorker:
                 logger.exception(f"Failed to emit action_retry event: {exc}")
 
     async def _emit_worker_event(self, event_data: Dict[str, Any]) -> None:
-        from noetl.plugin.runtime import report_event_async
+        from noetl.core.runtime import report_event_async
 
         status = event_data.get("status")
         if status:
@@ -154,7 +154,7 @@ class QueueWorker:
             logger.critical(f"WORKER._run_action: loop block = {action_cfg.get('loop')}")
         
         # All tools (including Python) must go through execute_task to support iterator/loop handling
-        from noetl.plugin import execute_task
+        from noetl.tools import execute_task
         
         # Create event callback for iterator executor
         # This is a sync function that will be called from the thread pool
@@ -172,7 +172,7 @@ class QueueWorker:
         ) -> None:
             """Sync callback that bridges to async event emission."""
             import asyncio as async_module
-            from noetl.plugin.runtime import report_event_async
+            from noetl.core.runtime import report_event_async
             
             # Build event payload matching server expectations
             # Server uses EventEmitRequest schema which expects specific field names
@@ -248,7 +248,7 @@ class QueueWorker:
             attempt_number = current_attempts + 1
 
             from jinja2 import Environment
-            from noetl.plugin.runtime import RetryPolicy
+            from noetl.core.runtime import RetryPolicy
 
             jinja_env = Environment()
             policy = RetryPolicy(retry_config, jinja_env)

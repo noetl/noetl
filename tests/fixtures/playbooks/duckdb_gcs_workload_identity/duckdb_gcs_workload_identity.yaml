@@ -1,4 +1,4 @@
-apiVersion: noetl.io/v1
+apiVersion: noetl.io/v2
 kind: Playbook
 
 metadata:
@@ -14,57 +14,69 @@ workload:
 workflow:
   - step: start
     desc: Start workflow
+    tool:
+      kind: python
+      code: |
+        def main():
+            return {"status": "initialized"}
     next:
       - step: test_data
 
 
   - step: test_data
     desc: Upload a parquet file to GCS via DuckDB
-    tool: duckdb
-    auth:
-      pg_db:
-        source: credential
-        tool: postgres
-        key: "{{ workload.pg_auth }}"
-      gcs_secret:
-        source: credential
-        tool: hmac
-        key: gcs_hmac_local
-        scope: gs://{{ workload.gcs_bucket }}
-    commands: |
-      INSTALL httpfs;
-      LOAD httpfs;
+    tool:
+      kind: duckdb
+      auth:
+        pg_db:
+          source: credential
+          tool: postgres
+          key: "{{ workload.pg_auth }}"
+        gcs_secret:
+          source: credential
+          tool: hmac
+          key: gcs_hmac_local
+          scope: gs://{{ workload.gcs_bucket }}
+      commands: |
+        INSTALL httpfs;
+        LOAD httpfs;
 
-      CREATE TABLE test_data AS
-      SELECT 'test data' AS message, '{{ execution_id }}' AS id;
+        CREATE TABLE test_data AS
+        SELECT 'test data' AS message, '{{ execution_id }}' AS id;
 
-      COPY test_data TO 'gs://{{ workload.gcs_bucket }}/fixture/{{ workload.upload_file }}' (FORMAT PARQUET);
+        COPY test_data TO 'gs://{{ workload.gcs_bucket }}/fixture/{{ workload.upload_file }}' (FORMAT PARQUET);
     next:
       - step: download_file
 
   - step: download_file
     desc: Read the file back and upload under a different name
-    tool: duckdb
-    auth:
-      pg_db:
-        source: credential
-        tool: postgres
-        key: "{{ workload.pg_auth }}"
-      gcs_secret:
-        source: credential
-        tool: hmac
-        key: gcs_hmac_local
-        scope: gs://{{ workload.gcs_bucket }}
-    commands: |
-      INSTALL httpfs;
-      LOAD httpfs;
+    tool:
+      kind: duckdb
+      auth:
+        pg_db:
+          source: credential
+          tool: postgres
+          key: "{{ workload.pg_auth }}"
+        gcs_secret:
+          source: credential
+          tool: hmac
+          key: gcs_hmac_local
+          scope: gs://{{ workload.gcs_bucket }}
+      commands: |
+        INSTALL httpfs;
+        LOAD httpfs;
 
-      CREATE TABLE downloaded_data AS
-      SELECT * FROM 'gs://{{ workload.gcs_bucket }}/fixture/{{ workload.upload_file }}';
+        CREATE TABLE downloaded_data AS
+        SELECT * FROM 'gs://{{ workload.gcs_bucket }}/fixture/{{ workload.upload_file }}';
 
-      COPY downloaded_data TO '{{ workload.download_file }}' (FORMAT PARQUET);
+        COPY downloaded_data TO '{{ workload.download_file }}' (FORMAT PARQUET);
     next:
       - step: end
 
   - step: end
     desc: Done
+    tool:
+      kind: python
+      code: |
+        def main():
+            return {"status": "completed"}

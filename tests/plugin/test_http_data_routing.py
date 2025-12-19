@@ -1,6 +1,6 @@
 import os
 from jinja2 import Environment
-from noetl.plugin.http import execute_http_task
+from noetl.tools.http import execute_http_task
 
 
 def test_get_routes_data_to_query(monkeypatch):

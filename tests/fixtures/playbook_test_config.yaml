@@ -169,12 +169,12 @@ playbooks:
     validation:
       execution_status: completed
 
-  - name: test_vars_cache
-    path: tests/fixtures/playbooks/vars_test/test_vars_cache
+  - name: test_transient
+    path: tests/fixtures/playbooks/vars_test/test_transient
     category: basic
     enabled: true
     requires_credentials: []
-    expected_result_file: test_vars_cache.json
+    expected_result_file: test_transient.json
     validation:
       execution_status: completed
 
