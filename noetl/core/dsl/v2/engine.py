@@ -350,6 +350,17 @@ class ControlFlowEngine:
         self.state_store = state_store
         self.jinja_env = Environment(undefined=StrictUndefined)
     
+    def _render_value_recursive(self, value: Any, context: dict[str, Any]) -> Any:
+        """Recursively render templates in nested data structures."""
+        if isinstance(value, str) and "{{" in value:
+            return self._render_template(value, context)
+        elif isinstance(value, dict):
+            return {k: self._render_value_recursive(v, context) for k, v in value.items()}
+        elif isinstance(value, list):
+            return [self._render_value_recursive(item, context) for item in value]
+        else:
+            return value
+    
     def _render_template(self, template_str: str, context: dict[str, Any]) -> Any:
         """Render Jinja2 template."""
         try:
@@ -403,6 +414,39 @@ class ControlFlowEngine:
             logger.error(f"Condition evaluation error: {e}")
             logger.error(f"Condition: {when_expr}")
             return False
+    
+    async def _process_case_rules(
+        self,
+        state: ExecutionState,
+        step_def: Step,
+        event: Event
+    ) -> list[Command]:
+        """Process case rules for a given event and return matching commands."""
+        commands = []
+        context = state.get_render_context(event)
+        
+        if step_def.case:
+            logger.debug(f"[CASE-EVAL] Step {event.step} has {len(step_def.case)} case rules, evaluating for event {event.name}")
+            for idx, case_entry in enumerate(step_def.case):
+                # Evaluate condition
+                if self._evaluate_condition(case_entry.when, context):
+                    logger.info(f"[CASE-MATCH] Step {event.step}, event {event.name}: matched case {idx}: {case_entry.when}")
+                    
+                    # Process then actions
+                    new_commands = await self._process_then_actions(
+                        case_entry.then,
+                        state,
+                        event
+                    )
+                    commands.extend(new_commands)
+                    logger.info(f"[CASE-MATCH] Generated {len(new_commands)} commands from case rule")
+                    
+                    # First match wins - don't evaluate remaining cases
+                    break
+                else:
+                    logger.debug(f"[CASE-EVAL] Case {idx} did not match: {case_entry.when}")
+        
+        return commands
     
     async def _process_then_actions(
         self, 
@@ -593,17 +637,14 @@ class ControlFlowEngine:
                 sink_spec = action["sink"]
                 backend = sink_spec.get("backend", "postgres")
                 table = sink_spec.get("table")
-                data_source = sink_spec.get("from", "{{ result }}")
+                data_source = sink_spec.get("from", "{{ response }}")
                 
                 if not table:
                     logger.warning("Sink action missing 'table' attribute")
                     continue
                 
-                # Render data source
-                if isinstance(data_source, str) and "{{" in data_source:
-                    data = self._render_template(data_source, context)
-                else:
-                    data = data_source
+                # Render data source recursively (handles dicts, lists, strings)
+                data = self._render_value_recursive(data_source, context)
                 
                 # Create sink command (uses special sink tool kind)
                 sink_command = Command(
@@ -615,7 +656,7 @@ class ControlFlowEngine:
                             "backend": backend,
                             "table": table,
                             "data": data,
-                            "connection": sink_spec.get("connection")
+                            "auth": sink_spec.get("auth")
                         }
                     ),
                     args={}
@@ -855,26 +896,8 @@ class ControlFlowEngine:
         
         # CRITICAL: Process case rules FIRST for ALL events (not just step.exit)
         # This allows steps to react to call.done, call.error, and other mid-step events
-        if step_def.case:
-            logger.debug(f"[CASE-EVAL] Step {event.step} has {len(step_def.case)} case rules, evaluating for event {event.name}")
-            for idx, case_entry in enumerate(step_def.case):
-                # Evaluate condition
-                if self._evaluate_condition(case_entry.when, context):
-                    logger.info(f"[CASE-MATCH] Step {event.step}, event {event.name}: matched case {idx}: {case_entry.when}")
-                    
-                    # Process then actions
-                    new_commands = await self._process_then_actions(
-                        case_entry.then,
-                        state,
-                        event
-                    )
-                    commands.extend(new_commands)
-                    logger.info(f"[CASE-MATCH] Generated {len(new_commands)} commands from case rule")
-                    
-                    # First match wins - don't evaluate remaining cases
-                    break
-                else:
-                    logger.debug(f"[CASE-EVAL] Case {idx} did not match: {case_entry.when}")
+        case_commands = await self._process_case_rules(state, step_def, event)
+        commands.extend(case_commands)
         
         # Handle loop.item events - continue loop iteration
         # Only process if case didn't generate commands
@@ -898,8 +921,16 @@ class ControlFlowEngine:
                 if command:
                     commands.append(command)
             else:
-                # Loop done - would transition to next step via structural next
-                logger.info(f"Loop completed for step {event.step}")
+                # Loop done - recursively process loop.done event through case matching
+                logger.info(f"Loop completed for step {event.step}, processing loop.done event")
+                loop_done_event = Event(
+                    execution_id=event.execution_id,
+                    step=event.step,
+                    name="loop.done",
+                    payload={"status": "completed", "iterations": state.loop_state[event.step]["index"]}
+                )
+                loop_done_commands = await self._process_case_rules(state, step_def, loop_done_event)
+                commands.extend(loop_done_commands)
         
         # Process vars block if present (extract variables from step result after completion)
         if event.name == "step.exit" and step_def:
