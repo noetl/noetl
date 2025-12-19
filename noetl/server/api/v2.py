@@ -46,10 +46,13 @@ async def get_nats_publisher():
     global _nats_publisher
     
     if _nats_publisher is None:
-        nats_url = os.getenv("NATS_URL", "nats://noetl:noetl@nats.nats.svc.cluster.local:4222")
-        _nats_publisher = NATSCommandPublisher(nats_url=nats_url)
+        from noetl.core.config import settings
+        _nats_publisher = NATSCommandPublisher(
+            nats_url=settings.nats_url,
+            subject=settings.nats_subject
+        )
         await _nats_publisher.connect()
-        logger.info(f"NATS publisher initialized: {nats_url}")
+        logger.info(f"NATS publisher initialized: {settings.nats_url}")
     
     return _nats_publisher
 

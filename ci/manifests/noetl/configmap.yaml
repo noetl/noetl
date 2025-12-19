@@ -42,3 +42,10 @@ data:
   NOETL_SCHEMA: "noetl"
   NOETL_DB_STARTUP_TIMEOUT: "180"
   NOETL_DB_RETRY_INTERVAL: "5"
+  # NATS Configuration
+  NATS_URL: "nats://noetl:noetl@nats.nats.svc.cluster.local:4222"
+  NATS_USER: "noetl"
+  NATS_PASSWORD: "noetl"
+  NATS_STREAM: "NOETL_COMMANDS"
+  NATS_CONSUMER: "noetl_worker_pool"
+  NATS_SUBJECT: "noetl.commands"

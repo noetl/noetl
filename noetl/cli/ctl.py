@@ -61,8 +61,8 @@ def start_worker_service(
             sys.stderr.flush()
             # Get configuration
             settings = get_settings()
-            nats_url = os.getenv("NATS_URL", "nats://noetl:noetl@localhost:30422")
-            server_url = settings.server_api_url or os.getenv("SERVER_API_URL", "http://localhost:8082")
+            nats_url = settings.nats_url
+            server_url = settings.server_api_url or settings.server_url
             
             sys.stderr.write(f"=== CALLING run_worker_v2_sync NATS={nats_url} ===\n")
             sys.stderr.flush()
