@@ -302,6 +302,7 @@ class StateStore:
             "completed_steps": list(state.completed_steps),
             "failed": state.failed,
             "completed": state.completed,
+            "loop_state": state.loop_state,  # Include loop state for iteration result tracking
         }
         
         # Pure event-driven: State is fully reconstructable from events
@@ -358,6 +359,11 @@ class StateStore:
                     # Restore step results from step.exit events
                     if event_type == 'step.exit' and result_data:
                         state.mark_step_completed(node_name, result_data)
+                
+                # Note: loop_state is not persisted in events, so loops must complete within
+                # a single server session. For cross-session loop continuation, loop_state
+                # would need to be persisted or reconstructed from events.
+                # Currently, loops are expected to complete quickly within memory cache lifetime.
                 
                 # Cache and return
                 self._memory_cache[execution_id] = state
@@ -922,6 +928,7 @@ class ControlFlowEngine:
         state.set_current_step(event.step)
         
         # Store step result if this is a step.exit event
+        logger.info(f"[LOOP_DEBUG] Checking step.exit: name={event.name}, has_result={'result' in event.payload}, payload_keys={list(event.payload.keys())}")
         if event.name == "step.exit" and "result" in event.payload:
             logger.info(f"[LOOP_DEBUG] step.exit with result for {event.step}, step_def.loop={step_def.loop}, in_loop_state={event.step in state.loop_state}")
             # If in a loop, add iteration result to aggregation (for ALL iterations)
