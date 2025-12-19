@@ -261,6 +261,7 @@ class Step(BaseModel):
     step: str = Field(..., description="Step name (unique identifier)")
     desc: Optional[str] = Field(None, description="Step description")
     args: Optional[dict[str, Any]] = Field(None, description="Input arguments for this step")
+    vars: Optional[dict[str, Any]] = Field(None, description="Variables to extract from step result")
     loop: Optional[Loop] = Field(None, description="Loop configuration")
     tool: ToolSpec = Field(..., description="Tool configuration with tool.kind")
     case: Optional[list[CaseEntry]] = Field(None, description="Event-driven conditional rules")
