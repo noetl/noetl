@@ -899,6 +899,7 @@ class ControlFlowEngine:
         
         This is the core engine method called by the API.
         """
+        logger.info(f"[ENGINE] handle_event called: event.name={event.name}, step={event.step}, execution={event.execution_id}")
         commands: list[Command] = []
         
         # Load execution state (from memory cache or reconstruct from events)
