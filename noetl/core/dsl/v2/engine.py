@@ -473,10 +473,15 @@ class ControlFlowEngine:
             
             # Convert to boolean
             if isinstance(result, bool):
+                logger.info(f"[COND] Evaluated '{when_expr}' => {result}")
                 return result
             if isinstance(result, str):
-                return result.lower() in ("true", "1", "yes")
-            return bool(result)
+                is_true = result.lower() in ("true", "1", "yes")
+                logger.info(f"[COND] Evaluated '{when_expr}' => '{result}' => {is_true}")
+                return is_true
+            bool_result = bool(result)
+            logger.info(f"[COND] Evaluated '{when_expr}' => {result} (type={type(result)}) => {bool_result}")
+            return bool_result
         except Exception as e:
             logger.error(f"Condition evaluation error: {e}")
             logger.error(f"Condition: {when_expr}")
@@ -493,9 +498,10 @@ class ControlFlowEngine:
         context = state.get_render_context(event)
         
         if step_def.case:
-            logger.debug(f"[CASE-EVAL] Step {event.step} has {len(step_def.case)} case rules, evaluating for event {event.name}")
+            logger.info(f"[CASE-EVAL] Step {event.step} has {len(step_def.case)} case rules, evaluating for event {event.name}")
             for idx, case_entry in enumerate(step_def.case):
                 # Evaluate condition
+                logger.info(f"[CASE-EVAL] Evaluating case {idx}: {case_entry.when}")
                 if self._evaluate_condition(case_entry.when, context):
                     logger.info(f"[CASE-MATCH] Step {event.step}, event {event.name}: matched case {idx}: {case_entry.when}")
                     
