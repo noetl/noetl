@@ -196,7 +196,7 @@ log_info "========================================="
 # Cleanup: Print instructions
 echo ""
 log_info "To view all variables in database:"
-echo "PGPASSWORD=demo psql -h localhost -p 54321 -U demo -d demo_noetl -c \"SELECT var_name, var_type, source_step, access_count FROM noetl.vars_cache WHERE execution_id = $EXECUTION_ID ORDER BY created_at;\""
+echo "PGPASSWORD=demo psql -h localhost -p 54321 -U demo -d demo_noetl -c \"SELECT var_name, var_type, source_step, access_count FROM noetl.transient WHERE execution_id = $EXECUTION_ID ORDER BY created_at;\""
 
 echo ""
 log_info "To check execution events:"

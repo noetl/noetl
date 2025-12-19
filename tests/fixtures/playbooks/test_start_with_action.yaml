@@ -1,4 +1,4 @@
-apiVersion: noetl.io/v1
+apiVersion: noetl.io/v2
 kind: Playbook
 metadata:
   name: test_start_with_action
@@ -11,38 +11,57 @@ workload:
 workflow:
   - step: start
     desc: Start step with Python action - should execute first
-    tool: python
     args:
       input_data: "{{ workload }}"
-    code: |
-      async def main(input_data):
-          return {
-              'status': 'success',
-              'message': 'Start step executed with action type',
-              'data': {'executed': True, 'input': input_data}
-          }
-    next:
-      - step: process
-        args:
-          from_start: "{{ start.data.executed }}"
+    tool:
+      kind: python
+      code: |
+        async def main(input_data):
+            return {
+                'status': 'success',
+                'message': 'Start step executed with action type',
+                'data': {'executed': True, 'input': input_data}
+            }
+    
+    case:
+      - when: "{{ event.name == 'call.done' and response is defined }}"
+        then:
+          result:
+            from: response
+          next:
+            - step: process
+              args:
+                from_start: "{{ response.data.executed }}"
   
   - step: process
     desc: Process step - executed after start
-    tool: python
     args:
       from_start: "{{ start.data.executed }}"
-    code: |
-      async def main(from_start):
-          return {
-              'status': 'success',
-              'message': 'Process step executed',
-              'data': {
-                  'from_start': from_start,
-                  'processed': True
-              }
-          }
-    next:
-      - step: end
+    tool:
+      kind: python
+      code: |
+        async def main(from_start):
+            return {
+                'status': 'success',
+                'message': 'Process step executed',
+                'data': {
+                    'from_start': from_start,
+                    'processed': True
+                }
+            }
+    
+    case:
+      - when: "{{ event.name == 'call.done' and response is defined }}"
+        then:
+          result:
+            from: response
+          next:
+            - step: end
         
   - step: end
     desc: End step - aggregator (no action type)
+    tool:
+      kind: python
+      code: |
+        def main():
+            return {"status": "complete"}

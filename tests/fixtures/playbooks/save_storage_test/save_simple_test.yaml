@@ -1,4 +1,4 @@
-apiVersion: noetl.io/v1
+apiVersion: noetl.io/v2
 kind: Playbook
 metadata:
   name: save_storage_simple_test
@@ -17,122 +17,163 @@ workflow:
   # Setup: Create tables first
   - step: start
     desc: "Setup test tables"
-    next:
-      - step: create_tables
+    tool:
+      kind: python
+      code: |
+        def main():
+            return {"status": "initialized"}
+    
+    case:
+      - when: "{{ event.name == 'step.exit' }}"
+        then:
+          next:
+            - step: create_tables
   
   - step: create_tables
     desc: "Create required test tables"
-    tool: playbook
-    path: tests/fixtures/playbooks/save_storage_test/create_tables
-    args:
-      pg_auth: "{{ workload.pg_auth }}"
-    next:
-      - step: truncate_tables
+    tool:
+      kind: playbook
+      path: tests/fixtures/playbooks/save_storage_test/create_tables
+      args:
+        pg_auth: "{{ workload.pg_auth }}"
+    
+    case:
+      - when: "{{ event.name == 'call.done' and response is defined }}"
+        then:
+          next:
+            - step: truncate_tables
   
   - step: truncate_tables
     desc: "Clear test data from previous runs"
-    tool: postgres
-    auth: "{{ workload.pg_auth }}"
-    command: |
-      TRUNCATE TABLE simple_test_flat;
-      TRUNCATE TABLE simple_test_nested;
-    next:
-      - step: event_test
+    tool:
+      kind: postgres
+      auth: "{{ workload.pg_auth }}"
+      command: |
+        TRUNCATE TABLE simple_test_flat;
+        TRUNCATE TABLE simple_test_nested;
+    
+    case:
+      - when: "{{ event.name == 'call.done' and response is defined }}"
+        then:
+          next:
+            - step: event_test
   
   # Test 1: Event log storage (default)
   - step: event_test
     desc: "Test event log storage (simplest form)"
-    tool: python
-    code: |
-      def main(**kwargs):
-          return {
-              "status": "success",
-              "data": {
-                  "step": "event_log_test",
-                  "message": "Testing event log storage",
-                  "test_id": "evt_001"
-              }
-          }
-    sink:
-      tool: event_log
-      args: "{{ result }}"
-    next:
-      - step: postgres_flat_test
+    tool:
+      kind: python
+      code: |
+        def main(**kwargs):
+            return {
+                "status": "success",
+                "data": {
+                    "step": "event_log_test",
+                    "message": "Testing event log storage",
+                    "test_id": "evt_001"
+                }
+            }
+    
+    case:
+      - when: "{{ event.name == 'call.done' and response is defined }}"
+        then:
+          sink:
+            tool: event_log
+            args: "{{ response }}"
+          next:
+            - step: postgres_flat_test
 
   # Test 2: Postgres flat structure
   - step: postgres_flat_test
     desc: "Test postgres sink with flat structure"
-    tool: python
-    code: |
-      def main(**kwargs):
-          return {
-              "status": "success", 
-              "data": {
-                  "record_id": 100,
-                  "description": "Postgres flat structure test",
-                  "source_step": "postgres_flat_test"
-              }
-          }
-    sink:
-      tool: postgres
-      auth: "{{ workload.pg_auth }}"
-      table: simple_test_flat
-      args:
-        test_id: "{{ result.record_id }}"
-        test_name: "{{ result.description }}"
-        test_value: 42
-        storage_type: "flat"
-        test_execution: "{{ execution_id }}"
-    next:
-      - step: postgres_nested_test
+    tool:
+      kind: python
+      code: |
+        def main(**kwargs):
+            return {
+                "status": "success", 
+                "data": {
+                    "record_id": 100,
+                    "description": "Postgres flat structure test",
+                    "source_step": "postgres_flat_test"
+                }
+            }
+    
+    case:
+      - when: "{{ event.name == 'call.done' and response is defined }}"
+        then:
+          sink:
+            tool: postgres
+            auth: "{{ workload.pg_auth }}"
+            table: simple_test_flat
+            args:
+              test_id: "{{ response.record_id }}"
+              test_name: "{{ response.description }}"
+              test_value: 42
+              storage_type: "flat"
+              test_execution: "{{ execution_id }}"
+            args:
+              test_id: "{{ response.record_id }}"
+              test_name: "{{ response.description }}"
+              test_value: 42
+              storage_type: "flat"
+              test_execution: "{{ execution_id }}"
+          next:
+            - step: postgres_nested_test
 
   # Test 3: Postgres nested structure
   - step: postgres_nested_test
     desc: "Test postgres save with nested structure"
-    tool: python
-    code: |
-      import json
-      
-      def main(**kwargs):
-          # Access workload from context
-          context = kwargs.get('context', {})
-          workload = context.get('workload', {})
-          test_data_value = workload.get('test_data', {}).get('value', 42.5)
-          
-          test_data = {
-              "value": test_data_value,
-              "nested_indicator": True,
-              "test_type": "nested_structure"
-          }
-          
-          return {
-              "test_type": "nested_structure",
-              "nested_id": 200,
-              "test_data_json": json.dumps(test_data)
-          }
-    sink:
-      tool: postgres
-      table: simple_test_nested
-      mode: upsert
-      key: test_id
-      auth: "{{ workload.pg_auth }}"
-      args:
-        test_id: "{{ result.nested_id }}"
-        test_name: "nested_structure_test"
-        test_data: "{{ result.test_data_json }}"
-        storage_type: "nested"
-        test_execution: "{{ execution_id }}"
-    next:
-      - step: end
+    tool:
+      kind: python
+      code: |
+        import json
+        
+        def main(**kwargs):
+            # Access workload from context
+            context = kwargs.get('context', {})
+            workload = context.get('workload', {})
+            test_data_value = workload.get('test_data', {}).get('value', 42.5)
+            
+            test_data = {
+                "value": test_data_value,
+                "nested_indicator": True,
+                "test_type": "nested_structure"
+            }
+            
+            return {
+                "test_type": "nested_structure",
+                "nested_id": 200,
+                "test_data_json": json.dumps(test_data)
+            }
+    
+    case:
+      - when: "{{ event.name == 'call.done' and response is defined }}"
+        then:
+          sink:
+            tool: postgres
+            table: simple_test_nested
+            mode: upsert
+            key: test_id
+            auth: "{{ workload.pg_auth }}"
+            args:
+              test_id: "{{ response.nested_id }}"
+              test_name: "nested_structure_test"
+              test_data: "{{ response.test_data_json }}"
+              storage_type: "nested"
+              test_execution: "{{ execution_id }}"
+          next:
+            - step: end
 
   - step: end
     desc: "Test completion"
-    tool: python
-    code: |
-      def main(**kwargs):
-          return {
-              "status": "success",
-              "data": {
-                  "message": "All save storage tests completed successfully"
-              }
-          }
+    tool:
+      kind: python
+      code: |
+        def main(**kwargs):
+            return {
+                "status": "success",
+                "data": {
+                    "message": "All save storage tests completed successfully"
+                }
+            }

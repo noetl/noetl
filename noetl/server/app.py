@@ -18,11 +18,16 @@ from noetl.core.db.pool import init_pool, close_pool
 from noetl.core.logger import setup_logger
 from noetl.server.api import router as api_router
 from noetl.server.middleware import catch_exceptions_middleware
+
+# Import V2 API
+from noetl.server.api.v2 import router as v2_router
+
 logger = setup_logger(__name__, include_location=True)
 
 
 router = APIRouter()
 router.include_router(api_router)
+router.include_router(v2_router)
 
 
 def create_app() -> FastAPI:
@@ -297,6 +302,16 @@ def _create_app(settings: Settings, enable_ui: Optional[bool] = None) -> FastAPI
                                 except Exception as e:
                                     logger.error(f"Runtime sweeper commit failed: {e}")
                                     logger.exception("Commit failure details:")
+
+                        # Reclaim expired leases
+                        try:
+                            from noetl.server.api.queue import QueueService
+                            result = await QueueService.reap_expired_jobs()
+                            if result.reclaimed > 0:
+                                logger.info(f"Reclaimed {result.reclaimed} expired leased jobs")
+                        except Exception as e:
+                            logger.error(f"Failed to reclaim expired jobs: {e}")
+                            logger.exception("Reap expired jobs exception details:")
 
                         # Report server metrics periodically
                         if current_time - last_metrics_time >= metrics_interval:

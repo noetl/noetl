@@ -80,7 +80,13 @@ async def expand_workbook_reference(
     if not isinstance(step_config, dict):
         return step_config
 
-    step_tool = step_config.get("tool", "").lower()
+    tool_raw = step_config.get("tool", "")
+    # Handle both string tool names and dict tool definitions
+    if isinstance(tool_raw, dict):
+        step_tool = (tool_raw.get("kind") or tool_raw.get("type") or "").lower()
+    else:
+        step_tool = tool_raw.lower() if isinstance(tool_raw, str) else str(tool_raw).lower()
+    
     if step_tool != "workbook":
         return step_config
 
@@ -158,14 +164,7 @@ async def expand_workbook_reference(
 
 
 class QueuePublisher:
-    """
-    Publishes tasks to queue table for worker execution.
-
-    Responsibilities:
-    - Publish initial workflow steps to queue
-    - Set appropriate priority and availability
-    - Link tasks to execution and events
-    """
+    """Compatibility shim after queue removal."""
 
     @staticmethod
     async def publish_initial_steps(
@@ -176,255 +175,13 @@ class QueuePublisher:
         parent_event_id: str,
         context: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        parent_execution_id: Optional[str] = None,
     ) -> List[str]:
-        """
-        Publish initial workflow steps to queue.
-
-        Router steps (e.g., start without actionable type) are not enqueued.
-        Instead, their actionable next steps are resolved from transitions and enqueued directly.
-
-        Args:
-            execution_id: Execution identifier
-            catalog_id: Catalog entry ID
-            initial_steps: List of step names to publish (e.g., ['start'])
-            workflow_steps: Complete workflow step definitions
-            parent_event_id: Parent event ID (workflow initialized event)
-            context: Optional execution context
-            metadata: Optional iterator/execution metadata to propagate through queue
-
-        Returns:
-            List of queue_ids for published tasks
-        """
-        queue_ids = []
-
-        # Build lookup map for workflow steps
-        step_map = {step["step_name"]: step for step in workflow_steps}
-
-        async with get_pool_connection() as conn:
-            async with conn.cursor(row_factory=dict_row) as cur:
-                for step_name in initial_steps:
-                    step_def = step_map.get(step_name)
-                    if not step_def:
-                        logger.warning(
-                            f"Initial step '{step_name}' not found in workflow, skipping"
-                        )
-                        continue
-
-                    step_type = (step_def.get("step_type") or "").lower()
-
-                    # If router (e.g. start without actionable type), do not enqueue itself.
-                    if step_type == "router":
-                        # Lookup transitions from this step and enqueue actionable next steps
-                        await cur.execute(
-                            """
-                            SELECT to_step, condition, with_params
-                            FROM noetl.transition
-                            WHERE execution_id = %(execution_id)s
-                              AND from_step = %(from_step)s
-                            """,
-                            {"execution_id": execution_id, "from_step": step_name},
-                        )
-                        next_rows = await cur.fetchall() or []
-
-                        for row in next_rows:
-                            to_step = row.get("to_step")
-                            if not to_step:
-                                continue
-                            next_def = step_map.get(to_step)
-                            if not next_def:
-                                logger.warning(
-                                    f"Transition target step '{to_step}' not found in workflow, skipping"
-                                )
-                                continue
-                            nxt_type = (next_def.get("step_type") or "").lower()
-                            # Skip non-actionable types (router/end)
-                            if nxt_type in ("router", "end"):
-                                logger.debug(
-                                    f"Skipping non-actionable next step '{to_step}' of type '{nxt_type}'"
-                                )
-                                continue
-
-                            # Merge transition with_params into the step config as inputs
-                            step_cfg = (
-                                json.loads(next_def["raw_config"])
-                                if isinstance(next_def.get("raw_config"), str)
-                                else (next_def.get("raw_config") or {})
-                            )
-                            try:
-                                with_params = row.get("with_params") or {}
-                                if isinstance(step_cfg, dict) and isinstance(
-                                    with_params, dict
-                                ):
-                                    # Normalize into 'args' to be read by worker
-                                    args = (
-                                        step_cfg.get("args")
-                                        if isinstance(step_cfg.get("args"), dict)
-                                        else {}
-                                    )
-                                    step_cfg["args"] = {**args, **with_params}
-                            except Exception:
-                                logger.exception(
-                                    "Error merging with_params into step config"
-                                )
-
-                            # Expand workbook references before publishing
-                            step_cfg = await expand_workbook_reference(
-                                step_cfg, catalog_id
-                            )
-
-                            # Publish the actionable next step
-                            qid = await QueuePublisher.publish_step(
-                                execution_id=execution_id,
-                                catalog_id=catalog_id,
-                                step_name=to_step,
-                                step_config=step_cfg,
-                                step_type=nxt_type,
-                                parent_event_id=parent_event_id,
-                                context={
-                                    "workload": (context or {}).get("workload", {})
-                                },
-                                priority=90,  # just below start's 100, but urgent
-                                metadata=metadata,
-                            )
-                            queue_ids.append(qid)
-
-                        # Done with router; do not enqueue router itself
-                        logger.info(
-                            f"Router step '{step_name}' resolved to {len(next_rows)} next steps"
-                        )
-                        continue
-
-                    # Actionable start (has explicit type) — enqueue via QueueService
-                    # Lazy import to avoid circular dependency
-                    from noetl.server.api.queue.service import QueueService
-
-                    queue_id = await get_snowflake_id()
-
-                    # Parse step config - handle both string (JSON) and dict (JSONB) from PostgreSQL
-                    raw_config = step_def["raw_config"]
-                    if isinstance(raw_config, str):
-                        step_cfg = json.loads(raw_config)
-                    else:
-                        step_cfg = raw_config or {}
-
-                    # Expand workbook references (if type='workbook')
-                    step_cfg = await expand_workbook_reference(step_cfg, catalog_id)
-
-                    # Render step args with available context (workload for initial steps)
-                    # IMPORTANT: For iterator steps, DO NOT render the nested 'task' block
-                    # because it contains templates like {{ item }} that only exist during iteration
-                    if "args" in step_cfg and step_cfg["args"] and context:
-                        from noetl.core.dsl.render import render_template
-                        from jinja2 import BaseLoader, Environment
-                        
-                        try:
-                            env = Environment(loader=BaseLoader())
-                            step_cfg["args"] = render_template(
-                                env, step_cfg["args"], context, rules=None, strict_keys=False
-                            )
-                        except Exception as e:
-                            logger.warning(f"Failed to render args for step '{step_name}': {e}")
-                    
-                    # Preserve blocks that should not be rendered server-side:
-                    # 1. For iterator steps (OLD format): nested 'task' block (contains {{ item }} templates)
-                    # 2. For loop steps (NEW format): 'loop' block AND nested tool config (contains {{ item }} templates)
-                    # 3. For all steps: 'sink' block (contains {{ result }} templates)
-                    step_tool = (step_cfg.get("tool") or "").lower()
-                    is_iterator_old = step_tool == "iterator"
-                    has_loop_new = "loop" in step_cfg
-                    
-                    # Always preserve sink block (regardless of step type)
-                    sink_block = step_cfg.pop("sink", None)
-                    if sink_block is not None:
-                        logger.critical(f"PUBLISHER: Extracted sink block for step '{step_name}': {sink_block}")
-                    
-                    # Preserve loop block (NEW format)
-                    loop_block = step_cfg.pop("loop", None)
-                    if loop_block is not None:
-                        logger.critical(f"PUBLISHER: Extracted loop block for step '{step_name}': {loop_block}")
-                    
-                    if is_iterator_old and context:
-                        from noetl.core.dsl.render import render_template
-                        from jinja2 import BaseLoader, Environment
-                        
-                        try:
-                            env = Environment(loader=BaseLoader())
-                            # Save the task block before rendering (OLD format)
-                            task_block = step_cfg.get("task")
-                            
-                            # Remove task block temporarily to prevent rendering
-                            if task_block:
-                                step_cfg_without_task = {k: v for k, v in step_cfg.items() if k != "task"}
-                            else:
-                                step_cfg_without_task = step_cfg
-                            
-                            # Render iterator config (collection, element, mode, etc.)
-                            # This will render {{ workload.items }} in collection
-                            step_cfg_rendered = render_template(
-                                env, step_cfg_without_task, context, rules=None, strict_keys=False
-                            )
-                            
-                            # Restore the task block unrendered
-                            if task_block:
-                                step_cfg_rendered["task"] = task_block
-                            
-                            step_cfg = step_cfg_rendered
-                        except Exception as e:
-                            logger.warning(f"Failed to render iterator config for step '{step_name}': {e}")
-                    
-                    # Restore loop block after rendering (worker will render it with item context)
-                    if loop_block is not None:
-                        step_cfg["loop"] = loop_block
-                        logger.critical(f"PUBLISHER: Restored loop block for step '{step_name}'")
-                    
-                    # Restore sink block after rendering (worker will render it with result context)
-                    if sink_block is not None:
-                        step_cfg["sink"] = sink_block
-                        logger.critical(f"PUBLISHER: Restored sink block for step '{step_name}'")
-
-                    # Encode step config for queue
-                    encoded_step_cfg = encode_task_for_queue(step_cfg)
-
-                    task_context = {
-                        "execution_id": execution_id,
-                        "step_name": step_name,
-                        "step_type": step_def["step_type"],
-                        "step_config": encoded_step_cfg,
-                    }
-                    if context:
-                        task_context["workload"] = context.get("workload", {})
-
-                    action = json.dumps(
-                        encoded_step_cfg
-                    )  # Use encoded config for action
-                    priority = 100 if step_name.lower() == "start" else 50
-                    available_at = datetime.now(timezone.utc)
-
-                    # Use QueueService to enqueue the job
-                    response = await QueueService.enqueue_job(
-                        execution_id=execution_id,
-                        catalog_id=catalog_id,
-                        node_id=step_def["step_id"],
-                        node_name=step_name,
-                        node_type=step_def["step_type"],
-                        action=action,
-                        context=task_context,
-                        priority=priority,
-                        max_attempts=5,
-                        available_at=available_at,
-                        parent_event_id=parent_event_id,
-                        event_id=None,
-                        queue_id=queue_id,
-                        status="queued",
-                        metadata=metadata,
-                    )
-
-                    queue_ids.append(response.id)
-                    logger.info(
-                        f"Published step '{step_name}' to queue: execution_id={execution_id}, queue_id={queue_id}, priority={priority}"
-                    )
-
-        return queue_ids
+        # Queue subsystem is removed; nothing to enqueue here.
+        logger.info(
+            "QueuePublisher.publish_initial_steps invoked but queue subsystem is removed; returning empty list"
+        )
+        return []
 
     @staticmethod
     async def publish_step(
@@ -439,137 +196,9 @@ class QueuePublisher:
         delay_seconds: int = 0,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> str:
-        """
-        Publish a single step to queue.
-
-        Args:
-            execution_id: Execution identifier
-            catalog_id: Catalog entry ID
-            step_name: Step name
-            step_config: Step configuration
-            step_type: Step type
-            parent_event_id: Parent event ID
-            context: Optional execution context
-            priority: Task priority (0-100, higher is more urgent)
-            delay_seconds: Delay before making available (default: 0)
-            metadata: Optional iterator/execution metadata to propagate
-
-        Returns:
-            queue_id of published task
-        """
-        # CRITICAL: Preserve blocks that should NOT be rendered server-side
-        # These blocks contain templates ({{ item }}, {{ result }}) that must be
-        # rendered worker-side AFTER task execution completes
-        
-        # Make a copy to avoid mutating the original config
-        step_config_copy = dict(step_config)
-        
-        # 1. Always preserve sink block (contains {{ result }} templates)
-        sink_block = step_config_copy.pop("sink", None)
-        if sink_block is not None:
-            logger.critical(f"PUBLISHER.publish_step: Extracted sink block for step '{step_name}': {sink_block}")
-        
-        # 2. Preserve loop block (NEW format - contains {{ item }} templates)
-        loop_block = step_config_copy.pop("loop", None)
-        if loop_block is not None:
-            logger.critical(f"PUBLISHER.publish_step: Extracted loop block for step '{step_name}': {loop_block}")
-        
-        # 3. For OLD iterator format: preserve nested 'task' block
-        step_tool = (step_config_copy.get("tool") or "").lower()
-        task_block = None
-        if step_tool == "iterator":
-            task_block = step_config_copy.pop("task", None)
-            if task_block is not None:
-                logger.critical(f"PUBLISHER.publish_step: Extracted task block for iterator step '{step_name}'")
-        
-        # Generate queue_id from database
+        # Generate a synthetic identifier to maintain API compatibility.
         queue_id = await get_snowflake_id()
-
-        # Encode task config for queue (base64 encode code/command fields)
-        # Use the config with preserved blocks removed
-        encoded_step_config = encode_task_for_queue(step_config_copy)
-        
-        # Restore preserved blocks AFTER encoding but BEFORE queue insertion
-        # This ensures they bypass server-side rendering but get passed to worker
-        if sink_block is not None:
-            encoded_step_config["sink"] = sink_block
-            logger.critical(f"PUBLISHER.publish_step: Restored sink block for step '{step_name}'")
-        
-        if loop_block is not None:
-            encoded_step_config["loop"] = loop_block
-            logger.critical(f"PUBLISHER.publish_step: Restored loop block for step '{step_name}'")
-        
-        if task_block is not None:
-            encoded_step_config["task"] = task_block
-            logger.critical(f"PUBLISHER.publish_step: Restored task block for iterator step '{step_name}'")
-
-        # Build task context
-        task_context = {
-            "execution_id": execution_id,
-            "step_name": step_name,
-            "step_type": step_type,
-            "step_config": encoded_step_config,
-        }
-
-        if context:
-            task_context.update(context)
-
-        # Make available after delay (use UTC timezone-aware datetime)
-        available_at = datetime.now(timezone.utc) + timedelta(seconds=delay_seconds)
-
-        # Lazy import to avoid circular dependency
-        from noetl.server.api.queue.service import QueueService
-
-        # Use QueueService to enqueue the job
-        response = await QueueService.enqueue_job(
-            execution_id=execution_id,
-            catalog_id=catalog_id,
-            node_id=step_name,
-            node_name=step_name,
-            node_type=step_type,
-            action=json.dumps(encoded_step_config),
-            context=task_context,
-            priority=priority,
-            max_attempts=5,
-            available_at=available_at,
-            parent_event_id=parent_event_id,
-            event_id=None,
-            queue_id=queue_id,
-            status="queued",
-            metadata=metadata,
-        )
-
         logger.info(
-            f"Published step '{step_name}' to queue: "
-            f"execution_id={execution_id}, queue_id={response.id}, priority={priority}"
+            "QueuePublisher.publish_step invoked but queue subsystem is removed; returning synthetic id"
         )
-
-        # Emit step_started event when step is enqueued
-        try:
-            from noetl.server.api.broker.schema import EventEmitRequest
-            from noetl.server.api.broker.service import EventService
-
-            step_started_request = EventEmitRequest(
-                execution_id=int(execution_id),
-                catalog_id=int(catalog_id),
-                event_type="step_started",
-                node_id=step_name,
-                node_name=step_name,
-                node_type=step_type,
-                status="RUNNING",
-                parent_event_id=int(parent_event_id) if parent_event_id else None,
-                context={"step_config": step_config},
-                meta={"emitter": "publisher", "queue_id": str(response.id)},
-            )
-
-            step_started_result = await EventService.emit_event(step_started_request)
-            logger.debug(
-                f"Emitted step_started event for '{step_name}', event_id={step_started_result.event_id}"
-            )
-        except Exception as e:
-            logger.warning(
-                f"Failed to emit step_started event for step '{step_name}': {e}",
-                exc_info=True,
-            )
-
-        return response.id
+        return str(queue_id)

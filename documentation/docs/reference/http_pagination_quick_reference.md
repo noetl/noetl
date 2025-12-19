@@ -146,9 +146,9 @@ python tests/fixtures/servers/paginated_api.py 5555
 ## Files
 
 **Implementation:**
-- `noetl/plugin/controller/iterator/pagination.py` - Executor
-- `noetl/plugin/controller/iterator/config.py` - Config extraction
-- `noetl/plugin/controller/iterator/executor.py` - Delegation logic
+- `noetl/tools/controller/iterator/pagination.py` - Executor
+- `noetl/tools/controller/iterator/config.py` - Config extraction
+- `noetl/tools/controller/iterator/executor.py` - Delegation logic
 
 **Tests:**
 - `tests/fixtures/servers/paginated_api.py` - Mock server

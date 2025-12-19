@@ -210,9 +210,9 @@ WHERE execution_id = '<your_execution_id>'
 - Event callback is wired through the execution chain
 
 **Code Locations**:
-- Iterator executor: `noetl/plugin/controller/iterator/executor.py`
-- Iterator execution: `noetl/plugin/controller/iterator/execution.py`
-- Save executor: `noetl/plugin/shared/storage/executor.py`
+- Iterator executor: `noetl/tools/controller/iterator/executor.py`
+- Iterator execution: `noetl/tools/controller/iterator/execution.py`
+- Save executor: `noetl/tools/shared/storage/executor.py`
 
 ### HTTP Requests Failing
 
@@ -297,6 +297,6 @@ The playbook demonstrates passing data between steps using `args:` in the `next:
 
 - **Bug Fix Summary**: [HTTP_ITERATOR_SAVE_SUMMARY.md](./HTTP_ITERATOR_SAVE_SUMMARY.md)
 - **Playbook DSL Spec**: [docs/dsl_spec.md](../../../../docs/dsl_spec.md)
-- **Iterator Plugin**: [noetl/plugin/controller/iterator/](../../../../noetl/plugin/controller/iterator/)
-- **Save Storage**: [noetl/plugin/shared/storage/](../../../../noetl/plugin/shared/storage/)
+- **Iterator Plugin**: [noetl/tools/controller/iterator/](../../../../noetl/tools/controller/iterator/)
+- **Save Storage**: [noetl/tools/shared/storage/](../../../../noetl/tools/shared/storage/)
 - **Data Passing**: Uses `args:` in `next:` block (planner.py)

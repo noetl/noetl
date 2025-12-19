@@ -123,7 +123,9 @@ async def list_credentials(
 @router.get("/credentials/{identifier}", response_model=CredentialResponse)
 async def get_credential(
     identifier: str,
-    include_data: bool = False
+    include_data: bool = False,
+    execution_id: Optional[int] = None,
+    parent_execution_id: Optional[int] = None
 ) -> CredentialResponse:
     """
     Get a credential by ID or name.
@@ -175,7 +177,12 @@ async def get_credential(
     sensitive information that is normally encrypted at rest.
     """
     try:
-        return await CredentialService.get_credential(identifier, include_data)
+        return await CredentialService.get_credential(
+            identifier,
+            include_data,
+            execution_id=execution_id,
+            parent_execution_id=parent_execution_id
+        )
     except HTTPException:
         raise
     except Exception as e:

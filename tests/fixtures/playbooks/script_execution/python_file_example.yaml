@@ -1,4 +1,4 @@
-apiVersion: noetl.io/v1
+apiVersion: noetl.io/v2
 kind: Playbook
 metadata:
   name: python_file_script_example
@@ -12,41 +12,65 @@ workload:
 workflow:
   - step: start
     desc: Start workflow
-    next:
-      - step: run_python_from_file
+    tool:
+      kind: python
+      code: |
+        def main():
+            return {"status": "initialized"}
+    
+    case:
+      - when: "{{ event.name == 'step.exit' }}"
+        then:
+          next:
+            - step: run_python_from_file
 
   - step: run_python_from_file
     desc: Execute Python script from local file
-    tool: python
-    script:
-      uri: "{{ workload.script_path }}"
-      source:
-        type: file
-    args:
-      name: "{{ workload.greeting_name }}"
-      count: "{{ workload.greeting_count }}"
-    next:
-      - step: verify_result
+    tool:
+      kind: python
+      script:
+        uri: "{{ workload.script_path }}"
+        source:
+          type: file
+      args:
+        name: "{{ workload.greeting_name }}"
+        count: "{{ workload.greeting_count }}"
+    
+    case:
+      - when: "{{ event.name == 'call.done' and response is defined }}"
+        then:
+          next:
+            - step: verify_result
 
   - step: verify_result
     desc: Verify script execution result
-    tool: python
-    code: |
-      def main(result):
-          assert result['status'] == 'success', f"Expected success, got {result['status']}"
-          assert result['total_greetings'] == 3, f"Expected 3 greetings, got {result['total_greetings']}"
-          assert result['script_source'] == 'file', f"Expected file source, got {result['script_source']}"
-          assert len(result['messages']) == 3, f"Expected 3 messages, got {len(result['messages'])}"
-          
-          return {
-              "status": "verified",
-              "checks_passed": 4,
-              "result": result
-          }
-    args:
-      result: "{{ run_python_from_file.data }}"
-    next:
-      - step: end
+    tool:
+      kind: python
+      code: |
+        def main(result):
+            assert result['status'] == 'success', f"Expected success, got {result['status']}"
+            assert result['total_greetings'] == 3, f"Expected 3 greetings, got {result['total_greetings']}"
+            assert result['script_source'] == 'file', f"Expected file source, got {result['script_source']}"
+            assert len(result['messages']) == 3, f"Expected 3 messages, got {len(result['messages'])}"
+            
+            return {
+                "status": "verified",
+                "checks_passed": 4,
+                "result": result
+            }
+      args:
+        result: "{{ run_python_from_file.data }}"
+    
+    case:
+      - when: "{{ event.name == 'call.done' and response is defined }}"
+        then:
+          next:
+            - step: end
 
   - step: end
     desc: End workflow
+    tool:
+      kind: python
+      code: |
+        def main():
+            return {"status": "complete"}

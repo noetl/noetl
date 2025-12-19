@@ -6,7 +6,7 @@ import pytest
 import os
 from jinja2 import Environment, BaseLoader
 
-from noetl.plugin.http import execute_http_task
+from noetl.tools.http import execute_http_task
 
 
 @pytest.mark.integration

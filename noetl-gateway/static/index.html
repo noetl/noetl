@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cybx AI Flight Assistant</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+
+<body>
+  <div class="container">
+    <div class="chat-header">
+      <div class="header-content">
+        <div class="avatar">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <path
+              d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z">
+            </path>
+            <polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
+            <line x1="12" y1="22.08" x2="12" y2="12"></line>
+          </svg>
+        </div>
+        <div class="header-info">
+          <h1>Cybx AI</h1>
+          <p>Your intelligent flight search assistant</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="chat-container" id="chatContainer">
+      <div class="welcome-message">
+        <div class="welcome-icon">✈️</div>
+        <h2>Welcome to Cybx AI</h2>
+        <p>I can help you find flights. Try asking something like:</p>
+        <div class="suggestions">
+          <button class="suggestion-chip"
+            onclick="sendSuggestion('I want a one-way flight from SFO to JFK on March 15, 2026 for 1 adult')">
+            Find flights from SFO to JFK
+          </button>
+          <button class="suggestion-chip"
+            onclick="sendSuggestion('Show me flights from LAX to Miami next week for 2 passengers')">
+            LAX to Miami for 2 people
+          </button>
+          <button class="suggestion-chip"
+            onclick="sendSuggestion('I need a round trip from New York to London in April')">
+            Round trip NY to London
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div class="chat-input-container">
+      <form id="chatForm" class="chat-form">
+        <input type="text" id="chatInput" class="chat-input"
+          placeholder="Ask about flights, e.g., 'I want to fly from SFO to JFK tomorrow'" autocomplete="off" />
+        <button type="submit" class="send-button" id="sendButton">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <line x1="22" y1="2" x2="11" y2="13"></line>
+            <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+          </svg>
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+
+</html>

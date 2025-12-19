@@ -5,7 +5,7 @@ tasks:
     desc: Build noetl container with docker
     aliases: [dbn, docker-build-noetl]
     vars:
-      CACHE: '{{ if (eq .CLI_ARGS "cache")}}{{ else }}--no-cache{{ end }}'
+      CACHE: '{{.CACHE | default ""}}'
       REGISTRY: '{{.REGISTRY | default "local"}}'
       IMAGE_NAME: '{{.IMAGE_NAME | default "noetl"}}'
       IMAGE_TAG:
@@ -13,8 +13,8 @@ tasks:
     env:
       DOCKER_BUILDKIT: "0"
     cmds:
-      - echo "{{.IMAGE_TAG}}" > .noetl_last_build_tag.txt
       - docker build {{.CACHE}} -t {{.REGISTRY}}/{{.IMAGE_NAME}}:{{.IMAGE_TAG}} -f docker/noetl/dev/Dockerfile .
+      - echo "{{.IMAGE_TAG}}" > .noetl_last_build_tag.txt
 
   docker:local:images-clear:
     desc: Clear all docker images

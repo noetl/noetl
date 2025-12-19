@@ -18,10 +18,11 @@ logger = setup_logger(__name__, include_location=True)
 
 cli_app = typer.Typer()
 
-# from noetl.server import create_app
+# Server management
 server_app = typer.Typer()
 cli_app.add_typer(server_app, name="server")
 
+# Worker management (v1 and v2)
 worker_app = typer.Typer()
 cli_appprefix = "worker"
 cli_app.add_typer(worker_app, name=cli_appprefix)
@@ -33,10 +34,52 @@ cli_app.add_typer(db_app, name="db")
 
 @worker_app.command("start")
 def start_worker_service(
-    max_workers: int = typer.Option(None, "--max-workers", "-m", help="Maximum number of worker threads")
+    max_workers: int = typer.Option(None, "--max-workers", "-m", help="Maximum number of worker threads"),
+    v2: bool = typer.Option(False, "--v2", help="Use v2 worker architecture (event-driven)")
 ):
-    """Start the queue worker pool that polls the server queue API."""
+    """
+    Start the queue worker pool.
+    
+    Use --v2 flag to enable the new event-driven v2 worker architecture.
+    v2 workers poll the queue directly and emit events to the server.
+    """
+    import sys
+    sys.stderr.write(f"=== START_WORKER_SERVICE v2={v2} ===\n")
+    sys.stderr.flush()
+    
+    if v2:
+        sys.stderr.write("=== V2 BRANCH ENTERED ===\n")
+        sys.stderr.flush()
+        # Start v2 worker with NATS
+        logger.info("Starting worker v2 (event-driven NATS architecture)")
+        try:
+            sys.stderr.write("=== IMPORTING V2 WORKER ===\n")
+            sys.stderr.flush()
+            from noetl.worker.v2_worker_nats import run_worker_v2_sync
+            
+            sys.stderr.write("=== GETTING SETTINGS ===\n")
+            sys.stderr.flush()
+            # Get configuration
+            settings = get_settings()
+            nats_url = settings.nats_url
+            server_url = settings.server_api_url or settings.server_url
+            
+            sys.stderr.write(f"=== CALLING run_worker_v2_sync NATS={nats_url} ===\n")
+            sys.stderr.flush()
+            logger.info(f"Configuration: NATS={nats_url}, Server={server_url}")
+            
+            run_worker_v2_sync(nats_url=nats_url, server_url=server_url)
+            
+            sys.stderr.write("=== run_worker_v2_sync RETURNED ===\n")
+            sys.stderr.flush()
+        except Exception as e:
+            sys.stderr.write(f"=== EXCEPTION: {e} ===\n")
+            sys.stderr.flush()
+            logger.error(f"Failed to start V2 worker: {e}", exc_info=True)
+            raise
+        return
 
+    # Start v1 worker (existing implementation)
     from noetl.core.config import _settings, get_worker_settings
     import noetl.core.config as core_config
     core_config._settings = None
@@ -680,11 +723,11 @@ def manage_catalog(
             if host is None or port is None:
                 logger.error("Error: --host and --port are required for this client command")
                 raise typer.Exit(code=1)
-            url = f"http://{host}:{port}/api/run/playbook"
+            url = f"http://{host}:{port}/api/v2/execute"
             headers = {"Content-Type": "application/json"}
             data = {
                 "path": path,
-                "args": input_payload,
+                "payload": input_payload,
                 "merge": merge
             }
 
@@ -879,9 +922,9 @@ def run_playbook(
     This is an alias for 'noetl execute playbook'.
 
     Equivalent REST call:
-      curl -X POST http://{host}:{port}/api/run/playbook \
+      curl -X POST http://{host}:{port}/api/v2/execute \
            -H "Content-Type: application/json" \
-           -d '{"path": "<playbook_path>", "args": {...}}'
+           -d '{"path": "<playbook_path>", "payload": {...}}'
 
     Example:
       noetl run "tests/fixtures/playbooks/weather/weather_loop_example" --host localhost --port 8082
@@ -904,8 +947,8 @@ def run_playbook(
                 typer.echo(f"Failed to parse --payload JSON: {e}")
                 raise typer.Exit(code=1)
 
-        url = f"http://{host}:{port}/api/run/playbook"
-        body = {"path": playbook_id, "args": parameters, "merge": merge}
+        url = f"http://{host}:{port}/api/v2/execute"
+        body = {"path": playbook_id, "payload": parameters}
         if not json_only:
             typer.echo(f"POST {url}")
         resp = requests.post(url, json=body)
@@ -942,7 +985,7 @@ def plan_schedule(
     """
     try:
         from noetl.core.common import ordered_yaml_load
-        from noetl.scheduler import build_plan, CpSatScheduler
+        from noetl.core.scheduler import build_plan, CpSatScheduler
         with open(path, "r", encoding="utf-8") as f:
             playbook = ordered_yaml_load(f)
         cap_dict = {}
@@ -985,9 +1028,9 @@ def execute_playbook_by_name(
     Execute a registered playbook by name against a running NoETL server.
 
     Equivalent REST call:
-      curl -X POST http://{host}:{port}/api/run/playbook \
+      curl -X POST http://{host}:{port}/api/v2/execute \
            -H "Content-Type: application/json" \
-           -d '{"path": "<playbook_path>", "args": {...}}'
+           -d '{"path": "<playbook_path>", "payload": {...}}'
 
     Example:
       noetl execute playbook "tests/fixtures/playbooks/weather/weather_loop_example" --host localhost --port 8082
@@ -1010,9 +1053,9 @@ def execute_playbook_by_name(
                 typer.echo(f"Failed to parse --payload JSON: {e}")
                 raise typer.Exit(code=1)
 
-        url = f"http://{host}:{port}/api/run/playbook"
+        url = f"http://{host}:{port}/api/v2/execute"
         logger.info(f"POST {url}")
-        body = {"path": playbook_id, "args": parameters, "merge": merge}
+        body = {"path": playbook_id, "payload": parameters}
         if not json_only:
             typer.echo(f"POST {url}")
         resp = requests.post(url, json=body)

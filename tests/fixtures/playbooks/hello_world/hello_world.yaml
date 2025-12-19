@@ -1,4 +1,4 @@
-apiVersion: noetl.io/v1
+apiVersion: noetl.io/v2
 kind: Playbook
 
 metadata:
@@ -11,29 +11,54 @@ workload:
 workflow:
   - step: start
     desc: "Start hello world test"
-    next:
-      - step: test_step
-        args:
-          message: "{{ workload.message }}"
+    tool:
+      kind: python
+      code: |
+        def main():
+            return {"status": "initialized"}
+    
+    case:
+      - when: "{{ event.name == 'step.exit' }}"
+        then:
+          next:
+            - step: test_step
+              args:
+                message: "{{ workload.message }}"
 
   - step: test_step
     desc: "Hello world test step"
-    tool: python
     args:
       message: "{{ workload.message }}"
-    code: |
-      async def main(message):
-          print(f"HELLO_WORLD: {message}")
-          # Required envelope: {status, data, meta?}
-          return {"status": "success", "data": {"message": message}}
-    next:
-      - step: end
+    tool:
+      kind: python
+      code: |
+        async def main(message):
+            print(f"HELLO_WORLD: {message}")
+            # Required envelope: {status, data, meta?}
+            return {"status": "success", "data": {"message": message}}
+    
+    case:
+      - when: "{{ event.name == 'call.done' and response is defined }}"
+        then:
+          result:
+            from: response
+          next:
+            - step: end
 
   - step: end
     desc: "End hello world test"
-    tool: end
-    sink:
-      tool: event_log
-      args:
-        status: "success"
-        message: "{{ test_step.result.data.message }}"
+    tool:
+      kind: python
+      code: |
+        def main():
+            return {"status": "complete"}
+    
+    case:
+      - when: "{{ event.name == 'call.done' and response is defined }}"
+        then:
+          sink:
+            tool:
+              kind: event_log
+            args:
+              status: "success"
+              message: "{{ test_step.data.message }}"

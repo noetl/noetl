@@ -13,8 +13,8 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
 # Import routers from local modules
-from . import credential, queue, aggregate, catalog, runtime, dashboard, system, metrics, broker, \
-    database, context, run, execution, vars
+from . import credential, aggregate, catalog, runtime, dashboard, system, metrics, broker, \
+    database, context, run, execution, vars, keychain
 
 router = APIRouter()
 
@@ -24,7 +24,8 @@ async def api_health():
 
 # Include all sub-routers
 router.include_router(context.router)
-router.include_router(broker.router)  # Event handler (was event package)
+# DISABLED: Legacy v1 event endpoint - replaced by /api/v2/events
+# router.include_router(broker.router)  # Event handler (was event package)
 router.include_router(catalog.router)
 router.include_router(execution.router)
 router.include_router(credential.router)
@@ -32,7 +33,6 @@ router.include_router(database.router)
 router.include_router(runtime.router)
 router.include_router(dashboard.router)
 router.include_router(system.router)
-router.include_router(queue.router)
 router.include_router(aggregate.router)
 # Note: broker.router already included above as event handler
 router.include_router(metrics.router)
@@ -40,10 +40,12 @@ router.include_router(metrics.router)
 router.include_router(run.router)
 # Variable management endpoints
 router.include_router(vars.router)
+# Keychain management endpoints
+router.include_router(keychain.router)
 
 __all__ = [
     "router",
-    "context", "queue", "broker", "catalog", "credential",
+    "context", "broker", "catalog", "credential",
     "database", "runtime", "dashboard", "system",
-    "aggregate", "metrics", "run", "vars"
+    "aggregate", "metrics", "run", "vars", "keychain"
 ]

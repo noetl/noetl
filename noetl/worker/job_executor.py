@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import datetime
 import time
 import traceback
 from typing import Any, Awaitable, Callable, Dict, Optional, Union
@@ -105,7 +106,7 @@ class JobExecutor:
             return
 
         if prepared.action_type == "result_aggregation":
-            from noetl.plugin.controller.result import process_loop_aggregation_job
+            from noetl.core.workflow.result import process_loop_aggregation_job
 
             await process_loop_aggregation_job(job.model_dump())
             return
@@ -288,7 +289,9 @@ class JobExecutor:
                     err_msg,
                     tb_text,
                     result,
+                    context=self._sanitize_context_for_event(exec_ctx) if exec_ctx and isinstance(exec_ctx, dict) else None,
                 )
+                
                 await self._emit_event(error_event)
                 emitted_error = True
                 raise TaskExecutionError(
@@ -301,7 +304,9 @@ class JobExecutor:
                 action_duration,
                 result,
                 action_started_event_id,
+                context=self._sanitize_context_for_event(exec_ctx) if exec_ctx and isinstance(exec_ctx, dict) else None,
             )
+            
             await self._emit_event(complete_event)
 
             await self._emit_step_result(
@@ -323,7 +328,9 @@ class JobExecutor:
                 f"{type(exc).__name__}: {exc}",
                 tb_text,
                 {"error": str(exc), "stack_trace": tb_text},
+                context=self._sanitize_context_for_event(exec_ctx) if exec_ctx and isinstance(exec_ctx, dict) else None,
             )
+            
             if not emitted_error:
                 await self._emit_event(error_event)
             raise
@@ -402,7 +409,7 @@ class JobExecutor:
         except Exception:
             exec_ctx_with_result = exec_ctx
 
-        from noetl.plugin.shared.storage import execute_sink_task as _do_sink
+        from noetl.core.storage import execute_sink_task as _do_sink
 
         sink_payload = {"sink": inline_sink}
         logger.critical(f"INLINE_SINK: About to call execute_sink_task with inline_sink type: {type(inline_sink)}")
@@ -478,6 +485,62 @@ class JobExecutor:
         if upper in legacy_map:
             return legacy_map[upper]
         raise ValueError(f"Unsupported step result status: {raw_status}")
+    
+    def _sanitize_context_for_event(self, context: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Sanitize execution context for event storage.
+        
+        Removes sensitive data and limits size to prevent bloat.
+        Keeps execution state needed for workflow continuation.
+        
+        Args:
+            context: Full execution context
+            
+        Returns:
+            Sanitized context safe for event storage
+        """
+        if not context or not isinstance(context, dict):
+            return {}
+        
+        # Start with copy to avoid modifying original
+        sanitized = {}
+        
+        # Include essential execution state
+        safe_keys = [
+            'execution_id', 'job_id', 'catalog_id',
+            'workload',  # Workflow variables
+            'vars',  # Extracted variables
+        ]
+        
+        for key in safe_keys:
+            if key in context:
+                value = context[key]
+                # Limit size of large objects
+                if isinstance(value, dict) and len(str(value)) > 10000:
+                    sanitized[key] = {'_truncated': True, '_size': len(str(value))}
+                elif isinstance(value, list) and len(str(value)) > 10000:
+                    sanitized[key] = {'_truncated': True, '_size': len(value)}
+                else:
+                    sanitized[key] = value
+        
+        # Add step results summary (not full data)
+        step_results = {}
+        for key, value in context.items():
+            # Skip internal keys and already captured keys
+            if key.startswith('_') or key in safe_keys:
+                continue
+            # Capture step results metadata
+            if isinstance(value, dict) and ('status' in value or 'data' in value):
+                step_results[key] = {
+                    'has_data': 'data' in value,
+                    'status': value.get('status'),
+                    'data_type': type(value.get('data')).__name__ if 'data' in value else None
+                }
+        
+        if step_results:
+            sanitized['_step_results'] = step_results
+        
+        return sanitized
 
     def _base_event(self, prepared: PreparedJob) -> Dict[str, Any]:
         event = {
@@ -528,14 +591,35 @@ class JobExecutor:
         error_message: str,
         stack_trace: str,
         result: Dict[str, Any],
+        context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
+        # Retry is handled by unified when/then wrapper in retry.py
+        # No need to extract retry metadata here
+        meta = {}
+        
         extra = {
             "result": result,
             "error": error_message,
             "stack_trace": stack_trace,
         }
+        
+        # Add error details to meta
+        meta['error'] = {
+            'message': (error_message[:500] if error_message else "Unknown error"),  # Truncate for meta
+            'has_stack_trace': bool(stack_trace),
+            'failed_at': datetime.datetime.now(datetime.timezone.utc).isoformat()
+        }
+        
         if duration is not None:
             extra["duration"] = duration
+            meta['execution'] = {'duration_seconds': duration}
+        
+        if meta:
+            extra['meta'] = meta
+        
+        if context:
+            extra['context'] = context
+        
         return self._build_event_payload(
             prepared,
             event_type="action_failed",
@@ -551,7 +635,24 @@ class JobExecutor:
         duration: float,
         result: Dict[str, Any],
         action_started_event_id: Optional[str],
+        context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
+        # Retry is handled by unified when/then wrapper in retry.py
+        extra = {}
+        meta = {}
+        
+        # Add execution details to meta
+        meta['execution'] = {
+            'duration_seconds': duration,
+            'completed_at': datetime.datetime.now(datetime.timezone.utc).isoformat()
+        }
+        
+        if meta:
+            extra['meta'] = meta
+        
+        if context:
+            extra['context'] = context
+        
         return self._build_event_payload(
             prepared,
             event_type="action_completed",
@@ -560,6 +661,7 @@ class JobExecutor:
             duration=duration,
             result=result,
             parent_event_override=action_started_event_id,
+            **extra
         )
 
     async def _emit_step_result(
@@ -574,21 +676,53 @@ class JobExecutor:
         if not isinstance(normalized, dict):
             normalized = {"value": normalized}
         status = self._extract_step_status(result)
-        event = self._build_event_payload(
-            prepared,
-            event_type="step_result",
-            status=status,
-            node_type=node_type,
-            duration=duration,
-            result=normalized,
-            parent_event_override=action_started_event_id or prepared.parent_event_id,
-        )
+        
+        # Check if this is a loop iteration by looking for iterator metadata in job_meta
+        iterator_meta = prepared.job_meta.get('iterator') if prepared.job_meta else None
+        is_loop_iteration = bool(iterator_meta and isinstance(iterator_meta, dict))
+        
+        if is_loop_iteration:
+            # This is a loop iteration - emit iteration_completed instead of step_result
+            iteration_meta = {
+                'iteration_index': iterator_meta.get('iteration_index', 0),
+                'total_iterations': iterator_meta.get('total_iterations', 0),
+                'iterator_name': iterator_meta.get('iterator_name', 'item'),
+                'mode': iterator_meta.get('mode', 'sequential'),
+                'parent_execution_id': iterator_meta.get('parent_execution_id'),
+            }
+            
+            event = self._build_event_payload(
+                prepared,
+                event_type="iteration_completed",
+                status=status,
+                node_type=node_type,
+                duration=duration,
+                result=normalized,
+                parent_event_override=action_started_event_id or prepared.parent_event_id,
+                meta=iteration_meta,
+            )
+            logger.info(
+                f"Emitting iteration_completed for {prepared.node_name} "
+                f"(iteration {iteration_meta['iteration_index']}/{iteration_meta['total_iterations']})"
+            )
+        else:
+            # Normal step - emit step_result
+            event = self._build_event_payload(
+                prepared,
+                event_type="step_result",
+                status=status,
+                node_type=node_type,
+                duration=duration,
+                result=normalized,
+                parent_event_override=action_started_event_id or prepared.parent_event_id,
+            )
+        
         await self._emit_event(event)
 
     async def _emit_event(
         self, event_data: Union[Dict[str, Any], EventPayload]
     ) -> Dict[str, Any]:
-        from noetl.plugin.runtime import report_event_async
+        from noetl.core.runtime import report_event_async
 
         payload = (
             event_data.model_dump(exclude_none=True)

@@ -1,32 +1,45 @@
 ---
 sidebar_position: 1
 title: DSL Specification
-description: Complete reference for NoETL DSL syntax, step types, and workflow structure
----
-
----
-sidebar_position: 1
-title: DSL Specification
-description: Complete reference for NoETL DSL syntax, step types, and workflow structure
+description: Complete reference for NoETL DSL syntax, step structure, and workflow patterns
 ---
 
 # NoETL DSL Design Specification (Step Widgets v2)
 
 ## Overview
 
-The NoETL DSL defines workflows as a sequence of typed steps (widgets). Each step type has its own inputs, outputs, and execution semantics. Playbooks are YAML/JSON documents validated against the schema in `docs/playbook-schema.json`.
+The NoETL DSL defines workflows as a sequence of steps that coordinate tool execution. **Steps are aggregators** that control how tools execute using attributes like `tool:`, `loop:`, `vars:`, and `case:`. Playbooks are YAML/JSON documents validated against the schema in `docs/playbook-schema.json`.
 
-This revision replaces the previous "run/rule/case" model with explicit step types:
-- start — Entry point of a workflow. Must route to the first executable step via `next`.
-- end — Terminal step. No `next`. Used broadly.
-- workbook — Invokes a named task from the workbook library; use `task:` and `with:` to pass inputs.
-- python — Runs inline Python in the step itself.
-- http — Makes an HTTP call directly from a step (method, endpoint, headers, params/payload).
-- duckdb — Executes DuckDB SQL/script in the step.
-- postgres — Executes PostgreSQL SQL/script in the step.
-- secrets — Reads a secret from a provider (e.g., Google Secret Manager) and exposes it as `secret_value` (or a custom alias).
-- playbooks — Executes all playbooks under a catalog path, forwarding inputs via `with:`; the step result can be passed on to the next step.
-- loop — Runs a loop over either a workbook task (for single-step loops) or playbooks (for multi-step subflows).
+### Step Structure
+
+Each step is a coordinator with:
+- **`tool:`** - Defines what executes (required, except for `start`/`end`)
+  - `kind:` - Tool type (python, http, postgres, duckdb, workbook, playbook, etc.)
+  - Tool-specific configuration (code, endpoint, script, etc.)
+- **`loop:`** - Controls repeated tool execution (optional)
+  - `in:` - Collection to iterate over
+  - `iterator:` - Variable name for current item
+  - `mode:` - Execution mode (sequential/async)
+- **`vars:`** - Extracts values from results for persistence (optional)
+- **`case:`** - Event-driven conditional routing (optional)
+- **`next:`** - Default routing to subsequent steps (optional)
+
+### Available Tool Kinds
+
+- **workbook** — Reference to named task from workbook library
+- **python** — Inline Python code execution
+- **http** — HTTP request (GET, POST, etc.)
+- **postgres** — PostgreSQL SQL/script execution
+- **duckdb** — DuckDB SQL/script execution
+- **playbook** — Execute sub-playbook by catalog path
+- **secrets** — Fetch secret from provider (GCP, AWS, etc.)
+
+### Special Steps
+
+- **start** — Workflow entry point. Conventionally has no tool (just routing with `next:`), though technically can have one
+- **end** — Terminal step by convention. Step named "end" typically has no `next:` to indicate workflow completion, but can have a tool for final actions
+
+**Note**: "start" and "end" are naming conventions, not special types. Any step can be an entry point or terminal step based on workflow structure.
 
 ---
 
@@ -57,62 +70,476 @@ context:
   jobId: "{{ uuid() }}"
   state: "init"
 workbook:
-  - task: get_weather
-    type: http
+  - name: get_weather
     desc: Weather by city
-    method: GET
-    endpoint: "https://api.example.com/weather"
+    tool:
+      kind: http
+      method: GET
+      endpoint: "https://api.example.com/weather"
 ```
 
 ---
 
 ## Steps (Widgets)
 
-Each step has:
-- step: Unique step name
-- type: One of `start|end|workbook|python|http|duckdb|postgres|secrets|playbooks|loop`
-- next: The next step name (string or list of names). Not allowed for `end`. Required for `start`.
-- Inputs/Outputs: Vary by type as defined below.
+**Steps are aggregators** that coordinate tool execution and control flow. Each step combines:
 
-General execution:
-- Steps execute in order by following `next`.
-- A step may optionally publish outputs to the playbook context under a variable name (see `as:` below).
-- If a step has no `next` and is not `end`, the branch terminates implicitly.
+### Step Attributes
 
-### start
-Entry point that routes to the first executable step.
+- **step** (string, required): Unique step identifier
+- **desc** (string, optional): Human-readable description
+- **tool** (object, optional): Tool to execute (not required for `start`/`end`)
+  - **kind** (string, required): Tool type - `python`, `http`, `postgres`, `duckdb`, `workbook`, `playbook`, `secrets`
+  - Tool-specific configuration fields (varies by kind)
+- **loop** (object, optional): Control repeated tool execution
+  - **in** (array|string): Collection to iterate over
+  - **iterator** (string): Variable name for current item
+  - **mode** (string): `sequential` or `async`
+- **vars** (object, optional): Variable extraction block - extracts values from step result and stores in `transient` database
+- **case** (array, optional): Event-driven conditional routing
+  - **when** (string): Jinja2 condition to evaluate
+  - **then** (object): Actions when condition matches
+    - **next** (array): Steps to route to
+    - **set** (object): Ephemeral variables to set
+- **next** (string|array, optional): Default routing to subsequent steps. Not allowed for `end`. Required for `start`.
 
-Inputs: none
-Outputs: none
-Required: `next`
+### General Execution Model
 
-Example:
+- Steps execute in order by following `next` edges
+- `tool:` defines what runs (Python code, HTTP call, database query, etc.)
+- `loop:` controls repeated execution of the tool over a collection
+- `vars:` extracts and persists values after successful execution
+- `case:` enables event-driven conditional logic
+- If a step has no `next` and is not `end`, the branch terminates implicitly
+
+### Variable Extraction with `vars:` Block
+
+**Purpose**: Extract and persist values from step execution results for use in subsequent steps.
+
+**Syntax**:
+```yaml
+- step: step_name
+  tool:
+    kind: <tool_kind>   # python, http, postgres, etc.
+    # ... tool configuration ...
+  vars:
+    variable_name: "{{ result.field }}"
+    another_var: "{{ result.nested.value }}"
+```
+
+**Behavior**:
+- Executes AFTER step completes successfully
+- Templates use `{{ result.field }}` to access current step's result
+- Variables stored in `noetl.transient` database table with `var_type='step_result'`
+- Accessible in all subsequent steps via `{{ vars.variable_name }}`
+- Also accessible via REST API: `GET /api/vars/{execution_id}/{var_name}`
+
+**Template Namespaces**:
+- `{{ result.field }}` - Current step's result (only in vars block)
+- `{{ vars.var_name }}` - Previously extracted variables
+- `{{ workload.field }}` - Global playbook variables
+- `{{ step_name.field }}` - Previous step results
+- `{{ execution_id }}` - System execution ID
+
+**Example - Extract from Database Query**:
+```yaml
+- step: fetch_user
+  tool:
+    kind: postgres
+    script: "SELECT user_id, email, status FROM users WHERE id = 1"
+  vars:
+    user_id: "{{ result[0].user_id }}"
+    email: "{{ result[0].email }}"
+    is_active: "{{ result[0].status == 'active' }}"
+  next: send_notification
+
+- step: send_notification
+  tool:
+    kind: http
+    method: POST
+    endpoint: "https://api.example.com/notify"
+    body:
+      user_id: "{{ vars.user_id }}"
+      email: "{{ vars.email }}"
+      active: "{{ vars.is_active }}"
+  next: end
+```
+
+**Example - Extract from Python Result**:
+```yaml
+- step: calculate
+  tool:
+    kind: python
+    code: |
+      def main():
+        return {"total": 100, "average": 25.5, "count": 4}
+  vars:
+    total_amount: "{{ result.total }}"
+    avg_value: "{{ result.average }}"
+    record_count: "{{ result.count }}"
+  next: log_results
+```
+
+**Storage Details**:
+- Table: `noetl.transient`
+- Primary Key: `(execution_id, var_name)`
+- Columns: `var_type`, `var_value` (JSONB), `source_step`, `created_at`, `accessed_at`, `access_count`
+- Automatic cleanup when execution completes
+
+**REST API Access**:
+```bash
+# Get all variables for execution
+GET /api/vars/{execution_id}
+
+# Get specific variable (increments access_count)
+GET /api/vars/{execution_id}/{var_name}
+
+# Set variables programmatically
+POST /api/vars/{execution_id}
+Content-Type: application/json
+{
+  "variables": {"my_var": "value"},
+  "var_type": "user_defined"
+}
+```
+
+See `vars_block_quick_reference.md` for more patterns and examples.
+
+---
+
+## Argument Passing with `args:` Attribute
+
+### Overview
+
+The `args:` attribute is used to pass data between steps, into tools, and when routing to next steps. **It can appear at three different levels**, each with distinct purposes:
+
+1. **Step Level** (`- step: name` / `args:`) - Provides input data to the step's tool
+2. **Tool Level** (`tool:` / `args:`) - Direct arguments for tool configuration (less common, typically at step level)
+3. **Next Level** (`next:` / `- step: name` / `args:`) - Passes specific data when routing to a step
+
+### Scope and Purpose by Level
+
+| Level | Location | Purpose | Available Context |
+|-------|----------|---------|-------------------|
+| **Step** | Sibling to `tool:` | Inject data into tool execution (e.g., Python function params, HTTP request data) | All: `workload`, `vars`, prior step results, `execution_id` |
+| **Tool** | Inside `tool:` block | Tool-specific configuration arguments (alternative to step-level) | Same as step level |
+| **Next** | Inside routing target in `next:` or `case.then.next` | Pass data to specific next step(s) during routing | Same as step level |
+
+---
+
+### Step-Level `args:`
+
+**Purpose**: Provide input data that the tool will receive during execution. This is the most common usage.
+
+**Location**: Sibling to `tool:`, same indentation level
+
+**Behavior**:
+- Values are Jinja2-templated at step execution time
+- Tool receives args as input parameters (e.g., Python function arguments, template variables)
+- Accessible within tool code as variables
+
+**Example - Python Tool with Step Args**:
+```yaml
+- step: calculate_discount
+  args:
+    original_price: "{{ fetch_product.price }}"
+    discount_rate: "{{ vars.discount_rate }}"
+    customer_tier: "{{ vars.customer_tier }}"
+  tool:
+    kind: python
+    code: |
+      def main(original_price, discount_rate, customer_tier):
+        multiplier = 1.0 if customer_tier == 'gold' else 0.8
+        discount = original_price * discount_rate * multiplier
+        return {"discount": discount, "final_price": original_price - discount}
+  next: apply_discount
+```
+
+**Example - HTTP Tool with Step Args**:
+```yaml
+- step: send_notification
+  args:
+    user_id: "{{ vars.user_id }}"
+    message: "{{ vars.notification_message }}"
+    priority: "high"
+  tool:
+    kind: http
+    method: POST
+    endpoint: "https://api.example.com/notifications"
+    body:
+      user_id: "{{ user_id }}"      # References step args
+      message: "{{ message }}"
+      priority: "{{ priority }}"
+  next: end
+```
+
+**Example - Workbook Tool with Step Args**:
+```yaml
+- step: process_user
+  args:
+    user_data: "{{ current_user }}"
+    processing_mode: "standard"
+  tool:
+    kind: workbook
+    name: user_processor
+    args:
+      user: "{{ user_data }}"       # Can reference step args
+      mode: "{{ processing_mode }}"
+  next: save_result
+```
+
+---
+
+### Tool-Level `args:`
+
+**Purpose**: Alternative location for tool-specific arguments. Less common; step-level `args:` is preferred.
+
+**Location**: Inside `tool:` block, sibling to `kind:`
+
+**Behavior**:
+- Similar to step-level args but scoped to tool configuration
+- Useful when step has multiple concerns (e.g., args for tool vs. args for routing)
+
+**Example - Tool Args (Alternative Pattern)**:
+```yaml
+- step: compute_score
+  tool:
+    kind: python
+    code: |
+      def main(a, b):
+        return {"sum": a + b}
+    args:
+      a: 5
+      b: 7
+  next: end
+```
+
+**Note**: Step-level `args:` is generally preferred for clarity and consistency.
+
+---
+
+### Next-Level `args:` (Routing with Data)
+
+**Purpose**: Pass specific data to target step(s) during routing. Allows dynamic parameterization based on control flow.
+
+**Location**: Inside `next:` array items or `case.then.next` array items
+
+**Behavior**:
+- Templated at routing time (when branching occurs)
+- Target step receives these args as if they were step-level args
+- Overrides or supplements step's own `args:` definition
+- Useful for passing event-specific data or conditional values
+
+**Example - Next Args in case.then.next**:
 ```yaml
 - step: start
-  type: start
+  tool:
+    kind: python
+    code: |
+      def main():
+        return {"status": "initialized"}
+  case:
+    - when: "{{ event.name == 'step.exit' }}"
+      then:
+        next:
+          - step: process_data
+            args:
+              message: "{{ workload.message }}"
+              timestamp: "{{ result.timestamp }}"
+
+- step: process_data
+  args:
+    message: "default message"    # Can be overridden by routing args
+  tool:
+    kind: python
+    code: |
+      def main(message, timestamp=None):
+        print(f"Processing: {message} at {timestamp}")
+        return {"processed": True}
+  next: end
+```
+
+**Example - Next Args in Loop with Playbook**:
+```yaml
+- step: process_users
+  loop:
+    in: "{{ workload.users }}"
+    iterator: user
+  tool:
+    kind: playbook
+    path: workflows/user_processor
+    args:
+      user_data: "{{ user }}"
+      execution_context: "{{ execution_id }}"
+  next: summarize
+```
+
+**Example - Conditional Routing with Different Args**:
+```yaml
+- step: evaluate_score
+  tool:
+    kind: python
+    code: |
+      def main():
+        score = calculate_score()
+        return {"score": score}
+  case:
+    - when: "{{ result.score > 80 }}"
+      then:
+        next:
+          - step: high_score_handler
+            args:
+              score: "{{ result.score }}"
+              level: "gold"
+    - when: "{{ result.score > 50 }}"
+      then:
+        next:
+          - step: medium_score_handler
+            args:
+              score: "{{ result.score }}"
+              level: "silver"
+  next:
+    - step: low_score_handler
+      args:
+        score: "{{ result.score }}"
+        level: "bronze"
+```
+
+---
+
+### Args in Sink Blocks
+
+**Purpose**: Provide data to sink tools (database writes, event logs, etc.) after step execution.
+
+**Location**: Inside `case.then.sink` or step-level `sink:`
+
+**Behavior**:
+- Templated after step completes
+- Has access to `result` (unwrapped step data), `this` (envelope), prior step results
+
+**Example - Sink Args**:
+```yaml
+- step: fetch_user
+  tool:
+    kind: http
+    method: GET
+    endpoint: "https://api.example.com/users/{{ user_id }}"
+  case:
+    - when: "{{ event.name == 'call.done' and response is defined }}"
+      then:
+        sink:
+          tool:
+            kind: postgres
+          auth: pg_prod
+          table: public.user_cache
+          args:
+            id: "{{ execution_id }}:{{ response.data.user_id }}"
+            user_id: "{{ response.data.user_id }}"
+            email: "{{ response.data.email }}"
+            fetched_at: "{{ this.meta.timestamp }}"
+        next:
+          - step: end
+```
+
+---
+
+### Template Context for Args
+
+All `args:` blocks have access to the standard template namespaces:
+
+- **`{{ workload.field }}`** - Global playbook variables
+- **`{{ vars.var_name }}`** - Extracted variables from vars: blocks
+- **`{{ step_name.field }}`** - Previous step results
+- **`{{ execution_id }}`** - Current execution identifier
+- **`{{ result.field }}`** - Current step result (in case.then contexts)
+- **`{{ iterator }}`** - Current loop item (within loop iterations)
+
+---
+
+### Best Practices
+
+1. **Prefer Step-Level Args**: Place `args:` at step level for clarity, not inside `tool:`
+2. **Use Next Args for Dynamic Routing**: When different paths need different data
+3. **Explicit Over Implicit**: Be explicit about data flow; don't rely on ambient context
+4. **Template Defensively**: Use default values or conditional checks for optional args
+   ```yaml
+   args:
+     value: "{{ result.value | default(0) }}"
+   ```
+5. **Document Data Flow**: Use comments to clarify complex arg passing
+   ```yaml
+   - step: process
+     args:
+       # Comes from previous fetch_data step
+       dataset: "{{ fetch_data.results }}"
+       # Global configuration
+       batch_size: "{{ workload.batch_size }}"
+   ```
+
+---
+
+See `vars_block_quick_reference.md` for more patterns and examples.
+
+### start
+Workflow entry point that routes to the first executable step. Conventionally has no `tool:` (just routing), but can optionally include one.
+
+Typical Attributes:
+- **desc** (string, optional): Description
+- **next** (string|array, required): Step(s) to execute first
+- **tool** (object, optional): Optional tool to execute on entry
+
+Example (routing only):
+```yaml
+- step: start
+  desc: Entry point for user onboarding workflow
+  next: fetch_user
+```
+
+Example (with tool):
+```yaml
+- step: start
+  desc: Initialize workflow state
+  tool:
+    kind: python
+    code: |
+      def main():
+        return {"initialized": True, "timestamp": datetime.now().isoformat()}
   next: fetch_user
 ```
 
 ### end
-Terminal step.
+Terminal step indicating workflow completion. By convention, step named "end" has no `next:` to mark the endpoint, but can include a `tool:` for final actions.
 
-Inputs: none
-Outputs: none
-Constraints: Must not define `next`.
+Typical Attributes:
+- **desc** (string, optional): Description
+- **tool** (object, optional): Optional tool for final processing
+- **next** (typically omitted): No next steps to mark termination
 
-Example:
+Example (marker only):
 ```yaml
 - step: end
-  type: end
+  desc: Workflow completed successfully
+```
+
+Example (with final action):
+```yaml
+- step: end
+  desc: Log completion and cleanup
+  tool:
+    kind: python
+    code: |
+      def main():
+        return {"status": "completed", "timestamp": datetime.now().isoformat()}
 ```
 
 ### workbook
-Invoke a named task from the workbook library.
+Reference a named task from the workbook library.
 
-Inputs:
-- task (string, required): Name of a task defined under `workbook` at top-level
-- with (object, optional): Inputs forwarded to the task
-- as (string, optional): Variable name to store the task result
+Tool Configuration (`tool:`):
+- **kind**: `workbook` (required)
+- **name** (string, required): Name of task defined under playbook's `workbook:` section
+- **args** (object, optional): Inputs forwarded to the task
+- **as** (string, optional): Variable name to store the task result
 
 Outputs:
 - Result of the task, stored under `context[as]` if `as` is provided, else available as step-local `result`
@@ -120,21 +547,23 @@ Outputs:
 Example:
 ```yaml
 - step: fetch_weather
-  type: workbook
-  task: get_weather
-  with:
-    city: "Paris"
-  as: weather
+  tool:
+    kind: workbook
+    name: get_weather
+    args:
+      city: "Paris"
+    as: weather
   next: end
 ```
 
 ### python
 Execute inline Python code.
 
-Inputs:
-- code (string, required): Python code to execute
-- with (object, optional): Variables to inject into the code context
-- as (string, optional): Variable name to store the result
+Tool Configuration (`tool:`):
+- **kind**: `python` (required)
+- **code** (string, required): Python code to execute (typically with `def main():` function)
+- **args** (object, optional): Variables to inject into the code context
+- **as** (string, optional): Variable name to store the result
 
 Outputs:
 - `result` from the last expression or explicit `return` in the code block; saved under `as` if provided
@@ -142,29 +571,32 @@ Outputs:
 Example:
 ```yaml
 - step: compute_score
-  type: python
-  with:
-    a: 5
-    b: 7
-  code: |
-    total = a + b
-    return {"sum": total, "ok": True}
-  as: score
+  tool:
+    kind: python
+    code: |
+      def main(a, b):
+        total = a + b
+        return {"sum": total, "ok": True}
+    args:
+      a: 5
+      b: 7
+    as: score
   next: end
 ```
 
 ### http
 Perform an HTTP request.
 
-Inputs:
-- method (enum: GET, POST, PUT, DELETE, PATCH) required
-- endpoint (string, required)
-- headers (object, optional)
-- params (object, optional)
-- body (object|string, optional)
-- timeout (number, optional, seconds)
-- verify (boolean, optional)
-- as (string, optional)
+Tool Configuration (`tool:`):
+- **kind**: `http` (required)
+- **method** (enum: GET, POST, PUT, DELETE, PATCH) required
+- **endpoint** (string, required)
+- **headers** (object, optional)
+- **params** (object, optional)
+- **body** (object|string, optional)
+- **timeout** (number, optional, seconds)
+- **verify** (boolean, optional)
+- **as** (string, optional)
 
 Outputs:
 - `status`, `headers`, `body`, `json` (if parseable). If `as` is provided, the whole response object is saved under that name.
@@ -172,22 +604,24 @@ Outputs:
 Example:
 ```yaml
 - step: call_api
-  type: http
-  method: GET
-  endpoint: "https://api.example.com/users/{{ user_id }}"
-  headers:
-    Authorization: "Bearer {{ env.API_TOKEN }}"
-  as: user_response
+  tool:
+    kind: http
+    method: GET
+    endpoint: "https://api.example.com/users/{{ user_id }}"
+    headers:
+      Authorization: "Bearer {{ env.API_TOKEN }}"
+    as: user_response
   next: end
 ```
 
 ### duckdb
 Run DuckDB SQL/script.
 
-Inputs:
-- script (string, required): SQL or script
-- files (array[string], optional): External file paths
-- as (string, optional)
+Tool Configuration (`tool:`):
+- **kind**: `duckdb` (required)
+- **script** (string, required): SQL or script to execute
+- **files** (array[string], optional): External file paths to load
+- **as** (string, optional)
 
 Outputs:
 - Query result set (if any), saved under `as` if provided
@@ -195,22 +629,24 @@ Outputs:
 Example:
 ```yaml
 - step: duck_transform
-  type: duckdb
-  script: |
-    CREATE OR REPLACE TABLE t AS SELECT 1 AS id;
-    SELECT * FROM t;
-  as: table_rows
+  tool:
+    kind: duckdb
+    script: |
+      CREATE OR REPLACE TABLE t AS SELECT 1 AS id;
+      SELECT * FROM t;
+    as: table_rows
   next: end
 ```
 
 ### postgres
 Run PostgreSQL SQL/script.
 
-Inputs:
-- sql (string, required)
-- connection (string, optional): DSN/URL; OR provide discrete fields below
-- db_host, db_port, db_user, db_password, db_name, db_schema (optional)
-- as (string, optional)
+Tool Configuration (`tool:`):
+- **kind**: `postgres` (required)
+- **sql** (string, required): SQL query or script to execute
+- **connection** (string, optional): DSN/URL connection string
+- **db_host, db_port, db_user, db_password, db_name, db_schema** (optional): Discrete connection fields
+- **as** (string, optional)
 
 Outputs:
 - Query result set (if any) or `rowcount`; saved under `as` if provided
@@ -218,23 +654,25 @@ Outputs:
 Example:
 ```yaml
 - step: load_users
-  type: postgres
-  connection: "{{ environment.postgres_url }}"
-  sql: |
-    SELECT id, email FROM users LIMIT 10;
-  as: users
+  tool:
+    kind: postgres
+    connection: "{{ environment.postgres_url }}"
+    sql: |
+      SELECT id, email FROM users LIMIT 10;
+    as: users
   next: end
 ```
 
 ### secrets
 Read a secret from a provider.
 
-Inputs:
-- provider (enum: gcp, aws, azure, vault, env)
-- name (string, required): Secret identifier
-- project (string, optional)
-- version (string|number, optional)
-- as (string, optional, default logical value: `secret_value`)
+Tool Configuration (`tool:`):
+- **kind**: `secrets` (required)
+- **provider** (enum: gcp, aws, azure, vault, env) required
+- **name** (string, required): Secret identifier
+- **project** (string, optional): Provider-specific project/account ID
+- **version** (string|number, optional): Secret version to retrieve
+- **as** (string, optional, default logical value: `secret_value`)
 
 Outputs:
 - Secret material as a string; saved under `as` (default `secret_value`)
@@ -242,94 +680,194 @@ Outputs:
 Example:
 ```yaml
 - step: get_openai_key
-  type: secrets
-  provider: gcp
-  project: my-gcp-project
-  name: OPENAI_API_KEY
-  as: openai_api_key
+  tool:
+    kind: secrets
+    provider: gcp
+    project: my-gcp-project
+    name: OPENAI_API_KEY
+    as: openai_api_key
   next: end
 ```
 
-### playbooks
-Execute all playbooks under a catalog path.
+### playbook
+Execute a sub-playbook by catalog path.
 
-Inputs:
-- catalog_path (string, required): Path/prefix in the catalog
-- with (object, optional): Inputs to forward to each playbook
-- parallel (boolean, optional): Execute sub-playbooks in parallel
-- as (string, optional)
+Tool Configuration (`tool:`):
+- **kind**: `playbook` (required)
+- **path** (string, required): Catalog path to the playbook
+- **args** (object, optional): Inputs to forward to the sub-playbook
+- **return_step** (string, optional): Specific step result to return from sub-playbook
+- **as** (string, optional): Variable name to store result
 
 Outputs:
-- Array of child playbook results; saved under `as` if provided
+- Result from the executed sub-playbook; saved under `as` if provided
 
 Example:
 ```yaml
-- step: run_batch
-  type: playbooks
-  catalog_path: workflows/batch/jobs
-  with:
-    job_date: "{{ today() }}"
-  parallel: true
-  as: batch_results
+- step: run_etl
+  tool:
+    kind: playbook
+    path: workflows/etl/user_transform
+    args:
+      job_date: "{{ today() }}"
+      batch_size: 1000
+    as: etl_result
+  next: validate_results
+```
+
+---
+
+## Loop Control Attribute
+
+### loop:
+The `loop:` attribute controls repeated execution of a step's tool over a collection. **It is not a step type**, but a step-level attribute that modifies how the tool executes.
+
+**Structure**:
+```yaml
+- step: step_name
+  tool:
+    kind: <tool_kind>     # Any tool: python, http, postgres, etc.
+    # ... tool configuration
+  loop:                   # Controls repeated execution
+    in: "{{ collection }}"
+    iterator: item_name
+    mode: sequential      # or async
+```
+
+**Attributes**:
+- **in** (array|string, required): Collection to iterate over (can be Jinja2 expression)
+- **iterator** (string, required): Variable name for the current item in each iteration
+- **mode** (string, optional): Execution mode
+  - `sequential` - Items processed one at a time (default)
+  - `async` - Items processed concurrently
+
+**Behavior**:
+1. Tool executes once per item in the collection
+2. Current item available as `{{ iterator_name }}` in tool configuration
+3. Results collected into array accessible in next steps
+4. Works with any tool kind: python, http, postgres, workbook, playbook, etc.
+
+**Example - Loop with HTTP Tool**:
+```yaml
+- step: fetch_user_data
+  loop:
+    in: "{{ workload.user_ids }}"
+    iterator: user_id
+    mode: sequential
+  tool:
+    kind: http
+    method: GET
+    endpoint: "https://api.example.com/users/{{ user_id }}"
+  next: process_results
+```
+
+**Example - Loop with Python Tool**:
+```yaml
+- step: process_items
+  loop:
+    in: "{{ workload.items }}"
+    iterator: item
+    mode: async
+  tool:
+    kind: python
+    code: |
+      def main(item):
+        return {"id": item["id"], "processed": True}
+    args:
+      item: "{{ item }}"
+  vars:
+    processed_count: "{{ result | length }}"
   next: end
 ```
 
-### loop
-Iterate over a collection, running either a workbook task per item or a sub-playbook per item.
-
-Variant A (workbook task per item):
-
-Inputs:
-- mode: workbook
-- in (array|string, required): Collection/expression to iterate over
-- iterator (string, required): Item variable name
-- task (string, required): Workbook task name
-- with (object, optional): Inputs (may reference `&#123;&#123; iterator &#125;&#125;`)
-- as (string, optional): Aggregate results variable
-
-Variant B (playbooks per item):
-
-Inputs:
-- mode: playbooks
-- in (array|string, required)
-- iterator (string, required)
-- catalog_path (string, required)
-- with (object, optional)
-- parallel (boolean, optional)
-- as (string, optional)
-
-Outputs:
-- Array of per-iteration results; saved under `as` if provided
-
-Examples:
+**Example - Loop with Workbook Tool**:
 ```yaml
-- step: loop_task
-  type: loop
-  mode: workbook
-  in: "{{ workload.user_ids }}"
-  iterator: uid
-  task: get_user
-  with:
-    id: "{{ uid }}"
-  as: users
-  next: end
+- step: batch_transform
+  loop:
+    in: "{{ workload.batch_dates }}"
+    iterator: date
+  tool:
+    kind: workbook
+    name: daily_transform
+    args:
+      job_date: "{{ date }}"
+  next: aggregate_results
+```
 
-- step: loop_playbooks
-  type: loop
-  mode: playbooks
-  in: ["2025-09-01", "2025-09-02"]
-  iterator: d
-  catalog_path: workflows/daily/jobs
-  with:
-    job_date: "{{ d }}"
-  parallel: true
-  as: daily_runs
-  next: end
+**Example - Loop with Playbook Tool**:
+```yaml
+- step: run_daily_jobs
+  loop:
+    in: ["2025-01-01", "2025-01-02", "2025-01-03"]
+    iterator: day
+    mode: async
+  tool:
+    kind: playbook
+    path: workflows/daily/jobs
+    args:
+      job_date: "{{ day }}"
+  next: validate_all
+```
+
+**Accessing Loop Results**:
+```yaml
+- step: summarize
+  tool:
+    kind: python
+    code: |
+      def main(results):
+        return {"total": len(results), "success": sum(1 for r in results if r.get("ok"))}
+    args:
+      results: "{{ fetch_user_data }}"  # Array of all loop iteration results
 ```
 
 ---
 
 ## Template Context and Result References
+
+### Available Template Namespaces
+
+During workflow execution, multiple namespaces are available in Jinja2 templates:
+
+**1. Global/Static Namespaces**:
+- `{{ workload.field }}` - Global variables from playbook `workload:` section (immutable)
+- `{{ execution_id }}` - System execution identifier
+- `{{ payload.field }}` - CLI --payload values
+
+**2. Dynamic Step Results** (available after step execution):
+- `{{ step_name }}` or `{{ step_name.result }}` - Full result object from previous step
+- `{{ step_name.data }}` - Data payload (when step returns envelope structure)
+- `{{ step_name.data.field }}` - Specific field access
+
+**3. Extracted Variables** (via `vars:` block):
+- `{{ vars.var_name }}` - Persistent variables extracted from step results
+- Stored in `transient` database table
+- Accessible via REST API: `/api/vars/{execution_id}`
+- Example:
+  ```yaml
+  - step: fetch_data
+    tool:
+      kind: postgres
+      script: "SELECT id, name FROM users"
+    vars:
+      first_id: "{{ result[0].id }}"
+      first_name: "{{ result[0].name }}"
+  
+  - step: use_vars
+    tool:
+      kind: python
+      code: |
+        def main(first_id, first_name):
+          print(f"ID: {first_id}, Name: {first_name}")
+      args:
+        first_id: "{{ vars.first_id }}"
+        first_name: "{{ vars.first_name }}"
+  ```
+
+**4. Context-Specific** (only in certain locations):
+- `{{ result.field }}` - Current step's result (only in `vars:` block)
+- `{{ args.field }}` - Input arguments (only within step execution code)
+- `{{ iterator }}` - Loop item variable (only within loop iterations)
 
 ### Step Result References in Workflow
 
@@ -338,23 +876,44 @@ During workflow execution, completed step results are available in subsequent st
 - `&#123;&#123; step_name.data &#125;&#125;` - Direct access to the data payload when step returns envelope structure
 - `&#123;&#123; step_name.data.field &#125;&#125;` - Access specific fields within the data payload
 
+**Important**: The server normalizes step results by extracting `.data` when present, so:
+- `{{ step_name.field }}` usually works directly without needing `.data` prefix
+- Use `{{ step_name.data.field }}` only if the step explicitly returns an envelope
+
+### Variable Persistence Comparison
+
+| Mechanism | Scope | Persistence | Access Pattern | Use Case |
+|-----------|-------|-------------|----------------|----------|
+| `workload:` | Global | Immutable after start | `{{ workload.field }}` | Static configuration |
+| Step results | Execution | In-memory only | `{{ step_name.field }}` | Passing data between adjacent steps |
+| `vars:` block | Execution | Database (`transient`) | `{{ vars.var_name }}` or REST API | Extracted values for reuse |
+| `context:` | Global | Runtime mutable | `{{ context.field }}` | Runtime state (deprecated - use `vars:`) |
+
+**Recommendation**: Use `vars:` block for extracting and persisting values that need to be:
+- Reused across multiple steps
+- Accessed via REST API externally
+- Tracked for debugging (access count, timestamps)
+- Survived in case of orchestrator restarts
+
 Example:
 ```yaml
 - step: fetch_data
-  type: python
-  code: |
-    def main():
-      return {"status": "success", "data": {"count": 42, "name": "test"}}
+  tool:
+    kind: python
+    code: |
+      def main():
+        return {"status": "success", "data": {"count": 42, "name": "test"}}
   next: process
 
 - step: process
-  type: python
-  code: |
-    def main(count, name):
-      print(f"Processing {name} with count {count}")
-  args:
-    count: "{{ fetch_data.data.count }}"
-    name: "{{ fetch_data.data.name }}"
+  tool:
+    kind: python
+    code: |
+      def main(count, name):
+        print(f"Processing {name} with count {count}")
+    args:
+      count: "{{ fetch_data.data.count }}"
+      name: "{{ fetch_data.data.name }}"
 ```
 
 ### Sink Template Context (Result Unwrapping)
@@ -373,10 +932,11 @@ When a `sink:` block executes, the worker provides a **special context** where r
 ✅ **Correct sink usage:**
 ```yaml
 - step: generate
-  type: python
-  code: |
-    def main():
-      return {"status": "success", "data": {"value": 123, "message": "hello"}}
+  tool:
+    kind: python
+    code: |
+      def main():
+        return {"status": "success", "data": {"value": 123, "message": "hello"}}
   sink:
     tool: postgres
     table: outputs
@@ -398,11 +958,14 @@ sink:
 
 ## Validation Summary
 
-- `start` must define `next`.
-- `end` must not define `next`.
-- Each step type only accepts its own inputs/outputs as specified above.
-- `next` may be a string or an array of step names. If omitted (and not `end`), the branch ends.
-- Step names must be unique. References in `next` must exist.
+- Steps named `start` typically define `next` to route to first executable step
+- Steps named `end` typically omit `next` to mark workflow termination
+- Each tool kind only accepts its specific configuration fields as documented
+- `next` may be a string or an array of step names. If omitted, the branch ends at that step
+- Step names must be unique within a workflow. References in `next` must point to existing steps
+- `loop:` attribute requires both `in` and `iterator` fields
+- `vars:` block templates can only access `{{ result }}` (current step result)
+- Tool `kind:` must be one of: workbook, python, http, postgres, duckdb, playbook, secrets
 
 ---
 
@@ -415,16 +978,17 @@ name: Minimal
 path: workflows/examples/minimal
 workflow:
   - step: start
-    type: start
+    desc: Entry point
     next: ping
 
   - step: ping
-    type: http
-    method: GET
-    endpoint: https://httpbin.org/get
-    as: resp
+    tool:
+      kind: http
+      method: GET
+      endpoint: https://httpbin.org/get
+      as: resp
     next: end
 
   - step: end
-    type: end
+    desc: Workflow complete
 ```

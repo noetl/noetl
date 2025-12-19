@@ -132,3 +132,16 @@ Project Links
 - tests/fixtures/playbooks/api_integration/amadeus_ai_api
 
 
+### sqlx-cli
+
+https://docs.rs/crate/sqlx-cli/0.8.2
+
+https://dev.to/behainguyen/rust-sqlx-cli-database-migration-with-mysql-and-postgresql-42gp
+
+- `sqlx migrate add -r my_migration_name`
+- write sql scripts
+- `sqlx migrate run`
+- `sqlx migrate revert`
+- `cargo sqlx prepare` (run always after query changing) need update cache for query! macros for all functions 
+
+

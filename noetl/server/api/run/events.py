@@ -11,6 +11,7 @@ from typing import Dict, Any, Optional, List
 import json
 from datetime import datetime
 from psycopg.rows import dict_row
+from psycopg.types.json import Json
 from noetl.core.db.pool import get_pool_connection, get_snowflake_id
 from noetl.core.logger import setup_logger
 
@@ -98,8 +99,14 @@ class ExecutionEventEmitter:
         if metadata:
             meta.update(metadata)
         
+        logger.critical(f"DEBUG: Before get_pool_connection, about to emit execution start")
+        
         async with get_pool_connection() as conn:
+            logger.critical(f"DEBUG: Got connection, about to get cursor")
             async with conn.cursor() as cur:
+                logger.critical(f"DEBUG: Got cursor, about to execute INSERT, context type={type(context)}, has workload={('workload' in context)}")
+                logger.critical(f"DEBUG: workload type={type(context.get('workload'))}")
+                
                 await cur.execute(
                     """
                     INSERT INTO noetl.event (
@@ -143,16 +150,29 @@ class ExecutionEventEmitter:
                         "node_name": path,
                         "node_type": "execution",
                         "status": "STARTED",
-                        "context": json.dumps(context),
-                        "meta": json.dumps(meta),
+                        "context": Json(context),
+                        "meta": Json(meta),
                         "created_at": datetime.utcnow()
                     }
                 )
+                
+                logger.critical(f"DEBUG: INSERT completed successfully")
+                
+                # Test query to ensure connection is OK after JSONB insert
+                await cur.execute("SELECT 1 AS test")
+                test_result = await cur.fetchone()
+                logger.critical(f"DEBUG: Post-insert test query result={test_result}")
+        
+        logger.critical(f"DEBUG: Exited cursor context")
         
         logger.info(
             f"Emitted execution start event: execution_id={execution_id}, "
             f"event_id={event_id}, catalog_id={catalog_id}"
         )
+        
+        if not isinstance(event_id, int):
+            logger.error(f"BUG: event_id is {type(event_id)}, not int! Value: {event_id}")
+            raise TypeError(f"event_id must be int, got {type(event_id)}")
         
         return event_id
     
@@ -176,6 +196,8 @@ class ExecutionEventEmitter:
             async with conn.cursor() as cur:
                 # Insert workflow steps
                 for step in workflow_steps:
+                    logger.critical(f"DEBUG PERSIST_WORKFLOW: step keys={step.keys()}, types={[(k, type(v).__name__) for k, v in step.items()]}")
+                    logger.critical(f"DEBUG PERSIST_WORKFLOW: raw_config type={type(step.get('raw_config'))}, value={step.get('raw_config')[:100] if isinstance(step.get('raw_config'), str) else step.get('raw_config')}")
                     await cur.execute(
                         """
                         INSERT INTO noetl.workflow (
@@ -337,6 +359,8 @@ class ExecutionEventEmitter:
             "emitter": "execution_service"
         }
         
+        logger.critical(f"DEBUG WORKFLOW_INIT: About to emit_workflow_initialized, context type={type(context)}, meta type={type(meta)}")
+        
         async with get_pool_connection() as conn:
             async with conn.cursor() as cur:
                 await cur.execute(
@@ -374,13 +398,13 @@ class ExecutionEventEmitter:
                         "catalog_id": catalog_id,
                         "event_id": event_id,
                         "parent_event_id": parent_event_id,
-                        "event_type": "workflow_initialized",
+                        "event_type": "workflow.initialized",
                         "node_id": "workflow",
                         "node_name": "workflow",
                         "node_type": "workflow",
                         "status": "COMPLETED",
-                        "context": json.dumps(context),
-                        "meta": json.dumps(meta),
+                        "context": Json(context),
+                        "meta": Json(meta),
                         "created_at": datetime.utcnow()
                     }
                 )

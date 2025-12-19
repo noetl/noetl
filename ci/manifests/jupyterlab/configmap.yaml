@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: jupyterlab-notebooks
+  namespace: noetl
+  labels:
+    app: jupyterlab
+    component: analytics
+data:
+  # This ConfigMap is managed via kubectl create --from-file
+  # Deploy with: task jupyterlab:deploy
+  # 
+  # Manual update:
+  # kubectl create configmap jupyterlab-notebooks \
+  #   --from-file=regression_dashboard.ipynb=tests/fixtures/notebooks/regression_dashboard.ipynb \
+  #   --from-file=pagination_loop_test.ipynb=tests/fixtures/playbooks/pagination/loop_with_pagination/pagination_loop_test.ipynb \
+  #   -n noetl --dry-run=client -o yaml | kubectl apply -f -
+  #
+  # Notebooks included:
+  # - regression_dashboard.ipynb: Full regression testing dashboard
+  # - pagination_loop_test.ipynb: Loop with pagination validation notebook
