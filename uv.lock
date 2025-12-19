@@ -1950,6 +1950,12 @@ wheels = [
 ]
 
 [[package]]
+name = "nats-py"
+version = "2.12.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/71/c5/2564d917503fe8d68fe630c74bf6b678fbc15c01b58f2565894761010f57/nats_py-2.12.0.tar.gz", hash = "sha256:2981ca4b63b8266c855573fa7871b1be741f1889fd429ee657e5ffc0971a38a1", size = 119821, upload-time = "2025-10-31T05:27:31.247Z" }
+
+[[package]]
 name = "nbclient"
 version = "0.10.2"
 source = { registry = "https://pypi.org/simple" }
@@ -2057,7 +2063,7 @@ wheels = [
 
 [[package]]
 name = "noetl"
-version = "1.8.0"
+version = "2.0.0"
 source = { editable = "." }
 dependencies = [
     { name = "aiofiles" },
@@ -2081,6 +2087,7 @@ dependencies = [
     { name = "kubernetes" },
     { name = "lark" },
     { name = "memray" },
+    { name = "nats-py" },
     { name = "networkx" },
     { name = "ortools" },
     { name = "polars", extra = ["pyarrow"] },
@@ -2153,6 +2160,7 @@ requires-dist = [
     { name = "lark", specifier = ">=1.2.2" },
     { name = "matplotlib", marker = "extra == 'notebook'", specifier = ">=3.10.3" },
     { name = "memray", specifier = ">=1.17.2" },
+    { name = "nats-py", specifier = ">=2.10.0" },
     { name = "networkx", specifier = ">=3.5" },
     { name = "ortools", specifier = ">=9.10" },
     { name = "pandas", marker = "extra == 'notebook'", specifier = ">=2.2.3" },
