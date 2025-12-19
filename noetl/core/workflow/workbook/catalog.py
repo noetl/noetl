@@ -107,81 +107,52 @@ def find_workbook_action(playbook: Dict[str, Any], task_name: str) -> Dict[str, 
     return target_action
 
 
-def extract_playbook_location(context: Dict[str, Any]) -> tuple[Optional[str], str]:
+async def extract_playbook_location(context: Dict[str, Any]) -> tuple[Optional[str], str]:
     """
     Extract playbook path and version from execution context.
 
-    First tries to fetch from workload table using execution_id if available,
-    then falls back to context data structures.
+    For V2 worker architecture, uses catalog_id to fetch path from catalog API.
+    Falls back to context-based extraction for legacy compatibility.
 
     Args:
-        context: Execution context
+        context: Execution context (should contain catalog_id or path)
 
     Returns:
         Tuple of (path, version)
 
     Raises:
-        ValueError: If path not found in context
+        ValueError: If path not found in context or catalog API
     """
-    # Try to get execution_id and fetch from workload table first
-    execution_id = context.get("execution_id")
-    if execution_id:
+    # V2 Architecture: Use catalog_id to fetch path from catalog API
+    # Worker never accesses noetl database directly - uses server API instead
+    catalog_id = context.get("catalog_id")
+    if catalog_id:
+        logger.info(f"WORKBOOK: Fetching playbook path from catalog API for catalog_id={catalog_id}")
+        
         try:
-            import asyncio
-
-            from noetl.core.common import get_async_db_connection
-
-            async def _fetch_workload_path(exec_id):
-                try:
-                    async with get_async_db_connection() as conn:
-                        async with conn.cursor() as cur:
-                            await cur.execute(
-                                "SELECT data FROM noetl.workload WHERE execution_id = %s",
-                                (str(exec_id),),
-                            )
-                            row = await cur.fetchone()
-                            if row and row[0]:
-                                import json
-
-                                data = (
-                                    json.loads(row[0])
-                                    if isinstance(row[0], str)
-                                    else row[0]
-                                )
-                                return data.get("path"), data.get("version")
-                except Exception as e:
-                    logger.debug(f"WORKBOOK: Failed to fetch workload from DB: {e}")
-                return None, None
-
-            # Try to run the async function
-            try:
-                loop = asyncio.get_running_loop()
-                # We're in an async context, but execute_task is sync
-                # Create a new event loop in a thread
-                import concurrent.futures
-
-                with concurrent.futures.ThreadPoolExecutor() as pool:
-                    future = pool.submit(
-                        asyncio.run, _fetch_workload_path(execution_id)
-                    )
-                    db_path, db_version = future.result(timeout=2)
-                    if db_path:
-                        logger.info(
-                            f"WORKBOOK: Fetched path={db_path}, version={db_version} from workload table for execution={execution_id}"
-                        )
-                        return db_path, db_version or "latest"
-            except RuntimeError:
-                # No running loop
-                db_path, db_version = asyncio.run(_fetch_workload_path(execution_id))
-                if db_path:
-                    logger.info(
-                        f"WORKBOOK: Fetched path={db_path}, version={db_version} from workload table for execution={execution_id}"
-                    )
-                    return db_path, db_version or "latest"
+            worker_settings = get_worker_settings()
+            server_url = worker_settings.server_api_url.rstrip("/")
+            
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(
+                    f"{server_url}/catalog/resource",
+                    json={"catalog_id": int(catalog_id)}
+                )
+                response.raise_for_status()
+                entry = response.json()
+                
+                path = entry.get("path")
+                version = entry.get("version", "latest")
+                
+                if path:
+                    logger.info(f"WORKBOOK: Fetched path={path}, version={version} from catalog API")
+                    return path, version
+                else:
+                    logger.warning(f"WORKBOOK: Catalog entry {catalog_id} has no path field")
         except Exception as e:
-            logger.debug(f"WORKBOOK: Could not fetch from workload table: {e}")
+            logger.warning(f"WORKBOOK: Failed to fetch from catalog API: {e}")
 
-    # Fall back to context-based extraction
+    # Fall back to context-based extraction for legacy compatibility
     # Context can come in various shapes. Prefer 'work' wrapper if present
     # (as emitted by worker events), then fall back to top-level and nested
     # 'workload' keys.

@@ -608,7 +608,11 @@ class V2Worker:
         
         # Map V2 config format to plugin task_config format
         # Plugins use different field names than V2 DSL
-        task_config = {**config, "args": args, "name": step}
+        # For workbook tool, preserve 'name' field from config (it's the workbook action name)
+        # For other tools, add 'name' as step name for logging
+        task_config = {**config, "args": args}
+        if "name" not in config:
+            task_config["name"] = step
         
         if tool_kind == "python":
             # Use plugin's execute_python_task_async (not the sync wrapper!)
@@ -697,12 +701,8 @@ class V2Worker:
             return result.get('data', result) if isinstance(result, dict) else result
             
         elif tool_kind == "workbook":
-            # Use plugin's execute_workbook_task (sync function - run in executor)
-            loop = asyncio.get_running_loop()
-            result = await loop.run_in_executor(
-                None,
-                lambda: execute_workbook_task(task_config, context, jinja_env, args)
-            )
+            # Call async execute_workbook_task directly (don't use executor for async functions)
+            result = await execute_workbook_task(task_config, context, jinja_env, args)
             # Check if plugin returned error status
             if isinstance(result, dict) and result.get('status') == 'error':
                 # Keep error response intact (worker needs status field to detect error)

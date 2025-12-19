@@ -46,31 +46,47 @@ def build_action_config(
     logger.info(f"WORKBOOK.BUILD_CONFIG: action_args after merge = {action_args}")
 
     # Create task config for the actual action type
-    tool_name = target_action.get("tool")
-    if not tool_name:
+    # V2 DSL: tool is an object with 'kind' field
+    # V1 DSL: tool is a string
+    tool_spec = target_action.get("tool")
+    if not tool_spec:
         raise ValueError(f"Workbook action '{task_name}' must define a 'tool' field")
-    action_config = {
-        "tool": tool_name,
-        "name": task_name,
-    }
-
-    # Copy relevant fields from the action to the config
-    for field in [
-        "code",
-        "command",
-        "commands",
-        "sql",
-        "url",
-        "method",
-        "endpoint",
-        "headers",
-        "params",
-        "data",
-        "payload",
-        "timeout",
-    ]:
-        if field in target_action:
-            action_config[field] = target_action[field]
+    
+    # Handle both V2 (tool: {kind: python, ...}) and V1 (tool: python)
+    if isinstance(tool_spec, dict):
+        tool_name = tool_spec.get("kind")
+        action_config = {
+            "tool": tool_name,
+            "name": task_name,
+        }
+        # Copy all fields from tool spec (code, args, etc.)
+        for field, value in tool_spec.items():
+            if field != "kind":
+                action_config[field] = value
+    else:
+        tool_name = tool_spec
+        action_config = {
+            "tool": tool_name,
+            "name": task_name,
+        }
+        
+        # Copy relevant fields from the action to the config
+        for field in [
+            "code",
+            "command",
+            "commands",
+            "sql",
+            "url",
+            "method",
+            "endpoint",
+            "headers",
+            "params",
+            "data",
+            "payload",
+            "timeout",
+        ]:
+            if field in target_action:
+                action_config[field] = target_action[field]
 
     return action_config, action_args
 
@@ -116,7 +132,7 @@ async def execute_workbook_task(
     logger.info(f"WORKBOOK: Looking up task '{task_name}' in workbook")
 
     # Step 1: Extract playbook location from context
-    path, version = extract_playbook_location(context)
+    path, version = await extract_playbook_location(context)
 
     # Step 2: Fetch playbook from catalog
     playbook = await fetch_playbook_from_catalog(path, version)
@@ -134,13 +150,49 @@ async def execute_workbook_task(
     logger.debug(f"WORKBOOK: Action config: {action_config}")
     logger.debug(f"WORKBOOK: Action args: {action_args}")
 
-    # Step 5: Execute the actual action using the standard task executor
-    # Import execute_task here to avoid circular imports
-    from noetl.core.runtime import execute_task
-
-    result = execute_task(
-        action_config, task_name, context, jinja_env, action_args, log_event_callback
-    )
+    # Step 5: Execute the actual action using async tool executors
+    # Since we're already in async context, call tool executors directly
+    tool_type = action_config.get("tool")
+    
+    if tool_type == "python":
+        from noetl.tools.python import execute_python_task_async
+        result = await execute_python_task_async(action_config, context, jinja_env, action_args)
+    elif tool_type == "http":
+        from noetl.tools.http import execute_http_task
+        # execute_http_task is sync, run in executor
+        import asyncio
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(
+            None,
+            lambda: execute_http_task(action_config, context, jinja_env, action_args)
+        )
+    elif tool_type == "postgres":
+        from noetl.tools.postgres import execute_postgres_task
+        # execute_postgres_task is sync, run in executor
+        import asyncio
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(
+            None,
+            lambda: execute_postgres_task(action_config, context, jinja_env, action_args)
+        )
+    elif tool_type == "duckdb":
+        from noetl.tools.duckdb import execute_duckdb_task
+        # execute_duckdb_task is sync, run in executor
+        import asyncio
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(
+            None,
+            lambda: execute_duckdb_task(action_config, context, jinja_env, action_args)
+        )
+    else:
+        # Fallback to sync execute_task in executor for other tools
+        from noetl.core.runtime import execute_task
+        import asyncio
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(
+            None,
+            lambda: execute_task(action_config, task_name, context, jinja_env, action_args, log_event_callback)
+        )
 
     logger.info(f"WORKBOOK: Action '{task_name}' completed successfully")
     return result
