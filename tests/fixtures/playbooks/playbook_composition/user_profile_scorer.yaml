@@ -44,8 +44,8 @@ workbook:
                 score = years * 5.0                # 0-10 points
             
             return {
-                \"experience_score\": round(score, 1),
-                \"experience_weight\": 0.4  # 40% of total score
+                "experience_score": round(score, 1),
+                "experience_weight": 0.4  # 40% of total score
             }
 
   - name: calculate_performance_score
@@ -65,8 +65,8 @@ workbook:
             score = (rating - 1.0) * 6.25  # Maps 1-5 to 0-25
             
             return {
-                \"performance_score\": round(score, 1),
-                \"performance_weight\": 0.35  # 35% of total score
+                "performance_score": round(score, 1),
+                "performance_weight": 0.35  # 35% of total score
             }
 
   - name: calculate_department_score
