@@ -13,11 +13,13 @@ Database access uses pool connection pattern (noetl.core.db.pool).
 
 from typing import Any, Dict, Optional
 from datetime import datetime, timezone
+import os
+import httpx
 
 from psycopg.rows import dict_row
 from psycopg.types.json import Json
 
-from noetl.core.db.pool import get_pool_connection
+from noetl.core.db.pool import get_pool_connection, get_pool
 from noetl.core.logger import setup_logger
 
 logger = setup_logger(__name__, include_location=True)
@@ -34,7 +36,23 @@ class TransientVars:
     - Source step tracking for debugging
     
     Similar to auth_cache but for runtime workflow state instead of credentials.
+    
+    ARCHITECTURE NOTE:
+    - In worker context: uses server REST API (worker never accesses noetl schema directly)
+    - In server context: uses direct database pool access
     """
+    
+    @staticmethod
+    def _is_worker_context() -> bool:
+        """Check if running in worker context (should use API) vs server context (should use DB)."""
+        is_worker = os.getenv("NOETL_WORKER_MODE") == "true"
+        logger.info(f"TransientVars: NOETL_WORKER_MODE={os.getenv('NOETL_WORKER_MODE')}, is_worker={is_worker}")
+        return is_worker
+    
+    @staticmethod
+    def _get_server_url() -> str:
+        """Get server URL for API calls."""
+        return os.getenv("SERVER_API_URL", "http://noetl.noetl.svc.cluster.local:8082")
 
     @staticmethod
     async def get_cached(
@@ -44,7 +62,7 @@ class TransientVars:
         """
         Retrieve variable from cache and update access tracking.
         
-        Updates accessed_at timestamp and increments access_count on successful read.
+        Uses server API when running in worker context (no pool), or direct DB when in server.
         
         Args:
             var_name: Variable name
@@ -54,43 +72,71 @@ class TransientVars:
             Dict with keys: value, type, source_step, created_at, accessed_at, access_count
             None if variable not found
         """
-        try:
-            async with get_pool_connection() as conn:
-                async with conn.cursor(row_factory=dict_row) as cur:
-                    # Retrieve and update access tracking in one query
-                    await cur.execute(
-                        """
-                        UPDATE noetl.transient
-                        SET 
-                            access_count = access_count + 1,
-                            accessed_at = NOW()
-                        WHERE execution_id = %(execution_id)s 
-                          AND var_name = %(var_name)s
-                        RETURNING 
-                            var_value as value,
-                            var_type as type,
-                            source_step,
-                            created_at,
-                            accessed_at,
-                            access_count
-                        """,
-                        {"execution_id": execution_id, "var_name": var_name}
+        # Check if running in worker context (use API) or server context (use DB)
+        if TransientVars._is_worker_context():
+            # Worker context - use server API
+            server_url = TransientVars._get_server_url()
+            try:
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    response = await client.get(
+                        f"{server_url}/api/vars/{execution_id}/{var_name}"
                     )
-                    row = await cur.fetchone()
-                    
-                    if row:
+                    if response.status_code == 200:
+                        data = response.json()
                         logger.debug(
-                            f"VAR: Retrieved '{var_name}' from cache "
-                            f"(execution {execution_id}, access_count={row['access_count']})"
+                            f"VAR: Retrieved '{var_name}' from server API "
+                            f"(execution {execution_id})"
                         )
-                        return dict(row)
-                    else:
+                        # API returns variable metadata directly (value, type, source_step, etc.)
+                        return data
+                    elif response.status_code == 404:
                         logger.debug(f"VAR: Cache miss for '{var_name}' (execution {execution_id})")
                         return None
-                    
-        except Exception as e:
-            logger.warning(f"VAR: Failed to get cached variable '{var_name}': {e}")
-            return None
+                    else:
+                        logger.warning(f"VAR: Server API returned {response.status_code} for '{var_name}'")
+                        return None
+            except Exception as e:
+                logger.warning(f"VAR: Failed to get cached variable '{var_name}' via API: {e}")
+                return None
+        else:
+            # Server context - use direct DB access
+            try:
+                async with get_pool_connection() as conn:
+                    async with conn.cursor(row_factory=dict_row) as cur:
+                        # Retrieve and update access tracking in one query
+                        await cur.execute(
+                            """
+                            UPDATE noetl.transient
+                            SET 
+                                access_count = access_count + 1,
+                                accessed_at = NOW()
+                            WHERE execution_id = %(execution_id)s 
+                              AND var_name = %(var_name)s
+                            RETURNING 
+                                var_value as value,
+                                var_type as type,
+                                source_step,
+                                created_at,
+                                accessed_at,
+                                access_count
+                            """,
+                            {"execution_id": execution_id, "var_name": var_name}
+                        )
+                        row = await cur.fetchone()
+                        
+                        if row:
+                            logger.debug(
+                                f"VAR: Retrieved '{var_name}' from DB cache "
+                                f"(execution {execution_id}, access_count={row['access_count']})"
+                            )
+                            return dict(row)
+                        else:
+                            logger.debug(f"VAR: Cache miss for '{var_name}' (execution {execution_id})")
+                            return None
+                        
+            except Exception as e:
+                logger.warning(f"VAR: Failed to get cached variable '{var_name}': {e}")
+                return None
 
     @staticmethod
     async def set_cached(
@@ -103,8 +149,7 @@ class TransientVars:
         """
         Store or update variable in cache.
         
-        Upserts on (execution_id, var_name) primary key.
-        Preserves created_at on updates, always updates accessed_at.
+        Uses server API when running in worker context (no pool), or direct DB when in server.
         
         Args:
             var_name: Variable name
@@ -113,54 +158,76 @@ class TransientVars:
             var_type: Variable classification (user_defined, step_result, computed, iterator_state)
             source_step: Step name that set/updated the variable
         """
-        try:
-            async with get_pool_connection() as conn:
-                async with conn.cursor() as cur:
-                    await cur.execute(
-                        """
-                        INSERT INTO noetl.transient (
-                            execution_id,
-                            var_name,
-                            var_type,
-                            var_value,
-                            source_step,
-                            created_at,
-                            accessed_at,
-                            access_count
-                        ) VALUES (
-                            %(execution_id)s, 
-                            %(var_name)s, 
-                            %(var_type)s, 
-                            %(var_value)s, 
-                            %(source_step)s, 
-                            NOW(), 
-                            NOW(), 
-                            0
-                        )
-                        ON CONFLICT (execution_id, var_name)
-                        DO UPDATE SET
-                            var_value = EXCLUDED.var_value,
-                            var_type = EXCLUDED.var_type,
-                            source_step = EXCLUDED.source_step,
-                            accessed_at = NOW()
-                        """,
-                        {
-                            "execution_id": execution_id,
-                            "var_name": var_name,
+        # Check if running in worker context (use API) or server context (use DB)
+        if TransientVars._is_worker_context():
+            # Worker context - use server API
+            logger.info(f"TransientVars.set_cached: Using server API (execution {execution_id}, var={var_name})")
+            server_url = TransientVars._get_server_url()
+            try:
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    response = await client.post(
+                        f"{server_url}/api/vars/{execution_id}",
+                        json={
+                            "variables": {var_name: var_value},
                             "var_type": var_type,
-                            "var_value": Json(var_value),
                             "source_step": source_step
                         }
                     )
-                    
-                    logger.debug(
-                        f"VAR: Cached variable '{var_name}' "
-                        f"(execution {execution_id}, type={var_type}, source={source_step})"
-                    )
-                    
-        except Exception as e:
-            logger.error(f"VAR: Failed to cache variable '{var_name}': {e}")
-            raise
+                    if response.status_code == 200:
+                        logger.debug(
+                            f"VAR: Set '{var_name}' via server API "
+                            f"(execution {execution_id})"
+                        )
+                    else:
+                        logger.warning(f"VAR: Server API returned {response.status_code} for set '{var_name}'")
+            except Exception as e:
+                logger.warning(f"VAR: Failed to set cached variable '{var_name}' via API: {e}")
+        else:
+            # Server context - use direct DB access
+            try:
+                async with get_pool_connection() as conn:
+                    async with conn.cursor() as cur:
+                        await cur.execute(
+                            """
+                            INSERT INTO noetl.transient (
+                                execution_id,
+                                var_name,
+                                var_type,
+                                var_value,
+                                source_step,
+                                created_at,
+                                accessed_at,
+                                access_count
+                            ) VALUES (
+                                %(execution_id)s, 
+                                %(var_name)s, 
+                                %(var_type)s, 
+                                %(var_value)s, 
+                                %(source_step)s, 
+                                NOW(), 
+                                NOW(), 
+                                0
+                            )
+                            ON CONFLICT (execution_id, var_name)
+                            DO UPDATE SET
+                                var_value = EXCLUDED.var_value,
+                                var_type = EXCLUDED.var_type,
+                                source_step = EXCLUDED.source_step,
+                                accessed_at = NOW()
+                            """,
+                            {
+                                "execution_id": execution_id,
+                                "var_name": var_name,
+                                "var_type": var_type,
+                                "var_value": Json(var_value),
+                                "source_step": source_step
+                            }
+                        )
+                        
+                        logger.debug(f"VAR: Set '{var_name}' in DB cache (execution {execution_id})")
+                        
+            except Exception as e:
+                logger.warning(f"VAR: Failed to set cached variable '{var_name}': {e}")
 
     @staticmethod
     async def get_all_vars(execution_id: int) -> Dict[str, Any]:

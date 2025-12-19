@@ -126,6 +126,9 @@ class ExecutionState:
         """
         logger.info(f"ENGINE: get_render_context called, catalog_id={self.catalog_id}, execution_id={self.execution_id}")
         
+        # Protected system fields that should not be overridden by workload variables
+        protected_fields = {"execution_id", "catalog_id", "job"}
+        
         context = {
             "event": {
                 "name": event.name,
@@ -133,17 +136,19 @@ class ExecutionState:
                 "step": event.step,
                 "timestamp": event.timestamp.isoformat() if event.timestamp else None,
             },
-            "execution_id": self.execution_id,
-            "catalog_id": self.catalog_id,  # Add catalog_id for keychain resolution
-            "job": {
-                "uuid": self.execution_id,
-                "execution_id": self.execution_id,
-                "id": self.execution_id
-            },
             "workload": self.variables,
             "vars": self.variables,
             **self.variables,  # Make variables accessible at top level (includes loop vars)
             **self.step_results,  # Make step results accessible (e.g., {{ process }})
+        }
+        
+        # Set protected fields AFTER spreading variables to ensure they are not overridden
+        context["execution_id"] = self.execution_id
+        context["catalog_id"] = self.catalog_id
+        context["job"] = {
+            "uuid": self.execution_id,
+            "execution_id": self.execution_id,
+            "id": self.execution_id
         }
         
         # Add loop metadata context if step has active loop

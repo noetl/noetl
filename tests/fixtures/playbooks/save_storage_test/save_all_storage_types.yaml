@@ -81,45 +81,46 @@ workbook:
             
             # Get postgres results and create analytics dataset
             postgres_result = context.get("test_flat_postgres_save", {}).get("data", {})
-          
-          analytics_data = {
-              "source_table": "test_employees",
-              "analysis_type": "department_summary",
-              "query_params": {
-                  "min_salary": 60000,
-                  "target_departments": ["Engineering", "Marketing", "Sales"]
-              },
-              "expected_aggregations": ["COUNT", "AVG", "MAX", "MIN"]
-          }
-          
-          print(f"Prepared analytics configuration for DuckDB")
-          return {"status": "success", "data": analytics_data}
+            
+            analytics_data = {
+                "source_table": "test_employees",
+                "analysis_type": "department_summary",
+                "query_params": {
+                    "min_salary": 60000,
+                    "target_departments": ["Engineering", "Marketing", "Sales"]
+                },
+                "expected_aggregations": ["COUNT", "AVG", "MAX", "MIN"]
+            }
+            
+            print(f"Prepared analytics configuration for DuckDB")
+            return {"status": "success", "data": analytics_data}
 
   # Prepare HTTP API payload
   - name: prepare_http_payload
-    tool: python
-    code: |
-      def main(input_data):
-          # Simulate API payload preparation
-          duckdb_result = input_data.get("data", {})
-          
-          api_payload = {
-              "webhook_type": "test_completion",
-              "test_results": {
-                  "postgres_status": "completed",
-                  "duckdb_status": "completed",
-                  "total_records_processed": 3,
-                  "test_execution_id": "{{ execution_id }}"
-              },
-              "notification": {
-                  "message": "Save storage test completed successfully",
-                  "priority": "info",
-                  "timestamp": "{{ now() }}"
-              }
-          }
-          
-          print(f"Prepared HTTP payload for webhook notification")
-          return {"status": "success", "data": api_payload}
+    tool:
+      kind: python
+      code: |
+        def main(input_data):
+            # Simulate API payload preparation
+            duckdb_result = input_data.get("data", {})
+            
+            api_payload = {
+                "webhook_type": "test_completion",
+                "test_results": {
+                    "postgres_status": "completed",
+                    "duckdb_status": "completed",
+                    "total_records_processed": 3,
+                    "test_execution_id": "{{ execution_id }}"
+                },
+                "notification": {
+                    "message": "Save storage test completed successfully",
+                    "priority": "info",
+                    "timestamp": "{{ now() }}"
+                }
+            }
+            
+            print(f"Prepared HTTP payload for webhook notification")
+            return {"status": "success", "data": api_payload}
 
 workflow:
   # Start: Route to initialization
@@ -308,18 +309,19 @@ workflow:
       - when: "{{ event.name == 'call.done' and response is defined }}"
         then:
           sink:
-            tool: python
-            code: |
-              def main(data):
-                  import json
-                  import os
-                  
-                  # Custom python storage logic
-                  result = {
-                      "storage_type": "python",
-                      "processed_data": data,
-                      "file_output": f"/tmp/noetl_test_{data.get('execution_id', 'unknown')}.json"
-                  }
+            tool:
+              kind: python
+              code: |
+                def main(data):
+                    import json
+                    import os
+                    
+                    # Custom python storage logic
+                    result = {
+                        "storage_type": "python",
+                        "processed_data": data,
+                        "file_output": f"/tmp/noetl_test_{data.get('execution_id', 'unknown')}.json"
+                    }
                   
                   # Simulate file writing
                   try:
@@ -434,32 +436,33 @@ workflow:
   # Final step: Test completion summary
   - step: test_completion
     desc: "Complete save storage comprehensive test"
-    tool: python
-    code: |
-      def main(input_data):
-          import json
-          
-          summary = {
-              "test_suite": "save_storage_comprehensive",
-              "execution_id": input_data.get("execution_id", "unknown"),
-              "storage_types_tested": [
-                  "event_log",
-                  "postgres_flat_structure", 
-                  "postgres_nested_structure",
-                  "postgres_custom_statement",
-                  "python_custom_code",
-                  "duckdb_analytics",
-                  "http_webhook"
-              ],
-              "test_status": "completed",
-              "total_save_operations": 7,
-              "validation": "All save storage types successfully tested"
-          }
-          
-          print(f"TEST COMPLETION SUMMARY:")
-          print(json.dumps(summary, indent=2))
-          
-          return {"status": "success", "data": summary}
+    tool:
+      kind: python
+      code: |
+        def main(input_data):
+            import json
+            
+            summary = {
+                "test_suite": "save_storage_comprehensive",
+                "execution_id": input_data.get("execution_id", "unknown"),
+                "storage_types_tested": [
+                    "event_log",
+                    "postgres_flat_structure", 
+                    "postgres_nested_structure",
+                    "postgres_custom_statement",
+                    "python_custom_code",
+                    "duckdb_analytics",
+                    "http_webhook"
+                ],
+                "test_status": "completed",
+                "total_save_operations": 7,
+                "validation": "All save storage types successfully tested"
+            }
+            
+            print(f"TEST COMPLETION SUMMARY:")
+            print(json.dumps(summary, indent=2))
+            
+            return {"status": "success", "data": summary}
       args:
         input_data: "{{ test_http_save }}"
     
