@@ -916,6 +916,15 @@ class ControlFlowEngine:
         # Check on step.exit regardless of whether case generated commands
         # (case may have matched call.done and generated sink/next commands)
         if step_def.loop and event.name == "step.exit":
+            # Check if loop is complete by examining loop state directly
+            # Don't call get_next_loop_item as it would consume an item
+            loop_state = state.loop_state.get(event.step)
+            if loop_state and not loop_state["completed"]:
+                # Check if index >= collection length to determine completion
+                if loop_state["index"] >= len(loop_state["collection"]):
+                    loop_state["completed"] = True
+                    logger.info(f"Marked loop as completed for step {event.step}")
+            
             if not state.is_loop_done(event.step):
                 # More items to process - create next iteration command if not already created
                 # (case rules may have already created next iteration)
