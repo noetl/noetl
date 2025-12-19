@@ -737,6 +737,81 @@ class ControlFlowEngine:
         
         return command
     
+    async def _process_vars_block(self, event: Event, state: ExecutionState, step_def: Step) -> None:
+        """
+        Process vars block from step definition after step completion.
+        
+        Extracts variables using templates like {{ result.field }} and stores them
+        in the transient table for access via {{ vars.var_name }} in subsequent steps.
+        
+        Args:
+            event: The step.exit event
+            state: Current execution state
+            step_def: Step definition containing optional vars block
+        """
+        vars_block = step_def.vars
+        if not vars_block or not isinstance(vars_block, dict):
+            logger.debug(f"[VARS] No vars block for step '{event.step}'")
+            return
+        
+        logger.info(f"[VARS] Processing vars block for step '{event.step}': {list(vars_block.keys())}")
+        
+        try:
+            # Import TransientVars for storage
+            from noetl.worker.transient import TransientVars
+            from jinja2 import BaseLoader, Environment
+            
+            # Build context for template rendering
+            # The 'result' key points to the step's output for current step vars extraction
+            eval_ctx = state.get_render_context(event)
+            
+            # Render each variable template
+            env = Environment(loader=BaseLoader())
+            rendered_vars = {}
+            
+            for var_name, var_template in vars_block.items():
+                try:
+                    if isinstance(var_template, str):
+                        template = env.from_string(var_template)
+                        rendered_value = template.render(eval_ctx)
+                        
+                        # Try to parse as JSON if it looks like JSON
+                        if rendered_value.strip().startswith(("{", "[")):
+                            try:
+                                import json
+                                rendered_value = json.loads(rendered_value)
+                            except:
+                                pass  # Keep as string
+                    else:
+                        # Non-string values pass through
+                        rendered_value = var_template
+                    
+                    rendered_vars[var_name] = rendered_value
+                    logger.info(f"[VARS] Rendered '{var_name}' = {rendered_value}")
+                except Exception as e:
+                    logger.warning(f"[VARS] Failed to render '{var_name}': {e}")
+                    continue
+            
+            if not rendered_vars:
+                logger.debug(f"[VARS] No vars successfully rendered for step '{event.step}'")
+                return
+            
+            # Store variables in transient table
+            count = await TransientVars.set_multiple(
+                variables=rendered_vars,
+                execution_id=event.execution_id,
+                var_type="step_result",
+                source_step=event.step
+            )
+            
+            # Also add to state.variables for immediate template access
+            state.variables.update(rendered_vars)
+            
+            logger.info(f"[VARS] Stored {count} variables from step '{event.step}'")
+            
+        except Exception as e:
+            logger.exception(f"[VARS] Error processing vars block for step '{event.step}': {e}")
+    
     async def handle_event(self, event: Event) -> list[Command]:
         """
         Handle an event and return commands to enqueue.
@@ -825,6 +900,11 @@ class ControlFlowEngine:
             else:
                 # Loop done - would transition to next step via structural next
                 logger.info(f"Loop completed for step {event.step}")
+        
+        # Process vars block if present (extract variables from step result after completion)
+        if event.name == "step.exit" and step_def:
+            logger.info(f"[VARS_DEBUG] step.exit event for step '{event.step}', step_def.vars={getattr(step_def, 'vars', None)}")
+            await self._process_vars_block(event, state, step_def)
         
         # If step.exit event and no case/loop matched, use structural next as fallback
         if event.name == "step.exit" and step_def.next and not commands:

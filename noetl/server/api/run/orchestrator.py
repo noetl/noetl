@@ -1337,8 +1337,9 @@ async def _process_step_vars(
         eval_ctx: Evaluation context with step results
     """
     vars_block = step_def.get("vars")
+    logger.info(f"[VARS_DEBUG] _process_step_vars called for step '{step_name}', step_def keys: {list(step_def.keys())}, vars_block: {vars_block}")
     if not vars_block or not isinstance(vars_block, dict):
-        logger.debug(f"No vars block found for step '{step_name}'")
+        logger.info(f"[VARS_DEBUG] No vars block or not dict for step '{step_name}' - returning early")
         return
     
     logger.info(f"Processing vars block for step '{step_name}': {list(vars_block.keys())}")
@@ -1838,6 +1839,9 @@ async def _process_transitions(execution_id: int) -> None:
                     )
 
                 # Process vars block if present in step definition
+                logger.info(f"[VARS_DEBUG] About to process vars for step '{step_name}', step_def keys: {list(step_def.keys())}, has 'vars': {'vars' in step_def}")
+                if 'vars' in step_def:
+                    logger.info(f"[VARS_DEBUG] step_def['vars'] = {step_def['vars']}")
                 await _process_step_vars(execution_id, step_name, step_def, eval_ctx)
 
                 # Get transitions for this step

@@ -35,16 +35,13 @@ workflow:
             - step: set_variables
 
   - step: set_variables
-    desc: Set multiple test variables
+    desc: Set multiple test variables via vars block
     tool:
       kind: python
       code: |
-        async def main():
-            from noetl.worker.transient import TransientVars
-            execution_id = int(context.get('execution_id'))
-            
-            # Set multiple variables
-            variables = {
+        def main():
+            # Return values that will be extracted via vars block
+            return {
                 "counter": 42,
                 "message": "Template access works!",
                 "config": {
@@ -52,15 +49,10 @@ workflow:
                     "retries": 3
                 }
             }
-            
-            count = await TransientVars.set_multiple(
-                variables=variables,
-                execution_id=execution_id,
-                var_type="user_defined",
-                source_step="set_variables"
-            )
-            
-            return {"status": "success", "variables_set": count}
+    vars:
+      counter: "{{ result.counter }}"
+      message: "{{ result.message }}"
+      config: "{{ result.config }}"
     
     case:
       - when: "{{ event.name == 'call.done' and response is defined }}"

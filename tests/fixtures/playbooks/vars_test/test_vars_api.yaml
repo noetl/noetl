@@ -39,21 +39,13 @@ workflow:
               "source": "test_playbook"
             }
           }
-    
-    case:
-      - when: "{{ event.name == 'call.done' and response is defined }}"
-        then:
-          set:
-            - name: test_user_id
-              value: "{{ response.user_id }}"
-            - name: test_username
-              value: "{{ response.username }}"
-            - name: test_score
-              value: "{{ response.score }}"
-            - name: test_metadata
-              value: "{{ response.metadata }}"
-          next:
-            - step: wait_for_api_calls
+    vars:
+      test_user_id: "{{ result.user_id }}"
+      test_username: "{{ result.username }}"
+      test_score: "{{ result.score }}"
+      test_metadata: "{{ result.metadata }}"
+    next:
+      - step: wait_for_api_calls
 
   - step: wait_for_api_calls
     desc: Pause to allow API endpoint testing
@@ -78,8 +70,18 @@ workflow:
     tool:
       kind: python
       code: |
-        def main(user_id, username, score, execution_id):
-          # Convert to correct types since Jinja templates may return strings
+        def main(user_id, username, score):
+          # Debug: Show what we received
+          print(f"DEBUG: Received user_id={repr(user_id)}, username={repr(username)}, score={repr(score)}")
+          
+          # Convert to correct types, with validation
+          if not user_id or user_id == '':
+            raise ValueError(f"user_id is empty or None: {repr(user_id)}")
+          if not username or username == '':
+            raise ValueError(f"username is empty or None: {repr(username)}")
+          if not score or score == '':
+            raise ValueError(f"score is empty or None: {repr(score)}")
+            
           user_id = int(user_id) if isinstance(user_id, str) else user_id
           score = int(score) if isinstance(score, str) else score
           
@@ -91,7 +93,6 @@ workflow:
           return {
             "verification": "passed",
             "vars_loaded": True,
-            "execution_id": execution_id,
             "user_id": user_id,
             "username": username,
             "score": score
@@ -100,7 +101,6 @@ workflow:
         user_id: "{{ vars.test_user_id }}"
         username: "{{ vars.test_username }}"
         score: "{{ vars.test_score }}"
-        execution_id: "{{ execution_id }}"
     
     case:
       - when: "{{ event.name == 'call.done' and response is defined }}"
