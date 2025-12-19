@@ -46,12 +46,20 @@ async def fetch_execution_context(execution_id: int) -> Dict[str, Any]:
 
     logger.debug(f"Fetching execution context for {execution_id}")
 
-    workload_data = await EventService.get_workload(execution_id)
-    resource_template = await CatalogService.fetch_resource_template(
-        resource_path=workload_data.path, version=workload_data.version
-    )
-    # if not workload:
-    #     workload = await EventService.get_context_workload(execution_id)
+    workload_from_context = await EventService.get_context_workload(execution_id)
+    workload_data = workload_from_context or {}
+
+    playbook_path = None
+    playbook_version = None
+    if isinstance(workload_data, dict):
+        playbook_path = workload_data.get("path")
+        playbook_version = workload_data.get("version")
+
+    resource_template = {}
+    if playbook_path:
+        resource_template = await CatalogService.fetch_resource_template(
+            resource_path=playbook_path, version=playbook_version
+        )
 
     # Fetch results from all completed steps
     results: Dict[str, Any] = await EventService.get_all_node_results(execution_id)
@@ -102,11 +110,11 @@ async def fetch_execution_context(execution_id: int) -> Dict[str, Any]:
     #         logger.exception(f"Failed to fetch playbook steps: {e}")
 
     return {
-        "workload": workload_data.workload,
+        "workload": workload_data.get("workload", workload_data) if isinstance(workload_data, dict) else {},
         "results": results,
-        "playbook_path": workload_data.path,
-        "playbook_version": workload_data.version,
-        "steps": resource_template.get("workflow", []),
+        "playbook_path": playbook_path,
+        "playbook_version": playbook_version,
+        "steps": resource_template.get("workflow", []) if isinstance(resource_template, dict) else [],
     }
 
 

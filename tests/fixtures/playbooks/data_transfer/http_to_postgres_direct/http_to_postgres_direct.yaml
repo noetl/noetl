@@ -66,7 +66,8 @@ workflow:
       - when: "{{ event.name == 'step.exit' }}"
         then:
           - set:
-              direct_count: "{{ response.command_0[0].records }}"
+              # Postgres tool returns commands under response.data.command_*
+              direct_count: "{{ response.data.command_0.rows[0].records }}"
     next:
       - step: end
 

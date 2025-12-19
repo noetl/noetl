@@ -13,7 +13,7 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
 # Import routers from local modules
-from . import credential, queue, aggregate, catalog, runtime, dashboard, system, metrics, broker, \
+from . import credential, aggregate, catalog, runtime, dashboard, system, metrics, broker, \
     database, context, run, execution, vars, keychain
 
 router = APIRouter()
@@ -33,7 +33,6 @@ router.include_router(database.router)
 router.include_router(runtime.router)
 router.include_router(dashboard.router)
 router.include_router(system.router)
-router.include_router(queue.router)
 router.include_router(aggregate.router)
 # Note: broker.router already included above as event handler
 router.include_router(metrics.router)
@@ -46,7 +45,7 @@ router.include_router(keychain.router)
 
 __all__ = [
     "router",
-    "context", "queue", "broker", "catalog", "credential",
+    "context", "broker", "catalog", "credential",
     "database", "runtime", "dashboard", "system",
     "aggregate", "metrics", "run", "vars", "keychain"
 ]

@@ -241,83 +241,9 @@ class V2Worker:
         
         Returns command dict or None if not available.
         """
-        import time
-        import asyncio
-        
-        max_retries = 3
-        retry_delays = [0.01, 0.05, 0.1]  # 10ms, 50ms, 100ms
-        
-        for attempt in range(max_retries):
-            if attempt > 0:
-                delay = retry_delays[attempt - 1]
-                logger.info(f"[QUEUE] Worker {self.worker_id} retry {attempt} for queue_id={queue_id} after {delay*1000}ms")
-                await asyncio.sleep(delay)
-            
-            fetch_start = time.time()
-            if attempt == 0:
-                logger.info(f"[QUEUE] Worker {self.worker_id} acquiring lock for queue_id={queue_id}")
-            
-            try:
-                # Use SELECT FOR UPDATE SKIP LOCKED pattern
-                # This is a two-step process within a transaction:
-                # 1. SELECT ... FOR UPDATE SKIP LOCKED to acquire row lock
-                # 2. UPDATE to change status if we got the lock
-                response = await self._http_client.post(
-                    f"{server_url.rstrip('/')}/api/postgres/execute",
-                    json={
-                        "procedure": """
-                            WITH locked_row AS (
-                                SELECT queue_id, execution_id, node_id, action, context
-                                FROM noetl.queue
-                                WHERE queue_id = %s
-                                  AND status = 'queued'
-                                FOR UPDATE SKIP LOCKED
-                            )
-                            UPDATE noetl.queue q
-                            SET status = 'running',
-                                worker_id = %s,
-                                updated_at = NOW()
-                            FROM locked_row
-                            WHERE q.queue_id = locked_row.queue_id
-                            RETURNING q.queue_id, q.execution_id, q.node_id, q.action, q.context
-                        """,
-                        "parameters": [queue_id, self.worker_id],
-                        "schema": "noetl"
-                    },
-                    timeout=10.0
-                )
-                response.raise_for_status()
-                
-                fetch_end = time.time()
-                fetch_duration_ms = (fetch_end - fetch_start) * 1000
-                
-                result = response.json()
-                
-                if result.get("status") == "ok" and result.get("result"):
-                    rows = result["result"]
-                    if rows:
-                        # Parse result (queue_id, execution_id, node_id, action, context)
-                        row = rows[0]
-                        logger.info(f"[QUEUE] Worker {self.worker_id} acquired lock for queue_id={queue_id} in {fetch_duration_ms:.2f}ms (attempt {attempt + 1})")
-                        return {
-                            "queue_id": row[0],
-                            "execution_id": row[1],
-                            "step": row[2],
-                            "tool_kind": row[3],
-                            "context": row[4]
-                        }
-                
-                # Row not found or already locked - continue to next retry
-                if attempt < max_retries - 1:
-                    logger.debug(f"[QUEUE] Worker {self.worker_id} queue_id={queue_id} not available (attempt {attempt + 1}), will retry")
-                else:
-                    logger.info(f"[QUEUE] Worker {self.worker_id} could not acquire queue_id={queue_id} after {max_retries} attempts")
-                
-            except Exception as e:
-                logger.exception(f"Failed to fetch command {queue_id} on attempt {attempt + 1}: {e}")
-                if attempt == max_retries - 1:
-                    return None
-        
+        logger.info(
+            f"[QUEUE] Queue subsystem removed; _fetch_command is a no-op for queue_id={queue_id}"
+        )
         return None
     
     async def _execute_command(self, command: dict, server_url: str, command_id: str = None):
@@ -560,6 +486,9 @@ class V2Worker:
         from noetl.tools.http import execute_http_task
         from noetl.tools.postgres import execute_postgres_task
         from noetl.tools.duckdb import execute_duckdb_task
+        from noetl.tools.snowflake import execute_snowflake_task
+        from noetl.tools.transfer import execute_transfer_action
+        from noetl.tools.transfer.snowflake_transfer import execute_snowflake_transfer_action
         from noetl.core.secrets import execute_secrets_task
         from noetl.core.storage import execute_sink_task
         from noetl.core.workflow.workbook import execute_workbook_task
@@ -674,6 +603,39 @@ class V2Worker:
             # Check if plugin returned error status
             if isinstance(result, dict) and result.get('status') == 'error':
                 # Keep error response intact (worker needs status field to detect error)
+                return result
+            return result.get('data', result) if isinstance(result, dict) else result
+
+        elif tool_kind == "snowflake":
+            # Use plugin's execute_snowflake_task (sync wrapper)
+            loop = asyncio.get_running_loop()
+            result = await loop.run_in_executor(
+                None,
+                lambda: execute_snowflake_task(task_config, context, jinja_env, args)
+            )
+            if isinstance(result, dict) and result.get('status') == 'error':
+                return result
+            return result.get('data', result) if isinstance(result, dict) else result
+
+        elif tool_kind == "transfer":
+            # Generic transfer action (may delegate to Snowflake/Postgres executors)
+            loop = asyncio.get_running_loop()
+            result = await loop.run_in_executor(
+                None,
+                lambda: execute_transfer_action(task_config, context, jinja_env, args)
+            )
+            if isinstance(result, dict) and result.get('status') == 'error':
+                return result
+            return result.get('data', result) if isinstance(result, dict) else result
+
+        elif tool_kind == "snowflake_transfer":
+            # Explicit snowflake_transfer action (legacy specialized executor)
+            loop = asyncio.get_running_loop()
+            result = await loop.run_in_executor(
+                None,
+                lambda: execute_snowflake_transfer_action(task_config, context, jinja_env, args)
+            )
+            if isinstance(result, dict) and result.get('status') == 'error':
                 return result
             return result.get('data', result) if isinstance(result, dict) else result
             

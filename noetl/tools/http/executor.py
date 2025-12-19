@@ -87,7 +87,13 @@ async def execute_http_task(
         logger.debug(f"HTTP.EXECUTE_HTTP_TASK: HTTP method={method}")
 
         # Support both 'endpoint' (preferred) and legacy 'url' key for backward compatibility
-        raw_endpoint_template = task_config.get('endpoint') or task_config.get('url', '')
+        # Allow overrides via task_with (used by pagination retry)
+        raw_endpoint_template = (
+            task_with.get('endpoint')
+            or task_with.get('url')
+            or task_config.get('endpoint')
+            or task_config.get('url', '')
+        )
         logger.critical(f"HTTP.EXECUTE: raw_endpoint_template={raw_endpoint_template}")
         logger.critical(f"HTTP.EXECUTE: context keys={list(context.keys())}")
         logger.critical(f"HTTP.EXECUTE: patient_id in context={'patient_id' in context}, value={context.get('patient_id')}")
@@ -112,6 +118,18 @@ async def execute_http_task(
         # Direct params/payload (alternative to data.query/data.body)
         params = render_template(jinja_env, task_config.get('params', {}), context)
         payload = render_template(jinja_env, task_config.get('payload', {}), context)
+
+        # Apply runtime overrides from task_with (e.g., pagination retry params)
+        if isinstance(task_with, dict):
+            if isinstance(task_with.get('params'), dict):
+                params = {**params, **task_with['params']}
+            if isinstance(task_with.get('payload'), dict):
+                payload = {**payload, **task_with['payload']}
+            if isinstance(task_with.get('headers'), dict):
+                headers = {**headers, **task_with['headers']}
+            if isinstance(task_with.get('data'), dict):
+                # Merge into data_map for completeness
+                data_map.update(task_with['data'])
 
         headers = render_template(jinja_env, task_config.get('headers', {}), context)
         logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Rendered headers={headers}")

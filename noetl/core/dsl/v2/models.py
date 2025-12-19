@@ -160,7 +160,22 @@ class ToolSpec(BaseModel):
     Tool configuration with tool.kind pattern.
     All execution-specific fields live under tool.
     """
-    kind: Literal["http", "postgres", "duckdb", "python", "workbook", "playbook", "playbooks", "secrets", "iterator", "container", "script"] = Field(
+    kind: Literal[
+        "http",
+        "postgres",
+        "duckdb",
+        "python",
+        "workbook",
+        "playbook",
+        "playbooks",
+        "secrets",
+        "iterator",
+        "container",
+        "script",
+        "snowflake",
+        "transfer",
+        "snowflake_transfer",
+    ] = Field(
         ..., description="Tool type"
     )
     # Tool-specific fields stored as flexible dict

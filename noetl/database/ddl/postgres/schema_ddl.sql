@@ -20,14 +20,6 @@ CREATE TABLE IF NOT EXISTS noetl.catalog (
     UNIQUE (path, version)
 );
 
--- Workload
-CREATE TABLE IF NOT EXISTS noetl.workload (
-    execution_id BIGINT,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    data JSONB,
-    PRIMARY KEY (execution_id)
-);
-
 -- Variables Cache
 -- Stores runtime variables for playbook execution scope with access tracking
 CREATE TABLE IF NOT EXISTS noetl.transient (
@@ -94,35 +86,6 @@ CREATE INDEX IF NOT EXISTS idx_event_created_at ON noetl.event (created_at);
 CREATE INDEX IF NOT EXISTS idx_event_node_name ON noetl.event (node_name);
 CREATE INDEX IF NOT EXISTS idx_event_parent_event_id ON noetl.event (parent_event_id);
 CREATE INDEX IF NOT EXISTS idx_event_parent_execution_id ON noetl.event (parent_execution_id);
-
--- Workflow/workbook/transition
-CREATE TABLE IF NOT EXISTS noetl.workflow (
-    execution_id BIGINT,
-    step_id VARCHAR,
-    step_name VARCHAR,
-    step_type VARCHAR,
-    description TEXT,
-    raw_config TEXT,
-    PRIMARY KEY (execution_id, step_id)
-);
-
-CREATE TABLE IF NOT EXISTS noetl.workbook (
-    execution_id BIGINT,
-    task_id VARCHAR,
-    task_name VARCHAR,
-    task_type VARCHAR,
-    raw_config TEXT,
-    PRIMARY KEY (execution_id, task_id)
-);
-
-CREATE TABLE IF NOT EXISTS noetl.transition (
-    execution_id BIGINT,
-    from_step VARCHAR,
-    to_step VARCHAR,
-    condition TEXT,
-    with_params TEXT,
-    PRIMARY KEY (execution_id, from_step, to_step, condition)
-);
 
 -- Legacy compatibility view for event_log
 CREATE OR REPLACE VIEW noetl.event_log AS SELECT * FROM noetl.event;
@@ -329,33 +292,6 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Queue
-CREATE TABLE IF NOT EXISTS noetl.queue (
-    queue_id BIGINT PRIMARY KEY,
-    execution_id BIGINT NOT NULL,
-    catalog_id BIGINT NOT NULL REFERENCES noetl.catalog(catalog_id),
-    node_id VARCHAR NOT NULL,
-    action TEXT NOT NULL,
-    context JSONB,
-    status TEXT NOT NULL DEFAULT 'queued',
-    priority INTEGER NOT NULL DEFAULT 0,
-    attempts INTEGER NOT NULL DEFAULT 0,
-    max_attempts INTEGER NOT NULL DEFAULT 5,
-    available_at TIMESTAMPTZ,
-    lease_until TIMESTAMPTZ,
-    worker_id TEXT,
-    last_heartbeat TIMESTAMPTZ,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    parent_execution_id BIGINT,
-    parent_event_id BIGINT,
-    event_id BIGINT,
-    node_name VARCHAR,
-    node_type VARCHAR,
-    meta JSONB,
-    UNIQUE(execution_id, node_id)
-);
-
 -- Schedule
 CREATE TABLE IF NOT EXISTS noetl.schedule (
     schedule_id BIGSERIAL PRIMARY KEY,
@@ -478,12 +414,10 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 ALTER TABLE noetl.role ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
-ALTER TABLE noetl.workload ALTER COLUMN execution_id SET DEFAULT noetl.snowflake_id();
 ALTER TABLE noetl.catalog ALTER COLUMN catalog_id SET DEFAULT noetl.snowflake_id();
 ALTER TABLE noetl.profile ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
 ALTER TABLE noetl.session ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
 ALTER TABLE noetl.dentry ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
-ALTER TABLE noetl.queue ALTER COLUMN queue_id SET DEFAULT noetl.snowflake_id();
 ALTER TABLE noetl.schedule ALTER COLUMN schedule_id SET DEFAULT noetl.snowflake_id();
 alter table noetl.credential ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
 alter table noetl.metric ALTER COLUMN metric_id SET DEFAULT noetl.snowflake_id();

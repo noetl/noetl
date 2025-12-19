@@ -144,19 +144,8 @@ async def _check_execution_completion(
             )
             row = await cur.fetchone()
             running_count = row["running_count"] if row else 0
-
-            # Check for any pending jobs in the queue
-            await cur.execute(
-                """
-                SELECT COUNT(*) as pending_count
-                FROM noetl.queue
-                WHERE execution_id = %(execution_id)s
-                  AND status IN ('pending', 'running')
-                """,
-                {"execution_id": int(execution_id)},
-            )
-            row = await cur.fetchone()
-            pending_count = row["pending_count"] if row else 0
+            # Queue subsystem removed; no pending queue jobs
+            pending_count = 0
             
             # Also check for steps that are started but not completed
             await cur.execute(
@@ -905,102 +894,14 @@ async def _handle_action_failure(execution_id: int, action_failed_event_id: Opti
         await _emit_immediate_failure(execution_id, catalog_id, catalog_path, step_name, error_message, step_failed_event_id)
         return
     
-    # Enqueue 'end' step for execution
+    # Queue subsystem removed; emit immediate failure events instead of enqueueing 'end'
     try:
-        from noetl.server.api.run.publisher import QueuePublisher
-        from noetl.server.api.context.service import ContextService
-        
-        # Load execution context for end step
-        context = await ContextService.load_execution_context(str(execution_id), str(catalog_id))
-        
-        # Emit step_started for end step
-        from noetl.server.api.broker.schema import EventEmitRequest
-        end_step_started_request = EventEmitRequest(
-            execution_id=str(execution_id),
-            catalog_id=catalog_id,
-            event_type="step_started",
-            status="STARTED",
-            node_id="end",
-            node_name="end",
-            node_type="step",
-            parent_event_id=step_failed_event_id,
-        )
-        from noetl.server.api.broker.service import EventService
-        end_started_result = await EventService.emit_event(end_step_started_request)
-        
-        # Special handling for "end" step - only enqueue once all other steps are complete
-        async with await get_db_connection() as conn:
-            async with conn.cursor() as cur:
-                # Acquire advisory lock to prevent duplicate "end" enqueues
-                await cur.execute(
-                    "SELECT pg_advisory_xact_lock(hashtext(%(lock_key)s))",
-                    {"lock_key": f"end_publish_{execution_id}"}
-                )
-                logger.info(f"Acquired advisory lock for 'end' step publishing in execution {execution_id}")
-                
-                logger.info(f"Checking if 'end' step should be enqueued for execution {execution_id}")
-                
-                # Check if there are any non-end steps still running or pending
-                await cur.execute(
-                    """
-                    SELECT COUNT(*) as active_count
-                    FROM noetl.queue
-                    WHERE execution_id = %(execution_id)s
-                      AND node_name != 'end'
-                      AND status IN ('pending', 'running')
-                    """,
-                    {"execution_id": int(execution_id)}
-                )
-                active_row = await cur.fetchone()
-                active_count = active_row["active_count"] if active_row else 0
-                
-                if active_count > 0:
-                    logger.info(
-                        f"'end' step enqueue deferred: {active_count} other steps still active. "
-                        f"Will retry when those complete."
-                    )
-                    return  # Skip enqueuing end for now
-                
-                # Check if end step is already in queue (prevent duplicate enqueues)
-                await cur.execute(
-                    """
-                    SELECT COUNT(*) as end_queued
-                    FROM noetl.queue
-                    WHERE execution_id = %(execution_id)s
-                      AND node_name = 'end'
-                      AND status IN ('pending', 'running', 'completed')
-                    """,
-                    {"execution_id": int(execution_id)}
-                )
-                end_queued_row = await cur.fetchone()
-                end_queued = end_queued_row["end_queued"] if end_queued_row else 0
-                
-                if end_queued > 0:
-                    logger.info(f"'end' step already enqueued/running/completed, skipping duplicate")
-                    return
-                
-                logger.info(f"All other steps complete, enqueuing 'end' step for execution {execution_id}")
-        
-        # Publish end step to queue
-        await QueuePublisher.publish_step(
-            step_name="end",
-            step_config=end_step,
-            execution_id=str(execution_id),
-            catalog_id=catalog_id,
-            context=context,
-            parent_event_id=end_started_result.event_id
-        )
-        
-        logger.info(
-            f"ORCHESTRATOR: Successfully routed execution {execution_id} to 'end' step"
-        )
-        
+        logger.info("Queue subsystem removed; emitting immediate failure in lieu of 'end' step")
+        await _emit_immediate_failure(execution_id, catalog_id, catalog_path, step_name, error_message, step_failed_event_id)
     except Exception as e:
         logger.exception(
-            f"ORCHESTRATOR: Failed to route to 'end' step for {execution_id}: {e}"
+            f"ORCHESTRATOR: Failed to emit immediate failure for {execution_id}: {e}"
         )
-        # Fallback: emit workflow_failed and playbook_failed
-        await _emit_immediate_failure(execution_id, catalog_id, catalog_path, step_name, error_message, step_failed_event_id)
 
 
 async def _emit_immediate_failure(
@@ -1570,25 +1471,8 @@ async def _process_transitions(execution_id: int) -> None:
                         )
                         continue
                     
-                    # Check if there are any pending iteration jobs
-                    await cur.execute(
-                        """
-                        SELECT COUNT(*) as pending_count
-                        FROM noetl.queue
-                        WHERE execution_id = %s
-                          AND node_name LIKE %s
-                          AND status IN ('pending', 'running')
-                        """,
-                        (execution_id, f"{parent_name}_iter_%")
-                    )
-                    pending_row = await cur.fetchone()
-                    pending_count = pending_row['pending_count'] if pending_row else 0
-                    
-                    if pending_count > 0:
-                        logger.debug(
-                            f"Parent step '{parent_name}' has {pending_count} pending iterations, skipping"
-                        )
-                        continue
+                    # Queue subsystem removed; treat iterations as complete once events are present
+                    pending_count = 0
                     
                     # Check if parent already has action_completed
                     await cur.execute(
@@ -1749,29 +1633,9 @@ async def _process_transitions(execution_id: int) -> None:
                 
                 # Check if this step has a loop attribute - if so, check for pending iterations
                 if step_def.get("loop"):
-                    logger.info(f"Step '{step_name}' has loop attribute, checking for pending iterations")
-                    # Check if there are pending iteration jobs
-                    await cur.execute(
-                        """
-                        SELECT COUNT(*) as pending_count
-                        FROM noetl.queue
-                        WHERE parent_execution_id = %s
-                          AND node_name = %s
-                          AND status IN ('pending', 'running')
-                        """,
-                        (execution_id, step_name)
+                    logger.info(
+                        f"Step '{step_name}' has loop attribute, queue subsystem removed; proceeding without pending iteration checks"
                     )
-                    pending_row = await cur.fetchone()
-                    pending_count = pending_row['pending_count'] if pending_row else 0
-                    
-                    if pending_count > 0:
-                        logger.info(
-                            f"Step '{step_name}' has {pending_count} pending iteration jobs, "
-                            f"skipping transition processing until iterations complete"
-                        )
-                        continue  # Skip this step for now
-                    else:
-                        logger.info(f"All iterations complete for step '{step_name}', proceeding with transitions")
 
                 # Add current step result as 'result' for condition evaluation
                 if step_name in eval_ctx:
@@ -2077,46 +1941,9 @@ async def _process_transitions(execution_id: int) -> None:
                                 
                                 logger.info(f"Checking if 'end' step should be enqueued for execution {execution_id}")
                                 
-                                # Check if there are any non-end steps still running or pending
-                                await cur.execute(
-                                    """
-                                    SELECT COUNT(*) as active_count
-                                    FROM noetl.queue
-                                    WHERE execution_id = %(execution_id)s
-                                      AND node_name != 'end'
-                                      AND status IN ('pending', 'running')
-                                    """,
-                                    {"execution_id": int(execution_id)}
+                                logger.info(
+                                    "Queue subsystem removed; skipping queue-based gating for 'end' step"
                                 )
-                                active_row = await cur.fetchone()
-                                active_count = active_row["active_count"] if active_row else 0
-                                
-                                if active_count > 0:
-                                    logger.info(
-                                        f"'end' step enqueue deferred: {active_count} other steps still active. "
-                                        f"Will retry when those complete."
-                                    )
-                                    continue  # Skip enqueuing end for now
-                                
-                                # Check if end step is already in queue (prevent duplicate enqueues)
-                                await cur.execute(
-                                    """
-                                    SELECT COUNT(*) as end_queued
-                                    FROM noetl.queue
-                                    WHERE execution_id = %(execution_id)s
-                                      AND node_name = 'end'
-                                      AND status IN ('pending', 'running', 'completed')
-                                    """,
-                                    {"execution_id": int(execution_id)}
-                                )
-                                end_queued_row = await cur.fetchone()
-                                end_queued = end_queued_row["end_queued"] if end_queued_row else 0
-                                
-                                if end_queued > 0:
-                                    logger.info(f"'end' step already enqueued/running/completed, skipping duplicate")
-                                    continue
-                                
-                                logger.info(f"All other steps complete, enqueuing 'end' step for execution {execution_id}")
 
                             queue_id = await QueuePublisher.publish_step(
                                 execution_id=str(execution_id),
@@ -2277,55 +2104,9 @@ async def _process_transitions(execution_id: int) -> None:
 
                         # Special handling for "end" step - only enqueue once all other steps are complete
                         if to_step.lower() == "end":
-                            # Acquire advisory lock to prevent duplicate "end" enqueues
-                            await cur.execute(
-                                "SELECT pg_advisory_xact_lock(hashtext(%(lock_key)s))",
-                                {"lock_key": f"end_publish_{execution_id}"}
+                            logger.info(
+                                "Queue subsystem removed; skipping queue-based gating for 'end' step"
                             )
-                            logger.info(f"Acquired advisory lock for 'end' step publishing in execution {execution_id}")
-                            
-                            logger.info(f"Checking if 'end' step should be enqueued for execution {execution_id}")
-                            
-                            # Check if there are any non-end steps still running or pending
-                            await cur.execute(
-                                """
-                                SELECT COUNT(*) as active_count
-                                FROM noetl.queue
-                                WHERE execution_id = %(execution_id)s
-                                  AND node_name != 'end'
-                                  AND status IN ('pending', 'running')
-                                """,
-                                {"execution_id": int(execution_id)}
-                            )
-                            active_row = await cur.fetchone()
-                            active_count = active_row["active_count"] if active_row else 0
-                            
-                            if active_count > 0:
-                                logger.info(
-                                    f"'end' step enqueue deferred: {active_count} other steps still active. "
-                                    f"Will retry when those complete."
-                                )
-                                continue  # Skip enqueuing end for now
-                            
-                            # Check if end step is already in queue (prevent duplicate enqueues)
-                            await cur.execute(
-                                """
-                                SELECT COUNT(*) as end_queued
-                                FROM noetl.queue
-                                WHERE execution_id = %(execution_id)s
-                                  AND node_name = 'end'
-                                  AND status IN ('pending', 'running', 'completed')
-                                """,
-                                {"execution_id": int(execution_id)}
-                            )
-                            end_queued_row = await cur.fetchone()
-                            end_queued = end_queued_row["end_queued"] if end_queued_row else 0
-                            
-                            if end_queued > 0:
-                                logger.info(f"'end' step already enqueued/running/completed, skipping duplicate")
-                                continue
-                            
-                            logger.info(f"All other steps complete, enqueuing 'end' step for execution {execution_id}")
 
                         queue_id = await QueuePublisher.publish_step(
                             execution_id=str(execution_id),
@@ -2594,173 +2375,47 @@ async def _process_iterator_started(
         execution_id: Loop execution ID
         event: iterator_started event with collection metadata
     """
-    from noetl.server.api.queue.service import QueueService
-    
-    logger.info(f"ORCHESTRATOR: Processing iterator_started for execution {execution_id}")
-    
+    logger.info(
+        f"ORCHESTRATOR: Processing iterator_started for execution {execution_id} (queue subsystem removed)"
+    )
+
     # Extract iterator configuration from event context
     event_context = event.get('context', {})
-    iterator_name = event_context.get('iterator_name')
     collection = event_context.get('collection', [])
-    nested_task = event_context.get('nested_task', {})
-    mode = event_context.get('mode', 'sequential')
-    chunk_size = event_context.get('chunk_size')
-    
-    if not collection:
-        logger.warning(f"ORCHESTRATOR: Empty collection for iterator in execution {execution_id}")
-        # Emit iterator_completed immediately
-        async with get_pool_connection() as conn:
-            now = datetime.now(timezone.utc)
-            completed_event_id = get_snowflake_id()
-            
-            await conn.execute(
-                """
-                INSERT INTO noetl.event (
-                    event_id, execution_id, catalog_id, parent_event_id,
-                    event_type, node_id, node_name, node_type,
-                    status, context, meta, created_at
-                )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                """,
-                (
-                    completed_event_id,
-                    execution_id,
-                    event.get('catalog_id'),
-                    event.get('event_id'),
-                    'iterator_completed',
-                    event.get('node_id'),
-                    event.get('node_name'),
-                    'iterator',
-                    'COMPLETED',
-                    json.dumps({}),
-                    json.dumps({'total_iterations': 0, 'results': []}),
-                    now
-                )
-            )
-        return
-    
-    # Create batches if chunking enabled
-    if chunk_size and chunk_size > 1:
-        batches = []
-        for i in range(0, len(collection), chunk_size):
-            batches.append({
-                'index': len(batches),
-                'elements': collection[i:i+chunk_size]
-            })
-    else:
-        # One job per element
-        batches = [{'index': i, 'element': elem} for i, elem in enumerate(collection)]
-    
-    logger.info(f"ORCHESTRATOR: Enqueueing {len(batches)} iteration jobs for execution {execution_id}")
-    
-    # Get workload from parent execution for iteration context
-    parent_workload = {}
-    try:
-        async with get_pool_connection() as conn:
-            result = await conn.execute(
-                "SELECT data FROM noetl.workload WHERE execution_id = %s",
-                (execution_id,)
-            )
-            workload_row = await result.fetchone()
-            logger.critical(f"ORCHESTRATOR: Raw workload_row type: {type(workload_row)}, value: {workload_row}")
-            
-            if workload_row:
-                # fetchone returns a dict-like Row object with 'data' key
-                if isinstance(workload_row, dict) and 'data' in workload_row:
-                    workload_data = workload_row['data']
-                else:
-                    # Fallback: try index access for tuple-like results
-                    workload_data = workload_row[0] if len(workload_row) > 0 else {}
-                    
-                logger.critical(f"ORCHESTRATOR: Extracted workload_data type: {type(workload_data)}, keys: {list(workload_data.keys()) if isinstance(workload_data, dict) else 'not a dict'}")
-                
-                # CRITICAL: Extract nested 'workload' key if present
-                if isinstance(workload_data, dict) and 'workload' in workload_data and isinstance(workload_data['workload'], dict):
-                    parent_workload = workload_data['workload']
-                    logger.critical(f"ORCHESTRATOR: Extracted nested workload with keys: {list(parent_workload.keys())}")
-                elif isinstance(workload_data, dict):
-                    parent_workload = workload_data
-                    logger.critical(f"ORCHESTRATOR: Using workload_data directly with keys: {list(parent_workload.keys())}")
-                else:
-                    logger.warning(f"ORCHESTRATOR: workload_data is not a dict: {type(workload_data)}")
-            else:
-                logger.warning(f"ORCHESTRATOR: No workload found for execution {execution_id}")
-                
-            logger.critical(f"ORCHESTRATOR: Final parent_workload keys: {list(parent_workload.keys()) if isinstance(parent_workload, dict) else type(parent_workload)}")
-    except Exception as e:
-        logger.error(f"ORCHESTRATOR: Failed to fetch workload for execution {execution_id}: {e}", exc_info=True)
-        parent_workload = {}
-    
-    # Enqueue iteration jobs
-    queue_ids = []
-    for batch in batches:
-        # Build context with element data accessible via iterator variable name
-        # For example, if iterator_name='endpoint', templates can use {{ endpoint.name }}
-        # CRITICAL: Include workload so sink templates can access {{ workload.* }}
-        iteration_context = {
-            iterator_name: batch.get('element'),  # Single element for non-chunked
-            '_iteration_index': batch['index'],
-            '_iterator_name': iterator_name,
-            '_total_iterations': len(batches),
-            'workload': parent_workload  # Include workload for sink templates
-        }
-        
-        # Build iteration task config - inject element into nested_task
-        iteration_task = dict(nested_task)
-        
-        # CRITICAL: Render ALL templates in iteration_task with iteration_context
-        # This ensures params like {{ city.lat }} are resolved before sending to worker
-        from noetl.core.dsl.render import render_template
-        from jinja2 import BaseLoader, Environment
-        
-        try:
-            env = Environment(loader=BaseLoader())
-            iteration_task = render_template(env, iteration_task, iteration_context)
-            logger.info(
-                f"ORCHESTRATOR: Rendered iteration task for batch {batch['index']}, "
-                f"element={batch.get('element')}"
-            )
-        except Exception as e:
-            logger.error(
-                f"ORCHESTRATOR: Failed to render iteration task templates: {e}",
-                exc_info=True
-            )
-        
-        # If chunked, provide elements array
-        if 'elements' in batch:
-            iteration_context[f'{iterator_name}s'] = batch['elements']
-            iteration_context['_chunk_size'] = len(batch['elements'])
-        
-        # Build metadata for tracking
-        iteration_meta = {
-            'iterator': {
-                'parent_execution_id': execution_id,
-                'iteration_index': batch['index'],
-                'total_iterations': len(batches),
-                'iterator_name': iterator_name,
-                'mode': mode
-            }
-        }
-        
-        # Enqueue job - all iterations share the parent execution_id
-        # Database will auto-generate queue_id for each iteration
-        response = await QueueService.enqueue_job(
-            execution_id=execution_id,  # All iterations share parent execution_id
-            catalog_id=event.get('catalog_id'),
-            node_id=f"{event.get('node_id')}_iter_{batch['index']}",
-            node_name=f"{event.get('node_name')}_iter_{batch['index']}",
-            node_type='iteration',
-            action=json.dumps(iteration_task),
-            context=iteration_context,  # Element data injected here
-            parent_execution_id=execution_id,
-            priority=0,
-            metadata=iteration_meta
-        )
-        queue_ids.append(response.id)
-    
+
+    total_iterations = len(collection)
     logger.info(
-        f"ORCHESTRATOR: Enqueued {len(queue_ids)} iteration jobs for execution {execution_id}"
+        f"Queue subsystem removed; marking iterator with {total_iterations} iterations as completed immediately"
     )
+
+    async with get_pool_connection() as conn:
+        now = datetime.now(timezone.utc)
+        completed_event_id = get_snowflake_id()
+
+        await conn.execute(
+            """
+            INSERT INTO noetl.event (
+                event_id, execution_id, catalog_id, parent_event_id,
+                event_type, node_id, node_name, node_type,
+                status, context, meta, created_at
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                completed_event_id,
+                execution_id,
+                event.get('catalog_id'),
+                event.get('event_id'),
+                'iterator_completed',
+                event.get('node_id'),
+                event.get('node_name'),
+                'iterator',
+                'COMPLETED',
+                json.dumps({}),
+                json.dumps({'total_iterations': total_iterations, 'results': []}),
+                now
+            )
+        )
 
 
 async def _process_iteration_completed(
@@ -2786,20 +2441,8 @@ async def _process_iteration_completed(
     
     # Count total and completed iterations for parent
     async with get_pool_connection() as conn:
-        # Check how many iteration jobs exist for this parent
         async with conn.cursor() as cur:
-            await cur.execute(
-                """
-                SELECT COUNT(*) as total
-                FROM noetl.queue
-                WHERE parent_execution_id = %s
-                """,
-                (parent_execution_id,)
-            )
-            row = await cur.fetchone()
-            total_iterations = row['total'] if row else 0
-            
-            # Check how many have completed
+            # Count completed iteration events (queue removed)
             await cur.execute(
                 """
                 SELECT COUNT(*) as completed
@@ -2812,6 +2455,7 @@ async def _process_iteration_completed(
             )
             row = await cur.fetchone()
             completed_iterations = row['completed'] if row else 0
+            total_iterations = completed_iterations
         
         logger.info(
             f"ORCHESTRATOR: Iterator progress - {completed_iterations}/{total_iterations} iterations"
@@ -2923,7 +2567,6 @@ async def _process_retry_eligible_event(
         execution_id: Current execution ID
         event: action_failed or action_completed event
     """
-    from noetl.server.api.queue.service import QueueService
     from noetl.core.dsl.render import render_template
     from jinja2 import BaseLoader, Environment
     
@@ -2967,58 +2610,8 @@ async def _process_retry_eligible_event(
             f"backoff={delay_seconds}s"
         )
         
-        # Get original task config from queue or event
-        async with get_pool_connection() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(
-                    """
-                    SELECT task_config, with_params, catalog_id, step_name
-                    FROM noetl.queue
-                    WHERE execution_id = %s
-                    ORDER BY created_at DESC
-                    LIMIT 1
-                    """,
-                    (execution_id,)
-                )
-                queue_row = await cur.fetchone()
-            
-                if queue_row:
-                    task_config = queue_row[0] if isinstance(queue_row[0], dict) else json.loads(queue_row[0] or '{}')
-                    with_params = queue_row[1] if isinstance(queue_row[1], dict) else json.loads(queue_row[1] or '{}')
-                    
-                    # Update retry metadata
-                    if 'retry' not in task_config:
-                        task_config['retry'] = {}
-                    task_config['retry']['_attempt_number'] = attempt_number + 1
-                    task_config['retry']['_parent_event_id'] = event.get('event_id')
-                
-                # Build retry metadata for tracking
-                retry_meta = {
-                    'retry': {
-                        'type': 'on_error',
-                        'attempt_number': attempt_number + 1,
-                        'max_attempts': max_attempts,
-                        'parent_event_id': str(event.get('event_id')),
-                        'backoff_seconds': delay_seconds,
-                        'scheduled_at': (datetime.now(timezone.utc) + timedelta(seconds=delay_seconds)).isoformat() if delay_seconds > 0 else None
-                    }
-                }
-                
-                # Re-enqueue
-                response = await QueueService.enqueue_job(
-                    execution_id=execution_id,
-                    catalog_id=queue_row[2],
-                    node_id=queue_row[3],
-                    node_name=queue_row[3],
-                    node_type='action',
-                    action=json.dumps(task_config),
-                    context=with_params,
-                    parent_event_id=str(event.get('event_id')),
-                    available_at=datetime.now(timezone.utc) + timedelta(seconds=delay_seconds) if delay_seconds > 0 else None,
-                    metadata=retry_meta
-                )
-                
-                logger.info(f"ORCHESTRATOR: Re-enqueued retry job, queue_id={response.queue_id}")
+        logger.info("Queue subsystem removed; skipping retry enqueue")
+        return
     
     elif event_type in ('action_completed', 'step_completed'):
         # Check on_success retry (pagination/polling)
@@ -3077,71 +2670,8 @@ async def _process_retry_eligible_event(
         # Get original task config and apply updates
         async with get_pool_connection() as conn:
             async with conn.cursor() as cur:
-                await cur.execute(
-                    """
-                    SELECT task_config, with_params, catalog_id, step_name
-                    FROM noetl.queue
-                    WHERE execution_id = %s
-                    ORDER BY created_at DESC
-                    LIMIT 1
-                    """,
-                    (execution_id,)
-                )
-                queue_row = await cur.fetchone()
-            
-                if queue_row:
-                    task_config = queue_row[0] if isinstance(queue_row[0], dict) else json.loads(queue_row[0] or '{}')
-                    with_params = queue_row[1] if isinstance(queue_row[1], dict) else json.loads(queue_row[1] or '{}')
-                    
-                    # Apply next_call updates
-                    env = Environment(loader=BaseLoader())
-                    for key, update_spec in next_call.items():
-                        if isinstance(update_spec, dict):
-                            # Update nested config (e.g., params, headers)
-                            if key not in task_config:
-                                task_config[key] = {}
-                            for sub_key, template_value in update_spec.items():
-                                rendered = render_template(env, template_value, eval_context)
-                                task_config[key][sub_key] = rendered
-                    else:
-                        # Direct update
-                        rendered = render_template(env, update_spec, eval_context)
-                        task_config[key] = rendered
-                
-                # Update retry metadata
-                if 'retry' not in task_config:
-                    task_config['retry'] = {}
-                task_config['retry']['_attempt_number'] = attempt_number + 1
-                task_config['retry']['_parent_event_id'] = event.get('event_id')
-                
-                # Build retry metadata for tracking (pagination/polling)
-                retry_meta = {
-                    'retry': {
-                        'type': 'on_success',
-                        'attempt_number': attempt_number + 1,
-                        'max_attempts': max_attempts,
-                        'parent_event_id': str(event.get('event_id')),
-                        'continuation': 'pagination' if 'paging' in response_data else 'polling'
-                    }
-                }
-                
-                # Re-enqueue for next iteration
-                response = await QueueService.enqueue_job(
-                    execution_id=execution_id,
-                    catalog_id=queue_row[2],
-                    node_id=queue_row[3],
-                    node_name=queue_row[3],
-                    node_type='action',
-                    action=json.dumps(task_config),
-                    context=with_params,
-                    parent_event_id=str(event.get('event_id')),
-                    metadata=retry_meta
-                )
-                
-                logger.info(
-                    f"ORCHESTRATOR: Re-enqueued success retry job (attempt {attempt_number + 1}), "
-                    f"queue_id={response.queue_id}"
-                )
+                logger.info("Queue subsystem removed; skipping success retry enqueue")
+                return
 
 
 async def _aggregate_retry_results(

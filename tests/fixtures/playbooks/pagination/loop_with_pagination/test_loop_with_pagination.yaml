@@ -55,22 +55,22 @@ workflow:
             backoff_multiplier: 2.0
             initial_delay: 0.5
       
-      - when: "{{ event.name == 'call.done' and response is defined and response.paging.hasMore == true }}"
+      - when: "{{ event.name == 'call.done' and response is defined and response.data.paging.hasMore == true }}"
         then:
           collect:
             strategy: append
-            path: data
+            path: data.data
             into: pages
           retry:
             params:
-              page: "{{ (response.paging.page | int) + 1 }}"
-              pageSize: "{{ response.paging.pageSize }}"
+              page: "{{ (response.data.paging.page | int) + 1 }}"
+              pageSize: "{{ response.data.paging.pageSize }}"
       
-      - when: "{{ event.name == 'call.done' and response is defined and response.paging.hasMore != true }}"
+      - when: "{{ event.name == 'call.done' and response is defined and response.data.paging.hasMore != true }}"
         then:
           collect:
             strategy: append
-            path: data
+            path: data.data
             into: pages
       
       - when: "{{ event.name == 'loop.done' }}"
@@ -133,19 +133,21 @@ workflow:
                 
                 # iteration_result is HTTP response: {url, data: {data: [...], paging: {}}, status_code, ...}
                 if isinstance(iteration_result, list):
-                    items = iteration_result
+                  items = iteration_result
                 elif isinstance(iteration_result, dict):
-                    # Extract from HTTP response structure
-                    if 'data' in iteration_result and isinstance(iteration_result['data'], dict):
-                        # HTTP response has nested data.data structure
-                        if 'data' in iteration_result['data']:
-                            items = iteration_result['data']['data']
-                        else:
-                            items = iteration_result['data']
-                    elif 'value' in iteration_result:
-                        items = iteration_result['value']
+                  # Prefer pagination aggregation if present
+                  if '_all_collected_items' in iteration_result:
+                    items = iteration_result['_all_collected_items']
+                  elif 'data' in iteration_result and isinstance(iteration_result['data'], dict):
+                    # HTTP response has nested data.data structure
+                    if 'data' in iteration_result['data']:
+                      items = iteration_result['data']['data']
                     else:
-                        items = [iteration_result]
+                      items = iteration_result['data']
+                  elif 'value' in iteration_result:
+                    items = iteration_result['value']
+                  else:
+                    items = [iteration_result]
                 else:
                     items = []
                 
@@ -161,9 +163,8 @@ workflow:
                 })
                 validation['total_items_fetched'] += items_count
             
-            # Each iteration should have first page only (pagination collection not yet implemented)
-            # Expected: 10, 15, 20 items (first page of each endpoint)
-            expected_counts = [10, 15, 20]
+            # Pagination collection aggregates all pages for each endpoint
+            expected_counts = [35, 35, 35]
             for idx, endpoint_result in enumerate(validation['endpoints_tested']):
                 items_count = endpoint_result['items_count']
                 endpoint_name = endpoint_result['endpoint']
