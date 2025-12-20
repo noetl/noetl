@@ -10,7 +10,7 @@ MASTER_TEST_PATH = "tests/fixtures/playbooks/regression_test/master_regression_t
 print(f"Starting regression test at {NOETL_SERVER}...")
 try:
     response = requests.post(
-        f"{NOETL_SERVER}/api/v2/execute",
+        f"{NOETL_SERVER}/api/execute",
         json={"path": MASTER_TEST_PATH, "payload": {}},
         timeout=30
     )

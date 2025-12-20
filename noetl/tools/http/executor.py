@@ -132,12 +132,24 @@ async def execute_http_task(
                 data_map.update(task_with['data'])
 
         headers = render_template(jinja_env, task_config.get('headers', {}), context)
-        logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Rendered headers={headers}")
+        logger.info(f"HTTP.EXECUTE_HTTP_TASK: Rendered headers (raw keys)={list(headers.keys())}")
 
         # Apply auth headers (already processed above)
         if auth_headers:
-            logger.debug(f"HTTP: Applying {len(auth_headers)} auth headers")
+            logger.info(f"HTTP: Applying {len(auth_headers)} auth headers")
             headers.update(auth_headers)
+
+        # Log a safe preview of Authorization to debug token resolution without leaking secrets
+        auth_header = headers.get('Authorization')
+        if auth_header:
+            preview = auth_header
+            if isinstance(auth_header, str) and len(auth_header) > 24:
+                preview = f"{auth_header[:12]}...{auth_header[-6:]}"
+            logger.info(
+                f"HTTP.EXECUTE_HTTP_TASK: Authorization header present (len={len(auth_header) if isinstance(auth_header, str) else 'n/a'}, preview={preview})"
+            )
+        redacted_headers = redact_sensitive_headers(headers)
+        logger.info(f"HTTP.EXECUTE_HTTP_TASK: Headers (redacted)={redacted_headers}")
 
         timeout = task_config.get('timeout', 30)
         logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Timeout={timeout}")
@@ -161,8 +173,8 @@ async def execute_http_task(
                 
                 # Log request with redacted sensitive headers
                 redacted_headers = redact_sensitive_headers(headers)
-                logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Request headers (redacted)={redacted_headers}")
-                logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Final request_args={request_args}")
+                logger.info(f"HTTP.EXECUTE_HTTP_TASK: Request headers (redacted)={redacted_headers}")
+                logger.info(f"HTTP.EXECUTE_HTTP_TASK: Final request_args={request_args}")
                 logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Making HTTP request")
                 
                 response = client.request(method, **request_args)

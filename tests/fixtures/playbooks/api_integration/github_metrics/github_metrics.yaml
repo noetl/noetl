@@ -33,19 +33,19 @@ workflow:
         Accept: application/vnd.github.v3+json
     next:
       - step: extract_repo_metrics
-        args:
-          repo_name: '{{ fetch_github_repo.data.name }}'
-          repo_full_name: '{{ fetch_github_repo.data.full_name }}'
-          stars_count: '{{ fetch_github_repo.data.stargazers_count }}'
-          forks_count: '{{ fetch_github_repo.data.forks_count }}'
-          language: '{{ fetch_github_repo.data.language }}'
-          created_at: '{{ fetch_github_repo.data.created_at }}'
-          updated_at: '{{ fetch_github_repo.data.updated_at }}'
   
   - step: extract_repo_metrics
     desc: Extract and calculate repository metrics
     tool:
       kind: duckdb
+      args:
+        repo_name: '{{ fetch_github_repo.data.name }}'
+        repo_full_name: '{{ fetch_github_repo.data.full_name }}'
+        stars_count: '{{ fetch_github_repo.data.stargazers_count }}'
+        forks_count: '{{ fetch_github_repo.data.forks_count }}'
+        language: '{{ fetch_github_repo.data.language }}'
+        created_at: '{{ fetch_github_repo.data.created_at }}'
+        updated_at: '{{ fetch_github_repo.data.updated_at }}'
       query: |
         -- Create a table from the GitHub repository data
         DROP TABLE IF EXISTS repo_metrics;
@@ -88,10 +88,6 @@ workflow:
         SELECT * FROM repo_stats;
     next:
       - step: store_in_postgres
-        args:
-          table_name: github_repo_analysis
-          repo_data: '{{ extract_repo_metrics.command_2.rows }}'
-          stats_data: '{{ extract_repo_metrics.command_5.rows }}'
   
   - step: store_in_postgres
     desc: Store repository analysis in PostgreSQL
@@ -137,8 +133,6 @@ workflow:
         );
     next:
       - step: query_and_analyze
-        args:
-          analysis_table: github_repo_analysis
   
   - step: query_and_analyze
     desc: Query the stored data and perform final analysis

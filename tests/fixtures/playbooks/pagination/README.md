@@ -191,8 +191,10 @@ retry:
 ## 📊 Test Server
 
 All tests use the pagination test server:
-- **Cluster**: `http://paginated-api.test-server.svc.cluster.local:5555`
-- **Localhost**: `http://localhost:30555` (NodePort)
+- **Cluster default**: `http://paginated-api.test-server.svc.cluster.local:5555`
+- **Localhost default**: `http://localhost:30555` (NodePort)
+- **Override**: set `PAGINATION_API_URL` to point to your target endpoint; playbooks fall back to the localhost NodePort when the variable is not provided.
+- **Scheme guard**: if you pass `PAGINATION_API_URL` without `http://` or `https://`, playbooks auto-prepend `http://` to keep requests valid.
 
 **Endpoints:**
 - `/api/v1/assessments` - Page-number pagination (35 items)

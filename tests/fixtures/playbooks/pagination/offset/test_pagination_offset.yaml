@@ -6,7 +6,7 @@ metadata:
   description: Offset-based pagination test
 
 workload:
-  api_url: http://paginated-api.test-server.svc.cluster.local:5555
+  api_url: "http://paginated-api.test-server.svc.cluster.local:5555"
 
 workflow:
   - step: start
@@ -16,7 +16,7 @@ workflow:
       code: |
         def main():
             return {"status": "initialized"}
-    
+
     case:
       - when: "{{ event.name == 'step.exit' }}"
         then:
@@ -32,7 +32,7 @@ workflow:
       params:
         offset: 0
         limit: 10
-    
+
     case:
       - when: "{{ event.name == 'call.done' and response is defined and response.has_more == true }}"
         then:
@@ -45,7 +45,7 @@ workflow:
             params:
               offset: "{{ (response.offset | int) + (response.limit | int) }}"
               limit: "{{ response.limit }}"
-      
+
       - when: "{{ event.name == 'call.done' and response is defined and response.has_more != true }}"
         then:
           collect:
@@ -63,7 +63,7 @@ workflow:
         def main(input_data):
             # Check we got all items - handle server wrapping in {'value': [items]}
             raw_data = input_data.get('fetch_all_users', [])
-            
+
             # Unwrap if server wrapped in {'value': ...}
             if isinstance(raw_data, dict) and 'value' in raw_data:
                 data = raw_data['value']
@@ -73,16 +73,16 @@ workflow:
                 data = raw_data
             else:
                 data = []
-            
+
             print(f"Total users fetched: {len(data)}")
             print(f"First user: {data[0] if data else None}")
             print(f"Last user: {data[-1] if data else None}")
-            
+
             # Validate
             assert len(data) == 35, f"Expected 35 users, got {len(data)}"
             assert data[0]['id'] == 1, f"First user should have id=1"
             assert data[-1]['id'] == 35, f"Last user should have id=35"
-            
+
             return {
                 'status': 'success',
                 'total_users': len(data)
@@ -90,7 +90,7 @@ workflow:
       args:
         input_data:
           fetch_all_users: "{{ fetch_all_users }}"
-    
+
     case:
       - when: "{{ event.name == 'call.done' and response is defined }}"
         then:
