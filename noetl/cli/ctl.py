@@ -59,10 +59,11 @@ def start_worker_service(
             
             sys.stderr.write("=== GETTING SETTINGS ===\n")
             sys.stderr.flush()
-            # Get configuration
-            settings = get_settings()
-            nats_url = settings.nats_url
-            server_url = settings.server_api_url or settings.server_url
+            # Worker v2 only needs NATS + server endpoints; skip full server env validation
+            nats_url = os.environ.get("NATS_URL", "nats://noetl:noetl@localhost:30422")
+            server_url = os.environ.get("NOETL_SERVER_URL", "http://localhost:8082").rstrip('/')
+            if not server_url.endswith('/api'):
+                server_url = f"{server_url}/api"
             
             sys.stderr.write(f"=== CALLING run_worker_v2_sync NATS={nats_url} ===\n")
             sys.stderr.flush()
