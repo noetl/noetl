@@ -24,7 +24,7 @@ def register_playbook(yaml_path):
 def execute_playbook(path, payload_data=None):
     """Execute a playbook"""
     exec_payload = {'path': path, 'payload': payload_data or {}}
-    response = requests.post(f'{BASE_URL}/api/v2/execute', json=exec_payload)
+    response = requests.post(f'{BASE_URL}/api/execute', json=exec_payload)
     return response.status_code, response.json()
 
 def get_execution_events(execution_id):

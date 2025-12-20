@@ -23,8 +23,10 @@ logger = setup_logger(__name__, include_location=True)
 
 
 router = APIRouter()
-router.include_router(api_router)
+# v2 (event-driven) routes are the primary API; legacy routes are still included
+# for non-execution resources.
 router.include_router(v2_router)
+router.include_router(api_router)
 
 
 def create_app() -> FastAPI:
