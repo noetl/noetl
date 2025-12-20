@@ -6,7 +6,7 @@ metadata:
   description: Cursor-based pagination test
 
 workload:
-  api_url: http://paginated-api.test-server.svc.cluster.local:5555
+  api_url: "http://paginated-api.test-server.svc.cluster.local:5555"
 
 workflow:
   - step: start
@@ -16,7 +16,7 @@ workflow:
       code: |
         def main():
             return {"status": "initialized"}
-    
+
     case:
       - when: "{{ event.name == 'step.exit' }}"
         then:
@@ -31,7 +31,7 @@ workflow:
       method: GET
       params:
         limit: 10
-    
+
     case:
       - when: "{{ event.name == 'call.done' and response is defined and response.next_cursor is not none and response.next_cursor != '' }}"
         then:
@@ -44,7 +44,7 @@ workflow:
             params:
               cursor: "{{ response.next_cursor }}"
               limit: "{{ response.limit }}"
-      
+
       - when: "{{ event.name == 'call.done' and response is defined and (response.next_cursor is none or response.next_cursor == '') }}"
         then:
           collect:
@@ -62,7 +62,7 @@ workflow:
         def main(input_data):
             # Check we got all items - handle server wrapping in {'value': [items]}
             raw_data = input_data.get('fetch_all_events', [])
-            
+
             # Unwrap if server wrapped in {'value': ...}
             if isinstance(raw_data, dict) and 'value' in raw_data:
                 data = raw_data['value']
@@ -72,16 +72,16 @@ workflow:
                 data = raw_data
             else:
                 data = []
-            
+
             print(f"Total events fetched: {len(data)}")
             print(f"First event: {data[0] if data else None}")
             print(f"Last event: {data[-1] if data else None}")
-            
+
             # Validate
             assert len(data) == 35, f"Expected 35 events, got {len(data)}"
             assert data[0]['id'] == 1, f"First event should have id=1"
             assert data[-1]['id'] == 35, f"Last event should have id=35"
-            
+
             return {
                 'status': 'success',
                 'total_events': len(data)
@@ -89,7 +89,7 @@ workflow:
       args:
         input_data:
           fetch_all_events: "{{ fetch_all_events }}"
-    
+
     case:
       - when: "{{ event.name == 'call.done' and response is defined }}"
         then:

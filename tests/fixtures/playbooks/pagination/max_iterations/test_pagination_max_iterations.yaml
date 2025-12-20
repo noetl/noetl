@@ -6,7 +6,7 @@ metadata:
   description: Test max_iterations safety limit
 
 workload:
-  api_url: http://paginated-api.test-server.svc.cluster.local:5555
+  api_url: "http://paginated-api.test-server.svc.cluster.local:5555"
 
 workflow:
   - step: start
@@ -16,7 +16,7 @@ workflow:
       code: |
         def main():
             return {"status": "initialized"}
-    
+
     case:
       - when: "{{ event.name == 'step.exit' }}"
         then:
@@ -32,7 +32,7 @@ workflow:
       params:
         page: 1
         pageSize: 10
-    
+
     case:
       - when: "{{ event.name == 'call.done' and response is defined and response.paging.hasMore == true }}"
         then:
@@ -41,10 +41,10 @@ workflow:
             path: data
             into: pages
           retry:
-            max_attempts: 2  # Only fetch first 2 pages (20 items)
+            max_attempts: 2 # Only fetch first 2 pages (20 items)
             params:
               page: "{{ (response.paging.page | int) + 1 }}"
-      
+
       - when: "{{ event.name == 'call.done' and response is defined and response.paging.hasMore != true }}"
         then:
           collect:
@@ -62,7 +62,7 @@ workflow:
         def main(input_data):
             # Should only get 2 pages = 20 items (not all 35) - handle server wrapping
             raw_data = input_data.get('fetch_with_limit', [])
-            
+
             # Unwrap if server wrapped in {'value': ...}
             if isinstance(raw_data, dict) and 'value' in raw_data:
                 data = raw_data['value']
@@ -72,12 +72,12 @@ workflow:
                 data = raw_data
             else:
                 data = []
-            
+
             print(f"Total items fetched (limited): {len(data)}")
-            
+
             # Validate max_iterations worked
             assert len(data) == 20, f"Expected 20 items (2 pages), got {len(data)}"
-            
+
             return {
                 'status': 'success',
                 'total_items': len(data),
@@ -86,7 +86,7 @@ workflow:
       args:
         input_data:
           fetch_with_limit: "{{ fetch_with_limit }}"
-    
+
     case:
       - when: "{{ event.name == 'call.done' and response is defined }}"
         then:
