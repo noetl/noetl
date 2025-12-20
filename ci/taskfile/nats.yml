@@ -6,18 +6,16 @@ tasks:
   deploy:
     desc: Deploy NATS JetStream
     cmds:
-      - kubectl apply -f ci/manifests/nats/namespace.yaml
-      - kubectl apply -f ci/manifests/nats/nats.yaml
+      - helm repo add nats https://nats-io.github.io/k8s/helm/charts/
+      - helm repo update
+      - helm upgrade --install nats nats/nats --values=ci/manifests/nats/values.yaml --namespace=nats --create-namespace --wait --wait-for-jobs 
       - echo "✓ NATS deployed"
-      - echo "Waiting for NATS to be ready..."
-      - kubectl wait --for=condition=ready --timeout=120s pod -l app=nats -n nats || true
       - task: status
 
   undeploy:
     desc: Remove NATS JetStream
     cmds:
-      - kubectl delete -f ci/manifests/nats/nats.yaml --ignore-not-found=true
-      - kubectl delete -f ci/manifests/nats/namespace.yaml --ignore-not-found=true
+      - helm uninstall nats --namespace=nats --wait
       - echo "✓ NATS removed"
 
   restart:
@@ -47,27 +45,27 @@ tasks:
     cmds:
       - kubectl logs -n nats statefulset/nats --tail=100 -f
 
-  connect:
-    desc: Connect to NATS CLI
-    cmds:
-      - |
-        POD=$(kubectl get pods -n nats -l app=nats -o jsonpath='{.items[0].metadata.name}')
-        if [ -n "$POD" ]; then
-          echo "Connecting to NATS..."
-          kubectl exec -it -n nats $POD -- nats-server --version
-        else
-          echo "NATS pod not found"
-          exit 1
-        fi
+  # connect:
+  #   desc: Connect to NATS CLI
+  #   cmds:
+  #     - |
+  #       POD=$(kubectl get pods -n nats -l app=nats -o jsonpath='{.items[0].metadata.name}')
+  #       if [ -n "$POD" ]; then
+  #         echo "Connecting to NATS..."
+  #         kubectl exec -it -n nats $POD -- nats-server --version
+  #       else
+  #         echo "NATS pod not found"
+  #         exit 1
+  #       fi
 
-  health:
-    desc: Check NATS health
-    cmds:
-      - |
-        POD=$(kubectl get pods -n nats -l app=nats -o jsonpath='{.items[0].metadata.name}')
-        if [ -n "$POD" ]; then
-          kubectl exec -n nats $POD -- wget -qO- http://localhost:8222/healthz
-        fi
+  # health:
+  #   desc: Check NATS health
+  #   cmds:
+  #     - |
+  #       POD=$(kubectl get pods -n nats -l app=nats -o jsonpath='{.items[0].metadata.name}')
+  #       if [ -n "$POD" ]; then
+  #         kubectl exec -n nats $POD -- wget -qO- http://localhost:8222/healthz
+  #       fi
 
   port-forward:
     desc: Forward NATS ports
@@ -76,33 +74,36 @@ tasks:
       - echo "Client - localhost:4222"
       - echo "Monitoring - localhost:8222"
       - echo "Press Ctrl+C to stop"
-      - kubectl port-forward -n nats svc/nats 4222:4222 8222:8222
+      - |
+        kubectl port-forward -n nats svc/nats 4222:4222 &
+        kubectl port-forward -n nats svc/nats-headless 8222:8222 &
+        wait
 
   streams:
     desc: List JetStream streams
     cmds:
       - |
-        POD=$(kubectl get pods -n nats -l app=nats -o jsonpath='{.items[0].metadata.name}')
+        POD=$(kubectl get pods -n nats -l app.kubernetes.io/component=nats-box -o jsonpath='{.items[0].metadata.name}')
         if [ -n "$POD" ]; then
-          kubectl exec -n nats $POD -- wget -qO- http://localhost:8222/jsz
+          kubectl exec -n nats $POD -- sh -c "nats server ls --sort=name --context=sys && nats stream ls"
         fi
 
-  monitoring:
-    desc: Show NATS monitoring dashboard
-    cmds:
-      - |
-        POD=$(kubectl get pods -n nats -l app=nats -o jsonpath='{.items[0].metadata.name}')
-        if [ -n "$POD" ]; then
-          kubectl exec -n nats $POD -- wget -qO- http://localhost:8222/varz
-        fi
+  # monitoring:
+  #   desc: Show NATS monitoring dashboard
+  #   cmds:
+  #     - |
+  #       POD=$(kubectl get pods -n nats -l app=nats -o jsonpath='{.items[0].metadata.name}')
+  #       if [ -n "$POD" ]; then
+  #         kubectl exec -n nats $POD -- wget -qO- http://localhost:8222/varz
+  #       fi
 
-  test:
-    desc: Test NATS connection and JetStream
-    cmds:
-      - echo "=== Testing NATS Connection ==="
-      - task: health
-      - echo ""
-      - echo "=== JetStream Info ==="
-      - task: streams
-      - echo ""
-      - echo "✓ NATS tests completed"
+  # test:
+  #   desc: Test NATS connection and JetStream
+  #   cmds:
+  #     - echo "=== Testing NATS Connection ==="
+  #     - task: health
+  #     - echo ""
+  #     - echo "=== JetStream Info ==="
+  #     - task: streams
+  #     - echo ""
+  #     - echo "✓ NATS tests completed"
