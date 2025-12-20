@@ -62,6 +62,10 @@ spec:
               value: "worker-cpu-01-k8s"
             - name: NATS_URL
               value: "nats://noetl:noetl@nats.nats.svc.cluster.local:4222"
+            - name: NATS_USER
+              value: noetl
+            - name: NATS_PASSWORD
+              value: noetl
             - name: SERVER_API_URL
               value: "http://noetl.noetl.svc.cluster.local:8082"
           volumeMounts:
