@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.0.1](https://github.com/noetl/noetl/compare/v2.0.0...v2.0.1) (2025-12-20)
+
+### Bug Fixes
+
+* enable UI in configmap for improved user interaction ([e0db518](https://github.com/noetl/noetl/commit/e0db5184ca3118cf1f20a88c5feb8178b3328696))
+
 ## [2.0.0](https://github.com/noetl/noetl/compare/v1.8.0...v2.0.0) (2025-12-19)
 
 ### ⚠ BREAKING CHANGES
