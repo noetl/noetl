@@ -12,7 +12,7 @@ response = httpx.post(f"{BASE_URL}/api/catalog/register", json={"content": json.
 print(f"Registration: {response.status_code}")
 
 # Execute
-response = httpx.post(f"{BASE_URL}/api/v2/execute", json={"path": playbook['metadata']['path'], "payload": {}}, timeout=30.0)
+response = httpx.post(f"{BASE_URL}/api/execute", json={"path": playbook['metadata']['path'], "payload": {}}, timeout=30.0)
 execution_id = response.json()['execution_id']
 print(f"Execution ID: {execution_id}")
 

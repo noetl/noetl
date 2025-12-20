@@ -6,7 +6,7 @@ These endpoints are being deprecated in favor of the event-driven v2 architectur
 Workers should:
 1. Poll queue table directly (via database)
 2. Execute commands
-3. Emit events to POST /api/v2/events
+3. Emit events to POST /api/events
 
 Server is the ONLY component that writes to queue table via the event processing engine.
 

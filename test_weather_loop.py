@@ -35,7 +35,7 @@ def test_weather_loop():
     catalog_path = playbook_yaml['metadata']['path']
     
     response = httpx.post(
-        f"{BASE_URL}/api/v2/execute",
+        f"{BASE_URL}/api/execute",
         json={
             "path": catalog_path,
             "payload": {}

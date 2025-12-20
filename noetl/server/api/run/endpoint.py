@@ -28,8 +28,8 @@ async def execute_resource(
     """
     Execute a resource (playbook, tool, model, workflow) using unified request schema.
     
-    **DEPRECATED**: This endpoint is deprecated and redirects to /api/v2/execute.
-    Use /api/v2/execute directly for new integrations.
+    **DEPRECATED**: This endpoint is deprecated and redirects to /api/execute.
+    Use /api/execute directly for new integrations.
     
     **Path Parameters:**
     - `resource_type`: Type of resource to execute (currently supported: playbook)

@@ -14,7 +14,7 @@ from fastapi.responses import JSONResponse
 
 # Import routers from local modules
 from . import credential, aggregate, catalog, runtime, dashboard, system, broker, \
-    database, context, run, execution, vars, keychain
+    database, context, run, vars, keychain, execution
 
 router = APIRouter()
 
@@ -24,10 +24,9 @@ async def api_health():
 
 # Include all sub-routers
 router.include_router(context.router)
-# DISABLED: Legacy v1 event endpoint - replaced by /api/v2/events
+# DISABLED: Legacy v1 event endpoint - replaced by unified /api/events
 # router.include_router(broker.router)  # Event handler (was event package)
 router.include_router(catalog.router)
-router.include_router(execution.router)
 router.include_router(credential.router)
 router.include_router(database.router)
 router.include_router(runtime.router)
@@ -41,6 +40,8 @@ router.include_router(run.router)
 router.include_router(vars.router)
 # Keychain management endpoints
 router.include_router(keychain.router)
+# Execution query endpoints (event history, list)
+router.include_router(execution.router)
 
 __all__ = [
     "router",
