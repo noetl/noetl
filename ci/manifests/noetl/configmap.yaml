@@ -13,7 +13,7 @@ data:
   PYTHONPATH: "/opt/noetl"
   NOETL_DATA_DIR: "/opt/noetl/data"
   NOETL_RUN_MODE: "server"
-  NOETL_ENABLE_UI: "false"
+  NOETL_ENABLE_UI: "true"
   NOETL_DEBUG: "true"
   NOETL_HTTP_MOCK_LOCAL: "false"
   PAGINATION_API_URL: "http://paginated-api.test-server.svc.cluster.local:5555"
