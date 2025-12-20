@@ -5,6 +5,11 @@ metadata:
   name: google_gcs_oauth
   path: tests/fixtures/playbooks/oauth/google_gcs
 
+keychain:
+  - name: google_oauth           # Resolved credential name used by token()
+    type: google_oauth
+    ref: google_oauth            # Credential key stored in DB
+
 workload:
   google_auth: google_oauth
   project_id: noetl-demo-19700101  # Your GCP project from gcloud config

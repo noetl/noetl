@@ -534,9 +534,11 @@ class V2Worker:
         
         from jinja2 import Environment, BaseLoader
         from noetl.core.dsl.render import add_b64encode_filter
+        from noetl.core.auth.token_resolver import register_token_functions
         
         jinja_env = Environment(loader=BaseLoader())
         jinja_env = add_b64encode_filter(jinja_env)  # Add custom filters including tojson
+        register_token_functions(jinja_env, context)
         
         # Map V2 config format to plugin task_config format
         # Plugins use different field names than V2 DSL
