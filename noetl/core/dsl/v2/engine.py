@@ -843,12 +843,26 @@ class ControlFlowEngine:
                 has_data_fields = any(
                     key in sink_config for key in ("data", "args", "payload", "statement", "sql", "commands", "params")
                 )
+                # Also check if statement/sql/commands are nested inside tool dict
+                if not has_data_fields and isinstance(sink_config.get("tool"), dict):
+                    tool_dict = sink_config["tool"]
+                    has_data_fields = any(
+                        key in tool_dict for key in ("statement", "sql", "commands", "params")
+                    )
+                
                 if not has_data_fields:
                     default_source = sink_config.get("from", "{{ response }}")
-                    sink_config["data"] = self._render_value_recursive(default_source, context)
+                    # Only render if response exists in context (avoid errors on failed steps)
+                    if "response" in context or default_source != "{{ response }}":
+                        sink_config["data"] = self._render_value_recursive(default_source, context)
+                    else:
+                        logger.warning("Sink action: 'response' not in context, skipping data assignment")
+                        continue
 
                 # Basic guard for DB-backed sinks when no statement is provided
-                requires_table = backend in {"postgres", "duckdb", "snowflake"}
+                # Handle backend as string or dict (extract 'tool' key if dict)
+                backend_str = backend.get("tool") if isinstance(backend, dict) else backend
+                requires_table = backend_str in {"postgres", "duckdb", "snowflake"}
                 if requires_table and not sink_config.get("table") and not sink_config.get("statement"):
                     logger.warning("Sink action missing 'table' attribute")
                     continue
@@ -1080,9 +1094,11 @@ class ControlFlowEngine:
         
         # Handle synthetic steps (like sink commands)
         # These are created dynamically and don't exist in the workflow
+        # They execute and emit events, but don't need orchestration
         if event.step.endswith('_sink'):
-            # Sink steps are synthetic - they execute but don't need orchestration
-            logger.debug(f"Skipping orchestration for synthetic sink step: {event.step}")
+            logger.debug(f"Synthetic sink step: {event.step} - persisting event without orchestration")
+            # Persist the event but don't generate commands (no orchestration needed)
+            await self._persist_event(event, state)
             return commands
         
         step_def = state.get_step(event.step)

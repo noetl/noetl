@@ -360,6 +360,7 @@ async def handle_event(req: EventRequest) -> EventResponse:
         )
         
         # Process event through engine to generate next commands
+        # Note: Engine handles event persistence internally
         commands = await engine.handle_event(event)
         
         # Get NATS publisher

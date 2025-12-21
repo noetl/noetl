@@ -39,28 +39,26 @@ workflow:
       - step: transfer_http_to_pg
 
   - step: transfer_http_to_pg
-    desc: Fetch HTTP data and insert into PostgreSQL
+    desc: Transfer HTTP data to PostgreSQL with column mapping
     tool:
-      kind: http
-      url: "{{ workload.api_url }}"
-      method: GET
-    
-    case:
-      - when: "{{ event.name == 'call.done' and response is defined }}"
-        then:
-          sink:
-            tool: postgres
-            auth: "{{ workload.pg_auth }}"
-            table: public.http_to_postgres_transfer
-            mode: insert
-            mapping:
-              post_id: id
-              user_id: userId
-              title: title
-              body: body
-            data: "{{ response.data }}"
-          next:
-            - step: show_count
+      kind: transfer
+      source:
+        type: http
+        url: "{{ workload.api_url }}"
+        method: GET
+      target:
+        type: postgres
+        auth:
+          source: credential
+          key: "{{ workload.pg_auth }}"
+        table: public.http_to_postgres_transfer
+        mapping:
+          user_id: userId
+          post_id: id
+          title: title
+          body: body
+    next:
+      - step: show_count
 
   - step: show_count
     desc: Verify record count
