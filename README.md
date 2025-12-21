@@ -4,6 +4,8 @@ __NoETL__ is an automation framework for Data Mash and MLOps orchestration.
 
 [![PyPI version](https://badge.fury.io/py/noetl.svg)](https://badge.fury.io/py/noetl)
 
+![NoETL](./noetl.png)
+
 
 ## Documentation
 
