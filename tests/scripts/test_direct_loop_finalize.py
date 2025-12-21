@@ -15,7 +15,7 @@ async def main(execution_id: str, step_name: str) -> None:
 
 if __name__ == "__main__":
     if len(sys.argv) < 3:
-        print("Usage: python scripts/test_direct_loop_finalize.py <execution_id> <step_name>")
+        print("Usage: python tests/scripts/test_direct_loop_finalize.py <execution_id> <step_name>")
         sys.exit(1)
     eid = sys.argv[1]
     step = sys.argv[2]

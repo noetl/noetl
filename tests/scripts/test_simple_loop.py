@@ -2,7 +2,7 @@
 import json, time, yaml, httpx
 
 BASE_URL = "http://localhost:8082"
-yaml_path = "test_simple_loop.yaml"
+yaml_path = "tests/fixtures/playbooks/root_scripts/test_simple_loop.yaml"
 
 # Register
 with open(yaml_path, 'r') as f:

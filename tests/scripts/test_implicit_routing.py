@@ -3,7 +3,7 @@ import requests
 import time
 
 # Register
-with open('test_implicit_end_routing.yaml') as f:
+with open('tests/fixtures/playbooks/root_scripts/test_implicit_end_routing.yaml') as f:
     content = f.read()
 
 resp = requests.post(
