@@ -35,11 +35,12 @@ def parse_tool_config(tool_value: Any) -> Tuple[str, Dict[str, Any]]:
         # Flat structure: tool: "postgres"
         kind = tool_value.strip().lower()
     elif isinstance(tool_value, dict):
-        # Nested structure: tool: { type: "postgres", ... }
-        kind = tool_value.get('type', 'event').strip().lower()
+        # Nested structure: tool: { type: "postgres", ... } or { kind: "postgres", ... }
+        kind = (tool_value.get('type') or tool_value.get('kind') or 'event').strip().lower()
         tool_config = tool_value.copy()
-        # Remove 'type' from config as it's already extracted
+        # Remove 'type' and 'kind' from config as they're already extracted
         tool_config.pop('type', None)
+        tool_config.pop('kind', None)
     else:
         raise ValueError(
             "sink.tool must be a string (e.g., 'postgres') or dict with "

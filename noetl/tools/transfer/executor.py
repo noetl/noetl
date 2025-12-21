@@ -315,7 +315,8 @@ def execute_transfer_action(
         if not source_config:
             raise ValueError("'source' configuration is required")
         
-        source_type = source_config.get('tool', source_config.get('type', '')).lower()
+        # Support both 'kind' and 'type' keys, with 'kind' taking priority
+        source_type = source_config.get('tool', source_config.get('kind', source_config.get('type', ''))).lower()
         source_query = source_config.get('query')
         source_auth = source_config.get('auth')
         source_url = source_config.get('url')
@@ -345,7 +346,8 @@ def execute_transfer_action(
         if not target_config:
             raise ValueError("'target' configuration is required")
         
-        target_type = target_config.get('tool', target_config.get('type', '')).lower()
+        # Support both 'kind' and 'type' keys, with 'kind' taking priority
+        target_type = target_config.get('tool', target_config.get('kind', target_config.get('type', ''))).lower()
         target_table = target_config.get('table')
         target_query = target_config.get('query')
         target_auth = target_config.get('auth')
