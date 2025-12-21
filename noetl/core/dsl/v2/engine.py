@@ -974,9 +974,9 @@ class ControlFlowEngine:
         # Render Jinja2 templates in tool config
         # CRITICAL: Use recursive render_template to handle nested dicts/lists like params: {latitude: "{{ city.lat }}"}
         from noetl.core.dsl.render import render_template as recursive_render
-        from jinja2 import Environment, BaseLoader
+        from jinja2 import Environment, BaseLoader, StrictUndefined
         
-        env = Environment(loader=BaseLoader())
+        env = Environment(loader=BaseLoader(), undefined=StrictUndefined)
         rendered_tool_config = recursive_render(env, tool_config, context)
         
         # Render Jinja2 templates in args (also use recursive rendering for nested structures)

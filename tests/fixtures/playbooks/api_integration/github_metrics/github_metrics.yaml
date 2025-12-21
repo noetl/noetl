@@ -38,32 +38,24 @@ workflow:
     desc: Extract and calculate repository metrics
     tool:
       kind: duckdb
-      args:
-        repo_name: '{{ fetch_github_repo.data.name }}'
-        repo_full_name: '{{ fetch_github_repo.data.full_name }}'
-        stars_count: '{{ fetch_github_repo.data.stargazers_count }}'
-        forks_count: '{{ fetch_github_repo.data.forks_count }}'
-        language: '{{ fetch_github_repo.data.language }}'
-        created_at: '{{ fetch_github_repo.data.created_at }}'
-        updated_at: '{{ fetch_github_repo.data.updated_at }}'
       query: |
         -- Create a table from the GitHub repository data
         DROP TABLE IF EXISTS repo_metrics;
         CREATE TABLE repo_metrics AS
         SELECT 
-          '{{ repo_name }}' AS name,
-          '{{ repo_full_name }}' AS full_name,
-          {{ stars_count }} AS stars,
-          {{ forks_count }} AS forks,
-          '{{ language }}' AS primary_language,
-          '{{ created_at }}'::TIMESTAMP AS created_date,
-          '{{ updated_at }}'::TIMESTAMP AS last_updated,
-          {{ stars_count }} + {{ forks_count }} AS total_engagement,
+          '{{ fetch_github_repo.data.name }}' AS name,
+          '{{ fetch_github_repo.data.full_name }}' AS full_name,
+          {{ fetch_github_repo.data.stargazers_count }} AS stars,
+          {{ fetch_github_repo.data.forks_count }} AS forks,
+          '{{ fetch_github_repo.data.language }}' AS primary_language,
+          '{{ fetch_github_repo.data.created_at }}'::TIMESTAMP AS created_date,
+          '{{ fetch_github_repo.data.updated_at }}'::TIMESTAMP AS last_updated,
+          {{ fetch_github_repo.data.stargazers_count }} + {{ fetch_github_repo.data.forks_count }} AS total_engagement,
           CASE 
-            WHEN {{ stars_count }} > 100000 THEN 'Extremely Popular'
-            WHEN {{ stars_count }} > 50000 THEN 'Very Popular'
-            WHEN {{ stars_count }} > 10000 THEN 'Popular'
-            WHEN {{ stars_count }} > 1000 THEN 'Well Known'
+            WHEN {{ fetch_github_repo.data.stargazers_count }} > 100000 THEN 'Extremely Popular'
+            WHEN {{ fetch_github_repo.data.stargazers_count }} > 50000 THEN 'Very Popular'
+            WHEN {{ fetch_github_repo.data.stargazers_count }} > 10000 THEN 'Popular'
+            WHEN {{ fetch_github_repo.data.stargazers_count }} > 1000 THEN 'Well Known'
             ELSE 'Growing'
           END AS popularity_tier;
         
