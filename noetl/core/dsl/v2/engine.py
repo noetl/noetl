@@ -825,39 +825,49 @@ class ControlFlowEngine:
                         f"[RETRY-ACTION] Re-attempting step {event.step} "
                         f"(attempt {command.attempt}/{max_attempts})"
                     )
-            
-            elif "sink" in action:
+
+            # Sink action can co-exist with next/retry, so handle separately
+            if "sink" in action:
                 # Persist step result to storage backend
-                sink_spec = action["sink"]
-                backend = sink_spec.get("backend", "postgres")
-                table = sink_spec.get("table")
-                data_source = sink_spec.get("from", "{{ response }}")
-                
-                if not table:
+                sink_spec = action.get("sink") or {}
+                if not isinstance(sink_spec, dict):
+                    logger.warning("Sink action must be a dictionary")
+                    continue
+
+                # Preserve full sink spec (args, mode, key, etc.) and map backend alias
+                sink_config = dict(sink_spec)
+                backend = sink_config.get("tool") or sink_config.get("backend") or "postgres"
+                sink_config.setdefault("tool", backend)
+
+                # If no data/args/payload provided, default to saving the response envelope
+                has_data_fields = any(
+                    key in sink_config for key in ("data", "args", "payload", "statement", "sql", "commands", "params")
+                )
+                if not has_data_fields:
+                    default_source = sink_config.get("from", "{{ response }}")
+                    sink_config["data"] = self._render_value_recursive(default_source, context)
+
+                # Basic guard for DB-backed sinks when no statement is provided
+                requires_table = backend in {"postgres", "duckdb", "snowflake"}
+                if requires_table and not sink_config.get("table") and not sink_config.get("statement"):
                     logger.warning("Sink action missing 'table' attribute")
                     continue
+
+                # Get render context for sink command
+                sink_context = state.get_render_context(event)
                 
-                # Render data source recursively (handles dicts, lists, strings)
-                data = self._render_value_recursive(data_source, context)
-                
-                # Create sink command (uses special sink tool kind)
-                # Note: sink executor expects 'tool' not 'backend'
                 sink_command = Command(
                     execution_id=state.execution_id,
                     step=f"{event.step}_sink",
                     tool=ToolCall(
                         kind="sink",
-                        config={
-                            "tool": backend,  # executor expects 'tool' field
-                            "table": table,
-                            "data": data,
-                            "auth": sink_spec.get("auth")
-                        }
+                        config=sink_config
                     ),
-                    args={}
+                    args={},
+                    render_context=sink_context  # Provide context so worker can render templates
                 )
                 commands.append(sink_command)
-                logger.info(f"Sink action: persisting to {backend}.{table}")
+                logger.info(f"Sink action: persisting to {sink_config.get('tool')}.{sink_config.get('table')}")
         
         return commands
     
@@ -1066,6 +1076,13 @@ class ControlFlowEngine:
         # Get current step
         if not event.step:
             logger.error("Event missing step name")
+            return commands
+        
+        # Handle synthetic steps (like sink commands)
+        # These are created dynamically and don't exist in the workflow
+        if event.step.endswith('_sink'):
+            # Sink steps are synthetic - they execute but don't need orchestration
+            logger.debug(f"Skipping orchestration for synthetic sink step: {event.step}")
             return commands
         
         step_def = state.get_step(event.step)
