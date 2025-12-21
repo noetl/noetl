@@ -72,3 +72,6 @@ ci/kind/cache
 /tests/fixtures/credentials/*.txt
 /tests/fixtures/credentials/*.pem
 /tests/fixtures/credentials/*.key
+
+# VS Code workspace files (local developer settings)
+bhs-state-program-analytics.code-workspace

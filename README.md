@@ -266,16 +266,104 @@ For distributed execution patterns and worker pool management, see [Multiple Wor
 
 NoETL uses a declarative YAML-based Domain Specific Language (DSL) for defining workflows. The key parts of a NoETL playbook include:
 
-- **Metadata**: Version, path, and description of the playbook
-- **Workload**: Input data and parameters for the workflow (Jinja2 templated)
-- **Workflow**: A list of steps that make up the workflow, where each step is defined with `step: step_name`, including:
-  - **Step**: Individual operations with unique names
-  - **Tool**: Action types performed at each step (http, python, workbook, playbook, script, postgres, duckdb, snowflake, clickhouse)
-  - **Next**: Conditional routing to subsequent steps with `when` clauses
-  - **Args**: Parameters passed to the next step using templating (Jinja2)
-- **Workbook** (optional): Reusable task definitions that can be called from workflow steps via `tool: workbook` and `name: task_name`
+- **apiVersion**: Version of the NoETL DSL (e.g., `noetl.io/v2`)
+- **kind**: Type of resource (e.g., `Playbook`)
+- **metadata**: Metadata including name, path, and description of the playbook
+- **workload**: Input data and parameters for the workflow (Jinja2 templated)
+- **keychain** (optional): Dynamic token caching and authentication management
+- **workflow**: A list of steps that make up the workflow, where each step is defined with:
+  - **step**: Unique step name
+  - **desc**: Description of the step
+  - **tool**: Execution configuration with `kind` (http, postgres, duckdb, python, etc.) and tool-specific parameters
+  - **case** (optional): Event-driven conditional logic with `when`/`then` blocks for retries, pagination, transitions, etc.
+  - **next** (optional): Structural default next steps (unconditional)
 
-For examples of NoETL playbooks and detailed explanations, see the [Examples Guide](https://github.com/noetl/noetl/blob/master/docs/examples.md).
+### Example Playbook Structure (v2 DSL)
+
+```yaml
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: example_playbook
+  path: examples/my_example
+  description: Example NoETL playbook
+
+workload:
+  api_url: "https://api.example.com"
+  pg_auth: pg_local
+
+keychain:
+  - name: api_token
+    kind: oauth2
+    scope: global
+    auto_renew: true
+    endpoint: "{{ workload.api_url }}/oauth/token"
+    data:
+      grant_type: client_credentials
+      client_id: "{{ secret.client_id }}"
+      client_secret: "{{ secret.client_secret }}"
+
+workflow:
+  - step: fetch_data
+    desc: Fetch data from API with pagination
+    tool:
+      kind: http
+      method: GET
+      url: "{{ workload.api_url }}/data"
+      headers:
+        Authorization: "Bearer {{ keychain.api_token.access_token }}"
+      params:
+        page: 1
+        limit: 10
+
+    case:
+      - when: "{{ event.name == 'call.done' and response.paging.hasMore }}"
+        then:
+          collect:
+            from: response.data
+            into: results
+            mode: append
+          call:
+            params:
+              page: "{{ (response.paging.page | int) + 1 }}"
+              limit: 10
+
+      - when: "{{ event.name == 'call.done' and not response.paging.hasMore }}"
+        then:
+          collect:
+            from: response.data
+            into: results
+            mode: append
+          next:
+            - step: save_to_db
+
+  - step: save_to_db
+    desc: Save results to database
+    tool:
+      kind: postgres
+      auth: "{{ workload.pg_auth }}"
+      command: |
+        INSERT INTO results (data, created_at)
+        VALUES (%s, NOW())
+      args:
+        - "{{ results }}"
+
+    next:
+      - step: end
+
+  - step: end
+    desc: Workflow complete
+```
+
+### Key DSL Concepts
+
+- **Event-Driven Execution**: Steps use `case` with `when`/`then` to react to events like `step.enter`, `call.done`, `step.exit`
+- **Tool Abstraction**: All execution uses `tool.kind` (http, postgres, duckdb, python, etc.) with kind-specific configuration
+- **Token Management**: `keychain` provides OAuth tokens, secret manager integration, and caching with scopes (global, catalog, local, shared)
+- **Conditional Flow**: `case.then.next` for conditional transitions; `next` for structural defaults
+- **Data Flow**: `args` for cross-step parameter passing; `collect` for aggregating results
+
+For detailed examples and advanced patterns, see the test playbooks in `tests/fixtures/playbooks/` and the [DSL V2 Specification](documentation/docs/reference/architecture_design.md).
 
 To execute a playbook:
 
@@ -287,20 +375,21 @@ noetl execute playbook "path/to/playbook" --host localhost --port 8082
 
 NoETL provides a unified authentication system for handling credentials in workflows:
 
-### Simple Credential Reference
+#### Simple Credential Reference
 
 For single credential authentication, use a direct string reference:
 
 ```yaml
 - step: create_table
   desc: Create test table
-  tool: postgres
-  auth: "{{ workload.pg_auth }}"
-  command: |
-    CREATE TABLE IF NOT EXISTS users (
-      id SERIAL PRIMARY KEY,
-      name VARCHAR(255)
-    )
+  tool:
+    kind: postgres
+    auth: "{{ workload.pg_auth }}"
+    command: |
+      CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        name VARCHAR(255)
+      )
 ```
 
 ### Structured Authentication
@@ -310,40 +399,42 @@ For more complex scenarios (multiple credentials, scoped access), use structured
 ```yaml
 - step: upload_to_gcs
   desc: Upload parquet file to GCS via DuckDB
-  tool: duckdb
-  auth:
-    pg_db:
-      source: credential
-      tool: postgres
-      key: "{{ workload.pg_auth }}"
-    gcs_secret:
-      source: credential
-      tool: hmac
-      key: gcs_hmac_local
-      scope: gs://{{ workload.gcs_bucket }}
-  commands: |
-    INSTALL httpfs;
-    LOAD httpfs;
-    
-    CREATE TABLE test_data AS
-    SELECT 'test data' AS message;
-    
-    COPY test_data TO 'gs://{{ workload.gcs_bucket }}/data.parquet' (FORMAT PARQUET);
+  tool:
+    kind: duckdb
+    auth:
+      pg_db:
+        source: credential
+        tool: postgres
+        key: "{{ workload.pg_auth }}"
+      gcs_secret:
+        source: credential
+        tool: hmac
+        key: gcs_hmac_local
+        scope: gs://{{ workload.gcs_bucket }}
+    commands: |
+      INSTALL httpfs;
+      LOAD httpfs;
+
+      CREATE TABLE test_data AS
+      SELECT 'test data' AS message;
+
+      COPY test_data TO 'gs://{{ workload.gcs_bucket }}/data.parquet' (FORMAT PARQUET);
 ```
 
 ### OAuth Token Authentication
 
-For OAuth-based APIs (Google Cloud, Interactive Brokers, etc.), use the `token()` function:
+For OAuth-based APIs (Google Cloud, Interactive Brokers, etc.), use the token() function:
 
 ```yaml
 - step: list_buckets
   desc: List GCS buckets using OAuth token
-  tool: http
-  method: GET
-  url: "https://storage.googleapis.com/storage/v1/b?project={{ workload.project_id }}"
-  headers:
-    Authorization: "Bearer {{ token(workload.google_auth) }}"
-    Content-Type: application/json
+  tool:
+    kind: http
+    method: GET
+    url: "https://storage.googleapis.com/storage/v1/b?project={{ workload.project_id }}"
+    headers:
+      Authorization: "Bearer {{ token(workload.google_auth) }}"
+      Content-Type: application/json
 ```
 
 ### Authentication Patterns
