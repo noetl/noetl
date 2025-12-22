@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.0.3](https://github.com/noetl/noetl/compare/v2.0.2...v2.0.3) (2025-12-22)
+
+### Bug Fixes
+
+* enable verbose logging during npm install in Dockerfile ([a91469a](https://github.com/noetl/noetl/commit/a91469ab7c411e6c08301726492b22e8d15d2a95))
+
 ## [2.0.2](https://github.com/noetl/noetl/compare/v2.0.1...v2.0.2) (2025-12-21)
 
 ### Bug Fixes
