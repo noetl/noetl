@@ -539,7 +539,7 @@ TRANSFER_FUNCTIONS = {
 
 To add a new source or target:
 
-1. **Create Plugin** in `noetl/plugin/`:
+1. **Create Plugin** in `noetl/tools/`:
 ```python
 class NewSourcePlugin(BasePlugin):
     def execute(self, config):

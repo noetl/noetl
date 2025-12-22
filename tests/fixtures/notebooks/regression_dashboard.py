@@ -122,7 +122,7 @@ lookback_from
 # - `noetl.event(execution_id, event_id, catalog_id, created_at, event_type, node_name, node_type, status, duration, error, ...)`
 # - `noetl.workflow(execution_id, step_id, step_name, step_type, ...)` (structure of steps)
 # - `noetl.workload(execution_id, data)` (workload input)
-# - `noetl.vars_cache(execution_id, var_name, var_value, ...)` (runtime variables)
+# - `noetl.transient(execution_id, var_name, var_value, ...)` (runtime variables)
 #
 # We derive a run's final status by taking the last event per `execution_id` by `created_at`.
 

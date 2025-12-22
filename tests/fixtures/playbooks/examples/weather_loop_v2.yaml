@@ -1,0 +1,213 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: weather_loop_v2
+  path: examples/weather_loop_v2
+  version: "2.0"
+workload:
+  cities:
+    - name: San Francisco
+      lat: 37.7749
+      lon: -122.4194
+    - name: New York
+      lat: 40.7128
+      lon: -74.0060
+    - name: London
+      lat: 51.5074
+      lon: -0.1278
+  weather_api_url: https://api.open-meteo.com/v1/forecast
+  alert_threshold: 30  # degrees Celsius
+
+workbook:
+  - name: evaluate_weather_directly
+    tool:
+      kind: python
+      code: |
+        def main(city, threshold):
+            # Evaluate weather data
+            temp = city.get("temperature", 0)
+            alert = temp > threshold
+            
+            return {
+                "city": city["name"],
+                "temperature": temp,
+                "alert": alert,
+                "message": f"Temperature {temp}°C {'exceeds' if alert else 'below'} threshold {threshold}°C"
+            }
+
+workflow:
+- step: start
+  desc: Start weather monitoring workflow
+  tool:
+    kind: python
+    code: |
+      def main():
+          return {"status": "initialized", "timestamp": "2025-12-10T00:00:00Z"}
+  next: city_loop
+
+- step: city_loop
+  desc: Loop over cities and fetch weather data
+  loop:
+    in: "{{ workload.cities }}"
+    iterator: city
+  tool:
+    kind: http
+    method: GET
+    endpoint: "{{ workload.weather_api_url }}"
+    params:
+      latitude: "{{ city.lat }}"
+      longitude: "{{ city.lon }}"
+      current_weather: true
+      temperature_unit: celsius
+  case:
+    # Initialize collection on step entry
+    - when: "{{ event.name == 'step.enter' }}"
+      then:
+        set:
+          ctx:
+            weather_results: []
+            alerts: []
+    
+    # Retry on network errors
+    - when: >-
+        {{ event.name == 'call.done'
+           and error is defined
+           and error.status in [500, 502, 503, 504] }}
+      then:
+        retry:
+          max_attempts: 3
+          backoff_multiplier: 1.5
+          initial_delay: 1.0
+    
+    # Process successful response
+    - when: >-
+        {{ event.name == 'call.done'
+           and response is defined
+           and response.status == 200 }}
+      then:
+        # Extract temperature and city info
+        set:
+          ctx:
+            current_temp: "{{ response.data.current_weather.temperature }}"
+            city_data:
+              name: "{{ city.name }}"
+              temperature: "{{ response.data.current_weather.temperature }}"
+              windspeed: "{{ response.data.current_weather.windspeed }}"
+        
+        # Check if temperature exceeds threshold
+        next:
+          - step: evaluate_weather
+            args:
+              city: "{{ ctx.city_data }}"
+              threshold: "{{ workload.alert_threshold }}"
+
+- step: evaluate_weather
+  desc: Evaluate weather data and determine if alert is needed
+  tool:
+    kind: workbook
+    task: evaluate_weather_directly
+    with:
+      city: "{{ args.city }}"
+      threshold: "{{ args.threshold }}"
+  case:
+    # If alert triggered, collect to alerts list
+    - when: >-
+        {{ event.name == 'step.exit'
+           and result.alert == true }}
+      then:
+        collect:
+          from: result
+          into: alerts
+          mode: append
+        next:
+          - step: send_alert
+            args:
+              alert_data: "{{ result }}"
+    
+    # If no alert, just collect to results
+    - when: >-
+        {{ event.name == 'step.exit'
+           and result.alert == false }}
+      then:
+        collect:
+          from: result
+          into: weather_results
+          mode: append
+
+- step: send_alert
+  desc: Send alert for high temperature
+  tool:
+    kind: python
+    code: |
+      def main(alert_data):
+          # In production, this would send email/SMS/notification
+          print(f"ALERT: {alert_data['message']}")
+          return {
+              "alert_sent": True,
+              "city": alert_data["city"],
+              "temperature": alert_data["temperature"]
+          }
+  args:
+    alert_data: "{{ args.alert_data }}"
+  case:
+    # After sending alert, check if there are more cities to process
+    - when: "{{ event.name == 'step.exit' }}"
+      then:
+        # Continue to next city in loop (implicit - engine handles this)
+        # or move to summary if loop is complete
+        next:
+          - step: generate_summary
+
+- step: generate_summary
+  desc: Generate summary of weather monitoring
+  tool:
+    kind: python
+    code: |
+      def main(weather_results, alerts):
+          total_cities = len(weather_results) + len(alerts)
+          alert_count = len(alerts)
+          
+          summary = {
+              "total_cities_monitored": total_cities,
+              "alerts_triggered": alert_count,
+              "alert_percentage": (alert_count / total_cities * 100) if total_cities > 0 else 0,
+              "weather_data": weather_results,
+              "alerts": alerts
+          }
+          
+          return summary
+  args:
+    weather_results: "{{ ctx.weather_results }}"
+    alerts: "{{ ctx.alerts }}"
+  case:
+    # Save summary to sink
+    - when: "{{ event.name == 'step.exit' }}"
+      then:
+        sink:
+          tool:
+            kind: postgres
+            auth: pg_local
+            command: |
+              INSERT INTO weather_monitoring_summary (
+                execution_id, 
+                total_cities, 
+                alerts_triggered, 
+                summary_data, 
+                created_at
+              ) VALUES (
+                '{{ execution_id }}',
+                {{ result.total_cities_monitored }},
+                {{ result.alerts_triggered }},
+                $json${{ result | tojson }}$json$::jsonb,
+                NOW()
+              );
+        next:
+          - step: end
+
+- step: end
+  desc: End of weather monitoring workflow
+  tool:
+    kind: python
+    code: |
+      def main():
+          return {"status": "completed", "workflow": "weather_monitoring"}

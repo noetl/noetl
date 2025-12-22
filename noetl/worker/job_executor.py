@@ -106,7 +106,7 @@ class JobExecutor:
             return
 
         if prepared.action_type == "result_aggregation":
-            from noetl.plugin.controller.result import process_loop_aggregation_job
+            from noetl.core.workflow.result import process_loop_aggregation_job
 
             await process_loop_aggregation_job(job.model_dump())
             return
@@ -409,7 +409,7 @@ class JobExecutor:
         except Exception:
             exec_ctx_with_result = exec_ctx
 
-        from noetl.plugin.shared.storage import execute_sink_task as _do_sink
+        from noetl.core.storage import execute_sink_task as _do_sink
 
         sink_payload = {"sink": inline_sink}
         logger.critical(f"INLINE_SINK: About to call execute_sink_task with inline_sink type: {type(inline_sink)}")
@@ -593,23 +593,9 @@ class JobExecutor:
         result: Dict[str, Any],
         context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        # Extract retry config and attempt number for server-side retry handling
-        task_config = prepared.action_cfg
-        retry_config = task_config.retry if task_config else None
-        attempt_number = 1
+        # Retry is handled by unified when/then wrapper in retry.py
+        # No need to extract retry metadata here
         meta = {}
-        
-        if retry_config and isinstance(retry_config, dict):
-            attempt_number = retry_config.get('_attempt_number', 1)
-            
-            # Put retry details in meta
-            meta['retry'] = {
-                'has_config': True,
-                'attempt_number': attempt_number,
-                'max_attempts': retry_config.get('on_error', {}).get('max_attempts', 1),
-                'retry_type': 'on_error',
-                'will_retry': attempt_number < retry_config.get('on_error', {}).get('max_attempts', 1)
-            }
         
         extra = {
             "result": result,
@@ -627,14 +613,6 @@ class JobExecutor:
         if duration is not None:
             extra["duration"] = duration
             meta['execution'] = {'duration_seconds': duration}
-        
-        # Add retry metadata for server-side retry decision
-        if retry_config:
-            extra["data"] = {
-                "error": error_message,
-                "retry_config": retry_config,
-                "attempt_number": attempt_number
-            }
         
         if meta:
             extra['meta'] = meta
@@ -659,30 +637,9 @@ class JobExecutor:
         action_started_event_id: Optional[str],
         context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        # Extract retry config and attempt number from task config for server-side retry handling
+        # Retry is handled by unified when/then wrapper in retry.py
         extra = {}
         meta = {}
-        task_config = prepared.action_cfg
-        
-        if task_config and task_config.retry:
-            retry_config = task_config.retry
-            if retry_config:
-                # Put retry details in meta for better tracking
-                meta['retry'] = {
-                    'has_config': True,
-                    'attempt_number': retry_config.get('_attempt_number', 1),
-                    'max_attempts': retry_config.get('on_error', {}).get('max_attempts') or retry_config.get('on_success', {}).get('max_attempts'),
-                    'retry_type': 'on_error' if 'on_error' in retry_config else ('on_success' if 'on_success' in retry_config else None)
-                }
-                
-                # Include full retry_config in result for server to make retry decisions
-                # Wrap the actual result along with retry metadata
-                result_with_retry = {
-                    'result': result.get('data') if isinstance(result, dict) else result,
-                    'retry_config': retry_config,
-                    'attempt_number': retry_config.get('_attempt_number', 1)
-                }
-                result = result_with_retry
         
         # Add execution details to meta
         meta['execution'] = {
@@ -719,21 +676,53 @@ class JobExecutor:
         if not isinstance(normalized, dict):
             normalized = {"value": normalized}
         status = self._extract_step_status(result)
-        event = self._build_event_payload(
-            prepared,
-            event_type="step_result",
-            status=status,
-            node_type=node_type,
-            duration=duration,
-            result=normalized,
-            parent_event_override=action_started_event_id or prepared.parent_event_id,
-        )
+        
+        # Check if this is a loop iteration by looking for iterator metadata in job_meta
+        iterator_meta = prepared.job_meta.get('iterator') if prepared.job_meta else None
+        is_loop_iteration = bool(iterator_meta and isinstance(iterator_meta, dict))
+        
+        if is_loop_iteration:
+            # This is a loop iteration - emit iteration_completed instead of step_result
+            iteration_meta = {
+                'iteration_index': iterator_meta.get('iteration_index', 0),
+                'total_iterations': iterator_meta.get('total_iterations', 0),
+                'iterator_name': iterator_meta.get('iterator_name', 'item'),
+                'mode': iterator_meta.get('mode', 'sequential'),
+                'parent_execution_id': iterator_meta.get('parent_execution_id'),
+            }
+            
+            event = self._build_event_payload(
+                prepared,
+                event_type="iteration_completed",
+                status=status,
+                node_type=node_type,
+                duration=duration,
+                result=normalized,
+                parent_event_override=action_started_event_id or prepared.parent_event_id,
+                meta=iteration_meta,
+            )
+            logger.info(
+                f"Emitting iteration_completed for {prepared.node_name} "
+                f"(iteration {iteration_meta['iteration_index']}/{iteration_meta['total_iterations']})"
+            )
+        else:
+            # Normal step - emit step_result
+            event = self._build_event_payload(
+                prepared,
+                event_type="step_result",
+                status=status,
+                node_type=node_type,
+                duration=duration,
+                result=normalized,
+                parent_event_override=action_started_event_id or prepared.parent_event_id,
+            )
+        
         await self._emit_event(event)
 
     async def _emit_event(
         self, event_data: Union[Dict[str, Any], EventPayload]
     ) -> Dict[str, Any]:
-        from noetl.plugin.runtime import report_event_async
+        from noetl.core.runtime import report_event_async
 
         payload = (
             event_data.model_dump(exclude_none=True)

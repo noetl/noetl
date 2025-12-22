@@ -4,148 +4,17 @@ __NoETL__ is an automation framework for Data Mash and MLOps orchestration.
 
 [![PyPI version](https://badge.fury.io/py/noetl.svg)](https://badge.fury.io/py/noetl)
 
+![NoETL](https://raw.githubusercontent.com/noetl/noetl/master/noetl.png)
 
-## Overview
 
-The following diagram illustrates the main parts and intent of the NoETL system:
+## Documentation
 
-![NoETL System Diagram](docs/images/NoETL.png)
-
-- **Server**: orchestration + API endpoints (catalog, credentials, tasks, events)
-- **Worker**: background worker pool, no HTTP endpoints
-- **Noetl CLI**: manages worker pools and server lifecycle
+For the introduction, system overview, architecture, and the semantic execution pipeline, see the [Introduction document](https://noetl.io/docs/introduction).
 
 ## AI & Domain Data-Driven Design
 
-__NoETL__ is an **AI-data-driven workflow runtime** for **domain-centric** Data Mesh, Data Lakehouse, Analytical, MLOps, and general automation workloads.
-
-Instead of being _just ETL_, __NoETL__ is intended to sit at the center of **domain data products** and **AI workloads**:
-- risk and fraud scoring pipelines,
-- patient and cohort analytics in healthcare,
-- recommendation and ranking systems in e-commerce,
-- marketing attribution and customer 360 views,
-- operations / observability analytics for SRE & platform teams.
-
-It takes inspiration from:
-
-- **Erlang** – everything is a process; isolate failures and supervise them.
-- **Rust** – explicit ownership and borrowing of data; minimize unsafe sharing, applied to data governance and analytics.
-- **Petri nets** – explicit modeling of state transitions and token-based parallelism in workflows.
-- **Zero-copy data interchange** – Apache Arrow style memory layouts for sharing data without re-serialization.
-
-### Domain-Centric & Data Mesh Aware
-
-NoETL assumes that data and AI are **domain-specific**:
-
-- Each **playbook** is a domain workload:
-  - e.g. `risk/score_application`, `healthcare/patient_cohort`, `marketing/attribution_model`, `observability/ingest_traces`.
-- Domains publish **data products** (tables, files, features, embeddings, metrics) into a **data mesh** or **data lakehouse**.
-- NoETL coordinates how those products are:
-  - built and refreshed (batch / streaming),
-  - validated (schema checks, quality checks),
-  - exposed to analytical and AI workloads (SQL engines, vector DBs, APIs).
-
-This makes NoETL a good fit for organizations that want domain teams (risk, clinical, marketing, ops, etc.) to own their pipelines independently, while sharing the same runtime.
-
-### AI-Native & Data-Driven Orchestration
-
-NoETL treats every execution as a feedback signal for **AI-assisted optimization**:
-
-- All **steps**, **retries**, **durations**, **error types**, and **resource usages** are recorded as events.
-- These events are exported to **analytical backends** (ClickHouse, VictoriaMetrics, VictoriaLogs) and **AI-centric stores** (Qdrant for embeddings and semantic search across playbooks, logs, events, and domain artifacts).
-- Domain-specific AI tasks can then:
-  - learn from historical runs (e.g. which features are expensive, which steps are flaky in data processing, where fraud models time out),
-  - tune **runtime parameters** (batch sizes, sampling, routing, retry policies, pool limits),
-  - select **optimal runtime hardware** per step (CPU class, GPU type, accelerator pool, quantum API backends) based on observed latency, throughput, and cost,
-  - pick cheaper or safer alternatives for specific domains (e.g. use cached features for credit scoring, downsample telemetry for observability workloads, or route heavy semantic queries to cheaper vector backends).
-
-Typical AI workloads orchestrated by NoETL include:
-
-- **RAG and semantic search** pipelines for documentation, logs, metrics, and domain records (backed by Qdrant or other vector stores),
-- **Feature engineering** and **feature store** feeds for ML models,
-- **Model training and evaluation** for domain models (risk, clinical, marketing, operations),
-- **Online scoring** pathways that fan out to vector DBs, warehouses, services, and specialized hardware (CPU/GPU/accelerator/quantum endpoints).
-
-At runtime, hardware capabilities are modeled as part of the resource pools: playbooks and steps can declare hardware preferences or constraints, and AI policies can decide how to map those steps onto available CPU, GPU, or quantum-style backends.
-
-The long-term goal is a **closed-loop control plane** where AI agents continuously propose and apply safe configuration changes for each domain — routing, hardware selection, and scheduling policies — based on real execution data and semantic understanding of past workloads.
-
-### Petri Net Inspired State & Parallelism
-
-NoETL’s workflow model is also inspired by **Petri nets**: parallelism and state are made explicit, and **data moves from state to state** in a controlled way.
-
-- **States as places, steps as transitions**  
-  - Each **step** in a workflow behaves like a Petri net **transition**.
-  - The **context/result snapshots** between steps behave like **places** that hold tokens.
-  - The `next` edges (with optional `when` and `args`) define how tokens flow from one state to another.
-
-- **Tokens as data + context**  
-  - A “token” corresponds to a unit of execution context (workload parameters, step results, domain data references).
-  - When a step fires, it:
-    - consumes one or more incoming tokens,
-    - executes its tool (`http`, `python`, `postgres`, `duckdb`, `clickhouse`, `qdrant`, etc.),
-    - produces new tokens with updated context/results for downstream steps.
-
-- **Parallelism as token fan-out**  
-  - Parallel branches are modeled by **fan-out in the Petri net**:
-    - one completed step can produce multiple tokens that flow into different downstream steps,
-    - those downstream steps can run in parallel across worker pools.
-  - Synchronization / joins are modeled by steps that wait for multiple incoming tokens (fan-in) before firing.
-
-- **State management as explicit flow**  
-  - State is not hidden inside arbitrary code; it is modeled as:
-    - workflow context (workload → workflow → step → tool),
-    - tokens moving along `next` edges,
-    - persisted events analyzed for each transition.
-  - This makes it possible to **replay**, **inspect**, and **reason about** execution state in the same way Petri nets allow analysis of reachability and invariants.
-
-### Erlang Inspired Process Model
-
-NoETL follows Erlang’s idea that **everything is a process**:
-
-- Each workflow execution, and each step within it, is modeled as an **isolated runtime task**.
-- `worker.py` runs pools of background workers that execute these tasks; workers do **not** expose HTTP endpoints.
-- `server.py` acts as the **orchestrator and supervisor**:
-  - exposes API endpoints (catalog, credentials, events),
-  - schedules tasks,
-  - handles retries and backoff,
-  - records events and state transitions,
-  - keeps failures local to the affected execution or domain.
-- `cli.ctl.py` manages the lifecycle of servers and worker pools (start, stop, scale).
-
-Components communicate via **events** and persisted state (Postgres, NATS JetStream, logs/metrics), similar to Erlang processes communicating via message passing.
-
-### Rust and Arrow Informed Data Handling
-
-NoETL’s data model borrows ideas from Rust and Apache Arrow:
-
-- **Ownership & borrowing semantics (Rust inspired)**  
-  - Workflow **context** and **results** have clear scopes: workload → workflow → step → tool.
-  - Large domain data objects (tables, feature sets, parquet files, embeddings) are passed by **reference** (paths, handles, table names) rather than blindly copying blobs.
-  - Shared mutable state is minimized; each step “owns” its slice of context while it runs, then publishes results back into well-defined domain products.
-
-- **Zero-copy and columnar sharing (Arrow inspired)**  
-  - Tools like DuckDB, ClickHouse, Postgres, and vector databases operate on **structured, columnar data** where possible.
-  - Domain pipelines are encouraged to share data via:
-    - Arrow-compatible formats (Parquet, Arrow IPC),
-    - engine-native tables,
-    - object storage layouts,  
-    instead of repeatedly serializing/deserializing huge JSON payloads.
-  - The aim is to **borrow** existing representations rather than constantly re-encode them, keeping data movement predictable and efficient across domains.
-
-
-By combining **Erlang style processes**, **Rust like ownership of context**, **Arrow style zero-copy data interchange**, and **Petri net style state and parallelism**, NoETL provides a runtime where:
-
-- tasks are isolated,
-- state transitions are explicit,
-- parallelism is structurally visible,
-- and AI/analytics can safely optimize how data flows from one state to another.
-
-Together, these principles give NoETL a clear stance:
-
-- Treat each domain workload as a **process** that can fail, restart, and be supervised.
-- Treat data as something that should be **borrowed and shared safely**, not constantly cloned.
-- Use **AI and domain-specific analytics** over past executions to continuously improve how the system schedules, routes, and scales workflows across data mesh / lakehouse, analytical, and MLOps domains.
+Please see:
+- https://noetl.io/docs/introduction#ai--domain-data-driven-design
 
 
 ## Quick Start 
@@ -397,16 +266,104 @@ For distributed execution patterns and worker pool management, see [Multiple Wor
 
 NoETL uses a declarative YAML-based Domain Specific Language (DSL) for defining workflows. The key parts of a NoETL playbook include:
 
-- **Metadata**: Version, path, and description of the playbook
-- **Workload**: Input data and parameters for the workflow (Jinja2 templated)
-- **Workflow**: A list of steps that make up the workflow, where each step is defined with `step: step_name`, including:
-  - **Step**: Individual operations with unique names
-  - **Tool**: Action types performed at each step (http, python, workbook, playbook, script, postgres, duckdb, snowflake, clickhouse)
-  - **Next**: Conditional routing to subsequent steps with `when` clauses
-  - **Args**: Parameters passed to the next step using templating (Jinja2)
-- **Workbook** (optional): Reusable task definitions that can be called from workflow steps via `tool: workbook` and `name: task_name`
+- **apiVersion**: Version of the NoETL DSL (e.g., `noetl.io/v2`)
+- **kind**: Type of resource (e.g., `Playbook`)
+- **metadata**: Metadata including name, path, and description of the playbook
+- **workload**: Input data and parameters for the workflow (Jinja2 templated)
+- **keychain** (optional): Dynamic token caching and authentication management
+- **workflow**: A list of steps that make up the workflow, where each step is defined with:
+  - **step**: Unique step name
+  - **desc**: Description of the step
+  - **tool**: Execution configuration with `kind` (http, postgres, duckdb, python, etc.) and tool-specific parameters
+  - **case** (optional): Event-driven conditional logic with `when`/`then` blocks for retries, pagination, transitions, etc.
+  - **next** (optional): Structural default next steps (unconditional)
 
-For examples of NoETL playbooks and detailed explanations, see the [Examples Guide](https://github.com/noetl/noetl/blob/master/docs/examples.md).
+### Example Playbook Structure (v2 DSL)
+
+```yaml
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: example_playbook
+  path: examples/my_example
+  description: Example NoETL playbook
+
+workload:
+  api_url: "https://api.example.com"
+  pg_auth: pg_local
+
+keychain:
+  - name: api_token
+    kind: oauth2
+    scope: global
+    auto_renew: true
+    endpoint: "{{ workload.api_url }}/oauth/token"
+    data:
+      grant_type: client_credentials
+      client_id: "{{ secret.client_id }}"
+      client_secret: "{{ secret.client_secret }}"
+
+workflow:
+  - step: fetch_data
+    desc: Fetch data from API with pagination
+    tool:
+      kind: http
+      method: GET
+      url: "{{ workload.api_url }}/data"
+      headers:
+        Authorization: "Bearer {{ keychain.api_token.access_token }}"
+      params:
+        page: 1
+        limit: 10
+
+    case:
+      - when: "{{ event.name == 'call.done' and response.paging.hasMore }}"
+        then:
+          collect:
+            from: response.data
+            into: results
+            mode: append
+          call:
+            params:
+              page: "{{ (response.paging.page | int) + 1 }}"
+              limit: 10
+
+      - when: "{{ event.name == 'call.done' and not response.paging.hasMore }}"
+        then:
+          collect:
+            from: response.data
+            into: results
+            mode: append
+          next:
+            - step: save_to_db
+
+  - step: save_to_db
+    desc: Save results to database
+    tool:
+      kind: postgres
+      auth: "{{ workload.pg_auth }}"
+      command: |
+        INSERT INTO results (data, created_at)
+        VALUES (%s, NOW())
+      args:
+        - "{{ results }}"
+
+    next:
+      - step: end
+
+  - step: end
+    desc: Workflow complete
+```
+
+### Key DSL Concepts
+
+- **Event-Driven Execution**: Steps use `case` with `when`/`then` to react to events like `step.enter`, `call.done`, `step.exit`
+- **Tool Abstraction**: All execution uses `tool.kind` (http, postgres, duckdb, python, etc.) with kind-specific configuration
+- **Token Management**: `keychain` provides OAuth tokens, secret manager integration, and caching with scopes (global, catalog, local, shared)
+- **Conditional Flow**: `case.then.next` for conditional transitions; `next` for structural defaults
+- **Data Flow**: `args` for cross-step parameter passing; `collect` for aggregating results
+
+For detailed examples and advanced patterns, see the test playbooks in `tests/fixtures/playbooks/` and the [DSL V2 Specification](documentation/docs/reference/architecture_design.md).
 
 To execute a playbook:
 
@@ -418,20 +375,21 @@ noetl execute playbook "path/to/playbook" --host localhost --port 8082
 
 NoETL provides a unified authentication system for handling credentials in workflows:
 
-### Simple Credential Reference
+#### Simple Credential Reference
 
 For single credential authentication, use a direct string reference:
 
 ```yaml
 - step: create_table
   desc: Create test table
-  tool: postgres
-  auth: "{{ workload.pg_auth }}"
-  command: |
-    CREATE TABLE IF NOT EXISTS users (
-      id SERIAL PRIMARY KEY,
-      name VARCHAR(255)
-    )
+  tool:
+    kind: postgres
+    auth: "{{ workload.pg_auth }}"
+    command: |
+      CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        name VARCHAR(255)
+      )
 ```
 
 ### Structured Authentication
@@ -441,40 +399,42 @@ For more complex scenarios (multiple credentials, scoped access), use structured
 ```yaml
 - step: upload_to_gcs
   desc: Upload parquet file to GCS via DuckDB
-  tool: duckdb
-  auth:
-    pg_db:
-      source: credential
-      tool: postgres
-      key: "{{ workload.pg_auth }}"
-    gcs_secret:
-      source: credential
-      tool: hmac
-      key: gcs_hmac_local
-      scope: gs://{{ workload.gcs_bucket }}
-  commands: |
-    INSTALL httpfs;
-    LOAD httpfs;
-    
-    CREATE TABLE test_data AS
-    SELECT 'test data' AS message;
-    
-    COPY test_data TO 'gs://{{ workload.gcs_bucket }}/data.parquet' (FORMAT PARQUET);
+  tool:
+    kind: duckdb
+    auth:
+      pg_db:
+        source: credential
+        tool: postgres
+        key: "{{ workload.pg_auth }}"
+      gcs_secret:
+        source: credential
+        tool: hmac
+        key: gcs_hmac_local
+        scope: gs://{{ workload.gcs_bucket }}
+    commands: |
+      INSTALL httpfs;
+      LOAD httpfs;
+
+      CREATE TABLE test_data AS
+      SELECT 'test data' AS message;
+
+      COPY test_data TO 'gs://{{ workload.gcs_bucket }}/data.parquet' (FORMAT PARQUET);
 ```
 
 ### OAuth Token Authentication
 
-For OAuth-based APIs (Google Cloud, Interactive Brokers, etc.), use the `token()` function:
+For OAuth-based APIs (Google Cloud, Interactive Brokers, etc.), use the token() function:
 
 ```yaml
 - step: list_buckets
   desc: List GCS buckets using OAuth token
-  tool: http
-  method: GET
-  url: "https://storage.googleapis.com/storage/v1/b?project={{ workload.project_id }}"
-  headers:
-    Authorization: "Bearer {{ token(workload.google_auth) }}"
-    Content-Type: application/json
+  tool:
+    kind: http
+    method: GET
+    url: "https://storage.googleapis.com/storage/v1/b?project={{ workload.project_id }}"
+    headers:
+      Authorization: "Bearer {{ token(workload.google_auth) }}"
+      Content-Type: application/json
 ```
 
 ### Authentication Patterns
@@ -526,8 +486,8 @@ For more detailed information, please refer to the following documentation:
 - [Credential Management](docs/concepts/credentials.md) - auth vs credentials vs secret
 
 ### Infrastructure & Operations
-- [CI/CD Setup](documentation/docs/operations/ci-setup.md) - Kind cluster, PostgreSQL, NoETL deployment
-- [Observability Services](documentation/docs/operations/observability.md) - ClickHouse, Qdrant, NATS JetStream
+- [CI/CD Setup](https://noetl.io/docs/operations/ci-setup) - Kind cluster, PostgreSQL, NoETL deployment
+- [Observability Services](https://noetl.io/docs/operations/observability) - ClickHouse, Qdrant, NATS JetStream
 
 
 ### Examples

@@ -209,7 +209,7 @@ The playbook uses `args:` blocks to pass data between steps:
 
 The iterator controller automatically encodes nested task configurations when executing tasks directly within the worker process. This ensures that PostgreSQL `command`, DuckDB `command`, and Python `code` fields are properly base64-encoded before execution, matching the behavior of tasks published through the queue system.
 
-This encoding happens in `noetl/plugin/controller/iterator/execution.py` via the `_encode_nested_task()` function, which:
+This encoding happens in `noetl/tools/controller/iterator/execution.py` via the `_encode_nested_task()` function, which:
 1. Base64-encodes `code`, `command`, and `commands` fields
 2. Removes the original plain-text fields
 3. Ensures consistent handling regardless of execution path (queue vs direct)
@@ -266,7 +266,7 @@ command: |
 ### Iterator Errors with "No command_b64 found"
 - **Fixed in v1.0+**: Iterator now automatically base64-encodes nested task commands
 - If you see this error on older versions, upgrade to latest NoETL release
-- The fix is in `noetl/plugin/controller/iterator/execution.py`
+- The fix is in `noetl/tools/controller/iterator/execution.py`
 
 ### Database Connection Errors
 - Verify credentials are registered: `.venv/bin/noetl credential list`

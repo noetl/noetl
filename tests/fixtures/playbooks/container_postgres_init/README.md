@@ -251,7 +251,7 @@ task test:container:register
   --host localhost --port 8082
 
 # Or via script
-./register_test_playbooks.sh
+./tests/fixtures/register_test_playbooks.sh
 ```
 
 #### 5. Execute Playbook

@@ -1,9 +1,14 @@
-apiVersion: noetl.io/v1
+apiVersion: noetl.io/v2
 kind: Playbook
 
 metadata:
   name: google_gcs_oauth
   path: tests/fixtures/playbooks/oauth/google_gcs
+
+keychain:
+  - name: google_oauth           # Resolved credential name used by token()
+    type: google_oauth
+    ref: google_oauth            # Credential key stored in DB
 
 workload:
   google_auth: google_oauth
@@ -15,82 +20,95 @@ workload:
 workflow:
   - step: start
     desc: Start GCS OAuth test
+    tool:
+      kind: python
+      code: |
+        def main():
+            return {"status": "initialized", "message": "Starting GCS OAuth test"}
     next:
       - step: list_buckets
 
   - step: list_buckets
     desc: List GCS buckets to verify authentication
-    tool: http
-    method: GET
-    url: "https://storage.googleapis.com/storage/v1/b?project={{ workload.project_id }}"
-    headers:
-      Authorization: "Bearer {{ token(workload.google_auth) }}"
-      Content-Type: application/json
+    tool:
+      kind: http
+      method: GET
+      url: "https://storage.googleapis.com/storage/v1/b?project={{ workload.project_id }}"
+      headers:
+        Authorization: "Bearer {{ token(workload.google_auth) }}"
+        Content-Type: application/json
     next:
       - step: parse_bucket_list
 
   - step: parse_bucket_list
     desc: Parse bucket list response
-    tool: python
-    code: |
-      def main(api_response):
-          """Parse GCS bucket list response."""
-          if not isinstance(api_response, dict):
-              return {'status': 'error', 'message': 'Invalid response format'}
-          
-          data = api_response.get('data', {})
-          status_code = api_response.get('status_code', 0)
-          
-          if status_code != 200:
-              return {
-                  'status': 'error',
-                  'status_code': status_code,
-                  'message': f'API call failed with status {status_code}',
-                  'error': data.get('error', {})
-              }
-          
-          buckets = data.get('items', [])
-          bucket_names = [b.get('name') for b in buckets if b.get('name')]
-          
-          return {
-              'status': 'success',
-              'bucket_count': len(bucket_names),
-              'buckets': bucket_names[:5],  # First 5 buckets
-              'message': f'Found {len(bucket_names)} buckets'
-          }
-    args:
-      api_response: "{{ list_buckets }}"
+    tool:
+      kind: python
+      args:
+        api_response: "{{ list_buckets }}"
+      code: |
+        def main(api_response):
+            """Parse GCS bucket list response."""
+            if not isinstance(api_response, dict):
+                return {'status': 'error', 'message': 'Invalid response format'}
+            
+            data = api_response.get('data', {})
+            status_code = api_response.get('status_code', 0)
+            
+            if status_code != 200:
+                return {
+                    'status': 'error',
+                    'status_code': status_code,
+                    'message': f'API call failed with status {status_code}',
+                    'error': data.get('error', {})
+                }
+            
+            buckets = data.get('items', [])
+            bucket_names = [b.get('name') for b in buckets if b.get('name')]
+            
+            return {
+                'status': 'success',
+                'bucket_count': len(bucket_names),
+                'buckets': bucket_names[:5],  # First 5 buckets
+                'message': f'Found {len(bucket_names)} buckets'
+            }
     next:
       - step: verify_oauth
 
   - step: verify_oauth
     desc: Final OAuth verification
-    tool: python
-    code: |
-      def main(bucket_result):
-          """Verify OAuth flow completed successfully."""
-          
-          # Check bucket listing worked
-          bucket_ok = bucket_result.get('status') == 'success'
-          
-          if bucket_ok:
-              return {
-                  'status': 'success',
-                  'message': 'GCS OAuth authentication fully verified!',
-                  'bucket_listing': 'SUCCESS',
-                  'buckets_found': bucket_result.get('bucket_count', 0),
-                  'validation': 'Token generated, GCS API calls succeeded'
-              }
-          else:
-              return {
-                  'status': 'error',
-                  'message': 'OAuth verification failed',
-                  'bucket_status': bucket_result.get('status')
-              }
-    args:
-      bucket_result: "{{ parse_bucket_list }}"
+    tool:
+      kind: python
+      args:
+        bucket_result: "{{ parse_bucket_list }}"
+      code: |
+        def main(bucket_result):
+            """Verify OAuth flow completed successfully."""
+            
+            # Check bucket listing worked
+            bucket_ok = bucket_result.get('status') == 'success'
+            
+            if bucket_ok:
+                return {
+                    'status': 'success',
+                    'message': 'GCS OAuth authentication fully verified!',
+                    'bucket_listing': 'SUCCESS',
+                    'buckets_found': bucket_result.get('bucket_count', 0),
+                    'validation': 'Token generated, GCS API calls succeeded'
+                }
+            else:
+                return {
+                    'status': 'error',
+                    'message': 'OAuth verification failed',
+                    'bucket_status': bucket_result.get('status')
+                }
     next:
       - step: end
 
   - step: end
     desc: GCS OAuth test completed
+    tool:
+      kind: python
+      code: |
+        def main():
+            return {"status": "completed"}

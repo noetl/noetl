@@ -18,7 +18,7 @@ from noetl.core.logger import setup_logger
 from noetl.server.api.broker.service import EventService
 from noetl.server.api.catalog import get_catalog_service
 from noetl.server.api.catalog.service import CatalogService
-from noetl.worker.vars_cache import VarsCache
+from noetl.worker.transient import TransientVars
 
 logger = setup_logger(__name__, include_location=True)
 
@@ -46,12 +46,20 @@ async def fetch_execution_context(execution_id: int) -> Dict[str, Any]:
 
     logger.debug(f"Fetching execution context for {execution_id}")
 
-    workload_data = await EventService.get_workload(execution_id)
-    resource_template = await CatalogService.fetch_resource_template(
-        resource_path=workload_data.path, version=workload_data.version
-    )
-    # if not workload:
-    #     workload = await EventService.get_context_workload(execution_id)
+    workload_from_context = await EventService.get_context_workload(execution_id)
+    workload_data = workload_from_context or {}
+
+    playbook_path = None
+    playbook_version = None
+    if isinstance(workload_data, dict):
+        playbook_path = workload_data.get("path")
+        playbook_version = workload_data.get("version")
+
+    resource_template = {}
+    if playbook_path:
+        resource_template = await CatalogService.fetch_resource_template(
+            resource_path=playbook_path, version=playbook_version
+        )
 
     # Fetch results from all completed steps
     results: Dict[str, Any] = await EventService.get_all_node_results(execution_id)
@@ -102,11 +110,11 @@ async def fetch_execution_context(execution_id: int) -> Dict[str, Any]:
     #         logger.exception(f"Failed to fetch playbook steps: {e}")
 
     return {
-        "workload": workload_data.workload,
+        "workload": workload_data.get("workload", workload_data) if isinstance(workload_data, dict) else {},
         "results": results,
-        "playbook_path": workload_data.path,
-        "playbook_version": workload_data.version,
-        "steps": resource_template.get("workflow", []),
+        "playbook_path": playbook_path,
+        "playbook_version": playbook_version,
+        "steps": resource_template.get("workflow", []) if isinstance(resource_template, dict) else [],
     }
 
 
@@ -134,18 +142,18 @@ async def build_rendering_context(
         "results": results,
     }
 
-    # Add vars namespace from VarsCache if execution_id available
+    # Add vars namespace from TransientVars if execution_id available
     execution_id = None
     if isinstance(extra_context, dict):
         execution_id = extra_context.get("execution_id")
     
     if execution_id:
         try:
-            vars_data = await VarsCache.get_all_vars(execution_id)
+            vars_data = await TransientVars.get_all_vars(execution_id)
             base_ctx["vars"] = vars_data
-            logger.info(f"✓ Loaded {len(vars_data)} variables from vars_cache for execution {execution_id}")
+            logger.info(f"✓ Loaded {len(vars_data)} variables from transient for execution {execution_id}")
         except Exception as e:
-            logger.warning(f"Failed to load vars_cache for execution {execution_id}: {e}")
+            logger.warning(f"Failed to load transient for execution {execution_id}: {e}")
             base_ctx["vars"] = {}
     else:
         logger.info("No execution_id in extra_context, vars namespace will be empty")
@@ -201,18 +209,42 @@ async def build_rendering_context(
                     else:
                         base_ctx[step_nm] = val
 
+    # Merge extra context FIRST (before workload) to establish protected system fields
+    if isinstance(extra_context, dict):
+        try:
+            # DEBUG: Log execution_id from extra_context
+            if "execution_id" in extra_context:
+                logger.info(f"[CONTEXT] execution_id from extra_context: {extra_context['execution_id']} (type: {type(extra_context['execution_id']).__name__})")
+            base_ctx.update(extra_context)
+        except (TypeError, ValueError, KeyError) as e:
+            logger.warning(f"Could not update context with extra_context: {e}")
+
     # Back-compat: expose workload fields at top level
     base_ctx["context"] = base_ctx["work"]
     if isinstance(workload, dict):
         try:
+            # Protected fields that should not be overwritten by workload
+            protected_fields = {"execution_id", "catalog_id", "job_id"}
+            # Save protected values
+            protected_values = {k: base_ctx.get(k) for k in protected_fields if k in base_ctx}
+            # DEBUG: Log what we're protecting
+            if protected_values:
+                logger.info(f"[CONTEXT] Protecting fields: {list(protected_values.keys())} with values: {protected_values}")
+            if "execution_id" in workload:
+                logger.warning(f"[CONTEXT] workload contains execution_id={workload['execution_id']}, will be overridden by protected value")
+            # Merge workload
             base_ctx.update(workload)
+            # Restore protected values
+            base_ctx.update(protected_values)
+            # DEBUG: Verify execution_id after restore
+            if "execution_id" in base_ctx:
+                logger.info(f"[CONTEXT] After restore, execution_id={base_ctx['execution_id']} (type: {type(base_ctx['execution_id']).__name__})")
         except (TypeError, ValueError) as e:
             logger.warning(f"Could not update context with workload: {e}")
 
-    # Merge extra context
+    # Ensure job.uuid exists (after all merges)
     if isinstance(extra_context, dict):
         try:
-            base_ctx.update(extra_context)
             # Ensure job.uuid exists
             job_obj = base_ctx.get("job")
             if isinstance(job_obj, dict) and "uuid" not in job_obj:

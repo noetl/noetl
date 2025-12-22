@@ -1,4 +1,4 @@
-apiVersion: noetl.io/v1
+apiVersion: noetl.io/v2
 kind: Playbook
 
 metadata:
@@ -13,104 +13,120 @@ workload:
 workflow:
   - step: start
     desc: Start HTTP to PostgreSQL transfer
+    tool:
+      kind: python
+      code: |
+        def main():
+            return {"status": "initialized"}
     next:
       - step: fetch_posts
 
   - step: fetch_posts
     desc: Fetch posts from JSONPlaceholder API
-    tool: http
-    method: GET
-    url: "{{ workload.api_url }}"
+    tool:
+      kind: http
+      method: GET
+      url: "{{ workload.api_url }}"
     next:
       - step: create_pg_table
 
   - step: create_pg_table
     desc: Create PostgreSQL table for posts
-    tool: postgres
-    auth: "{{ workload.pg_auth }}"
-    command: |
-      CREATE TABLE IF NOT EXISTS public.http_to_postgres_simple (
-        id INTEGER PRIMARY KEY,
-        user_id INTEGER,
-        title TEXT,
-        body TEXT
-      );
+    tool:
+      kind: postgres
+      auth: "{{ workload.pg_auth }}"
+      command: |
+        CREATE TABLE IF NOT EXISTS public.http_to_postgres_simple (
+          id INTEGER PRIMARY KEY,
+          user_id INTEGER,
+          title TEXT,
+          body TEXT
+        );
 
-      TRUNCATE TABLE public.http_to_postgres_simple;
+        TRUNCATE TABLE public.http_to_postgres_simple;
     next:
       - step: transform_and_insert
 
   - step: transform_and_insert
     desc: Transform and insert posts into PostgreSQL
-    tool: python
-    code: |
-      def main(input_data):
-          """Transform JSON posts and insert into PostgreSQL."""
-          # Get posts - input_data should be the HTTP response dict with 'data' key
-          if isinstance(input_data, dict):
-              posts = input_data.get('data', [])
-          elif isinstance(input_data, list):
-              posts = input_data
-          else:
-              posts = []
+    tool:
+      kind: python
+      args:
+        input_data: "{{ fetch_posts }}"
+      code: |
+        def main(input_data):
+            """Transform JSON posts and insert into PostgreSQL."""
+            # Get posts - input_data should be the HTTP response dict with 'data' key
+            if isinstance(input_data, dict):
+                posts = input_data.get('data', [])
+            elif isinstance(input_data, list):
+                posts = input_data
+            else:
+                posts = []
 
-          if not posts:
-              return {'status': 'error', 'message': 'No posts found', 'count': 0}
+            if not posts:
+                return {'status': 'error', 'message': 'No posts found', 'count': 0}
 
-          # Prepare SQL statements
-          insert_statements = []
-          for post in posts:
-              if not post or not post.get('id'):
-                  continue
+            # Prepare SQL statements
+            insert_statements = []
+            for post in posts:
+                if not post or not post.get('id'):
+                    continue
 
-              title = (post.get('title') or '').replace("'", "''")
-              body = (post.get('body') or '').replace("'", "''")
+                title = (post.get('title') or '').replace("'", "''")
+                body = (post.get('body') or '').replace("'", "''")
 
-              sql = f"INSERT INTO public.http_to_postgres_simple (id, user_id, title, body) VALUES ({post['id']}, {post.get('userId', 0)}, '{title}', '{body}') ON CONFLICT (id) DO NOTHING;"
-              insert_statements.append(sql)
+                sql = f"INSERT INTO public.http_to_postgres_simple (id, user_id, title, body) VALUES ({post['id']}, {post.get('userId', 0)}, '{title}', '{body}') ON CONFLICT (id) DO NOTHING;"
+                insert_statements.append(sql)
 
-          return {
-              'status': 'success',
-              'sql_statements': insert_statements,
-              'count': len(insert_statements)
-          }
-    args:
-      input_data: "{{ fetch_posts }}"
+            return {
+                'status': 'success',
+                'sql_statements': insert_statements,
+                'count': len(insert_statements)
+            }
     next:
       - step: execute_inserts
 
   - step: execute_inserts
     desc: Execute INSERT statements
-    tool: postgres
-    auth: "{{ workload.pg_auth }}"
-    command: "{{ transform_and_insert.sql_statements | join('\n') }}"
+    tool:
+      kind: postgres
+      auth: "{{ workload.pg_auth }}"
+      command: "{{ transform_and_insert.sql_statements | join('\n') }}"
     next:
       - step: verify_data
 
   - step: verify_data
     desc: Verify data was inserted
-    tool: postgres
-    auth: "{{ workload.pg_auth }}"
-    command: |
-      SELECT
-        COUNT(*) as total_posts,
-        COUNT(DISTINCT user_id) as unique_users,
-        MAX(id) as max_post_id
-      FROM public.http_to_postgres_simple;
+    tool:
+      kind: postgres
+      auth: "{{ workload.pg_auth }}"
+      command: |
+        SELECT
+          COUNT(*) as total_posts,
+          COUNT(DISTINCT user_id) as unique_users,
+          MAX(id) as max_post_id
+        FROM public.http_to_postgres_simple;
     next:
       - step: show_sample
 
   - step: show_sample
     desc: Show sample posts
-    tool: postgres
-    auth: "{{ workload.pg_auth }}"
-    command: |
-      SELECT id, user_id, title, LEFT(body, 50) || '...' as body_preview
-      FROM public.http_to_postgres_simple
-      ORDER BY id
-      LIMIT 5;
+    tool:
+      kind: postgres
+      auth: "{{ workload.pg_auth }}"
+      command: |
+        SELECT id, user_id, title, LEFT(body, 50) || '...' as body_preview
+        FROM public.http_to_postgres_simple
+        ORDER BY id
+        LIMIT 5;
     next:
       - step: end
 
   - step: end
     desc: End HTTP to PostgreSQL transfer
+    tool:
+      kind: python
+      code: |
+        def main():
+            return {"status": "completed"}

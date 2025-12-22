@@ -1,7 +1,19 @@
 #!/bin/bash
 
-PORT=${1:-8082}
-HOST=${2:-localhost}
+# Usage:
+#   ./tests/fixtures/register_test_playbooks.sh [host] [port]
+#   ./tests/fixtures/register_test_playbooks.sh [port] [host]
+
+ARG1=${1:-localhost}
+ARG2=${2:-8082}
+
+if [[ "$ARG1" =~ ^[0-9]+$ ]]; then
+  PORT="$ARG1"
+  HOST="$ARG2"
+else
+  HOST="$ARG1"
+  PORT="$ARG2"
+fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"

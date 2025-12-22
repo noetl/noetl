@@ -3,11 +3,17 @@
 ## Status: ✅ FULLY IMPLEMENTED AND TESTED
 
 **Implementation Date**: December 2025  
-**Test Execution**: 508176494351351907 (successful - 4 variables extracted)
+**Test Execution**: 508176494351351907 (successful - 4 variables extracted)  
+**REST API**: `/api/vars/*` endpoints available for variable management
 
 ## Feature Overview
 
-The `vars` block feature enables declarative extraction of values from step execution results. Variables are automatically stored and become accessible in subsequent workflow steps through template syntax.
+The `vars` block feature enables declarative extraction of values from step execution results. Variables are automatically stored in the `transient` database table and become accessible in subsequent workflow steps through template syntax.
+
+**Architecture**:
+- **Server**: Direct database access via `TransientVars` service (pool connections)
+- **Workers**: REST API access (`/api/vars/{execution_id}`) - NO direct database connections
+- **Database**: `noetl.transient` table with execution-scoped isolation
 
 ## Design Decisions
 
@@ -27,7 +33,7 @@ The `vars` block feature enables declarative extraction of values from step exec
 
 ### 2. Variable Type: `step_result`
 
-**Decision**: Store extracted variables with `var_type='step_result'` in `vars_cache` table.
+**Decision**: Store extracted variables with `var_type='step_result'` in `transient` table.
 
 **Rationale**:
 - Aligns with existing database constraint: `CHECK (var_type IN ('user_defined', 'step_result', 'computed', 'iterator_state'))`
@@ -85,7 +91,7 @@ The `vars` block feature enables declarative extraction of values from step exec
 3. Orchestrator calls _process_step_vars()
    a. Extracts vars dict from step definition
    b. Renders each template using eval_ctx (with 'result' pointing to current step)
-   c. Stores rendered variables via VarsCache.set_multiple()
+   c. Stores rendered variables via TransientVars.set_multiple()
    d. Logs success/error for each variable
 4. Orchestrator evaluates next transitions
 5. Subsequent steps load vars into template context
@@ -131,15 +137,91 @@ async def _process_step_vars(
         except Exception as e:
             logger.error(f"✗ Failed to render var '{var_name}': {e}")
     
-    # Store in vars_cache
+    # Store in transient
     if rendered_vars:
-        count = await VarsCache.set_multiple(
+        count = await TransientVars.set_multiple(
             variables=rendered_vars,
             execution_id=execution_id,
             var_type="step_result",
             source_step=step_name
         )
         logger.info(f"✓ Stored {count} variables from step '{step_name}'")
+```
+
+## REST API Access
+
+Variables are accessed via REST API for external systems and workers.
+
+### API Endpoints
+
+**Base Path**: `/api/vars`
+
+| Method | Endpoint | Description | Access Tracking |
+|--------|----------|-------------|-----------------|
+| GET | `/api/vars/{execution_id}` | List all variables with metadata | No (bulk read) |
+| GET | `/api/vars/{execution_id}/{var_name}` | Get single variable | Yes (increments count) |
+| POST | `/api/vars/{execution_id}` | Set/update multiple variables | No |
+| DELETE | `/api/vars/{execution_id}/{var_name}` | Delete variable | No |
+
+### Example Usage
+
+**Get all variables**:
+```bash
+curl http://noetl-server:8080/api/vars/507861119290048685
+```
+
+Response:
+```json
+{
+  "execution_id": 507861119290048685,
+  "variables": {
+    "user_id": {
+      "value": 12345,
+      "type": "step_result",
+      "source_step": "fetch_user",
+      "created_at": "2025-12-13T10:00:00Z",
+      "accessed_at": "2025-12-13T10:01:00Z",
+      "access_count": 5
+    }
+  },
+  "count": 1
+}
+```
+
+**Set variables**:
+```bash
+curl -X POST http://noetl-server:8080/api/vars/507861119290048685 \
+  -H "Content-Type: application/json" \
+  -d '{
+    "variables": {"config_timeout": 60, "retry_enabled": true},
+    "var_type": "user_defined",
+    "source_step": "manual_config"
+  }'
+```
+
+### Worker Access Pattern
+
+Workers must use REST API for variable access:
+
+```python
+import httpx
+import os
+
+SERVER_URL = os.getenv("NOETL_SERVER_URL", "http://localhost:8080")
+
+async def load_variables(execution_id: int) -> dict:
+    """Load all variables via REST API."""
+    async with httpx.AsyncClient() as client:
+        response = await client.get(f"{SERVER_URL}/api/vars/{execution_id}")
+        response.raise_for_status()
+        data = response.json()
+        return {name: var["value"] for name, var in data["variables"].items()}
+```
+
+**Configuration**:
+```bash
+# Set server URL for workers
+export NOETL_SERVER_URL="http://noetl-server:8080"
 ```
 
 ## DSL Syntax
@@ -206,10 +288,10 @@ async def _process_step_vars(
 
 ## Database Schema
 
-**Table**: `vars_cache`
+**Table**: `transient`
 
 ```sql
-CREATE TABLE vars_cache (
+CREATE TABLE transient (
     execution_id BIGINT NOT NULL,
     var_name VARCHAR(255) NOT NULL,
     var_type VARCHAR(50) NOT NULL CHECK (var_type IN (
@@ -266,7 +348,7 @@ async def build_rendering_context(
     # Load stored variables
     execution_id = extra_context.get("execution_id")
     if execution_id:
-        vars_data = await VarsCache.get_all_vars(execution_id)
+        vars_data = await TransientVars.get_all_vars(execution_id)
         base_ctx["vars"] = vars_data
         logger.info(f"✓ Loaded {len(vars_data)} variables")
     
@@ -278,7 +360,7 @@ async def build_rendering_context(
 - **Design Document**: `docs/variables_feature_design.md` - Complete feature design and rationale
 - **DSL Specification**: `docs/dsl_spec.md` - Vars block syntax and template namespace
 - **Test Playbook**: `tests/fixtures/playbooks/vars_test/test_vars_block.yaml` - Working example
-- **VarsCache API**: `noetl/server/api/context/vars_cache.py` - Storage layer implementation
+- **TransientVars API**: `noetl/server/api/context/transient.py` - Storage layer implementation
 
 ## Future Enhancements (Not Implemented)
 
@@ -302,7 +384,7 @@ async def build_rendering_context(
 - Existing playbooks continue to work without modification
 - `vars` block is optional
 - No changes to existing template syntax
-- VarsCache table already existed and migrated from `execution_variable`
+- TransientVars table already existed and migrated from `execution_variable`
 
 ## Conclusion
 

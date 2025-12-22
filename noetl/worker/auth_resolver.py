@@ -187,8 +187,14 @@ def _fetch_secret_data(name: str) -> Dict[str, Any]:
     """
     Fetch secret data by name.
     
-    Note: This is a placeholder for future secret store integration.
-    Currently returns a simple value structure.
+    Current implementation checks environment variables with NOETL_SECRET_ prefix.
+    
+    For production deployments, integrate with your secret management system:
+    - AWS Secrets Manager
+    - Azure Key Vault
+    - Google Cloud Secret Manager
+    - HashiCorp Vault
+    - Kubernetes Secrets
     
     Args:
         name: Secret name
@@ -199,13 +205,15 @@ def _fetch_secret_data(name: str) -> Dict[str, Any]:
     Raises:
         ValueError: If secret not found
     """
-    # TODO: Implement actual secret store integration
-    # For now, check environment variables as fallback
+    # Check environment variables as fallback
     env_value = os.environ.get(f"NOETL_SECRET_{name.upper()}")
     if env_value:
         return {"value": env_value}
     
-    raise ValueError(f"Secret '{name}' not found (secret store not implemented)")
+    raise ValueError(
+        f"Secret '{name}' not found. Set NOETL_SECRET_{name.upper()} environment variable "
+        f"or integrate with a secret management system."
+    )
 
 
 def _resolve_single_auth_item(

@@ -14,8 +14,7 @@ NATS with JetStream provides messaging, streaming, and key-value store capabilit
 - Stream-based messaging
 - Message persistence and replay
 - Consumer groups
-- Max memory: 1GB
-- Max file store: 5GB
+- Max file store: 1GB
 
 ### Key-Value Store
 - Distributed KV operations
@@ -85,9 +84,9 @@ Default settings in `nats-config` ConfigMap:
 
 ## Resources
 
-- Requests: 512Mi memory, 250m CPU
-- Limits: 2Gi memory, 1000m CPU
-- Storage: 5Gi persistent volume
+- Requests: 200Mi memory, 200m CPU
+- Limits: 200Mi memory,  200m CPU
+- Storage: 1Gi persistent volume
 
 ## References
 

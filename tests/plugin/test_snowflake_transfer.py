@@ -12,7 +12,7 @@ from decimal import Decimal
 from datetime import datetime
 
 # Import the transfer module
-from noetl.plugin.snowflake.transfer import (
+from noetl.tools.snowflake.transfer import (
     _convert_value,
     transfer_snowflake_to_postgres,
     transfer_postgres_to_snowflake
@@ -59,7 +59,7 @@ class TestValueConversion:
 class TestSnowflakeToPostgres:
     """Test Snowflake to PostgreSQL transfer"""
     
-    @patch('noetl.plugin.snowflake.transfer.logger')
+    @patch('noetl.tools.snowflake.transfer.logger')
     def test_successful_transfer(self, mock_logger):
         """Test successful data transfer with single chunk"""
         # Mock Snowflake cursor
@@ -108,7 +108,7 @@ class TestSnowflakeToPostgres:
         # Verify commit was called
         pg_conn.commit.assert_called()
     
-    @patch('noetl.plugin.snowflake.transfer.logger')
+    @patch('noetl.tools.snowflake.transfer.logger')
     def test_multiple_chunks(self, mock_logger):
         """Test transfer with multiple chunks"""
         sf_cursor = Mock()
@@ -142,7 +142,7 @@ class TestSnowflakeToPostgres:
         assert result['rows_transferred'] == 5
         assert result['chunks_processed'] == 3
     
-    @patch('noetl.plugin.snowflake.transfer.logger')
+    @patch('noetl.tools.snowflake.transfer.logger')
     def test_replace_mode(self, mock_logger):
         """Test transfer with replace mode"""
         sf_cursor = Mock()
@@ -171,7 +171,7 @@ class TestSnowflakeToPostgres:
         pg_cursor.execute.assert_any_call('TRUNCATE TABLE public.target')
         assert result['status'] == 'success'
     
-    @patch('noetl.plugin.snowflake.transfer.logger')
+    @patch('noetl.tools.snowflake.transfer.logger')
     def test_error_handling(self, mock_logger):
         """Test error handling during transfer"""
         sf_cursor = Mock()
@@ -197,7 +197,7 @@ class TestSnowflakeToPostgres:
 class TestPostgresToSnowflake:
     """Test PostgreSQL to Snowflake transfer"""
     
-    @patch('noetl.plugin.snowflake.transfer.logger')
+    @patch('noetl.tools.snowflake.transfer.logger')
     def test_successful_transfer(self, mock_logger):
         """Test successful PG to SF transfer"""
         # Mock PostgreSQL cursor
@@ -235,7 +235,7 @@ class TestPostgresToSnowflake:
 class TestProgressCallback:
     """Test progress callback functionality"""
     
-    @patch('noetl.plugin.snowflake.transfer.logger')
+    @patch('noetl.tools.snowflake.transfer.logger')
     def test_progress_callback_called(self, mock_logger):
         """Test that progress callback is invoked"""
         progress_calls = []

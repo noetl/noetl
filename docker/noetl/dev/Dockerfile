@@ -1,7 +1,7 @@
 FROM node:20-alpine AS ui-builder
 WORKDIR /ui
 COPY ui-src/package.json ui-src/package-lock.json ./ui-src/
-RUN cd ui-src && npm ci
+RUN cd ui-src && npm ci --verbose
 COPY ui-src ./ui-src
 ENV VITE_API_BASE_URL=/api
 RUN cd ui-src && npm run build

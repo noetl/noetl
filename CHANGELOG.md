@@ -2,6 +2,102 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.0.3](https://github.com/noetl/noetl/compare/v2.0.2...v2.0.3) (2025-12-22)
+
+### Bug Fixes
+
+* enable verbose logging during npm install in Dockerfile ([a91469a](https://github.com/noetl/noetl/commit/a91469ab7c411e6c08301726492b22e8d15d2a95))
+
+## [2.0.2](https://github.com/noetl/noetl/compare/v2.0.1...v2.0.2) (2025-12-21)
+
+### Bug Fixes
+
+* update GitHub metrics extraction to use direct data references for improved accuracy ([f2cfe85](https://github.com/noetl/noetl/commit/f2cfe858de26a461e8e4fa45bc90a51721431598))
+* update HTTP iterator playbook to use correct response status code and improve validation logic ([9bd6c56](https://github.com/noetl/noetl/commit/9bd6c56e5cf1403ca04bf13f28b559d791fcafc0))
+
+## [2.0.1](https://github.com/noetl/noetl/compare/v2.0.0...v2.0.1) (2025-12-20)
+
+### Bug Fixes
+
+* enable UI in configmap for improved user interaction ([e0db518](https://github.com/noetl/noetl/commit/e0db5184ca3118cf1f20a88c5feb8178b3328696))
+
+## [2.0.0](https://github.com/noetl/noetl/compare/v1.8.0...v2.0.0) (2025-12-19)
+
+### ⚠ BREAKING CHANGES
+
+* introduce NoETL DSL v2 with event-driven execution model
+
+### Features
+
+* add `schema` column to keychain and credential tables ([53f5cc6](https://github.com/noetl/noetl/commit/53f5cc6c9a930f113e91a15bfb5aa43552da1dde))
+* add comprehensive automated tests for playbooks ([0c13024](https://github.com/noetl/noetl/commit/0c13024f08a731bc59eda86ed63dd26dcf193f38))
+* add comprehensive test cases and update worker implementation ([46978a6](https://github.com/noetl/noetl/commit/46978a6484bbcd8a1da184dd673c6d638a3e31a3))
+* add container and script tool kinds to V2 worker ([50d3569](https://github.com/noetl/noetl/commit/50d35694ee55da57bc00567084c17badaac0153e))
+* add detailed event payload models and improve lifecycle event handling ([5e99c56](https://github.com/noetl/noetl/commit/5e99c56963ca87f655e033c2d2155706206b376c))
+* add external script loading and inline test playbook ([e24cfc1](https://github.com/noetl/noetl/commit/e24cfc187a8912373f6b4ee03fc31da6ad685955))
+* add schema validation support for keychain and credential entries ([7148d25](https://github.com/noetl/noetl/commit/7148d25c134a14da2b62cdfd06b69d3ab6e7ffc9))
+* add V2 DuckDB test playbook and implement DuckDB execution in worker ([f2b59ef](https://github.com/noetl/noetl/commit/f2b59ef58874351baffba50db1b949abc08ab79e))
+* add workflow completion detection and enhance event tracing ([9df736f](https://github.com/noetl/noetl/commit/9df736ff2978d65ef0f7e098049f08eec56d57da))
+* enable navigation to execution page post playbook execution ([a3f945a](https://github.com/noetl/noetl/commit/a3f945a19934a3b2c23ffd57136e2cee06cd4d35))
+* enhance function argument handling in V2 worker ([28c180d](https://github.com/noetl/noetl/commit/28c180daa5b71db61606729108d8d7be00535973))
+* enhance Postgres execution and credential handling ([54ab5a1](https://github.com/noetl/noetl/commit/54ab5a1e3211c959b2e49276a0ac48149afaf099))
+* enhance V2 HTTP test playbook and add debug logging to worker ([e312bf4](https://github.com/noetl/noetl/commit/e312bf4be346800a939cc412b2c572fb4e46776c))
+* **events:** add traceability metadata with root_event_id and execution links ([bb48133](https://github.com/noetl/noetl/commit/bb48133b5d7292c3c656fcb3a79f434c662aeb67))
+* implement collect+retry pagination support in V2 DSL ([cf98dae](https://github.com/noetl/noetl/commit/cf98dae2dce0fdaaea264d1489a96f78294260f6))
+* implement sub-playbook polling and execution state reconstruction ([871c123](https://github.com/noetl/noetl/commit/871c123e3980cbbbca676f6350b23d89facca9b0))
+* implement universal end convergence and fix event ordering ([c294deb](https://github.com/noetl/noetl/commit/c294deb5ff45499bbc92fd8fe78e073edcb6e5f2))
+* implement vars block feature for v2 DSL ([07ce12a](https://github.com/noetl/noetl/commit/07ce12a599ef1c69e1d019215cc1d86c8f5061a5))
+* improve case evaluation and loop handling in V2 engine ([557becd](https://github.com/noetl/noetl/commit/557becda66ba58109e0ac7ae5dea544b977e5c4f))
+* improve event metadata handling and retry logic ([47891b1](https://github.com/noetl/noetl/commit/47891b1448fe0e9e5b08e3c97c791d1e76d747c2))
+* improve sub-playbook support and duration handling in V2 workflows ([7645eea](https://github.com/noetl/noetl/commit/7645eeaa139ce36bda7cfb9363aa74d76db8b006))
+* include node_name in queue persistence for V2 compatibility ([2835c21](https://github.com/noetl/noetl/commit/2835c21d8c6634b8ec288bfd0e4c20bd383094f1))
+* integrate keychain resolution for context population and template rendering ([725a212](https://github.com/noetl/noetl/commit/725a212b24aa46e8ea0a8bc758329929c8cfd341))
+* introduce architecture design reference for NoETL DSL v2 ([67171bf](https://github.com/noetl/noetl/commit/67171bf13a90671404d4c70942b4f677e3370bb2))
+* introduce NoETL DSL v2 with event-driven execution model ([f93ce9b](https://github.com/noetl/noetl/commit/f93ce9befbc1eff52c571a970c5aaf1b25767953))
+* **logging:** add VictoriaLogsHandler for streaming logs and custom log formatting ([d52aa5c](https://github.com/noetl/noetl/commit/d52aa5c1e5212f8911a307429d89673526ae5126))
+* merge tool_config.args with top-level args in V2 worker ([0f5a8d3](https://github.com/noetl/noetl/commit/0f5a8d326e62aed526ffb6e5a9b3839e2d33d3e8))
+* **retry:** implement unified retry logic for error recovery and success-driven tasks ([e424ff8](https://github.com/noetl/noetl/commit/e424ff87d4a3f4f1a47da8190f06a6abac3a53bc))
+* **retry:** introduce unified retry logic and event analysis tools ([6806656](https://github.com/noetl/noetl/commit/6806656d13a674fd18628bee2dcc355f1e5d457b))
+* update REST API paths and improve payload structure ([2db5e29](https://github.com/noetl/noetl/commit/2db5e29b4f323d76c26f51d65415d368d176421a))
+
+### Bug Fixes
+
+* add render context to enable Jinja2 template rendering in postgres SQL ([1a91946](https://github.com/noetl/noetl/commit/1a91946f5de6e9cb8904153902cdd84035ffb130))
+* call async tool executors directly in workbook ([da9cc8e](https://github.com/noetl/noetl/commit/da9cc8e5310cf4f5bb7ae59ccba419e516291bc9))
+* check loop completion on step.exit regardless of case commands ([d625491](https://github.com/noetl/noetl/commit/d62549147fd31e887401e8a75aea94fb8b000056))
+* correct direction of NOETL_COMMANDS stream in system diagram ([65fd0f8](https://github.com/noetl/noetl/commit/65fd0f83479b643d93d838b04b4415823c062b0c))
+* correct sink specification in iterator_save_test ([8e1a3a5](https://github.com/noetl/noetl/commit/8e1a3a57507977ee0613af39dc4d0dfb1d2fb2a0))
+* emit loop.done event and add recursive rendering for sink ([59ac3fc](https://github.com/noetl/noetl/commit/59ac3fcf4bd5757991c3ca2713eb9b28170186c9))
+* enforce architectural separation for auth_cache management via service layer ([1453d37](https://github.com/noetl/noetl/commit/1453d37bf84d26f888d93a3ea99faa8b1426617d))
+* **engine:** allow completion events (workflow_failed, playbook_failed) to be emitted before stopping execution ([27c3533](https://github.com/noetl/noetl/commit/27c3533c23d387dd97f8bf13217fb6be04912dff))
+* **engine:** skip structural next transitions when step fails ([c47d6c2](https://github.com/noetl/noetl/commit/c47d6c2487127fed9c53f4ec0835f32df38621c7))
+* **engine:** stop execution when step fails (FAILED status or command.failed event) ([2b39a16](https://github.com/noetl/noetl/commit/2b39a16de88ca49cc936f9892fc1ecf75671530a))
+* **error-handling:** properly detect and fail on tool errors ([f0a18c6](https://github.com/noetl/noetl/commit/f0a18c68f13c44cfc786486fda4117e95dc4adf9))
+* **events:** use consistent dot notation for lifecycle event types ([fcb80bf](https://github.com/noetl/noetl/commit/fcb80bf53bbff28681b5cd5a21bfdf8a0b92a81c))
+* explicitly check and mark loop completion on step.exit ([82f272b](https://github.com/noetl/noetl/commit/82f272bfdd965de7a3b7b86358cc8586960790ab))
+* improve error logging in V2 worker and add Google OAuth credentials fixture ([0c0db74](https://github.com/noetl/noetl/commit/0c0db745197f262cd7b1f1422506cec17aad622a))
+* integrate keychain resolution for context population and template rendering ([61a55c8](https://github.com/noetl/noetl/commit/61a55c898e32ee5f7b73858f23275c8d804845fd))
+* integrate NATS JetStream for event-driven command execution ([8cdb790](https://github.com/noetl/noetl/commit/8cdb7904a59a1aeef076baa5b9e6c3c49fb083a0))
+* **keychain:** fix credential API endpoint and support authorized_user credentials ([dd7533a](https://github.com/noetl/noetl/commit/dd7533aa4d9aaf66c8992320bb44792d165170b4))
+* **keychain:** remove duplicate keychain processing in V2 API ([6b9959d](https://github.com/noetl/noetl/commit/6b9959d99eb39f58ec1f8a73e578d5d80e83c3bb))
+* **keychain:** remove try-catch blocks, allow failures to crash ([4446e27](https://github.com/noetl/noetl/commit/4446e2742d54d48110f96c48d50b2440e0560e2f))
+* **keychain:** use correct API port 8082 for keychain resolution ([7193a43](https://github.com/noetl/noetl/commit/7193a4351b1c61f965d8836f476c0c25a6ed646c))
+* move loop to step level in playbook_composition ([794a8f8](https://github.com/noetl/noetl/commit/794a8f8b6852d27226ba23e90e4ed4d3234f3e7b))
+* **nats:** acknowledge messages immediately to prevent redelivery ([ce62d6b](https://github.com/noetl/noetl/commit/ce62d6b612b9af69fd0c2779223994e84a64ddd9))
+* **nats:** ensure exactly-once message delivery ([c4be42c](https://github.com/noetl/noetl/commit/c4be42c5b129fe2499679ebac76433cf9d1ce219))
+* persist loop_state in state data (though currently unused due to event sourcing) ([bf0a558](https://github.com/noetl/noetl/commit/bf0a558e32b065f6dd49fb2e3c1773dc5dbf001e))
+* remove escaped quotes in YAML Python code blocks ([d590ee5](https://github.com/noetl/noetl/commit/d590ee552bc1413cc754f3bc30e6d3617b2b5f3e))
+* reorganize packages and rename transient storage ([e00564d](https://github.com/noetl/noetl/commit/e00564d24cc15b6a40beab5a55a39921675e8de4))
+* replace `events_v2` with `v2` API and simplify control flow engine ([1ab2f61](https://github.com/noetl/noetl/commit/1ab2f61dfc7f8c9b3188c8b3c09f99c1829e7005))
+* **server:** fix execution_id context protection and remove from playbook workload ([8817dfb](https://github.com/noetl/noetl/commit/8817dfb81b508b4a957c6026744a3b6f0bf04884))
+* **server:** protect execution_id from workload override ([88f0057](https://github.com/noetl/noetl/commit/88f005778f1b92d3fc6eef04ecf99dd3ba9bae16))
+* **status:** use uppercase FAILED status in worker events ([21d1bfe](https://github.com/noetl/noetl/commit/21d1bfe2fa04ed5febb9bd4769516d727de566dd))
+* **status:** use uppercase PENDING for command.issued events ([5f56dc6](https://github.com/noetl/noetl/commit/5f56dc65b8a8cbd26183757d339b1a02ddf1af13))
+* use 'auth' instead of 'connection' in sink spec ([059da45](https://github.com/noetl/noetl/commit/059da45bf962c77ca1bba041991edaa067a84c86))
+* use 'tool' instead of 'backend' in sink command config ([53a0d44](https://github.com/noetl/noetl/commit/53a0d4493acb31b49d338f1b6d0a9cdb51b6f257))
+* **v2:** add keychain processing to V2 API start_execution ([2169b02](https://github.com/noetl/noetl/commit/2169b0233eeb5c0dcb79aaa439d625edc11217cb))
+* wire snowflake transfer and serialize snowflake results ([5dcb11c](https://github.com/noetl/noetl/commit/5dcb11cef0e8fd220e01df4d9d7a24a6cef63c0e))
+
 ## [1.8.0](https://github.com/noetl/noetl/compare/v1.7.1...v1.8.0) (2025-12-09)
 
 ### Features

@@ -158,11 +158,10 @@ const Catalog: React.FC = () => {
   const handleExecutePlaybook = async (catalog_id: string) => {
     try {
       let executePlaybookResponse = await apiService.executePlaybook(catalog_id);
-      // console.log("Playbook execution started: ", executePlaybookResponse);
-      message.success("Playbook execution started successfully!");
-      // Redirect to execution page
-      const execution_id = executePlaybookResponse.execution_id;
-      navigate(`/execution/${execution_id}`);
+      message.success(`Playbook execution started successfully! Execution ID: ${executePlaybookResponse.execution_id}`);
+      
+      // Navigate to execution page
+      navigate(`/execution/${executePlaybookResponse.execution_id}`);
     } catch (err: AxiosError<any, any> | any) {
 
       if (err instanceof AxiosError && err.response) {

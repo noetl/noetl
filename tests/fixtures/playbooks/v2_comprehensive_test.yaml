@@ -1,0 +1,128 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: v2_comprehensive_test
+  path: test/v2/comprehensive
+  description: Comprehensive V2 test with multiple steps, conditionals, and data flow
+
+workload:
+  initial_message: "Starting V2 comprehensive test"
+  threshold: 10
+
+workflow:
+  - step: start
+    desc: Initialize workflow with data preparation
+    tool:
+      kind: python
+      code: |
+        def main(input_data):
+            message = input_data.get('initial_message', 'default')
+            import random
+            value = random.randint(1, 20)
+            print(f"[START] {message}")
+            print(f"[START] Generated random value: {value}")
+            return {
+                "status": "initialized",
+                "random_value": value,
+                "message": message
+            }
+    args:
+      initial_message: "{{ workload.initial_message }}"
+    case:
+      - when: "{{ result.random_value > workload.threshold }}"
+        then:
+          - next:
+              step: process_high
+              args:
+                value: "{{ result.random_value }}"
+      - when: "{{ result.random_value <= workload.threshold }}"
+        then:
+          - next:
+              step: process_low
+              args:
+                value: "{{ result.random_value }}"
+  
+  - step: process_high
+    desc: Process high values
+    tool:
+      kind: python
+      code: |
+        def main(input_data):
+            value = int(input_data.get('value', 0))
+            print(f"[PROCESS_HIGH] Handling high value: {value}")
+            result = value * 2
+            print(f"[PROCESS_HIGH] Doubled result: {result}")
+            return {
+                "status": "high_processed",
+                "original": value,
+                "processed": result,
+                "category": "high"
+            }
+    args:
+      value: "{{ start.random_value }}"
+    next:
+      - step: summarize
+  
+  - step: process_low
+    desc: Process low values
+    tool:
+      kind: python
+      code: |
+        def main(input_data):
+            value = int(input_data.get('value', 0))
+            print(f"[PROCESS_LOW] Handling low value: {value}")
+            result = value + 100
+            print(f"[PROCESS_LOW] Added 100, result: {result}")
+            return {
+                "status": "low_processed",
+                "original": value,
+                "processed": result,
+                "category": "low"
+            }
+    args:
+      value: "{{ start.random_value }}"
+    next:
+      - step: summarize
+  
+  - step: summarize
+    desc: Generate final summary
+    tool:
+      kind: python
+      code: |
+        def main(input_data):
+            import json
+            print(f"[SUMMARIZE] Generating final summary")
+            print(f"[SUMMARIZE] Received input_data type: {type(input_data)}")
+            print(f"[SUMMARIZE] Input data keys: {list(input_data.keys()) if isinstance(input_data, dict) else 'N/A'}")
+            print(f"[SUMMARIZE] Input data: {json.dumps(input_data, indent=2)}")
+            
+            # Extract values from input
+            start_value = input_data.get('start_value')
+            category = input_data.get('category')
+            final_value = input_data.get('final_value')
+            
+            summary = {
+                "workflow": "v2_comprehensive_test",
+                "original_value": start_value,
+                "processing_path": category,
+                "final_result": final_value,
+                "completed": True
+            }
+            
+            print(f"[SUMMARIZE] Final summary: {json.dumps(summary, indent=2)}")
+            return summary
+    args:
+      start_value: "{{ start.random_value }}"
+      category: "{{ process_high.category if process_high else process_low.category }}"
+      final_value: "{{ process_high.result if process_high else process_low.result }}"
+    next:
+      - step: end
+  
+  - step: end
+    desc: Workflow complete
+    tool:
+      kind: python
+      code: |
+        def main(input_data):
+            print("[END] Workflow execution completed successfully!")
+            return {"status": "completed"}

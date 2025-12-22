@@ -1,4 +1,4 @@
-apiVersion: noetl.io/v1
+apiVersion: noetl.io/v2
 kind: Playbook
 metadata:
   name: duckdb_retry_query
@@ -10,21 +10,41 @@ workload:
   
 workflow:
   - step: start
-    next:
-      - step: retry
+    tool:
+      kind: python
+      code: |
+        def main():
+            return {"status": "initialized"}
+    
+    case:
+      - when: "{{ event.name == 'step.exit' }}"
+        then:
+          next:
+            - step: retry
 
   - step: retry
     desc: Execute DuckDB query with retry
-    tool: duckdb
-    command: "{{ workload.test_query }}"
-    retry:
-      max_attempts: 3
-      initial_delay: 0.5
-      backoff_multiplier: 1.5
-      # Retry on errors
-      retry_when: "{{ error != None }}"
-    next:
-      - step: end
+    tool:
+      kind: duckdb
+      command: "{{ workload.test_query }}"
+    
+    case:
+      - when: "{{ event.name == 'call.error' and error is defined }}"
+        then:
+          retry:
+            max_attempts: 3
+            initial_delay: 0.5
+            backoff_multiplier: 1.5
+      
+      - when: "{{ event.name == 'call.done' and response is defined }}"
+        then:
+          next:
+            - step: end
 
   - step: end
     desc: End workflow
+    tool:
+      kind: python
+      code: |
+        def main():
+            return {"status": "complete"}

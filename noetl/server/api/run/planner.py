@@ -244,7 +244,8 @@ class ExecutionPlanner:
         2. Explicit 'tool' field
         3. Default to control flow ('router') when no tool is provided
         """
-        step_name = step.get("step", "").lower()
+        step_name_raw = step.get("step", "")
+        step_name = step_name_raw.lower() if isinstance(step_name_raw, str) else str(step_name_raw).lower()
 
         # Special control steps handling
         # - start: router if no explicit tool; otherwise use explicit tool (actionable)
@@ -252,13 +253,34 @@ class ExecutionPlanner:
         if step_name == "start":
             tool = step.get("tool")
             if tool:
+                # Handle both string tool names and dict tool definitions
+                if isinstance(tool, dict):
+                    result = tool.get("kind") or tool.get("type") or "unknown"
+                    logger.debug(f"PLANNER: step=start, tool is dict, extracted kind={result}")
+                    return result
+                logger.debug(f"PLANNER: step=start, tool is string={tool}")
                 return tool  # Actionable start with explicit tool
             return "router"  # Router start without tool
         if step_name == "end":
-            return "end"
+            tool = step.get("tool")
+            if tool:
+                # End step with tool - should be executed like any other step
+                if isinstance(tool, dict):
+                    result = tool.get("kind") or tool.get("type") or "unknown"
+                    logger.debug(f"PLANNER: step=end, tool is dict, extracted kind={result}")
+                    return result
+                logger.debug(f"PLANNER: step=end, tool is string={tool}")
+                return tool  # Actionable end with explicit tool
+            return "end"  # Terminal end without tool
 
         tool = step.get("tool")
         if tool:
+            # Handle both string tool names and dict tool definitions
+            if isinstance(tool, dict):
+                result = tool.get("kind") or tool.get("type") or "unknown"
+                logger.debug(f"PLANNER: step={step_name}, tool is dict, extracted kind={result}")
+                return result
+            logger.debug(f"PLANNER: step={step_name}, tool is string={tool}")
             return tool
         
         raise ValueError(f"Workflow step '{step_name}' must define a 'tool' field", step)

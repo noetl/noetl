@@ -1,4 +1,4 @@
-apiVersion: noetl.io/v1
+apiVersion: noetl.io/v2
 kind: Playbook
 
 metadata:
@@ -16,202 +16,222 @@ workload:
 workflow:
   - step: start
     desc: Start data transfer pipeline
+    tool:
+      kind: python
+      code: |
+        def main():
+            return {"status": "initialized"}
     next:
       - step: create_sf_database
 
   - step: create_sf_database
     desc: Create Snowflake database if it does not exist
-    tool: snowflake
-    auth: "{{ workload.sf_auth }}"
-    command: |
-      CREATE DATABASE IF NOT EXISTS TEST_DB;
-      USE DATABASE TEST_DB;
-      USE SCHEMA PUBLIC;
+    tool:
+      kind: snowflake
+      auth: "{{ workload.sf_auth }}"
+      command: |
+        CREATE DATABASE IF NOT EXISTS TEST_DB;
+        USE DATABASE TEST_DB;
+        USE SCHEMA PUBLIC;
     next:
       - step: setup_pg_table
 
   - step: setup_pg_table
     desc: Create PostgreSQL target table
-    tool: postgres
-    auth: "{{ workload.pg_auth }}"
-    command: |
-      DROP TABLE IF EXISTS {{ workload.test_table_pg }};
-      DROP TABLE IF EXISTS public.test_pg_source;
-      CREATE TABLE IF NOT EXISTS {{ workload.test_table_pg }} (
-        id INTEGER PRIMARY KEY,
-        name TEXT,
-        value NUMERIC(10,2),
-        created_at TIMESTAMPTZ,
-        metadata JSONB
-      );
+    tool:
+      kind: postgres
+      auth: "{{ workload.pg_auth }}"
+      command: |
+        DROP TABLE IF EXISTS {{ workload.test_table_pg }};
+        DROP TABLE IF EXISTS public.test_pg_source;
+        CREATE TABLE IF NOT EXISTS {{ workload.test_table_pg }} (
+          id INTEGER PRIMARY KEY,
+          name TEXT,
+          value NUMERIC(10,2),
+          created_at TIMESTAMPTZ,
+          metadata JSONB
+        );
 
-      TRUNCATE TABLE {{ workload.test_table_pg }};
+        TRUNCATE TABLE {{ workload.test_table_pg }};
     next:
       - step: setup_sf_table
 
   - step: setup_sf_table
     desc: Create and populate Snowflake source table
-    tool: snowflake
-    auth: "{{ workload.sf_auth }}"
-    command: |
-      CREATE OR REPLACE TABLE {{ workload.test_table_sf }} (
-        id INTEGER PRIMARY KEY,
-        name STRING,
-        value NUMERIC(10,2),
-        created_at TIMESTAMP_TZ,
-        metadata VARIANT
-      );
+    tool:
+      kind: snowflake
+      auth: "{{ workload.sf_auth }}"
+      command: |
+        CREATE OR REPLACE TABLE {{ workload.test_table_sf }} (
+          id INTEGER PRIMARY KEY,
+          name STRING,
+          value NUMERIC(10,2),
+          created_at TIMESTAMP_TZ,
+          metadata VARIANT
+        );
 
-      -- Insert test data
-      INSERT INTO {{ workload.test_table_sf }}
-      SELECT 1, 'Record 1', 100.50, CURRENT_TIMESTAMP(), PARSE_JSON('{"type": "test", "batch": 1}')
-      UNION ALL
-      SELECT 2, 'Record 2', 200.75, CURRENT_TIMESTAMP(), PARSE_JSON('{"type": "test", "batch": 1}')
-      UNION ALL
-      SELECT 3, 'Record 3', 300.25, CURRENT_TIMESTAMP(), PARSE_JSON('{"type": "test", "batch": 2}')
-      UNION ALL
-      SELECT 4, 'Record 4', 400.00, CURRENT_TIMESTAMP(), PARSE_JSON('{"type": "test", "batch": 2}')
-      UNION ALL
-      SELECT 5, 'Record 5', 500.99, CURRENT_TIMESTAMP(), PARSE_JSON('{"type": "test", "batch": 3}');
+        -- Insert test data
+        INSERT INTO {{ workload.test_table_sf }}
+        SELECT 1, 'Record 1', 100.50, CURRENT_TIMESTAMP(), PARSE_JSON('{"type": "test", "batch": 1}')
+        UNION ALL
+        SELECT 2, 'Record 2', 200.75, CURRENT_TIMESTAMP(), PARSE_JSON('{"type": "test", "batch": 1}')
+        UNION ALL
+        SELECT 3, 'Record 3', 300.25, CURRENT_TIMESTAMP(), PARSE_JSON('{"type": "test", "batch": 2}')
+        UNION ALL
+        SELECT 4, 'Record 4', 400.00, CURRENT_TIMESTAMP(), PARSE_JSON('{"type": "test", "batch": 2}')
+        UNION ALL
+        SELECT 5, 'Record 5', 500.99, CURRENT_TIMESTAMP(), PARSE_JSON('{"type": "test", "batch": 3}');
     next:
       - step: transfer_sf_to_pg
 
   - step: transfer_sf_to_pg
     desc: Transfer data from Snowflake to PostgreSQL using generic transfer action
-    tool: transfer
-    source:
-      tool: snowflake
-      auth:
-        source: credential
+    tool:
+      kind: transfer
+      source:
         tool: snowflake
-        key: "{{ workload.sf_auth }}"
-      query: "SELECT * FROM TEST_DATA ORDER BY id"
-    target:
-      tool: postgres
-      auth:
-        source: credential
+        auth:
+          source: credential
+          tool: snowflake
+          key: "{{ workload.sf_auth }}"
+        query: "SELECT * FROM TEST_DATA ORDER BY id"
+      target:
         tool: postgres
-        key: "{{ workload.pg_auth }}"
-      # Using custom query for UPSERT
-      query: |
-        INSERT INTO {{ workload.test_table_pg }} (id, name, value, created_at, metadata)
-        VALUES (%s, %s, %s, %s, %s)
-        ON CONFLICT (id) DO UPDATE SET
-          name = EXCLUDED.name,
-          value = EXCLUDED.value,
-          created_at = EXCLUDED.created_at,
-          metadata = EXCLUDED.metadata
-    chunk_size: "{{ workload.chunk_size }}"
+        auth:
+          source: credential
+          tool: postgres
+          key: "{{ workload.pg_auth }}"
+        # Using custom query for UPSERT
+        query: |
+          INSERT INTO {{ workload.test_table_pg }} (id, name, value, created_at, metadata)
+          VALUES (%s, %s, %s, %s, %s)
+          ON CONFLICT (id) DO UPDATE SET
+            name = EXCLUDED.name,
+            value = EXCLUDED.value,
+            created_at = EXCLUDED.created_at,
+            metadata = EXCLUDED.metadata
+      chunk_size: "{{ workload.chunk_size }}"
     next:
       - step: verify_pg_data
 
   - step: verify_pg_data
     desc: Verify data was transferred to PostgreSQL
-    tool: postgres
-    auth: "{{ workload.pg_auth }}"
-    command: |
-      SELECT
-        COUNT(*) as row_count,
-        MIN(id) as min_id,
-        MAX(id) as max_id,
-        SUM(value) as total_value
-      FROM {{ workload.test_table_pg }};
+    tool:
+      kind: postgres
+      auth: "{{ workload.pg_auth }}"
+      command: |
+        SELECT
+          COUNT(*) as row_count,
+          MIN(id) as min_id,
+          MAX(id) as max_id,
+          SUM(value) as total_value
+        FROM {{ workload.test_table_pg }};
     next:
       - step: setup_pg_source
 
   - step: setup_pg_source
     desc: Create PostgreSQL source table for reverse transfer
-    tool: postgres
-    auth: "{{ workload.pg_auth }}"
-    command: |
-      CREATE TABLE IF NOT EXISTS public.test_pg_source (
-        id INTEGER PRIMARY KEY,
-        description TEXT,
-        amount NUMERIC(10,2),
-        status TEXT
-      );
+    tool:
+      kind: postgres
+      auth: "{{ workload.pg_auth }}"
+      command: |
+        CREATE TABLE IF NOT EXISTS public.test_pg_source (
+          id INTEGER PRIMARY KEY,
+          description TEXT,
+          amount NUMERIC(10,2),
+          status TEXT
+        );
 
-      TRUNCATE TABLE public.test_pg_source;
+        TRUNCATE TABLE public.test_pg_source;
 
-      INSERT INTO public.test_pg_source VALUES
-        (101, 'PG Record 1', 1000.00, 'active'),
-        (102, 'PG Record 2', 2000.50, 'pending'),
-        (103, 'PG Record 3', 3000.75, 'active'),
-        (104, 'PG Record 4', 4000.25, 'completed'),
-        (105, 'PG Record 5', 5000.99, 'active');
+        INSERT INTO public.test_pg_source VALUES
+          (101, 'PG Record 1', 1000.00, 'active'),
+          (102, 'PG Record 2', 2000.50, 'pending'),
+          (103, 'PG Record 3', 3000.75, 'active'),
+          (104, 'PG Record 4', 4000.25, 'completed'),
+          (105, 'PG Record 5', 5000.99, 'active');
     next:
       - step: setup_sf_target
 
   - step: setup_sf_target
     desc: Create Snowflake target table for reverse transfer
-    tool: snowflake
-    auth: "{{ workload.sf_auth }}"
-    command: |
-      CREATE OR REPLACE TABLE PG_IMPORTED_DATA (
-        id INTEGER PRIMARY KEY,
-        description STRING,
-        amount NUMERIC(10,2),
-        status STRING
-      );
+    tool:
+      kind: snowflake
+      auth: "{{ workload.sf_auth }}"
+      command: |
+        CREATE OR REPLACE TABLE PG_IMPORTED_DATA (
+          id INTEGER PRIMARY KEY,
+          description STRING,
+          amount NUMERIC(10,2),
+          status STRING
+        );
     next:
       - step: transfer_pg_to_sf
 
   - step: transfer_pg_to_sf
     desc: Transfer data from PostgreSQL to Snowflake using generic transfer action
-    tool: transfer
-    source:
-      tool: postgres
-      auth:
-        source: credential
+    tool:
+      kind: transfer
+      source:
         tool: postgres
-        key: "{{ workload.pg_auth }}"
-      query: "SELECT * FROM public.test_pg_source ORDER BY id"
-    target:
-      tool: snowflake
-      auth:
-        source: credential
+        auth:
+          source: credential
+          tool: postgres
+          key: "{{ workload.pg_auth }}"
+        query: "SELECT * FROM public.test_pg_source ORDER BY id"
+      target:
         tool: snowflake
-        key: "{{ workload.sf_auth }}"
-      # Using custom MERGE query for Snowflake
-      query: |
-        MERGE INTO PG_IMPORTED_DATA AS target
-        USING (SELECT %s AS id, %s AS description, %s AS amount, %s AS status) AS source
-        ON target.id = source.id
-        WHEN MATCHED THEN
-          UPDATE SET
-            description = source.description,
-            amount = source.amount,
-            status = source.status
-        WHEN NOT MATCHED THEN
-          INSERT (id, description, amount, status)
-          VALUES (source.id, source.description, source.amount, source.status)
-    chunk_size: "{{ workload.chunk_size }}"
+        auth:
+          source: credential
+          tool: snowflake
+          key: "{{ workload.sf_auth }}"
+        # Using custom MERGE query for Snowflake
+        query: |
+          MERGE INTO PG_IMPORTED_DATA AS target
+          USING (SELECT %s AS id, %s AS description, %s AS amount, %s AS status) AS source
+          ON target.id = source.id
+          WHEN MATCHED THEN
+            UPDATE SET
+              description = source.description,
+              amount = source.amount,
+              status = source.status
+          WHEN NOT MATCHED THEN
+            INSERT (id, description, amount, status)
+            VALUES (source.id, source.description, source.amount, source.status)
+      chunk_size: "{{ workload.chunk_size }}"
     next:
       - step: verify_sf_data
 
   - step: verify_sf_data
     desc: Verify data was transferred to Snowflake
-    tool: snowflake
-    auth: "{{ workload.sf_auth }}"
-    command: |
-      SELECT
-        COUNT(*) as row_count,
-        MIN(id) as min_id,
-        MAX(id) as max_id,
-        SUM(amount) as total_amount
-      FROM PG_IMPORTED_DATA;
+    tool:
+      kind: snowflake
+      auth: "{{ workload.sf_auth }}"
+      command: |
+        SELECT
+          COUNT(*) as row_count,
+          MIN(id) as min_id,
+          MAX(id) as max_id,
+          SUM(amount) as total_amount
+        FROM PG_IMPORTED_DATA;
     next:
       - step: end
 
   - step: cleanup
     desc: Clean up test tables
-    tool: postgres
-    auth: "{{ workload.pg_auth }}"
-    command: |
-      DROP TABLE IF EXISTS {{ workload.test_table_pg }};
-      DROP TABLE IF EXISTS public.test_pg_source;
+    tool:
+      kind: postgres
+      auth: "{{ workload.pg_auth }}"
+      command: |
+        DROP TABLE IF EXISTS {{ workload.test_table_pg }};
+        DROP TABLE IF EXISTS public.test_pg_source;
     next:
       - step: end
 
   - step: end
     desc: End data transfer test pipeline
+    tool:
+      kind: python
+      code: |
+        def main():
+            return {"status": "completed"}

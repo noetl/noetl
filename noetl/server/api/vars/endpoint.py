@@ -15,7 +15,7 @@ from typing import Any, Dict
 from fastapi import APIRouter, HTTPException, Path, Body
 from fastapi.responses import JSONResponse
 
-from noetl.worker.vars_cache import VarsCache
+from noetl.worker.transient import TransientVars
 from noetl.core.logger import setup_logger
 from .schema import (
     VariableListResponse,
@@ -43,7 +43,7 @@ async def list_variables(
     **Does not increment access_count** - this is a bulk read operation.
     """
     try:
-        vars_with_metadata = await VarsCache.get_all_vars_with_metadata(execution_id)
+        vars_with_metadata = await TransientVars.get_all_vars_with_metadata(execution_id)
         
         # Convert to VariableMetadata models
         variables = {}
@@ -87,7 +87,7 @@ async def get_variable(
     Returns 404 if variable not found.
     """
     try:
-        cached_var = await VarsCache.get_cached(var_name, execution_id)
+        cached_var = await TransientVars.get_cached(var_name, execution_id)
         
         if cached_var is None:
             logger.warning(
@@ -161,7 +161,7 @@ async def set_variables(
                 detail=f"Invalid var_type '{request.var_type}'. Must be one of: {', '.join(valid_types)}"
             )
         
-        count = await VarsCache.set_multiple(
+        count = await TransientVars.set_multiple(
             variables=request.variables,
             execution_id=execution_id,
             var_type=request.var_type,
@@ -208,7 +208,7 @@ async def delete_variable(
     Returns deleted=true if variable was found and deleted, false if not found.
     """
     try:
-        deleted = await VarsCache.delete_var(var_name, execution_id)
+        deleted = await TransientVars.delete_var(var_name, execution_id)
         
         if deleted:
             logger.info(

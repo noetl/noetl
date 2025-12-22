@@ -3,7 +3,7 @@ from fastapi import APIRouter, HTTPException, Request, Path
 from fastapi.openapi.models import Example
 from noetl.core.logger import setup_logger
 from .schema import ExecutionRequest, ExecutionResponse, ResourceType
-from .service import ExecutionService
+from noetl.server.api.v2 import start_execution, StartExecutionRequest
 
 
 logger = setup_logger(__name__, include_location=True)
@@ -28,6 +28,9 @@ async def execute_resource(
     """
     Execute a resource (playbook, tool, model, workflow) using unified request schema.
     
+    **DEPRECATED**: This endpoint is deprecated and redirects to /api/execute.
+    Use /api/execute directly for new integrations.
+    
     **Path Parameters:**
     - `resource_type`: Type of resource to execute (currently supported: playbook)
     
@@ -42,8 +45,8 @@ async def execute_resource(
       - `version`: Version identifier (default: "latest")
     
     - **Configuration**:
-      - `args`: Input arguments for execution
-      - `merge`: Merge args with existing workload (default: false)
+      - `args`: Input arguments for execution (mapped to 'payload' in V2)
+      - `merge`: Merge args with existing workload (default: false) [IGNORED in V2]
     
     - **Context** (for nested executions):
       - `context`: Nested context object
@@ -52,32 +55,32 @@ async def execute_resource(
     **Returns:**
     - Execution response with execution_id, path, version, and status
     
-    **Execution Flow:**
-    1. Resolve catalog entry (path/version or catalog_id)
-    2. Validate resource content
-    3. Build execution plan (workflow, transitions, workbook)
-    4. Merge workload data
-    5. Persist to database (workload, event, workflow, transition tables)
-    6. Publish initial steps to queue for worker processing
-    7. Return execution response with tracking details
-    
     **Examples:**
-    - Execute playbook: `POST /api/v1/run/playbook`
+    - Execute playbook: `POST /api/run/playbook`
     """
     try:
-        # Capture requestor details from HTTP request
-        requestor_info = {
-            "ip": request.client.host if request.client else None,
-            "user_agent": request.headers.get("user-agent"),
-            "timestamp": None,  # Will be set during execution
-        }
+        logger.debug(f"EXECUTE (redirect to V2): resource_type={resource_type}, request: {payload.model_dump()}")
         
-        logger.debug(f"EXECUTE: resource_type={resource_type}, request: {payload.model_dump()}")
+        # Convert old API request to V2 format
+        v2_request = StartExecutionRequest(
+            path=payload.path,
+            catalog_id=int(payload.catalog_id) if payload.catalog_id else None,
+            payload=payload.args or {},
+            parent_execution_id=int(payload.context.parent_execution_id) if payload.context and payload.context.parent_execution_id else None
+        )
         
-        # Set resource type in payload for tracking
-        # (Currently all resources go through the same execution flow)
+        # Call V2 API
+        v2_response = await start_execution(v2_request)
         
-        return await ExecutionService.execute(payload, requestor_info)
+        # Convert V2 response to old API format
+        return ExecutionResponse(
+            execution_id=v2_response.execution_id,
+            path=payload.path,
+            version=payload.version or "latest",
+            status="running",
+            message=f"Execution started with {v2_response.commands_generated} initial commands"
+        )
+        
     except ValueError as e:
         logger.error(f"Validation error executing resource: {e}")
         raise HTTPException(status_code=400, detail={
@@ -88,5 +91,5 @@ async def execute_resource(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error executing request: {e}")
+        logger.error(f"Error executing request: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))

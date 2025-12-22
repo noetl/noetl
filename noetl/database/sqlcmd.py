@@ -327,66 +327,6 @@ INSERT INTO transition (execution_id, from_step, to_step, condition, with_params
 VALUES (?, ?, ?, ?, ?)
 """
 
-WORKLOAD_TABLE_EXISTS_POSTGRES = """
-SELECT EXISTS (
-    SELECT FROM information_schema.tables 
-    WHERE table_name = 'workload'
-)
-"""
-
-WORKLOAD_TABLE_EXISTS_DUCKDB = """
-SELECT COUNT(*) 
-FROM information_schema.tables 
-WHERE table_name = 'workload'
-"""
-
-WORKLOAD_COUNT_POSTGRES = """
-SELECT COUNT(*) FROM workload
-"""
-
-WORKLOAD_COUNT_DUCKDB = """
-SELECT COUNT(*) FROM workload
-"""
-
-WORKLOAD_COUNT_BY_ID_POSTGRES = """
-SELECT COUNT(*) FROM workload WHERE execution_id = %s
-"""
-
-WORKLOAD_COUNT_BY_ID_DUCKDB = """
-SELECT COUNT(*) FROM workload WHERE execution_id = ?
-"""
-
-WORKLOAD_INSERT_POSTGRES = """
-INSERT INTO workload (execution_id, data)
-VALUES (%s, %s)
-ON CONFLICT (execution_id) DO UPDATE
-SET data = EXCLUDED.data
-"""
-
-WORKLOAD_INSERT_DUCKDB = """
-INSERT INTO workload (execution_id, data) VALUES (?, ?)
-"""
-
-WORKLOAD_UPDATE_DUCKDB = """
-UPDATE workload SET data = ? WHERE execution_id = ?
-"""
-
-WORKLOAD_SELECT_POSTGRES = """
-SELECT data FROM workload WHERE execution_id = %s
-"""
-
-WORKLOAD_SELECT_DUCKDB = """
-SELECT data FROM workload WHERE execution_id = ?
-"""
-
-WORKLOAD_SELECT_ALL_IDS_POSTGRES = """
-SELECT execution_id FROM workload
-"""
-
-WORKLOAD_SELECT_ALL_IDS_DUCKDB = """
-SELECT execution_id FROM workload
-"""
-
 TRANSITION_INSERT_POSTGRES = """
 INSERT INTO transition (execution_id, from_step, to_step, condition, with_params)
 VALUES (%s, %s, %s, %s, %s)
@@ -416,29 +356,4 @@ WHERE execution_id = ?
 WORKFLOW_INSERT_POSTGRES = """
 INSERT INTO workflow (execution_id, step_id, step_name, step_type, description, raw_config)
 VALUES (%s, %s, %s, %s, %s, %s)
-"""
-
-WORKFLOW_INSERT_DUCKDB = """
-INSERT INTO workflow (execution_id, step_id, step_name, step_type, description, raw_config)
-VALUES (?, ?, ?, ?, ?, ?)
-"""
-
-TRANSITION_INSERT_CONDITION_POSTGRES = """
-INSERT INTO transition
-VALUES (%s, %s, %s, %s, %s)
-"""
-
-TRANSITION_INSERT_CONDITION_DUCKDB = """
-INSERT INTO transition
-VALUES (?, ?, ?, ?, ?)
-"""
-
-WORKBOOK_INSERT_POSTGRES = """
-INSERT INTO workbook
-VALUES (%s, %s, %s, %s, %s)
-"""
-
-WORKBOOK_INSERT_DUCKDB = """
-INSERT INTO workbook
-VALUES (?, ?, ?, ?, ?)
 """

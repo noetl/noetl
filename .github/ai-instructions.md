@@ -2,13 +2,32 @@
 
 NoETL is a workflow automation framework for data processing and MLOps orchestration with a distributed server-worker architecture.
 
+## Documentation Standards
+
+**CRITICAL**: All documentation must go in `documentation/docs/` (Docusaurus format), NOT in `docs/` folder at project root.
+
+## Repo Hygiene (No Root Scripts/Docs)
+
+**CRITICAL**: Do not add new scripts, one-off utilities, or documentation files to the repository root.
+
+- **Scripts**: put under `scripts/` (project utilities) or `tests/scripts/` (test helpers)
+- **Documentation**: put under `documentation/docs/` only
+- **Test fixtures**: put under `tests/fixtures/`
+- **Tooling**: put under `tools/` when appropriate
+
+- **Location**: `documentation/docs/` for all new documentation
+- **Format**: Markdown with Docusaurus frontmatter (sidebar_position, etc.)
+- **Configuration**: `documentation/docusaurus.config.ts`
+- **Categories**: Use `documentation/docs/reference/`, `documentation/docs/features/`, etc.
+- **Never Create**: `docs/` folder at project root - it has been removed
+
 ## Architecture Overview
 
 **Core Components:**
 - **Server** (`noetl/server/`): FastAPI-based orchestration engine with REST APIs for catalog, events, queue, and execution coordination
 - **Worker** (`noetl/worker/`): Polling workers that lease jobs from PostgreSQL queue and execute tasks
 - **CLI** (`noetl/cli/ctl.py`): Typer-based command interface managing server/worker lifecycle
-- **Plugins** (`noetl/plugin/`): Extensible action executors (http, postgres, duckdb, python, secrets, etc.)
+- **Plugins** (`noetl/tools/`): Extensible action executors (http, postgres, duckdb, python, secrets, etc.)
 - **Observability** (`ci/manifests/clickhouse/`): ClickHouse-based observability stack with OpenTelemetry schema for logs, metrics, and traces
 
 **Data Flow:**
@@ -109,6 +128,9 @@ workflow:                 # Execution flow (required, must have 'start' step)
   - `tool: workbook` - References named task from workbook section by `name` attribute
   - Direct action tools: `python`, `http`, `postgres`, `duckdb`, `playbook`, `iterator`
 - **Conditional Flow**: Steps use `next` with optional `when` conditions and `then` arrays for routing
+  - `next:` - Provides default/fallback routing edges; always evaluated when present
+  - `case:` - Optional conditional routing (v2 DSL); when conditions don't match, engine falls back to `next:` field
+  - **Pattern**: Use `next:` for unconditional default flow, `case:` for event-driven or conditional branching
 - **Iterator**: `tool: iterator` loops over collections with `collection`, `element`, and `mode` (sequential/async) attributes
 - **HTTP Pagination**: `loop.pagination` enables automatic page continuation with `continue_while`, `next_page`, and `merge_strategy` attributes
   ```yaml
@@ -207,7 +229,7 @@ script:
 
 See `tests/fixtures/playbooks/script_execution/` and `docs/script_attribute_design.md` for complete details.
 
-**Plugin Development** (`noetl/plugin/`):
+**Plugin Development** (`noetl/tools/`):
 - Inherit from base classes in `base.py`
 - Use `report_event()` for execution tracking
 - Follow type-specific patterns in existing plugins (http.py, postgres.py, etc.)
@@ -223,12 +245,13 @@ See `tests/fixtures/playbooks/script_execution/` and `docs/script_attribute_desi
 - `noetl/core/dsl/` - Playbook parsing, validation, and rendering
 - `noetl/server/api/event/processing.py` - Server-side execution coordination
 - `noetl/server/api/broker/core.py` - Execution engine
-- `noetl/plugin/` - All action type implementations
+- `noetl/tools/` - All action type implementations
 
 **Development Infrastructure:**
 - `taskfile.yml` - Main task automation with included taskfiles for tests and monitoring
 - `ci/taskfile/` - Specialized taskfiles for testing, troubleshooting, and observability
 - `ci/taskfile/test-server.yml` - Pagination test server lifecycle management
+- `ci/kind/config.yaml` - **Kind cluster configuration with NodePort mappings** (DO NOT use port-forward, ports are permanently mapped here)
 - `tests/taskfile/noetltest.yml` - Test task definitions
 - `docker/` - Container build scripts for all components
 - `docker/test-server/` - Pagination test server Dockerfile
@@ -257,8 +280,8 @@ See `tests/fixtures/playbooks/script_execution/` and `docs/script_attribute_desi
   - User: `noetl` / Password: `noetl` (NoETL metadata schema)
   - Schema: `noetl` (for NoETL system tables: catalog, event, queue, etc.)
 - **NoETL API for Postgres Queries**:
-  - Endpoint: `POST http://localhost:30082/api/postgres/execute`
-  - Documentation: `http://localhost:30082/docs#/default/execute_postgres_api_postgres_execute_post`
+  - Endpoint: `POST http://localhost:8082/api/postgres/execute` (NOT 30082!)
+  - Documentation: `http://localhost:8082/docs#/default/execute_postgres_api_postgres_execute_post`
   - **Use this REST API instead of running `psql` commands directly**
   - Request body examples:
     ```json
@@ -287,6 +310,17 @@ See `tests/fixtures/playbooks/script_execution/` and `docs/script_attribute_desi
 - Local: Direct Python execution with file-based logs
 - Docker: Containerized with environment-based configuration
 - Kubernetes: Helm charts with unified observability stack (Grafana, VictoriaMetrics, ClickHouse)
+
+**Kind Cluster Port Mappings (CRITICAL):**
+- **Port mappings are PERMANENT** - defined in `ci/kind/config.yaml`
+- **DO NOT use `kubectl port-forward`** - ports are already mapped to localhost
+- **Use localhost ports directly**: 
+  - NoETL API: `http://localhost:8082` (maps to NodePort 30082)
+  - Postgres: `localhost:54321` (maps to NodePort 30321)
+  - ClickHouse HTTP: `localhost:30123` (maps to NodePort 30123)
+  - Test Server: `localhost:30555` (maps to NodePort 30555)
+- See `ci/kind/config.yaml` for complete port mapping list
+- After rebuilding containers, ports remain the same - no need to re-map
 
 **Observability Stack:**
 - **ClickHouse**: Column-oriented database for logs, metrics, and traces (OpenTelemetry format)

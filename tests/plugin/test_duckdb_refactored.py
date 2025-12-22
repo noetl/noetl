@@ -8,11 +8,11 @@ import base64
 from unittest.mock import MagicMock
 from jinja2 import Environment
 
-from noetl.plugin.duckdb import execute_duckdb_task
-from noetl.plugin.duckdb.config import create_task_config, create_connection_config
-from noetl.plugin.duckdb.connections import get_duckdb_connection
-from noetl.plugin.duckdb.sql import render_commands, clean_sql_text
-from noetl.plugin.duckdb.types import ConnectionConfig, TaskConfig
+from noetl.tools.duckdb import execute_duckdb_task
+from noetl.tools.duckdb.config import create_task_config, create_connection_config
+from noetl.tools.duckdb.connections import get_duckdb_connection
+from noetl.tools.duckdb.sql import render_commands, clean_sql_text
+from noetl.tools.duckdb.types import ConnectionConfig, TaskConfig
 
 
 class TestDuckDBRefactoredStructure:

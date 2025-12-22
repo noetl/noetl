@@ -10,9 +10,9 @@ import pytest
 from unittest.mock import patch, MagicMock
 from jinja2 import Environment
 
-from noetl.plugin.postgres import execute_postgres_task
-from noetl.plugin.http import execute_http_task
-from noetl.plugin.duckdb import execute_duckdb_task
+from noetl.tools.postgres import execute_postgres_task
+from noetl.tools.http import execute_http_task
+from noetl.tools.duckdb import execute_duckdb_task
 
 
 class TestPluginAuthIntegration:
@@ -24,7 +24,7 @@ class TestPluginAuthIntegration:
         self.context = {"execution_id": "test-integration-123"}
         self.log_callback = MagicMock()
     
-    @patch('noetl.plugin.postgres.psycopg.connect')
+    @patch('noetl.tools.postgres.psycopg.connect')
     @patch('noetl.worker.auth_resolver.fetch_credential_by_key')
     def test_postgres_unified_auth_integration(self, mock_fetch_cred, mock_connect):
         """Test Postgres plugin with unified auth system."""
@@ -68,7 +68,7 @@ class TestPluginAuthIntegration:
         mock_fetch_cred.assert_called_once_with("pg_test")
         mock_connect.assert_called_once()
     
-    @patch('noetl.plugin.postgres.psycopg.connect')
+    @patch('noetl.tools.postgres.psycopg.connect')
     def test_postgres_inline_auth_integration(self, mock_connect):
         """Test Postgres plugin with inline auth configuration."""
         # Mock database connection
@@ -339,7 +339,7 @@ class TestPluginAuthIntegration:
         create_secret_statements = [stmt for stmt in executed_statements if "CREATE OR REPLACE SECRET default" in stmt]
         assert len(create_secret_statements) == 1  # Should have one secret with 'default' alias
     
-    @patch('noetl.plugin.postgres.psycopg.connect')
+    @patch('noetl.tools.postgres.psycopg.connect')
     def test_backwards_compatibility_credentials_field(self, mock_connect):
         """Test backwards compatibility with deprecated 'credentials' field."""
         # Mock database connection
@@ -364,7 +364,7 @@ class TestPluginAuthIntegration:
             
             task_with = {}
             
-            with patch('noetl.plugin.postgres.logger') as mock_logger:
+            with patch('noetl.tools.postgres.logger') as mock_logger:
                 result = execute_postgres_task(
                     task_config, self.context, self.jinja_env, task_with, self.log_callback
                 )

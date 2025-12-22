@@ -1,4 +1,4 @@
-apiVersion: noetl.io/v1
+apiVersion: noetl.io/v2
 kind: Playbook
 metadata:
   name: http_to_postgres_transfer
@@ -11,55 +11,69 @@ workload:
 workflow:
   - step: start
     desc: Start workflow
+    tool:
+      kind: python
+      code: |
+        def main():
+            return {"status": "initialized"}
     next:
       - step: create_table
 
   - step: create_table
     desc: Create table for storing HTTP data
-    tool: postgres
-    auth: "{{ workload.pg_auth }}"
-    command: |
-      DROP TABLE IF EXISTS public.http_to_postgres_transfer;
+    tool:
+      kind: postgres
+      auth: "{{ workload.pg_auth }}"
+      command: |
+        DROP TABLE IF EXISTS public.http_to_postgres_transfer;
 
-      CREATE TABLE public.http_to_postgres_transfer (
-        id SERIAL PRIMARY KEY,
-        post_id INTEGER,
-        user_id INTEGER,
-        title TEXT,
-        body TEXT,
-        fetched_at TIMESTAMPTZ DEFAULT NOW()
-      );
+        CREATE TABLE public.http_to_postgres_transfer (
+          id SERIAL PRIMARY KEY,
+          post_id INTEGER,
+          user_id INTEGER,
+          title TEXT,
+          body TEXT,
+          fetched_at TIMESTAMPTZ DEFAULT NOW()
+        );
     next:
       - step: transfer_http_to_pg
 
   - step: transfer_http_to_pg
-    desc: Transfer HTTP API data to PostgreSQL
-    tool: transfer
-    source:
-      tool: http
-      url: "{{ workload.api_url }}"
-      method: GET
-    target:
-      tool: postgres
-      auth: "{{ workload.pg_auth }}"
-      table: public.http_to_postgres_transfer
-      mode: insert
-      mapping:
-        post_id: id
-        user_id: userId
-        title: title
-        body: body
+    desc: Transfer HTTP data to PostgreSQL with column mapping
+    tool:
+      kind: transfer
+      source:
+        type: http
+        url: "{{ workload.api_url }}"
+        method: GET
+      target:
+        type: postgres
+        auth:
+          source: credential
+          key: "{{ workload.pg_auth }}"
+        table: public.http_to_postgres_transfer
+        mapping:
+          user_id: userId
+          post_id: id
+          title: title
+          body: body
     next:
       - step: show_count
 
   - step: show_count
     desc: Verify record count
-    tool: postgres
-    auth: "{{ workload.pg_auth }}"
-    command: |
-      SELECT COUNT(*) as records FROM public.http_to_postgres_transfer;
+    tool:
+      kind: postgres
+      auth: "{{ workload.pg_auth }}"
+      command: |
+        SELECT COUNT(*) as records FROM public.http_to_postgres_transfer;
     next:
       - step: end
 
   - step: end
     desc: End workflow
+    tool:
+      kind: python
+      code: |
+        def main():
+            return {"status": "completed"}
