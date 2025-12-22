@@ -23,7 +23,7 @@ async def process_keychain_section(
     catalog_id: int,
     execution_id: int,
     workload_vars: Dict[str, Any],
-    api_base_url: str = "http://noetl.noetl.svc.cluster.local:8082"
+    api_base_url: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Process playbook keychain section at execution start.
@@ -47,15 +47,26 @@ async def process_keychain_section(
     if not keychain_section:
         logger.debug("KEYCHAIN_PROCESSOR: No keychain section to process")
         return {}
+
+    # Resolve API base URL (local dev-friendly)
+    if not api_base_url:
+        try:
+            from noetl.core.config import settings
+            api_base_url = settings.server_api_url or f"http://{settings.host}:{settings.port}"
+        except Exception:
+            api_base_url = "http://localhost:8082"
+
+    api_base_url = _normalize_api_base_url(api_base_url)
     
-    logger.info(f"KEYCHAIN_PROCESSOR: Processing {len(keychain_section)} keychain entries for execution {execution_id}")
+    logger.info(f"KEYCHAIN_PROCESSOR: Processing {len(keychain_section)} keychain entries for execution {execution_id} (api_base_url={api_base_url})")
     
     keychain_data = {}
     
     async with httpx.AsyncClient(timeout=30.0) as client:
         for entry in keychain_section:
             entry_name = entry.get('name')
-            entry_kind = entry.get('kind')
+            # Accept either 'kind' or 'type' for entry classification
+            entry_kind = entry.get('kind') or entry.get('type')
             
             if not entry_name or not entry_kind:
                 logger.warning(f"KEYCHAIN_PROCESSOR: Skipping invalid entry: {entry}")
@@ -71,6 +82,8 @@ async def process_keychain_section(
                 data = await _process_bearer(entry, workload_vars, keychain_data)
             elif entry_kind == 'static':
                 data = await _process_static(entry, workload_vars, keychain_data)
+            elif entry_kind in ['credential', 'credential_ref', 'google_oauth', 'google_service_account', 'google']:
+                data = await _process_credential_ref(entry, workload_vars, keychain_data, client, api_base_url)
             else:
                 logger.warning(f"KEYCHAIN_PROCESSOR: Unknown kind '{entry_kind}' for entry '{entry_name}'")
                 continue
@@ -128,8 +141,9 @@ async def _process_secret_manager(
         params={"include_data": "true"}
     )
     if cred_response.status_code != 200:
-        logger.error(f"KEYCHAIN_PROCESSOR: Failed to fetch credential '{auth_name}': {cred_response.status_code}")
-        return None
+        raise RuntimeError(
+            f"KEYCHAIN_PROCESSOR: Failed to fetch credential '{auth_name}': {cred_response.status_code} - {cred_response.text}"
+        )
     
     cred = cred_response.json()
     cred_type = cred.get('type', '')
@@ -150,8 +164,7 @@ async def _process_secret_manager(
         access_token = token_result.get('access_token')
     
     if not access_token:
-        logger.error(f"KEYCHAIN_PROCESSOR: No access token available in credential '{auth_name}'")
-        return None
+        raise RuntimeError(f"KEYCHAIN_PROCESSOR: No access token available in credential '{auth_name}'")
     
     # Fetch secrets from GCP Secret Manager
     result_data = {}
@@ -283,6 +296,38 @@ async def _process_static(
     return result_data
 
 
+async def _process_credential_ref(
+    entry: Dict[str, Any],
+    workload_vars: Dict[str, Any],
+    keychain_data: Dict[str, Any],
+    client: httpx.AsyncClient,
+    api_base_url: str
+) -> Optional[Dict[str, Any]]:
+    """Fetch an existing credential and cache its data as a keychain entry."""
+    ref = entry.get('ref') or entry.get('credential') or entry.get('name')
+    if not ref:
+        logger.error("KEYCHAIN_PROCESSOR: credential_ref requires 'ref' or 'credential' field")
+        return None
+
+    env = Environment(undefined=StrictUndefined)
+    ref_rendered = env.from_string(str(ref)).render(workload=workload_vars, keychain=keychain_data)
+
+    resp = await client.get(
+        f"{api_base_url}/api/credentials/{ref_rendered}",
+        params={"include_data": "true"}
+    )
+    if resp.status_code != 200:
+        raise RuntimeError(
+            f"KEYCHAIN_PROCESSOR: Failed to fetch credential '{ref_rendered}': {resp.status_code} - {resp.text}"
+        )
+
+    cred = resp.json()
+    if not cred.get('data'):
+        raise RuntimeError(f"KEYCHAIN_PROCESSOR: Credential '{ref_rendered}' has no data to cache")
+
+    return cred['data']
+
+
 async def _store_keychain_entry(
     client: httpx.AsyncClient,
     api_base_url: str,
@@ -344,3 +389,14 @@ async def _store_keychain_entry(
     
     logger.debug(f"KEYCHAIN_PROCESSOR: Stored keychain entry '{keychain_name}'")
     return True
+
+
+def _normalize_api_base_url(url: str) -> str:
+    """Drop trailing slashes and duplicate /api segments to avoid double-prefixing."""
+    if not url:
+        return ""
+
+    normalized = url.rstrip('/')
+    if normalized.endswith('/api'):
+        normalized = normalized[:-4]
+    return normalized

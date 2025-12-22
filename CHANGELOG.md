@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.0.2](https://github.com/noetl/noetl/compare/v2.0.1...v2.0.2) (2025-12-21)
+
+### Bug Fixes
+
+* update GitHub metrics extraction to use direct data references for improved accuracy ([f2cfe85](https://github.com/noetl/noetl/commit/f2cfe858de26a461e8e4fa45bc90a51721431598))
+* update HTTP iterator playbook to use correct response status code and improve validation logic ([9bd6c56](https://github.com/noetl/noetl/commit/9bd6c56e5cf1403ca04bf13f28b559d791fcafc0))
+
+## [2.0.1](https://github.com/noetl/noetl/compare/v2.0.0...v2.0.1) (2025-12-20)
+
+### Bug Fixes
+
+* enable UI in configmap for improved user interaction ([e0db518](https://github.com/noetl/noetl/commit/e0db5184ca3118cf1f20a88c5feb8178b3328696))
+
 ## [2.0.0](https://github.com/noetl/noetl/compare/v1.8.0...v2.0.0) (2025-12-19)
 
 ### ⚠ BREAKING CHANGES

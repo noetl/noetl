@@ -58,7 +58,7 @@ export interface ExecutionData {
   execution_id: string;
   path: string;
   version: string;
-  status: "running" | "completed" | "failed" | "pending";
+  status: "RUNNING" | "COMPLETED" | "FAILED" | "PENDING" | "running" | "completed" | "failed" | "pending";
   start_time: string;
   end_time?: string;
   duration?: number;

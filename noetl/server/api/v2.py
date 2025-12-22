@@ -1,8 +1,9 @@
 """
-NoETL V2 API Endpoints
+NoETL API Endpoints (v2 engine merged into primary API).
 
-Clean V2 API for event-driven playbook execution.
-No backward compatibility.
+This file exposes the v2 event-driven engine under the regular `/api` prefix
+so callers no longer need a `/v2` path. Legacy endpoints are superseded by
+these handlers; no backward compatibility is maintained.
 """
 
 import logging
@@ -20,7 +21,8 @@ from noetl.core.messaging import NATSCommandPublisher
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/v2", tags=["v2"])
+# Expose v2 engine on the primary API prefix (no "/v2" path).
+router = APIRouter(prefix="", tags=["api"])
 
 # Global engine components
 _playbook_repo: Optional[PlaybookRepo] = None
@@ -261,6 +263,15 @@ async def start_execution(req: StartExecutionRequest) -> StartExecutionResponse:
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ---------------------------------------------------------------------------
+# Compatibility aliases (UI still calling /api/v2/*). Forward to merged paths.
+# ---------------------------------------------------------------------------
+
+@router.post("/v2/execute", response_model=StartExecutionResponse)
+async def start_execution_compat(req: StartExecutionRequest) -> StartExecutionResponse:
+    return await start_execution(req)
+
+
 @router.get("/commands/{event_id}")
 async def get_command_details(event_id: int):
     """
@@ -314,6 +325,11 @@ async def get_command_details(event_id: int):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/v2/commands/{event_id}")
+async def get_command_details_compat(event_id: int):
+    return await get_command_details(event_id)
+
+
 @router.post("/events", response_model=EventResponse)
 async def handle_event(req: EventRequest) -> EventResponse:
     """
@@ -344,6 +360,7 @@ async def handle_event(req: EventRequest) -> EventResponse:
         )
         
         # Process event through engine to generate next commands
+        # Note: Engine handles event persistence internally
         commands = await engine.handle_event(event)
         
         # Get NATS publisher
@@ -468,9 +485,14 @@ async def handle_event(req: EventRequest) -> EventResponse:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/executions/{execution_id}")
+@router.post("/v2/events", response_model=EventResponse)
+async def handle_event_compat(req: EventRequest) -> EventResponse:
+    return await handle_event(req)
+
+
+@router.get("/executions/{execution_id}/status")
 async def get_execution_status(execution_id: str):
-    """Get execution status."""
+    """Get lightweight execution status (v2 engine state)."""
     try:
         engine = get_engine()
         state = engine.state_store.get_state(execution_id)

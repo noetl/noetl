@@ -59,10 +59,11 @@ def start_worker_service(
             
             sys.stderr.write("=== GETTING SETTINGS ===\n")
             sys.stderr.flush()
-            # Get configuration
-            settings = get_settings()
-            nats_url = settings.nats_url
-            server_url = settings.server_api_url or settings.server_url
+            # Worker v2 only needs NATS + server endpoints; skip full server env validation
+            nats_url = os.environ.get("NATS_URL", "nats://noetl:noetl@localhost:30422")
+            server_url = os.environ.get("NOETL_SERVER_URL", "http://localhost:8082").rstrip('/')
+            if not server_url.endswith('/api'):
+                server_url = f"{server_url}/api"
             
             sys.stderr.write(f"=== CALLING run_worker_v2_sync NATS={nats_url} ===\n")
             sys.stderr.flush()
@@ -723,7 +724,7 @@ def manage_catalog(
             if host is None or port is None:
                 logger.error("Error: --host and --port are required for this client command")
                 raise typer.Exit(code=1)
-            url = f"http://{host}:{port}/api/v2/execute"
+            url = f"http://{host}:{port}/api/execute"
             headers = {"Content-Type": "application/json"}
             data = {
                 "path": path,
@@ -921,8 +922,8 @@ def run_playbook(
     Execute a registered playbook by name against a running NoETL server.
     This is an alias for 'noetl execute playbook'.
 
-    Equivalent REST call:
-      curl -X POST http://{host}:{port}/api/v2/execute \
+        Equivalent REST call:
+            curl -X POST http://{host}:{port}/api/execute \
            -H "Content-Type: application/json" \
            -d '{"path": "<playbook_path>", "payload": {...}}'
 
@@ -947,7 +948,7 @@ def run_playbook(
                 typer.echo(f"Failed to parse --payload JSON: {e}")
                 raise typer.Exit(code=1)
 
-        url = f"http://{host}:{port}/api/v2/execute"
+        url = f"http://{host}:{port}/api/execute"
         body = {"path": playbook_id, "payload": parameters}
         if not json_only:
             typer.echo(f"POST {url}")
@@ -1027,8 +1028,8 @@ def execute_playbook_by_name(
     """
     Execute a registered playbook by name against a running NoETL server.
 
-    Equivalent REST call:
-      curl -X POST http://{host}:{port}/api/v2/execute \
+        Equivalent REST call:
+            curl -X POST http://{host}:{port}/api/execute \
            -H "Content-Type: application/json" \
            -d '{"path": "<playbook_path>", "payload": {...}}'
 
@@ -1053,7 +1054,7 @@ def execute_playbook_by_name(
                 typer.echo(f"Failed to parse --payload JSON: {e}")
                 raise typer.Exit(code=1)
 
-        url = f"http://{host}:{port}/api/v2/execute"
+        url = f"http://{host}:{port}/api/execute"
         logger.info(f"POST {url}")
         body = {"path": playbook_id, "payload": parameters}
         if not json_only:

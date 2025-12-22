@@ -626,7 +626,7 @@ tasks:
         
         # Register all test playbooks using local server with local postgres auth
         echo "Registering all test playbooks with local postgres credentials..."
-        ./register_test_playbooks.sh localhost 8083
+        ./tests/fixtures/register_test_playbooks.sh localhost 8083
         echo "✓ Test playbooks registered"
         
         echo ""

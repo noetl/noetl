@@ -5,7 +5,7 @@ Event-driven worker that:
 1. Subscribes to NATS for command notifications
 2. Fetches command details from server queue API  
 3. Executes based on tool.kind
-4. Emits events back to server (POST /api/v2/events)
+4. Emits events back to server (POST /api/events)
 
 NO backward compatibility - pure V2 implementation.
 """
@@ -32,7 +32,7 @@ class V2Worker:
     - Receives lightweight message with {execution_id, queue_id, step, server_url}
     - Fetches full command from server API
     - Executes tool based on tool.kind
-    - Emits events to POST /api/v2/events
+    - Emits events to POST /api/events
     - NEVER directly updates queue table (server does this via events)
     """
     
@@ -143,7 +143,7 @@ class V2Worker:
         """
         try:
             response = await self._http_client.post(
-                f"{server_url.rstrip('/')}/api/v2/events",
+                    f"{server_url.rstrip('/')}/api/events",
                 json={
                     "execution_id": str(execution_id),
                     "step": command_id.split(":")[1] if ":" in command_id else "unknown",  # Extract step from command_id
@@ -178,12 +178,12 @@ class V2Worker:
         """
         Fetch command details from server API.
         
-        Uses the /api/v2/commands/{event_id} endpoint to get command configuration
+        Uses the /api/commands/{event_id} endpoint to get command configuration
         from the command.issued event.
         """
         try:
             response = await self._http_client.get(
-                f"{server_url.rstrip('/')}/api/v2/commands/{event_id}"
+                f"{server_url.rstrip('/')}/api/commands/{event_id}"
             )
             
             if response.status_code == 404:
@@ -206,7 +206,7 @@ class V2Worker:
         """Emit command.failed event."""
         try:
             await self._http_client.post(
-                f"{server_url.rstrip('/')}/api/v2/events",
+                f"{server_url.rstrip('/')}/api/events",
                 json={
                     "execution_id": str(execution_id),
                     "step": step,
@@ -534,9 +534,11 @@ class V2Worker:
         
         from jinja2 import Environment, BaseLoader
         from noetl.core.dsl.render import add_b64encode_filter
+        from noetl.core.auth.token_resolver import register_token_functions
         
         jinja_env = Environment(loader=BaseLoader())
         jinja_env = add_b64encode_filter(jinja_env)  # Add custom filters including tojson
+        register_token_functions(jinja_env, context)
         
         # Map V2 config format to plugin task_config format
         # Plugins use different field names than V2 DSL
@@ -901,7 +903,7 @@ class V2Worker:
             payload["parent_execution_id"] = parent_execution_id
         
         response = await self._http_client.post(
-            f"{server_url}/api/v2/execute",
+            f"{server_url}/api/execute",
             json=payload,
             timeout=30.0
         )
@@ -922,18 +924,16 @@ class V2Worker:
                 
                 # Check execution status
                 status_response = await self._http_client.get(
-                    f"{server_url}/api/v2/executions/{execution_id}/status",
+                    f"{server_url}/api/executions/{execution_id}",
                     timeout=10.0
                 )
                 
                 if status_response.status_code == 200:
                     status_data = status_response.json()
-                    state = status_data.get("status")
+                    state_completed = bool(status_data.get("completed"))
+                    state_failed = bool(status_data.get("failed"))
                     
-                    if state in ["completed", "failed", "error"]:
-                        # Get result from return_step
-                        if state == "completed" and return_step:
-                            return status_data.get("steps", {}).get(return_step, {})
+                    if state_completed or state_failed:
                         return status_data
             
             # Timeout - return what we have
@@ -1078,7 +1078,7 @@ class V2Worker:
         
         try:
             response = await self._http_client.post(
-                f"{server_url.rstrip('/')}/api/v2/events",
+                f"{server_url.rstrip('/')}/api/events",
                 json=event_data,
                 timeout=10.0
             )

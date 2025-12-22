@@ -6,6 +6,15 @@ NoETL is a workflow automation framework for data processing and MLOps orchestra
 
 **CRITICAL**: All documentation must go in `documentation/docs/` (Docusaurus format), NOT in `docs/` folder at project root.
 
+## Repo Hygiene (No Root Scripts/Docs)
+
+**CRITICAL**: Do not add new scripts, one-off utilities, or documentation files to the repository root.
+
+- **Scripts**: put under `scripts/` (project utilities) or `tests/scripts/` (test helpers)
+- **Documentation**: put under `documentation/docs/` only
+- **Test fixtures**: put under `tests/fixtures/`
+- **Tooling**: put under `tools/` when appropriate
+
 - **Location**: `documentation/docs/` for all new documentation
 - **Format**: Markdown with Docusaurus frontmatter (sidebar_position, etc.)
 - **Configuration**: `documentation/docusaurus.config.ts`

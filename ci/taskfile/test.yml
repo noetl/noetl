@@ -161,7 +161,7 @@ tasks:
     cmds:
       - task: kubectl:local:context-set-kind
       - echo "=== Registering all test playbooks ==="
-      - ./register_test_playbooks.sh {{ .NOETL_HOST }} {{ .NOETL_PORT }}
+      - ./tests/fixtures/register_test_playbooks.sh {{ .NOETL_HOST }} {{ .NOETL_PORT }}
       - echo "=== All test playbooks registered successfully ==="
 
   test:k8s:setup-environment:

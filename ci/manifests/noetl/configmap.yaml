@@ -16,6 +16,7 @@ data:
   NOETL_ENABLE_UI: "true"
   NOETL_DEBUG: "true"
   NOETL_HTTP_MOCK_LOCAL: "false"
+  PAGINATION_API_URL: "http://paginated-api.test-server.svc.cluster.local:5555"
   NOETL_HOST: "0.0.0.0"
   NOETL_PORT: "8082"
   NOETL_SERVER_URL: "http://noetl.noetl.svc.cluster.local:8082"
