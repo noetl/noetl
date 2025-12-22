@@ -77,6 +77,7 @@ tasks:
       - sleep 30
       - task: test:k8s:setup-environment
       - task: test:k8s:create-tables
+      - task: test:k8s:register-credentials
       - echo "UI :http://localhost:8082"
       - echo "API :http://localhost:8082/docs"
 

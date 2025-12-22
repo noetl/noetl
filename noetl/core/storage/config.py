@@ -123,15 +123,21 @@ def extract_sink_config(
                     payload.get('payload'))
     
     # Statement can come from nested tool or top-level
-    # Also support 'commands' and 'sql' aliases (for DuckDB compatibility)
+    # Also support 'commands', 'command', 'sql', 'cmds' aliases (for compatibility)
     if isinstance(tool_value, dict):
         statement = (tool_value.get('statement') or 
-                    tool_value.get('commands') or 
-                    tool_value.get('sql'))
+                    tool_value.get('commands') or
+                    tool_value.get('command') or  # Single command alias
+                    tool_value.get('cmds') or     # Short form
+                    tool_value.get('sql') or
+                    tool_value.get('query'))       # Query alias
     else:
         statement = (payload.get('statement') or 
-                    payload.get('commands') or 
-                    payload.get('sql'))
+                    payload.get('commands') or
+                    payload.get('command') or      # Single command alias
+                    payload.get('cmds') or         # Short form
+                    payload.get('sql') or
+                    payload.get('query'))           # Query alias
     
     # Extract configuration parameters
     params = get_config_value('params', tool_value, payload, {})

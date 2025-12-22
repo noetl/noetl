@@ -175,6 +175,9 @@ class Settings(BaseModel):
     nats_consumer: str = Field(default="noetl_worker_pool", alias="NATS_CONSUMER")
     nats_subject: str = Field(default="noetl.commands", alias="NATS_SUBJECT")
 
+    # Keychain configuration
+    keychain_refresh_threshold: int = Field(default=300, alias="NOETL_KEYCHAIN_REFRESH_THRESHOLD")  # seconds (5min default)
+
     # Server identity and base URL (required)
     server_url: str = Field(..., alias="NOETL_SERVER_URL")
     server_name: str = Field(..., alias="NOETL_SERVER_NAME")
