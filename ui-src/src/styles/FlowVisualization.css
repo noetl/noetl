@@ -473,6 +473,39 @@
     stroke-dasharray: none;
 }
 
+/* Button Edge Styles */
+.button-edge__label {
+    position: absolute;
+    pointer-events: all;
+    transform-origin: center;
+}
+
+.button-edge__button {
+    width: 24px;
+    height: 24px;
+    border: none;
+    color: #64748b;
+    background-color: #ffffff;
+    cursor: pointer;
+    border-radius: 50%;
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+    transition: all 0.2s ease;
+}
+
+.button-edge__button:hover {
+    background-color: #ef4444;
+    color: #ffffff;
+    transform: scale(1.15);
+    box-shadow: 0 4px 10px rgba(239, 68, 68, 0.25);
+}
+
 /* Make edges easier to click */
 .react-flow__edge-path {
     cursor: pointer !important;

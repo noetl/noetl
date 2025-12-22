@@ -27,6 +27,7 @@ import "@xyflow/react/dist/style.css";
 import "../styles/FlowVisualization.css";
 import { apiService } from "../services/api";
 import { nodeTypes } from './nodes'; // simplified source
+import { edgeTypes } from './edges'; // custom edge components
 import { EditableTaskNode, TaskNode } from "./types";
 import { DnDProvider, useDnD } from "./DnDContext";
 import Sidebar from "./Sidebar";
@@ -75,8 +76,18 @@ const FlowVisualizationInner: React.FC<FlowVisualizationProps> = ({
   const [hasChanges, setHasChanges] = useState(false);
   const [isDraggingOver, setIsDraggingOver] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
-  const { screenToFlowPosition } = useReactFlow();
+  const reactFlowInstance = useReactFlow();
+  const { screenToFlowPosition } = reactFlowInstance;
   const [type] = useDnD();
+
+  // Force ReactFlow to recalculate viewport after sidebar renders
+  useEffect(() => {
+    if (visible && reactFlowInstance) {
+      setTimeout(() => {
+        reactFlowInstance.fitView({ padding: 0.18 });
+      }, 50);
+    }
+  }, [visible, reactFlowInstance]);
 
   const onConnect = useCallback(
     (params: Connection) => {
@@ -98,11 +109,9 @@ const FlowVisualizationInner: React.FC<FlowVisualizationProps> = ({
 
       setEdges((eds) => addEdge({
         ...params,
-        type: 'smoothstep',
-        animated: false,
+        type: 'buttonedge',
+        markerEnd: { type: MarkerType.ArrowClosed },
         style: { stroke: '#94a3b8', strokeWidth: 1.5 },
-        deletable: true,
-        focusable: true,
       }, eds));
       setHasChanges(true);
       messageApi.success('Nodes connected');
@@ -259,18 +268,8 @@ const FlowVisualizationInner: React.FC<FlowVisualizationProps> = ({
         });
       });
 
-      // Create edges based on dependencies (with arrow markers)
+      // Create edges based on dependencies
       tasks.forEach((task, index) => {
-        const edgeCommon = {
-          animated: false,
-          className: "flow-edge-solid",
-          deletable: true,
-          focusable: true,
-          selectable: true,
-          type: 'smoothstep',
-          style: { stroke: '#94a3b8', strokeWidth: 1.5 },
-        };
-
         if (task.dependencies && task.dependencies.length > 0) {
           task.dependencies.forEach((dep) => {
             const sourceTask = tasks.find((t) => t.name === dep);
@@ -279,7 +278,9 @@ const FlowVisualizationInner: React.FC<FlowVisualizationProps> = ({
                 id: `edge-${sourceTask.id}-${task.id}`,
                 source: sourceTask.id,
                 target: task.id,
-                ...edgeCommon,
+                type: 'buttonedge',
+                markerEnd: { type: MarkerType.ArrowClosed },
+                style: { stroke: '#94a3b8', strokeWidth: 1.5 },
               });
             }
           });
@@ -288,7 +289,9 @@ const FlowVisualizationInner: React.FC<FlowVisualizationProps> = ({
             id: `edge-${tasks[index - 1].id}-${task.id}`,
             source: tasks[index - 1].id,
             target: task.id,
-            ...edgeCommon,
+            type: 'buttonedge',
+            markerEnd: { type: MarkerType.ArrowClosed },
+            style: { stroke: '#94a3b8', strokeWidth: 1.5 },
           });
         }
       });
@@ -346,12 +349,9 @@ const FlowVisualizationInner: React.FC<FlowVisualizationProps> = ({
   const handleFullscreen = () => setFullscreen((f) => !f);
 
   const defaultEdgeOptions = {
-    type: "smoothstep" as const,
-    animated: false,
+    type: "buttonedge" as const,
+    markerEnd: { type: MarkerType.ArrowClosed },
     style: { stroke: "#94a3b8", strokeWidth: 1.5 },
-    deletable: true,
-    focusable: true,
-    selectable: true,
   };
 
   const flowInner = (
@@ -369,55 +369,6 @@ const FlowVisualizationInner: React.FC<FlowVisualizationProps> = ({
           </div>
         ) : (
           <div className="react-flow-wrapper" ref={reactFlowWrapper} style={{ flex: 1, position: 'relative' }}>
-            {/* Connection helper overlay */}
-            {isConnecting && !readOnly && (
-              <div style={{
-                position: 'absolute',
-                top: 10,
-                // left: '50%',
-                // transform: 'translateX(-50%)',
-                zIndex: 1000,
-                background: 'linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)',
-                color: 'white',
-                padding: '12px 24px',
-                borderRadius: '12px',
-                boxShadow: '0 8px 24px rgba(59, 130, 246, 0.4)',
-                fontSize: '14px',
-                fontWeight: 500,
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                animation: 'slideDown 0.3s ease-out',
-              }}>
-                <span style={{ fontSize: '18px' }}>🔗</span>
-                <span>Drag to a target node to connect • Press ESC to cancel</span>
-              </div>
-            )}
-
-            {/* Hint overlay for edge operations */}
-            {!readOnly && (
-              <div style={{
-                position: 'absolute',
-                bottom: 10,
-                // left: '50%',
-                // transform: 'translateX(-50%)',
-                zIndex: 1000,
-                background: 'rgba(15, 23, 42, 0.85)',
-                backdropFilter: 'blur(8px)',
-                color: 'white',
-                padding: '8px 16px',
-                borderRadius: '8px',
-                fontSize: '12px',
-                fontWeight: 400,
-                display: 'flex',
-                alignItems: 'center',
-                gap: '16px',
-                boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
-              }}>
-                <span>💡 Click edge to select • Delete key or × button to remove</span>
-              </div>
-            )}
-
             {/* Control buttons moved to top right */}
             <div className="flow-controls" style={{ position: 'absolute', top: 10, right: 10, zIndex: 10, display: 'flex', gap: 8 }}>
               <Button
@@ -435,68 +386,68 @@ const FlowVisualizationInner: React.FC<FlowVisualizationProps> = ({
                 size="small"
               />
             </div>
-            <div className="FlowVisualization__flow-canvas-container" style={{ width: '100%', height: '100%' }}>
-              <ReactFlow
-                nodes={nodes.map(n => ({ ...n, data: { ...n.data, readOnly } }))}
-                edges={edges}
-                onNodesChange={onNodesChange}
-                onEdgesChange={(changes) => {
-                  onEdgesChange(changes);
-                  setHasChanges(true);
+            <ReactFlow
+              nodes={nodes.map(n => ({ ...n, data: { ...n.data, readOnly } }))}
+              edges={edges}
+              onNodesChange={onNodesChange}
+              onEdgesChange={(changes) => {
+                onEdgesChange(changes);
+                setHasChanges(true);
+              }}
+              onConnect={onConnect}
+              onConnectStart={onConnectStart}
+              onConnectEnd={onConnectEnd}
+              onDrop={onDrop}
+              onDragOver={onDragOver}
+              onDragLeave={onDragLeave}
+              onInit={(instance) => {
+                // Force viewport update after ReactFlow initializes
+                setTimeout(() => instance.fitView({ padding: 0.18 }), 100);
+              }}
+              nodeTypes={nodeTypes}
+              edgeTypes={edgeTypes}
+              defaultEdgeOptions={defaultEdgeOptions}
+              connectionMode={ConnectionMode.Strict}
+              connectionLineStyle={{
+                stroke: "#3b82f6",
+                strokeWidth: 2,
+                strokeDasharray: '8,4'
+              }}
+              connectionLineType={ConnectionLineType.SmoothStep}
+              connectionRadius={0}
+              snapToGrid={false}
+              snapGrid={[15, 15]}
+              deleteKeyCode="Delete"
+              multiSelectionKeyCode="Shift"
+              edgesReconnectable={!readOnly}
+              edgesFocusable={!readOnly}
+              elementsSelectable={!readOnly}
+              nodesConnectable={!readOnly}
+              nodesDraggable={!readOnly}
+              fitView
+              fitViewOptions={{ padding: 0.18 }}
+              attributionPosition="bottom-left"
+              className={isDraggingOver ? 'dragging-over' : ''}
+              key={`flow-${tasks.length}-${tasks.map((t) => `${t.id}-${t.type}`).join("-")}-${readOnly ? 'ro' : 'rw'}`}
+            >
+              <Controls />
+              <MiniMap
+                nodeColor="#3b82f6"
+                pannable
+                zoomable
+                style={{
+                  background: "white",
+                  border: "1px solid #e5e7eb",
+                  borderRadius: 8,
                 }}
-                onConnect={onConnect}
-                onConnectStart={onConnectStart}
-                onConnectEnd={onConnectEnd}
-                onDrop={onDrop}
-                onDragOver={onDragOver}
-                onDragLeave={onDragLeave}
-                nodeTypes={nodeTypes}
-                defaultEdgeOptions={defaultEdgeOptions}
-                connectionMode={ConnectionMode.Loose}
-                connectionLineStyle={{
-                  stroke: "#3b82f6",
-                  strokeWidth: 2,
-                  strokeDasharray: '8,4'
-                }}
-                connectionLineType={ConnectionLineType.SmoothStep}
-                connectionRadius={8}
-                snapToGrid={false}
-                snapGrid={[15, 15]}
-                deleteKeyCode="Delete"
-                multiSelectionKeyCode="Shift"
-                edgesReconnectable={!readOnly}
-                edgesFocusable={!readOnly}
-                elementsSelectable={!readOnly}
-                nodesConnectable={!readOnly}
-                nodesDraggable={!readOnly}
-                fitView
-                fitViewOptions={{ padding: 0.18 }}
-                attributionPosition="bottom-left"
-                className={isDraggingOver ? 'dragging-over' : ''}
-                key={`flow-${tasks.length}-${tasks.map((t) => `${t.id}-${t.type}`).join("-")}-${readOnly ? 'ro' : 'rw'}`}
-              >
-                <Controls />
-                <MiniMap
-                  nodeColor={(node) => {
-                    const type = (node.data as any)?.task?.type ?? 'workbook';
-                    return nodeMeta[type]?.color || '#8c8c8c';
-                  }}
-                  pannable
-                  zoomable
-                  style={{
-                    background: "white",
-                    border: "1px solid #e5e7eb",
-                    borderRadius: 8,
-                  }}
-                />
-                <Background
-                  variant={BackgroundVariant.Dots}
-                  gap={22}
-                  size={1}
-                  color="#eaeef5"
-                />
-              </ReactFlow>
-            </div>
+              />
+              <Background
+                variant={BackgroundVariant.Dots}
+                gap={22}
+                size={1}
+                color="#eaeef5"
+              />
+            </ReactFlow>
           </div>
         )}
       </div>
