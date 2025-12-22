@@ -17,6 +17,8 @@ logs/
 *.egg-info/
 .env.prod
 .env.local
+.env.*
+!.env.docker
 .secrets/
 node_modules/
 data/noetldb/
