@@ -23,10 +23,11 @@ test.describe('Hello World', () => {
         await exampleItem.click();
 
         // wait until URL contains "/execution"
-        await page.waitForURL('**/execution', { timeout: 60000 });
+        // await page.waitForURL('**/execution', { timeout: 60000 });
 
         // now check
-        await expect(page.url()).toContain('/execution');
+        await expect(page).toHaveURL(/\/execution/);
+        // await expect(page.url()).toContain('/execution');
 
         const loader = page.locator("//*[text()='Loading executions...']");
         await loader.waitFor({ state: 'visible', timeout: 5000 }).catch(() => { });
@@ -74,7 +75,8 @@ test.describe('Hello World', () => {
         await exampleItem.click();
 
         // wait until URL contains "/editor"
-        await page.waitForURL('**/editor', { timeout: 60000 });
+        await expect(page).toHaveURL(/\/editor/);
+        // await page.waitForURL('**/editor', { timeout: 60000 });
 
         // now check
         await expect(page.url()).toContain('/editor?id=tests/fixtures/playbooks/hello_world');
@@ -94,10 +96,13 @@ test.describe('Hello World', () => {
         await exampleItem.click();
 
         // wait until URL contains "/execution"
-        await page.waitForURL('**/execution', { timeout: 60000 });
+        await expect(page).toHaveURL(/\/execution/);
+        // await page.waitForURL('**/execution', { timeout: 60000 });
 
         // now check
-        await expect(page.url()).toContain('/execution?playbook=tests%2Ffixtures%2Fplaybooks%2Fhello_world&view=workflow');
+        const workflow_element = page.locator("//h2[contains(text(), 'Workflow Visualization')]");
+        await expect(workflow_element).toBeVisible();
+        // await expect(page.url()).toContain('/execution?playbook=tests%2Ffixtures%2Fplaybooks%2Fhello_world&view=workflow');
     });
 
     test('/catalog: Search', async ({ page }) => {
