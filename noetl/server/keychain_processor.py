@@ -325,7 +325,27 @@ async def _process_credential_ref(
     if not cred.get('data'):
         raise RuntimeError(f"KEYCHAIN_PROCESSOR: Credential '{ref_rendered}' has no data to cache")
 
-    return cred['data']
+    credential_type = cred.get('type', 'generic')
+    credential_data = cred['data']
+
+    # For Google OAuth credentials, generate access token from service account JSON
+    if credential_type in ['google_oauth', 'google_service_account', 'gcp']:
+        logger.info(f"KEYCHAIN_PROCESSOR: Generating OAuth access token for credential '{ref_rendered}' (type: {credential_type})")
+        try:
+            from noetl.database.core.auth.google_provider import GoogleTokenProvider
+            provider = GoogleTokenProvider(credential_data)
+            access_token = provider.fetch_token()  # Get access token
+            logger.info(f"KEYCHAIN_PROCESSOR: Successfully generated access token for '{ref_rendered}'")
+            return {
+                'access_token': access_token,
+                'token_type': 'Bearer'
+            }
+        except Exception as e:
+            logger.error(f"KEYCHAIN_PROCESSOR: Failed to generate access token for '{ref_rendered}': {e}", exc_info=True)
+            raise RuntimeError(f"KEYCHAIN_PROCESSOR: Failed to generate access token for '{ref_rendered}': {e}")
+    
+    # For other credential types, return data as-is
+    return credential_data
 
 
 async def _store_keychain_entry(

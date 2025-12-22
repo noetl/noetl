@@ -153,6 +153,17 @@ tasks:
             -H 'Content-Type: application/json' \
             --data-binary @tests/fixtures/credentials/google_oauth.json
         fi
+      - echo "\n=== Registering gcs_service_account credential ==="
+      - |
+        if command -v jq >/dev/null 2>&1; then
+          curl -sS -X POST "http://localhost:8082/api/credentials" \
+            -H 'Content-Type: application/json' \
+            --data-binary @tests/fixtures/credentials/gcs_service_account_noetl.json | jq -C .
+        else
+          curl -sS -X POST "http://localhost:8082/api/credentials" \
+            -H 'Content-Type: application/json' \
+            --data-binary @tests/fixtures/credentials/gcs_service_account_noetl.json
+        fi
       - echo "\n=== Test credentials registered successfully ==="
 
   test:k8s:register-playbooks:

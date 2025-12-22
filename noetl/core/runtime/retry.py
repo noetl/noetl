@@ -226,7 +226,13 @@ def _execute_with_pagination(
     collect_into = collect_config.get('into', 'pages')
     max_attempts = then_config.get('max_attempts', 100)
     next_call_config = then_config.get('next_call', {})
+    
+    # FIXED: Check for sink in both per_iteration AND directly in then block
     per_iteration_config = then_config.get('per_iteration', {})
+    if 'sink' in then_config and 'sink' not in per_iteration_config:
+        # Sink defined directly in then block - move to per_iteration for execution
+        per_iteration_config['sink'] = then_config['sink']
+        logger.info("Sink found in then block - will execute per pagination iteration")
     
     accumulated = None
     iteration = 0
