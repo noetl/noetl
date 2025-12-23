@@ -15,6 +15,7 @@ services:
       POSTGRES_SCHEMA: ${POSTGRES_SCHEMA}
       POSTGRES_DB: ${POSTGRES_DB}
       PGDATA: ${PGDATA}
+      NOETL_POSTGRES_DB: ${NOETL_POSTGRES_DB}
       NOETL_USER: ${NOETL_USER}
       NOETL_PASSWORD: ${NOETL_PASSWORD}
       NOETL_SCHEMA: ${NOETL_SCHEMA}
@@ -152,4 +153,3 @@ services:
       - GOOGLE_APPLICATION_CREDENTIALS=/home/jovyan/secrets/noetl-service-account.json
     networks:
       - noetl-network
-

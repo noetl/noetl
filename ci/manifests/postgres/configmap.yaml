@@ -9,6 +9,7 @@ data:
   POSTGRES_DB: demo_noetl
   POSTGRES_USER: demo
   POSTGRES_SCHEMA: public
+  NOETL_POSTGRES_DB: noetl
   NOETL_USER: noetl
   NOETL_SCHEMA: noetl
   PGDATA: /var/lib/postgresql/data/pgdata
