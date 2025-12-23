@@ -13,7 +13,7 @@ workload:
 keychain:
   - name: gcp_sa
     kind: credential  # Full service account JSON, not bearer token
-    scope: global
+    scope: local  # Execution-scoped (per-execution isolation)
     credential: gcs_service_account
 
 workflow:
@@ -45,7 +45,7 @@ workflow:
         namespace: noetl
         ttlSecondsAfterFinished: 300
         backoffLimit: 3
-        install_dependencies: [google-auth]  # For service account token generation
+        install_dependencies: [google-auth, requests]  # google-auth requires requests for token generation
         resources:
           requests:
             memory: "256Mi"
@@ -54,8 +54,8 @@ workflow:
             memory: "512Mi"
             cpu: "1000m"
         env:
-          # Service account JSON - double braces to escape server rendering
-          GCP_SERVICE_ACCOUNT_JSON: "{{{{ gcp_sa.service_account_json | tojson }}}}"
+          # Service account JSON from keychain - access nested field
+          GCP_SERVICE_ACCOUNT_JSON: "{{ keychain.gcp_sa.service_account_json | tojson }}"
           GCS_BUCKET: "{{ workload.output_bucket }}"
           GCP_PROJECT: noetl-demo-19700101
     next:

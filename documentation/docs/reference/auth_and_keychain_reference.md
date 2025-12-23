@@ -192,7 +192,7 @@ keychain:
   - name: amadeus_credentials
     kind: secret_manager
     provider: gcp
-    scope: catalog
+    scope: global
     auth: "{{ workload.gcp_auth }}"
     map:
       client_id: '{{ workload.amadeus_key_path }}'
@@ -222,7 +222,7 @@ Fetch secrets from external secret managers (GCP Secret Manager, AWS Secrets Man
 - name: api_credentials
   kind: secret_manager
   provider: gcp
-  scope: catalog
+  scope: global
   auth: "{{ workload.gcp_auth }}"
   map:
     username: 'projects/123/secrets/api-username/versions/latest'
@@ -304,13 +304,16 @@ workflow:
 
 ## Scope Types
 
-Keychain entries support three scope types that control access and lifetime.
+Keychain entries support three scope types that control access and lifetime:
+- **global**: Shared across all executions
+- **local**: Isolated to single execution (execution-scoped)
+- **shared**: Shared across execution tree (parent + children)
 
 ### 1. Global Scope
 
-**Access:** Available to ALL executions across ALL playbooks  
+**Access:** Available to ALL executions of the playbook  
 **Lifetime:** Until token expires (respects TTL)  
-**Use Case:** Shared service tokens, organization-wide API keys
+**Use Case:** Shared service tokens, API keys used across multiple executions
 
 ```yaml
 - name: shared_api_token
@@ -331,33 +334,13 @@ Keychain entries support three scope types that control access and lifetime.
 - Any execution of this playbook can access the token
 - Token is shared across all concurrent and future executions
 - One token refresh serves all executions
+- Most efficient for high-concurrency scenarios
 
-### 2. Catalog Scope
+### 2. Local Scope (Execution-Scoped)
 
-**Access:** Available to ALL executions of THIS specific playbook  
-**Lifetime:** Until token expires  
-**Use Case:** Playbook-specific credentials, catalog-level caching
-
-```yaml
-- name: catalog_credentials
-  kind: secret_manager
-  provider: gcp
-  scope: catalog
-  auth: "{{ workload.gcp_auth }}"
-```
-
-**Cache Key Format:** `{keychain_name}:{catalog_id}:catalog`
-
-**Behavior:**
-- Same as global within the catalog scope
-- Isolated from other playbooks/catalogs
-- Useful when different playbooks need different credentials for the same service
-
-### 3. Local Scope
-
-**Access:** Available ONLY to this execution and its child executions (sub-playbooks)  
+**Access:** Available ONLY to this specific execution (execution-scoped isolation)  
 **Lifetime:** Until execution completes OR token expires  
-**Use Case:** Execution-specific tokens, user session tokens, temporary credentials
+**Use Case:** Execution-specific tokens, user session tokens, temporary credentials, per-run isolation
 
 ```yaml
 - name: user_session
@@ -378,16 +361,28 @@ Keychain entries support three scope types that control access and lifetime.
 - Cache key: `user_session:518486534513754563:518508477736551392`
 
 **Access Pattern:**
-- Main execution: Full access
-- Child playbooks (via `tool: playbook`): Inherited access via `parent_execution_id`
-- Sibling executions: No access
-- Cleaned up when execution completes
+- Only the execution that created it can access
+- Child playbooks: NO access (use `shared` scope for inheritance)
+- Sibling executions: NO access
+- Concurrent executions: Isolated (each has its own)
+- Automatically cleaned up when execution completes
 
-### 4. Shared Scope
+**Note:** If you need child playbooks to access the keychain entry, use `scope: shared` instead.
 
-**Access:** Available to execution and its entire execution tree (parent + children)  
+### 3. Shared Scope (Execution Tree)
+
+**Access:** Available to entire execution tree (parent, children, grandchildren)  
 **Lifetime:** Until root execution completes OR token expires  
-**Use Case:** Multi-level playbook orchestration, parent-child shared state
+**Use Case:** Multi-level playbook orchestration, parent-child shared state, context passing
+
+**Execution Tree Example:**
+```
+Playbook A (execution_id: 123, creates shared keychain)
+  ├─ Playbook B (execution_id: 456, can access)
+  │   └─ Playbook C (execution_id: 789, can access)
+  └─ Playbook D (execution_id: 101, can access)
+```
+All executions in this tree can access the shared keychain entry created by Playbook A.
 
 ```yaml
 - name: shared_context
@@ -402,10 +397,16 @@ Keychain entries support three scope types that control access and lifetime.
 **Cache Key Format:** `{keychain_name}:{catalog_id}:shared:{execution_id}`
 
 **Access Pattern:**
-- Root execution creates the entry
-- All child playbooks can access
-- All grandchild playbooks can access
-- Entry is tagged with `parent_execution_id` for cleanup
+- Parent execution creates the entry (e.g., Playbook A)
+- All direct children can access (e.g., Playbook B, D)
+- All descendants can access (e.g., Playbook C)
+- Entry tagged with root `execution_id` for tree-wide access
+- Cleaned up when root execution completes
+
+**Use Cases:**
+- Passing authentication context through playbook call chain
+- Sharing initialization state across orchestration layers
+- Multi-step workflows where sub-playbooks need parent's credentials
 
 ### Scope Comparison Table
 
@@ -1109,7 +1110,7 @@ keychain:
   - name: amadeus_credentials
     kind: secret_manager
     provider: gcp
-    scope: catalog
+    scope: global
     auth: "{{ workload.gcp_auth }}"
     map:
       client_id: '{{ workload.amadeus_key_path }}'
@@ -1360,7 +1361,7 @@ workflow:
   
 - name: daily_batch_token
   kind: oauth2
-  scope: catalog
+  scope: global
   ttl_seconds: 86400  # 24 hours for daily jobs
 ```
 
