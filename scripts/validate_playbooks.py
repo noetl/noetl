@@ -19,13 +19,16 @@ from __future__ import annotations
 
 import sys
 import json
+import logging
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
+
+logger = logging.getLogger(__name__)
 
 try:
     import yaml  # type: ignore
 except Exception as e:
-    print("ERROR: PyYAML is required to run validator (pip install pyyaml)", file=sys.stderr)
+    logger.critical("ERROR: PyYAML is required to run validator (pip install pyyaml)")
     sys.exit(2)
 
 
@@ -115,18 +118,19 @@ def main() -> int:
             problems.append((str(fp), errs))
 
     if problems:
-        print("Playbook validation failed:\n")
-        for path, errs in problems:
-            print(f"- {path}")
+        logger.error("Playbook validation failed:\n")
+        for path, errs in problems.items():
+            logger.error(f"- {path}")
             for e in errs:
-                print(f"  * {e}")
-        print(f"\nTotal invalid playbooks: {len(problems)}")
+                logger.error(f"  * {e}")
+        logger.error(f"\nTotal invalid playbooks: {len(problems)}")
         return 1
     else:
-        print(f"OK: All playbooks under {root} pass iterator+metadata validation ({len(files)} files scanned).")
+        logger.info(f"OK: All playbooks under {root} pass iterator+metadata validation ({len(files)} files scanned).")
         return 0
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format='%(message)s')
     sys.exit(main())
 

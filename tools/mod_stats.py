@@ -6,6 +6,9 @@ Usage: python tools/mod_stats.py [N]
 
 import sys
 from pathlib import Path
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def main() -> None:
@@ -24,11 +27,12 @@ def main() -> None:
         except Exception:
             pass
     stats.sort(reverse=True)
-    print("lines, path")
+    logger.info("lines, path")
     for lines, p in stats[:topn]:
-        print(f"{lines}, {p}")
+        logger.info(f"{lines}, {p}")
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format='%(message)s')
     main()
 

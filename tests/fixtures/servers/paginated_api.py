@@ -8,6 +8,9 @@ from fastapi import FastAPI, Query
 import uvicorn
 import sys
 from collections import defaultdict
+import logging
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
@@ -217,12 +220,12 @@ def health():
 
 if __name__ == '__main__':
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 5555
-    print(f"Starting mock pagination API on port {port}")
-    print(f"Total items: {TOTAL_ITEMS}, Items per page: {ITEMS_PER_PAGE}")
-    print("\nAvailable endpoints:")
-    print("  GET /api/v1/assessments?page=N&pageSize=M  - Page number pagination")
-    print("  GET /api/v1/users?offset=N&limit=M         - Offset pagination")
-    print("  GET /api/v1/events?cursor=TOKEN&limit=M    - Cursor pagination")
-    print("  GET /api/v1/flaky?page=N&fail_on=2,3       - Retry testing")
-    print("  GET /health                                - Health check")
+    logger.info(f"Starting mock pagination API on port {port}")
+    logger.info(f"Total items: {TOTAL_ITEMS}, Items per page: {ITEMS_PER_PAGE}")
+    logger.info("\nAvailable endpoints:")
+    logger.info("  GET /api/v1/assessments?page=N&pageSize=M  - Page number pagination")
+    logger.info("  GET /api/v1/users?offset=N&limit=M         - Offset pagination")
+    logger.info("  GET /api/v1/events?cursor=TOKEN&limit=M    - Cursor pagination")
+    logger.info("  GET /api/v1/flaky?page=N&fail_on=2,3       - Retry testing")
+    logger.info("  GET /health                                - Health check")
     uvicorn.run(app, host='0.0.0.0', port=port, log_level='info')

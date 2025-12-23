@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 import json
+import logging
+
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO, format='%(message)s')
 
 # Read notebook
 with open('tests/fixtures/notebooks/regression_dashboard.ipynb', 'r') as f:
     nb = json.load(f)
 
 cells = nb['cells']
-print(f"Original cell count: {len(cells)}")
+logger.info(f"Original cell count: {len(cells)}")
 
 # Correct logical order
 ordered_cells = [
@@ -42,9 +46,9 @@ nb['cells'] = ordered_cells
 with open('tests/fixtures/notebooks/regression_dashboard.ipynb', 'w') as f:
     json.dump(nb, f, indent=1)
 
-print("✓ Notebook reordered successfully")
-print(f"Total cells: {len(ordered_cells)}")
-print("\nFirst 10 cells:")
+logger.info("✓ Notebook reordered successfully")
+logger.info(f"Total cells: {len(ordered_cells)}")
+logger.info("\nFirst 10 cells:")
 for i, cell in enumerate(ordered_cells[:10], 1):
     first_line = cell['source'][0][:60] if cell['source'] else ''
-    print(f"{i:2d}. {cell['cell_type']:8s} | {first_line}")
+    logger.info(f"{i:2d}. {cell['cell_type']:8s} | {first_line}")
