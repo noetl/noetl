@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.1.0](https://github.com/noetl/noetl/compare/v2.0.3...v2.1.0) (2025-12-23)
+
+### Features
+
+* apply latest keychain and playbook updates ([af77430](https://github.com/noetl/noetl/commit/af77430427ee67ad613dd2666fd54ef63026f4ce))
+
+### Bug Fixes
+
+* Trigger release ([b1230c3](https://github.com/noetl/noetl/commit/b1230c3944d3f27b7f5cb944ddf7655e000f96eb))
+* update .gitignore to include all environment files while excluding .env.docker ([dc3567f](https://github.com/noetl/noetl/commit/dc3567f70cdccb6802093d4a122bc0a90f349247))
+* update image source in README to use raw GitHub URL ([ba2e3ae](https://github.com/noetl/noetl/commit/ba2e3ae07eb1b294984e2c2f47f2442e9f3450c9))
+
 ## [2.0.3](https://github.com/noetl/noetl/compare/v2.0.2...v2.0.3) (2025-12-22)
 
 ### Bug Fixes
