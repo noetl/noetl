@@ -170,7 +170,7 @@ async def start_execution(req: StartExecutionRequest) -> StartExecutionResponse:
         nats_pub = await get_nats_publisher()
         
         # Server URL for worker API calls
-        server_url = os.getenv("SERVER_API_URL", "http://noetl.noetl.svc.cluster.local:8082")
+        server_url = os.getenv("NOETL_SERVER_URL", "http://noetl.noetl.svc.cluster.local:8082")
         
         # Emit command.issued events instead of queue table insertion
         command_events = []  # Store (event_id, command) for NATS publishing after commit
@@ -367,7 +367,7 @@ async def handle_event(req: EventRequest) -> EventResponse:
         nats_pub = await get_nats_publisher()
         
         # Server URL for worker API calls
-        server_url = os.getenv("SERVER_API_URL", "http://noetl.noetl.svc.cluster.local:8082")
+        server_url = os.getenv("NOETL_SERVER_URL", "http://noetl.noetl.svc.cluster.local:8082")
         
         # Emit command.issued events instead of queue table insertion
         command_events = []  # Store (event_id, command_id, command) for NATS publishing after commit

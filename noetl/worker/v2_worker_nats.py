@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 
 from noetl.core.logger import setup_logger
 from noetl.core.messaging import NATSCommandSubscriber
+from noetl.core.logging_context import LoggingContext
 
 logger = setup_logger(__name__, include_location=True)
 
@@ -100,37 +101,38 @@ class V2Worker:
         3. If claim succeeds, fetch command details and execute
         4. If claim fails, another worker got it - silently skip
         """
-        try:
-            execution_id = notification["execution_id"]
-            event_id = notification["event_id"]
-            command_id = notification["command_id"]
-            step = notification["step"]
-            server_url = notification["server_url"]
-            
-            logger.info(f"[EVENT] Worker {self.worker_id} received notification: exec={execution_id}, command={command_id}, step={step}")
-            
-            # Attempt to claim the command atomically
-            claimed = await self._claim_command(server_url, execution_id, command_id)
-            
-            if not claimed:
-                logger.info(f"[EVENT] Command {command_id} already claimed by another worker - skipping")
-                return
-            
-            logger.info(f"[EVENT] Worker {self.worker_id} claimed command {command_id}")
-            
-            # Fetch command details from command.issued event
-            command = await self._fetch_command_details(server_url, event_id)
-            
-            if not command:
-                logger.error(f"[EVENT] Failed to fetch command details for event_id={event_id}")
-                await self._emit_command_failed(server_url, execution_id, command_id, step, "Failed to fetch command details")
-                return
-            
-            # Execute the command
-            await self._execute_command(command, server_url, command_id)
-            
-        except Exception as e:
-            logger.exception(f"Error handling command notification: {e}")
+        with LoggingContext(logger, notification=notification):
+            try:
+                execution_id = notification["execution_id"]
+                event_id = notification["event_id"]
+                command_id = notification["command_id"]
+                step = notification["step"]
+                server_url = notification["server_url"]
+                
+                logger.info(f"[EVENT] Worker {self.worker_id} received notification: exec={execution_id}, command={command_id}, step={step}")
+                
+                # Attempt to claim the command atomically
+                claimed = await self._claim_command(server_url, execution_id, command_id)
+                
+                if not claimed:
+                    logger.info(f"[EVENT] Command {command_id} already claimed by another worker - skipping")
+                    return
+                
+                logger.info(f"[EVENT] Worker {self.worker_id} claimed command {command_id}")
+                
+                # Fetch command details from command.issued event
+                command = await self._fetch_command_details(server_url, event_id)
+                
+                if not command:
+                    logger.error(f"[EVENT] Failed to fetch command details for event_id={event_id}")
+                    await self._emit_command_failed(server_url, execution_id, command_id, step, "Failed to fetch command details")
+                    return
+                
+                # Execute the command
+                await self._execute_command(command, server_url, command_id)
+                
+            except Exception as e:
+                logger.exception(f"Error handling command notification: {e}")
     
     async def _claim_command(self, server_url: str, execution_id: int, command_id: str) -> bool:
         """
@@ -246,6 +248,163 @@ class V2Worker:
         )
         return None
     
+    async def _execute_case_sinks(
+        self,
+        tool_config: dict,
+        response: Any,
+        render_context: dict,
+        server_url: str,
+        execution_id: int,
+        step: str
+    ):
+        """
+        Execute sinks from case blocks immediately after tool execution.
+        
+        Evaluates case conditions against response and executes matching sinks.
+        Reports sink execution back to server via events.
+        """
+        import asyncio
+        from jinja2 import Environment
+        from noetl.tools.postgres import execute_postgres_task
+        
+        # Check if tool_config has case blocks
+        case_blocks = tool_config.get('case')
+        if not case_blocks or not isinstance(case_blocks, list):
+            return
+        
+        logger.info(f"[SINK] Checking {len(case_blocks)} case blocks for sinks")
+        
+        # Create Jinja environment for condition evaluation
+        jinja_env = Environment()
+        
+        # Build evaluation context with response
+        eval_context = {
+            **render_context,
+            'response': response,
+            'event': {'name': 'call.done'},  # Simulate call.done event
+            'error': response.get('error') if isinstance(response, dict) else None
+        }
+        
+        # Check each case block
+        for idx, case in enumerate(case_blocks):
+            if not isinstance(case, dict):
+                continue
+                
+            when_condition = case.get('when')
+            then_block = case.get('then')
+            
+            if not when_condition or not then_block or not isinstance(then_block, dict):
+                continue
+            
+            # Extract case components (order doesn't matter in YAML)
+            collect_config = then_block.get('collect')
+            sink_config = then_block.get('sink')
+            retry_config = then_block.get('retry')
+            
+            # Skip if no sink to execute (we only care about sinks here)
+            if not sink_config:
+                continue
+            
+            logger.info(f"[SINK] Case block {idx} has sink, evaluating condition: {when_condition}")
+            
+            # Evaluate condition
+            try:
+                template = jinja_env.from_string("{{ " + when_condition + " }}")
+                result = template.render(eval_context)
+                condition_met = result.lower() in ('true', '1', 'yes')
+                
+                logger.info(f"[SINK] Condition result: {result} -> {condition_met}")
+                
+                if not condition_met:
+                    continue
+                
+                # Condition met - execute in semantic order: collect → sink → retry
+                # Note: collect and retry are handled by server/engine, we only execute sink
+                
+                logger.info(f"[SINK] Executing sink for case {idx}")
+                
+                # Extract sink configuration
+                sink_tool = sink_config.get('tool', {})
+                sink_kind = sink_tool.get('kind', 'postgres')  # Default to postgres
+                sink_auth = sink_tool.get('auth')  # Auth is under tool: in YAML
+                
+                # Support multiple field names for SQL command: statement, command, cmds, query, sql
+                # These are also under tool: in the YAML structure
+                sink_command = (
+                    sink_tool.get('statement') or 
+                    sink_tool.get('command') or 
+                    sink_tool.get('cmds') or
+                    sink_tool.get('query') or
+                    sink_tool.get('sql')
+                )
+                
+                if not sink_command:
+                    logger.warning(f"[SINK] No command/statement in sink config, skipping")
+                    continue
+                
+                # Build sink task config with all supported field names
+                # Postgres plugin accepts: statement, query, sql, or command
+                sink_task_config = {
+                    'kind': sink_kind,
+                    'auth': sink_auth,
+                    'statement': sink_command,  # Primary field for postgres plugin
+                    'command': sink_command,     # Alternative
+                    'cmds': sink_command,        # Alternative
+                    'query': sink_command,       # Alternative
+                    'sql': sink_command,         # Alternative
+                    'name': f"{step}_sink_{idx}"
+                }
+                
+                logger.critical(f"[SINK] Sink task config: {sink_task_config}")
+                logger.critical(f"[SINK] Sink command value: {sink_command}")
+                logger.critical(f"[SINK] Config keys present: {list(sink_task_config.keys())}")
+                
+                # Execute sink (currently only postgres supported)
+                if sink_kind == 'postgres':
+                    loop = asyncio.get_running_loop()
+                    sink_result = await loop.run_in_executor(
+                        None,
+                        lambda: execute_postgres_task(
+                            sink_task_config,
+                            eval_context,
+                            jinja_env,
+                            {}
+                        )
+                    )
+                    
+                    logger.info(f"[SINK] Sink executed successfully: {sink_result}")
+                    
+                    # Report sink execution via event
+                    await self._emit_event(
+                        server_url,
+                        execution_id,
+                        step,
+                        "sink.executed",
+                        {
+                            "case_index": idx,
+                            "sink_type": sink_kind,
+                            "result": sink_result,
+                            "has_collect": collect_config is not None,
+                            "has_retry": retry_config is not None
+                        }
+                    )
+                else:
+                    logger.warning(f"[SINK] Unsupported sink type: {sink_kind}")
+                    
+            except Exception as e:
+                logger.error(f"[SINK] Error executing sink for case {idx}: {e}", exc_info=True)
+                # Report sink failure
+                await self._emit_event(
+                    server_url,
+                    execution_id,
+                    step,
+                    "sink.failed",
+                    {
+                        "case_index": idx,
+                        "error": str(e)
+                    }
+                )
+    
     async def _execute_command(self, command: dict, server_url: str, command_id: str = None):
         """Execute a command and emit events."""
         execution_id = command["execution_id"]
@@ -300,6 +459,21 @@ class V2Worker:
             
             # Execute tool
             response = await self._execute_tool(tool_kind, tool_config, args, step, render_context)
+            
+            logger.critical(f"[DEBUG] tool_config keys: {list(tool_config.keys())}")
+            logger.critical(f"[DEBUG] tool_config has 'case': {'case' in tool_config}")
+            if 'case' in tool_config:
+                logger.critical(f"[DEBUG] case blocks count: {len(tool_config['case'])}")
+            
+            # SINK EXECUTION: Check for case blocks with sinks and execute immediately
+            await self._execute_case_sinks(
+                tool_config,
+                response,
+                render_context,
+                server_url,
+                execution_id,
+                step
+            )
             
             # Check if tool returned error status
             tool_error = None
@@ -489,6 +663,7 @@ class V2Worker:
         from noetl.tools.snowflake import execute_snowflake_task
         from noetl.tools.transfer import execute_transfer_action
         from noetl.tools.transfer.snowflake_transfer import execute_snowflake_transfer_action
+        from noetl.tools.script import execute_script_task
         from noetl.core.secrets import execute_secrets_task
         from noetl.core.storage import execute_sink_task
         from noetl.core.workflow.workbook import execute_workbook_task
@@ -524,12 +699,18 @@ class V2Worker:
             # Combine config and args into single dict for scanning
             task_config_combined = {**config, **args}
             server_url = context.get('server_url', 'http://noetl.noetl.svc.cluster.local:8082')
+            
+            # Get refresh threshold from settings
+            from noetl.core.config import settings
+            refresh_threshold = getattr(settings, 'keychain_refresh_threshold', 300)
+            
             context = await populate_keychain_context(
                 task_config=task_config_combined,
                 context=context,
                 catalog_id=catalog_id,
                 execution_id=execution_id,
-                api_base_url=server_url
+                api_base_url=server_url,
+                refresh_threshold_seconds=refresh_threshold
             )
         
         from jinja2 import Environment, BaseLoader
@@ -566,21 +747,81 @@ class V2Worker:
             return result
             
         elif tool_kind == "http":
-            # Use plugin's execute_http_task which includes:
-            # - Auth resolution and credential caching
-            # - Pagination support
-            # - Template rendering
-            # - Response processing
-            task_with = args  # Plugin uses 'task_with' for rendered params
-            result = await execute_http_task(task_config, context, jinja_env, task_with)
-            # Check if plugin returned error status
-            if isinstance(result, dict) and result.get('status') == 'error':
-                # Keep error response intact (worker needs status field to detect error)
+            # Check if retry config has pagination/success-driven repeats (next_call or collect)
+            # If so, use execute_with_retry which handles per-iteration sinks
+            retry_config = config.get('retry') if isinstance(config, dict) else None
+            logger.critical(f"HTTP TOOL: config keys={list(config.keys()) if isinstance(config, dict) else 'not dict'}")
+            logger.critical(f"HTTP TOOL: has retry config={retry_config is not None}, type={type(retry_config)}")
+            has_pagination_retry = False
+            if isinstance(retry_config, list):
+                logger.critical(f"HTTP TOOL: retry_config is list with {len(retry_config)} policies")
+                for idx, policy in enumerate(retry_config):
+                    if isinstance(policy, dict) and 'then' in policy:
+                        then_block = policy['then']
+                        has_next_call = 'next_call' in then_block if isinstance(then_block, dict) else False
+                        has_collect = 'collect' in then_block if isinstance(then_block, dict) else False
+                        logger.critical(f"HTTP TOOL: policy[{idx}] has next_call={has_next_call}, has_collect={has_collect}")
+                        if isinstance(then_block, dict) and (has_next_call or has_collect):
+                            has_pagination_retry = True
+                            break
+            
+            logger.critical(f"HTTP TOOL: has_pagination_retry={has_pagination_retry}")
+            
+            if has_pagination_retry:
+                logger.info(f"HTTP tool with pagination retry - using execute_with_retry for per-iteration sink support")
+                # Use retry-aware executor which handles per-iteration sinks
+                from noetl.core.runtime.retry import execute_with_retry
+                
+                # Create executor function that wraps async execute_http_task
+                def http_executor(cfg, ctx, env, task_w):
+                    import asyncio
+                    try:
+                        loop = asyncio.get_running_loop()
+                    except RuntimeError:
+                        # No running loop - create one
+                        return asyncio.run(execute_http_task(cfg, ctx, env, task_w or {}))
+                    else:
+                        # Running in existing loop - run in executor to avoid blocking
+                        import concurrent.futures
+                        with concurrent.futures.ThreadPoolExecutor() as pool:
+                            future = pool.submit(
+                                lambda: asyncio.run(execute_http_task(cfg, ctx, env, task_w or {}))
+                            )
+                            return future.result()
+                
+                # Execute with retry handler (supports per-iteration sinks)
+                result = execute_with_retry(
+                    http_executor,
+                    task_config,
+                    step,
+                    context,
+                    jinja_env,
+                    args
+                )
+                
+                # Check if retry handler returned error status
+                if isinstance(result, dict) and result.get('status') == 'error':
+                    return result
+                # Normalize result
+                if isinstance(result, dict):
+                    return result.get('data', result)
                 return result
-            # Normalize result
-            if isinstance(result, dict):
-                return result.get('data', result)
-            return result
+            else:
+                # No pagination retry - use direct execution (original path)
+                # Use plugin's execute_http_task which includes:
+                # - Auth resolution and credential caching
+                # - Template rendering
+                # - Response processing
+                task_with = args  # Plugin uses 'task_with' for rendered params
+                result = await execute_http_task(task_config, context, jinja_env, task_with)
+                # Check if plugin returned error status
+                if isinstance(result, dict) and result.get('status') == 'error':
+                    # Keep error response intact (worker needs status field to detect error)
+                    return result
+                # Normalize result
+                if isinstance(result, dict):
+                    return result.get('data', result)
+                return result
             
         elif tool_kind == "postgres":
             # Use plugin's execute_postgres_task (sync function - run in executor)
@@ -640,6 +881,13 @@ class V2Worker:
             if isinstance(result, dict) and result.get('status') == 'error':
                 return result
             return result.get('data', result) if isinstance(result, dict) else result
+
+        elif tool_kind == "script":
+            # Execute script as Kubernetes job (async plugin)
+            result = await execute_script_task(task_config, context, jinja_env, args)
+            if isinstance(result, dict) and result.get('status') == 'error':
+                return result
+            return result
             
         elif tool_kind == "secrets":
             # Use plugin's execute_secrets_task (sync function - run in executor)
@@ -893,7 +1141,7 @@ class V2Worker:
             raise RuntimeError("HTTP client not initialized")
         
         # Get server URL from config or environment
-        server_url = os.getenv("SERVER_API_URL", "http://noetl.noetl.svc.cluster.local:8082")
+        server_url = os.getenv("NOETL_SERVER_URL", "http://noetl.noetl.svc.cluster.local:8082")
         
         # Get current execution_id to pass as parent
         parent_execution_id = getattr(self, '_current_execution_id', None)
@@ -1146,7 +1394,7 @@ def run_worker_v2_sync(
         
         # Get from environment or use defaults
         nats_url = os.getenv("NATS_URL", nats_url)
-        server_url = server_url or os.getenv("SERVER_API_URL", "http://noetl.noetl.svc.cluster.local:8082")
+        server_url = server_url or os.getenv("NOETL_SERVER_URL", "http://noetl.noetl.svc.cluster.local:8082")
         
         worker_id = f"worker-{uuid.uuid4().hex[:8]}"
         

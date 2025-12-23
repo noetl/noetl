@@ -61,7 +61,7 @@ workflow:
                 "result": result
             }
       args:
-        result: "{{ run_python_from_http.data }}"
+        result: "{{ run_python_from_http }}"
     
     case:
       - when: "{{ event.name == 'call.done' and response is defined }}"

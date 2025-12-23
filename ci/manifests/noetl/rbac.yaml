@@ -11,15 +11,30 @@ metadata:
   name: noetl-worker-role
   namespace: noetl
 rules:
+  # Jobs - for script tool execution
   - apiGroups: ["batch"]
     resources: ["jobs"]
     verbs: ["create", "get", "list", "watch", "delete"]
+  # Job status - for monitoring job execution
+  - apiGroups: ["batch"]
+    resources: ["jobs/status"]
+    verbs: ["get", "list", "watch"]
+  # Pods - for monitoring job execution
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get", "list", "watch"]
+  # Pod logs - for capturing script output
   - apiGroups: [""]
     resources: ["pods/log"]
     verbs: ["get", "list"]
+  # ConfigMaps - for mounting scripts into jobs
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["create", "get", "delete"]
+  # Secrets - for passing credentials to jobs
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create", "get", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
