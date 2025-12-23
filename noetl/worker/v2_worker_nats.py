@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 
 from noetl.core.logger import setup_logger
 from noetl.core.messaging import NATSCommandSubscriber
+from noetl.core.logging_context import LoggingContext
 
 logger = setup_logger(__name__, include_location=True)
 
@@ -100,37 +101,38 @@ class V2Worker:
         3. If claim succeeds, fetch command details and execute
         4. If claim fails, another worker got it - silently skip
         """
-        try:
-            execution_id = notification["execution_id"]
-            event_id = notification["event_id"]
-            command_id = notification["command_id"]
-            step = notification["step"]
-            server_url = notification["server_url"]
-            
-            logger.info(f"[EVENT] Worker {self.worker_id} received notification: exec={execution_id}, command={command_id}, step={step}")
-            
-            # Attempt to claim the command atomically
-            claimed = await self._claim_command(server_url, execution_id, command_id)
-            
-            if not claimed:
-                logger.info(f"[EVENT] Command {command_id} already claimed by another worker - skipping")
-                return
-            
-            logger.info(f"[EVENT] Worker {self.worker_id} claimed command {command_id}")
-            
-            # Fetch command details from command.issued event
-            command = await self._fetch_command_details(server_url, event_id)
-            
-            if not command:
-                logger.error(f"[EVENT] Failed to fetch command details for event_id={event_id}")
-                await self._emit_command_failed(server_url, execution_id, command_id, step, "Failed to fetch command details")
-                return
-            
-            # Execute the command
-            await self._execute_command(command, server_url, command_id)
-            
-        except Exception as e:
-            logger.exception(f"Error handling command notification: {e}")
+        with LoggingContext(logger, notification=notification):
+            try:
+                execution_id = notification["execution_id"]
+                event_id = notification["event_id"]
+                command_id = notification["command_id"]
+                step = notification["step"]
+                server_url = notification["server_url"]
+                
+                logger.info(f"[EVENT] Worker {self.worker_id} received notification: exec={execution_id}, command={command_id}, step={step}")
+                
+                # Attempt to claim the command atomically
+                claimed = await self._claim_command(server_url, execution_id, command_id)
+                
+                if not claimed:
+                    logger.info(f"[EVENT] Command {command_id} already claimed by another worker - skipping")
+                    return
+                
+                logger.info(f"[EVENT] Worker {self.worker_id} claimed command {command_id}")
+                
+                # Fetch command details from command.issued event
+                command = await self._fetch_command_details(server_url, event_id)
+                
+                if not command:
+                    logger.error(f"[EVENT] Failed to fetch command details for event_id={event_id}")
+                    await self._emit_command_failed(server_url, execution_id, command_id, step, "Failed to fetch command details")
+                    return
+                
+                # Execute the command
+                await self._execute_command(command, server_url, command_id)
+                
+            except Exception as e:
+                logger.exception(f"Error handling command notification: {e}")
     
     async def _claim_command(self, server_url: str, execution_id: int, command_id: str) -> bool:
         """

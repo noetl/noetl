@@ -294,27 +294,41 @@ class VictoriaLogsFormatter(logging.Formatter):
 class JSONFormatter(logging.Formatter):
     def format(self, record):
         log_dict = {
-            "level": record.levelname,
+            "severity": record.levelname,
             "message": record.msg,
-            "time": self.formatTime(record, self.datefmt),
+            "in_file": f"{record.pathname}:{record.lineno}",
+            # "timestamp": self.formatTime(record, self.datefmt),
+            # "timestamp": record["time"].strftime('%Y-%m-%d %H:%M:%S.%f %Z'),
         }
         if hasattr(record, "scope"):
             log_dict["scope"] = record.scope
-        if hasattr(record, "module") and hasattr(record, "funcName") and hasattr(record, "lineno"):
-            log_dict["location"] = {
-                "module": record.module,
-                "function": record.funcName,
-                "line": record.lineno,
-            }
+
+        STANDARD_LOG_FIELDS = {
+            "msg", "args", "levelname", "levelno", "pathname",
+            "filename", "module", "exc_info", "exc_text", "stack_info",
+            "lineno", "funcName", "created", "msecs", "relativeCreated",
+            "thread", "threadName", "process", "processName",
+            "scope", "name", "taskName",
+        }
+
+        extra_items = {}
+
+        for key, value in record.__dict__.items():
+            if key in STANDARD_LOG_FIELDS:
+                continue
+            formatted_value = stringify_extra(value)
+            extra_items[str(key)] = formatted_value
+        log_dict["_"] = extra_items
         if record.exc_info:
-            log_dict["exception"] = self.formatException(record.exc_info)
-        return json.dumps(log_dict, ensure_ascii=False)
+            log_dict["traceback"] = self.formatException(record.exc_info)
+        return json.dumps(log_dict, ensure_ascii=False, default=str)
 
 def setup_logger(name: str, include_location=False, use_json=False):
     logging.setLoggerClass(CustomLogger)
     logger = logging.getLogger(name)
     logger.addFilter(ContextFilter())
     use_json = os.getenv("NOETL_LOG_FORMAT", "").lower()
+    # use_json = "json"
     if not any(isinstance(h, logging.StreamHandler) for h in logger.handlers):
         if use_json == "victorialogs":
             stream_handler = VictoriaLogsHandler(
