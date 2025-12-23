@@ -178,6 +178,8 @@ class KeyValBuilder:
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format='%(message)s')
+    
     def check_keyval_builder():
         payload = (
             KeyVal.builder()
@@ -187,15 +189,15 @@ if __name__ == "__main__":
             .info({"created_by": "Maidu people"})
             .build()
         )
-        print("Account info:", payload.get_keys("account"))
-        print("User info:", payload.get_keys("user"))
-        print("User name:", payload.get_value("user.name"))
-        print("User age:", payload.get_value("user.age"))
-        print("Account active:", payload.get_value("account.active"))
-        print("Account info:", payload.get_value("account.info"))
-        print("Metadata info:", payload.get_value("info"))
-        print("Encoded payload:", payload.encode(["user.name", "user.age"]))
-        print("Decoded payload:", KeyVal.decode(payload.encode(["user.name", "user.age"])))
-        print("Encoded full payload:", payload.encode())
-        print("Metadata info:", payload.info)
+        logger.info("Account info: %s", payload.get_keys("account"))
+        logger.info("User info: %s", payload.get_keys("user"))
+        logger.info("User name: %s", payload.get_value("user.name"))
+        logger.info("User age: %s", payload.get_value("user.age"))
+        logger.info("Account active: %s", payload.get_value("account.active"))
+        logger.info("Account info: %s", payload.get_value("account.info"))
+        logger.info("Metadata info: %s", payload.get_value("info"))
+        logger.info("Encoded payload: %s", payload.encode(["user.name", "user.age"]))
+        logger.info("Decoded payload: %s", KeyVal.decode(payload.encode(["user.name", "user.age"])))
+        logger.info("Encoded full payload: %s", payload.encode())
+        logger.info("Metadata info: %s", payload.info)
     check_keyval_builder()

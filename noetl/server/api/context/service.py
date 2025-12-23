@@ -362,7 +362,7 @@ def render_template_object(
 
     from noetl.core.dsl.render import render_template
 
-    print(f"!!! RENDER_TEMPLATE_OBJECT CALLED: template type={type(template)}")
+    logger.debug(f"RENDER_TEMPLATE_OBJECT CALLED: template type={type(template)}")
     logger.info(
         f"RENDER_TEMPLATE_OBJECT: template type={type(template)}, isinstance dict={isinstance(template, dict)}"
     )

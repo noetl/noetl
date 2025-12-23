@@ -44,38 +44,31 @@ def start_worker_service(
     v2 workers poll the queue directly and emit events to the server.
     """
     import sys
-    sys.stderr.write(f"=== START_WORKER_SERVICE v2={v2} ===\n")
-    sys.stderr.flush()
+    logger.debug(f"START_WORKER_SERVICE v2={v2}")
     
     if v2:
-        sys.stderr.write("=== V2 BRANCH ENTERED ===\n")
-        sys.stderr.flush()
+        logger.debug("V2 BRANCH ENTERED")
         # Start v2 worker with NATS
         logger.info("Starting worker v2 (event-driven NATS architecture)")
         try:
-            sys.stderr.write("=== IMPORTING V2 WORKER ===\n")
-            sys.stderr.flush()
+            logger.debug("IMPORTING V2 WORKER")
             from noetl.worker.v2_worker_nats import run_worker_v2_sync
             
-            sys.stderr.write("=== GETTING SETTINGS ===\n")
-            sys.stderr.flush()
+            logger.debug("GETTING SETTINGS")
             # Worker v2 only needs NATS + server endpoints; skip full server env validation
             nats_url = os.environ.get("NATS_URL", "nats://noetl:noetl@localhost:30422")
             server_url = os.environ.get("NOETL_SERVER_URL", "http://localhost:8082").rstrip('/')
             if not server_url.endswith('/api'):
                 server_url = f"{server_url}/api"
             
-            sys.stderr.write(f"=== CALLING run_worker_v2_sync NATS={nats_url} ===\n")
-            sys.stderr.flush()
+            logger.debug(f"CALLING run_worker_v2_sync NATS={nats_url}")
             logger.info(f"Configuration: NATS={nats_url}, Server={server_url}")
             
             run_worker_v2_sync(nats_url=nats_url, server_url=server_url)
             
-            sys.stderr.write("=== run_worker_v2_sync RETURNED ===\n")
-            sys.stderr.flush()
+            logger.debug("run_worker_v2_sync RETURNED")
         except Exception as e:
-            sys.stderr.write(f"=== EXCEPTION: {e} ===\n")
-            sys.stderr.flush()
+            logger.error(f"EXCEPTION: {e}")
             logger.error(f"Failed to start V2 worker: {e}", exc_info=True)
             raise
         return

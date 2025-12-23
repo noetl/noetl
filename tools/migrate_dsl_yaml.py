@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 import sys
 import re
+import logging
 from pathlib import Path
 from typing import Any, Dict
 
 import yaml
+
+logger = logging.getLogger(__name__)
 
 
 def merge_data(dst: Dict[str, Any], src: Dict[str, Any]) -> Dict[str, Any]:
@@ -164,11 +167,11 @@ def main() -> int:
                 continue
             try:
                 if process_file(p):
-                    print(f"migrated: {p}")
+                    logger.info(f"migrated: {p}")
                     changed += 1
             except Exception as e:
-                print(f"WARN: failed migrating {p}: {e}")
-    print(f"Total migrated files: {changed}")
+                logger.info(f"WARN: failed migrating {p}: {e}")
+    logger.info(f"Total migrated files: {changed}")
     return 0
 
 

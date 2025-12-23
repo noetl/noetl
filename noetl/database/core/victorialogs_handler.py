@@ -99,7 +99,8 @@ class VictoriaLogsHandler(logging.Handler):
             except queue.Full:
                 self.logs_dropped += 1
                 if self.fallback_to_stderr:
-                    print(f"VictoriaLogs queue full, dropped log: {record.getMessage()}", file=os.sys.stderr)
+                    # Use standard logging to avoid circular dependency
+                    logging.getLogger(__name__).error(f"VictoriaLogs queue full, dropped log: {record.getMessage()}")
         except Exception as e:
             self.handleError(record)
     
@@ -201,7 +202,7 @@ class VictoriaLogsHandler(logging.Handler):
             except Exception as e:
                 # Don't let worker thread crash
                 if self.fallback_to_stderr:
-                    print(f"VictoriaLogs worker error: {e}", file=os.sys.stderr)
+                    logging.getLogger(__name__).error(f"VictoriaLogs worker error: {e}", exc_info=True)
     
     def _send_batch(self, batch: list) -> None:
         """
@@ -237,8 +238,8 @@ class VictoriaLogsHandler(logging.Handler):
                     # Final attempt failed
                     self.send_failures += 1
                     if self.fallback_to_stderr:
-                        print(f"VictoriaLogs send failed after {self.retry_attempts} attempts: {e}", file=os.sys.stderr)
-                        print(f"Failed to send {len(batch)} log entries", file=os.sys.stderr)
+                        logging.getLogger(__name__).error(f"VictoriaLogs send failed after {self.retry_attempts} attempts: {e}")
+                        logging.getLogger(__name__).error(f"Failed to send {len(batch)} log entries")
                 else:
                     # Wait before retry (exponential backoff)
                     time.sleep(0.1 * (2 ** attempt))

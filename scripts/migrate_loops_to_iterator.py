@@ -29,8 +29,11 @@ Guardrails:
 from __future__ import annotations
 
 import argparse
+import logging
 from pathlib import Path
 from typing import Any, Tuple
+
+logger = logging.getLogger(__name__)
 
 try:
     from ruamel.yaml import YAML
@@ -175,12 +178,13 @@ def main() -> int:
                 changed, msg = process_file(fp, apply)
                 if changed:
                     any_changed = True
-                print(msg)
+                logger.info(msg)
     if not any_changed:
-        print("No files required migration.")
+        logger.info("No files required migration.")
     return 0
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format='%(message)s')
     raise SystemExit(main())
 
