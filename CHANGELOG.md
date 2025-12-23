@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.1.2](https://github.com/noetl/noetl/compare/v2.1.1...v2.1.2) (2025-12-23)
+
+### Bug Fixes
+
+* update environment variable for server URL to NOETL_SERVER_URL ([ef58d04](https://github.com/noetl/noetl/commit/ef58d04fbeed52a860119bbed3732f5546e90e17))
+
 ## [2.1.1](https://github.com/noetl/noetl/compare/v2.1.0...v2.1.1) (2025-12-23)
 
 ### Bug Fixes
