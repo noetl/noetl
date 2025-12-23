@@ -78,9 +78,28 @@ def fetch_from_gcs(
                     elif 'type' in credential_data and credential_data.get('type') == 'authorized_user':
                         oauth_user_info = credential_data
                         logger.debug(f"Using OAuth user credentials from '{credential}'")
+                    # service_account_json field (NoETL credential format)
+                    elif 'service_account_json' in credential_data:
+                        sa_data = credential_data['service_account_json']
+                        # Handle both string and dict formats
+                        if isinstance(sa_data, str):
+                            import json
+                            service_account_info = json.loads(sa_data)
+                        else:
+                            service_account_info = sa_data
+                        logger.debug(f"Using service account from service_account_json field in '{credential}'")
                     # Nested data structure (credential wrapped in 'data' field)
                     elif 'data' in credential_data and isinstance(credential_data['data'], dict):
-                        if credential_data['data'].get('type') == 'service_account':
+                        # Check for service_account_json in nested data
+                        if 'service_account_json' in credential_data['data']:
+                            sa_data = credential_data['data']['service_account_json']
+                            if isinstance(sa_data, str):
+                                import json
+                                service_account_info = json.loads(sa_data)
+                            else:
+                                service_account_info = sa_data
+                            logger.debug(f"Using service account from nested service_account_json in '{credential}'")
+                        elif credential_data['data'].get('type') == 'service_account':
                             service_account_info = credential_data['data']
                             logger.debug(f"Using service account credentials (nested) from '{credential}'")
                         elif credential_data['data'].get('type') == 'authorized_user':

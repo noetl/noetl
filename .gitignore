@@ -17,6 +17,8 @@ logs/
 *.egg-info/
 .env.prod
 .env.local
+.env.*
+!.env.docker
 .secrets/
 node_modules/
 data/noetldb/
@@ -45,6 +47,9 @@ env/
 /status.json
 /tests/fixtures/credentials/gcs_hmac_local.json
 /tests/fixtures/credentials/sf_test.json
+/tests/fixtures/credentials/gcs_service_account.json
+/tests/fixtures/credentials/gcs_service_account_*.json
+/tests/fixtures/credentials/google_pcc_*.json
 
 # Ignore local credential overrides (keep only templates in git)
 /tests/fixtures/credentials/*_local.json
@@ -75,3 +80,5 @@ ci/kind/cache
 
 # VS Code workspace files (local developer settings)
 bhs-state-program-analytics.code-workspace
+noetl_playbooks
+.gitmodules

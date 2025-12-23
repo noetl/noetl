@@ -1019,43 +1019,39 @@ class ControlFlowEngine:
         try:
             # Import TransientVars for storage
             from noetl.worker.transient import TransientVars
-            from jinja2 import BaseLoader, Environment
-            
+
             # Build context for template rendering
             # The 'result' key points to the step's output for current step vars extraction
             eval_ctx = state.get_render_context(event)
-            
-            # Render each variable template
-            env = Environment(loader=BaseLoader())
+
             rendered_vars = {}
-            
+
             for var_name, var_template in vars_block.items():
                 try:
                     if isinstance(var_template, str):
-                        template = env.from_string(var_template)
-                        rendered_value = template.render(eval_ctx)
-                        
+                        rendered_value = self._render_template(var_template, eval_ctx)
+
                         # Try to parse as JSON if it looks like JSON
-                        if rendered_value.strip().startswith(("{", "[")):
+                        if isinstance(rendered_value, str) and rendered_value.strip().startswith(("{", "[")):
                             try:
                                 import json
                                 rendered_value = json.loads(rendered_value)
-                            except:
-                                pass  # Keep as string
+                            except Exception:
+                                pass  # Keep string if not valid JSON
                     else:
                         # Non-string values pass through
                         rendered_value = var_template
-                    
+
                     rendered_vars[var_name] = rendered_value
                     logger.info(f"[VARS] Rendered '{var_name}' = {rendered_value}")
                 except Exception as e:
                     logger.warning(f"[VARS] Failed to render '{var_name}': {e}")
                     continue
-            
+
             if not rendered_vars:
                 logger.debug(f"[VARS] No vars successfully rendered for step '{event.step}'")
                 return
-            
+
             # Store variables in transient table
             count = await TransientVars.set_multiple(
                 variables=rendered_vars,
@@ -1063,12 +1059,12 @@ class ControlFlowEngine:
                 var_type="step_result",
                 source_step=event.step
             )
-            
+
             # Also add to state.variables for immediate template access
             state.variables.update(rendered_vars)
-            
+
             logger.info(f"[VARS] Stored {count} variables from step '{event.step}'")
-            
+
         except Exception as e:
             logger.exception(f"[VARS] Error processing vars block for step '{event.step}': {e}")
     
@@ -1643,6 +1639,10 @@ class ControlFlowEngine:
                     execution_id=int(execution_id),
                     workload_vars=state.variables
                 )
+                if keychain_data:
+                    # Expose keychain entries directly and under 'keychain' namespace for rendering
+                    state.variables.update(keychain_data)
+                    state.variables.setdefault("keychain", {}).update(keychain_data)
                 logger.info(f"ENGINE: Keychain processing complete, created {len(keychain_data)} entries")
             except Exception as e:
                 logger.error(f"ENGINE: Failed to process keychain section: {e}")
