@@ -67,3 +67,5 @@ ENV NOETL_ENABLE_UI=false
 # - Set NOETL_RUN_MODE=worker and NOETL_PLAYBOOK_PATH for worker mode
 # - Set NOETL_RUN_MODE=cli for CLI mode
 CMD ["python", "-m", "noetl.main", "server", "start", "--host", "0.0.0.0", "--port", "8080"]
+
+# ===
