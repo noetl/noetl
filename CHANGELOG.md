@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.1.1](https://github.com/noetl/noetl/compare/v2.1.0...v2.1.1) (2025-12-23)
+
+### Bug Fixes
+
+* enhance logging in V2Worker with context management and improved JSON formatting ([4337fd9](https://github.com/noetl/noetl/commit/4337fd9f0586ae20c62b1d7fbb480ba52a246c41))
+
 ## [2.1.0](https://github.com/noetl/noetl/compare/v2.0.3...v2.1.0) (2025-12-23)
 
 ### Features
