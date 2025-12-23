@@ -69,6 +69,10 @@ async def execute_script_task(
     catalog_id = context.get('catalog_id')
     if catalog_id:
         server_url = context.get('server_url', 'http://noetl.noetl.svc.cluster.local:8082')
+        logger.critical(f"SCRIPT: About to populate keychain with task_config keys: {list(task_config.keys())}")
+        logger.critical(f"SCRIPT: task_config.job keys: {list(task_config.get('job', {}).keys())}")
+        logger.critical(f"SCRIPT: task_config.job.env: {task_config.get('job', {}).get('env', {})}")
+        
         context = await populate_keychain_context(
             task_config=task_config,
             context=context,
@@ -76,14 +80,15 @@ async def execute_script_task(
             execution_id=execution_id,
             api_base_url=server_url
         )
-        logger.info(f"SCRIPT: Keychain context populated: {list(context.get('keychain', {}).keys())}")
+        logger.critical(f"SCRIPT: Keychain context populated: {list(context.get('keychain', {}).keys())}")
         
         # Flatten keychain entries to top-level context for Jinja2 template access
         # This allows {{ gcp_sa.field }} instead of {{ keychain.gcp_sa.field }}
         keychain_data = context.get('keychain', {})
         for key, value in keychain_data.items():
             context[key] = value
-        logger.info(f"SCRIPT: Flattened {len(keychain_data)} keychain entries to top-level context")
+            logger.critical(f"SCRIPT: Flattened keychain entry '{key}' with keys: {list(value.keys()) if isinstance(value, dict) else type(value)}")
+        logger.critical(f"SCRIPT: Flattened {len(keychain_data)} keychain entries to top-level context")
     else:
         logger.warning("SCRIPT: No catalog_id in context, skipping keychain resolution")
     
@@ -139,6 +144,14 @@ async def execute_script_task(
         data={"script.py": script_content}
     )
     
+    # Delete existing ConfigMap if it exists (idempotent for retries)
+    try:
+        core_v1.delete_namespaced_config_map(name=configmap_name, namespace=namespace)
+        logger.info(f"Deleted existing ConfigMap: {configmap_name}")
+    except ApiException as e:
+        if e.status != 404:
+            logger.warning(f"Failed to delete ConfigMap (non-404): {e}")
+    
     try:
         core_v1.create_namespaced_config_map(namespace=namespace, body=configmap)
         logger.info(f"Created ConfigMap: {configmap_name}")
@@ -162,6 +175,14 @@ async def execute_script_task(
             metadata=client.V1ObjectMeta(name=secret_name, namespace=namespace),
             string_data=secret_data  # K8s will base64 encode automatically
         )
+        
+        # Delete existing Secret if it exists (idempotent for retries)
+        try:
+            core_v1.delete_namespaced_secret(name=secret_name, namespace=namespace)
+            logger.info(f"Deleted existing Secret: {secret_name}")
+        except ApiException as e:
+            if e.status != 404:
+                logger.warning(f"Failed to delete Secret (non-404): {e}")
         
         try:
             core_v1.create_namespaced_secret(namespace=namespace, body=secret)
@@ -217,12 +238,18 @@ async def execute_script_task(
                 name="script-volume",
                 mount_path="/scripts"
             )
-        ],
-        resources=client.V1ResourceRequirements(
-            requests=resources.get('requests', {}),
-            limits=resources.get('limits', {})
-        )
+        ]
     )
+    
+    # Only add resources if they are defined to avoid empty dict serialization issues
+    if resources:
+        requests = resources.get('requests')
+        limits = resources.get('limits')
+        if requests or limits:
+            container.resources = client.V1ResourceRequirements(
+                requests=requests if requests else None,
+                limits=limits if limits else None
+            )
     
     template = client.V1PodTemplateSpec(
         metadata=client.V1ObjectMeta(labels={"job": job_name}),
@@ -246,6 +273,18 @@ async def execute_script_task(
             ttl_seconds_after_finished=ttl_seconds
         )
     )
+    
+    # Delete existing Job if it exists (idempotent for retries)
+    try:
+        batch_v1.delete_namespaced_job(
+            name=job_name, 
+            namespace=namespace,
+            propagation_policy='Foreground'  # Wait for pods to be deleted
+        )
+        logger.info(f"Deleted existing Job: {job_name}")
+    except ApiException as e:
+        if e.status != 404:
+            logger.warning(f"Failed to delete Job (non-404): {e}")
     
     try:
         batch_v1.create_namespaced_job(namespace=namespace, body=job)
@@ -301,9 +340,21 @@ async def execute_script_task(
     
     execution_time = time.time() - start_time
     
-    # Determine final status
+    # Determine final status - check both job status and pod exit code
     job_status = batch_v1.read_namespaced_job_status(name=job_name, namespace=namespace)
-    status = "completed" if job_status.status.succeeded else "failed"
+    
+    # Check pod exit code for actual script failure
+    exit_code = None
+    if pod_list.items:
+        pod = pod_list.items[0]
+        if pod.status.container_statuses:
+            container_status = pod.status.container_statuses[0]
+            if container_status.state.terminated:
+                exit_code = container_status.state.terminated.exit_code
+    
+    # Job is failed if K8s job failed OR pod exited with non-zero code
+    job_failed = job_status.status.failed or (exit_code is not None and exit_code != 0)
+    status = "failed" if job_failed else "completed"
     
     result = {
         "status": status,
@@ -314,10 +365,16 @@ async def execute_script_task(
         "output": pod_logs,
         "succeeded": job_status.status.succeeded or 0,
         "failed": job_status.status.failed or 0,
+        "exit_code": exit_code,
         "kubectl_logs": f"kubectl logs {pod_name} -n {namespace}" if pod_name else None,
         "kubectl_describe": f"kubectl describe job {job_name} -n {namespace}"
     }
     
-    logger.info(f"Script job {job_name} finished: {status} ({execution_time:.2f}s)")
+    if status == "failed":
+        error_msg = f"Script job {job_name} failed: exit_code={exit_code}, k8s_failed={job_status.status.failed}"
+        logger.error(error_msg)
+        raise RuntimeError(error_msg)
+    
+    logger.info(f"Script job {job_name} finished: {status} ({execution_time:.2f}s, exit_code={exit_code})")
     
     return result

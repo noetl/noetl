@@ -238,14 +238,18 @@ async def resolve_keychain_entries(
             try:
                 # Build API URL
                 url = f"{api_base_url}/api/keychain/{catalog_id}/{keychain_name}"
-                params = {}
-                if execution_id:
-                    params['execution_id'] = execution_id
                 
-                logger.debug(f"KEYCHAIN: Resolving '{keychain_name}' from {url}")
+                # Try global scope first (most keychains are global)
+                # Global: cache_key = {name}:{catalog_id}:global
+                # Local: cache_key = {name}:{catalog_id}:{execution_id}
+                params = {'scope_type': 'global'}
+                
+                print(f"[KEYCHAIN-RESOLVE] Calling {url} with params {params}")
+                logger.info(f"KEYCHAIN: Resolving '{keychain_name}' from {url} (scope=global)")
                 
                 # Call keychain API
                 response = await client.get(url, params=params)
+                print(f"[KEYCHAIN-RESOLVE] Response status: {response.status_code}, body: {response.text[:500]}")
                 
                 if response.status_code == 200:
                     result = response.json()
@@ -340,7 +344,20 @@ async def resolve_keychain_entries(
                             logger.warning(f"KEYCHAIN: Auto-renewal not configured for '{keychain_name}'")
                             resolved[keychain_name] = {}
                     elif result.get('status') == 'not_found':
-                        logger.warning(f"KEYCHAIN: Entry '{keychain_name}' not found")
+                        # Try local scope as fallback if execution_id available
+                        if execution_id:
+                            logger.info(f"KEYCHAIN: '{keychain_name}' not found in global scope, trying local")
+                            local_params = {'scope_type': 'local', 'execution_id': execution_id}
+                            local_response = await client.get(url, params=local_params)
+                            
+                            if local_response.status_code == 200:
+                                local_result = local_response.json()
+                                if local_result.get('status') == 'success' and local_result.get('token_data'):
+                                    resolved[keychain_name] = local_result['token_data']
+                                    logger.info(f"KEYCHAIN: Resolved '{keychain_name}' from local scope")
+                                    continue
+                        
+                        logger.warning(f"KEYCHAIN: Entry '{keychain_name}' not found in any scope")
                         resolved[keychain_name] = {}
                     else:
                         logger.error(f"KEYCHAIN: Unexpected status for '{keychain_name}': {result.get('status')}")
@@ -393,6 +410,8 @@ async def populate_keychain_context(
         logger.debug("KEYCHAIN: No keychain references found in task config")
         return context
     
+    print(f"[KEYCHAIN-WORKER] Found {len(keychain_refs)} keychain references: {keychain_refs}")
+    print(f"[KEYCHAIN-WORKER] catalog_id={catalog_id}, execution_id={execution_id}, api_base_url={api_base_url}")
     logger.info(f"KEYCHAIN: Found {len(keychain_refs)} keychain references: {keychain_refs}")
     
     # Resolve keychain entries with proactive refresh
@@ -403,6 +422,9 @@ async def populate_keychain_context(
         api_base_url=api_base_url,
         refresh_threshold_seconds=refresh_threshold_seconds
     )
+    
+    print(f"[KEYCHAIN-WORKER] Resolved keychain_data keys: {list(keychain_data.keys())}")
+    print(f"[KEYCHAIN-WORKER] Resolved data: {keychain_data}")
     
     # Add to context
     context['keychain'] = keychain_data

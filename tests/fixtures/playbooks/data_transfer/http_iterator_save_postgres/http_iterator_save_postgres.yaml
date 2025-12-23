@@ -129,7 +129,7 @@ workflow:
     tool:
       kind: python
       args:
-        verify_results: "{{ vars.verify_results | tojson }}"
+        verify_results: "{{ vars.verify_results }}"
       code: |
         def main(verify_results):
             """Validate that all expected cities have data saved."""
