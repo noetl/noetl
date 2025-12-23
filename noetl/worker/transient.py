@@ -52,7 +52,7 @@ class TransientVars:
     @staticmethod
     def _get_server_url() -> str:
         """Get server URL for API calls."""
-        return os.getenv("SERVER_API_URL", "http://noetl.noetl.svc.cluster.local:8082")
+        return os.getenv("NOETL_SERVER_URL", "http://noetl.noetl.svc.cluster.local:8082")
 
     @staticmethod
     async def get_cached(

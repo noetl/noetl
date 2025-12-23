@@ -1141,7 +1141,7 @@ class V2Worker:
             raise RuntimeError("HTTP client not initialized")
         
         # Get server URL from config or environment
-        server_url = os.getenv("SERVER_API_URL", "http://noetl.noetl.svc.cluster.local:8082")
+        server_url = os.getenv("NOETL_SERVER_URL", "http://noetl.noetl.svc.cluster.local:8082")
         
         # Get current execution_id to pass as parent
         parent_execution_id = getattr(self, '_current_execution_id', None)
@@ -1394,7 +1394,7 @@ def run_worker_v2_sync(
         
         # Get from environment or use defaults
         nats_url = os.getenv("NATS_URL", nats_url)
-        server_url = server_url or os.getenv("SERVER_API_URL", "http://noetl.noetl.svc.cluster.local:8082")
+        server_url = server_url or os.getenv("NOETL_SERVER_URL", "http://noetl.noetl.svc.cluster.local:8082")
         
         worker_id = f"worker-{uuid.uuid4().hex[:8]}"
         

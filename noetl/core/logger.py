@@ -316,8 +316,7 @@ class JSONFormatter(logging.Formatter):
         for key, value in record.__dict__.items():
             if key in STANDARD_LOG_FIELDS:
                 continue
-            formatted_value = stringify_extra(value)
-            extra_items[str(key)] = formatted_value
+            extra_items[str(key)] = value
         log_dict["_"] = extra_items
         if record.exc_info:
             log_dict["traceback"] = self.formatException(record.exc_info)
