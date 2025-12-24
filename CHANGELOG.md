@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.1.4](https://github.com/noetl/noetl/compare/v2.1.3...v2.1.4) (2025-12-24)
+
+### Bug Fixes
+
+* Enhance logging in NATS command subscriber and worker for better error handling ([f8423eb](https://github.com/noetl/noetl/commit/f8423eb26bf0fce4246bca1d82af27ff84bb5403))
+
+## [2.1.3](https://github.com/noetl/noetl/compare/v2.1.2...v2.1.3) (2025-12-24)
+
+### Bug Fixes
+
+* Replace all print statements with logger ([0eb560e](https://github.com/noetl/noetl/commit/0eb560edc7a500564f255fac939b735ffe2f8b2b))
+
 ## [2.1.2](https://github.com/noetl/noetl/compare/v2.1.1...v2.1.2) (2025-12-23)
 
 ### Bug Fixes

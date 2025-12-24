@@ -62,18 +62,15 @@ class V2Worker:
             consumer_name=settings.nats_consumer
         )
         
-        print(f"Worker {self.worker_id} starting...", flush=True)
-        print(f"NATS URL: {self.nats_url}", flush=True)
         logger.info(f"Worker {self.worker_id} starting...")
         logger.info(f"NATS URL: {self.nats_url}")
         
         # Connect to NATS
-        print("Connecting to NATS...", flush=True)
+        logger.info("Connecting to NATS...")
         await self._nats_subscriber.connect()
-        print("Connected to NATS", flush=True)
+        logger.info("Connected to NATS")
         
         # Subscribe to command notifications (this should never return)
-        print("Subscribing to command notifications...", flush=True)
         logger.info(f"Subscribing to command notifications...")
         await self._nats_subscriber.subscribe(self._handle_command_notification)
     
@@ -101,7 +98,7 @@ class V2Worker:
         3. If claim succeeds, fetch command details and execute
         4. If claim fails, another worker got it - silently skip
         """
-        with LoggingContext(logger, notification=notification):
+        with LoggingContext(logger, notification=notification, execution_id = notification.get("execution_id")):
             try:
                 execution_id = notification["execution_id"]
                 event_id = notification["event_id"]
@@ -1382,13 +1379,9 @@ def run_worker_v2_sync(
     import uuid
     import sys
     
-    # Write to stderr BEFORE any other imports that might redirect stdout
-    sys.stderr.write("=== WORKER ENTRY POINT ===\n")
-    sys.stderr.flush()
-    
-    print("=== V2 Worker Starting ===", flush=True)
-    sys.stdout.flush()
-    sys.stderr.flush()
+    # Log worker entry point
+    logger.info("=== WORKER ENTRY POINT ===")
+    logger.info("=== V2 Worker Starting ===")
     
     try:
         
@@ -1403,10 +1396,6 @@ def run_worker_v2_sync(
             f.write(f"NATS URL: {nats_url}\n")
             f.write(f"Server URL: {server_url}\n")
             f.flush()
-        
-        print(f"Worker ID: {worker_id}", flush=True)
-        print(f"NATS URL: {nats_url}", flush=True)
-        print(f"Server URL: {server_url}", flush=True)
         
         logger.info(f"Starting V2 worker with ID: {worker_id}")
         logger.info(f"NATS URL: {nats_url}")
@@ -1426,7 +1415,6 @@ def run_worker_v2_sync(
         with open("/tmp/worker_interrupt.txt", "w") as f:
             f.write(f"Interrupted at {datetime.now()}\n")
             f.flush()
-        print("Worker interrupted by user", flush=True)
         logger.info("Worker interrupted by user")
         sys.exit(0)
     except Exception as e:
@@ -1436,8 +1424,5 @@ def run_worker_v2_sync(
             f.write(traceback.format_exc())
             f.flush()
         
-        print(f"Worker failed: {e}", flush=True)
         logger.error(f"Worker failed to start: {e}", exc_info=True)
-        import traceback
-        traceback.print_exc()
         sys.exit(1)

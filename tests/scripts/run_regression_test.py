@@ -3,11 +3,14 @@
 import requests
 import time
 import sys
+import logging
+
+logger = logging.getLogger(__name__)
 
 NOETL_SERVER = "http://localhost:8082"
 MASTER_TEST_PATH = "tests/fixtures/playbooks/regression_test/master_regression_test"
 
-print(f"Starting regression test at {NOETL_SERVER}...")
+logger.info(f"Starting regression test at {NOETL_SERVER}...")
 try:
     response = requests.post(
         f"{NOETL_SERVER}/api/execute",
@@ -19,15 +22,15 @@ try:
     result = response.json()
     execution_id = result["execution_id"]
     
-    print(f"✓ Test started: execution_id = {execution_id}")
-    print(f"  Status: {result['status']}")
-    print(f"\nWaiting 2 minutes for test execution...")
+    logger.info(f"✓ Test started: execution_id = {execution_id}")
+    logger.info(f"  Status: {result['status']}")
+    logger.info(f"\nWaiting 2 minutes for test execution...")
     
     # Wait for test to complete (52 playbooks take time)
     time.sleep(120)
     
     # Check status
-    print(f"\nChecking execution status...")
+    logger.info(f"\nChecking execution status...")
     query_response = requests.post(
         f"{NOETL_SERVER}/api/postgres/execute",
         json={
@@ -44,15 +47,15 @@ try:
     )
     
     stats = query_response.json()["result"][0]
-    print(f"  Steps completed: {stats[0]}")
-    print(f"  Total events: {stats[1]}")
-    print(f"  Failures: {stats[2]}")
+    logger.info(f"  Steps completed: {stats[0]}")
+    logger.info(f"  Total events: {stats[1]}")
+    logger.info(f"  Failures: {stats[2]}")
     
-    print(f"\n{'='*60}")
-    print(f"EXECUTION_ID = {execution_id}")
-    print(f"{'='*60}")
-    print(f"\nRun regression_dashboard.ipynb with this execution_id to see detailed results")
+    logger.info(f"\n{'='*60}")
+    logger.info(f"EXECUTION_ID = {execution_id}")
+    logger.info(f"{'='*60}")
+    logger.info(f"\nRun regression_dashboard.ipynb with this execution_id to see detailed results")
     
 except Exception as e:
-    print(f"✗ Error: {e}")
+    logger.info(f"✗ Error: {e}")
     sys.exit(1)
