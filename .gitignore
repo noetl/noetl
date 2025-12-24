@@ -80,6 +80,7 @@ ci/kind/cache
 
 # VS Code workspace files (local developer settings)
 bhs-state-program-analytics.code-workspace
-noetl_playbooks
-bhs-state-program-analytics/
+
+# Git submodules
 .gitmodules
+submodules/
