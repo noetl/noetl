@@ -9,13 +9,12 @@ import {
   addEdge,
   Node,
   Edge,
-  Connection,
   BackgroundVariant,
   useReactFlow,
   ReactFlowProvider,
   ConnectionMode,
   MarkerType,
-  ConnectionLineType,
+  type OnConnect,
 } from "@xyflow/react";
 import { Modal, Button, Spin, message, Select } from "antd";
 import {
@@ -75,7 +74,6 @@ const FlowVisualizationInner: React.FC<FlowVisualizationProps> = ({
   const [tasks, setTasks] = useState<EditableTaskNode[]>([]);
   const [hasChanges, setHasChanges] = useState(false);
   const [isDraggingOver, setIsDraggingOver] = useState(false);
-  const [isConnecting, setIsConnecting] = useState(false);
   const reactFlowInstance = useReactFlow();
   const { screenToFlowPosition } = reactFlowInstance;
   const [type] = useDnD();
@@ -89,44 +87,10 @@ const FlowVisualizationInner: React.FC<FlowVisualizationProps> = ({
     }
   }, [visible, reactFlowInstance]);
 
-  const onConnect = useCallback(
-    (params: Connection) => {
-      // Prevent self-connections
-      if (params.source === params.target) {
-        messageApi.warning('Cannot connect a node to itself');
-        return;
-      }
-
-      // Check for duplicate connections
-      const isDuplicate = edges.some(
-        edge => edge.source === params.source && edge.target === params.target
-      );
-
-      if (isDuplicate) {
-        messageApi.warning('Connection already exists');
-        return;
-      }
-
-      setEdges((eds) => addEdge({
-        ...params,
-        type: 'buttonedge',
-        markerEnd: { type: MarkerType.ArrowClosed },
-        style: { stroke: '#94a3b8', strokeWidth: 1.5 },
-      }, eds));
-      setHasChanges(true);
-      messageApi.success('Nodes connected');
-    },
-    [setEdges, edges, messageApi]
+  const onConnect: OnConnect = useCallback(
+    (params) => setEdges((eds) => addEdge(params, eds)),
+    [setEdges],
   );
-
-  // Connection start/end handlers for visual feedback
-  const onConnectStart = useCallback(() => {
-    setIsConnecting(true);
-  }, []);
-
-  const onConnectEnd = useCallback(() => {
-    setIsConnecting(false);
-  }, []);
 
   // Drag and drop handlers with visual feedback
   const onDragOver = useCallback((event: React.DragEvent) => {
@@ -268,34 +232,6 @@ const FlowVisualizationInner: React.FC<FlowVisualizationProps> = ({
         });
       });
 
-      // Create edges based on dependencies
-      tasks.forEach((task, index) => {
-        if (task.dependencies && task.dependencies.length > 0) {
-          task.dependencies.forEach((dep) => {
-            const sourceTask = tasks.find((t) => t.name === dep);
-            if (sourceTask) {
-              flowEdges.push({
-                id: `edge-${sourceTask.id}-${task.id}`,
-                source: sourceTask.id,
-                target: task.id,
-                type: 'buttonedge',
-                markerEnd: { type: MarkerType.ArrowClosed },
-                style: { stroke: '#94a3b8', strokeWidth: 1.5 },
-              });
-            }
-          });
-        } else if (index > 0) {
-          flowEdges.push({
-            id: `edge-${tasks[index - 1].id}-${task.id}`,
-            source: tasks[index - 1].id,
-            target: task.id,
-            type: 'buttonedge',
-            markerEnd: { type: MarkerType.ArrowClosed },
-            style: { stroke: '#94a3b8', strokeWidth: 1.5 },
-          });
-        }
-      });
-
       return { nodes: flowNodes, edges: flowEdges };
     },
     [handleEditTask, handleDeleteTask, readOnly]
@@ -331,8 +267,7 @@ const FlowVisualizationInner: React.FC<FlowVisualizationProps> = ({
       ];
 
       setTasks(demoTasks);
-      const { nodes: flowNodes, edges: flowEdges } =
-        createFlowFromTasks(demoTasks);
+      const { nodes: flowNodes, edges: flowEdges } = createFlowFromTasks(demoTasks);
       setNodes(flowNodes);
       setEdges(flowEdges);
     } finally {
@@ -347,12 +282,6 @@ const FlowVisualizationInner: React.FC<FlowVisualizationProps> = ({
   }, [visible, playbookId]);
 
   const handleFullscreen = () => setFullscreen((f) => !f);
-
-  const defaultEdgeOptions = {
-    type: "buttonedge" as const,
-    markerEnd: { type: MarkerType.ArrowClosed },
-    style: { stroke: "#94a3b8", strokeWidth: 1.5 },
-  };
 
   const flowInner = (
     <div className="FlowVisualization flow-layout-root" style={{ display: 'flex', height: fullscreen ? '100vh' : '600px' }}>
@@ -390,13 +319,8 @@ const FlowVisualizationInner: React.FC<FlowVisualizationProps> = ({
               nodes={nodes.map(n => ({ ...n, data: { ...n.data, readOnly } }))}
               edges={edges}
               onNodesChange={onNodesChange}
-              onEdgesChange={(changes) => {
-                onEdgesChange(changes);
-                setHasChanges(true);
-              }}
+              onEdgesChange={onEdgesChange}
               onConnect={onConnect}
-              onConnectStart={onConnectStart}
-              onConnectEnd={onConnectEnd}
               onDrop={onDrop}
               onDragOver={onDragOver}
               onDragLeave={onDragLeave}
@@ -406,24 +330,14 @@ const FlowVisualizationInner: React.FC<FlowVisualizationProps> = ({
               }}
               nodeTypes={nodeTypes}
               edgeTypes={edgeTypes}
-              defaultEdgeOptions={defaultEdgeOptions}
-              connectionMode={ConnectionMode.Strict}
-              connectionLineStyle={{
-                stroke: "#3b82f6",
-                strokeWidth: 2,
-                strokeDasharray: '8,4'
-              }}
-              connectionLineType={ConnectionLineType.SmoothStep}
-              connectionRadius={0}
               snapToGrid={false}
               snapGrid={[15, 15]}
-              deleteKeyCode="Delete"
-              multiSelectionKeyCode="Shift"
-              edgesReconnectable={!readOnly}
-              edgesFocusable={!readOnly}
               elementsSelectable={!readOnly}
               nodesConnectable={!readOnly}
               nodesDraggable={!readOnly}
+              connectionMode={ConnectionMode.Strict}
+              connectionRadius={20}
+              isValidConnection={(connection) => connection.source !== connection.target}
               fitView
               fitViewOptions={{ padding: 0.18 }}
               attributionPosition="bottom-left"

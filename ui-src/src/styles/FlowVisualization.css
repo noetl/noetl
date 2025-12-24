@@ -790,16 +790,6 @@
     /* flush */
 }
 
-/* Add left padding for canvas render area so nodes not hidden */
-.react-flow-wrapper .react-flow__renderer {
-    margin-left: 60px;
-}
-
-/* Controls shift accordingly */
-.react-flow-wrapper .react-flow__controls {
-    left: 66px !important;
-}
-
 /* Focus state subtle */
 .react-flow-wrapper:focus-within {
     border-color: #b7c2cc;
