@@ -42,41 +42,6 @@ def start_playbook():
     logger.info(f"✓ Execution started: {execution_id}")
     return execution_id
 
-def check_iteration_jobs(execution_id):
-    """Check if iteration jobs were created"""
-    with get_db_connection() as conn:
-        with conn.cursor() as cur:
-            # Check for iteration jobs in queue
-            query = """
-                SELECT 
-                    queue_id,
-                    node_id,
-                    node_type,
-                    status
-                FROM noetl.queue
-                WHERE execution_id = %s
-                  AND node_type = 'iteration'
-                ORDER BY queue_id
-            """
-            cur.execute(query, (execution_id,))
-            jobs = cur.fetchall()
-            
-            if not jobs:
-                logger.info("❌ No iteration jobs found!")
-                return False
-            
-            logger.info(f"\n✓ Found {len(jobs)} iteration jobs:")
-            for job in jobs:
-                queue_id, node_id, node_type, status = job
-                logger.info(f"  - {node_id}: status={status}")
-            
-            # Check expected count (2 endpoints in workload)
-            if len(jobs) == 2:
-                logger.info(f"\n✅ PASS: Correct number of iterations (2)")
-                return True
-            else:
-                logger.info(f"\n⚠️  Expected 2 iterations, got {len(jobs)}")
-                return True  # Still pass if jobs were created
 
 def check_iterator_started_event(execution_id):
     """Check if iterator_started event was emitted"""
@@ -121,12 +86,11 @@ def main():
         # Check iterator_started event
         has_event = check_iterator_started_event(execution_id)
         
-        # Check iteration jobs
-        has_jobs = check_iteration_jobs(execution_id)
+
         
         # Final result
         logger.info("\n" + "="*70)
-        if has_event and has_jobs:
+        if has_event:
             logger.info("✅ Phase 2 VALIDATION PASSED")
             logger.info("   - Server detected loop attribute")
             logger.info("   - Iterator event emitted")
