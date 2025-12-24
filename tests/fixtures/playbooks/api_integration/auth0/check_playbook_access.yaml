@@ -1,0 +1,252 @@
+apiVersion: noetl.io/v1
+kind: Playbook
+metadata:
+  name: check_playbook_access
+  path: api_integration/auth0/check_playbook_access
+  description: |
+    Check if user has permission to access a specific playbook.
+    
+    This playbook:
+    1. Validates user session
+    2. Retrieves user roles
+    3. Checks playbook permissions using auth.check_playbook_permission function
+    4. Returns permission decision (allow/deny) with details
+    5. Logs access check to audit log
+    
+    Input (workload):
+      - session_token: NoETL session token
+      - playbook_path: Path to playbook (e.g., data/etl/load_users)
+      - action: Action type (execute, view, modify) - default: execute
+    
+    Output:
+      - allowed: Boolean indicating if access is granted
+      - user: User details
+      - playbook_path: Requested playbook path
+      - action: Requested action
+      - matched_roles: Roles that grant access (if any)
+  tags:
+    - auth0
+    - authorization
+    - rbac
+    - permissions
+
+workload:
+  # Required: Session token from client
+  session_token: "{{ session_token }}"
+  
+  # Required: Playbook path to check access for
+  playbook_path: "{{ playbook_path }}"
+  
+  # Optional: Action type (default: execute)
+  action: "{{ action | default('execute') }}"
+  
+  # Client metadata for audit logging
+  client_ip: "{{ client_ip | default('0.0.0.0') }}"
+
+workflow:
+  - step: start
+    desc: Begin playbook access check
+    next:
+      - step: validate_session
+        args:
+          session_token: "{{ workload.session_token }}"
+
+  - step: validate_session
+    desc: Validate session and get user ID
+    tool: playbook
+    path: api_integration/auth0/auth0_validate_session
+    return_step: validation_success
+    args:
+      session_token: "{{ args.session_token }}"
+      validate_auth0: false
+      client_ip: "{{ workload.client_ip }}"
+    
+    vars:
+      session_valid: "{{ result.valid }}"
+      user_id: "{{ result.user.user_id }}"
+      user_email: "{{ result.user.email }}"
+      user_roles: "{{ result.user.roles }}"
+    
+    next:
+      - when: "{{ not vars.session_valid }}"
+        then:
+          - step: access_denied
+            args:
+              reason: "invalid_session"
+              message: "Session validation failed"
+      - when: "{{ vars.session_valid }}"
+        then:
+          - step: check_permission
+            args:
+              user_id: "{{ vars.user_id }}"
+              playbook_path: "{{ workload.playbook_path }}"
+              action: "{{ workload.action }}"
+
+  - step: check_permission
+    desc: Check if user has permission for playbook using database function
+    tool: postgres
+    auth:
+      type: postgres
+      credential: pg_auth_user
+    query: |
+      -- Use auth.check_playbook_permission function
+      SELECT 
+        auth.check_playbook_permission($1, $2, $3) as has_permission,
+        (
+          SELECT json_agg(json_build_object(
+            'role_name', r.role_name,
+            'permission_type', 
+              CASE 
+                WHEN pp.playbook_path = $2 THEN 'exact_match'
+                WHEN pp.allow_pattern IS NOT NULL AND $2 LIKE pp.allow_pattern THEN 'pattern_match'
+                ELSE 'no_match'
+              END,
+            'can_execute', pp.can_execute,
+            'can_view', pp.can_view,
+            'can_modify', pp.can_modify
+          ))
+          FROM auth.user_roles ur
+          JOIN auth.roles r ON ur.role_id = r.role_id
+          JOIN auth.playbook_permissions pp ON r.role_id = pp.role_id
+          WHERE ur.user_id = $1
+            AND (ur.expires_at IS NULL OR ur.expires_at > NOW())
+            AND (
+              pp.playbook_path = $2
+              OR (pp.allow_pattern IS NOT NULL AND $2 LIKE pp.allow_pattern)
+            )
+            AND (pp.deny_pattern IS NULL OR $2 NOT LIKE pp.deny_pattern)
+        ) as matched_permissions
+      FROM auth.users
+      WHERE user_id = $1;
+    parameters:
+      - "{{ args.user_id }}"
+      - "{{ args.playbook_path }}"
+      - "{{ args.action }}"
+    
+    vars:
+      has_permission: "{{ result[0].has_permission }}"
+      matched_permissions: "{{ result[0].matched_permissions }}"
+    
+    next:
+      - when: "{{ vars.has_permission }}"
+        then:
+          - step: access_granted
+            args:
+              user_id: "{{ args.user_id }}"
+              playbook_path: "{{ args.playbook_path }}"
+              action: "{{ args.action }}"
+              matched_permissions: "{{ vars.matched_permissions }}"
+      - when: "{{ not vars.has_permission }}"
+        then:
+          - step: access_denied
+            args:
+              user_id: "{{ args.user_id }}"
+              playbook_path: "{{ args.playbook_path }}"
+              action: "{{ args.action }}"
+              reason: "insufficient_permissions"
+              message: "User does not have {{ args.action }} permission for playbook {{ args.playbook_path }}"
+
+  - step: access_granted
+    desc: Return access granted response
+    tool: python
+    code: |
+      def main(user_id, playbook_path, action, matched_permissions, user_email, user_roles):
+          """Return access granted response."""
+          return {
+              "allowed": True,
+              "user": {
+                  "user_id": user_id,
+                  "email": user_email,
+                  "roles": user_roles
+              },
+              "playbook_path": playbook_path,
+              "action": action,
+              "matched_permissions": matched_permissions or [],
+              "message": f"Access granted to {action} playbook: {playbook_path}"
+          }
+    args:
+      user_id: "{{ args.user_id }}"
+      playbook_path: "{{ args.playbook_path }}"
+      action: "{{ args.action }}"
+      matched_permissions: "{{ args.matched_permissions }}"
+      user_email: "{{ vars.user_email }}"
+      user_roles: "{{ vars.user_roles }}"
+    
+    next:
+      - step: log_access_check
+        args:
+          user_id: "{{ args.user_id }}"
+          event_status: "allowed"
+          playbook_path: "{{ args.playbook_path }}"
+          action: "{{ args.action }}"
+
+  - step: access_denied
+    desc: Return access denied response
+    tool: python
+    code: |
+      def main(reason, message, **context):
+          """Return access denied response."""
+          return {
+              "allowed": False,
+              "reason": reason,
+              "message": message,
+              "playbook_path": context.get("playbook_path", "unknown"),
+              "action": context.get("action", "unknown"),
+              "user_id": context.get("user_id"),
+              "context": context
+          }
+    args:
+      reason: "{{ args.reason }}"
+      message: "{{ args.message }}"
+      context: "{{ args }}"
+    
+    next:
+      - step: log_access_check
+        args:
+          user_id: "{{ args.get('user_id', 0) }}"
+          event_status: "denied"
+          playbook_path: "{{ args.get('playbook_path', 'unknown') }}"
+          action: "{{ args.get('action', 'unknown') }}"
+          reason: "{{ args.reason }}"
+
+  - step: log_access_check
+    desc: Record access check in audit log
+    tool: postgres
+    auth:
+      type: postgres
+      credential: pg_auth_user
+    query: |
+      INSERT INTO auth.audit_log (
+        user_id,
+        event_type,
+        event_status,
+        resource_type,
+        resource_id,
+        event_details,
+        ip_address
+      )
+      VALUES (
+        NULLIF($1, 0),  -- NULL if user_id is 0
+        'permission_check',
+        $2,
+        'playbook',
+        $3,
+        jsonb_build_object(
+          'action', $4,
+          'reason', $5
+        ),
+        $6::inet
+      );
+    parameters:
+      - "{{ args.user_id }}"
+      - "{{ args.event_status }}"
+      - "{{ args.playbook_path }}"
+      - "{{ args.action }}"
+      - "{{ args.get('reason', 'permission_granted') }}"
+      - "{{ workload.client_ip }}"
+    
+    next:
+      - step: end
+
+  - step: end
+    desc: Complete access check workflow
