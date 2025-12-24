@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.2.1](https://github.com/noetl/noetl/compare/v2.2.0...v2.2.1) (2025-12-24)
+
+### Bug Fixes
+
+* remove .gitmodules file and associated submodule configurations ([538b49a](https://github.com/noetl/noetl/commit/538b49a8d3f05130fa97d6dca44fbc0d86c90305))
+
 ## [2.2.0](https://github.com/noetl/noetl/compare/v2.1.4...v2.2.0) (2025-12-24)
 
 ### Features
