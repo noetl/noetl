@@ -2,6 +2,9 @@
 import sys
 import subprocess
 from pathlib import Path
+import logging
+
+logger = logging.getLogger(__name__)
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "examples" / "test"
@@ -22,7 +25,7 @@ def is_playbook(path: Path) -> bool:
 
 def main() -> None:
     if not SRC.exists():
-        print(f"Source not found: {SRC}", file=sys.stderr)
+        logger.info(f"Source not found: {SRC}", file=sys.stderr)
         sys.exit(1)
 
     DST_PB.mkdir(parents=True, exist_ok=True)
@@ -44,12 +47,13 @@ def main() -> None:
         subprocess.run(["git", "mv", str(path), str(target)], check=True)
         moves.append((str(path), str(target)))
 
-    print("\nMoved files:")
+    logger.info("\nMoved files:")
     for src, dest in moves:
-        print(f" - {src} -> {dest}")
+        logger.info(f" - {src} -> {dest}")
     if not moves:
-        print("No files matched for migration.")
+        logger.info("No files matched for migration.")
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format='%(message)s')
     main()

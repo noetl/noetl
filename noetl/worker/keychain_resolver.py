@@ -244,12 +244,12 @@ async def resolve_keychain_entries(
                 # Local: cache_key = {name}:{catalog_id}:{execution_id}
                 params = {'scope_type': 'global'}
                 
-                print(f"[KEYCHAIN-RESOLVE] Calling {url} with params {params}")
+                logger.debug(f"[KEYCHAIN-RESOLVE] Calling {url} with params {params}")
                 logger.info(f"KEYCHAIN: Resolving '{keychain_name}' from {url} (scope=global)")
                 
                 # Call keychain API
                 response = await client.get(url, params=params)
-                print(f"[KEYCHAIN-RESOLVE] Response status: {response.status_code}, body: {response.text[:500]}")
+                logger.debug(f"[KEYCHAIN-RESOLVE] Response status: {response.status_code}, body: {response.text[:500]}")
                 
                 if response.status_code == 200:
                     result = response.json()
@@ -410,8 +410,8 @@ async def populate_keychain_context(
         logger.debug("KEYCHAIN: No keychain references found in task config")
         return context
     
-    print(f"[KEYCHAIN-WORKER] Found {len(keychain_refs)} keychain references: {keychain_refs}")
-    print(f"[KEYCHAIN-WORKER] catalog_id={catalog_id}, execution_id={execution_id}, api_base_url={api_base_url}")
+    logger.debug(f"[KEYCHAIN-WORKER] Found {len(keychain_refs)} keychain references: {keychain_refs}")
+    logger.debug(f"[KEYCHAIN-WORKER] catalog_id={catalog_id}, execution_id={execution_id}, api_base_url={api_base_url}")
     logger.info(f"KEYCHAIN: Found {len(keychain_refs)} keychain references: {keychain_refs}")
     
     # Resolve keychain entries with proactive refresh
@@ -423,8 +423,8 @@ async def populate_keychain_context(
         refresh_threshold_seconds=refresh_threshold_seconds
     )
     
-    print(f"[KEYCHAIN-WORKER] Resolved keychain_data keys: {list(keychain_data.keys())}")
-    print(f"[KEYCHAIN-WORKER] Resolved data: {keychain_data}")
+    logger.debug(f"[KEYCHAIN-WORKER] Resolved keychain_data keys: {list(keychain_data.keys())}")
+    logger.debug(f"[KEYCHAIN-WORKER] Resolved data: {keychain_data}")
     
     # Add to context
     context['keychain'] = keychain_data

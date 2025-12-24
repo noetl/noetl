@@ -26,13 +26,16 @@ import pandas as pd
 import sqlalchemy as sa
 from sqlalchemy import text
 import plotly.express as px
+import logging
+
+logger = logging.getLogger(__name__)
 
 try:
     from IPython.display import display
 except Exception:  # pragma: no cover - harmless outside IPython
     def display(*args, **kwargs):  # fallback
         for a in args:
-            print(a)
+            logger.info(a)
 
 #%% md
 ## Configuration
@@ -64,7 +67,7 @@ if cred_path.exists():
     try:
         cfg = json.loads(cred_path.read_text())
     except Exception as e:
-        print('Failed to read pg_local.json:', e)
+        logger.info('Failed to read pg_local.json:', e)
 
 host = os.getenv('PGHOST') or (cfg and cfg.get('data', {}).get('db_host')) or 'localhost'
 port = int(os.getenv('PGPORT') or (cfg and cfg.get('data', {}).get('db_port') or 54321))
@@ -75,7 +78,7 @@ database = os.getenv('PGDATABASE') or (cfg and cfg.get('data', {}).get('db_name'
 # If the detected host is the in-cluster DNS and you're running locally, you may want to override
 # to localhost:54321. Leave as-is when running inside the Kind JupyterLab.
 pg_dsn = f"postgresql+psycopg2://{user}:{password}@{host}:{port}/{database}"
-print('Primary DSN:', pg_dsn)
+logger.info('Primary DSN:', pg_dsn)
 
 # Attempt primary connection; on failure, fallback to localhost:54321 which is mapped by Kind.
 def create_engine_with_fallback(primary_dsn: str):
@@ -84,21 +87,21 @@ def create_engine_with_fallback(primary_dsn: str):
         with eng.connect() as conn:
             # simple check
             conn.execute(text('select 1'))
-        print('Connected with primary DSN')
+        logger.info('Connected with primary DSN')
         return eng
     except Exception as e:
-        print('Primary DSN failed, trying localhost fallback:', e)
+        logger.info('Primary DSN failed, trying localhost fallback:', e)
         fallback_dsn = f"postgresql+psycopg2://{user}:{password}@localhost:54321/{database}"
-        print('Fallback DSN:', fallback_dsn)
+        logger.info('Fallback DSN:', fallback_dsn)
         eng = sa.create_engine(fallback_dsn, pool_pre_ping=True, future=True)
         with eng.connect() as conn:
             conn.execute(text('select 1'))
-        print('Connected with fallback DSN')
+        logger.info('Connected with fallback DSN')
         return eng
 
 engine = create_engine_with_fallback(pg_dsn)
 with engine.connect() as conn:
-    print('DB time:', list(conn.execute(text('select now()')))[0][0])
+    logger.info('DB time:', list(conn.execute(text('select now()')))[0][0])
 
 #%% md
 ## Parameters
@@ -156,7 +159,7 @@ sql_overview = text(
 with engine.connect() as conn:
     df_overview = pd.read_sql(sql_overview, conn, params={'from_ts': lookback_from, 'path_substr': PLAYBOOK_PATH, 'lim': LIMIT})
 
-print('Recent runs:')
+logger.info('Recent runs:')
 display(df_overview.head(10))
 
 #%%
@@ -166,7 +169,7 @@ succ = int((df_overview['status'] == 'success').sum()) if total else 0
 fail = int((df_overview['status'] == 'error').sum()) if total else 0
 other = total - succ - fail
 median_dur = float(df_overview['duration'].median()) if total else None
-print({'total_runs': total, 'success': succ, 'error': fail, 'other': other, 'median_duration_sec': median_dur})
+logger.info({'total_runs': total, 'success': succ, 'error': fail, 'other': other, 'median_duration_sec': median_dur})
 
 #%%
 # Failures by step (top offenders)
@@ -257,7 +260,7 @@ if EXECUTION_ID is not None:
     display(df_tl.head(10))
 else:
     df_tl = pd.DataFrame()
-    print('No executions found in the selected window.')
+    logger.info('No executions found in the selected window.')
 
 #%%
 # Plot timeline (Gantt-like)
@@ -274,7 +277,7 @@ if not df_tl.empty:
     fig.update_layout(title=f'Execution timeline — {EXECUTION_ID}')
     fig.show()
 else:
-    print('No timeline data to plot.')
+    logger.info('No timeline data to plot.')
 
 #%%
 # Error details for the chosen run (latest error per step)
@@ -297,7 +300,7 @@ if EXECUTION_ID is not None:
         df_err = pd.read_sql(sql_err, conn, params={'exec_id': EXECUTION_ID})
     display(df_err)
 else:
-    print('No execution selected.')
+    logger.info('No execution selected.')
 
 #%% md
 ## Notes

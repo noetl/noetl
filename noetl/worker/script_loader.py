@@ -1,4 +1,7 @@
 """Script loading utilities for external code execution."""
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 async def load_script_content(script_config: dict) -> str:
@@ -32,8 +35,6 @@ async def load_script_content(script_config: dict) -> str:
 
 async def load_from_gcs(uri: str, source: dict) -> str:
     """Load script from Google Cloud Storage."""
-    import logging
-    logger = logging.getLogger(__name__)
     
     try:
         from google.cloud import storage
@@ -51,23 +52,23 @@ async def load_from_gcs(uri: str, source: dict) -> str:
         # Handle authentication
         client = None
         auth_key = source.get("auth")
-        print(f"[SCRIPT_LOADER] DEBUG: auth_key = {auth_key}", flush=True)
-        print(f"[SCRIPT_LOADER] DEBUG: source = {source}", flush=True)
+        logger.debug(f"[SCRIPT_LOADER] auth_key = {auth_key}")
+        logger.debug(f"[SCRIPT_LOADER] source = {source}")
         
         if auth_key:
             from noetl.worker.secrets import fetch_credential_by_key
             credential = fetch_credential_by_key(auth_key)
-            print(f"[SCRIPT_LOADER] DEBUG: credential fetched = {credential is not None}", flush=True)
+            logger.debug(f"[SCRIPT_LOADER] credential fetched = {credential is not None}")
             
             if not credential or not credential.get("data"):
                 raise ValueError(f"Failed to resolve GCS credential: {auth_key}")
             
             cred_data = credential.get("data", {})
-            print(f"[SCRIPT_LOADER] DEBUG: cred_data keys: {list(cred_data.keys())}", flush=True)
+            logger.debug(f"[SCRIPT_LOADER] cred_data keys: {list(cred_data.keys())}")
             
             # Support OAuth user credentials (refresh_token)
             if "refresh_token" in cred_data and "client_id" in cred_data:
-                print(f"[SCRIPT_LOADER] DEBUG: Using OAuth credentials", flush=True)
+                logger.debug(f"[SCRIPT_LOADER] Using OAuth credentials")
                 credentials = UserCredentials(
                     token=None,  # Will be refreshed
                     refresh_token=cred_data["refresh_token"],
@@ -78,11 +79,11 @@ async def load_from_gcs(uri: str, source: dict) -> str:
                 # Extract project from bucket URI or use a dummy project
                 # GCS doesn't require project for reading with valid credentials
                 client = storage.Client(credentials=credentials, project="noetl-gcs")
-                print(f"[SCRIPT_LOADER] DEBUG: Created storage client with OAuth", flush=True)
+                logger.debug(f"[SCRIPT_LOADER] Created storage client with OAuth")
             
             # Support service account JSON
             elif "service_account_json" in cred_data:
-                print(f"[SCRIPT_LOADER] DEBUG: Using service account credentials", flush=True)
+                logger.debug(f"[SCRIPT_LOADER] Using service account credentials")
                 import json
                 # Handle both string and dict formats
                 sa_data = cred_data["service_account_json"]
@@ -92,7 +93,7 @@ async def load_from_gcs(uri: str, source: dict) -> str:
                     sa_info = sa_data
                 credentials = service_account.Credentials.from_service_account_info(sa_info)
                 client = storage.Client(credentials=credentials, project=sa_info.get("project_id"))
-                print(f"[SCRIPT_LOADER] DEBUG: Created storage client with service account, project={sa_info.get('project_id')}", flush=True)
+                logger.debug(f"[SCRIPT_LOADER] Created storage client with service account, project={sa_info.get('project_id')}")
             
             # Use project ID with default credentials
             elif "project_id" in cred_data:

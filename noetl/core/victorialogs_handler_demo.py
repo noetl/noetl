@@ -13,11 +13,14 @@ import logging
 import time
 from noetl.core.victorialogs_handler import VictoriaLogsHandler, add_victorialogs_handler
 from noetl.core.logging_context import LoggingContext
+from noetl.core.logger import setup_logger
+
+logger = setup_logger(__name__)
 
 
 def demo_basic_usage():
     """Basic usage example."""
-    print("\n=== Basic Usage Demo ===\n")
+    logger.info("\n=== Basic Usage Demo ===\n")
     
     # Create logger
     logger = logging.getLogger("demo.basic")
@@ -42,7 +45,7 @@ def demo_basic_usage():
     
     # Check stats
     stats = handler.get_stats()
-    print(f"Stats: {stats}")
+    logger.info(f"Stats: {stats}")
     
     # Clean up
     handler.close()
@@ -50,7 +53,7 @@ def demo_basic_usage():
 
 def demo_with_context():
     """Demo with logging context."""
-    print("\n=== Logging Context Demo ===\n")
+    logger.info("\n=== Logging Context Demo ===\n")
     
     logger = logging.getLogger("demo.context")
     logger.setLevel(logging.DEBUG)
@@ -79,13 +82,13 @@ def demo_with_context():
         logger.info("Request completed")
     
     time.sleep(1.5)
-    print(f"Stats: {handler.get_stats()}")
+    logger.info(f"Stats: {handler.get_stats()}")
     handler.close()
 
 
 def demo_exception_logging():
     """Demo exception logging."""
-    print("\n=== Exception Logging Demo ===\n")
+    logger.info("\n=== Exception Logging Demo ===\n")
     
     logger = logging.getLogger("demo.exceptions")
     logger.setLevel(logging.DEBUG)
@@ -107,13 +110,13 @@ def demo_exception_logging():
         })
     
     time.sleep(1.0)
-    print(f"Stats: {handler.get_stats()}")
+    logger.info(f"Stats: {handler.get_stats()}")
     handler.close()
 
 
 def demo_high_volume():
     """Demo high volume logging."""
-    print("\n=== High Volume Demo ===\n")
+    logger.info("\n=== High Volume Demo ===\n")
     
     logger = logging.getLogger("demo.volume")
     logger.setLevel(logging.INFO)
@@ -141,16 +144,16 @@ def demo_high_volume():
     handler.flush()
     
     elapsed = time.time() - start_time
-    print(f"Logged {num_logs} messages in {elapsed:.2f} seconds")
-    print(f"Rate: {num_logs/elapsed:.0f} logs/sec")
-    print(f"Stats: {handler.get_stats()}")
+    logger.info(f"Logged {num_logs} messages in {elapsed:.2f} seconds")
+    logger.info(f"Rate: {num_logs/elapsed:.0f} logs/sec")
+    logger.info(f"Stats: {handler.get_stats()}")
     
     handler.close()
 
 
 def demo_multiple_handlers():
     """Demo using multiple handlers (console + VictoriaLogs)."""
-    print("\n=== Multiple Handlers Demo ===\n")
+    logger.info("\n=== Multiple Handlers Demo ===\n")
     
     logger = logging.getLogger("demo.multi")
     logger.setLevel(logging.DEBUG)
@@ -175,14 +178,14 @@ def demo_multiple_handlers():
     logger.warning("Warning message visible in both places")
     
     time.sleep(2.5)
-    print(f"\nVictoriaLogs Stats: {vl_handler.get_stats()}")
+    logger.info(f"\nVictoriaLogs Stats: {vl_handler.get_stats()}")
     
     vl_handler.close()
 
 
 def demo_custom_formatter():
     """Demo with custom formatter."""
-    print("\n=== Custom Formatter Demo ===\n")
+    logger.info("\n=== Custom Formatter Demo ===\n")
     
     logger = logging.getLogger("demo.formatter")
     logger.setLevel(logging.DEBUG)
@@ -208,16 +211,16 @@ def demo_custom_formatter():
     logger.debug("Debug with custom format")
     
     time.sleep(1.5)
-    print(f"Stats: {handler.get_stats()}")
+    logger.info(f"Stats: {handler.get_stats()}")
     handler.close()
 
 
 if __name__ == "__main__":
-    print("=" * 60)
-    print("VictoriaLogsHandler Demo")
-    print("=" * 60)
-    print("\nMake sure VictoriaLogs is running at http://localhost:9428")
-    print("You can start it with: docker run -p 9428:9428 victoriametrics/victoria-logs:latest")
+    logger.info("=" * 60)
+    logger.info("VictoriaLogsHandler Demo")
+    logger.info("=" * 60)
+    logger.info("\nMake sure VictoriaLogs is running at http://localhost:9428")
+    logger.info("You can start it with: docker run -p 9428:9428 victoriametrics/victoria-logs:latest")
     
     try:
         demo_basic_usage()
@@ -227,10 +230,10 @@ if __name__ == "__main__":
         demo_multiple_handlers()
         demo_custom_formatter()
         
-        print("\n" + "=" * 60)
-        print("All demos completed successfully!")
-        print("=" * 60)
+        logger.info("\n" + "=" * 60)
+        logger.info("All demos completed successfully!")
+        logger.info("=" * 60)
         
     except Exception as e:
-        print(f"\nError running demo: {e}")
-        print("Make sure VictoriaLogs is accessible at http://localhost:9428")
+        logger.error(f"\nError running demo: {e}")
+        logger.error("Make sure VictoriaLogs is accessible at http://localhost:9428")
