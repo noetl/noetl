@@ -98,7 +98,7 @@ class V2Worker:
         3. If claim succeeds, fetch command details and execute
         4. If claim fails, another worker got it - silently skip
         """
-        with LoggingContext(logger, notification=notification):
+        with LoggingContext(logger, notification=notification, execution_id = notification.get("execution_id")):
             try:
                 execution_id = notification["execution_id"]
                 event_id = notification["event_id"]

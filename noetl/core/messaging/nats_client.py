@@ -236,7 +236,6 @@ class NATSCommandSubscriber:
                 durable=self.consumer_name
             )
             
-            logger.info(f"Subscribed to {self.subject}")
             logger.info(f"Subscribed to {self.subject} with consumer {self.consumer_name}")
             
             # Start message fetch loop
@@ -244,15 +243,18 @@ class NATSCommandSubscriber:
             while True:
                 try:
                     messages = await self._subscription.fetch(batch=1, timeout=5)
-                    for msg in messages:
-                        await message_handler(msg)
                 except asyncio.TimeoutError:
-                    # No messages, continue polling
-                    logger.debug(".")  # Heartbeat
+                    # GPT do net add any logs to this line!!!
                     continue
                 except Exception as e:
-                    logger.error(f"Fetch error: {e}")
-                    logger.error(f"Error fetching messages: {e}")
+                    logger.error(f"Error fetching nats messages: {e}")
+                    await asyncio.sleep(1)
+
+                try:
+                    for msg in messages:
+                        await message_handler(msg)
+                except Exception as e:
+                    logger.exception(f"Error fetching nats messages: {e}")
                     await asyncio.sleep(1)
             
         except Exception as e:
