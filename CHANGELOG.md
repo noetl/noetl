@@ -173,7 +173,7 @@ All notable changes to this project will be documented in this file.
 * **container:** add container tool with authenticated remote file downloads ([fa8c1db](https://github.com/noetl/noetl/commit/fa8c1db48b21db7ff87c1126e99cc8ba36d67449))
 * enhance execute_playbook documentation and add execution status details ([740f522](https://github.com/noetl/noetl/commit/740f5220b7c01cdc1232c0107dfe39cd0ffd6256))
 * enhance GoogleTokenProvider for effective audience resolution and lazy imports for container execution ([ff8819c](https://github.com/noetl/noetl/commit/ff8819c87b2d5b78b11d5eaf92b5f9a50b25f1c6))
-* refactor noetl-gateway structure and update dependencies ([ac3d5e5](https://github.com/noetl/noetl/commit/ac3d5e5f7723101378f4086c78f79028b1e73168))
+* refactor gateway structure and update dependencies ([ac3d5e5](https://github.com/noetl/noetl/commit/ac3d5e5f7723101378f4086c78f79028b1e73168))
 
 ### Bug Fixes
 
@@ -196,7 +196,7 @@ All notable changes to this project will be documented in this file.
 * **container:** add container tool with authenticated remote file downloads ([fa8c1db](https://github.com/noetl/noetl/commit/fa8c1db48b21db7ff87c1126e99cc8ba36d67449))
 * enhance execute_playbook documentation and add execution status details ([740f522](https://github.com/noetl/noetl/commit/740f5220b7c01cdc1232c0107dfe39cd0ffd6256))
 * enhance GoogleTokenProvider for effective audience resolution and lazy imports for container execution ([ff8819c](https://github.com/noetl/noetl/commit/ff8819c87b2d5b78b11d5eaf92b5f9a50b25f1c6))
-* refactor noetl-gateway structure and update dependencies ([ac3d5e5](https://github.com/noetl/noetl/commit/ac3d5e5f7723101378f4086c78f79028b1e73168))
+* refactor gateway structure and update dependencies ([ac3d5e5](https://github.com/noetl/noetl/commit/ac3d5e5f7723101378f4086c78f79028b1e73168))
 
 ### Bug Fixes
 
@@ -218,7 +218,7 @@ All notable changes to this project will be documented in this file.
 * **container:** add container tool with authenticated remote file downloads ([fa8c1db](https://github.com/noetl/noetl/commit/fa8c1db48b21db7ff87c1126e99cc8ba36d67449))
 * enhance execute_playbook documentation and add execution status details ([740f522](https://github.com/noetl/noetl/commit/740f5220b7c01cdc1232c0107dfe39cd0ffd6256))
 * enhance GoogleTokenProvider for effective audience resolution and lazy imports for container execution ([ff8819c](https://github.com/noetl/noetl/commit/ff8819c87b2d5b78b11d5eaf92b5f9a50b25f1c6))
-* refactor noetl-gateway structure and update dependencies ([ac3d5e5](https://github.com/noetl/noetl/commit/ac3d5e5f7723101378f4086c78f79028b1e73168))
+* refactor gateway structure and update dependencies ([ac3d5e5](https://github.com/noetl/noetl/commit/ac3d5e5f7723101378f4086c78f79028b1e73168))
 
 ### Bug Fixes
 
@@ -236,7 +236,7 @@ All notable changes to this project will be documented in this file.
 * container secrets ([f6a1391](https://github.com/noetl/noetl/commit/f6a1391f3bb2437add043b48610dddd5625287ff))
 * **container:** add container tool with authenticated remote file downloads ([fa8c1db](https://github.com/noetl/noetl/commit/fa8c1db48b21db7ff87c1126e99cc8ba36d67449))
 * enhance GoogleTokenProvider for effective audience resolution and lazy imports for container execution ([ff8819c](https://github.com/noetl/noetl/commit/ff8819c87b2d5b78b11d5eaf92b5f9a50b25f1c6))
-* refactor noetl-gateway structure and update dependencies ([ac3d5e5](https://github.com/noetl/noetl/commit/ac3d5e5f7723101378f4086c78f79028b1e73168))
+* refactor gateway structure and update dependencies ([ac3d5e5](https://github.com/noetl/noetl/commit/ac3d5e5f7723101378f4086c78f79028b1e73168))
 
 ### Bug Fixes
 

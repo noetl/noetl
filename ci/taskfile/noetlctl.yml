@@ -1,0 +1,32 @@
+version: '3.45'
+
+tasks:
+  noetlctl:local:build:
+    desc: Build noetlctl binary and place it in the project bin/ directory
+    dir: noetlctl
+    cmds:
+      - cargo build --release
+      - mkdir -p ../bin
+      - cp target/release/noetlctl ../bin/
+    sources:
+      - src/**/*.rs
+      - Cargo.toml
+      - Cargo.lock
+    generates:
+      - ../bin/noetlctl
+
+  noetlctl:local:install:
+    desc: Install noetlctl binary to ~/.local/bin/
+    dir: noetlctl
+    cmds:
+      - cargo install --path . --root ~/.local/
+    preconditions:
+      - sh: command -v cargo
+        msg: "Cargo is not installed. Please install Rust and Cargo."
+
+  noetlctl:local:clean:
+    desc: Clean noetlctl build artifacts
+    dir: noetlctl
+    cmds:
+      - cargo clean
+      - rm -f ../bin/noetlctl

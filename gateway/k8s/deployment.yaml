@@ -1,0 +1,32 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway
+  labels:
+    app: gateway
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gateway
+  template:
+    metadata:
+      labels:
+        app: gateway
+    spec:
+      containers:
+        - name: router
+          image: gateway:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8090
+          env:
+            - name: ROUTER_PORT
+              value: "8090"
+            - name: NOETL_BASE_URL
+              value: "http://noetl-server.default.svc.cluster.local:8082"
+            - name: NATS_URL
+              value: "nats://nats.default.svc.cluster.local:4222"
+            - name: NATS_UPDATES_SUBJECT_PREFIX
+              value: "playbooks.executions."
