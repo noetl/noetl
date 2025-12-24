@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.2.0](https://github.com/noetl/noetl/compare/v2.1.4...v2.2.0) (2025-12-24)
+
+### Features
+
+* add Auth0 authentication and session management playbooks ([08f9ffd](https://github.com/noetl/noetl/commit/08f9ffdba893ec9eb218294cd03cf3ce35ebff6a))
+
+### Bug Fixes
+
+* remove .gitmodules file and associated submodule configurations ([4fa2af7](https://github.com/noetl/noetl/commit/4fa2af7a8c155d295a4db105cfca83150d03f85d))
+
 ## [2.1.4](https://github.com/noetl/noetl/compare/v2.1.3...v2.1.4) (2025-12-24)
 
 ### Bug Fixes
