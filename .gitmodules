@@ -1,0 +1,5 @@
+[submodule "noetl_playbooks"]
+	path = submodules/noetl_playbooks
+	url = git@github.com:cybrnx/noetl_playbooks.git
+[submodule "bhs-state-program-analytics"]
+	path = submodules/bhs-state-program-analytics
