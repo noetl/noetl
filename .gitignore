@@ -81,6 +81,6 @@ ci/kind/cache
 # VS Code workspace files (local developer settings)
 bhs-state-program-analytics.code-workspace
 
-# Git submodules
+# Local repositories (not tracked as submodules)
 .gitmodules
 submodules/

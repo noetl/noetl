@@ -1,49 +1,69 @@
 # Auth0 Integration Playbooks
 
-This directory contains playbooks for Auth0 authentication integration with gateway.
+This directory contains playbooks for Auth0 authentication integration with noetl-gateway.
 
 ## Quick Start
 
+Get up and running with Auth0 integration in 5 minutes:
+
 ```bash
-# 1. Provision database schema
-noetlctl register-credential -f tests/fixtures/credentials/pg_k8s.json
-noetlctl register-playbook -f tests/fixtures/playbooks/api_integration/auth0/provision_auth_schema.yaml
+# 1. Register admin credential for provisioning
+noetlctl register-credential --file tests/fixtures/credentials/pg_k8s.json
+
+# 2. Provision auth schema (creates tables, roles, permissions)
+noetlctl register-playbook --file tests/fixtures/playbooks/api_integration/auth0/provision_auth_schema.yaml
 noetlctl exec api_integration/auth0/provision_auth_schema
 
-# 2. Change auth_user password (REQUIRED for security)
+# 3. Change auth_user password (IMPORTANT: do this before next step!)
 psql -h localhost -p 54321 -U demo -d demo_noetl -c \
   "ALTER ROLE auth_user WITH PASSWORD 'your_secure_password_here';"
 
-# 3. Update and register auth_user credential
+# 4. Update and register auth_user credential
 # Edit tests/fixtures/credentials/pg_auth_user.json with new password
-noetlctl register-credential -f tests/fixtures/credentials/pg_auth_user.json
+noetlctl register-credential --file tests/fixtures/credentials/pg_auth_user.json
 
-# 4. Register authentication playbooks
-noetlctl register-playbook -f tests/fixtures/playbooks/api_integration/auth0/auth0_login.yaml
-noetlctl register-playbook -f tests/fixtures/playbooks/api_integration/auth0/auth0_validate_session.yaml
-noetlctl register-playbook -f tests/fixtures/playbooks/api_integration/auth0/check_playbook_access.yaml
+# 5. Register authentication playbooks
+noetlctl register-playbook --file tests/fixtures/playbooks/api_integration/auth0/auth0_login.yaml
+noetlctl register-playbook --file tests/fixtures/playbooks/api_integration/auth0/auth0_validate_session.yaml
+noetlctl register-playbook --file tests/fixtures/playbooks/api_integration/auth0/check_playbook_access.yaml
 
-# 5. Create test user (optional)
+# 6. Create a test user (optional - for testing without Auth0)
 psql -h localhost -p 54321 -U demo -d demo_noetl <<EOF
 INSERT INTO auth.users (auth0_id, email, display_name)
-VALUES ('auth0|test123', 'admin@test.noetl.io', 'Admin User')
+VALUES ('auth0|test123', 'test@example.com', 'Test User')
 RETURNING user_id;
--- Replace <user_id> below with returned value
+-- Save the user_id and use it below
+
 INSERT INTO auth.user_roles (user_id, role_id)
-SELECT <user_id>, role_id FROM auth.roles WHERE role_name = 'admin';
+SELECT 1, role_id FROM auth.roles WHERE role_name = 'admin';
 EOF
+
+# 7. Test the setup (see TESTING.md for comprehensive tests)
+noetlctl catalog list --filter "path like 'api_integration/auth0%'"
 ```
 
-See [TESTING.md](TESTING.md) for comprehensive testing guide.
+**What just happened?**
+- ✅ Created `auth` schema with 8 tables (users, roles, permissions, sessions, audit_log, etc.)
+- ✅ Created `auth_user` database role with appropriate permissions
+- ✅ Seeded 4 system roles: admin, developer, analyst, viewer
+- ✅ Seeded 12+ permissions with role mappings
+- ✅ Registered 4 authentication playbooks in catalog
+- ✅ Ready to test authentication flows (see [TESTING.md](TESTING.md))
+
+**Next Steps:**
+- Review [TESTING.md](TESTING.md) for comprehensive testing guide
+- Configure Auth0 application and callbacks
+- Integrate with noetl-gateway for production use
+- See detailed setup instructions below for production deployment
 
 ## Overview
 
-The Auth0 integration enables user authentication and authorization for the gateway, allowing clients to connect and execute playbooks based on their roles and permissions. All backend functionality is managed through playbooks.
+The Auth0 integration enables user authentication and authorization for the noetl-gateway, allowing clients to connect and execute playbooks based on their roles and permissions. All backend functionality is managed through playbooks.
 
 ## Architecture
 
 ```
-Client → gateway → Auth0 (authentication) → noetl-server (playbook execution)
+Client → noetl-gateway → Auth0 (authentication) → noetl-server (playbook execution)
                     ↓
               auth schema (user tracking, roles, playbook permissions)
 ```
@@ -132,7 +152,7 @@ noetlctl credential register -f tests/fixtures/credentials/pg_auth_user.json
 
 ### Step 3: Configure Auth0
 1. Create Auth0 application
-2. Configure callback URLs for gateway
+2. Configure callback URLs for noetl-gateway
 3. Set up API permissions
 4. Store Auth0 credentials in keychain
 
