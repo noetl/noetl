@@ -43,9 +43,11 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           file: docker/noetl/dev/Dockerfile
-          platforms: linux/amd64,linux/arm64
+          # platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64
           push: true
-          outputs: type=image,name=target,annotation-index.org.opencontainers.image.description=linux/amd64 linux/arm64 image
+          # outputs: type=image,name=target,annotation-index.org.opencontainers.image.description=linux/amd64 linux/arm64 image
+          outputs: type=image,name=target,annotation-index.org.opencontainers.image.description=linux/amd64 image
           tags: |
             ghcr.io/noetl/noetl:${{ env.IMAGE_TAG }}
             ghcr.io/noetl/noetl:latest
