@@ -52,7 +52,7 @@ data:
     CREATE SCHEMA IF NOT EXISTS ${NOETL_SCHEMA};
 
     -- Grant privileges to noetl user on database
-    GRANT ALL PRIVILEGES ON DATABASE ${NOETL_DB} TO ${NOETL_USER};
+    GRANT ALL PRIVILEGES ON DATABASE ${NOETL_POSTGRES_DB} TO ${NOETL_USER};
 
     -- Grant privileges to noetl user on schema
     GRANT ALL PRIVILEGES ON SCHEMA ${NOETL_SCHEMA} TO ${NOETL_USER};

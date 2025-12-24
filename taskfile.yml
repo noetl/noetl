@@ -58,6 +58,9 @@ includes:
     taskfile: ci/taskfile/test-server.yml
     dir: .
     flatten: false
+  noetlctl:
+    taskfile: ci/taskfile/noetlctl.yml
+    flatten: true
 
 tasks:
   default:

@@ -1,0 +1,336 @@
+apiVersion: noetl.io/v1
+kind: Playbook
+metadata:
+  name: auth0_validate_session
+  path: api_integration/auth0/auth0_validate_session
+  description: |
+    Validate NoETL session token and return user session details.
+    
+    This playbook:
+    1. Looks up session by session_token
+    2. Verifies session is active and not expired
+    3. Updates last_activity_at timestamp
+    4. Returns user and session information
+    5. Optionally checks Auth0 token validity
+    
+    Input (workload):
+      - session_token: NoETL session token from client
+      - validate_auth0: Whether to re-validate Auth0 token (default: false)
+    
+    Output:
+      - valid: Boolean indicating session validity
+      - user: User details (user_id, email, display_name, roles)
+      - session: Session metadata (created_at, expires_at, last_activity_at)
+  tags:
+    - auth0
+    - authentication
+    - session
+    - validation
+
+workload:
+  # Required: Session token from client request header
+  session_token: "{{ session_token }}"
+  
+  # Optional: Re-validate Auth0 token (default: false for performance)
+  validate_auth0: "{{ validate_auth0 | default(false) }}"
+  
+  # Client metadata for activity tracking
+  client_ip: "{{ client_ip | default('0.0.0.0') }}"
+
+workflow:
+  - step: start
+    desc: Begin session validation workflow
+    next:
+      - step: lookup_session
+        args:
+          session_token: "{{ workload.session_token }}"
+
+  - step: lookup_session
+    desc: Lookup session and verify it's active and not expired
+    tool: postgres
+    auth:
+      type: postgres
+      credential: pg_auth_user
+    query: |
+      SELECT 
+        s.session_id,
+        s.user_id,
+        s.session_token,
+        s.auth0_token,
+        s.created_at,
+        s.expires_at,
+        s.last_activity_at,
+        s.is_active,
+        u.auth0_id,
+        u.email,
+        u.display_name,
+        u.is_active as user_is_active,
+        CASE 
+          WHEN s.expires_at < NOW() THEN false
+          WHEN NOT s.is_active THEN false
+          WHEN NOT u.is_active THEN false
+          ELSE true
+        END as session_valid
+      FROM auth.sessions s
+      JOIN auth.users u ON s.user_id = u.user_id
+      WHERE s.session_token = $1;
+    parameters:
+      - "{{ args.session_token }}"
+    
+    vars:
+      session_found: "{{ result | length > 0 }}"
+      session_valid: "{{ result[0].session_valid if result | length > 0 else false }}"
+      session_id: "{{ result[0].session_id if result | length > 0 else 0 }}"
+      user_id: "{{ result[0].user_id if result | length > 0 else 0 }}"
+      auth0_token: "{{ result[0].auth0_token if result | length > 0 else '' }}"
+      email: "{{ result[0].email if result | length > 0 else '' }}"
+      display_name: "{{ result[0].display_name if result | length > 0 else '' }}"
+      expires_at: "{{ result[0].expires_at if result | length > 0 else '' }}"
+      last_activity: "{{ result[0].last_activity_at if result | length > 0 else '' }}"
+    
+    next:
+      - when: "{{ not vars.session_found }}"
+        then:
+          - step: validation_failed
+            args:
+              reason: "session_not_found"
+              message: "Session token not found"
+      - when: "{{ vars.session_found and not vars.session_valid }}"
+        then:
+          - step: validation_failed
+            args:
+              reason: "session_expired_or_inactive"
+              message: "Session is expired or inactive"
+              session_id: "{{ vars.session_id }}"
+      - when: "{{ vars.session_valid and workload.validate_auth0 }}"
+        then:
+          - step: validate_auth0_token
+            args:
+              auth0_token: "{{ vars.auth0_token }}"
+              session_id: "{{ vars.session_id }}"
+              user_id: "{{ vars.user_id }}"
+      - when: "{{ vars.session_valid }}"
+        then:
+          - step: update_activity
+            args:
+              session_id: "{{ vars.session_id }}"
+              user_id: "{{ vars.user_id }}"
+
+  - step: validate_auth0_token
+    desc: Optional Auth0 token validation
+    tool: http
+    url: "https://{{ workload.auth0_domain | default('your-tenant.auth0.com') }}/userinfo"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ args.auth0_token }}"
+    
+    next:
+      - when: "{{ result.status == 200 }}"
+        then:
+          - step: update_activity
+            args:
+              session_id: "{{ args.session_id }}"
+              user_id: "{{ args.user_id }}"
+      - when: "{{ result.status == 401 }}"
+        then:
+          - step: invalidate_session
+            args:
+              session_id: "{{ args.session_id }}"
+              user_id: "{{ args.user_id }}"
+              reason: "auth0_token_invalid"
+      - step: validation_failed
+        args:
+          reason: "auth0_validation_error"
+          message: "Failed to validate Auth0 token"
+          status_code: "{{ result.status }}"
+
+  - step: invalidate_session
+    desc: Mark session as inactive due to Auth0 token invalidity
+    tool: postgres
+    auth:
+      type: postgres
+      credential: pg_auth_user
+    query: |
+      UPDATE auth.sessions
+      SET is_active = false
+      WHERE session_id = $1;
+      
+      INSERT INTO auth.audit_log (
+        user_id,
+        session_id,
+        event_type,
+        event_status,
+        event_details
+      )
+      VALUES (
+        $2,
+        $1,
+        'session_invalidation',
+        'success',
+        jsonb_build_object('reason', $3)
+      );
+    parameters:
+      - "{{ args.session_id }}"
+      - "{{ args.user_id }}"
+      - "{{ args.reason }}"
+    
+    next:
+      - step: validation_failed
+        args:
+          reason: "{{ args.reason }}"
+          message: "Session invalidated due to invalid Auth0 token"
+
+  - step: update_activity
+    desc: Update last_activity_at timestamp for active session
+    tool: postgres
+    auth:
+      type: postgres
+      credential: pg_auth_user
+    query: |
+      UPDATE auth.sessions
+      SET last_activity_at = NOW()
+      WHERE session_id = $1
+      RETURNING last_activity_at;
+    parameters:
+      - "{{ args.session_id }}"
+    
+    vars:
+      activity_updated: "{{ result | length > 0 }}"
+    
+    next:
+      - step: get_user_roles
+        args:
+          user_id: "{{ args.user_id }}"
+
+  - step: get_user_roles
+    desc: Fetch user roles and permissions
+    tool: postgres
+    auth:
+      type: postgres
+      credential: pg_auth_user
+    query: |
+      SELECT 
+        r.role_name,
+        r.description,
+        array_agg(DISTINCT p.permission_name) as permissions
+      FROM auth.user_roles ur
+      JOIN auth.roles r ON ur.role_id = r.role_id
+      LEFT JOIN auth.role_permissions rp ON r.role_id = rp.role_id
+      LEFT JOIN auth.permissions p ON rp.permission_id = p.permission_id
+      WHERE ur.user_id = $1
+        AND (ur.expires_at IS NULL OR ur.expires_at > NOW())
+      GROUP BY r.role_id, r.role_name, r.description;
+    parameters:
+      - "{{ args.user_id }}"
+    
+    vars:
+      roles: "{{ result }}"
+    
+    next:
+      - step: validation_success
+
+  - step: validation_success
+    desc: Return valid session with user details
+    tool: python
+    code: |
+      def main(user_id, email, display_name, session_id, expires_at, last_activity, roles):
+          """Return session validation success response."""
+          return {
+              "valid": True,
+              "user": {
+                  "user_id": user_id,
+                  "email": email,
+                  "display_name": display_name,
+                  "roles": [r["role_name"] for r in roles],
+                  "permissions": list(set([perm for r in roles for perm in (r.get("permissions") or []) if perm]))
+              },
+              "session": {
+                  "session_id": session_id,
+                  "expires_at": expires_at,
+                  "last_activity_at": last_activity
+              },
+              "message": "Session is valid"
+          }
+    args:
+      user_id: "{{ vars.user_id }}"
+      email: "{{ vars.email }}"
+      display_name: "{{ vars.display_name }}"
+      session_id: "{{ vars.session_id }}"
+      expires_at: "{{ vars.expires_at }}"
+      last_activity: "{{ vars.last_activity }}"
+      roles: "{{ vars.roles }}"
+    
+    next:
+      - step: log_validation_success
+
+  - step: log_validation_success
+    desc: Record successful session validation
+    tool: postgres
+    auth:
+      type: postgres
+      credential: pg_auth_user
+    query: |
+      INSERT INTO auth.audit_log (
+        user_id,
+        session_id,
+        event_type,
+        event_status,
+        ip_address
+      )
+      VALUES ($1, $2, 'session_validation', 'success', $3::inet);
+    parameters:
+      - "{{ vars.user_id }}"
+      - "{{ vars.session_id }}"
+      - "{{ workload.client_ip }}"
+    
+    next:
+      - step: end
+
+  - step: validation_failed
+    desc: Handle session validation failure
+    tool: python
+    code: |
+      def main(reason, message, **context):
+          """Return session validation failure response."""
+          return {
+              "valid": False,
+              "reason": reason,
+              "message": message,
+              "context": context
+          }
+    args:
+      reason: "{{ args.reason }}"
+      message: "{{ args.message }}"
+      context: "{{ args }}"
+    
+    next:
+      - step: log_validation_failure
+
+  - step: log_validation_failure
+    desc: Record failed session validation
+    tool: postgres
+    auth:
+      type: postgres
+      credential: pg_auth_user
+    query: |
+      INSERT INTO auth.audit_log (
+        event_type,
+        event_status,
+        event_details,
+        ip_address
+      )
+      VALUES (
+        'session_validation',
+        'failure',
+        $1::jsonb,
+        $2::inet
+      );
+    parameters:
+      - "{{ args | tojson }}"
+      - "{{ workload.client_ip }}"
+    
+    next:
+      - step: end
+
+  - step: end
+    desc: Complete session validation workflow
