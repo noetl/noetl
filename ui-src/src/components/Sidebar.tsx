@@ -123,7 +123,7 @@ const Sidebar: React.FC = () => {
                 <div className="sidebar-header-content">
                     <h3 className="sidebar-title">
                         <span className="sidebar-title-icon">🎨</span>
-                        Steps
+                        Flow Canvas
                     </h3>
                     <p className="sidebar-subtitle">Drag & drop to build your workflow</p>
                 </div>

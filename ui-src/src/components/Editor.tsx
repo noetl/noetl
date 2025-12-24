@@ -47,6 +47,7 @@ import { PlaybookData } from "../types";
 import MonacoEditor from "@monaco-editor/react";
 import FlowVisualization from "./FlowVisualization";
 import { useNavigate } from "react-router-dom";
+import * as yaml from 'js-yaml';
 
 const { Content } = Layout;
 const { Title, Text } = Typography;
@@ -129,6 +130,7 @@ const PlaybookEditor: React.FC = () => {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [editorHeight, setEditorHeight] = useState(500);
   const [showFlowVisualization, setShowFlowVisualization] = useState(false);
+  const [nodePositions, setNodePositions] = useState<Record<string, { x: number; y: number }>>({});
   const editorRef = useRef<any>(null);
   const navigate = useNavigate();
 
@@ -185,13 +187,35 @@ const PlaybookEditor: React.FC = () => {
     try {
       setSaving(true);
 
+      // Merge node positions if available
+      let finalContent = content;
+      if (Object.keys(nodePositions).length > 0) {
+        try {
+          const playbookData: any = yaml.load(content);
+          const workflowSteps = playbookData?.workflow || playbookData?.workbook || [];
+
+          // Update positions in workflow steps
+          workflowSteps.forEach((step: any) => {
+            if (step.step && nodePositions[step.step]) {
+              step.position = nodePositions[step.step];
+            }
+          });
+
+          // Convert back to YAML
+          finalContent = yaml.dump(playbookData);
+        } catch (yamlError) {
+          console.error('Failed to merge positions:', yamlError);
+          // Continue with original content if YAML parsing fails
+        }
+      }
+
       if (playbookId) {
         // Update existing playbooks
-        await apiService.savePlaybookContent(playbookId, content);
+        await apiService.savePlaybookContent(playbookId, finalContent);
         message.success("Playbook saved successfully");
       } else {
         // Create new playbooks
-        const newPlaybook = await apiService.createPlaybook(content);
+        const newPlaybook = await apiService.createPlaybook(finalContent);
 
         navigate(`/editor?id=${newPlaybook.path}`);
         message.success(newPlaybook.message);
@@ -360,6 +384,7 @@ const PlaybookEditor: React.FC = () => {
           visible={showFlowVisualization}
           onClose={() => setShowFlowVisualization(false)}
           playbookId={playbookId || playbook?.catalog_id || "new"}
+          onPositionsChange={setNodePositions}
         />
 
         {/* Code Editor */}

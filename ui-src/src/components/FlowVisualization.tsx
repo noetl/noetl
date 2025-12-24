@@ -38,6 +38,7 @@ interface FlowVisualizationProps {
   onClose: () => void;
   playbookId: string;
   readOnly?: boolean;
+  onPositionsChange?: (positions: Record<string, { x: number; y: number }>) => void;
 }
 
 // Minimal metadata retained locally only for icons/colors (no editors/complex config)
@@ -64,6 +65,7 @@ const FlowVisualizationInner: React.FC<FlowVisualizationProps> = ({
   onClose,
   playbookId,
   readOnly,
+  onPositionsChange,
 }) => {
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
@@ -72,11 +74,41 @@ const FlowVisualizationInner: React.FC<FlowVisualizationProps> = ({
   const [fullscreen, setFullscreen] = useState(false);
   const [messageApi, contextHolder] = message.useMessage();
   const [tasks, setTasks] = useState<EditableTaskNode[]>([]);
-  const [hasChanges, setHasChanges] = useState(false);
   const [isDraggingOver, setIsDraggingOver] = useState(false);
   const reactFlowInstance = useReactFlow();
   const { screenToFlowPosition } = reactFlowInstance;
   const [type] = useDnD();
+
+  // Track node position changes and update tasks
+  const handleNodesChange = useCallback((changes: any[]) => {
+    onNodesChange(changes);
+
+    // Update task positions when nodes are moved
+    changes.forEach((change) => {
+      if (change.type === 'position' && change.position && !change.dragging) {
+        setTasks((prevTasks) => {
+          const updatedTasks = prevTasks.map((task) =>
+            task.id === change.id
+              ? { ...task, position: change.position }
+              : task
+          );
+
+          // Notify parent of position changes
+          if (onPositionsChange) {
+            const positions: Record<string, { x: number; y: number }> = {};
+            updatedTasks.forEach(task => {
+              if (task.position) {
+                positions[task.id] = task.position;
+              }
+            });
+            onPositionsChange(positions);
+          }
+
+          return updatedTasks;
+        });
+      }
+    });
+  }, [onNodesChange, onPositionsChange]);
 
   // Force ReactFlow to recalculate viewport after sidebar renders
   useEffect(() => {
@@ -127,7 +159,6 @@ const FlowVisualizationInner: React.FC<FlowVisualizationProps> = ({
       };
 
       setTasks((prev) => [...prev, newTask]);
-      setHasChanges(true);
       messageApi.success(`${type} node added`);
     },
     [screenToFlowPosition, type, readOnly, messageApi]
@@ -178,7 +209,6 @@ const FlowVisualizationInner: React.FC<FlowVisualizationProps> = ({
         }
         return n;
       }));
-      setHasChanges(true);
     },
     [setNodes, readOnly]
   );
@@ -187,7 +217,6 @@ const FlowVisualizationInner: React.FC<FlowVisualizationProps> = ({
   const handleDeleteTask = useCallback((taskId: string) => {
     if (readOnly) return;
     setTasks((prev) => prev.filter((t) => t.id !== taskId));
-    setHasChanges(true);
     messageApi.success("Component deleted");
   }, [messageApi, readOnly]);
 
@@ -254,7 +283,58 @@ const FlowVisualizationInner: React.FC<FlowVisualizationProps> = ({
   const loadPlaybookFlow = async () => {
     setLoading(true);
     try {
+      // Fetch playbook data from API
+      const response = await apiService.getPlaybook(playbookId);
+      console.log('API response:', response);
 
+      // Parse the playbook content if it's YAML/JSON string
+      let playbookData: any = response;
+      if (response.content) {
+        try {
+          // Parse YAML content
+          playbookData = yaml.load(response.content);
+          console.log('Parsed playbook from content:', playbookData);
+        } catch (parseError) {
+          console.error('Error parsing playbook content:', parseError);
+          throw new Error('Failed to parse playbook content');
+        }
+      }
+
+      console.log('Playbook data:', playbookData);
+      console.log('Has workflow?', playbookData?.workflow);
+      console.log('Has workbook?', playbookData?.workbook);
+
+      // Parse workflow steps into tasks
+      const workflowSteps = playbookData?.workflow || playbookData?.workbook || [];
+      console.log('Workflow steps:', workflowSteps);
+
+      // If no workflow steps, throw error with helpful message
+      if (workflowSteps.length === 0) {
+        console.error('Playbook structure:', Object.keys(playbookData));
+        throw new Error(`No workflow/workbook found. Available keys: ${Object.keys(playbookData).join(', ')}`);
+      }
+
+      const loadedTasks: EditableTaskNode[] = workflowSteps.map((step: any, index: number) => {
+        const stepType = step.tool || step.type || 'workbook';
+        return {
+          id: step.step || `step-${index}`,
+          name: step.desc || step.step || `Step ${index + 1}`,
+          type: mapType(stepType),
+          enabled: true,
+          config: step,
+          position: step.position, // Use saved position if available
+        };
+      });
+
+      setTasks(loadedTasks);
+      const { nodes: flowNodes, edges: flowEdges } = createFlowFromTasks(loadedTasks);
+      setNodes(flowNodes);
+      setEdges(flowEdges);
+    } catch (error) {
+      console.error('Error loading playbook:', error);
+      messageApi.error('Failed to load playbook');
+
+      // Fallback to demo tasks
       let demoTasks: EditableTaskNode[] = [
         { id: "demo-1", name: "Start Workflow", type: 'start', enabled: true },
         { id: "demo-2", name: "HTTP Request", type: 'http', enabled: true },
@@ -318,7 +398,7 @@ const FlowVisualizationInner: React.FC<FlowVisualizationProps> = ({
             <ReactFlow
               nodes={nodes.map(n => ({ ...n, data: { ...n.data, readOnly } }))}
               edges={edges}
-              onNodesChange={onNodesChange}
+              onNodesChange={handleNodesChange}
               onEdgesChange={onEdgesChange}
               onConnect={onConnect}
               onDrop={onDrop}

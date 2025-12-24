@@ -22,6 +22,7 @@ export interface ServerStatus {
 //   created_at?: string;
 // }
 export interface PlaybookData {
+  workflow: any;
   catalog_id: string
   path: string
   version: string
