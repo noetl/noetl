@@ -1,5 +1,9 @@
 import os
 import psycopg
+import logging
+
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO, format='%(message)s')
 
 conn = psycopg.connect(
     f"postgresql://{os.environ['POSTGRES_USER']}:{os.environ['POSTGRES_PASSWORD']}@"
@@ -14,4 +18,4 @@ GROUP BY event_type
 ORDER BY event_type
 ''')
 for row in cur.fetchall():
-    print(f"{row[0]} {row[1]}")
+    logger.info(f"{row[0]} {row[1]}")

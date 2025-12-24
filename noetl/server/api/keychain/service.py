@@ -35,12 +35,28 @@ class KeychainService:
         execution_id: Optional[int] = None,
         scope_type: str = 'global'
     ) -> str:
-        """Generate cache key for keychain entry."""
+        """Generate cache key for keychain entry.
+        
+        Args:
+            keychain_name: Name of the keychain entry
+            catalog_id: Catalog ID (playbook version identifier)
+            execution_id: Execution ID (playbook instance identifier)
+            scope_type: Scope type - determines key format
+                - 'local': Per-execution scope, uses execution_id (execution-isolated)
+                - 'global': Global scope, shared across all executions (uses catalog_id)
+                - 'shared': Shared across execution tree (parent + children)
+        
+        Returns:
+            Cache key string in format appropriate for scope_type
+        """
         if scope_type == 'local' and execution_id:
+            # Local (execution) scope: per-execution isolation
             return f"{keychain_name}:{catalog_id}:{execution_id}"
         elif scope_type == 'shared' and execution_id:
+            # Shared scope: execution tree (parent + children)
             return f"{keychain_name}:{catalog_id}:shared:{execution_id}"
         else:
+            # Global scope: shared across all executions
             return f"{keychain_name}:{catalog_id}:global"
     
     @staticmethod

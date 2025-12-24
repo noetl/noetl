@@ -208,16 +208,21 @@ async def resolve_keychain_entries(
     keychain_refs: Set[str],
     catalog_id: int,
     execution_id: Optional[int] = None,
-    api_base_url: str = "http://noetl.noetl.svc.cluster.local:8082"
+    api_base_url: str = "http://noetl.noetl.svc.cluster.local:8082",
+    refresh_threshold_seconds: int = 300
 ) -> Dict[str, Any]:
     """
     Resolve keychain entries by calling the keychain API.
+    
+    Automatically refreshes tokens that are expired or expiring soon to avoid
+    tool execution failures due to expired credentials.
     
     Args:
         keychain_refs: Set of keychain entry names to resolve
         catalog_id: Catalog ID of the playbook
         execution_id: Optional execution ID for local scope
         api_base_url: Base URL of the NoETL API
+        refresh_threshold_seconds: Refresh token if TTL is below this threshold (default: 300s = 5min)
         
     Returns:
         Dictionary mapping keychain names to their data
@@ -233,21 +238,78 @@ async def resolve_keychain_entries(
             try:
                 # Build API URL
                 url = f"{api_base_url}/api/keychain/{catalog_id}/{keychain_name}"
-                params = {}
-                if execution_id:
-                    params['execution_id'] = execution_id
                 
-                logger.debug(f"KEYCHAIN: Resolving '{keychain_name}' from {url}")
+                # Try global scope first (most keychains are global)
+                # Global: cache_key = {name}:{catalog_id}:global
+                # Local: cache_key = {name}:{catalog_id}:{execution_id}
+                params = {'scope_type': 'global'}
+                
+                logger.debug(f"[KEYCHAIN-RESOLVE] Calling {url} with params {params}")
+                logger.info(f"KEYCHAIN: Resolving '{keychain_name}' from {url} (scope=global)")
                 
                 # Call keychain API
                 response = await client.get(url, params=params)
+                logger.debug(f"[KEYCHAIN-RESOLVE] Response status: {response.status_code}, body: {response.text[:500]}")
                 
                 if response.status_code == 200:
                     result = response.json()
                     
                     if result.get('status') == 'success' and result.get('token_data'):
-                        resolved[keychain_name] = result['token_data']
-                        logger.info(f"KEYCHAIN: Resolved '{keychain_name}' successfully")
+                        ttl_seconds = result.get('ttl_seconds')
+                        auto_renew = result.get('auto_renew', False)
+                        renew_config = result.get('renew_config')
+                        
+                        # Check if token is expiring soon
+                        needs_refresh = False
+                        if ttl_seconds is not None:
+                            if ttl_seconds <= 0:
+                                logger.warning(
+                                    f"KEYCHAIN: Token '{keychain_name}' is expired (TTL: {ttl_seconds}s)"
+                                )
+                                needs_refresh = True
+                            elif ttl_seconds < refresh_threshold_seconds:
+                                logger.warning(
+                                    f"KEYCHAIN: Token '{keychain_name}' expiring soon "
+                                    f"(TTL: {ttl_seconds}s < threshold: {refresh_threshold_seconds}s)"
+                                )
+                                needs_refresh = True
+                            else:
+                                logger.info(
+                                    f"KEYCHAIN: Token '{keychain_name}' is valid (TTL: {ttl_seconds}s)"
+                                )
+                        
+                        # Refresh token if needed and auto-renewal is configured
+                        if needs_refresh and auto_renew and renew_config:
+                            logger.info(f"KEYCHAIN: Proactively refreshing '{keychain_name}' before use")
+                            renewed_data = await _renew_token(
+                                keychain_name=keychain_name,
+                                renew_config=renew_config,
+                                client=client
+                            )
+                            
+                            if renewed_data:
+                                # Store renewed token back to keychain
+                                await _update_keychain_entry(
+                                    keychain_name=keychain_name,
+                                    catalog_id=catalog_id,
+                                    token_data=renewed_data,
+                                    renew_config=renew_config,
+                                    api_base_url=api_base_url,
+                                    client=client
+                                )
+                                resolved[keychain_name] = renewed_data
+                                logger.info(f"KEYCHAIN: Successfully refreshed '{keychain_name}' (was expiring soon)")
+                            else:
+                                logger.error(
+                                    f"KEYCHAIN: Failed to refresh '{keychain_name}', "
+                                    f"using existing token (may be expired)"
+                                )
+                                resolved[keychain_name] = result['token_data']
+                        else:
+                            # Token is valid or auto-renewal not configured
+                            resolved[keychain_name] = result['token_data']
+                            logger.info(f"KEYCHAIN: Resolved '{keychain_name}' successfully")
+                            
                     elif result.get('status') == 'expired':
                         logger.warning(
                             f"KEYCHAIN: Entry '{keychain_name}' expired. "
@@ -256,7 +318,7 @@ async def resolve_keychain_entries(
                         
                         # Attempt auto-renewal if enabled
                         if result.get('auto_renew') and result.get('renew_config'):
-                            logger.info(f"KEYCHAIN: Attempting auto-renewal for '{keychain_name}'")
+                            logger.info(f"KEYCHAIN: Attempting auto-renewal for expired '{keychain_name}'")
                             renewed_data = await _renew_token(
                                 keychain_name=keychain_name,
                                 renew_config=result['renew_config'],
@@ -274,7 +336,7 @@ async def resolve_keychain_entries(
                                     client=client
                                 )
                                 resolved[keychain_name] = renewed_data
-                                logger.info(f"KEYCHAIN: Successfully renewed '{keychain_name}'")
+                                logger.info(f"KEYCHAIN: Successfully renewed expired '{keychain_name}'")
                             else:
                                 logger.error(f"KEYCHAIN: Failed to renew '{keychain_name}', returning empty dict")
                                 resolved[keychain_name] = {}
@@ -282,7 +344,20 @@ async def resolve_keychain_entries(
                             logger.warning(f"KEYCHAIN: Auto-renewal not configured for '{keychain_name}'")
                             resolved[keychain_name] = {}
                     elif result.get('status') == 'not_found':
-                        logger.warning(f"KEYCHAIN: Entry '{keychain_name}' not found")
+                        # Try local scope as fallback if execution_id available
+                        if execution_id:
+                            logger.info(f"KEYCHAIN: '{keychain_name}' not found in global scope, trying local")
+                            local_params = {'scope_type': 'local', 'execution_id': execution_id}
+                            local_response = await client.get(url, params=local_params)
+                            
+                            if local_response.status_code == 200:
+                                local_result = local_response.json()
+                                if local_result.get('status') == 'success' and local_result.get('token_data'):
+                                    resolved[keychain_name] = local_result['token_data']
+                                    logger.info(f"KEYCHAIN: Resolved '{keychain_name}' from local scope")
+                                    continue
+                        
+                        logger.warning(f"KEYCHAIN: Entry '{keychain_name}' not found in any scope")
                         resolved[keychain_name] = {}
                     else:
                         logger.error(f"KEYCHAIN: Unexpected status for '{keychain_name}': {result.get('status')}")
@@ -306,14 +381,15 @@ async def populate_keychain_context(
     context: Dict[str, Any],
     catalog_id: int,
     execution_id: Optional[int] = None,
-    api_base_url: str = "http://noetl.noetl.svc.cluster.local:8082"
+    api_base_url: str = "http://noetl.noetl.svc.cluster.local:8082",
+    refresh_threshold_seconds: int = 300
 ) -> Dict[str, Any]:
     """
     Scan task config for keychain references and populate context.keychain.
     
     This function:
     1. Scans the task_config for {{ keychain.* }} references
-    2. Resolves those keychain entries via API
+    2. Resolves those keychain entries via API (with proactive token refresh)
     3. Adds them to context['keychain']
     
     Args:
@@ -322,6 +398,7 @@ async def populate_keychain_context(
         catalog_id: Catalog ID of the playbook
         execution_id: Optional execution ID
         api_base_url: Base URL of NoETL API
+        refresh_threshold_seconds: Refresh token if TTL is below this threshold (default: 300s = 5min)
         
     Returns:
         Updated context with 'keychain' attribute
@@ -333,15 +410,21 @@ async def populate_keychain_context(
         logger.debug("KEYCHAIN: No keychain references found in task config")
         return context
     
+    logger.debug(f"[KEYCHAIN-WORKER] Found {len(keychain_refs)} keychain references: {keychain_refs}")
+    logger.debug(f"[KEYCHAIN-WORKER] catalog_id={catalog_id}, execution_id={execution_id}, api_base_url={api_base_url}")
     logger.info(f"KEYCHAIN: Found {len(keychain_refs)} keychain references: {keychain_refs}")
     
-    # Resolve keychain entries
+    # Resolve keychain entries with proactive refresh
     keychain_data = await resolve_keychain_entries(
         keychain_refs=keychain_refs,
         catalog_id=catalog_id,
         execution_id=execution_id,
-        api_base_url=api_base_url
+        api_base_url=api_base_url,
+        refresh_threshold_seconds=refresh_threshold_seconds
     )
+    
+    logger.debug(f"[KEYCHAIN-WORKER] Resolved keychain_data keys: {list(keychain_data.keys())}")
+    logger.debug(f"[KEYCHAIN-WORKER] Resolved data: {keychain_data}")
     
     # Add to context
     context['keychain'] = keychain_data

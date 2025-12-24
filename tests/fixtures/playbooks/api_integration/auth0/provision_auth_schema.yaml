@@ -1,0 +1,224 @@
+apiVersion: noetl.io/v1
+kind: Playbook
+metadata:
+  name: provision_auth_schema
+  path: api_integration/auth0/provision_auth_schema
+  description: |
+    Provision authentication schema and tables in demo_noetl database.
+    
+    This playbook:
+    1. Executes SQL script via Kubernetes job with postgres:16-alpine image
+    2. Creates auth schema with tables: users, roles, permissions, sessions, audit_log
+    3. Creates dedicated auth_user role with appropriate grants
+    4. Seeds default roles (admin, developer, analyst, viewer) with permissions
+    
+    Prerequisites:
+    - Kubernetes cluster with NoETL deployment
+    - PostgreSQL database (demo_noetl) accessible from cluster
+    - Admin credentials registered as 'pg_k8s' credential
+    
+    Post-provisioning:
+    1. Change auth_user password in database
+    2. Register auth_user credential as pg_auth_user
+    3. Deploy authentication playbooks (auth0_login, auth0_validate_session)
+  tags:
+    - auth0
+    - database
+    - provisioning
+    - kubernetes
+
+workload:
+  db_host: postgres.default.svc.cluster.local
+  db_port: "5432"
+  db_name: demo_noetl
+  job_namespace: default
+  job_timeout_seconds: 300
+  
+  # Script location (GCS URI)
+  script_uri: gs://noetl-scripts/auth0/provision_auth_schema.sql
+  
+  # Alternative: Local script path (if not using GCS)
+  # script_path: ./tests/fixtures/playbooks/api_integration/auth0/sql/provision_auth_schema.sql
+
+workflow:
+  - step: start
+    desc: Begin auth schema provisioning
+    next:
+      - step: provision_schema
+        args:
+          db_host: "{{ workload.db_host }}"
+          db_port: "{{ workload.db_port }}"
+          db_name: "{{ workload.db_name }}"
+
+  - step: provision_schema
+    desc: Execute SQL script via Kubernetes job
+    tool: script
+    script:
+      # GCS URI for SQL script
+      uri: "{{ workload.script_uri }}"
+      source:
+        type: gcs
+        # Auth credential for GCS access (if using GCS)
+        # Uses keychain to resolve service account token
+        auth: gcp_service_account
+    
+    # Kubernetes job configuration
+    job:
+      # PostgreSQL image with psql client
+      image: postgres:16-alpine
+      namespace: "{{ workload.job_namespace }}"
+      timeout: "{{ workload.job_timeout_seconds }}"
+      
+      # Command override: execute SQL using psql
+      command: ["psql"]
+      args:
+        - "-h"
+        - "{{ args.db_host }}"
+        - "-p"
+        - "{{ args.db_port }}"
+        - "-U"
+        - "{{ secret.pg_k8s.db_user }}"
+        - "-d"
+        - "{{ args.db_name }}"
+        - "-f"
+        - "/workspace/script.sql"  # Script mounted at this path
+        - "--echo-errors"
+        - "--set=ON_ERROR_STOP=1"
+      
+      # Resource limits
+      resources:
+        requests:
+          memory: "256Mi"
+          cpu: "100m"
+        limits:
+          memory: "512Mi"
+          cpu: "500m"
+      
+      # Environment variables for psql
+      env:
+        PGPASSWORD: "{{ secret.pg_k8s.db_password }}"
+        PGOPTIONS: "--client-min-messages=warning"
+    
+    # Credential for PostgreSQL admin access
+    auth:
+      type: postgres
+      credential: pg_k8s
+    
+    next:
+      - step: verify_schema
+        args:
+          db_host: "{{ args.db_host }}"
+          db_port: "{{ args.db_port }}"
+          db_name: "{{ args.db_name }}"
+
+  - step: verify_schema
+    desc: Verify auth schema and tables were created successfully
+    tool: postgres
+    auth:
+      type: postgres
+      credential: pg_k8s
+    query: |
+      -- Verify schema exists
+      SELECT 
+        schema_name,
+        schema_owner
+      FROM information_schema.schemata
+      WHERE schema_name = 'auth'
+      
+      UNION ALL
+      
+      -- Count tables in auth schema
+      SELECT 
+        'tables' as schema_name,
+        COUNT(*)::text as schema_owner
+      FROM information_schema.tables
+      WHERE table_schema = 'auth'
+      
+      UNION ALL
+      
+      -- Count roles
+      SELECT 
+        'roles' as schema_name,
+        COUNT(*)::text as schema_owner
+      FROM auth.roles
+      
+      UNION ALL
+      
+      -- Count permissions
+      SELECT 
+        'permissions' as schema_name,
+        COUNT(*)::text as schema_owner
+      FROM auth.permissions
+      
+      UNION ALL
+      
+      -- Verify auth_user role exists
+      SELECT 
+        'auth_user_exists' as schema_name,
+        CASE WHEN EXISTS(SELECT 1 FROM pg_roles WHERE rolname = 'auth_user') THEN 'true' ELSE 'false' END as schema_owner;
+    
+    vars:
+      schema_name: "{{ result[0].schema_name }}"
+      table_count: "{{ result[1].schema_owner }}"
+      role_count: "{{ result[2].schema_owner }}"
+      permission_count: "{{ result[3].schema_owner }}"
+      auth_user_exists: "{{ result[4].schema_owner }}"
+    
+    next:
+      - when: "{{ vars.auth_user_exists == 'true' and vars.table_count|int > 0 }}"
+        then:
+          - step: success
+            args:
+              verification: "{{ vars }}"
+      - when: "{{ vars.auth_user_exists != 'true' }}"
+        then:
+          - step: failure
+            args:
+              error: "auth_user role not created"
+      - step: failure
+        args:
+          error: "Schema verification failed"
+
+  - step: success
+    desc: Schema provisioned successfully
+    tool: python
+    code: |
+      def main(verification):
+          """Log successful provisioning."""
+          return {
+              "status": "success",
+              "message": "Auth schema provisioned successfully",
+              "details": {
+                  "schema_created": verification.get("schema_name") == "auth",
+                  "tables_created": int(verification.get("table_count", 0)),
+                  "roles_seeded": int(verification.get("role_count", 0)),
+                  "permissions_seeded": int(verification.get("permission_count", 0)),
+                  "auth_user_created": verification.get("auth_user_exists") == "true"
+              },
+              "next_steps": [
+                  "1. Change auth_user password: ALTER ROLE auth_user WITH PASSWORD 'new_secure_password';",
+                  "2. Register pg_auth_user credential with new password",
+                  "3. Deploy authentication playbooks: auth0_login, auth0_validate_session"
+              ]
+          }
+    args:
+      verification: "{{ vars }}"
+    
+    next:
+      - step: end
+
+  - step: failure
+    desc: Provisioning failed
+    tool: python
+    code: |
+      def main(error):
+          """Log provisioning failure."""
+          raise RuntimeError(f"Auth schema provisioning failed: {error}")
+    args:
+      error: "{{ args.error }}"
+    
+    next:
+      - step: end
+
+  - step: end
+    desc: Complete provisioning workflow

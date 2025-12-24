@@ -2,6 +2,58 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.2.1](https://github.com/noetl/noetl/compare/v2.2.0...v2.2.1) (2025-12-24)
+
+### Bug Fixes
+
+* remove .gitmodules file and associated submodule configurations ([538b49a](https://github.com/noetl/noetl/commit/538b49a8d3f05130fa97d6dca44fbc0d86c90305))
+
+## [2.2.0](https://github.com/noetl/noetl/compare/v2.1.4...v2.2.0) (2025-12-24)
+
+### Features
+
+* add Auth0 authentication and session management playbooks ([08f9ffd](https://github.com/noetl/noetl/commit/08f9ffdba893ec9eb218294cd03cf3ce35ebff6a))
+
+### Bug Fixes
+
+* remove .gitmodules file and associated submodule configurations ([4fa2af7](https://github.com/noetl/noetl/commit/4fa2af7a8c155d295a4db105cfca83150d03f85d))
+
+## [2.1.4](https://github.com/noetl/noetl/compare/v2.1.3...v2.1.4) (2025-12-24)
+
+### Bug Fixes
+
+* Enhance logging in NATS command subscriber and worker for better error handling ([f8423eb](https://github.com/noetl/noetl/commit/f8423eb26bf0fce4246bca1d82af27ff84bb5403))
+
+## [2.1.3](https://github.com/noetl/noetl/compare/v2.1.2...v2.1.3) (2025-12-24)
+
+### Bug Fixes
+
+* Replace all print statements with logger ([0eb560e](https://github.com/noetl/noetl/commit/0eb560edc7a500564f255fac939b735ffe2f8b2b))
+
+## [2.1.2](https://github.com/noetl/noetl/compare/v2.1.1...v2.1.2) (2025-12-23)
+
+### Bug Fixes
+
+* update environment variable for server URL to NOETL_SERVER_URL ([ef58d04](https://github.com/noetl/noetl/commit/ef58d04fbeed52a860119bbed3732f5546e90e17))
+
+## [2.1.1](https://github.com/noetl/noetl/compare/v2.1.0...v2.1.1) (2025-12-23)
+
+### Bug Fixes
+
+* enhance logging in V2Worker with context management and improved JSON formatting ([4337fd9](https://github.com/noetl/noetl/commit/4337fd9f0586ae20c62b1d7fbb480ba52a246c41))
+
+## [2.1.0](https://github.com/noetl/noetl/compare/v2.0.3...v2.1.0) (2025-12-23)
+
+### Features
+
+* apply latest keychain and playbook updates ([af77430](https://github.com/noetl/noetl/commit/af77430427ee67ad613dd2666fd54ef63026f4ce))
+
+### Bug Fixes
+
+* Trigger release ([b1230c3](https://github.com/noetl/noetl/commit/b1230c3944d3f27b7f5cb944ddf7655e000f96eb))
+* update .gitignore to include all environment files while excluding .env.docker ([dc3567f](https://github.com/noetl/noetl/commit/dc3567f70cdccb6802093d4a122bc0a90f349247))
+* update image source in README to use raw GitHub URL ([ba2e3ae](https://github.com/noetl/noetl/commit/ba2e3ae07eb1b294984e2c2f47f2442e9f3450c9))
+
 ## [2.0.3](https://github.com/noetl/noetl/compare/v2.0.2...v2.0.3) (2025-12-22)
 
 ### Bug Fixes
@@ -137,7 +189,7 @@ All notable changes to this project will be documented in this file.
 * **container:** add container tool with authenticated remote file downloads ([fa8c1db](https://github.com/noetl/noetl/commit/fa8c1db48b21db7ff87c1126e99cc8ba36d67449))
 * enhance execute_playbook documentation and add execution status details ([740f522](https://github.com/noetl/noetl/commit/740f5220b7c01cdc1232c0107dfe39cd0ffd6256))
 * enhance GoogleTokenProvider for effective audience resolution and lazy imports for container execution ([ff8819c](https://github.com/noetl/noetl/commit/ff8819c87b2d5b78b11d5eaf92b5f9a50b25f1c6))
-* refactor noetl-gateway structure and update dependencies ([ac3d5e5](https://github.com/noetl/noetl/commit/ac3d5e5f7723101378f4086c78f79028b1e73168))
+* refactor gateway structure and update dependencies ([ac3d5e5](https://github.com/noetl/noetl/commit/ac3d5e5f7723101378f4086c78f79028b1e73168))
 
 ### Bug Fixes
 
@@ -160,7 +212,7 @@ All notable changes to this project will be documented in this file.
 * **container:** add container tool with authenticated remote file downloads ([fa8c1db](https://github.com/noetl/noetl/commit/fa8c1db48b21db7ff87c1126e99cc8ba36d67449))
 * enhance execute_playbook documentation and add execution status details ([740f522](https://github.com/noetl/noetl/commit/740f5220b7c01cdc1232c0107dfe39cd0ffd6256))
 * enhance GoogleTokenProvider for effective audience resolution and lazy imports for container execution ([ff8819c](https://github.com/noetl/noetl/commit/ff8819c87b2d5b78b11d5eaf92b5f9a50b25f1c6))
-* refactor noetl-gateway structure and update dependencies ([ac3d5e5](https://github.com/noetl/noetl/commit/ac3d5e5f7723101378f4086c78f79028b1e73168))
+* refactor gateway structure and update dependencies ([ac3d5e5](https://github.com/noetl/noetl/commit/ac3d5e5f7723101378f4086c78f79028b1e73168))
 
 ### Bug Fixes
 
@@ -182,7 +234,7 @@ All notable changes to this project will be documented in this file.
 * **container:** add container tool with authenticated remote file downloads ([fa8c1db](https://github.com/noetl/noetl/commit/fa8c1db48b21db7ff87c1126e99cc8ba36d67449))
 * enhance execute_playbook documentation and add execution status details ([740f522](https://github.com/noetl/noetl/commit/740f5220b7c01cdc1232c0107dfe39cd0ffd6256))
 * enhance GoogleTokenProvider for effective audience resolution and lazy imports for container execution ([ff8819c](https://github.com/noetl/noetl/commit/ff8819c87b2d5b78b11d5eaf92b5f9a50b25f1c6))
-* refactor noetl-gateway structure and update dependencies ([ac3d5e5](https://github.com/noetl/noetl/commit/ac3d5e5f7723101378f4086c78f79028b1e73168))
+* refactor gateway structure and update dependencies ([ac3d5e5](https://github.com/noetl/noetl/commit/ac3d5e5f7723101378f4086c78f79028b1e73168))
 
 ### Bug Fixes
 
@@ -200,7 +252,7 @@ All notable changes to this project will be documented in this file.
 * container secrets ([f6a1391](https://github.com/noetl/noetl/commit/f6a1391f3bb2437add043b48610dddd5625287ff))
 * **container:** add container tool with authenticated remote file downloads ([fa8c1db](https://github.com/noetl/noetl/commit/fa8c1db48b21db7ff87c1126e99cc8ba36d67449))
 * enhance GoogleTokenProvider for effective audience resolution and lazy imports for container execution ([ff8819c](https://github.com/noetl/noetl/commit/ff8819c87b2d5b78b11d5eaf92b5f9a50b25f1c6))
-* refactor noetl-gateway structure and update dependencies ([ac3d5e5](https://github.com/noetl/noetl/commit/ac3d5e5f7723101378f4086c78f79028b1e73168))
+* refactor gateway structure and update dependencies ([ac3d5e5](https://github.com/noetl/noetl/commit/ac3d5e5f7723101378f4086c78f79028b1e73168))
 
 ### Bug Fixes
 

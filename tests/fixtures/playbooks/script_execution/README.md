@@ -8,12 +8,14 @@ This directory contains test playbooks demonstrating the `script` attribute for 
 script_execution/
 ├── scripts/                       # Sample scripts for testing
 │   ├── hello_world.py            # Python script (file source)
-│   └── create_test_table.sql     # SQL script (file source)
+│   ├── create_test_table.sql     # SQL script (file source)
+│   └── data_processor.py         # Python script for K8s job execution
 ├── python_file_example.yaml      # Python with file source
 ├── postgres_file_example.yaml    # Postgres with file source
 ├── python_http_example.yaml      # Python with HTTP source
 ├── python_gcs_example.yaml       # Python with GCS source 
 ├── postgres_s3_example.yaml      # Postgres with S3 source
+├── k8s_job_python_gcs.yaml       # Kubernetes Job execution from GCS
 └── README.md                     # This file
 ```
 
@@ -139,6 +141,116 @@ In the example above, NoETL will execute the GCS script and completely ignore bo
       auth: aws_credentials
 ```
 
+### 5. Kubernetes Job Execution (New in v2)
+
+Execute scripts as Kubernetes jobs with resource limits, retries, and monitoring:
+
+```yaml
+keychain:
+  - name: gcp_token
+    kind: bearer
+    scope: global
+    credential: google_oauth
+
+workflow:
+  - step: run_script_as_k8s_job
+    desc: Execute Python script from GCS as Kubernetes job
+    tool:
+      kind: script
+      script:
+        uri: gs://noetl-demo-19700101/scripts/data_processor.py
+        source:
+          type: gcs
+          auth: google_oauth
+      args:
+        input_file: sample_dataset.csv
+        output_bucket: noetl-results
+        mode: batch
+      job:
+        image: python:3.11-slim
+        namespace: noetl
+        ttlSecondsAfterFinished: 300
+        backoffLimit: 3
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "500m"
+          limits:
+            memory: "512Mi"
+            cpu: "1000m"
+        env:
+          # Credentials from keychain available as environment variables in pod
+          GCP_TOKEN: "{{ keychain.gcp_token.token }}"
+          GCS_BUCKET: "{{ workload.output_bucket }}"
+```
+
+**Features:**
+- Downloads script from GCS, S3, HTTP, or local filesystem
+- Creates Kubernetes Job with script mounted as ConfigMap
+- Configurable resource limits (CPU, memory)
+- Automatic retry on failure (backoffLimit)
+- Auto-cleanup after completion (ttlSecondsAfterFinished)
+- Returns job status, pod logs, and execution time
+- Supports timeout configuration
+- **Credential injection via keychain**: Pass credentials as environment variables to pod
+
+**Job Result:**
+```yaml
+{
+  "status": "completed",
+  "job_name": "script-run-script-as-k8s-job-522095307073519743",
+  "pod_name": "script-run-script-as-k8s-job-522095307073519743-abcd1",
+  "execution_time": 45.3,
+  "output": "[DATA PROCESSOR] Starting in batch mode\n[DATA PROCESSOR] Processed 1000 records\n...",
+  "succeeded": 1,
+  "failed": 0
+}
+```
+
+**Example Script Structure:**
+```python
+#!/usr/bin/env python3
+import sys
+import json
+import os
+
+def main():
+    # Parse arguments from command line (passed as JSON string)
+    if len(sys.argv) > 1:
+        args = json.loads(sys.argv[1])
+    else:
+        args = {}
+    
+    input_file = args.get('input_file', 'unknown')
+    output_bucket = args.get('output_bucket', 'unknown')
+    
+    # Access environment variables (including credentials from keychain)
+    gcp_token = os.environ.get('GCP_TOKEN', 'not_set')
+    gcs_bucket = os.environ.get('GCS_BUCKET', 'not_set')
+    
+    print(f"[DATA PROCESSOR] Processing {input_file}")
+    print(f"[DATA PROCESSOR] GCP Token available: {gcp_token != 'not_set'}")
+    
+    # Your processing logic here (can use credentials for cloud storage access)
+    
+    # Output result as JSON for NoETL to capture
+    result = {
+        "status": "completed",
+        "records_processed": 1000,
+        "output_location": f"gs://{output_bucket}/results/output.csv",
+        "environment": {
+            "gcp_token_available": gcp_token != 'not_set',
+            "gcs_bucket": gcs_bucket
+        }
+    }
+    
+    print(json.dumps(result))
+    return 0
+
+if __name__ == "__main__":
+    sys.exit(main())
+```
+
 ## Testing
 
 ### Prerequisites
@@ -185,6 +297,14 @@ task playbook:k8s:execute python_gcs_script_example
 
 task playbook:k8s:register tests/fixtures/playbooks/script_execution/postgres_s3_example.yaml
 task playbook:k8s:execute postgres_s3_script_example
+
+# Kubernetes Job execution test (requires GCS credentials)
+# First, upload test script to GCS:
+gsutil cp scripts/data_processor.py gs://noetl-demo-19700101/scripts/
+
+# Then register and execute
+task playbook:k8s:register tests/fixtures/playbooks/script_execution/k8s_job_python_gcs.yaml
+task playbook:k8s:execute k8s_job_python_gcs
 ```
 
 ## Backward Compatibility

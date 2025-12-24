@@ -1,9 +1,12 @@
 import os
 import sys
 import socket
+import logging
 from typing import Optional, Dict, Any, List
 from pydantic import BaseModel, Field, ConfigDict, model_validator, field_validator
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 _ENV_LOADED = False
@@ -39,10 +42,10 @@ def _load_env_file(path: str, allow_override: bool = False) -> None:
         # Silent pass for missing .env files - this is expected
         pass
     except PermissionError as e:
-        print(f"FATAL: Permission denied reading environment file {path}: {e}", file=sys.stderr)
+        logger.critical(f"Permission denied reading environment file {path}: {e}")
         raise
     except Exception as e:
-        print(f"FATAL: Failed to load environment file {path}: {e}", file=sys.stderr)
+        logger.critical(f"Failed to load environment file {path}: {e}")
         raise
 
 def load_env_if_present(force_reload: bool = False) -> None:
@@ -114,23 +117,23 @@ def validate_mandatory_env_vars():
         if empty_vars:
             error_msg.append(f"Empty environment variables: {', '.join(empty_vars)}")
 
-        print(f"FATAL: {' | '.join(error_msg)}", file=sys.stderr)
-        print("FATAL: Missing required environment variables for server start", file=sys.stderr)
-        print("FATAL: Required variables:", file=sys.stderr)
+        logger.critical(f"{' | '.join(error_msg)}")
+        logger.critical("Missing required environment variables for server start")
+        logger.critical("Required variables:")
         for var in mandatory_vars:
             value = os.environ.get(var, '<MISSING>')
             if value and value.strip():
                 if 'PASSWORD' in var:
                     masked_value = '*' * len(value)
-                    print(f"  {var}={masked_value}", file=sys.stderr)
+                    logger.critical(f"  {var}={masked_value}")
                 else:
-                    print(f"  {var}={value}", file=sys.stderr)
+                    logger.critical(f"  {var}={value}")
             else:
-                print(f"  {var}=<MISSING OR EMPTY>", file=sys.stderr)
+                logger.critical(f"  {var}=<MISSING OR EMPTY>")
 
         sys.exit(1)
 
-    print("All mandatory environment variables validated successfully")
+    logger.info("All mandatory environment variables validated successfully")
 
 class Settings(BaseModel):
     """
@@ -174,6 +177,9 @@ class Settings(BaseModel):
     nats_stream: str = Field(default="NOETL_COMMANDS", alias="NATS_STREAM")
     nats_consumer: str = Field(default="noetl_worker_pool", alias="NATS_CONSUMER")
     nats_subject: str = Field(default="noetl.commands", alias="NATS_SUBJECT")
+
+    # Keychain configuration
+    keychain_refresh_threshold: int = Field(default=300, alias="NOETL_KEYCHAIN_REFRESH_THRESHOLD")  # seconds (5min default)
 
     # Server identity and base URL (required)
     server_url: str = Field(..., alias="NOETL_SERVER_URL")
@@ -244,26 +250,26 @@ class Settings(BaseModel):
             if port < 1 or port > 65535:
                 raise ValueError(f"Invalid port number: {port}")
         except ValueError as e:
-            print(f"FATAL: Invalid POSTGRES_PORT value '{self.postgres_port}': {e}", file=sys.stderr)
+            logger.critical(f"Invalid POSTGRES_PORT value '{self.postgres_port}': {e}")
             sys.exit(1)
 
         try:
             if self.port < 1 or self.port > 65535:
                 raise ValueError(f"Invalid NOETL_PORT number: {self.port}")
         except Exception as e:
-            print(f"FATAL: Invalid NOETL_PORT value '{self.port}': {e}", file=sys.stderr)
+            logger.critical(f"Invalid NOETL_PORT value '{self.port}': {e}")
             sys.exit(1)
 
         try:
             if int(self.server_workers) < 1:
                 raise ValueError("NOETL_SERVER_WORKERS must be >= 1")
         except Exception as e:
-            print(f"FATAL: Invalid NOETL_SERVER_WORKERS value '{self.server_workers}': {e}", file=sys.stderr)
+            logger.critical(f"Invalid NOETL_SERVER_WORKERS value '{self.server_workers}': {e}")
             sys.exit(1)
 
         valid_runtimes = {"uvicorn", "gunicorn", "auto"}
         if self.server_runtime not in valid_runtimes:
-            print(f"FATAL: Invalid NOETL_SERVER value '{self.server_runtime}'. Expected one of {sorted(valid_runtimes)}", file=sys.stderr)
+            logger.critical(f"Invalid NOETL_SERVER value '{self.server_runtime}'. Expected one of {sorted(valid_runtimes)}")
             sys.exit(1)
 
         return self
@@ -545,7 +551,7 @@ def get_settings(reload: bool = False) -> Settings:
             # Backward compatibility: map deprecated NOETL_SCHEMA_ENSURE -> NOETL_SCHEMA_VALIDATE if new not set
             if 'NOETL_SCHEMA_VALIDATE' not in os.environ and 'NOETL_SCHEMA_ENSURE' in os.environ:
                 os.environ['NOETL_SCHEMA_VALIDATE'] = os.environ['NOETL_SCHEMA_ENSURE']
-                print("DEPRECATED: NOETL_SCHEMA_ENSURE detected -> set NOETL_SCHEMA_VALIDATE (will be removed soon).")
+                logger.warning("DEPRECATED: NOETL_SCHEMA_ENSURE detected -> set NOETL_SCHEMA_VALIDATE (will be removed soon).")
             if 'NOETL_SCHEMA_VALIDATE' not in os.environ:
                 raise RuntimeError("Missing required environment variable NOETL_SCHEMA_VALIDATE (true/false)")
 
@@ -590,10 +596,10 @@ def get_settings(reload: bool = False) -> Settings:
                 NATS_PASSWORD=os.environ.get('NATS_PASSWORD', 'noetl'),
                 NATS_STREAM=os.environ.get('NATS_STREAM', 'NOETL_COMMANDS'),
                 NATS_CONSUMER=os.environ.get('NATS_CONSUMER', 'noetl_worker_pool'),
-                NATS_SUBJECT=os.environ.get('NATS_SUBJECT', 'noetl.commands'),
+                NOETL_SUBJECT=os.environ.get('NOETL_SUBJECT', 'noetl.commands'),
             )
         except Exception as e:
-            print(f"FATAL: Failed to initialize settings: {e}", file=sys.stderr)
+            logger.critical(f"Failed to initialize settings: {e}")
             sys.exit(1)
 
     return _settings

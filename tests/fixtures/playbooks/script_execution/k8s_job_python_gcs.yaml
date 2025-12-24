@@ -1,0 +1,111 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: k8s_job_python_gcs
+  path: tests/script_execution/k8s_job_python_gcs
+
+workload:
+  gcs_script_uri: gs://noetl-demo-19700101/scripts/data_processor.py
+  gcp_credential: gcs_service_account  # Service account for reliable GCS access
+  input_data: "sample_dataset.csv"
+  output_bucket: noetl-demo-output
+
+keychain:
+  - name: gcp_sa
+    kind: credential  # Full service account JSON, not bearer token
+    scope: local  # Execution-scoped (per-execution isolation)
+    credential: gcs_service_account
+
+workflow:
+  - step: start
+    desc: Start Kubernetes job workflow
+    tool:
+      kind: python
+      code: |
+        def main():
+            return {"status": "initialized", "message": "Starting K8s job workflow"}
+    next:
+      - step: run_script_as_k8s_job
+
+  - step: run_script_as_k8s_job
+    desc: Execute Python script from GCS as Kubernetes job
+    tool:
+      kind: script
+      script:
+        uri: "{{ workload.gcs_script_uri }}"
+        source:
+          type: gcs
+          auth: "{{ workload.gcp_credential }}"
+      args:
+        input_file: "{{ workload.input_data }}"
+        output_bucket: "{{ workload.output_bucket }}"
+        mode: "batch"
+      job:
+        image: python:3.11-slim
+        namespace: noetl
+        ttlSecondsAfterFinished: 300
+        backoffLimit: 3
+        install_dependencies: [google-auth, requests]  # google-auth requires requests for token generation
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "500m"
+          limits:
+            memory: "512Mi"
+            cpu: "1000m"
+        env:
+          # Service account JSON from keychain - access nested field
+          GCP_SERVICE_ACCOUNT_JSON: "{{ keychain.gcp_sa.service_account_json | tojson }}"
+          GCS_BUCKET: "{{ workload.output_bucket }}"
+          GCP_PROJECT: noetl-demo-19700101
+    next:
+      - step: verify_result
+
+  - step: verify_result
+    desc: Verify job completed successfully and show details
+    tool:
+      kind: python
+      code: |
+        import json
+        
+        def main(job_result):
+            print("=" * 80)
+            print("JOB EXECUTION DETAILS")
+            print("=" * 80)
+            print(json.dumps(job_result, indent=2))
+            print("=" * 80)
+            
+            status = job_result.get('status')
+            if status != 'completed':
+                raise Exception(f"Job failed with status: {status}")
+            
+            # Check if data was written to GCS
+            output = job_result.get('output', '')
+            if 'wrote_to_gcs": true' in output.lower() or 'successfully wrote to' in output.lower():
+                print("✓ Data successfully written to GCS")
+            else:
+                print("⚠ WARNING: Data may not have been written to GCS")
+                print("Check logs with:")
+                print(f"  {job_result.get('kubectl_logs', 'N/A')}")
+            
+            return {
+                "status": "verified",
+                "job_name": job_result.get('job_name'),
+                "namespace": job_result.get('namespace'),
+                "pod_name": job_result.get('pod_name'),
+                "execution_time": job_result.get('execution_time'),
+                "kubectl_logs": job_result.get('kubectl_logs'),
+                "kubectl_describe": job_result.get('kubectl_describe')
+            }
+      args:
+        job_result: "{{ run_script_as_k8s_job }}"
+    next:
+      - step: end
+
+  - step: end
+    desc: End workflow
+    tool:
+      kind: python
+      code: |
+        def main():
+            return {"status": "complete"}

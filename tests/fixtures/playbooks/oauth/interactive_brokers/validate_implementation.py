@@ -11,31 +11,34 @@ This script validates:
 
 import sys
 from pathlib import Path
+import logging
+
+logger = logging.getLogger(__name__)
 
 def check_dependencies():
     """Check required dependencies."""
-    print("Checking dependencies...")
+    logger.info("Checking dependencies...")
     
     try:
         import jwt
-        print(f"  ✓ PyJWT installed: {jwt.__version__}")
+        logger.info(f"  ✓ PyJWT installed: {jwt.__version__}")
     except ImportError:
-        print("  ✗ PyJWT not installed")
+        logger.info("  ✗ PyJWT not installed")
         return False
     
     try:
         from cryptography.hazmat.primitives import serialization
         from cryptography.hazmat.backends import default_backend
-        print("  ✓ cryptography installed")
+        logger.info("  ✓ cryptography installed")
     except ImportError:
-        print("  ✗ cryptography not installed")
+        logger.info("  ✗ cryptography not installed")
         return False
     
     try:
         import httpx
-        print(f"  ✓ httpx installed: {httpx.__version__}")
+        logger.info(f"  ✓ httpx installed: {httpx.__version__}")
     except ImportError:
-        print("  ✗ httpx not installed")
+        logger.info("  ✗ httpx not installed")
         return False
     
     return True
@@ -43,13 +46,13 @@ def check_dependencies():
 
 def check_ib_provider():
     """Check IBTokenProvider implementation."""
-    print("\nChecking IBTokenProvider...")
+    logger.info("\nChecking IBTokenProvider...")
     
     try:
         from noetl.core.auth.ib_provider import IBTokenProvider
-        print("  ✓ IBTokenProvider imports successfully")
+        logger.info("  ✓ IBTokenProvider imports successfully")
     except ImportError as e:
-        print(f"  ✗ Failed to import IBTokenProvider: {e}")
+        logger.info(f"  ✗ Failed to import IBTokenProvider: {e}")
         return False
     
     return True
@@ -57,11 +60,11 @@ def check_ib_provider():
 
 def check_provider_registration():
     """Check token provider registration."""
-    print("\nChecking provider registration...")
+    logger.info("\nChecking provider registration...")
     
     try:
         from noetl.core.auth.providers import get_token_provider
-        print("  ✓ Token provider factory imports successfully")
+        logger.info("  ✓ Token provider factory imports successfully")
         
         # Check if ib_oauth is registered
         try:
@@ -74,14 +77,14 @@ def check_provider_registration():
             }
             
             for cred_type in provider_map:
-                print(f"  ✓ Provider registered: {cred_type}")
+                logger.info(f"  ✓ Provider registered: {cred_type}")
             
         except Exception as e:
-            print(f"  ✗ Provider registration issue: {e}")
+            logger.info(f"  ✗ Provider registration issue: {e}")
             return False
         
     except ImportError as e:
-        print(f"  ✗ Failed to import provider factory: {e}")
+        logger.info(f"  ✗ Failed to import provider factory: {e}")
         return False
     
     return True
@@ -89,7 +92,7 @@ def check_provider_registration():
 
 def test_jwt_signing():
     """Test JWT signing with a dummy RSA key."""
-    print("\nTesting JWT signing...")
+    logger.info("\nTesting JWT signing...")
     
     try:
         import jwt
@@ -123,15 +126,15 @@ def test_jwt_signing():
             headers={'alg': 'RS256', 'kid': 'test-key-id'}
         )
         
-        print(f"  ✓ JWT created and signed successfully")
-        print(f"    Token length: {len(token)} characters")
+        logger.info(f"  ✓ JWT created and signed successfully")
+        logger.info(f"    Token length: {len(token)} characters")
         
         # Decode without verification (just to check structure)
         decoded = jwt.decode(token, options={"verify_signature": False})
-        print(f"    Payload contains: iss={decoded.get('iss')}, sub={decoded.get('sub')}")
+        logger.info(f"    Payload contains: iss={decoded.get('iss')}, sub={decoded.get('sub')}")
         
     except Exception as e:
-        print(f"  ✗ JWT signing failed: {e}")
+        logger.info(f"  ✗ JWT signing failed: {e}")
         return False
     
     return True
@@ -139,9 +142,9 @@ def test_jwt_signing():
 
 def main():
     """Run all validation checks."""
-    print("=" * 60)
-    print("IBKR OAuth 2.0 Implementation Validation")
-    print("=" * 60)
+    logger.info("=" * 60)
+    logger.info("IBKR OAuth 2.0 Implementation Validation")
+    logger.info("=" * 60)
     
     results = []
     
@@ -150,36 +153,37 @@ def main():
     results.append(("Provider Registration", check_provider_registration()))
     results.append(("JWT Signing", test_jwt_signing()))
     
-    print("\n" + "=" * 60)
-    print("Validation Summary")
-    print("=" * 60)
+    logger.info("\n" + "=" * 60)
+    logger.info("Validation Summary")
+    logger.info("=" * 60)
     
     all_passed = True
     for name, passed in results:
         status = "✓ PASS" if passed else "✗ FAIL"
-        print(f"{status}: {name}")
+        logger.info(f"{status}: {name}")
         if not passed:
             all_passed = False
     
-    print("=" * 60)
+    logger.info("=" * 60)
     
     if all_passed:
-        print("\n✓ All checks passed! Implementation is ready.")
-        print("\nNext steps:")
-        print("1. Create OAuth application in IBKR portal")
-        print("2. Generate RSA key pair and upload public key")
-        print("3. Create ib_oauth.json with client_id, key_id, private_key")
-        print("4. Register credential: curl -X POST http://localhost:8083/api/credentials \\")
-        print("     -H 'Content-Type: application/json' \\")
-        print("     --data-binary @tests/fixtures/credentials/ib_oauth.json")
-        print("5. Test playbook: .venv/bin/noetl execute playbook \\")
-        print("     'tests/fixtures/playbooks/oauth/interactive_brokers' \\")
-        print("     --host localhost --port 8083")
+        logger.info("\n✓ All checks passed! Implementation is ready.")
+        logger.info("\nNext steps:")
+        logger.info("1. Create OAuth application in IBKR portal")
+        logger.info("2. Generate RSA key pair and upload public key")
+        logger.info("3. Create ib_oauth.json with client_id, key_id, private_key")
+        logger.info("4. Register credential: curl -X POST http://localhost:8083/api/credentials \\")
+        logger.info("     -H 'Content-Type: application/json' \\")
+        logger.info("     --data-binary @tests/fixtures/credentials/ib_oauth.json")
+        logger.info("5. Test playbook: .venv/bin/noetl execute playbook \\")
+        logger.info("     'tests/fixtures/playbooks/oauth/interactive_brokers' \\")
+        logger.info("     --host localhost --port 8083")
         return 0
     else:
-        print("\n✗ Some checks failed. Review errors above.")
+        logger.info("\n✗ Some checks failed. Review errors above.")
         return 1
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format='%(message)s')
     sys.exit(main())

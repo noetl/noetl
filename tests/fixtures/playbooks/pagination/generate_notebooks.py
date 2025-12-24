@@ -7,6 +7,9 @@ Creates standardized notebooks with proper structure for each pagination pattern
 import json
 import sys
 from pathlib import Path
+import logging
+
+logger = logging.getLogger(__name__)
 
 def create_pagination_notebook(
     test_name: str,
@@ -296,6 +299,7 @@ def create_pagination_notebook(
     return notebook
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format='%(message)s')
     # Generate notebooks for each test
     tests = [
         {

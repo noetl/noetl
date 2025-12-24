@@ -17,6 +17,9 @@ from __future__ import annotations
 import re
 import sys
 from pathlib import Path
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def parse_version(v: str) -> tuple[int, int, int]:
@@ -63,13 +66,13 @@ def write_version(pyproject: Path, new_version: str) -> None:
 
 def main(argv: list[str]) -> int:
     if len(argv) < 2:
-        print("Usage: python tools/update_version.py [major|minor|patch|<version>]")
+        logger.info("Usage: python tools/update_version.py [major|minor|patch|<version>]")
         return 1
 
     arg = argv[1].strip()
     pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
     if not pyproject.exists():
-        print("pyproject.toml not found")
+        logger.info("pyproject.toml not found")
         return 2
 
     current = read_current_version(pyproject)
@@ -86,9 +89,10 @@ def main(argv: list[str]) -> int:
         new_version = arg
 
     write_version(pyproject, new_version)
-    print(f"Updated version: {current} -> {new_version}")
+    logger.info(f"Updated version: {current} -> {new_version}")
     return 0
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format='%(message)s')
     raise SystemExit(main(sys.argv))
