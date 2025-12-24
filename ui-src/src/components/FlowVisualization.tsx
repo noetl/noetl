@@ -120,7 +120,10 @@ const FlowVisualizationInner: React.FC<FlowVisualizationProps> = ({
   }, [visible, reactFlowInstance]);
 
   const onConnect: OnConnect = useCallback(
-    (params) => setEdges((eds) => addEdge(params, eds)),
+    (params) => setEdges((eds) => addEdge({
+      ...params,
+      type: 'buttonedge',
+    }, eds)),
     [setEdges],
   );
 
@@ -259,6 +262,43 @@ const FlowVisualizationInner: React.FC<FlowVisualizationProps> = ({
           },
           className: "react-flow__node",
         });
+
+        // Create edges from workflow connections
+        if (task.config?.next) {
+          const nextSteps = Array.isArray(task.config.next) ? task.config.next : [task.config.next];
+          nextSteps.forEach((nextItem: any) => {
+            const targetStep = nextItem.step || nextItem;
+            if (targetStep && typeof targetStep === 'string') {
+              flowEdges.push({
+                id: `${task.id}-${targetStep}`,
+                source: task.id,
+                target: targetStep,
+                type: 'buttonedge',
+              });
+            }
+          });
+        }
+
+        // Also handle 'case' blocks if present
+        if (task.config?.case) {
+          const cases = Array.isArray(task.config.case) ? task.config.case : [task.config.case];
+          cases.forEach((caseItem: any) => {
+            if (caseItem.then) {
+              const thenSteps = Array.isArray(caseItem.then) ? caseItem.then : [caseItem.then];
+              thenSteps.forEach((thenItem: any) => {
+                const targetStep = thenItem.step || thenItem;
+                if (targetStep && typeof targetStep === 'string') {
+                  flowEdges.push({
+                    id: `${task.id}-${targetStep}-case`,
+                    source: task.id,
+                    target: targetStep,
+                    type: 'buttonedge',
+                  });
+                }
+              });
+            }
+          });
+        }
       });
 
       return { nodes: flowNodes, edges: flowEdges };
