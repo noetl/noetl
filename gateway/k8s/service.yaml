@@ -1,12 +1,12 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: noetl-gateway
+  name: gateway
   labels:
-    app: noetl-gateway
+    app: gateway
 spec:
   selector:
-    app: noetl-gateway
+    app: gateway
   ports:
     - name: http
       port: 8090

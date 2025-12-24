@@ -1,22 +1,22 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: noetl-gateway
+  name: gateway
   labels:
-    app: noetl-gateway
+    app: gateway
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: noetl-gateway
+      app: gateway
   template:
     metadata:
       labels:
-        app: noetl-gateway
+        app: gateway
     spec:
       containers:
         - name: router
-          image: noetl-gateway:local
+          image: gateway:local
           imagePullPolicy: IfNotPresent
           ports:
             - name: http

@@ -709,7 +709,7 @@ noetlctl exec api_integration/auth0/check_playbook_access \
     \"action\": \"execute\"
   }"
 
-# 4. If allowed, execute playbook (mock - would be done by noetl-gateway)
+# 4. If allowed, execute playbook (mock - would be done by gateway)
 # noetlctl exec data/test/simple --payload '{...}'
 
 # 5. Verify audit trail
@@ -768,4 +768,4 @@ For production deployment:
 3. Add rate limiting for login attempts
 4. Set up monitoring for audit log
 5. Configure automated session cleanup
-6. Deploy noetl-gateway with Auth0 configuration
+6. Deploy gateway with Auth0 configuration

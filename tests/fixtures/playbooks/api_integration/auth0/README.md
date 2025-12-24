@@ -1,6 +1,6 @@
 # Auth0 Integration Playbooks
 
-This directory contains playbooks for Auth0 authentication integration with noetl-gateway.
+This directory contains playbooks for Auth0 authentication integration with gateway.
 
 ## Quick Start
 
@@ -38,12 +38,12 @@ See [TESTING.md](TESTING.md) for comprehensive testing guide.
 
 ## Overview
 
-The Auth0 integration enables user authentication and authorization for the noetl-gateway, allowing clients to connect and execute playbooks based on their roles and permissions. All backend functionality is managed through playbooks.
+The Auth0 integration enables user authentication and authorization for the gateway, allowing clients to connect and execute playbooks based on their roles and permissions. All backend functionality is managed through playbooks.
 
 ## Architecture
 
 ```
-Client → noetl-gateway → Auth0 (authentication) → noetl-server (playbook execution)
+Client → gateway → Auth0 (authentication) → noetl-server (playbook execution)
                     ↓
               auth schema (user tracking, roles, playbook permissions)
 ```
@@ -132,7 +132,7 @@ noetlctl credential register -f tests/fixtures/credentials/pg_auth_user.json
 
 ### Step 3: Configure Auth0
 1. Create Auth0 application
-2. Configure callback URLs for noetl-gateway
+2. Configure callback URLs for gateway
 3. Set up API permissions
 4. Store Auth0 credentials in keychain
 

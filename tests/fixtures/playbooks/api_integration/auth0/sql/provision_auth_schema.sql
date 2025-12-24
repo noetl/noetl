@@ -15,7 +15,7 @@
 -- ============================================================================
 CREATE SCHEMA IF NOT EXISTS auth;
 
-COMMENT ON SCHEMA auth IS 'Authentication and authorization data for noetl-gateway Auth0 integration';
+COMMENT ON SCHEMA auth IS 'Authentication and authorization data for gateway Auth0 integration';
 
 -- ============================================================================
 -- 2. CREATE DATABASE USER
