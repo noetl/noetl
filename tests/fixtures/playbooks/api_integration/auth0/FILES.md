@@ -368,14 +368,14 @@ noetlctl register-playbook -f tests/fixtures/playbooks/api_integration/auth0/che
 - Auth0 token validation flow
 - Session token generation
 - REST API compatible
-- noetl-gateway ready
+- gateway ready
 
 ## Next Steps
 
 1. **Deploy to Cluster**: Execute provision playbook in kind cluster
 2. **Create Test Users**: Insert test users with different roles
 3. **Run Tests**: Follow TESTING.md guide for verification
-4. **Integrate noetl-gateway**: Connect Rust gateway to auth playbooks
+4. **Integrate gateway**: Connect Rust gateway to auth playbooks
 5. **Auth0 Configuration**: Set up Auth0 application and callbacks
 6. **Production Hardening**: Change passwords, configure TLS, enable monitoring
 

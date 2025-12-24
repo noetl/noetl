@@ -30,9 +30,9 @@ WORKDIR /app
 RUN apk add --no-cache libgcc libxslt ca-certificates openssl
 
 # Copy the compiled binary and configs
-COPY --from=builder /app/target/release/noetl-gateway ./noetl-gateway
+COPY --from=builder /app/target/release/gateway ./gateway
 
 ENV ROUTER_PORT=8090
 EXPOSE 8090
 
-ENTRYPOINT ["./noetl-gateway"]
+ENTRYPOINT ["./gateway"]

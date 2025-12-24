@@ -68,7 +68,7 @@ async fn main() -> anyhow::Result<()> {
         .with_state(());
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
-    tracing::info!(%addr, noetl_base, nats_url, "starting noetl-gateway server http://localhost:{}", port);
+    tracing::info!(%addr, noetl_base, nats_url, "starting gateway server http://localhost:{}", port);
     //
     let listener = tokio::net::TcpListener::bind(addr)
         .await

@@ -64,14 +64,14 @@ Docker
 ------
 Build:
 ```
-docker build --progress plain -t noetl-gateway:local .
+docker build --progress plain -t gateway:local .
 ```
 
 Run:
 ```
 docker run --rm -p 8090:8090 \
   -e NOETL_BASE_URL=http://host.docker.internal:8082 \
-  noetl-gateway:local
+  gateway:local
 ```
 
 Kubernetes (Kind)
@@ -95,12 +95,12 @@ How to run (local):
 1. Ensure NoETL server is running at `http://localhost:8082` and NATS at `nats://127.0.0.1:4222`.
 2. Start the router (choose one):
    - Rust toolchain (recommended Rust >= 1.83):
-     - `cd noetl-gateway && cargo run`
+     - `cd gateway && cargo run`
    - Docker (uses Rust 1.83 in builder):
-     - `docker build -t noetl-gateway:local .`
+     - `docker build -t gateway:local .`
      - `docker run --rm -p 8090:8090 \
          -e NOETL_BASE_URL=http://host.docker.internal:8082 \
-         noetl-gateway:local`
+         gateway:local`
 3. Open GraphQL Playground at `http://localhost:8090/`.
 4. Paste the mutation from `router_example.graphql` into the left pane and provide variables like:
 ```

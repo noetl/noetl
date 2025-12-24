@@ -1,5 +1,5 @@
 [package]
-name = "noetl-gateway"
+name = "gateway"
 version = "0.1.0"
 edition = "2024"
 
