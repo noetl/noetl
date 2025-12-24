@@ -110,7 +110,10 @@ async def get_execution(execution_id: str):
                     if isinstance(row["context"], str):
                         event_data["context"] = json.loads(row["context"])
                     if isinstance(row["result"], str):
-                        event_data["result"] = json.loads(row["result"])
+                        try:
+                            event_data["result"] = json.loads(row["result"])
+                        except json.JSONDecodeError:
+                            event_data["result"] = row["result"]
                     events.append(event_data)
 
                 execution_item = next((e for e in events if e.get("event_type") == "workflow.initialized"), None)
