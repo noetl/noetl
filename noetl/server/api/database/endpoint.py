@@ -35,6 +35,31 @@ async def execute_postgres(request: PostgresExecuteRequest) -> PostgresExecuteRe
     ```json
     {
         "query": "SELECT * FROM users WHERE id = 1",
+        "database": "noetl"
+    }
+    ```
+    
+    Or with credential (schema optional):
+    ```json
+    {
+        "query": "SELECT * FROM auth.users",
+        "credential": "pg_auth_user"
+    }
+    ```
+    
+    Or with schema parameter (for unqualified table names):
+    ```json
+    {
+        "query": "SELECT * FROM users",
+        "credential": "pg_auth_user",
+        "schema": "auth"
+    }
+    ```
+    
+    Or with full connection string:
+    ```json
+    {
+        "query": "SELECT * FROM users",
         "connection_string": "postgresql://user:pass@localhost/db"
     }
     ```
@@ -43,7 +68,8 @@ async def execute_postgres(request: PostgresExecuteRequest) -> PostgresExecuteRe
     ```json
     {
         "procedure": "CALL my_procedure(%s, %s)",
-        "parameters": ["value1", "value2"]
+        "parameters": ["value1", "value2"],
+        "database": "demo_noetl"
     }
     ```
     
@@ -57,13 +83,20 @@ async def execute_postgres(request: PostgresExecuteRequest) -> PostgresExecuteRe
     }
     ```
     
-    **Query Parameters**:
-    - `query`: SQL query to execute
-    - `query_base64`: Base64-encoded query (alternative)
-    - `procedure`: Stored procedure to call
-    - `parameters`: Query/procedure parameters
-    - `schema`: Database schema to use
-    - `connection_string`: Custom connection string
+    **Request Parameters**:
+    - `query`: SQL query to execute (required if procedure not provided)
+    - `query_base64`: Base64-encoded query (alternative to query)
+    - `procedure`: Stored procedure to call (required if query not provided)
+    - `parameters`: Query/procedure parameters (optional)
+    - `schema`: Database schema for search_path (optional, not needed if tables are fully qualified)
+    - `database`: Database name to connect to (optional, uses NOETL_POSTGRES_DB by default)
+    - `credential`: Credential name from credential table (optional)
+    - `connection_string`: Full connection string (optional, highest priority)
+    
+    **Connection Priority**: connection_string > credential > database > default
+    
+    **Note**: The `schema` parameter sets PostgreSQL's search_path. It's only needed when querying
+    tables without schema qualification (e.g., `SELECT * FROM users` instead of `SELECT * FROM auth.users`).
     
     **Note**: Either `query` or `procedure` is required.
     """
