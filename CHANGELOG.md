@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.3.1](https://github.com/noetl/noetl/compare/v2.3.0...v2.3.1) (2025-12-25)
+
+### Bug Fixes
+
+* fix errors, AHM-3901 ([93ee225](https://github.com/noetl/noetl/commit/93ee225cfa1529da2f332ad8fd6b70b2973d900c))
+* remove useless and double logs, AHM-3901 ([13e0de1](https://github.com/noetl/noetl/commit/13e0de1134101ed62e493aa4f0bc739e68f34dae))
+
 ## [2.3.0](https://github.com/noetl/noetl/compare/v2.2.1...v2.3.0) (2025-12-25)
 
 ### Features
