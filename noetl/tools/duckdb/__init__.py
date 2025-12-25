@@ -59,7 +59,7 @@ def execute_duckdb_task(
     task_id = None
     
     try:
-        logger.debug("=== DUCKDB.EXECUTE_TASK: Refactored implementation entry ===")
+        logger.debug("DUCKDB.EXECUTE_TASK: Entry")
         
         # Apply backwards compatibility transformation for deprecated 'credentials' field
         validate_auth_transition(task_config, task_with)

@@ -175,9 +175,8 @@ async def execute_python_task_async(
     log_event_callback: Optional[Callable] = None,
 ) -> Dict[str, Any]:
     """Execute a Python task asynchronously."""
-    logger.debug("=== PYTHON.EXECUTE_PYTHON_TASK: Function entry ===")
     start_time = datetime.datetime.now()
-    logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Start time={start_time}")
+    logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Entry at {start_time}")
 
     task_id = str(uuid.uuid4())
     task_name = task_config.get('name', 'unnamed_python_task')
@@ -200,9 +199,7 @@ async def execute_python_task_async(
     args = args or {}
 
     try:
-        logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Task config keys: {list(task_config.keys())}")
-        logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Args keys: {args}")
-        logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Context keys: {list((context or {}).keys())}")
+        logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: config_keys={list(task_config.keys())} | args={args} | context_keys={list((context or {}).keys())}")
 
         # Get and decode the code (priority: script > code_b64 > code)
         code = None
@@ -245,9 +242,7 @@ async def execute_python_task_async(
                 'in_progress', 0, context, None,
                 {'args': args}, None
             )
-            logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Task start event_id={event_id}")
-
-        logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Setting up execution globals")
+            logger.debug(f"PYTHON: Task start event_id={event_id} | setting up execution globals")
         
         # Import commonly used utilities from noetl.core.common
         from noetl.core.common import (
@@ -277,8 +272,7 @@ async def execute_python_task_async(
         exec_locals = {}
         logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Executing Python code")
         exec(code, exec_globals, exec_locals)
-        logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Python execution completed")
-        logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Execution locals keys: {list(exec_locals.keys())}")
+        logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Execution completed | locals_keys={list(exec_locals.keys())}")
 
         if 'main' in exec_locals and callable(exec_locals['main']):
             # Render Jinja templates in args against context

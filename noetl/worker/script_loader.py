@@ -52,19 +52,17 @@ async def load_from_gcs(uri: str, source: dict) -> str:
         # Handle authentication
         client = None
         auth_key = source.get("auth")
-        logger.debug(f"[SCRIPT_LOADER] auth_key = {auth_key}")
-        logger.debug(f"[SCRIPT_LOADER] source = {source}")
+        logger.debug(f"[SCRIPT_LOADER] auth_key={auth_key} | source={source}")
         
         if auth_key:
             from noetl.worker.secrets import fetch_credential_by_key
             credential = fetch_credential_by_key(auth_key)
-            logger.debug(f"[SCRIPT_LOADER] credential fetched = {credential is not None}")
             
             if not credential or not credential.get("data"):
                 raise ValueError(f"Failed to resolve GCS credential: {auth_key}")
             
             cred_data = credential.get("data", {})
-            logger.debug(f"[SCRIPT_LOADER] cred_data keys: {list(cred_data.keys())}")
+            logger.debug(f"[SCRIPT_LOADER] credential_fetched={credential is not None} | cred_data_keys={list(cred_data.keys())}")
             
             # Support OAuth user credentials (refresh_token)
             if "refresh_token" in cred_data and "client_id" in cred_data:

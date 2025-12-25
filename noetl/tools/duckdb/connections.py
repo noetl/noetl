@@ -36,8 +36,7 @@ def get_duckdb_connection(connection_config: ConnectionConfig):
     """
     database_path = connection_config.database_path
     
-    logger.debug("=== DUCKDB.GET_CONNECTION: Function entry ===")
-    logger.debug(f"DUCKDB.GET_CONNECTION: database_path={database_path}")
+    logger.debug(f"DUCKDB.GET_CONNECTION: Entry - database_path={database_path}")
 
     try:
         with _connection_lock:

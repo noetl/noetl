@@ -178,14 +178,11 @@ class JobExecutor:
                     job.context = work_context
                 task_cfg = rendered.get("task")
                 if isinstance(task_cfg, dict):
-                    logger.critical(f"WORKER.RENDER: task_cfg keys: {list(task_cfg.keys())}")
-                    logger.critical(f"WORKER.RENDER: task_cfg has 'data': {'data' in task_cfg}")
+                    logger.critical(f"WORKER.RENDER: task_cfg keys={list(task_cfg.keys())} | has_data={'data' in task_cfg}")
                     if 'data' in task_cfg:
-                        logger.critical(f"WORKER.RENDER: data value: {task_cfg['data']}")
-                    logger.critical(f"WORKER.RENDER: task_cfg has 'args': {'args' in task_cfg}")
+                        logger.critical(f"WORKER.RENDER: data={task_cfg['data']} | has_args={'args' in task_cfg}")
                     if 'args' in task_cfg:
-                        logger.critical(f"WORKER.RENDER: args value: {task_cfg['args']}")
-                    logger.critical(f"WORKER.RENDER: About to call ActionConfig.model_validate")
+                        logger.critical(f"WORKER.RENDER: args={task_cfg['args']} | calling ActionConfig.model_validate")
                     result = ActionConfig.model_validate(task_cfg)
                     logger.critical(f"WORKER.RENDER: After model_validate, result.args = {result.args}")
                     return result
@@ -370,8 +367,7 @@ class JobExecutor:
         # CRITICAL: For iterator actions (with loop attribute), do NOT run inline sink here.
         # The iterator executor handles per-iteration sinks internally.
         # Only run inline sink for non-iterator actions.
-        logger.critical(f"SINK_CHECK: action_cfg keys: {list(prepared.action_cfg.__dict__.keys() if hasattr(prepared.action_cfg, '__dict__') else prepared.action_cfg.keys() if isinstance(prepared.action_cfg, dict) else 'unknown')}")
-        logger.critical(f"SINK_CHECK: action_cfg type: {type(prepared.action_cfg)}")
+        logger.critical(f"SINK_CHECK: action_cfg type={type(prepared.action_cfg)} | keys={list(prepared.action_cfg.__dict__.keys() if hasattr(prepared.action_cfg, '__dict__') else prepared.action_cfg.keys() if isinstance(prepared.action_cfg, dict) else 'unknown')}")
         
         # Check for loop attribute (use model_dump to get dict representation for Pydantic models)
         action_cfg_dict = (prepared.action_cfg.model_dump() 
@@ -379,7 +375,7 @@ class JobExecutor:
                           else dict(prepared.action_cfg) if hasattr(prepared.action_cfg, '__dict__')
                           else prepared.action_cfg)
         has_loop = 'loop' in action_cfg_dict
-        logger.critical(f"SINK_CHECK: has_loop={has_loop}")
+        logger.critical(f"SINK_CHECK: type={type(prepared.action_cfg)} | keys={list(prepared.action_cfg.__dict__.keys() if hasattr(prepared.action_cfg, '__dict__') else prepared.action_cfg.keys() if isinstance(prepared.action_cfg, dict) else 'unknown')} | has_loop={has_loop}")
         if has_loop:
             logger.info(
                 f"SINK: Skipping inline sink execution for iterator action "
@@ -394,27 +390,18 @@ class JobExecutor:
                 if isinstance(result, dict) and result.get("data") is not None
                 else result
             )
-            logger.critical(f"SINK_CONTEXT: Original result type: {type(result)}, has 'data': {isinstance(result, dict) and 'data' in result}")
-            if isinstance(result, dict):
-                logger.critical(f"SINK_CONTEXT: Result keys: {list(result.keys())}")
-                logger.critical(f"SINK_CONTEXT: Result.data value: {result.get('data')}")
-            logger.critical(f"SINK_CONTEXT: Extracted current_result type: {type(current_result)}")
-            if isinstance(current_result, dict):
-                logger.critical(f"SINK_CONTEXT: current_result keys: {list(current_result.keys())}")
+            logger.critical(f"SINK_CONTEXT: result type={type(result)} | has_data={isinstance(result, dict) and 'data' in result} | keys={list(result.keys()) if isinstance(result, dict) else 'N/A'} | data_value={result.get('data') if isinstance(result, dict) else 'N/A'} | current_result type={type(current_result)} | current_result keys={list(current_result.keys()) if isinstance(current_result, dict) else 'N/A'}")
             exec_ctx_with_result["result"] = current_result
             exec_ctx_with_result["this"] = result
             exec_ctx_with_result["data"] = current_result  # FORCE override, don't use setdefault
-            logger.critical(f"SINK_CONTEXT: Context 'result' assigned - type: {type(exec_ctx_with_result.get('result'))}")
-            logger.critical(f"SINK_CONTEXT: Context 'data' assigned - type: {type(exec_ctx_with_result.get('data'))}")
+            logger.critical(f"SINK_CONTEXT: Context assigned | result type={type(exec_ctx_with_result.get('result'))} | data type={type(exec_ctx_with_result.get('data'))}")
         except Exception:
             exec_ctx_with_result = exec_ctx
 
         from noetl.core.storage import execute_sink_task as _do_sink
 
         sink_payload = {"sink": inline_sink}
-        logger.critical(f"INLINE_SINK: About to call execute_sink_task with inline_sink type: {type(inline_sink)}")
-        logger.critical(f"INLINE_SINK: inline_sink value: {inline_sink}")
-        logger.critical(f"INLINE_SINK: sink_payload: {sink_payload}")
+        logger.critical(f"INLINE_SINK: Calling execute_sink_task | inline_sink type={type(inline_sink)} | inline_sink={inline_sink} | sink_payload={sink_payload}")
         loop = None
         loop = asyncio.get_running_loop()
         sink_out = await loop.run_in_executor(

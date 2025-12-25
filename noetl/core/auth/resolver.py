@@ -215,11 +215,10 @@ async def resolve_auth_map(
                     )
                     if client_secret:
                         resolved_spec['client_secret'] = client_secret
-                        logger.debug(f"AUTH: Retrieved client_secret for alias '{alias}'")
                     else:
                         logger.warning(f"AUTH: Failed to retrieve client_secret from '{client_secret_key}' for alias '{alias}'")
                 
-                logger.debug(f"AUTH: Retrieved OAuth2 client credentials for alias '{alias}'")
+                logger.debug(f"AUTH: Retrieved OAuth2 client credentials | alias='{alias}' | has_client_secret={bool(resolved_spec.get('client_secret'))}")
             elif key:
                 # Standard single-key secret fetching
                 secret_value = await fetch_secret_manager_value(

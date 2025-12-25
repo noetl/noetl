@@ -118,8 +118,7 @@ def validate_mandatory_env_vars():
             error_msg.append(f"Empty environment variables: {', '.join(empty_vars)}")
 
         logger.critical(f"{' | '.join(error_msg)}")
-        logger.critical("Missing required environment variables for server start")
-        logger.critical("Required variables:")
+        logger.critical("Missing required environment variables for server start | Required variables:")
         for var in mandatory_vars:
             value = os.environ.get(var, '<MISSING>')
             if value and value.strip():

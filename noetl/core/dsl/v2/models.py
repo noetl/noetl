@@ -280,7 +280,7 @@ class Step(BaseModel):
     loop: Optional[Loop] = Field(None, description="Loop configuration")
     tool: ToolSpec = Field(..., description="Tool configuration with tool.kind")
     case: Optional[list[CaseEntry]] = Field(None, description="Event-driven conditional rules")
-    next: Optional[str | list[str] | list[dict[str, str]]] = Field(
+    next: Optional[str | list[str] | list[dict[str, Any]]] = Field(
         None, 
         description="Structural default next step(s) - unconditional"
     )

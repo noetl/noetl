@@ -123,8 +123,7 @@ def load_playbook_content(
     playbook_content = (task_config.get('content') or
                        task_config.get('playbook_content'))
     
-    logger.debug(f"PLAYBOOK: Extracted playbook_path: {playbook_path}")
-    logger.debug(f"PLAYBOOK: Extracted playbook_content: {playbook_content is not None}")
+    logger.debug(f"PLAYBOOK: Extracted | path={playbook_path} | has_content={playbook_content is not None}")
     
     # If neither path nor content provided, check for task reference
     if not playbook_path and not playbook_content:

@@ -40,10 +40,8 @@ def build_action_config(
         action_args.update(args)
 
     logger.info(
-        f"WORKBOOK.BUILD_CONFIG: action_args from workbook = {target_action.get('args', {})}"
+        f"WORKBOOK.BUILD_CONFIG: action_args_from_workbook={target_action.get('args', {})} | args_from_step={args} | action_args_after_merge={action_args}"
     )
-    logger.info(f"WORKBOOK.BUILD_CONFIG: args from step = {args}")
-    logger.info(f"WORKBOOK.BUILD_CONFIG: action_args after merge = {action_args}")
 
     # Create task config for the actual action type
     # V2 DSL: tool is an object with 'kind' field
@@ -147,8 +145,7 @@ async def execute_workbook_task(
         f"WORKBOOK: Executing action '{task_name}' as tool "
         f"'{action_config.get('tool')}'"
     )
-    logger.debug(f"WORKBOOK: Action config: {action_config}")
-    logger.debug(f"WORKBOOK: Action args: {action_args}")
+    logger.debug(f"WORKBOOK: Action config={action_config} | args={action_args}")
 
     # Step 5: Execute the actual action using async tool executors
     # Since we're already in async context, call tool executors directly

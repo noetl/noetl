@@ -378,14 +378,16 @@ def execute_transfer_action(
         
         direction_name = f"{source_type}_to_{target_type}"
         
-        logger.info(f"Transfer direction: {source_type} -> {target_type} ({direction_name})")
+        logger.info(f"Transfer: {source_type}->{target_type} ({direction_name}) | chunk_size={chunk_size} | mode={mode if not target_query else 'custom'}")
+        query_info = []
         if source_query:
-            logger.info(f"Source query: {source_query[:100]}...")
+            query_info.append(f"source_query={source_query[:100]}")
         if target_table:
-            logger.info(f"Target table: {target_table}")
+            query_info.append(f"target_table={target_table}")
         if target_query:
-            logger.info(f"Target query: {target_query[:100]}...")
-        logger.info(f"Chunk size: {chunk_size}, Mode: {mode if not target_query else 'custom'}")
+            query_info.append(f"target_query={target_query[:100]}")
+        if query_info:
+            logger.info(f"Transfer config: {' | '.join(query_info)}")
         
         # Resolve authentication and create connections for database sources/targets
         source_conn = None

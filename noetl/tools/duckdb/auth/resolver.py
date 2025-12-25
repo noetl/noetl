@@ -113,8 +113,9 @@ def resolve_credentials(
                         resolved_creds[cred_data.alias] = cred_data
                 except Exception as e:
                     logger.warning(f"Failed to resolve credential entry {entry}: {e}")
-                    
-        logger.debug(f"Resolved {len(resolved_creds)} legacy credentials")
+        
+        if resolved_creds:
+            logger.debug(f"Resolved {len(resolved_creds)} legacy credentials")
         return resolved_creds
         
     except Exception as e:

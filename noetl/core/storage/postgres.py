@@ -271,12 +271,7 @@ def handle_postgres_storage(
     Returns:
         Save result envelope with status, data, and meta
     """
-    logger.critical("=" * 80)
-    logger.critical("SINK.POSTGRES: handle_postgres_storage CALLED")
-    logger.critical(f"SINK.POSTGRES: table={table}, mode={mode}")
-    logger.critical(f"SINK.POSTGRES: credential_ref={credential_ref}")
-    logger.critical(f"SINK.POSTGRES: rendered_data={rendered_data}")
-    logger.critical("=" * 80)
+    logger.critical(f"SINK.POSTGRES: handle_postgres_storage CALLED | table={table} | mode={mode} | credential_ref={credential_ref} | rendered_data={rendered_data}")
 
     # Resolve credential alias if provided (best-effort)
     spec = resolve_credential(credential_ref, spec)
