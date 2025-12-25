@@ -466,7 +466,7 @@ def get_pgdb_connection(
         user = user or os.environ.get('POSTGRES_USER')
         password = password or os.environ.get('POSTGRES_PASSWORD')
     else:
-        db_name = db_name or os.environ.get('POSTGRES_DB')
+        db_name = db_name or os.environ.get('NOETL_POSTGRES_DB') or os.environ.get('POSTGRES_DB')
         user = user or os.environ.get('NOETL_USER')
         password = password or os.environ.get('NOETL_PASSWORD')
     
