@@ -35,9 +35,17 @@ class PostgresExecuteRequest(BaseModel):
         description="Database schema to use",
         alias="schema"
     )
+    database: Optional[str] = Field(
+        default=None,
+        description="Database name to connect to (overrides default)"
+    )
+    credential: Optional[str] = Field(
+        default=None,
+        description="Credential name from credential table to use for connection"
+    )
     connection_string: Optional[str] = Field(
         default=None,
-        description="Custom connection string (overrides default)"
+        description="Custom connection string (overrides database and credential)"
     )
     
     @field_validator('query', 'procedure', mode='before')
