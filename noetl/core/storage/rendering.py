@@ -46,11 +46,11 @@ def render_data_mapping(
         rendered = mapping
     
     logger.debug(
-            f"SINK: Available context keys: "
-            f"{list(context.keys()) if isinstance(context, dict) else type(context)}"
-        )
-        # Fallback: return as-is if rendering fails
-        return mapping
+        f"SINK: Available context keys: "
+        f"{list(context.keys()) if isinstance(context, dict) else type(context)}"
+    )
+    # Fallback: return as-is if rendering fails
+    return mapping
 
 
 def normalize_params(params: Dict[str, Any]) -> Dict[str, Any]:
