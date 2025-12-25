@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.3.0](https://github.com/noetl/noetl/compare/v2.2.1...v2.3.0) (2025-12-25)
+
+### Features
+
+* add support for custom PostgreSQL connections ([2317f11](https://github.com/noetl/noetl/commit/2317f11578de9ab4c2b6fd15048b8b9777933778))
+
 ## [2.2.1](https://github.com/noetl/noetl/compare/v2.2.0...v2.2.1) (2025-12-24)
 
 ### Bug Fixes
