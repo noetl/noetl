@@ -466,7 +466,7 @@ def get_pgdb_connection(
         user = user or os.environ.get('POSTGRES_USER')
         password = password or os.environ.get('POSTGRES_PASSWORD')
     else:
-        db_name = db_name or os.environ.get('POSTGRES_DB')
+        db_name = db_name or os.environ.get('NOETL_POSTGRES_DB') or os.environ.get('POSTGRES_DB')
         user = user or os.environ.get('NOETL_USER')
         password = password or os.environ.get('NOETL_PASSWORD')
     
@@ -568,14 +568,34 @@ def get_db_connection(optional=False):
 from contextlib import asynccontextmanager
 
 @asynccontextmanager
-async def get_async_db_connection(optional: bool = False):
+async def get_async_db_connection(connection_string: str = None, optional: bool = False):
     """
-    Get an async database connection from the async pool.
-    No fallbacks - fails fast if pool connection cannot be established.
+    Get an async database connection from the async pool or custom connection string.
 
     Args:
+        connection_string (str): Optional custom connection string. If provided, creates a new connection
+                                instead of using the pool.
         optional (bool): If True, yields None instead of raising an exception when connection fails.
     """
+    # If custom connection string provided, create direct connection
+    if connection_string:
+        try:
+            import psycopg
+            conn = await psycopg.AsyncConnection.connect(connection_string)
+            try:
+                yield conn
+            finally:
+                await conn.close()
+            return
+        except Exception as e:
+            logger.error(f"Failed to connect with custom connection string: {e}")
+            if optional:
+                yield None
+                return
+            else:
+                raise
+    
+    # Use pool connection for default database
     pool = await initialize_async_db_pool()
     if not pool:
         error_msg = "Database connection pool not initialized"

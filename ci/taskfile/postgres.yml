@@ -24,11 +24,13 @@ tasks:
       - kubectl delete configmap postgres-schema-ddl --namespace postgres
 
   postgres:k8s:schema-reset:
-    desc: Reset NoETL schema on Kubernetes Postgres
+    desc: Reset NoETL system schema on Kubernetes Postgres (noetl database)
     aliases: [prs, postgres-reset-schema]
     cmds:
       - task: kubectl:local:context-set-kind
-      - echo "Resetting NoETL schema on Postgres (DROP schema and re-run schema_ddl.sql)."
+      - echo "Resetting NoETL system schema on Postgres (DROP schema and re-run schema_ddl.sql)."
+      - echo "Note - This resets the noetl database (runtime, catalog, event, queue tables)."
+      - echo "       Application data in demo_noetl database is NOT affected."
       - |
         set -a; [ -f .env ] && . .env; set +a
         # Override with kubectl service port for Kind cluster
@@ -36,7 +38,8 @@ tasks:
         export PGPORT=54321
         export PGUSER=${POSTGRES_USER:-demo}
         export PGPASSWORD=${POSTGRES_PASSWORD:-demo}
-        export PGDATABASE=${POSTGRES_DB:-demo_noetl}
+        # Connect to noetl database (NoETL system tables)
+        export PGDATABASE=${NOETL_POSTGRES_DB:-noetl}
         echo "Connecting to Postgres at $PGHOST:$PGPORT as $PGUSER to database $PGDATABASE"
         echo "Dropping schema ${NOETL_SCHEMA:-noetl}..."
         psql -v ON_ERROR_STOP=1 -c "DROP SCHEMA IF EXISTS ${NOETL_SCHEMA:-noetl} CASCADE;"
