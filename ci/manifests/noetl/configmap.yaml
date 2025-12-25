@@ -39,6 +39,7 @@ data:
   POSTGRES_HOST: "postgres.postgres.svc.cluster.local"
   POSTGRES_PORT: "5432"
   POSTGRES_SCHEMA: "public"
+  NOETL_POSTGRES_DB: "noetl"
   NOETL_USER: "noetl"
   NOETL_SCHEMA: "noetl"
   NOETL_DB_STARTUP_TIMEOUT: "180"
