@@ -38,8 +38,7 @@ class DatabaseSchema:
             self.settings = get_settings()
             self.set_noetl_credentials(noetl_user, noetl_password, noetl_schema)
         except Exception as e:
-            logger.error(f"FATAL: Failed to initialize database schema: {e}")
-            logger.error("FATAL: Exiting immediately due to configuration error")
+            logger.error(f"FATAL: Failed to initialize database schema: {e}. Exiting immediately due to configuration error")
             sys.exit(1)
 
     async def initialize_async(self):
@@ -48,8 +47,7 @@ class DatabaseSchema:
             if self.conn is None:
                 await self.initialize_connection()
         except Exception as e:
-            logger.error(f"FATAL: Failed to initialize async database connection: {e}")
-            logger.error("FATAL: Exiting immediately due to database connection failure")
+            logger.error(f"FATAL: Failed to initialize async database connection: {e}. Exiting immediately due to database connection failure")
             sys.exit(1)
 
     def set_noetl_credentials(self, noetl_user: str = None, noetl_password: str = None, noetl_schema: str = None):
@@ -141,8 +139,7 @@ class DatabaseSchema:
                                 try:
                                     ac.execute(f"GRANT ALL PRIVILEGES ON SCHEMA {self.noetl_schema} TO {self.noetl_user}")
                                 except Exception as e:
-                                    logger.error(f"Failed to grant schema privileges to user {self.noetl_user}: {e}")
-                                    logger.exception("Schema privilege grant failed:")
+                                    logger.exception(f"Failed to grant schema privileges to user {self.noetl_user}: {e}")
                                     # Continue but log the issue - this could cause permission problems later
                         finally:
                             admin.close()
@@ -219,51 +216,44 @@ class DatabaseSchema:
 
     async def create_noetl_schema(self):
         try:
-            logger.info(f"ATTEMPTING TO CREATE SCHEMA: Starting schema installation for '{self.noetl_schema}' with user '{self.noetl_user}'")
-            logger.info(f"SCHEMA INSTALLATION: Using admin credentials to connect to database")
+            logger.info(f"Schema installation starting for '{self.noetl_schema}' with user '{self.noetl_user}'")
 
             try:
                 self.admin_connection = await psycopg.AsyncConnection.connect(self.admin_conn)
                 await self.admin_connection.set_autocommit(True)
                 logger.info("SCHEMA INSTALLATION: Successfully connected to database with admin credentials (async)")
             except Exception as admin_conn_error:
-                logger.error(f"SCHEMA INSTALLATION FAILED: Could not connect with admin credentials: {admin_conn_error}")
-                logger.error("SCHEMA INSTALLATION FAILED: Make sure POSTGRES_USER and POSTGRES_PASSWORD environment variables are set correctly")
+                logger.error(f"SCHEMA INSTALLATION FAILED: Could not connect with admin credentials: {admin_conn_error}. Make sure POSTGRES_USER and POSTGRES_PASSWORD environment variables are set correctly")
                 raise
 
             async with self.admin_connection.cursor() as cursor:
-                logger.info(f"SCHEMA INSTALLATION: Checking if user '{self.noetl_user}' exists...")
                 await cursor.execute("""
                     SELECT 1 FROM pg_roles WHERE rolname = %s
                 """, (self.noetl_user,))
                 user_exists = await cursor.fetchone()
 
                 if not user_exists:
-                    logger.info(f"SCHEMA INSTALLATION: Creating user '{self.noetl_user}'...")
                     await cursor.execute(f"""
                         CREATE USER {self.noetl_user} WITH 
                         PASSWORD '{self.noetl_password}'
                         CREATEDB
                         LOGIN
                     """)
-                    logger.info(f"SCHEMA INSTALLATION: User '{self.noetl_user}' created successfully")
+                    logger.info(f"User '{self.noetl_user}' created")
                 else:
-                    logger.info(f"SCHEMA INSTALLATION: User '{self.noetl_user}' already exists")
+                    logger.debug(f"User '{self.noetl_user}' already exists")
 
-                logger.info(f"SCHEMA INSTALLATION: Checking if schema '{self.noetl_schema}' exists...")
                 await cursor.execute("""
                     SELECT 1 FROM information_schema.schemata WHERE schema_name = %s
                 """, (self.noetl_schema,))
                 schema_exists = await cursor.fetchone()
 
                 if not schema_exists:
-                    logger.info(f"SCHEMA INSTALLATION: Creating schema '{self.noetl_schema}'...")
                     await cursor.execute(f"CREATE SCHEMA {self.noetl_schema}")
-                    logger.info(f"SCHEMA INSTALLATION: Schema '{self.noetl_schema}' created successfully")
+                    logger.info(f"Schema '{self.noetl_schema}' created")
                 else:
-                    logger.info(f"SCHEMA INSTALLATION: Schema '{self.noetl_schema}' already exists")
+                    logger.debug(f"Schema '{self.noetl_schema}' already exists")
 
-                logger.info(f"SCHEMA INSTALLATION: Granting permissions to user '{self.noetl_user}'...")
                 await cursor.execute(f"GRANT ALL PRIVILEGES ON SCHEMA {self.noetl_schema} TO {self.noetl_user}")
                 await cursor.execute(f"GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA {self.noetl_schema} TO {self.noetl_user}")
                 await cursor.execute(f"GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA {self.noetl_schema} TO {self.noetl_user}")
@@ -271,12 +261,10 @@ class DatabaseSchema:
                 await cursor.execute(f"ALTER DEFAULT PRIVILEGES IN SCHEMA {self.noetl_schema} GRANT ALL ON SEQUENCES TO {self.noetl_user}")
 
                 await self.admin_connection.commit()
-                logger.info("SCHEMA INSTALLATION: NoETL user and schema setup completed successfully")
+                logger.info(f"Schema installation completed for '{self.noetl_schema}'")
 
         except Exception as e:
-            logger.error(f"SCHEMA INSTALLATION FAILED: Error setting up noetl user and schema: {e}", exc_info=True)
-            logger.error(f"SCHEMA INSTALLATION FAILED: Check that POSTGRES_USER has sufficient privileges to create users and schemas")
-            logger.error(f"SCHEMA INSTALLATION FAILED: Verify that NOETL_USER, NOETL_PASSWORD, and NOETL_SCHEMA are correctly set")
+            logger.error(f"Schema installation failed: {e}. Check POSTGRES_USER privileges and verify NOETL_USER, NOETL_PASSWORD, NOETL_SCHEMA settings", exc_info=True)
             if self.admin_connection:
                 await self.admin_connection.rollback()
             raise ValueError(f"Schema installation failed: {e}")
@@ -296,8 +284,7 @@ class DatabaseSchema:
 
             return True
         except Exception as e:
-            logger.error(f"FATAL: Error initializing database: {e}.", exc_info=True)
-            logger.error("FATAL: Exiting immediately due to database initialization failure")
+            logger.error(f"FATAL: Error initializing database: {e}. Exiting immediately due to database initialization failure", exc_info=True)
             sys.exit(1)
 
     async def set_search_path(self):
@@ -520,14 +507,12 @@ class DatabaseSchema:
                 self.conn.commit()
                 return True
         except Exception as e:
-            logger.error(f"Database operation failed: {e}")
-            logger.exception("Database operation exception details:")
+            logger.exception(f"Database operation failed: {e}")
             try:
                 self.conn.rollback()
                 logger.info("Transaction rolled back successfully")
             except Exception as rollback_e:
-                logger.error(f"Critical: Transaction rollback failed: {rollback_e}")
-                logger.exception("Rollback failure details:")
+                logger.exception(f"Critical: Transaction rollback failed: {rollback_e}")
                 # This is a serious issue - database may be in inconsistent state
             return False
     

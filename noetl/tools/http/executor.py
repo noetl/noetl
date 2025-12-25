@@ -47,8 +47,7 @@ async def execute_http_task(
     Returns:
         A dictionary of the task result
     """
-    logger.debug("=== HTTP.EXECUTE_HTTP_TASK: Function entry ===")
-    logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Parameters - task_config={task_config}, task_with={task_with}")
+    logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Entry - task_config={task_config}, task_with={task_with}")
 
     task_id = str(uuid.uuid4())
     task_name = task_config.get('task', 'http_task')
@@ -58,9 +57,7 @@ async def execute_http_task(
     validate_auth_transition(task_config, task_with)
     task_config, task_with = transform_credentials_to_auth(task_config, task_with)
 
-    logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Generated task_id={task_id}")
-    logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Task name={task_name}")
-    logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Start time={start_time.isoformat()}")
+    logger.debug(f"HTTP.EXECUTE_HTTP_TASK: task_id={task_id} | name={task_name} | start={start_time.isoformat()}")
     
     # Standard HTTP execution (pagination/polling now handled by unified retry system)
 
@@ -82,9 +79,8 @@ async def execute_http_task(
         else:
             logger.warning("HTTP: No catalog_id in context, skipping keychain resolution")
             
-        logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Rendering HTTP task configuration")
         method = task_config.get('method', 'GET').upper()
-        logger.debug(f"HTTP.EXECUTE_HTTP_TASK: HTTP method={method}")
+        logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Rendering HTTP task configuration | method={method}")
 
         # Support both 'endpoint' (preferred) and legacy 'url' key for backward compatibility
         # Allow overrides via task_with (used by pagination retry)
@@ -94,12 +90,8 @@ async def execute_http_task(
             or task_config.get('endpoint')
             or task_config.get('url', '')
         )
-        logger.critical(f"HTTP.EXECUTE: raw_endpoint_template={raw_endpoint_template}")
-        logger.critical(f"HTTP.EXECUTE: context keys={list(context.keys())}")
-        logger.critical(f"HTTP.EXECUTE: patient_id in context={'patient_id' in context}, value={context.get('patient_id')}")
         endpoint = render_template(jinja_env, raw_endpoint_template, context)
-        logger.critical(f"HTTP.EXECUTE: Rendered endpoint={endpoint}")
-        logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Rendered endpoint={endpoint}")
+        logger.critical(f"HTTP.EXECUTE: endpoint_template={raw_endpoint_template} | rendered={endpoint} | context_keys={list(context.keys())} | patient_id={'patient_id' in context}:{context.get('patient_id')}")
 
         # Process authentication FIRST and add to context for template rendering
         auth_headers, resolved_auth_map = await _process_authentication_with_context(task_config, task_with, jinja_env, context)
@@ -132,24 +124,20 @@ async def execute_http_task(
                 data_map.update(task_with['data'])
 
         headers = render_template(jinja_env, task_config.get('headers', {}), context)
-        logger.info(f"HTTP.EXECUTE_HTTP_TASK: Rendered headers (raw keys)={list(headers.keys())}")
 
         # Apply auth headers (already processed above)
         if auth_headers:
-            logger.info(f"HTTP: Applying {len(auth_headers)} auth headers")
             headers.update(auth_headers)
 
-        # Log a safe preview of Authorization to debug token resolution without leaking secrets
+        # Log headers with safe Authorization preview
         auth_header = headers.get('Authorization')
+        auth_preview = None
         if auth_header:
-            preview = auth_header
+            auth_preview = auth_header
             if isinstance(auth_header, str) and len(auth_header) > 24:
-                preview = f"{auth_header[:12]}...{auth_header[-6:]}"
-            logger.info(
-                f"HTTP.EXECUTE_HTTP_TASK: Authorization header present (len={len(auth_header) if isinstance(auth_header, str) else 'n/a'}, preview={preview})"
-            )
+                auth_preview = f"{auth_header[:12]}...{auth_header[-6:]}"
         redacted_headers = redact_sensitive_headers(headers)
-        logger.info(f"HTTP.EXECUTE_HTTP_TASK: Headers (redacted)={redacted_headers}")
+        logger.info(f"HTTP.EXECUTE_HTTP_TASK: headers_keys={list(headers.keys())} | auth_applied={len(auth_headers) if auth_headers else 0} | auth_preview={auth_preview} | redacted={redacted_headers}")
 
         timeout = task_config.get('timeout', 30)
         logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Timeout={timeout}")
@@ -165,7 +153,6 @@ async def execute_http_task(
                 )
 
             # Execute the actual HTTP request
-            logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Creating HTTP client with timeout={timeout}")
             with httpx.Client(timeout=timeout) as client:
                 request_args = build_request_args(
                     endpoint, method, headers, data_map, params, payload
@@ -173,16 +160,13 @@ async def execute_http_task(
                 
                 # Log request with redacted sensitive headers
                 redacted_headers = redact_sensitive_headers(headers)
-                logger.info(f"HTTP.EXECUTE_HTTP_TASK: Request headers (redacted)={redacted_headers}")
-                logger.info(f"HTTP.EXECUTE_HTTP_TASK: Final request_args={request_args}")
-                logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Making HTTP request")
+                logger.info(f"HTTP.EXECUTE_HTTP_TASK: Making request | timeout={timeout} | headers={redacted_headers} | args={request_args}")
                 
                 response = client.request(method, **request_args)
-                logger.debug(f"HTTP.EXECUTE_HTTP_TASK: HTTP response received - status_code={response.status_code}")
 
                 response_data = process_response(response)
                 is_success = response.is_success
-                logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Request success status={is_success}")
+                logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Response received | status={response.status_code} | success={is_success}")
 
                 result = {
                     'id': task_id,
@@ -232,8 +216,7 @@ async def execute_http_task(
             'status': 'error',
             'error': error_msg
         }
-        logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Returning error result={result}")
-        logger.debug("=== HTTP.EXECUTE_HTTP_TASK: Function exit (error) ===")
+        logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Exit (error) - result={result}")
         return result
 
 
@@ -385,6 +368,5 @@ def _complete_task(
     logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Task duration={duration} seconds")
 
     result = {'id': task_id, 'status': status, 'data': data}
-    logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Returning result={result}")
-    logger.debug("=== HTTP.EXECUTE_HTTP_TASK: Function exit (success) ===")
+    logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Exit (success) - result={result}")
     return result

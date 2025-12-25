@@ -102,19 +102,13 @@ def execute_playbook_task(
     Raises:
         ValueError: If deprecated loop configuration detected
     """
-    logger.debug("=== PLAYBOOK.EXECUTE_PLAYBOOK_TASK: Function entry ===")
-    logger.debug(
-        f"PLAYBOOK.EXECUTE_PLAYBOOK_TASK: Parameters - "
-        f"task_config={task_config}, task_with={task_with}"
-    )
+    logger.debug(f"PLAYBOOK.EXECUTE_PLAYBOOK_TASK: Entry - task_config={task_config}, task_with={task_with}")
     
     task_id = str(uuid.uuid4())
     task_name = task_config.get('task', 'playbook_task')
     start_time = datetime.datetime.now()
     
-    logger.debug(f"PLAYBOOK: Generated task_id={task_id}")
-    logger.debug(f"PLAYBOOK: Task name={task_name}")
-    logger.debug(f"PLAYBOOK: Start time={start_time.isoformat()}")
+    logger.debug(f"PLAYBOOK: task_id={task_id} | name={task_name} | start={start_time.isoformat()}")
     
     try:
         # Step 1: Load playbook content
@@ -226,8 +220,7 @@ def execute_playbook_task(
             end_time = datetime.datetime.now()
             duration = (end_time - start_time).total_seconds()
             
-            logger.info("PLAYBOOK: Nested playbook execution completed")
-            logger.debug(f"PLAYBOOK: Task duration={duration} seconds")
+            logger.info(f"PLAYBOOK: Nested playbook execution completed | duration={duration}s")
             
             # Log success event
             log_task_event(
@@ -244,8 +237,7 @@ def execute_playbook_task(
                 'duration': duration
             }
             
-            logger.debug(f"PLAYBOOK: Returning success result={success_result}")
-            logger.debug("=== PLAYBOOK: Function exit (success) ===")
+            logger.debug(f"PLAYBOOK: Exit (success) - result={success_result}")
             return success_result
             
         except Exception as e:
@@ -287,6 +279,5 @@ def execute_playbook_task(
             'status': 'error',
             'error': error_msg
         }
-        logger.debug(f"PLAYBOOK: Returning error result={result}")
-        logger.debug("=== PLAYBOOK: Function exit (error) ===")
+        logger.debug(f"PLAYBOOK: Exit (error) - result={result}")
         return result

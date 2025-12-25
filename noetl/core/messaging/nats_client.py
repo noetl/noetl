@@ -56,9 +56,7 @@ class NATSCommandPublisher:
                     max_age=3600,  # 1 hour retention
                     storage="file"
                 )
-                logger.info(f"Created {settings.nats_stream} stream")
-            
-            logger.info(f"Connected to NATS at {self.nats_url}")
+                logger.info(f"Created stream {settings.nats_stream} | connected to NATS at {self.nats_url}")
             
         except Exception as e:
             logger.error(f"Failed to connect to NATS: {e}")
@@ -192,8 +190,7 @@ class NATSCommandSubscriber:
                 await self._js.stream_info(settings.nats_stream)
                 logger.debug("Stream exists")
             except Exception as stream_err:
-                logger.debug(f"Stream check error: {stream_err}")
-                logger.info(f"Creating stream {settings.nats_stream}...")
+                logger.info(f"Creating stream {settings.nats_stream} | reason: {stream_err}")
                 # Create stream if it doesn't exist
                 from nats.js.api import StreamConfig
                 await self._js.add_stream(
@@ -204,8 +201,7 @@ class NATSCommandSubscriber:
                         max_age=3600  # 1 hour
                     )
                 )
-                logger.info("Stream created")
-                logger.info(f"Created stream: {settings.nats_stream}")
+                logger.info(f"Stream created: {settings.nats_stream}")
             
             # Create pull consumer if it doesn't exist
             try:
@@ -213,8 +209,7 @@ class NATSCommandSubscriber:
                 await self._js.consumer_info(settings.nats_stream, self.consumer_name)
                 logger.debug("Consumer exists")
             except Exception as consumer_err:
-                logger.debug(f"Consumer check error: {consumer_err}")
-                logger.info(f"Creating consumer {self.consumer_name}...")
+                logger.info(f"Creating consumer {self.consumer_name} | reason: {consumer_err}")
                 await self._js.add_consumer(
                     stream=settings.nats_stream,
                     config=nats.js.api.ConsumerConfig(
@@ -226,8 +221,7 @@ class NATSCommandSubscriber:
                         replay_policy="instant"  # Deliver messages as fast as possible
                     )
                 )
-                logger.info("Consumer created")
-                logger.info(f"Created consumer: {self.consumer_name}")
+                logger.info(f"Consumer created: {self.consumer_name}")
             
             # Subscribe with pull consumer
             logger.info("Creating pull subscription...")

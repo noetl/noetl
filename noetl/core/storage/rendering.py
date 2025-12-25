@@ -42,7 +42,10 @@ def render_data_mapping(
             f"SINK: Template rendering failed for mapping {mapping}, "
             f"falling back to unrendered: {render_err}"
         )
-        logger.debug(
+        # Continue with unrendered value
+        rendered = mapping
+    
+    logger.debug(
             f"SINK: Available context keys: "
             f"{list(context.keys()) if isinstance(context, dict) else type(context)}"
         )

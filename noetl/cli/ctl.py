@@ -47,8 +47,6 @@ def start_worker_service(
     logger.debug(f"START_WORKER_SERVICE v2={v2}")
     
     if v2:
-        logger.debug("V2 BRANCH ENTERED")
-        # Start v2 worker with NATS
         logger.info("Starting worker v2 (event-driven NATS architecture)")
         try:
             logger.debug("IMPORTING V2 WORKER")
@@ -61,14 +59,11 @@ def start_worker_service(
             if not server_url.endswith('/api'):
                 server_url = f"{server_url}/api"
             
-            logger.debug(f"CALLING run_worker_v2_sync NATS={nats_url}")
             logger.info(f"Configuration: NATS={nats_url}, Server={server_url}")
-            
             run_worker_v2_sync(nats_url=nats_url, server_url=server_url)
             
             logger.debug("run_worker_v2_sync RETURNED")
         except Exception as e:
-            logger.error(f"EXCEPTION: {e}")
             logger.error(f"Failed to start V2 worker: {e}", exc_info=True)
             raise
         return
@@ -393,12 +388,10 @@ def _run_with_gunicorn(host: str, port: int, workers: int, reload: bool, log_lev
         subprocess.run(cmd, check=True)
 
     except ImportError:
-        logger.error("Gunicorn is not installed. Please install it with: pip install gunicorn")
-        logger.info("Falling back to Uvicorn...")
+        logger.warning("Gunicorn is not installed (pip install gunicorn). Falling back to Uvicorn...")
         _run_with_uvicorn(host, port, workers, reload, log_level)
     except Exception as e:
-        logger.error(f"Error running Gunicorn: {e}")
-        logger.info("Falling back to Uvicorn...")
+        logger.warning(f"Error running Gunicorn: {e}. Falling back to Uvicorn...")
         _run_with_uvicorn(host, port, workers, reload, log_level)
 
 @server_app.command("stop")
@@ -638,8 +631,7 @@ def manage_catalog(
             detected_resource_type = "Playbook"
 
             if not file_path:
-                logger.error("Path to resource file is required when using explicit resource type")
-                logger.info(f"Example: noetl catalog register {resource_type} /path/to/file.yaml")
+                logger.error(f"Path to resource file is required when using explicit resource type | Example: noetl catalog register {resource_type} /path/to/file.yaml")
                 raise typer.Exit(code=1)
     else:
         if action == "execute":
@@ -678,12 +670,9 @@ def manage_catalog(
 
             if response.status_code == 200:
                 result = response.json()
-                logger.info(f"{resource_type.capitalize()} registered successfully: {result}")
-                logger.info(f"Resource path: {result.get('resource_path')}")
-                logger.info(f"Resource version: {result.get('resource_version')}")
+                logger.info(f"{resource_type.capitalize()} registered successfully: {result} | Path: {result.get('resource_path')} | Version: {result.get('resource_version')}")
             else:
-                logger.error(f"Failed to register {resource_type}: {response.status_code}")
-                logger.error(f"Response: {response.text}")
+                logger.error(f"Failed to register {resource_type}: {response.status_code} - {response.text}")
                 raise typer.Exit(code=1)
 
         except Exception as e:
@@ -692,8 +681,7 @@ def manage_catalog(
 
     elif action == "execute":
         if not path:
-            logger.error("Resource path is required for execute action")
-            logger.info(f"Example: noetl catalog execute playbook weather_example --version 0.1.0")
+            logger.error("Resource path is required for execute action | Example: noetl catalog execute playbook weather_example --version 0.1.0")
             raise typer.Exit(code=1)
 
         try:
@@ -752,19 +740,8 @@ def manage_catalog(
                         for step_name, step_result in execution_result.items()
                     )
 
-                    logger.info("\n" + "="*80)
-                    logger.info("EXECUTION REPORT")
-                    logger.info("="*80)
-                    logger.info(f"{resource_type.capitalize()} Path: {path}")
-                    logger.info(f"Version: {version or 'latest'}")
-                    logger.info(f"Execution ID: {result.get('execution_id')}")
-
-                    if any_errors:
-                        logger.info(f"Status: FAILED")
-                    else:
-                        logger.info(f"Status: SUCCESS")
-
-                    logger.info("-"*80)
+                    status = "FAILED" if any_errors else "SUCCESS"
+                    logger.info(f"EXECUTION REPORT | {resource_type.capitalize()} Path: {path} | Version: {version or 'latest'} | Execution ID: {result.get('execution_id')} | Status: {status}")
 
                     step_count = 0
                     success_count = 0
@@ -833,18 +810,12 @@ def manage_catalog(
                             success_count += 1
                             logger.info(f"{step_name}: SUCCESS")
 
-                    logger.info("-"*80)
-                    logger.info(f"Total Steps: {step_count}")
-                    logger.info(f"Successful: {success_count}")
-                    logger.info(f"Failed: {error_count}")
-                    logger.info(f"Skipped: {skipped_count}")
-                    logger.info("="*80)
+                    logger.info(f"Total Steps: {step_count} | Successful: {success_count} | Failed: {error_count} | Skipped: {skipped_count}")
                 elif not result.get("execution_id"):
                     logger.error(f"Execution failed: {result.get('error')}")
                     raise typer.Exit(code=1)
             else:
-                logger.error(f"Failed to execute {resource_type}: {response.status_code}")
-                logger.error(f"Response: {response.text}")
+                logger.error(f"Failed to execute {resource_type}: {response.status_code} - {response.text}")
                 raise typer.Exit(code=1)
 
         except Exception as e:
@@ -869,11 +840,12 @@ def manage_catalog(
                     logger.info(f"No {resource_type}s found in catalog.")
                     return
 
-                logger.info(f"\n{resource_type.upper()}S IN CATALOG:")
-                logger.info("="*80)
-                logger.info(f"{'PATH':<40} {'VERSION':<10} {'TYPE':<15} {'TIMESTAMP':<15}")
-                logger.info("-"*80)
-
+                # Build table output as single log entry
+                table_lines = [
+                    f"\n{resource_type.upper()}S IN CATALOG:",
+                    f"{'PATH':<40} {'VERSION':<10} {'TYPE':<15} {'TIMESTAMP':<15}"
+                ]
+                
                 for entry in entries:
                     path = entry.get('resource_path', 'Unknown')
                     version = entry.get('resource_version', 'Unknown')
@@ -881,24 +853,24 @@ def manage_catalog(
                     timestamp = entry.get('timestamp', 'Unknown')
                     if isinstance(timestamp, str) and 'T' in timestamp:
                         timestamp = timestamp.split('T')[0]
-                    logger.info(f"{path:<40} {version:<10} {res_type:<15} {timestamp:<15}")
-                logger.info("="*80)
-                logger.info(f"Total: {len(entries)} {resource_type}(s)")
+                    table_lines.append(f"{path:<40} {version:<10} {res_type:<15} {timestamp:<15}")
+                
+                table_lines.append(f"Total: {len(entries)} {resource_type}(s)")
+                
+                logger.info("\n".join(table_lines))
 
             else:
-                logger.error(f"Failed to list {resource_type}s: {response.status_code}")
-                logger.error(f"Response: {response.text}")
+                logger.error(f"Failed to list {resource_type}s: {response.status_code} - {response.text}")
                 raise typer.Exit(code=1)
 
         except Exception as e:
             logger.error(f"Error listing {resource_type}s: {e}")
             raise typer.Exit(code=1)
     else:
-        logger.error(f"Unknown action: {action}. Supported actions: register, execute, list")
-        logger.info("Examples:")
-        logger.info(f"  noetl catalog register {resource_type} <path to file.yaml>")
-        logger.info(f"  noetl catalog execute {resource_type} <resource name> --version 0.1.0")
-        logger.info(f"  noetl catalog list {resource_type}")
+        logger.error(f"Unknown action '{action}'. Supported: register, execute, list | "
+                    f"Examples: 'noetl catalog register {resource_type} <file.yaml>' | "
+                    f"'noetl catalog execute {resource_type} <name> --version 0.1.0' | "
+                    f"'noetl catalog list {resource_type}'")
         raise typer.Exit(code=1)
 
 @cli_app.command("run")
@@ -1141,12 +1113,9 @@ def register_playbook(
 
         if response.status_code == 200:
             result = response.json()
-            logger.info(f"Playbook registered successfully: {result}")
-            logger.info(f"Resource path: {result.get('path')}")
-            logger.info(f"Resource version: {result.get('version')}")
+            logger.info(f"Playbook registered successfully: {result['path']} v{result.get('version')} | Full result: {result}")
         else:
-            logger.error(f"Failed to register playbook: {response.status_code}")
-            logger.error(f"Response: {response.text}")
+            logger.error(f"Failed to register playbook: {response.status_code} - {response.text}")
             raise typer.Exit(code=1)
 
     except Exception as e:

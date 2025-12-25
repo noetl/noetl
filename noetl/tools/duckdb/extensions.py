@@ -58,7 +58,8 @@ def get_required_extensions(resolved_auth_map: Dict[str, Dict[str, Any]]) -> Set
         except Exception as e:
             logger.warning(f"Failed to determine extensions for auth alias '{alias}': {e}")
     
-    logger.debug(f"Total required extensions: {sorted(extensions)}")
+    if extensions:
+        logger.debug(f"Total required extensions: {sorted(extensions)}")
     return extensions
 
 

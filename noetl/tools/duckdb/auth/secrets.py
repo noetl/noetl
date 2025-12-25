@@ -42,8 +42,9 @@ def generate_duckdb_secrets(resolved_auth_map: Dict[str, Any]) -> List[str]:
                     
             except Exception as e:
                 logger.warning(f"Failed to generate secret for alias '{alias}': {e}")
-                
-        logger.debug(f"Generated {len(statements)} DuckDB secret statements")
+        
+        if statements:
+            logger.debug(f"Generated {len(statements)} DuckDB secret statements")
         return statements
         
     except Exception as e:

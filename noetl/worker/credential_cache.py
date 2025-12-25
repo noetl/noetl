@@ -276,8 +276,7 @@ class CredentialCache:
         Returns:
             Number of entries deleted (always 0 for now)
         """
-        logger.info(f"Execution cleanup not implemented via API for execution {execution_id}")
-        logger.info("Server-side TTL expiration will handle cleanup")
+        logger.info(f"Execution {execution_id} cleanup delegated to server-side TTL expiration")
         return 0
     
     @staticmethod
@@ -291,6 +290,5 @@ class CredentialCache:
         Returns:
             Number of entries deleted (always 0 for now)
         """
-        logger.info("Expired cleanup not implemented via API")
-        logger.info("Server-side background tasks will handle cleanup")
+        logger.info("Expired cleanup delegated to server-side background tasks")
         return 0

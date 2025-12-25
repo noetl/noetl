@@ -62,16 +62,13 @@ class V2Worker:
             consumer_name=settings.nats_consumer
         )
         
-        logger.info(f"Worker {self.worker_id} starting...")
-        logger.info(f"NATS URL: {self.nats_url}")
+        logger.info(f"Worker {self.worker_id} starting (NATS: {self.nats_url})")
         
         # Connect to NATS
-        logger.info("Connecting to NATS...")
         await self._nats_subscriber.connect()
-        logger.info("Connected to NATS")
+        logger.info("Connected to NATS and subscribing to command notifications")
         
         # Subscribe to command notifications (this should never return)
-        logger.info(f"Subscribing to command notifications...")
         await self._nats_subscriber.subscribe(self._handle_command_notification)
     
     async def cleanup(self):
@@ -352,9 +349,7 @@ class V2Worker:
                     'name': f"{step}_sink_{idx}"
                 }
                 
-                logger.critical(f"[SINK] Sink task config: {sink_task_config}")
-                logger.critical(f"[SINK] Sink command value: {sink_command}")
-                logger.critical(f"[SINK] Config keys present: {list(sink_task_config.keys())}")
+                logger.critical(f"[SINK] Sink task config: {sink_task_config} | command={sink_command} | keys={list(sink_task_config.keys())}")
                 
                 # Execute sink (currently only postgres supported)
                 if sink_kind == 'postgres':
@@ -424,9 +419,9 @@ class V2Worker:
             # Merge with top-level args taking precedence
             merged_args = {**tool_config["args"], **args}
             args = merged_args
-            logger.debug(f"Merged args from tool_config.args: {args}")
+            logger.debug(f"Args config: merged_from_tool_config | result={args}")
         else:
-            logger.debug(f"No args in tool_config, using top-level args: {args}")
+            logger.debug(f"Args config: using_top_level | args={args}")
         
         logger.info(f"[EVENT] Executing {step} (tool={tool_kind}) for execution {execution_id}" + (f" command={command_id}" if command_id else ""))
         
@@ -457,10 +452,7 @@ class V2Worker:
             # Execute tool
             response = await self._execute_tool(tool_kind, tool_config, args, step, render_context)
             
-            logger.critical(f"[DEBUG] tool_config keys: {list(tool_config.keys())}")
-            logger.critical(f"[DEBUG] tool_config has 'case': {'case' in tool_config}")
-            if 'case' in tool_config:
-                logger.critical(f"[DEBUG] case blocks count: {len(tool_config['case'])}")
+            logger.critical(f"[DEBUG] tool_config keys={list(tool_config.keys())} | has_case={'case' in tool_config} | case_count={len(tool_config.get('case', []))}")
             
             # SINK EXECUTION: Check for case blocks with sinks and execute immediately
             await self._execute_case_sinks(
@@ -674,9 +666,7 @@ class V2Worker:
         # This allows plugins to render Jinja2 templates with full state
         context = render_context if render_context else {"args": args, "step": step}
         
-        logger.info(f"WORKER: Initial context keys: {list(context.keys())}")
-        logger.info(f"WORKER: execution_id in context: {context.get('execution_id')}")
-        logger.info(f"WORKER: catalog_id in context: {context.get('catalog_id')}")
+        logger.info(f"WORKER: Initial context keys={list(context.keys())} | execution_id={context.get('execution_id')} | catalog_id={context.get('catalog_id')}")
         
         # Note: catalog_id should come from server in render_context
         # Worker does NOT query noetl database - only executes tool steps
@@ -747,25 +737,21 @@ class V2Worker:
             # Check if retry config has pagination/success-driven repeats (next_call or collect)
             # If so, use execute_with_retry which handles per-iteration sinks
             retry_config = config.get('retry') if isinstance(config, dict) else None
-            logger.critical(f"HTTP TOOL: config keys={list(config.keys()) if isinstance(config, dict) else 'not dict'}")
-            logger.critical(f"HTTP TOOL: has retry config={retry_config is not None}, type={type(retry_config)}")
             has_pagination_retry = False
             if isinstance(retry_config, list):
-                logger.critical(f"HTTP TOOL: retry_config is list with {len(retry_config)} policies")
                 for idx, policy in enumerate(retry_config):
                     if isinstance(policy, dict) and 'then' in policy:
                         then_block = policy['then']
                         has_next_call = 'next_call' in then_block if isinstance(then_block, dict) else False
                         has_collect = 'collect' in then_block if isinstance(then_block, dict) else False
-                        logger.critical(f"HTTP TOOL: policy[{idx}] has next_call={has_next_call}, has_collect={has_collect}")
                         if isinstance(then_block, dict) and (has_next_call or has_collect):
                             has_pagination_retry = True
                             break
             
-            logger.critical(f"HTTP TOOL: has_pagination_retry={has_pagination_retry}")
+            logger.critical(f"HTTP TOOL: config_keys={list(config.keys()) if isinstance(config, dict) else 'not dict'} | retry={retry_config is not None} | policies={len(retry_config) if isinstance(retry_config, list) else 0} | has_pagination={has_pagination_retry}")
             
             if has_pagination_retry:
-                logger.info(f"HTTP tool with pagination retry - using execute_with_retry for per-iteration sink support")
+                logger.info("HTTP tool using execute_with_retry for pagination sink support")
                 # Use retry-aware executor which handles per-iteration sinks
                 from noetl.core.runtime.retry import execute_with_retry
                 
@@ -1005,9 +991,7 @@ class V2Worker:
             raise ValueError("HTTP tool requires 'url' or 'endpoint' in config")
         
         # Debug logging
-        logger.info(f"HTTP {method} request to URL: {url}")
-        logger.info(f"  Headers: {headers}")
-        logger.info(f"  Params: {params}")
+        logger.info(f"HTTP {method} request to URL: {url} | headers={headers} | params={params}")
         
         # Make request
         response = await self._http_client.request(
@@ -1379,10 +1363,6 @@ def run_worker_v2_sync(
     import uuid
     import sys
     
-    # Log worker entry point
-    logger.info("=== WORKER ENTRY POINT ===")
-    logger.info("=== V2 Worker Starting ===")
-    
     try:
         
         # Get from environment or use defaults
@@ -1397,9 +1377,7 @@ def run_worker_v2_sync(
             f.write(f"Server URL: {server_url}\n")
             f.flush()
         
-        logger.info(f"Starting V2 worker with ID: {worker_id}")
-        logger.info(f"NATS URL: {nats_url}")
-        logger.info(f"Server URL: {server_url}")
+        logger.info(f"Starting V2 worker {worker_id} | NATS={nats_url} | Server={server_url}")
         
         with open("/tmp/worker_before_run.txt", "w") as f:
             f.write(f"About to call asyncio.run at {datetime.now()}\n")

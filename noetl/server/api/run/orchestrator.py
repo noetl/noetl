@@ -187,10 +187,8 @@ async def _check_execution_completion(
             row = await cur.fetchone()
             pending_parents = row["pending_parents"] if row else 0
             
-            logger.info(f"DEBUG_PENDING_PARENTS: query returned {pending_parents} for execution {execution_id}")
-
             logger.info(
-                f"Execution {execution_id}: running_actions={running_count}, pending_jobs={pending_count}, incomplete_steps={incomplete_steps}, pending_parents={pending_parents}"
+                f"Execution {execution_id}: running_actions={running_count} | pending_jobs={pending_count} | incomplete_steps={incomplete_steps} | pending_parents={pending_parents}"
             )
 
             # If there are any running actions, pending jobs, incomplete steps, or pending parent aggregations, execution is not complete
@@ -732,11 +730,7 @@ async def evaluate_execution(
                 await _check_iterator_completions(exec_id)
 
         elif state == "completed":
-            logger.debug(
-                f"ORCHESTRATOR: Execution {exec_id} already completed, no action needed"
-            )
-
-        logger.debug(f"ORCHESTRATOR: Evaluation complete for execution {exec_id}")
+            logger.debug(f"ORCHESTRATOR: Execution {exec_id} already completed, no action needed | evaluation complete")
 
     except Exception as e:
         logger.exception(f"ORCHESTRATOR: Error evaluating execution {exec_id}")
@@ -1313,8 +1307,6 @@ async def _process_transitions(execution_id: int) -> None:
     5. Publish next steps to queue table as actionable tasks
     6. Workers execute and report results back via events
     """
-    logger.info(f">>> PROCESS_TRANSITIONS called for execution {execution_id}")
-
     # Find completed steps without step_completed event using async executor
     completed_steps = (
         await OrchestratorQueries.get_completed_steps_without_step_completed(
@@ -1322,11 +1314,9 @@ async def _process_transitions(execution_id: int) -> None:
         )
     )
 
-    logger.info(f">>> PROCESS_TRANSITIONS completed_steps={completed_steps}")
+    logger.info(f">>> PROCESS_TRANSITIONS: execution={execution_id} | completed_steps={completed_steps} | count={len(completed_steps) if completed_steps else 0}")
 
-    if completed_steps:
-        logger.info(f"Found {len(completed_steps)} completed steps: {completed_steps}")
-    else:
+    if not completed_steps:
         logger.debug(f"No new completed steps found for execution {execution_id}")
 
     # Get catalog_id
@@ -1389,10 +1379,9 @@ async def _process_transitions(execution_id: int) -> None:
             # Check for parent steps with completed iterations (fix for loop completion bug)
             # When a step has loop attribute, server expands into _iter_N jobs
             # After all iterations complete, we need to emit action_completed for parent step
-            logger.debug(f"Checking for parent steps with completed iterations, completed_steps={completed_steps}")
             parent_steps_to_process = []  # Track parents we emit action_completed for
             iteration_steps = [s for s in completed_steps if '_iter_' in s]
-            logger.debug(f"Found {len(iteration_steps)} iteration steps: {iteration_steps}")
+            logger.debug(f"Checking parent steps: completed_steps={completed_steps} | iteration_steps={len(iteration_steps)}:{iteration_steps}")
             if iteration_steps:
                 # Group by parent step name (remove _iter_N suffix)
                 parent_steps = {}
@@ -1411,7 +1400,6 @@ async def _process_transitions(execution_id: int) -> None:
                         continue
                     
                     # Get expected iteration count from iterator_started event
-                    logger.debug(f"Looking for iterator_started: execution_id={execution_id}, node_id={parent_name}")
                     await cur.execute(
                         """
                         SELECT context FROM noetl.event
@@ -1424,7 +1412,7 @@ async def _process_transitions(execution_id: int) -> None:
                         (execution_id, parent_name)
                     )
                     iterator_row = await cur.fetchone()
-                    logger.debug(f"iterator_started query result for '{parent_name}': {iterator_row is not None}")
+                    logger.debug(f"iterator_started query for '{parent_name}': execution_id={execution_id} | found={iterator_row is not None}")
                     expected_count = None
                     if iterator_row and iterator_row['context']:
                         context_data = iterator_row['context']
@@ -1703,9 +1691,7 @@ async def _process_transitions(execution_id: int) -> None:
                     )
 
                 # Process vars block if present in step definition
-                logger.info(f"[VARS_DEBUG] About to process vars for step '{step_name}', step_def keys: {list(step_def.keys())}, has 'vars': {'vars' in step_def}")
-                if 'vars' in step_def:
-                    logger.info(f"[VARS_DEBUG] step_def['vars'] = {step_def['vars']}")
+                logger.info(f"[VARS_DEBUG] Processing vars for step '{step_name}' | step_keys={list(step_def.keys())} | has_vars={'vars' in step_def} | vars={step_def.get('vars') if 'vars' in step_def else None}")
                 await _process_step_vars(execution_id, step_name, step_def, eval_ctx)
 
                 # Get transitions for this step
@@ -1732,11 +1718,8 @@ async def _process_transitions(execution_id: int) -> None:
                         "condition": None,
                         "with_params": {}
                     }]
-                    logger.info(f"Created implicit transition: {step_name} → end")
 
-                logger.info(
-                    f"Evaluating {len(step_transitions)} transitions for '{step_name}'"
-                )
+                logger.info(f"Evaluating {len(step_transitions)} transitions for '{step_name}' | implicit_end={len(step_transitions) == 1 and step_transitions[0]['to_step'] == 'end'}")
 
                 # Evaluate each transition
                 for transition in step_transitions:
@@ -1902,12 +1885,8 @@ async def _process_transitions(execution_id: int) -> None:
                             # - sink block: contains {{ result }} templates
                             # - loop block: contains {{ item }} templates and collection config
                             sink_block = router_step_config.pop("sink", None)
-                            if sink_block is not None:
-                                logger.critical(f"ORCHESTRATOR-ROUTER: Extracted sink block for step '{router_next_step}'")
-                            
                             loop_block = router_step_config.pop("loop", None)
-                            if loop_block is not None:
-                                logger.critical(f"ORCHESTRATOR-ROUTER: Extracted loop block for step '{router_next_step}'")
+                            logger.critical(f"ORCHESTRATOR-ROUTER: Extracted blocks for '{router_next_step}' | sink={sink_block is not None} | loop={loop_block is not None}")
 
                             # Render router step's existing args with current execution context
                             if "args" in router_step_config and router_step_config["args"]:
@@ -1918,11 +1897,9 @@ async def _process_transitions(execution_id: int) -> None:
                             # Restore preserved blocks (worker will render them with proper context)
                             if loop_block is not None:
                                 router_step_config["loop"] = loop_block
-                                logger.critical(f"ORCHESTRATOR-ROUTER: Restored loop block for step '{router_next_step}'")
-                            
                             if sink_block is not None:
                                 router_step_config["sink"] = sink_block
-                                logger.critical(f"ORCHESTRATOR-ROUTER: Restored sink block for step '{router_next_step}'")
+                            logger.critical(f"ORCHESTRATOR-ROUTER: Restored blocks for '{router_next_step}' | loop={loop_block is not None} | sink={sink_block is not None}")
 
                             # Build context for router next step
                             router_context_data = {"workload": workload}
@@ -1937,13 +1914,7 @@ async def _process_transitions(execution_id: int) -> None:
                                     "SELECT pg_advisory_xact_lock(hashtext(%(lock_key)s))",
                                     {"lock_key": f"end_publish_{execution_id}"}
                                 )
-                                logger.info(f"Acquired advisory lock for 'end' step publishing in execution {execution_id}")
-                                
-                                logger.info(f"Checking if 'end' step should be enqueued for execution {execution_id}")
-                                
-                                logger.info(
-                                    "Queue subsystem removed; skipping queue-based gating for 'end' step"
-                                )
+                                logger.info(f"Acquired advisory lock for 'end' step publishing. Checking if 'end' should be enqueued (execution {execution_id})")
 
                             queue_id = await QueuePublisher.publish_step(
                                 execution_id=str(execution_id),
@@ -1966,10 +1937,7 @@ async def _process_transitions(execution_id: int) -> None:
                         # Use the step definition directly as the config
                         step_config = dict(next_step_def)
                         
-                        logger.critical(f"ORCHESTRATOR_DEBUG: step '{to_step}' step_config keys BEFORE processing: {list(step_config.keys())}")
-                        logger.critical(f"ORCHESTRATOR_DEBUG: step '{to_step}' has 'loop': {'loop' in step_config}")
-                        if 'loop' in step_config:
-                            logger.critical(f"ORCHESTRATOR_DEBUG: loop value: {step_config['loop']}")
+                        logger.critical(f"ORCHESTRATOR_DEBUG: step '{to_step}' | step_config_keys={list(step_config.keys())} | has_loop={'loop' in step_config} | loop_value={step_config.get('loop') if 'loop' in step_config else None}")
 
                         # Expand workbook references - resolve the workbook action definition
                         # so the worker doesn't need to fetch from catalog
@@ -2606,11 +2574,8 @@ async def _process_retry_eligible_event(
         
         # Re-enqueue with incremented attempt
         logger.info(
-            f"ORCHESTRATOR: Retrying failed action (attempt {attempt_number + 1}/{max_attempts}), "
-            f"backoff={delay_seconds}s"
+            f"ORCHESTRATOR: Retrying failed action (attempt {attempt_number + 1}/{max_attempts}) | backoff={delay_seconds}s | Queue subsystem removed; skipping retry enqueue"
         )
-        
-        logger.info("Queue subsystem removed; skipping retry enqueue")
         return
     
     elif event_type in ('action_completed', 'step_completed'):
