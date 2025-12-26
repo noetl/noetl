@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.3.2](https://github.com/noetl/noetl/compare/v2.3.1...v2.3.2) (2025-12-26)
+
+### Bug Fixes
+
+* remove deprecated NoETL core modules and .gitignore entries ([cbcfb73](https://github.com/noetl/noetl/commit/cbcfb73e181b8bd652a599f28b7dd26f60ccf4cd))
+
 ## [2.3.1](https://github.com/noetl/noetl/compare/v2.3.0...v2.3.1) (2025-12-25)
 
 ### Bug Fixes
