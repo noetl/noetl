@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.3.3](https://github.com/noetl/noetl/compare/v2.3.2...v2.3.3) (2025-12-26)
+
+### Bug Fixes
+
+* remove expired job reclamation logic ([98a9b55](https://github.com/noetl/noetl/commit/98a9b55516ab0b44d4358cebde5dce4a0099fc30))
+
 ## [2.3.2](https://github.com/noetl/noetl/compare/v2.3.1...v2.3.2) (2025-12-26)
 
 ### Bug Fixes
