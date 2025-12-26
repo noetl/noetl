@@ -1,14 +1,13 @@
 import re
 import json
-import logging
 import base64
-import traceback
 from typing import Any, Dict, List, Union, Optional
 from jinja2 import Environment, meta, StrictUndefined, BaseLoader, Undefined
 from noetl.core.logger import log_error
 from noetl.core.common import DateTimeEncoder
 
-logger = logging.getLogger(__name__)
+from noetl.core.logger import setup_logger
+logger = setup_logger(__name__, include_location=True)
 
 
 def _handle_undefined_values(value: Any) -> Any:

@@ -11,7 +11,6 @@ Security Notes:
 - Redacts sensitive fields in error messages
 """
 import os
-import logging
 from typing import Dict, Any, Optional, Tuple, Union, List, Iterator
 from dataclasses import dataclass, asdict
 from collections.abc import Mapping
@@ -20,7 +19,8 @@ from jinja2 import Environment
 # Import existing credential fetching functions
 from .secrets import fetch_credential_by_key
 
-logger = logging.getLogger(__name__)
+from noetl.core.logger import setup_logger
+logger = setup_logger(__name__, include_location=True)
 
 # Reserved keys that indicate single-auth object (not alias map)
 RESERVED_SINGLE_AUTH_KEYS = {

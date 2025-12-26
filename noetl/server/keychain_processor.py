@@ -332,7 +332,7 @@ async def _process_credential_ref(
     if credential_type in ['google_oauth', 'google_service_account', 'gcp']:
         logger.info(f"KEYCHAIN_PROCESSOR: Generating OAuth access token for credential '{ref_rendered}' (type: {credential_type})")
         try:
-            from noetl.database.core.auth.google_provider import GoogleTokenProvider
+            from noetl.core.auth.google_provider import GoogleTokenProvider
             provider = GoogleTokenProvider(credential_data)
             access_token = provider.fetch_token()  # Get access token
             logger.info(f"KEYCHAIN_PROCESSOR: Successfully generated access token for '{ref_rendered}'")

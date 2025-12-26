@@ -1,7 +1,8 @@
 """Script loading utilities for external code execution."""
 import logging
 
-logger = logging.getLogger(__name__)
+from noetl.core.logger import setup_logger
+logger = setup_logger(__name__, include_location=True)
 
 
 async def load_script_content(script_config: dict) -> str:
