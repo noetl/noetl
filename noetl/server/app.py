@@ -207,14 +207,7 @@ def _create_app(settings: Settings, enable_ui: Optional[bool] = None) -> FastAPI
                                 except Exception as e:
                                     logger.exception(f"Runtime sweeper commit failed: {e}")
 
-                        # Reclaim expired leases
-                        try:
-                            from noetl.server.api.queue import QueueService
-                            result = await QueueService.reap_expired_jobs()
-                            if result.reclaimed > 0:
-                                logger.info(f"Reclaimed {result.reclaimed} expired leased jobs")
-                        except Exception as e:
-                            logger.exception(f"Failed to reclaim expired jobs: {e}")
+                        # Note: V2 uses NATS for command distribution, no queue table to reclaim
 
                     except Exception as outer_e:
                         logger.exception(f"Runtime sweeper loop error: {outer_e}")
