@@ -59,6 +59,7 @@ Unified auth mapping example (from HTTP → DuckDB → Postgres → GCS pipeline
 
 Usage patterns (fragments)
 - Attach Postgres and aggregate into DuckDB tables
+```  
   # ...existing code...
   commands: |
     INSTALL postgres; LOAD postgres;
@@ -67,12 +68,14 @@ Usage patterns (fragments)
     SELECT id, city, url AS source_url, elapsed AS elapsed_sec, payload
     FROM pg_db.public.weather_http_raw
     WHERE execution_id = '{{ execution_id }}';
-
+```
 - Write Parquet to cloud storage using httpfs
+```
   # ...existing code...
   commands: |
     INSTALL httpfs; LOAD httpfs;
     COPY weather_flat TO 'gs://{{ workload.gcs_bucket }}/weather/flat_{{ execution_id }}.parquet' (FORMAT PARQUET);
+```
 
 Tips
 - Use CREATE OR REPLACE to make reruns idempotent.
