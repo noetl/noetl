@@ -23,6 +23,7 @@ from .schema import (
     SetVariablesRequest,
     SetVariablesResponse,
     DeleteVariableResponse,
+    CleanupExecutionResponse,
     VariableMetadata
 )
 
@@ -232,4 +233,38 @@ async def delete_variable(
         raise HTTPException(
             status_code=500,
             detail=f"Failed to delete variable: {str(e)}"
+        )
+
+
+@router.delete("/{execution_id}", response_model=CleanupExecutionResponse)
+async def cleanup_execution(
+    execution_id: int = Path(..., description="Execution ID")
+) -> CleanupExecutionResponse:
+    """
+    Delete all variables for an execution.
+    
+    Called when playbook execution completes to clean up execution-scoped variables.
+    Also useful for manual cleanup during development/testing.
+    
+    Returns the number of variables deleted.
+    """
+    try:
+        deleted_count = await TransientVars.cleanup_execution(execution_id)
+        
+        logger.info(
+            f"API: Cleaned up {deleted_count} variables for execution {execution_id}"
+        )
+        
+        return CleanupExecutionResponse(
+            execution_id=execution_id,
+            deleted_count=deleted_count
+        )
+        
+    except Exception as e:
+        logger.error(
+            f"API: Failed to cleanup variables for execution {execution_id}: {e}"
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to cleanup execution variables: {str(e)}"
         )

@@ -10,14 +10,14 @@ Workers must use the REST API endpoints instead.
 
 from __future__ import annotations
 
-import logging
 from typing import Dict, Optional, Any
 from datetime import datetime, timedelta, timezone
 
 from noetl.core.common import get_async_db_connection
 from noetl.core.secret import encrypt_json, decrypt_json
 
-logger = logging.getLogger(__name__)
+from noetl.core.logger import setup_logger
+logger = setup_logger(__name__, include_location=True)
 
 
 class KeychainService:

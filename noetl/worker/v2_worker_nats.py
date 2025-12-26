@@ -17,10 +17,10 @@ import os
 from typing import Optional, Any
 from datetime import datetime, timezone
 
-from noetl.core.logger import setup_logger
+
 from noetl.core.messaging import NATSCommandSubscriber
 from noetl.core.logging_context import LoggingContext
-
+from noetl.core.logger import setup_logger
 logger = setup_logger(__name__, include_location=True)
 
 
@@ -480,12 +480,12 @@ class V2Worker:
                 # Tool returned error - treat as failure
                 logger.error(f"Tool execution failed for {step}: {tool_error}")
                 
-                # Emit call.done with error
+                # Emit call.error with error payload
                 await self._emit_event(
                     server_url,
                     execution_id,
                     step,
-                    "call.done",
+                    "call.error",
                     {"error": tool_error}
                 )
                 
@@ -586,7 +586,7 @@ class V2Worker:
                 server_url,
                 execution_id,
                 step,
-                "call.done",
+                "call.error",
                 {"error": str(e)}
             )
             

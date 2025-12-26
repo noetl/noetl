@@ -29,7 +29,8 @@ from datetime import datetime, timedelta, timezone
 import httpx
 from noetl.core.config import get_worker_settings
 
-logger = logging.getLogger(__name__)
+from noetl.core.logger import setup_logger
+logger = setup_logger(__name__, include_location=True)
 
 
 class CredentialCache:

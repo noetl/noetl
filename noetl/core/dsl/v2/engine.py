@@ -20,7 +20,8 @@ from psycopg.types.json import Json
 from noetl.core.dsl.v2.models import Event, Command, Playbook, Step, CaseEntry, ToolCall
 from noetl.core.db.pool import get_pool_connection, get_snowflake_id
 
-logger = logging.getLogger(__name__)
+from noetl.core.logger import setup_logger
+logger = setup_logger(__name__, include_location=True)
 
 
 class ExecutionState:

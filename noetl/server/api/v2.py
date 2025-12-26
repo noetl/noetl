@@ -19,7 +19,8 @@ from noetl.core.dsl.v2.engine import ControlFlowEngine, PlaybookRepo, StateStore
 from noetl.core.db.pool import get_pool_connection, get_snowflake_id
 from noetl.core.messaging import NATSCommandPublisher
 
-logger = logging.getLogger(__name__)
+from noetl.core.logger import setup_logger
+logger = setup_logger(__name__, include_location=True)
 
 # Expose v2 engine on the primary API prefix (no "/v2" path).
 router = APIRouter(prefix="", tags=["api"])

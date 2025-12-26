@@ -6,7 +6,8 @@ from typing import Optional, Dict, Any, List
 from pydantic import BaseModel, Field, ConfigDict, model_validator, field_validator
 from pathlib import Path
 
-logger = logging.getLogger(__name__)
+from noetl.core.logger import setup_logger
+logger = setup_logger(__name__, include_location=True)
 
 
 _ENV_LOADED = False
