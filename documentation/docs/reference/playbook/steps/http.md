@@ -45,6 +45,7 @@ Usage patterns
 
 Examples (fragments)
 - GET with params and headers
+```
   # ...existing code...
   method: GET
   endpoint: "{{ workload.base_url }}/forecast"
@@ -58,8 +59,10 @@ Examples (fragments)
   assert:
     expects: [ data.latitude, data.longitude, data.hourly, data.forecast_days ]
     returns: [ data.url, data.elapsed, data.payload ]
+```
 
 - POST JSON with selective save
+```
   # ...existing code...
   method: POST
   endpoint: "https://api.example.com/items"
@@ -69,8 +72,9 @@ Examples (fragments)
     name: "{{ previous.data.name }}"
     tags: "{{ previous.data.tags }}"
   sink: { name: created_id, data: "{{ this.data.id }}" }
-
+```
 - Inside iterator: guarded per-item upsert
+```
   # ...existing code...
   type: iterator
   element: item
@@ -87,7 +91,7 @@ Examples (fragments)
       table: public.items_http
       mode: upsert
       key: id
-
+```
 Failure modes and tips
 - Timeouts or non-2xx responses fail the step; use `assert` to catch missing fields early.
 - Prefer saving a projection over entire payloads to reduce storage size.
