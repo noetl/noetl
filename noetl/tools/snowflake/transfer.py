@@ -52,9 +52,7 @@ def transfer_snowflake_to_postgres(
         }
     """
     target_name = target_table or 'custom_query'
-    logger.info(f"Starting Snowflake -> PostgreSQL transfer to {target_name}")
-    logger.info(f"Starting Snowflake -> PostgreSQL transfer to {target_name}")
-    logger.info(f"Chunk size: {chunk_size}, Mode: {mode}")
+    logger.info(f"Starting Snowflake -> PostgreSQL transfer to {target_name} | chunk_size={chunk_size} | mode={mode}")
     
     # Validate: must have either target_table or target_query
     if not target_table and not target_query:
@@ -77,8 +75,7 @@ def transfer_snowflake_to_postgres(
         if target_query:
             # Use custom query provided by user
             insert_sql = target_query
-            logger.info(f"Using custom target query")
-            logger.debug(f"Custom SQL: {insert_sql}")
+            logger.info(f"Using custom target query: {insert_sql}")
             
             # Validate placeholder count matches column count
             placeholder_count = insert_sql.count('%s')
@@ -198,8 +195,7 @@ def transfer_postgres_to_snowflake(
         }
     """
     target_name = target_table or 'custom_query'
-    logger.info(f"Starting PostgreSQL -> Snowflake transfer to {target_name}")
-    logger.info(f"Chunk size: {chunk_size}, Mode: {mode}")
+    logger.info(f"Starting PostgreSQL -> Snowflake transfer to {target_name} (chunk_size={chunk_size}, mode={mode})")
     
     # Validate: must have either target_table or target_query
     if not target_table and not target_query:
@@ -222,8 +218,7 @@ def transfer_postgres_to_snowflake(
             if target_query:
                 # Use custom query provided by user
                 insert_sql = target_query
-                logger.info(f"Using custom target query")
-                logger.debug(f"Custom SQL: {insert_sql}")
+                logger.info(f"Using custom target query: {insert_sql}")
                 
                 # Validate placeholder count matches column count
                 placeholder_count = insert_sql.count('%s')

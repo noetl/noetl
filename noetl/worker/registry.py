@@ -211,8 +211,9 @@ def deregister_worker_pool_from_env(
             logger.info("Removed worker-specific name file")
         elif os.path.exists("/tmp/noetl_worker_pool_name"):
             os.remove("/tmp/noetl_worker_pool_name")
-            logger.info("Removed legacy worker name file")
-        logger.info("Deregistered worker pool: %s", name)
+            logger.info(f"Deregistered worker pool: {name} | removed_legacy_file=true")
+        else:
+            logger.info(f"Deregistered worker pool: {name}")
     except Exception as exc:
         logger.exception(f"Worker deregister general error: {exc}")
 

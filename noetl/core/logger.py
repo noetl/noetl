@@ -73,8 +73,7 @@ async def log_error_async(
                 severity="error"
             )
         except ImportError as import_error:
-            logger.warning(f"Could not log to database due to import error: {import_error}")
-            logger.warning("This is expected during initialization or in test environments")
+            logger.warning(f"Could not log to database due to import error: {import_error} | This is expected during initialization or in test environments")
         except Exception as db_error:
             logger.error(f"Failed to log template error to database: {db_error}")
     except Exception as le:

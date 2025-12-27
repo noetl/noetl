@@ -35,7 +35,7 @@ workload:
   job_timeout_seconds: 300
   
   # Script location (GCS URI)
-  script_uri: gs://noetl-scripts/auth0/provision_auth_schema.sql
+  script_uri: gs://noetl-demo-19700101/scripts/auth0/provision_auth_schema.sql
   
   # Alternative: Local script path (if not using GCS)
   # script_path: ./tests/fixtures/playbooks/api_integration/auth0/sql/provision_auth_schema.sql

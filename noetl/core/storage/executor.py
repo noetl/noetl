@@ -72,16 +72,14 @@ def execute_sink_task(
         - meta: Metadata about tool operation
         - error: Error message (if error)
     """
-    logger.critical("SINK.EXECUTOR: execute_sink_task CALLED")
-    logger.critical(f"SINK.EXECUTOR: task_config={task_config}")
+    logger.critical(f"SINK.EXECUTOR: execute_sink_task CALLED | task_config={task_config}")
     
     try:
         # Step 1: Extract sink configuration
         config = extract_sink_config(task_config)
         
         kind = config['kind']
-        logger.critical(f"SINK.EXECUTOR: Extracted sink config with kind={kind}")
-        logger.critical(f"SINK.EXECUTOR: Full config={config}")
+        logger.critical(f"SINK.EXECUTOR: Extracted sink config | kind={kind} | config={config}")
         tool_config = config['tool_config']
         data_spec = config['data_spec']
         statement = config['statement']

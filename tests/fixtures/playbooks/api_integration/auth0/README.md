@@ -8,10 +8,10 @@ Get up and running with Auth0 integration in 5 minutes:
 
 ```bash
 # 1. Register admin credential for provisioning
-noetlctl register-credential --file tests/fixtures/credentials/pg_k8s.json
+noetlctl register credential --file tests/fixtures/credentials/pg_k8s.json
 
 # 2. Provision auth schema (creates tables, roles, permissions)
-noetlctl register-playbook --file tests/fixtures/playbooks/api_integration/auth0/provision_auth_schema.yaml
+noetlctl register playbook --file tests/fixtures/playbooks/api_integration/auth0/provision_auth_schema.yaml
 noetlctl exec api_integration/auth0/provision_auth_schema
 
 # 3. Change auth_user password (IMPORTANT: do this before next step!)
@@ -20,12 +20,12 @@ psql -h localhost -p 54321 -U demo -d demo_noetl -c \
 
 # 4. Update and register auth_user credential
 # Edit tests/fixtures/credentials/pg_auth_user.json with new password
-noetlctl register-credential --file tests/fixtures/credentials/pg_auth_user.json
+noetlctl register credential --file tests/fixtures/credentials/pg_auth_user.json
 
 # 5. Register authentication playbooks
-noetlctl register-playbook --file tests/fixtures/playbooks/api_integration/auth0/auth0_login.yaml
-noetlctl register-playbook --file tests/fixtures/playbooks/api_integration/auth0/auth0_validate_session.yaml
-noetlctl register-playbook --file tests/fixtures/playbooks/api_integration/auth0/check_playbook_access.yaml
+noetlctl register playbook --file tests/fixtures/playbooks/api_integration/auth0/auth0_login.yaml
+noetlctl register playbook --file tests/fixtures/playbooks/api_integration/auth0/auth0_validate_session.yaml
+noetlctl register playbook --file tests/fixtures/playbooks/api_integration/auth0/check_playbook_access.yaml
 
 # 6. Create a test user (optional - for testing without Auth0)
 psql -h localhost -p 54321 -U demo -d demo_noetl <<EOF

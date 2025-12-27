@@ -59,8 +59,7 @@ async def execute_sql_with_connection(
     import time
     
     conn_id = f"{host}:{port}/{database}-{int(time.time() * 1000)}"
-    logger.error(f"[CONN-{conn_id}] START: Creating connection to {host}:{port}/{database}")
-    logger.error(f"[CONN-{conn_id}] Executing {len(commands)} SQL commands")
+    logger.error(f"[CONN-{conn_id}] START: Creating connection to {host}:{port}/{database}, executing {len(commands)} SQL commands")
     
     # Use direct async connection (no pooling) for worker-side execution
     # Connection is properly closed by context manager
@@ -82,7 +81,6 @@ async def execute_sql_with_connection(
             return results
     except Exception as e:
         # Log the error - connection cleanup happens automatically
-        logger.error(f"[CONN-{conn_id}] ERROR: {e}")
         logger.exception(f"[CONN-{conn_id}] Failed to execute SQL on {database}: {e}")
         raise
     finally:
@@ -93,8 +91,9 @@ async def execute_sql_with_connection(
                 await conn.close()
                 logger.error(f"[CONN-{conn_id}] Manually closed connection in finally")
             except Exception as close_err:
-                logger.error(f"[CONN-{conn_id}] Error closing: {close_err}")
-        logger.error(f"[CONN-{conn_id}] END: Cleanup complete")
+                logger.error(f"[CONN-{conn_id}] Error closing: {close_err} | cleanup complete")
+        else:
+            logger.error(f"[CONN-{conn_id}] END: Cleanup complete")
 
 
 async def execute_sql_statements_async(

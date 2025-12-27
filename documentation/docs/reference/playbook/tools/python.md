@@ -134,16 +134,18 @@ This section describes what “type: python” means and how the executor runs y
 
 Typical shape:
 - Workflow step with inline code:
+```
   type: python
   data: {...}            # Inputs rendered before execution
   code: |
     def main(...):
         ...
-
+```
 - Workbook task aliased by name:
+```
   type: workbook
   name: <python_task_name>  # The task defines type: python and code: main(...)
-
+```
 2) Execution pipeline (implemented by the Python executor)
 - Prepare context:
   - The engine assembles a context object containing execution metadata (e.g., execution_id, workload, previous step outputs, and other runtime values).
@@ -171,9 +173,9 @@ Typical shape:
 - Normalize return:
   - If your function returns a dict that already contains a top-level status key, it is preserved as-is.
   - Otherwise, any return value is wrapped as:
-    {"status": "success", "data": <returned_value>}
+    ```{"status": "success", "data": <returned_value>}```
   - Exceptions are caught and returned as:
-    {"status": "error", "error": "<message>"}
+    ```{"status": "error", "error": "<message>"}```
 
 - Apply assertions (if provided):
   - expects: Verifies that the rendered data contains all required input keys before execution.
@@ -201,7 +203,7 @@ Typical shape:
 - main not found or not callable:
   - Ensure your code defines def main(...): at top level.
 - Exception during execution:
-  - The executor returns {"status": "error", "error": "<message>"} and logs the stack trace.
+  - The executor returns `{"status": "error", "error": "<message>"}` and logs the stack trace.
 
 5) Practical tips
 - Prefer explicit arguments or **kwargs over relying solely on context for testability and clarity.

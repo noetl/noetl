@@ -20,7 +20,8 @@ from psycopg.types.json import Json
 from noetl.core.dsl.v2.models import Event, Command, Playbook, Step, CaseEntry, ToolCall
 from noetl.core.db.pool import get_pool_connection, get_snowflake_id
 
-logger = logging.getLogger(__name__)
+from noetl.core.logger import setup_logger
+logger = setup_logger(__name__, include_location=True)
 
 
 class ExecutionState:
@@ -464,9 +465,7 @@ class ControlFlowEngine:
             
             return result
         except Exception as e:
-            logger.error(f"Template rendering error: {e}")
-            logger.error(f"Template: {template_str}")
-            logger.error(f"Context keys: {list(context.keys())}")
+            logger.error(f"Template rendering error: {e} | Template: {template_str} | Context keys: {list(context.keys())}")
             raise
     
     def _evaluate_condition(self, when_expr: str, context: dict[str, Any]) -> bool:
@@ -487,8 +486,7 @@ class ControlFlowEngine:
             logger.info(f"[COND] Evaluated '{when_expr}' => {result} (type={type(result)}) => {bool_result}")
             return bool_result
         except Exception as e:
-            logger.error(f"Condition evaluation error: {e}")
-            logger.error(f"Condition: {when_expr}")
+            logger.error(f"Condition evaluation error: {e} | Condition: {when_expr}")
             return False
     
     async def _process_case_rules(
@@ -957,19 +955,12 @@ class ControlFlowEngine:
         
         # Debug: Log state for verify_result step
         if step.step == "verify_result":
-            logger.error(f"DEBUG: Creating command for verify_result")
-            logger.error(f"DEBUG: state.step_results keys: {list(state.step_results.keys())}")
-            logger.error(f"DEBUG: state.variables keys: {list(state.variables.keys())}")
-            logger.error(f"DEBUG: step_args: {step_args}")
-            if 'run_python_from_gcs' in state.step_results:
-                logger.error(f"DEBUG: run_python_from_gcs result: {state.step_results['run_python_from_gcs']}")
+            gcs_result = state.step_results.get('run_python_from_gcs', 'NOT_FOUND')
+            logger.error(f"DEBUG verify_result: step_results={list(state.step_results.keys())} | variables={list(state.variables.keys())} | step_args={step_args} | run_python_from_gcs={gcs_result}")
         
         # Debug: Log loop variables in context
         if step.loop:
-            logger.warning(f"[LOOP-DEBUG] Step {step.step} render context keys: {list(context.keys())}")
-            logger.warning(f"[LOOP-DEBUG] Iterator '{step.loop.iterator}' value in context: {context.get(step.loop.iterator, 'NOT FOUND')}")
-            logger.warning(f"[LOOP-DEBUG] loop_index value in context: {context.get('loop_index', 'NOT FOUND')}")
-            logger.warning(f"[LOOP-DEBUG] state.variables: {state.variables}")
+            logger.warning(f"[LOOP-DEBUG] Step {step.step}: context_keys={list(context.keys())} | iterator='{step.loop.iterator}'={context.get(step.loop.iterator, 'NOT_FOUND')} | loop_index={context.get('loop_index', 'NOT_FOUND')} | state.variables={state.variables}")
         
         # Render Jinja2 templates in tool config
         # CRITICAL: Use recursive render_template to handle nested dicts/lists like params: {latitude: "{{ city.lat }}"}
@@ -1341,7 +1332,7 @@ class ControlFlowEngine:
         # This handles explicit terminal steps (no next/case blocks) only
         # OR when a step fails with no error handler (no commands generated despite having routing)
         completion_events = []
-        logger.info(f"=== COMPLETION CHECK === event={event.name}, step={event.step}, commands={len(commands)}, completed={state.completed}, has_next={bool(step_def.next if step_def else False)}, has_case={bool(step_def.case if step_def else False)}, has_error={bool(event.payload.get('error'))}")
+        logger.info(f"COMPLETION CHECK: event={event.name}, step={event.step}, commands={len(commands)}, completed={state.completed}, has_next={bool(step_def.next if step_def else False)}, has_case={bool(step_def.case if step_def else False)}, has_error={bool(event.payload.get('error'))}")
         
         # Check if step failed
         has_error = event.payload.get("error") is not None

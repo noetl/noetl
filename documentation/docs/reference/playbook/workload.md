@@ -22,6 +22,7 @@ Rules and tips
 
 Examples (fragments)
 - Static plus collection
+```
   workload:
     message: "HTTP to PG demo"
     base_url: "https://api.open-meteo.com/v1"
@@ -29,7 +30,7 @@ Examples (fragments)
       - { name: London, lat: 51.51, lon: -0.13 }
       - { name: Paris,  lat: 48.85, lon:  2.35 }
       - { name: Berlin, lat: 52.52, lon: 13.41 }
-
+```
 - Cloud scope for storage
   workload:
     gcs_bucket: noetl-demo-19700101

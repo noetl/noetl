@@ -362,22 +362,17 @@ def render_template_object(
 
     from noetl.core.dsl.render import render_template
 
-    logger.debug(f"RENDER_TEMPLATE_OBJECT CALLED: template type={type(template)}")
-    logger.info(
-        f"RENDER_TEMPLATE_OBJECT: template type={type(template)}, isinstance dict={isinstance(template, dict)}"
-    )
+    template_info = f"type={type(template)} | is_dict={isinstance(template, dict)}"
     if isinstance(template, str):
-        logger.info(
-            f"RENDER_TEMPLATE_OBJECT: template is string, value={template[:200]}"
-        )
+        template_info += f" | value={template[:200]}"
+    elif isinstance(template, dict):
+        template_info += f" | keys={list(template.keys())}"
+    logger.info(f"RENDER_TEMPLATE_OBJECT: {template_info}")
 
     env = Environment(loader=BaseLoader(), undefined=StrictUndefined)
 
     # Handle dict templates specially
     if isinstance(template, dict):
-        logger.critical(
-            f"RENDER_DEBUG: Template is dict with keys: {list(template.keys())}"
-        )
         logger.info(
             f"RENDER_DEBUG: Template is dict with keys: {list(template.keys())}"
         )
@@ -402,10 +397,9 @@ def render_template_object(
         loop_block = None
         sink_block = None
         
-        logger.critical(f"RENDER_DEBUG: Template keys before extraction: {list(template.keys())}")
-        logger.critical(f"RENDER_DEBUG: has_loop={has_loop}, task_dict exists={task_dict is not None}")
+        task_dict_keys = list(task_dict.keys()) if task_dict else None
+        logger.critical(f"RENDER_DEBUG: Before extraction | template_keys={list(template.keys())} | has_loop={has_loop} | task_dict_exists={task_dict is not None} | task_dict_keys={task_dict_keys}")
         if task_dict:
-            logger.critical(f"RENDER_DEBUG: template['task'] keys: {list(task_dict.keys())}")
             # Extract sink from inside the task dict
             if 'sink' in task_dict:
                 sink_block = task_dict.pop('sink')
@@ -419,18 +413,21 @@ def render_template_object(
         if has_loop:
             if task_dict and "loop" in task_dict:
                 loop_block = task_dict.pop("loop")
-                logger.critical(f"RENDER_DEBUG: Extracted loop block from template['task']")
+                loop_source = "template['task']"
             elif "loop" in template:
                 loop_block = template.pop("loop")
-                logger.critical(f"RENDER_DEBUG: Extracted loop block from top level")
+                loop_source = "top level"
+            else:
+                loop_source = None
+            if loop_source:
+                logger.critical(f"RENDER_DEBUG: Extracted loop block from {loop_source}")
         
         # Also check for top-level sink (legacy support)
         if "sink" in template:
             top_level_sink = template.pop("sink")
             if sink_block is None:
                 sink_block = top_level_sink
-            logger.critical(f"RENDER_DEBUG: Extracted top-level sink block: {top_level_sink}")
-            logger.debug(f"RENDER_DEBUG: Extracted sink block to preserve unrendered")
+            logger.critical(f"RENDER_DEBUG: Extracted top-level sink (preserve unrendered) | sink={top_level_sink}")
         
         # NEW: For loop steps, preserve fields that may reference loop variables
         # These fields should only be rendered worker-side after loop context is available
@@ -479,21 +476,22 @@ def render_template_object(
             # Restore loop block to the same location it was extracted from
             if task_dict is not None and isinstance(out.get('task'), dict):
                 out['task']['loop'] = loop_block
-                logger.critical(f"RENDER_DEBUG: Restored loop block to out['task']")
+                restore_location = "out['task']"
             else:
                 out['loop'] = loop_block
-                logger.critical(f"RENDER_DEBUG: Restored loop block to top level")
+                restore_location = "top level"
+            logger.critical(f"RENDER_DEBUG: Restored loop block to {restore_location}")
         
         if sink_block is not None:
             # Restore sink into the task dict where it came from
             if isinstance(out.get('task'), dict):
                 out['task']['sink'] = sink_block
-                logger.critical(f"RENDER_DEBUG: Restored sink into out['task']: {sink_block}")
+                restore_location = "out['task']"
             else:
                 # Fallback: restore to top level if task dict not found
                 out['sink'] = sink_block
-                logger.critical(f"RENDER_DEBUG: Restored sink to top level: {sink_block}")
-            logger.debug("RENDER_DEBUG: Restored unrendered sink block")
+                restore_location = "top level"
+            logger.critical(f"RENDER_DEBUG: Restored unrendered sink to {restore_location} | sink={sink_block}")
         
         return out
     else:

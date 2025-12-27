@@ -1,8 +1,8 @@
 from __future__ import annotations
-
 import json
 from typing import Any, Dict, Optional
-
+from noetl.core.logger import setup_logger
+logger = setup_logger(__name__, include_location=True)
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
@@ -34,8 +34,6 @@ class ActionConfig(BaseModel):
             return value
         # Return empty dict for invalid types to allow job to proceed and fail gracefully
         # Log the issue for debugging
-        import logging
-        logger = logging.getLogger(__name__)
         logger.error(f"Invalid args type: expected dict, got {type(value).__name__}. Value: {value!r}. Using empty dict.")
         return {}
     
@@ -58,7 +56,8 @@ class ActionConfig(BaseModel):
             
             # Log for debugging
             import logging
-            logger = logging.getLogger(__name__)
+            from noetl.core.logger import setup_logger
+            logger = setup_logger(__name__, include_location=True)
             logger.critical(f"ActionConfig: Merged data into args. args_before={args}, data={list(data.keys())}, args_after={list(merged_args.keys())}")
         
         return values

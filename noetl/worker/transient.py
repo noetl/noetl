@@ -161,7 +161,6 @@ class TransientVars:
         # Check if running in worker context (use API) or server context (use DB)
         if TransientVars._is_worker_context():
             # Worker context - use server API
-            logger.info(f"TransientVars.set_cached: Using server API (execution {execution_id}, var={var_name})")
             server_url = TransientVars._get_server_url()
             try:
                 async with httpx.AsyncClient(timeout=30.0) as client:
@@ -174,10 +173,7 @@ class TransientVars:
                         }
                     )
                     if response.status_code == 200:
-                        logger.debug(
-                            f"VAR: Set '{var_name}' via server API "
-                            f"(execution {execution_id})"
-                        )
+                        logger.info(f"TransientVars: Set '{var_name}' via API | execution={execution_id}")
                     else:
                         logger.warning(f"VAR: Server API returned {response.status_code} for set '{var_name}'")
             except Exception as e:

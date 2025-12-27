@@ -2,6 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.3.3](https://github.com/noetl/noetl/compare/v2.3.2...v2.3.3) (2025-12-26)
+
+### Bug Fixes
+
+* remove expired job reclamation logic ([98a9b55](https://github.com/noetl/noetl/commit/98a9b55516ab0b44d4358cebde5dce4a0099fc30))
+
+## [2.3.2](https://github.com/noetl/noetl/compare/v2.3.1...v2.3.2) (2025-12-26)
+
+### Bug Fixes
+
+* remove deprecated NoETL core modules and .gitignore entries ([cbcfb73](https://github.com/noetl/noetl/commit/cbcfb73e181b8bd652a599f28b7dd26f60ccf4cd))
+
+## [2.3.1](https://github.com/noetl/noetl/compare/v2.3.0...v2.3.1) (2025-12-25)
+
+### Bug Fixes
+
+* fix errors, AHM-3901 ([93ee225](https://github.com/noetl/noetl/commit/93ee225cfa1529da2f332ad8fd6b70b2973d900c))
+* remove useless and double logs, AHM-3901 ([13e0de1](https://github.com/noetl/noetl/commit/13e0de1134101ed62e493aa4f0bc739e68f34dae))
+
+## [2.3.0](https://github.com/noetl/noetl/compare/v2.2.1...v2.3.0) (2025-12-25)
+
+### Features
+
+* add support for custom PostgreSQL connections ([2317f11](https://github.com/noetl/noetl/commit/2317f11578de9ab4c2b6fd15048b8b9777933778))
+
 ## [2.2.1](https://github.com/noetl/noetl/compare/v2.2.0...v2.2.1) (2025-12-24)
 
 ### Bug Fixes

@@ -8,7 +8,8 @@ It defines the validation rules and provides helper functions for plugins.
 import logging
 from typing import Any, Dict, List, Optional, Union
 
-logger = logging.getLogger(__name__)
+from noetl.core.logger import setup_logger
+logger = setup_logger(__name__, include_location=True)
 
 # Plugin auth requirements
 PLUGIN_AUTH_ARITY = {

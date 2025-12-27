@@ -61,3 +61,9 @@ class DeleteVariableResponse(BaseModel):
     execution_id: int = Field(..., description="Execution identifier")
     var_name: str = Field(..., description="Variable name deleted")
     deleted: bool = Field(..., description="Whether variable was found and deleted")
+
+
+class CleanupExecutionResponse(BaseModel):
+    """Response for DELETE /api/vars/{execution_id}."""
+    execution_id: int = Field(..., description="Execution identifier")
+    deleted_count: int = Field(..., description="Number of variables deleted")

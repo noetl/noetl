@@ -157,8 +157,7 @@ def _create_app(settings: Settings, enable_ui: Optional[bool] = None) -> FastAPI
                                         (offline_after,)
                                     )
                                 except Exception as e:
-                                    logger.error(f"Runtime offline sweep failed: {e}")
-                                    logger.exception("Sweep offline exception details:")
+                                    logger.exception(f"Runtime offline sweep failed: {e}")
 
                                 # Server heartbeat
                                 try:
@@ -201,28 +200,17 @@ def _create_app(settings: Settings, enable_ui: Optional[bool] = None) -> FastAPI
                                             (rid, server_name, server_url, runtime_payload)
                                         )
                                 except Exception as e:
-                                    logger.error(f"Server heartbeat refresh failed: {e}")
-                                    logger.exception("Heartbeat exception details:")
+                                    logger.exception(f"Server heartbeat refresh failed: {e}")
                                 try:
                                     await conn.commit()
                                     logger.info(f"Runtime sweeper transaction committed successfully")
                                 except Exception as e:
-                                    logger.error(f"Runtime sweeper commit failed: {e}")
-                                    logger.exception("Commit failure details:")
+                                    logger.exception(f"Runtime sweeper commit failed: {e}")
 
-                        # Reclaim expired leases
-                        try:
-                            from noetl.server.api.queue import QueueService
-                            result = await QueueService.reap_expired_jobs()
-                            if result.reclaimed > 0:
-                                logger.info(f"Reclaimed {result.reclaimed} expired leased jobs")
-                        except Exception as e:
-                            logger.error(f"Failed to reclaim expired jobs: {e}")
-                            logger.exception("Reap expired jobs exception details:")
+                        # Note: V2 uses NATS for command distribution, no queue table to reclaim
 
                     except Exception as outer_e:
-                        logger.error(f"Runtime sweeper loop error: {outer_e}")
-                        logger.exception("Sweeper loop exception details:")
+                        logger.exception(f"Runtime sweeper loop error: {outer_e}")
                     try:
                         await asyncio.sleep(sweep_interval)
                     except asyncio.CancelledError:
@@ -235,8 +223,7 @@ def _create_app(settings: Settings, enable_ui: Optional[bool] = None) -> FastAPI
                 sweeper_task = asyncio.create_task(_runtime_sweeper())
                 logger.info("Runtime sweeper background task started successfully")
             except Exception as e:
-                logger.error(f"Failed to start runtime sweeper: {e}")
-                logger.exception("Runtime sweeper startup exception details:")
+                logger.exception(f"Failed to start runtime sweeper: {e}")
 
             yield
             # Shutdown
@@ -247,8 +234,7 @@ def _create_app(settings: Settings, enable_ui: Optional[bool] = None) -> FastAPI
                     with contextlib.suppress(Exception):
                         await sweeper_task
                 except Exception as e:
-                    logger.error(f"Critical error during sweeper task shutdown: {e}")
-                    logger.exception("Sweeper shutdown exception details:")
+                    logger.exception(f"Critical error during sweeper task shutdown: {e}")
             try:
                 deregister_server_directly()
             except Exception as e:

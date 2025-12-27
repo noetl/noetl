@@ -322,18 +322,18 @@ workflow:
                         "processed_data": data,
                         "file_output": f"/tmp/noetl_test_{data.get('execution_id', 'unknown')}.json"
                     }
-                  
-                  # Simulate file writing
-                  try:
-                      with open(result["file_output"], "w") as f:
-                          json.dump(data, f, indent=2)
-                      result["file_written"] = True
-                  except Exception as e:
-                      result["file_written"] = False
-                      result["error"] = str(e)
-                  
-                  print(f"Python storage completed: {json.dumps(result, indent=2)}")
-                  return {"status": "success", "data": result}
+                    
+                    # Simulate file writing
+                    try:
+                        with open(result["file_output"], "w") as f:
+                            json.dump(data, f, indent=2)
+                        result["file_written"] = True
+                    except Exception as e:
+                        result["file_written"] = False
+                        result["error"] = str(e)
+                    
+                    print(f"Python storage completed: {json.dumps(result, indent=2)}")
+                    return {"status": "success", "data": result}
           next:
             - step: test_duckdb_save
 

@@ -42,14 +42,9 @@ def main():
 
         sa_available = gcp_sa_json != 'not_set'
 
-        logger.info(f"[DATA PROCESSOR] Starting in {mode} mode")
-        logger.info(f"[DATA PROCESSOR] Input: {input_file}")
-        logger.info(f"[DATA PROCESSOR] Output bucket: {output_bucket}")
-        logger.info(f"[DATA PROCESSOR] Service account available: {sa_available}")
+        logger.info(f"[DATA PROCESSOR] Starting | mode={mode} | input={input_file} | output_bucket={output_bucket} | sa_available={sa_available}")
         if sa_available:
-            logger.debug(f"[DATA PROCESSOR] SA JSON type: {type(gcp_sa_json)}")
-            logger.debug(f"[DATA PROCESSOR] SA JSON first 150 chars: {repr(gcp_sa_json[:150])}")
-            logger.debug(f"[DATA PROCESSOR] GCS Bucket from env: {gcs_bucket}")
+            logger.debug(f"[DATA PROCESSOR] SA type={type(gcp_sa_json)} | length={len(gcp_sa_json)[:150]} | gcs_bucket={gcs_bucket}")
         logger.info(f"[DATA PROCESSOR] GCP Project from env: {gcp_project}")
 
         # Simulate processing
@@ -70,8 +65,7 @@ def main():
                     csv_content += f"{i},record_{i},{i * 100},{datetime.utcnow().isoformat()}\n"
 
                 # Parse service account JSON
-                logger.debug(f"[DATA PROCESSOR] Attempting to parse SA JSON...")
-                logger.debug(f"[DATA PROCESSOR] Raw value length: {len(gcp_sa_json)}")
+                logger.debug(f"[DATA PROCESSOR] Parsing SA JSON | length={len(gcp_sa_json)}")
 
                 # Try to detect if it's already a dict (shouldn't happen with env var, but check)
                 if isinstance(gcp_sa_json, dict):
@@ -112,11 +106,10 @@ def main():
                     method='POST'
                 )
 
-                logger.info(f"[DATA PROCESSOR] Uploading {len(csv_content)} bytes...")
                 with urllib.request.urlopen(request_obj) as response:
                     if response.status in (200, 201):
                         wrote_to_gcs = True
-                        logger.info(f"[DATA PROCESSOR] ✓ Successfully wrote to {output_location}")
+                        logger.info(f"[DATA PROCESSOR] ✓ Uploaded {len(csv_content)} bytes to {output_location}")
                     else:
                         error_msg = f"HTTP {response.status}"
                         errors.append(f"GCS upload failed: {error_msg}")

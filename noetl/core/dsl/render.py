@@ -1,14 +1,13 @@
 import re
 import json
-import logging
 import base64
-import traceback
 from typing import Any, Dict, List, Union, Optional
 from jinja2 import Environment, meta, StrictUndefined, BaseLoader, Undefined
 from noetl.core.logger import log_error
 from noetl.core.common import DateTimeEncoder
 
-logger = logging.getLogger(__name__)
+from noetl.core.logger import setup_logger
+logger = setup_logger(__name__, include_location=True)
 
 
 def _handle_undefined_values(value: Any) -> Any:
@@ -93,8 +92,7 @@ def render_template(env: Environment, template: Any, context: Dict, rules: Dict 
 
     env = add_b64encode_filter(env)
     if isinstance(template, str) and '{{' in template and '}}' in template:
-        logger.debug(f"Render template: {template}")
-        logger.debug(f"Render template context keys: {list(context.keys())}")
+        logger.debug(f"Render template: {template} | context_keys={list(context.keys())}")
         if rules:
             logger.debug(f"Render template rules: {rules}")
 
@@ -104,10 +102,10 @@ def render_template(env: Environment, template: Any, context: Dict, rules: Dict 
 
     if isinstance(template, str):
         if '{{' not in template or '}}' not in template:
-            logger.debug(f"render_template: Plain string without template variables, returning as-is: {template}")
+            logger.debug(f"render_template: Plain string (no template vars), returning as-is: {template}")
             return template
 
-        logger.debug(f"render_template: String with template variables detected: {template}")
+        logger.debug(f"render_template: String with template vars: {template}")
         try:
             expr = template.strip()
             if expr == '{{}}':
@@ -365,9 +363,8 @@ def render_sql_template(env: Environment, sql_template: str, context: Dict) -> s
         return final_sql
 
     except Exception as e:
-        error_msg = f"Error rendering SQL template: {e}"
+        error_msg = f"Error rendering SQL template: {e} | template={sql_template[:200]}..."
         logger.error(error_msg)
-        logger.debug(f"Failed template: {sql_template[:200]}...")
         
         log_error(
             error=e,

@@ -6,7 +6,8 @@ from typing import Optional, Dict, Any, List
 from pydantic import BaseModel, Field, ConfigDict, model_validator, field_validator
 from pathlib import Path
 
-logger = logging.getLogger(__name__)
+from noetl.core.logger import setup_logger
+logger = setup_logger(__name__, include_location=True)
 
 
 _ENV_LOADED = False
@@ -118,8 +119,7 @@ def validate_mandatory_env_vars():
             error_msg.append(f"Empty environment variables: {', '.join(empty_vars)}")
 
         logger.critical(f"{' | '.join(error_msg)}")
-        logger.critical("Missing required environment variables for server start")
-        logger.critical("Required variables:")
+        logger.critical("Missing required environment variables for server start | Required variables:")
         for var in mandatory_vars:
             value = os.environ.get(var, '<MISSING>')
             if value and value.strip():

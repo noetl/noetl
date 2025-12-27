@@ -38,22 +38,30 @@ Example usage in playbooks:
      args:
        data: '{{ fetch_data.data }}'
    ```
+
+Architecture Note:
+    Workers use server REST API (/api/vars) exclusively - no direct database access.
+    This ensures clean separation between worker execution layer and data layer.
 """
 
 from __future__ import annotations
 
+import os
 import logging
 from typing import Dict, Optional, Any
-from datetime import datetime, timezone
+import httpx
 
-from psycopg.types.json import Json
-from noetl.core.common import get_async_db_connection
-
-logger = logging.getLogger(__name__)
+from noetl.core.logger import setup_logger
+logger = setup_logger(__name__, include_location=True)
 
 
 class ExecutionVariables:
-    """Execution-scoped variable storage and retrieval."""
+    """Execution-scoped variable storage and retrieval via server API."""
+    
+    @staticmethod
+    def _get_server_url() -> str:
+        """Get server URL for API calls."""
+        return os.getenv("NOETL_SERVER_URL", "http://noetl.noetl.svc.cluster.local:8082")
     
     @staticmethod
     async def set_variable(
@@ -64,7 +72,7 @@ class ExecutionVariables:
         source_step: Optional[str] = None
     ) -> bool:
         """
-        Store a variable for the execution scope.
+        Store a variable for the execution scope via server API.
         
         Args:
             execution_id: Execution ID
@@ -77,36 +85,29 @@ class ExecutionVariables:
             True if successfully stored
         """
         try:
-            async with get_async_db_connection() as conn:
-                async with conn.cursor() as cursor:
-                    await cursor.execute(
-                        """
-                        INSERT INTO noetl.execution_variable (
-                            execution_id, variable_name, variable_type,
-                            variable_value, source_step
-                        ) VALUES (%s, %s, %s, %s, %s)
-                        ON CONFLICT (execution_id, variable_name) DO UPDATE SET
-                            variable_value = EXCLUDED.variable_value,
-                            variable_type = EXCLUDED.variable_type,
-                            source_step = EXCLUDED.source_step,
-                            updated_at = now()
-                        """,
-                        (
-                            execution_id, variable_name, variable_type,
-                            Json(variable_value), source_step
-                        )
+            server_url = ExecutionVariables._get_server_url()
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(
+                    f"{server_url}/api/vars/{execution_id}",
+                    json={
+                        "variables": {variable_name: variable_value},
+                        "var_type": variable_type,
+                        "source_step": source_step
+                    }
+                )
+                
+                if response.status_code == 200:
+                    logger.debug(
+                        f"Stored execution variable '{variable_name}' "
+                        f"(type: {variable_type}, execution: {execution_id})"
                     )
-                    try:
-                        await conn.commit()
-                    except Exception as e:
-                        logger.warning(f"Commit warning (may auto-commit): {e}")
-            
-            logger.debug(
-                f"Stored execution variable '{variable_name}' "
-                f"(type: {variable_type}, execution: {execution_id})"
-            )
-            return True
-            
+                    return True
+                else:
+                    logger.error(
+                        f"Failed to store variable via API: {response.status_code} - {response.text}"
+                    )
+                    return False
+                    
         except Exception as e:
             logger.error(f"Failed to store execution variable: {e}")
             return False
@@ -117,7 +118,7 @@ class ExecutionVariables:
         variable_name: str
     ) -> Optional[Any]:
         """
-        Retrieve a variable value for the execution scope.
+        Retrieve a variable value for the execution scope via server API.
         
         Args:
             execution_id: Execution ID
@@ -127,27 +128,25 @@ class ExecutionVariables:
             Variable value or None if not found
         """
         try:
-            async with get_async_db_connection() as conn:
-                async with conn.cursor() as cursor:
-                    await cursor.execute(
-                        """
-                        SELECT variable_value, variable_type
-                        FROM noetl.execution_variable
-                        WHERE execution_id = %s
-                          AND variable_name = %s
-                        """,
-                        (execution_id, variable_name)
+            server_url = ExecutionVariables._get_server_url()
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.get(
+                    f"{server_url}/api/vars/{execution_id}/{variable_name}"
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    logger.debug(
+                        f"Retrieved execution variable '{variable_name}' "
+                        f"(type: {data.get('type')})"
                     )
-                    row = await cursor.fetchone()
-                    
-                    if row:
-                        value, var_type = row
-                        logger.debug(
-                            f"Retrieved execution variable '{variable_name}' "
-                            f"(type: {var_type})"
-                        )
-                        return value
-                    
+                    return data.get('value')
+                elif response.status_code == 404:
+                    return None
+                else:
+                    logger.error(
+                        f"Failed to retrieve variable via API: {response.status_code}"
+                    )
                     return None
                     
         except Exception as e:
@@ -157,7 +156,7 @@ class ExecutionVariables:
     @staticmethod
     async def get_all_variables(execution_id: int) -> Dict[str, Any]:
         """
-        Retrieve all variables for the execution scope.
+        Retrieve all variables for the execution scope via server API.
         
         Useful for building Jinja2 context with all available variables.
         
@@ -168,26 +167,30 @@ class ExecutionVariables:
             Dictionary mapping variable names to values
         """
         try:
-            async with get_async_db_connection() as conn:
-                async with conn.cursor() as cursor:
-                    await cursor.execute(
-                        """
-                        SELECT variable_name, variable_value
-                        FROM noetl.execution_variable
-                        WHERE execution_id = %s
-                        ORDER BY created_at ASC
-                        """,
-                        (execution_id,)
-                    )
-                    rows = await cursor.fetchall() or []
-                    
-                    variables = {row[0]: row[1] for row in rows}
+            server_url = ExecutionVariables._get_server_url()
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.get(
+                    f"{server_url}/api/vars/{execution_id}"
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    # Extract just the values from the metadata response
+                    variables = {
+                        var_name: metadata['value']
+                        for var_name, metadata in data.get('variables', {}).items()
+                    }
                     
                     logger.debug(
                         f"Retrieved {len(variables)} execution variables "
                         f"for execution {execution_id}"
                     )
                     return variables
+                else:
+                    logger.error(
+                        f"Failed to retrieve all variables via API: {response.status_code}"
+                    )
+                    return {}
                     
         except Exception as e:
             logger.error(f"Failed to retrieve execution variables: {e}")
@@ -201,7 +204,7 @@ class ExecutionVariables:
         source_step: str
     ) -> bool:
         """
-        Store a bearer token as an execution variable.
+        Store a bearer token as an execution variable via server API.
         
         Convenience method for auth system to store tokens.
         
@@ -229,7 +232,7 @@ class ExecutionVariables:
         result: Any
     ) -> bool:
         """
-        Store a step result as an execution variable.
+        Store a step result as an execution variable via server API.
         
         Automatically called by step executors to make results
         available to subsequent steps via {{ step_name.field }}.
@@ -253,7 +256,7 @@ class ExecutionVariables:
     @staticmethod
     async def cleanup_execution(execution_id: int) -> bool:
         """
-        Clean up all variables for an execution.
+        Clean up all variables for an execution via server API.
         
         Called when playbook execution completes.
         
@@ -264,30 +267,27 @@ class ExecutionVariables:
             True if cleanup succeeded
         """
         try:
-            async with get_async_db_connection() as conn:
-                async with conn.cursor() as cursor:
-                    await cursor.execute(
-                        """
-                        DELETE FROM noetl.execution_variable
-                        WHERE execution_id = %s
-                        """,
-                        (execution_id,)
-                    )
-                    deleted = cursor.rowcount
-                    
+            server_url = ExecutionVariables._get_server_url()
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.delete(
+                    f"{server_url}/api/vars/{execution_id}"
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    deleted = data.get('deleted_count', 0)
                     if deleted > 0:
                         logger.info(
                             f"Cleaned up {deleted} execution variable(s) "
                             f"for execution {execution_id}"
                         )
+                    return True
+                else:
+                    logger.error(
+                        f"Failed to cleanup variables via API: {response.status_code}"
+                    )
+                    return False
                     
-                    try:
-                        await conn.commit()
-                    except Exception as e:
-                        logger.warning(f"Commit warning (may auto-commit): {e}")
-            
-            return True
-            
         except Exception as e:
             logger.error(f"Failed to cleanup execution variables: {e}")
             return False
