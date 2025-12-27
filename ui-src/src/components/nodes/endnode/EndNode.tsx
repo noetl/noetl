@@ -2,23 +2,48 @@ import { memo, useState } from 'react';
 import { Handle, Position, useReactFlow, type NodeProps, type Node } from '@xyflow/react';
 import './EndNode.less';
 import { Modal, Input, Button, Tooltip } from 'antd';
-import { EditOutlined } from '@ant-design/icons';
+import { EditOutlined, DeleteOutlined, ExclamationCircleOutlined } from '@ant-design/icons';
 
-function EndNodeInternal({ id, data = {} }: NodeProps<Node<{ name?: string }>>) {
+interface EndNodeData {
+    name?: string;
+    desc?: string;
+    onDelete?: (taskId: string) => void;
+    readOnly?: boolean;
+    [key: string]: unknown;
+}
+
+function EndNodeInternal({ id, data = {} }: NodeProps<Node<EndNodeData>>) {
     const { updateNodeData } = useReactFlow();
+
+    const handleDelete = () => {
+        Modal.confirm({
+            title: 'Delete Node',
+            icon: <ExclamationCircleOutlined />,
+            content: `Are you sure you want to delete the "${data.name || 'End'}" node?`,
+            okText: 'Delete',
+            okType: 'danger',
+            cancelText: 'Cancel',
+            centered: true,
+            onOk() {
+                data.onDelete?.(id);
+            },
+        });
+    };
     const [modalOpen, setModalOpen] = useState(false);
-    const [draft, setDraft] = useState({ name: '' });
+    const [draft, setDraft] = useState({ name: '', desc: '' });
 
     const openEditor = () => {
         setDraft({
-            name: data.name || 'end'
+            name: data.name || 'end',
+            desc: (data.desc as string) || ''
         });
         setModalOpen(true);
     };
 
     const commit = () => {
         updateNodeData(id, {
-            name: draft.name
+            name: draft.name,
+            desc: draft.desc
         });
         setModalOpen(false);
     };
@@ -31,23 +56,47 @@ function EndNodeInternal({ id, data = {} }: NodeProps<Node<{ name?: string }>>) 
 
     return (
         <div className="EndNode" onDoubleClick={openEditor}>
-            <Handle type="target" position={Position.Left} />
+            <Handle
+                type="target"
+                position={Position.Left}
+                className="flow-node-handle flow-node-handle-target"
+                title="Connect to end the flow"
+            />
             <div className="EndNode__header">
-                <span className="EndNode__header-text">🏁 {data.name || 'end'}</span>
-                <Tooltip title="Edit End node">
-                    <Button
-                        className="end-edit-btn"
-                        size="small"
-                        type="text"
-                        icon={<EditOutlined />}
-                        onPointerDown={preventNodeDrag}
-                        onMouseDown={preventNodeDrag}
-                        onClick={(e) => { preventNodeDrag(e); openEditor(); }}
-                    />
-                </Tooltip>
+                <span className="EndNode__header-text">🏁 end</span>
+                <div className="EndNode__header-buttons">
+                    <Tooltip title="Edit End node">
+                        <Button
+                            className="end-edit-btn"
+                            size="small"
+                            type="text"
+                            icon={<EditOutlined />}
+                            onPointerDown={preventNodeDrag}
+                            onMouseDown={preventNodeDrag}
+                            onClick={(e) => { preventNodeDrag(e); openEditor(); }}
+                        />
+                    </Tooltip>
+                    {!data.readOnly && data.onDelete && (
+                        <Tooltip title="Delete node">
+                            <Button
+                                className="end-delete-btn"
+                                size="small"
+                                type="text"
+                                danger
+                                icon={<DeleteOutlined />}
+                                onPointerDown={preventNodeDrag}
+                                onMouseDown={preventNodeDrag}
+                                onClick={(e) => { preventNodeDrag(e); handleDelete(); }}
+                            />
+                        </Tooltip>
+                    )}
+                </div>
             </div>
-            <div className="EndNode__label">End</div>
-            <div className="EndNode__hint">double-click or edit icon</div>
+            {data.desc && (
+                <div className="EndNode__summary">
+                    {(data.desc as string).substring(0, 60)}{(data.desc as string).length > 60 ? '...' : ''}
+                </div>
+            )}
 
             <Modal
                 open={modalOpen}
@@ -66,6 +115,13 @@ function EndNodeInternal({ id, data = {} }: NodeProps<Node<{ name?: string }>>) 
                         value={draft.name}
                         placeholder='end'
                         onChange={e => setDraft(d => ({ ...d, name: e.target.value }))}
+                    />
+                    <div className="EndNodeModal__section-title" style={{ marginTop: '16px' }}>Description</div>
+                    <Input.TextArea
+                        value={draft.desc}
+                        placeholder='Workflow end point'
+                        rows={3}
+                        onChange={e => setDraft(d => ({ ...d, desc: e.target.value }))}
                     />
                 </div>
             </Modal>

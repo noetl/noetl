@@ -2,23 +2,48 @@ import { memo, useState } from 'react';
 import { Handle, Position, useReactFlow, type NodeProps, type Node } from '@xyflow/react';
 import './StartNode.less';
 import { Modal, Input, Button, Tooltip } from 'antd';
-import { EditOutlined } from '@ant-design/icons';
+import { EditOutlined, DeleteOutlined, ExclamationCircleOutlined } from '@ant-design/icons';
 
-function StartNodeInternal({ id, data = {} }: NodeProps<Node<{ name?: string }>>) {
+interface StartNodeData {
+    name?: string;
+    desc?: string;
+    onDelete?: (taskId: string) => void;
+    readOnly?: boolean;
+    [key: string]: unknown;
+}
+
+function StartNodeInternal({ id, data = {} }: NodeProps<Node<StartNodeData>>) {
     const { updateNodeData } = useReactFlow();
+
+    const handleDelete = () => {
+        Modal.confirm({
+            title: 'Delete Node',
+            icon: <ExclamationCircleOutlined />,
+            content: `Are you sure you want to delete the "${data.name || 'Start'}" node?`,
+            okText: 'Delete',
+            okType: 'danger',
+            cancelText: 'Cancel',
+            centered: true,
+            onOk() {
+                data.onDelete?.(id);
+            },
+        });
+    };
     const [modalOpen, setModalOpen] = useState(false);
-    const [draft, setDraft] = useState({ name: '' });
+    const [draft, setDraft] = useState({ name: '', desc: '' });
 
     const openEditor = () => {
         setDraft({
-            name: data.name || 'start'
+            name: data.name || 'start',
+            desc: (data.desc as string) || ''
         });
         setModalOpen(true);
     };
 
     const commit = () => {
         updateNodeData(id, {
-            name: draft.name
+            name: draft.name,
+            desc: draft.desc
         });
         setModalOpen(false);
     };
@@ -31,23 +56,47 @@ function StartNodeInternal({ id, data = {} }: NodeProps<Node<{ name?: string }>>
 
     return (
         <div className="StartNode" onDoubleClick={openEditor}>
-            <Handle type="source" position={Position.Right} />
+            <Handle
+                type="source"
+                position={Position.Right}
+                className="flow-node-handle flow-node-handle-source"
+                title="Start connection - drag to another node"
+            />
             <div className="StartNode__header">
-                <span className="StartNode__header-text">🚀 {data.name || 'start'}</span>
-                <Tooltip title="Edit Start node">
-                    <Button
-                        className="start-edit-btn"
-                        size="small"
-                        type="text"
-                        icon={<EditOutlined />}
-                        onPointerDown={preventNodeDrag}
-                        onMouseDown={preventNodeDrag}
-                        onClick={(e) => { preventNodeDrag(e); openEditor(); }}
-                    />
-                </Tooltip>
+                <span className="StartNode__header-text">🚀 start</span>
+                <div className="StartNode__header-buttons">
+                    <Tooltip title="Edit Start node">
+                        <Button
+                            className="start-edit-btn"
+                            size="small"
+                            type="text"
+                            icon={<EditOutlined />}
+                            onPointerDown={preventNodeDrag}
+                            onMouseDown={preventNodeDrag}
+                            onClick={(e) => { preventNodeDrag(e); openEditor(); }}
+                        />
+                    </Tooltip>
+                    {!data.readOnly && data.onDelete && (
+                        <Tooltip title="Delete node">
+                            <Button
+                                className="start-delete-btn"
+                                size="small"
+                                type="text"
+                                danger
+                                icon={<DeleteOutlined />}
+                                onPointerDown={preventNodeDrag}
+                                onMouseDown={preventNodeDrag}
+                                onClick={(e) => { preventNodeDrag(e); handleDelete(); }}
+                            />
+                        </Tooltip>
+                    )}
+                </div>
             </div>
-            <div className="StartNode__label">Start</div>
-            <div className="StartNode__hint">double-click or edit icon</div>
+            {data.desc && (
+                <div className="StartNode__summary">
+                    {(data.desc as string).substring(0, 60)}{(data.desc as string).length > 60 ? '...' : ''}
+                </div>
+            )}
 
             <Modal
                 open={modalOpen}
@@ -66,6 +115,13 @@ function StartNodeInternal({ id, data = {} }: NodeProps<Node<{ name?: string }>>
                         value={draft.name}
                         placeholder='start'
                         onChange={e => setDraft(d => ({ ...d, name: e.target.value }))}
+                    />
+                    <div className="StartNodeModal__section-title" style={{ marginTop: '16px' }}>Description</div>
+                    <Input.TextArea
+                        value={draft.desc}
+                        placeholder='Workflow start point'
+                        rows={3}
+                        onChange={e => setDraft(d => ({ ...d, desc: e.target.value }))}
                     />
                 </div>
             </Modal>
