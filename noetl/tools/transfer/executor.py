@@ -142,6 +142,126 @@ def transfer_http_to_postgres(
         raise ValueError(f"PostgreSQL insert failed: {e}")
 
 
+def transfer_postgres_to_postgres(
+    source_conn,
+    target_conn,
+    source_query: str,
+    target_table: str = None,
+    target_query: str = None,
+    chunk_size: int = 1000,
+    mode: str = 'append',
+    progress_callback: Optional[Callable[[int, int], None]] = None
+) -> Dict[str, Any]:
+    """Transfer data from PostgreSQL to PostgreSQL in chunks.
+
+    This is a generic Postgres-to-Postgres transfer helper used by the
+    transfer action. It mirrors the behaviour of the Snowflake->Postgres
+    transfer, including support for custom queries and simple upserts.
+    """
+    target_name = target_table or 'custom_query'
+    logger.info(
+        f"Starting PostgreSQL -> PostgreSQL transfer to {target_name} "
+        f"| chunk_size={chunk_size} | mode={mode}"
+    )
+
+    if not target_table and not target_query:
+        raise ValueError("Either target_table or target_query must be provided")
+
+    rows_transferred = 0
+    chunks_processed = 0
+
+    try:
+        with source_conn.cursor() as source_cursor:
+            source_cursor.execute(source_query)
+
+            columns = [desc[0] for desc in source_cursor.description]
+            logger.info(f"Source columns: {columns}")
+
+            # Prepare insert statement
+            if target_query:
+                insert_sql = target_query
+                logger.info(f"Using custom target query: {insert_sql}")
+
+                placeholder_count = insert_sql.count('%s')
+                if placeholder_count != len(columns):
+                    logger.warning(
+                        "Placeholder count (%s) doesn't match column count (%s). "
+                        "Verify target_query placeholders.",
+                        placeholder_count,
+                        len(columns),
+                    )
+            else:
+                column_list = ', '.join([f'"{col}"' for col in columns])
+                placeholders = ', '.join(['%s'] * len(columns))
+
+                if mode == 'replace':
+                    logger.info(f"Truncating target table: {target_table}")
+                    with target_conn.cursor() as target_cursor:
+                        target_cursor.execute(f'TRUNCATE TABLE {target_table}')
+                    target_conn.commit()
+
+                if mode == 'upsert':
+                    pk_column = columns[0]
+                    update_cols = ', '.join(
+                        [f'"{col}" = EXCLUDED."{col}"' for col in columns[1:]]
+                    )
+                    insert_sql = (
+                        f"INSERT INTO {target_table} ({column_list}) "
+                        f"VALUES ({placeholders}) "
+                        f"ON CONFLICT ({pk_column}) DO UPDATE SET {update_cols}"
+                    )
+                else:
+                    insert_sql = (
+                        f"INSERT INTO {target_table} ({column_list}) "
+                        f"VALUES ({placeholders})"
+                    )
+
+                logger.debug(f"Auto-generated SQL: {insert_sql}")
+
+            while True:
+                chunk = source_cursor.fetchmany(chunk_size)
+                if not chunk:
+                    break
+
+                with target_conn.cursor() as target_cursor:
+                    for row in chunk:
+                        target_cursor.execute(insert_sql, row)
+
+                target_conn.commit()
+
+                rows_transferred += len(chunk)
+                chunks_processed += 1
+
+                logger.debug(
+                    f"Processed chunk {chunks_processed}: {len(chunk)} rows"
+                )
+
+                if progress_callback:
+                    progress_callback(rows_transferred, -1)
+
+        logger.info(
+            f"Transfer complete: {rows_transferred} rows in {chunks_processed} chunks"
+        )
+
+        return {
+            'status': 'success',
+            'rows_transferred': rows_transferred,
+            'chunks_processed': chunks_processed,
+            'target_table': target_name,
+            'columns': columns,
+        }
+
+    except Exception as e:
+        logger.error(f"Transfer failed: {e}", exc_info=True)
+        return {
+            'status': 'error',
+            'rows_transferred': rows_transferred,
+            'chunks_processed': chunks_processed,
+            'target_table': target_name,
+            'error': str(e),
+        }
+
+
 # Supported database types and data sources
 SUPPORTED_TYPES = {'snowflake', 'postgres', 'http'}
 
@@ -150,6 +270,7 @@ TRANSFER_FUNCTIONS = {
     ('snowflake', 'postgres'): transfer_snowflake_to_postgres,
     ('postgres', 'snowflake'): transfer_postgres_to_snowflake,
     ('http', 'postgres'): transfer_http_to_postgres,
+    ('postgres', 'postgres'): transfer_postgres_to_postgres,
 }
 
 
@@ -432,6 +553,17 @@ def execute_transfer_action(
                 chunk_size=chunk_size,
                 mode=mode,
                 progress_callback=progress_callback
+            )
+        elif direction_key == ('postgres', 'postgres'):
+            result = transfer_function(
+                source_conn,
+                target_conn,
+                source_query=source_query,
+                target_table=target_table,
+                target_query=target_query,
+                chunk_size=chunk_size,
+                mode=mode,
+                progress_callback=progress_callback,
             )
         elif direction_key == ('snowflake', 'postgres'):
             result = transfer_function(
