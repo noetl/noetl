@@ -1,93 +1,100 @@
 import { test, expect } from '@playwright/test';
 import { execSync } from 'child_process';
 
+const NOETL_HOST = process.env.NOETL_HOST ?? 'localhost';
+const NOETL_PORT = process.env.NOETL_PORT ?? '8082';
+const BASE_URL = process.env.NOETL_BASE_URL ?? `http://${NOETL_HOST}:${NOETL_PORT}`;
+
+const CATALOG_URL = `${BASE_URL}/catalog`;
+
+const PLAYBOOK_NAME = 'user_profile_scorer';
+const PLAYBOOK_PATH = `tests/fixtures/playbooks/playbook_composition/${PLAYBOOK_NAME}.yaml`;
+const PLAYBOOK_CATALOG_NODE = `tests/fixtures/playbooks/playbook_composition/${PLAYBOOK_NAME}`;
+
+const LOADING_EXECUTIONS_TEXT = 'Loading executions...';
+
+const viewHeaders = ['Event Type', 'Node Name', 'Status', 'Timestamp', 'Duration'] as const;
+
 test.describe('User Profile Scorer', () => {
-
-    // Run the registration command before all tests in this suite
     test.beforeAll(() => {
-        console.log('Registering user_profile_scorer...');
-        execSync('noetl register tests/fixtures/playbooks/playbook_composition/user_profile_scorer.yaml --host localhost --port 8082', { stdio: 'inherit' });
+        console.log(`Registering ${PLAYBOOK_NAME}...`);
+        execSync(`noetl register "${PLAYBOOK_PATH}" --host ${NOETL_HOST} --port ${NOETL_PORT}`, { stdio: 'inherit' });
     });
 
-    test('should open catalog page', async ({ page }) => {
-        // Navigate to the catalog page
-        await page.goto('http://localhost:8082/catalog');
+    test('should execute playbook and show expected events', async ({ page }) => {
+        await test.step('Navigate: open Catalog', async () => {
+            await page.goto(CATALOG_URL);
+            await expect(page).toHaveTitle('NoETL Dashboard');
+        });
 
-        // Check that the page title contains "NoETL Dashboard"
-        await expect(page).toHaveTitle('NoETL Dashboard');
+        await test.step(`Click: Execute "${PLAYBOOK_NAME}" and wait for navigation`, async () => {
+            const executeButton = page.locator(
+                `(//*[text()='${PLAYBOOK_NAME}']/following::button[normalize-space()='Execute'])[1]`
+            );
+            await executeButton.click();
+            await expect(page).toHaveURL(/\/execution/);
+        });
 
-        // Locate the first element that contains the text "user_profile_scorer"
-        const exampleItem = page.locator("(//*[text()='user_profile_scorer']/following::button[normalize-space()='Execute'])[1]");
+        await test.step('Wait: executions loader finishes (if present)', async () => {
+            const loader = page.locator(`//*[text()='${LOADING_EXECUTIONS_TEXT}']`);
+            await loader.waitFor({ state: 'visible', timeout: 5000 }).catch(() => { });
+            await loader.waitFor({ state: 'detached', timeout: 30000 }).catch(() => { });
+        });
+        await test.step('Wait for completion, then reload', async () => {
+            await page.waitForTimeout(5000);
+            await page.reload();
+            await expect(page).toHaveTitle('NoETL Dashboard');
+        });
 
-        // Inside that element, find the child with text "Execute" and click it
-        await exampleItem.click();
+        await test.step('Validate: events table contains expected lifecycle and step events', async () => {
+            const rows = page.locator('.ant-table-wrapper .ant-table-row');
+            const rowCount = await rows.count();
 
-        // wait until URL contains "/execution"
-        await page.waitForURL('**/execution', { timeout: 60000 });
+            const tableData: Record<string, string>[] = [];
+            for (let i = 0; i < rowCount; i++) {
+                const cells = rows.nth(i).locator('td');
+                const values = await cells.allTextContents();
+                tableData.push(Object.fromEntries(viewHeaders.map((key, idx) => [key, values[idx]])));
+            }
 
-        // now check
-        await expect(page.url()).toContain('/execution');
+            console.log(tableData);
 
-        const loader = page.locator("//*[text()='Loading executions...']");
-        await loader.waitFor({ state: 'visible', timeout: 5000 }).catch(() => { });
-        // Wait for the loader to disappear
-        await loader.waitFor({ state: 'detached' });
+            const hasEvent = (eventType: string, nodeName: string, status?: string) =>
+                tableData.some(
+                    r =>
+                        r['Event Type'] === eventType &&
+                        r['Node Name'] === nodeName &&
+                        (status ? r['Status'] === status : true)
+                );
 
-        const headers = [
-            'Execution ID',
-            'Playbook',
-            'Status',
-            'Progress',
-            'Start Time',
-            'Duration',
-            'Actions'
-        ];
+            const validateCommandStep = async (stepName: string) => {
+                await test.step(`Validate: ${stepName} step`, async () => {
+                    expect(hasEvent('command.issued', stepName, 'PENDING')).toBeTruthy();
+                    expect(hasEvent('step.enter', stepName, 'STARTED')).toBeTruthy();
+                    expect(hasEvent('step.exit', stepName, 'COMPLETED')).toBeTruthy();
+                    expect(hasEvent('command.completed', stepName, 'COMPLETED')).toBeTruthy();
+                });
+            };
 
-        // Choose the first row of the table
-        const row = page.locator('.ant-table-tbody > tr:first-child');
-        const cells = row.locator('td');
+            await test.step('Validate: playbook/workflow lifecycle', async () => {
+                expect(hasEvent('playbook.initialized', PLAYBOOK_CATALOG_NODE, 'INITIALIZED')).toBeTruthy();
+                expect(hasEvent('workflow.initialized', 'workflow', 'INITIALIZED')).toBeTruthy();
+            });
 
-        // Wait until all cells in the row have non-empty text
-        await expect(cells.first()).toHaveText(/.+/);
+            await validateCommandStep('start');
+            await validateCommandStep('extract_user_data');
+            await validateCommandStep('score_experience');
+            await validateCommandStep('score_performance');
+            await validateCommandStep('score_department');
+            await validateCommandStep('score_age');
+            await validateCommandStep('compute_total_score');
+            await validateCommandStep('determine_score_category');
+            await validateCommandStep('finalize_result');
 
-        // Get all text contents of the cells in the row
-        const values = await cells.allTextContents();
-
-        // Map headers to their corresponding values
-        const rowData = Object.fromEntries(headers.map((key, i) => [key, values[i]]));
-
-        console.log(rowData);
-
-        // Assertions
-        await expect(rowData.Playbook).toBe('user_profile_scorer');
-        await expect(rowData.Status).toBe('STARTED');
-        await expect(rowData.Duration).toBe('8h 0m');
-
-        // Wait a bit for the execution to complete
-        await page.waitForTimeout(5000);
-        // Refresh the page
-        await page.reload();
-
-        // Choose the first row of the table again
-        const updatedRow = page.locator('.ant-table-tbody > tr:first-child');
-        const updatedCells = updatedRow.locator('td');
-        // Get all text contents of the cells in the row
-        const updatedValues = await updatedCells.allTextContents();
-        // Map headers to their corresponding values
-        const updatedRowData = Object.fromEntries(headers.map((key, i) => [key, updatedValues[i]]));
-
-        console.log(updatedRowData);
-
-        // Assert changes
-        await expect(page).toHaveTitle('NoETL Dashboard');
-        await expect(updatedRowData.Status).toBe('Completed');
-        // await expect(updatedRowData.Playbook).toBe('user_profile_scorer');
-
-        // Click the "View" button for the "user_profile_scorer" task
-        // TODO fix the selector below from "Unknown" to "user_profile_scorer"
-        const viewButton = await page.locator("(//*[text()='Unknown']/following::button[normalize-space()='View'])[1]");
-        await viewButton.click();
-
+            await test.step('Validate: workflow/playbook completion', async () => {
+                expect(hasEvent('workflow.completed', 'workflow', 'COMPLETED')).toBeTruthy();
+                expect(hasEvent('playbook.completed', PLAYBOOK_CATALOG_NODE, 'COMPLETED')).toBeTruthy();
+            });
+        });
     });
-
 });
