@@ -179,12 +179,13 @@ class ExecutionState:
         }
         
         # Set protected fields AFTER spreading variables to ensure they are not overridden
-        context["execution_id"] = self.execution_id
-        context["catalog_id"] = self.catalog_id
+        # CRITICAL: Convert IDs to strings to prevent JavaScript precision loss with Snowflake IDs
+        context["execution_id"] = str(self.execution_id) if self.execution_id else None
+        context["catalog_id"] = str(self.catalog_id) if self.catalog_id else None
         context["job"] = {
-            "uuid": self.execution_id,
-            "execution_id": self.execution_id,
-            "id": self.execution_id
+            "uuid": str(self.execution_id) if self.execution_id else None,
+            "execution_id": str(self.execution_id) if self.execution_id else None,
+            "id": str(self.execution_id) if self.execution_id else None
         }
         
         # Add loop metadata context if step has active loop
@@ -1519,34 +1520,35 @@ class ControlFlowEngine:
                     state.root_event_id = event_id
                 
                 # Build traceability metadata
+                # CRITICAL: Convert all IDs to strings to prevent JavaScript precision loss with Snowflake IDs
                 meta = {
                     "execution_id": str(event.execution_id),
-                    "catalog_id": catalog_id,
-                    "root_event_id": state.root_event_id,
+                    "catalog_id": str(catalog_id) if catalog_id else None,
+                    "root_event_id": str(state.root_event_id) if state.root_event_id else None,
                     "event_chain": [
-                        state.root_event_id,
-                        parent_event_id,
-                        event_id
-                    ] if state.root_event_id else [event_id]
+                        str(state.root_event_id) if state.root_event_id else None,
+                        str(parent_event_id) if parent_event_id else None,
+                        str(event_id)
+                    ] if state.root_event_id else [str(event_id)]
                 }
                 
                 # Add parent execution link if present
                 if state.parent_execution_id:
-                    meta["parent_execution_id"] = state.parent_execution_id
+                    meta["parent_execution_id"] = str(state.parent_execution_id)
                 
                 # Add step-specific metadata
                 if event.step:
                     meta["step"] = event.step
                     if event.step in state.step_event_ids:
-                        meta["previous_step_event_id"] = state.step_event_ids[event.step]
+                        meta["previous_step_event_id"] = str(state.step_event_ids[event.step])
                 
                 # Merge with existing context metadata
                 context_data = event.payload.get("context", {})
                 if isinstance(context_data, dict):
-                    # Ensure execution_id and catalog_id are in context for easy access
+                    # CRITICAL: Convert all IDs to strings to prevent JavaScript precision loss with Snowflake IDs
                     context_data["execution_id"] = str(event.execution_id)
-                    context_data["catalog_id"] = catalog_id
-                    context_data["root_event_id"] = state.root_event_id
+                    context_data["catalog_id"] = str(catalog_id) if catalog_id else None
+                    context_data["root_event_id"] = str(state.root_event_id) if state.root_event_id else None
                 
                 # Determine status: Use payload status if provided, otherwise infer from event name
                 payload_status = event.payload.get("status")
@@ -1610,10 +1612,14 @@ class ControlFlowEngine:
         # Generate execution ID
         execution_id = str(await get_snowflake_id())
         
-        # Load playbook
-        playbook = await self.playbook_repo.load_playbook(playbook_path)
+        # Load playbook - use catalog_id if provided to load specific version
+        if catalog_id:
+            playbook = await self.playbook_repo.load_playbook_by_id(catalog_id)
+        else:
+            playbook = await self.playbook_repo.load_playbook(playbook_path)
+        
         if not playbook:
-            raise ValueError(f"Playbook not found: {playbook_path}")
+            raise ValueError(f"Playbook not found: catalog_id={catalog_id} path={playbook_path}")
         
         # Create execution state with catalog_id and parent_execution_id
         state = ExecutionState(execution_id, playbook, payload, catalog_id, parent_execution_id)

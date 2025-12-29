@@ -808,10 +808,12 @@ class V2Worker:
             
         elif tool_kind == "postgres":
             # Use plugin's execute_postgres_task (sync function - run in executor)
+            # Pass full tool config as task_with to ensure auth is available
+            task_with = {**config, **args}  # Merge config (has auth) with args
             loop = asyncio.get_running_loop()
             result = await loop.run_in_executor(
                 None, 
-                lambda: execute_postgres_task(task_config, context, jinja_env, args)
+                lambda: execute_postgres_task(task_config, context, jinja_env, task_with)
             )
             # Check if plugin returned error status
             if isinstance(result, dict) and result.get('status') == 'error':
@@ -821,10 +823,12 @@ class V2Worker:
             
         elif tool_kind == "duckdb":
             # Use plugin's execute_duckdb_task (sync function - run in executor)
+            # Pass full tool config as task_with to ensure auth is available
+            task_with = {**config, **args}  # Merge config (has auth) with args
             loop = asyncio.get_running_loop()
             result = await loop.run_in_executor(
                 None,
-                lambda: execute_duckdb_task(task_config, context, jinja_env, args)
+                lambda: execute_duckdb_task(task_config, context, jinja_env, task_with)
             )
             # Check if plugin returned error status
             if isinstance(result, dict) and result.get('status') == 'error':
@@ -834,10 +838,12 @@ class V2Worker:
 
         elif tool_kind == "snowflake":
             # Use plugin's execute_snowflake_task (sync wrapper)
+            # Pass full tool config as task_with to ensure auth is available
+            task_with = {**config, **args}  # Merge config (has auth) with args
             loop = asyncio.get_running_loop()
             result = await loop.run_in_executor(
                 None,
-                lambda: execute_snowflake_task(task_config, context, jinja_env, args)
+                lambda: execute_snowflake_task(task_config, context, jinja_env, task_with)
             )
             if isinstance(result, dict) and result.get('status') == 'error':
                 return result
