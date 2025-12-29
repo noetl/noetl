@@ -25,7 +25,7 @@ from noetl.worker.auth_compatibility import validate_auth_transition, transform_
 from noetl.tools.duckdb.config import create_connection_config, create_task_config, preprocess_task_with
 from noetl.tools.duckdb.connections import get_duckdb_connection as _get_connection_new, create_standalone_connection
 from noetl.tools.duckdb.extensions import get_required_extensions, install_and_load_extensions, install_database_extensions
-from noetl.tools.duckdb.auth import resolve_unified_auth, resolve_credentials, generate_duckdb_secrets
+from noetl.tools.duckdb.auth import resolve_unified_auth, generate_duckdb_secrets
 from noetl.tools.duckdb.sql import render_commands, execute_sql_commands, serialize_results, create_task_result
 from noetl.tools.duckdb.cloud import detect_uri_scopes, configure_cloud_credentials, validate_cloud_output_requirement
 from noetl.tools.duckdb.excel import ExcelExportManager
@@ -127,10 +127,23 @@ def execute_duckdb_task(
             if uri_scopes.get('gs') or uri_scopes.get('s3'):
                 print(f"[DUCKDB DEBUG] Calling configure_cloud_credentials...", flush=True)
                 cloud_secrets = configure_cloud_credentials(
-                    conn, uri_scopes, task_config, processed_task_with
+                    conn,
+                    uri_scopes,
+                    task_config,
+                    processed_task_with,
+                    catalog_id=context.get('catalog_id'),
+                    execution_id=context.get('execution_id'),
                 )
                 print(f"[DUCKDB DEBUG] Cloud secrets created: {cloud_secrets}", flush=True)
                 secrets_created += cloud_secrets
+            
+            # Diagnostic: List all secrets
+            try:
+                secrets_list = conn.execute("SELECT name, type, provider, scope FROM duckdb_secrets()").fetchall()
+                print(f"[DUCKDB DEBUG] Current DuckDB secrets: {secrets_list}", flush=True)
+                logger.info(f"Current DuckDB secrets: {secrets_list}")
+            except Exception as e:
+                print(f"[DUCKDB DEBUG] Could not list secrets: {e}", flush=True)
                 
             # Validate cloud output requirements
             require_cloud = bool(processed_task_with.get('require_cloud_output') or task_config.get('require_cloud_output'))
@@ -226,34 +239,25 @@ def _setup_authentication(
             resolved_auth_map = resolve_unified_auth(auth_config, jinja_env, context)
             
             if resolved_auth_map:
+                logger.info(f"Resolved auth aliases: {list(resolved_auth_map.keys())}")
                 # Install required extensions
                 required_extensions = get_required_extensions(resolved_auth_map)
+                logger.info(f"Installing required extensions for auth: {required_extensions}")
                 install_and_load_extensions(connection, required_extensions)
                 
                 # Generate and execute secret creation statements
                 secret_statements = generate_duckdb_secrets(resolved_auth_map)
+                logger.info(f"Generated {len(secret_statements)} secret statements")
                 for stmt in secret_statements:
                     # Log statement without revealing secrets
                     import re
-                    redacted_stmt = re.sub(r"(SECRET|PASSWORD|KEY_ID)\s*'[^']*'", r"\1 '[REDACTED]'", stmt)
+                    redacted_stmt = re.sub(r"(SECRET|PASSWORD|KEY_ID|JSON_KEY)\s*'[^']*'", r"\1 '[REDACTED]'", stmt)
                     logger.info(f"Executing unified auth secret: {redacted_stmt[:150]}...")
                     connection.execute(stmt)
                 
                 secrets_created = len(secret_statements)
                 if secrets_created:
                     logger.info(f"Unified auth system created {secrets_created} DuckDB secrets")
-                    
-        # Fall back to legacy credential system if no unified auth
-        elif 'credentials' in task_config:
-            logger.debug("Using legacy credential system")
-            credentials_config = task_config.get('credentials')
-            resolved_creds = resolve_credentials(credentials_config, jinja_env, context)
-            
-            # Convert legacy credentials to secret statements
-            # This is simplified - full legacy support would require more complex handling
-            if resolved_creds:
-                logger.info(f"Resolved {len(resolved_creds)} legacy credentials")
-                # Legacy system handling would go here
                 
     except Exception as e:
         logger.warning(f"Authentication setup failed: {e}")
@@ -293,4 +297,3 @@ __all__ = ['execute_duckdb_task', 'get_duckdb_connection']
 
 # Legacy compatibility exports for internal functions used by tests
 from .sql.rendering import render_deep as _render_deep, escape_sql as _escape_sql
-from .auth.legacy import build_legacy_credential_prelude as _build_duckdb_secret_prelude

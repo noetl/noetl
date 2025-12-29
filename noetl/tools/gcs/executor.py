@@ -85,7 +85,11 @@ def execute_gcs_task(
     
     # Fetch credential from NoETL server
     try:
-        credential_data = _fetch_credential(credential_name)
+        credential_data = _fetch_credential(
+            credential_name,
+            catalog_id=context.get('catalog_id'),
+            execution_id=context.get('execution_id'),
+        )
         if not credential_data:
             raise ValueError(f"Credential '{credential_name}' not found")
         
@@ -148,45 +152,72 @@ def execute_gcs_task(
         }
 
 
-def _fetch_credential(credential_name: str) -> Optional[Dict[str, Any]]:
-    """
-    Fetch credential data from the NoETL server.
-    
-    Args:
-        credential_name: Name of the credential to fetch
-        
-    Returns:
-        Credential data dictionary or None if not found
+def _fetch_credential(
+    credential_name: str,
+    catalog_id: Optional[int] = None,
+    execution_id: Optional[int] = None,
+) -> Optional[Dict[str, Any]]:
+    """Fetch credential or keychain data for GCS uploads.
+
+    Tries the credentials API first; if not found (or prefixed with
+    keychain:/kc:), tries keychain using catalog_id/NOETL_CATALOG_ID.
     """
     import httpx
-    
+
     try:
-        base_url = os.environ.get('NOETL_SERVER_URL', 'http://localhost:8082').rstrip('/')
+        base_url = os.environ.get('NOETL_SERVER_URL', 'http://noetl.noetl.svc.cluster.local:8082').rstrip('/')
         if not base_url.endswith('/api'):
             base_url = base_url + '/api'
-            
-        url = f"{base_url}/credentials/{credential_name}?include_data=true"
-        
-        logger.debug(f"Fetching credential from: {url}")
-        
+
+        use_keychain_hint = False
+        name = credential_name
+        if isinstance(name, str):
+            lowered = name.lower()
+            if lowered.startswith('keychain:') or lowered.startswith('kc:'):
+                use_keychain_hint = True
+                name = name.split(':', 1)[1]
+
+        def _parse_credential_response(resp_json: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+            raw = (resp_json or {}).get('data') or {}
+            if isinstance(raw, dict) and isinstance(raw.get('data'), dict):
+                return raw.get('data')
+            return raw if isinstance(raw, dict) else None
+
         with httpx.Client(timeout=5.0) as client:
-            response = client.get(url)
-            
-            if response.status_code == 200:
-                body = response.json() or {}
-                raw = body.get('data') or {}
-                
-                # Handle nested data structure
-                if isinstance(raw, dict) and isinstance(raw.get('data'), dict):
-                    payload = raw.get('data')
+            payload: Optional[Dict[str, Any]] = None
+
+            if not use_keychain_hint:
+                cred_url = f"{base_url}/credentials/{name}?include_data=true"
+                logger.debug(f"Fetching credential from: {cred_url}")
+                resp = client.get(cred_url)
+                if resp.status_code == 200:
+                    payload = _parse_credential_response(resp.json())
+                elif resp.status_code != 404:
+                    logger.warning(f"Failed to fetch credential '{name}': HTTP {resp.status_code}")
+
+            if payload is None:
+                catalog_val = catalog_id or os.environ.get('NOETL_CATALOG_ID')
+                if catalog_val:
+                    kc_url = f"{base_url}/keychain/{catalog_val}/{name}"
+                    params = {'scope_type': 'global'}
+                    if execution_id:
+                        params['execution_id'] = execution_id
+                    kc_resp = client.get(kc_url, params=params)
+                    if kc_resp.status_code == 200:
+                        body = kc_resp.json() or {}
+                        token_data = body.get('token_data') or body.get('data')
+                        status = body.get('status')
+                        if status == 'expired' and body.get('auto_renew'):
+                            logger.warning(f"Keychain entry '{name}' for catalog {catalog_val} is expired")
+                        else:
+                            payload = token_data if isinstance(token_data, dict) else None
+                    elif kc_resp.status_code != 404:
+                        logger.warning(f"Failed to fetch keychain '{name}' (catalog {catalog_val}): HTTP {kc_resp.status_code}")
                 else:
-                    payload = raw
-                    
-                return payload if isinstance(payload, dict) else {}
-            else:
-                logger.warning(f"Failed to fetch credential '{credential_name}': HTTP {response.status_code}")
-                return None
-                
+                    logger.debug(f"No catalog_id available for keychain lookup of '{name}'")
+
+            return payload if isinstance(payload, dict) else None
+
     except Exception as e:
         logger.error(f"Failed to fetch credential '{credential_name}': {e}")
         return None

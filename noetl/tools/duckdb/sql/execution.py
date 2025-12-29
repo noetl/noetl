@@ -60,6 +60,15 @@ def execute_sql_commands(
             # Execute the command inside DuckDB
             result = connection.execute(command)
             
+            # Diagnostic: Check settings if this was a COPY command that failed previously
+            if "COPY" in command.upper() and ("gs://" in command or "s3://" in command):
+                try:
+                    s3_settings = connection.execute("SELECT name, value FROM duckdb_settings() WHERE name LIKE 's3_%' OR name LIKE 'gcs_%'").fetchall()
+                    logger.info(f"Cloud settings after COPY attempt: {s3_settings}")
+                    print(f"[DUCKDB DEBUG] Cloud settings: {s3_settings}", flush=True)
+                except Exception:
+                    pass
+
             # Try to fetch results if available
             try:
                 if hasattr(result, 'fetchall'):

@@ -43,102 +43,116 @@ def handle_gcs_storage(
         Result dictionary from GCS upload operation
     """
     logger.info(f"GCS.STORAGE: Starting GCS sink handler with config: {tool_config}")
-    
+
+    credential = None
+    source = None
+    destination = None
+
     try:
-        # Import GCS executor
         from noetl.tools.gcs import execute_gcs_task
-        
-        # Extract source file path
-        source = tool_config.get('source')
+
+        # Resolve source path from explicit config or rendered payloads
+        source = tool_config.get("source")
         if not source:
-            # Try to extract from rendered_data if it's a file path string
             if isinstance(rendered_data, str):
                 source = rendered_data
-            elif isinstance(rendered_data, dict) and 'local_path' in rendered_data:
-                source = rendered_data['local_path']
-            else:
-                raise ValueError("No source file path provided in sink configuration")
-        
+            elif isinstance(rendered_data, dict):
+                for key in ("local_path", "path", "file", "filepath", "filename", "output_path"):
+                    if rendered_data.get(key):
+                        source = rendered_data[key]
+                        break
+            if not source:
+                raise ValueError("GCS sink requires a source file path")
+
         logger.info(f"GCS.STORAGE: Source file: {source}")
-        
-        # Extract destination GCS URI
-        destination = tool_config.get('destination')
+
+        # Resolve destination URI
+        destination = tool_config.get("destination") or tool_config.get("uri")
         if not destination:
-            raise ValueError("No destination GCS URI provided in sink configuration")
-        
+            raise ValueError("GCS sink requires a destination GCS URI")
+
         logger.info(f"GCS.STORAGE: Destination URI: {destination}")
-        
-        # Extract credential reference
-        credential = tool_config.get('credential') or credential_ref
+
+        # Resolve credential reference
+        credential = tool_config.get("credential") or credential_ref
+        if not credential and isinstance(auth_config, str):
+            credential = auth_config
+        if not credential and isinstance(auth_config, dict):
+            credential = auth_config.get("credential") or auth_config.get("key")
         if not credential:
-            raise ValueError("No credential provided for GCS upload")
-        
+            raise ValueError("GCS sink requires a credential reference")
+
         logger.info(f"GCS.STORAGE: Using credential: {credential}")
-        
-        # Build task config for GCS executor
-        gcs_task_config = {
-            'kind': 'gcs',
-            'source': source,
-            'destination': destination,
-            'credential': credential,
+
+        # Build task config passed to the GCS tool
+        gcs_task_config: Dict[str, Any] = {
+            "kind": "gcs",
+            "source": source,
+            "destination": destination,
+            "credential": credential,
         }
-        
-        # Add optional parameters
-        if 'content_type' in tool_config:
-            gcs_task_config['content_type'] = tool_config['content_type']
-        
-        if 'metadata' in tool_config:
-            gcs_task_config['metadata'] = tool_config['metadata']
-        
-        logger.info(f"GCS.STORAGE: Task config: {gcs_task_config}")
-        
-        # Merge with task_with for additional context (handle None case)
+
+        if "content_type" in tool_config:
+            gcs_task_config["content_type"] = tool_config["content_type"]
+        if "metadata" in tool_config:
+            gcs_task_config["metadata"] = tool_config["metadata"]
+
         merged_task_with = {**(task_with or {}), **gcs_task_config}
-        
-        # Execute GCS upload via tool executor
+
         logger.info("GCS.STORAGE: Calling execute_gcs_task")
         result = execute_gcs_task(
             task_config=gcs_task_config,
             context=context,
             jinja_env=jinja_env,
             task_with=merged_task_with,
-            log_event_callback=log_event_callback
+            log_event_callback=log_event_callback,
         )
-        
+
         logger.info(f"GCS.STORAGE: Result: {result}")
-        
-        # Normalize result format for sink operations
-        if isinstance(result, dict):
-            if result.get('status') == 'error':
-                logger.error(f"GCS.STORAGE: Upload failed: {result.get('message')}")
-                return {
-                    'status': 'error',
-                    'message': result.get('message', 'GCS upload failed'),
-                    'error': result.get('error')
-                }
-            
-            # Return success result with GCS metadata
+
+        if not isinstance(result, dict):
             return {
-                'status': 'success',
-                'uri': result.get('uri'),
-                'bucket': result.get('bucket'),
-                'blob': result.get('blob'),
-                'size': result.get('size'),
-                'content_type': result.get('content_type'),
-                'message': result.get('message', 'File uploaded to GCS successfully')
+                "status": "error",
+                "data": None,
+                "meta": {"tool_kind": "gcs", "credential_ref": credential},
+                "error": "GCS tool returned non-dict result",
             }
-        
-        # Fallback for unexpected result format
+
+        if result.get("status") == "error":
+            return {
+                "status": "error",
+                "data": None,
+                "meta": {"tool_kind": "gcs", "credential_ref": credential},
+                "error": result.get("error") or result.get("message") or "GCS upload failed",
+            }
+
+        # Normalize success envelope
         return {
-            'status': 'success',
-            'result': result,
-            'message': 'GCS sink operation completed'
+            "status": "success",
+            "data": {
+                "saved": "gcs",
+                "uri": result.get("uri"),
+                "bucket": result.get("bucket"),
+                "blob": result.get("blob"),
+                "size": result.get("size"),
+                "content_type": result.get("content_type"),
+                "task_result": result,
+            },
+            "meta": {
+                "tool_kind": "gcs",
+                "credential_ref": credential,
+                "sink_spec": {
+                    "source": source,
+                    "destination": destination,
+                },
+            },
         }
-        
+
     except Exception as e:
         logger.exception(f"GCS.STORAGE: Error in GCS sink handler: {e}")
         return {
-            'status': 'error',
-            'message': f"GCS sink failed: {str(e)}",
-            'error': str(e)
+            "status": "error",
+            "data": None,
+            "meta": {"tool_kind": "gcs", "credential_ref": credential},
+            "error": str(e),
         }
