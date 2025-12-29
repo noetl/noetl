@@ -1,8 +1,8 @@
+use anyhow::{Context as AnyhowContext, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-use anyhow::{Result, Context as AnyhowContext};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Context {
@@ -42,8 +42,8 @@ impl Config {
     }
 
     pub fn get_current_context(&self) -> Option<(&String, &Context)> {
-        self.current_context.as_ref().and_then(|name| {
-            self.contexts.get(name).map(|ctx| (name, ctx))
-        })
+        self.current_context
+            .as_ref()
+            .and_then(|name| self.contexts.get(name).map(|ctx| (name, ctx)))
     }
 }
