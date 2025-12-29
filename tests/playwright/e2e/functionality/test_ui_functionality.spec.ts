@@ -58,6 +58,8 @@ test.describe('Hello World', () => {
 
             const executeButton = page.locator('//button[span[text()="Execute with Payload"]]');
             await expect(executeButton).toBeVisible();
+            //TODO: add file upload test
+            //TODO: add payload execution test, assert Executing playbook "tests/fixtures/playbooks/hello_world/hello_world"...
         });
     });
 
