@@ -23,6 +23,7 @@ logs/
 node_modules/
 ui-src/node_modules/
 documentation/node_modules/
+tests/playwright/node_modules/
 data/noetldb/
 .vscode/
 .vscode-test/
@@ -53,6 +54,7 @@ data/.venv/
 # --- Kind ---
 # Ignore folder with postgres data
 ci/kind/cache
+ci/.venv
 
 .git
 __pycache__
