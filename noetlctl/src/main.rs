@@ -53,7 +53,12 @@ enum Commands {
         #[command(subcommand)]
         command: ContextCommand,
     },
-    /// Execute a playbook
+    /// Execute a playbook (legacy command, use 'execute playbook' instead)
+    /// Examples:
+    ///     noetlctl exec my-playbook
+    ///     noetlctl exec workflows/data-pipeline --input params.json
+    ///     noetlctl --host=localhost --port=8082 exec etl-job --input /path/to/input.json --json
+    #[command(verbatim_doc_comment)]
     Exec {
         /// Playbook path/name as registered in catalog
         playbook_path: String,
@@ -71,7 +76,11 @@ enum Commands {
         #[command(subcommand)]
         resource: RegisterResource,
     },
-    /// Fetch execution status
+    /// Fetch execution status (legacy command, use 'execute status' instead)
+    /// Examples:
+    ///     noetlctl status 12345
+    ///     noetlctl --host=localhost --port=8082 status 12345 --json
+    #[command(verbatim_doc_comment)]
     Status {
         /// Execution ID
         execution_id: String,
@@ -80,9 +89,14 @@ enum Commands {
         #[arg(short, long)]
         json: bool,
     },
-    /// List resources in catalog
+    /// List resources in catalog (legacy command, use 'catalog list' instead)
+    /// Examples:
+    ///     noetlctl list Playbook
+    ///     noetlctl list Credential --json
+    ///     noetlctl --host=localhost --port=8082 list Playbook
+    #[command(verbatim_doc_comment)]
     List {
-        /// Resource type (e.g., Playbook)
+        /// Resource type (e.g., Playbook, Credential)
         resource_type: String,
 
         /// Emit only the JSON response
@@ -119,14 +133,24 @@ enum CatalogCommand {
         /// Path to the resource file
         file: PathBuf,
     },
-    /// Get resource details
+    /// Get resource details from catalog
+    /// Examples:
+    ///     noetlctl catalog get my-playbook
+    ///     noetlctl --host=localhost --port=8082 catalog get workflows/data-pipeline
+    ///     noetlctl catalog get my-credential
+    #[command(verbatim_doc_comment)]
     Get {
         /// Resource path/name
         path: String,
     },
-    /// List resources
+    /// List resources in catalog by type
+    /// Examples:
+    ///     noetlctl catalog list Playbook
+    ///     noetlctl catalog list Credential
+    ///     noetlctl --host=localhost --port=8082 catalog list Playbook --json
+    #[command(verbatim_doc_comment)]
     List {
-        /// Resource type (e.g., Playbook)
+        /// Resource type (e.g., Playbook, Credential)
         resource_type: String,
 
         /// Emit only the JSON response
@@ -137,9 +161,14 @@ enum CatalogCommand {
 
 #[derive(Subcommand)]
 enum ExecuteCommand {
-    /// Execute a playbook
+    /// Execute a playbook with optional input parameters
+    /// Examples:
+    ///     noetlctl execute playbook my-playbook
+    ///     noetlctl execute playbook workflows/etl-pipeline --input params.json
+    ///     noetlctl --host=localhost --port=8082 execute playbook data-sync --input /path/to/input.json --json
+    #[command(verbatim_doc_comment)]
     Playbook {
-        /// Playbook path/name
+        /// Playbook path/name as registered in catalog
         path: String,
 
         /// Path to JSON file with parameters
@@ -150,7 +179,11 @@ enum ExecuteCommand {
         #[arg(short, long)]
         json: bool,
     },
-    /// Get execution status
+    /// Get execution status for a playbook run
+    /// Examples:
+    ///     noetlctl execute status 12345
+    ///     noetlctl --host=localhost --port=8082 execute status 12345 --json
+    #[command(verbatim_doc_comment)]
     Status {
         /// Execution ID
         execution_id: String,
@@ -163,7 +196,12 @@ enum ExecuteCommand {
 
 #[derive(Subcommand)]
 enum GetResource {
-    /// Get credential details
+    /// Get credential details with optional data inclusion
+    /// Examples:
+    ///     noetlctl get credential my-db-creds
+    ///     noetlctl get credential google_oauth --include_data=false
+    ///     noetlctl --host=localhost --port=8082 get credential aws-credentials
+    #[command(verbatim_doc_comment)]
     Credential {
         /// Name of the credential
         name: String,
@@ -176,13 +214,21 @@ enum GetResource {
 
 #[derive(Subcommand)]
 enum RegisterResource {
-    /// Register a credential
+    /// Register a credential from JSON file
+    /// Examples:
+    ///     noetlctl register credential --file credentials/postgres.json
+    ///     noetlctl --host=localhost --port=8082 register credential -f tests/fixtures/credentials/google_oauth.json
+    #[command(verbatim_doc_comment)]
     Credential {
         /// Path to credential file
         #[arg(short, long)]
         file: PathBuf,
     },
-    /// Register a playbook
+    /// Register a playbook from YAML file
+    /// Examples:
+    ///     noetlctl register playbook --file playbooks/my-workflow.yaml
+    ///     noetlctl --host=localhost --port=8082 register playbook -f tests/fixtures/playbooks/hello_world/hello_world.yaml
+    #[command(verbatim_doc_comment)]
     Playbook {
         /// Path to playbook file
         #[arg(short, long)]
@@ -192,22 +238,49 @@ enum RegisterResource {
 
 #[derive(Subcommand)]
 enum ContextCommand {
-    /// Add a new context
+    /// Add a new context for connecting to NoETL servers
+    /// Examples:
+    ///     noetlctl context add local --server-url=http://localhost:8082
+    ///     noetlctl context add prod --server-url=https://noetl.example.com --set-current
+    ///     noetlctl context add staging --server-url=http://staging:8082
+    #[command(verbatim_doc_comment)]
     Add {
+        /// Context name
         name: String,
+        /// Server URL (e.g., http://localhost:8082)
         #[arg(long)]
         server_url: String,
         /// Set as current context
         #[arg(long)]
         set_current: bool,
     },
-    /// List all contexts
+    /// List all configured contexts
+    /// Example:
+    ///     noetlctl context list
+    #[command(verbatim_doc_comment)]
     List,
-    /// Use a context
-    Use { name: String },
+    /// Switch to a different context
+    /// Examples:
+    ///     noetlctl context use local
+    ///     noetlctl context use prod
+    #[command(verbatim_doc_comment)]
+    Use {
+        /// Context name to switch to
+        name: String,
+    },
     /// Delete a context
-    Delete { name: String },
-    /// Show current context
+    /// Examples:
+    ///     noetlctl context delete old-env
+    ///     noetlctl context delete staging
+    #[command(verbatim_doc_comment)]
+    Delete {
+        /// Context name to delete
+        name: String,
+    },
+    /// Show current active context
+    /// Example:
+    ///     noetlctl context current
+    #[command(verbatim_doc_comment)]
     Current,
 }
 
