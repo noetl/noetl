@@ -54,6 +54,7 @@ data/.venv/
 # --- Kind ---
 # Ignore folder with postgres data
 ci/kind/cache
+ci/.venv
 
 .git
 __pycache__
