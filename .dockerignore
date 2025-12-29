@@ -23,6 +23,7 @@ logs/
 node_modules/
 ui-src/node_modules/
 documentation/node_modules/
+tests/playwright/node_modules/
 data/noetldb/
 .vscode/
 .vscode-test/
