@@ -244,7 +244,7 @@ class V2Worker:
     
     async def _execute_case_sinks(
         self,
-        tool_config: dict,
+        case_blocks: list,
         response: Any,
         render_context: dict,
         server_url: str,
@@ -261,8 +261,7 @@ class V2Worker:
         from jinja2 import Environment
         from noetl.tools.postgres import execute_postgres_task
         
-        # Check if tool_config has case blocks
-        case_blocks = tool_config.get('case')
+        # Check if case_blocks provided
         if not case_blocks or not isinstance(case_blocks, list):
             return
         
@@ -317,71 +316,48 @@ class V2Worker:
                 
                 logger.info(f"[SINK] Executing sink for case {idx}")
                 
-                # Extract sink configuration
-                sink_tool = sink_config.get('tool', {})
-                sink_kind = sink_tool.get('kind', 'postgres')  # Default to postgres
-                sink_auth = sink_tool.get('auth')  # Auth is under tool: in YAML
+                # Use the centralized sink executor instead of postgres-only handling
+                from noetl.core.storage import execute_sink_task
                 
-                # Support multiple field names for SQL command: statement, command, cmds, query, sql
-                # These are also under tool: in the YAML structure
-                sink_command = (
-                    sink_tool.get('statement') or 
-                    sink_tool.get('command') or 
-                    sink_tool.get('cmds') or
-                    sink_tool.get('query') or
-                    sink_tool.get('sql')
-                )
-                
-                if not sink_command:
-                    logger.warning(f"[SINK] No command/statement in sink config, skipping")
-                    continue
-                
-                # Build sink task config with all supported field names
-                # Postgres plugin accepts: statement, query, sql, or command
+                # Build sink task config for execute_sink_task
+                # The sink config is already structured under 'tool:' key
                 sink_task_config = {
-                    'kind': sink_kind,
-                    'auth': sink_auth,
-                    'statement': sink_command,  # Primary field for postgres plugin
-                    'command': sink_command,     # Alternative
-                    'cmds': sink_command,        # Alternative
-                    'query': sink_command,       # Alternative
-                    'sql': sink_command,         # Alternative
-                    'name': f"{step}_sink_{idx}"
+                    'sink': sink_config  # Pass the entire sink configuration
                 }
                 
-                logger.critical(f"[SINK] Sink task config: {sink_task_config} | command={sink_command} | keys={list(sink_task_config.keys())}")
+                logger.info(f"[SINK] Delegating to execute_sink_task with config: {sink_task_config}")
+                logger.info(f"[SINK] Context keys: {list(eval_context.keys()) if isinstance(eval_context, dict) else type(eval_context)}")
+                logger.info(f"[SINK] Workload in context: {'workload' in eval_context}")
                 
-                # Execute sink (currently only postgres supported)
-                if sink_kind == 'postgres':
-                    loop = asyncio.get_running_loop()
-                    sink_result = await loop.run_in_executor(
-                        None,
-                        lambda: execute_postgres_task(
-                            sink_task_config,
-                            eval_context,
-                            jinja_env,
-                            {}
-                        )
+                # Execute sink via centralized executor (supports all tool types)
+                loop = asyncio.get_running_loop()
+                sink_result = await loop.run_in_executor(
+                    None,
+                    lambda: execute_sink_task(
+                        sink_task_config,
+                        eval_context,
+                        jinja_env,
+                        None  # task_with - not needed for case sinks
                     )
-                    
-                    logger.info(f"[SINK] Sink executed successfully: {sink_result}")
-                    
-                    # Report sink execution via event
-                    await self._emit_event(
-                        server_url,
-                        execution_id,
-                        step,
-                        "sink.executed",
-                        {
-                            "case_index": idx,
-                            "sink_type": sink_kind,
-                            "result": sink_result,
-                            "has_collect": collect_config is not None,
-                            "has_retry": retry_config is not None
-                        }
-                    )
-                else:
-                    logger.warning(f"[SINK] Unsupported sink type: {sink_kind}")
+                )
+                
+                logger.info(f"[SINK] Sink executed successfully: {sink_result}")
+                
+                # Report sink execution via event
+                sink_kind = sink_config.get('tool', {}).get('kind', 'unknown')
+                await self._emit_event(
+                    server_url,
+                    execution_id,
+                    step,
+                    "sink.executed",
+                    {
+                        "case_index": idx,
+                        "sink_type": sink_kind,
+                        "result": sink_result,
+                        "has_collect": collect_config is not None,
+                        "has_retry": retry_config is not None
+                    }
+                )
                     
             except Exception as e:
                 logger.error(f"[SINK] Error executing sink for case {idx}: {e}", exc_info=True)
@@ -410,6 +386,7 @@ class V2Worker:
         tool_config = context.get("tool_config", {})
         args = context.get("args", {})
         render_context = context.get("render_context", {})  # Full render context from engine
+        case_blocks = context.get("case")  # Case blocks from server for immediate execution
         
         # CRITICAL: Merge tool_config.args with top-level args
         # In V2 DSL, step args are often defined within the tool block
@@ -452,17 +429,18 @@ class V2Worker:
             # Execute tool
             response = await self._execute_tool(tool_kind, tool_config, args, step, render_context)
             
-            logger.critical(f"[DEBUG] tool_config keys={list(tool_config.keys())} | has_case={'case' in tool_config} | case_count={len(tool_config.get('case', []))}")
+            logger.critical(f"[DEBUG] context has_case={'case' in context} | case_blocks={case_blocks is not None} | case_count={len(case_blocks) if case_blocks else 0}")
             
             # SINK EXECUTION: Check for case blocks with sinks and execute immediately
-            await self._execute_case_sinks(
-                tool_config,
-                response,
-                render_context,
-                server_url,
-                execution_id,
-                step
-            )
+            if case_blocks:
+                await self._execute_case_sinks(
+                    case_blocks,
+                    response,
+                    render_context,
+                    server_url,
+                    execution_id,
+                    step
+                )
             
             # Check if tool returned error status
             tool_error = None
@@ -650,6 +628,7 @@ class V2Worker:
         from noetl.tools.postgres import execute_postgres_task
         from noetl.tools.duckdb import execute_duckdb_task
         from noetl.tools.snowflake import execute_snowflake_task
+        from noetl.tools.gcs import execute_gcs_task
         from noetl.tools.transfer import execute_transfer_action
         from noetl.tools.transfer.snowflake_transfer import execute_snowflake_transfer_action
         from noetl.tools.script import execute_script_task
@@ -921,6 +900,20 @@ class V2Worker:
                 lambda: execute_playbook_task(task_config, context, jinja_env, args)
             )
             return result
+            
+        elif tool_kind == "gcs":
+            # Use plugin's execute_gcs_task (sync function - run in executor)
+            task_with = {**config, **args}  # Merge config (has source, destination, credential) with args
+            loop = asyncio.get_running_loop()
+            result = await loop.run_in_executor(
+                None,
+                lambda: execute_gcs_task(task_config, context, jinja_env, task_with)
+            )
+            # Check if plugin returned error status
+            if isinstance(result, dict) and result.get('status') == 'error':
+                # Keep error response intact (worker needs status field to detect error)
+                return result
+            return result.get('data', result) if isinstance(result, dict) else result
             
         elif tool_kind == "container":
             # Container execution - keep inline for now as it's V2-specific

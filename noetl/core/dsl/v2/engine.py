@@ -827,60 +827,13 @@ class ControlFlowEngine:
 
             # Sink action can co-exist with next/retry, so handle separately
             if "sink" in action:
-                # Persist step result to storage backend
-                sink_spec = action.get("sink") or {}
-                if not isinstance(sink_spec, dict):
-                    logger.warning("Sink action must be a dictionary")
-                    continue
-
-                # Preserve full sink spec (args, mode, key, etc.) and map backend alias
-                sink_config = dict(sink_spec)
-                backend = sink_config.get("tool") or sink_config.get("backend") or "postgres"
-                sink_config.setdefault("tool", backend)
-
-                # If no data/args/payload provided, default to saving the response envelope
-                has_data_fields = any(
-                    key in sink_config for key in ("data", "args", "payload", "statement", "sql", "commands", "params")
-                )
-                # Also check if statement/sql/commands are nested inside tool dict
-                if not has_data_fields and isinstance(sink_config.get("tool"), dict):
-                    tool_dict = sink_config["tool"]
-                    has_data_fields = any(
-                        key in tool_dict for key in ("statement", "sql", "commands", "params")
-                    )
-                
-                if not has_data_fields:
-                    default_source = sink_config.get("from", "{{ response }}")
-                    # Only render if response exists in context (avoid errors on failed steps)
-                    if "response" in context or default_source != "{{ response }}":
-                        sink_config["data"] = self._render_value_recursive(default_source, context)
-                    else:
-                        logger.warning("Sink action: 'response' not in context, skipping data assignment")
-                        continue
-
-                # Basic guard for DB-backed sinks when no statement is provided
-                # Handle backend as string or dict (extract 'tool' key if dict)
-                backend_str = backend.get("tool") if isinstance(backend, dict) else backend
-                requires_table = backend_str in {"postgres", "duckdb", "snowflake"}
-                if requires_table and not sink_config.get("table") and not sink_config.get("statement"):
-                    logger.warning("Sink action missing 'table' attribute")
-                    continue
-
-                # Get render context for sink command
-                sink_context = state.get_render_context(event)
-                
-                sink_command = Command(
-                    execution_id=state.execution_id,
-                    step=f"{event.step}_sink",
-                    tool=ToolCall(
-                        kind="sink",
-                        config=sink_config
-                    ),
-                    args={},
-                    render_context=sink_context  # Provide context so worker can render templates
-                )
-                commands.append(sink_command)
-                logger.info(f"Sink action: persisting to {sink_config.get('tool')}.{sink_config.get('table')}")
+                # WORKER-SIDE EXECUTION: Sinks are now executed immediately by the worker
+                # after tool execution via _execute_case_sinks() method.
+                # The case blocks are passed to the worker in the command context.
+                # No need to create separate sink commands here - the worker handles it inline.
+                logger.info(f"[CASE-SINK] Sink action detected in case block - will be executed by worker immediately")
+                # Skip sink command creation - worker handles this
+                pass
         
         return commands
     
@@ -974,6 +927,13 @@ class ControlFlowEngine:
         # Render Jinja2 templates in args (also use recursive rendering for nested structures)
         rendered_args = recursive_render(env, step_args, context)
         
+        # Extract case blocks from step definition (if present) for worker-side execution
+        case_blocks = None
+        if step.case:
+            # Convert Pydantic models to dicts for serialization
+            case_blocks = [case_entry.model_dump() for case_entry in step.case]
+            logger.info(f"[CASE] Including {len(case_blocks)} case blocks in command for step '{step.step}'")
+        
         command = Command(
             execution_id=state.execution_id,
             step=step.step,
@@ -983,6 +943,7 @@ class ControlFlowEngine:
             ),
             args=rendered_args,  # Rendered step input arguments
             render_context=context,  # Pass full context for plugin template rendering
+            case=case_blocks,  # Pass case blocks to worker for immediate execution
             attempt=1,
             priority=0
         )

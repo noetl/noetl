@@ -140,12 +140,34 @@ enum ExecuteCommand {
         #[arg(short, long)]
         input: Option<PathBuf>,
 
+        /// Inline JSON payload (alternative to --input)
+        #[arg(short, long)]
+        payload: Option<String>,
+
         /// Emit only the JSON response
         #[arg(short, long)]
         json: bool,
     },
     /// Get execution status
     Status {
+        /// Execution ID
+        execution_id: String,
+
+        /// Emit only the JSON response
+        #[arg(short, long)]
+        json: bool,
+    },
+    /// Debug execution with detailed event timeline and errors
+    Debug {
+        /// Execution ID
+        execution_id: String,
+
+        /// Show only errors
+        #[arg(long)]
+        errors_only: bool,
+    },
+    /// List execution events
+    Events {
         /// Execution ID
         execution_id: String,
 
@@ -247,7 +269,7 @@ async fn main() -> Result<()> {
             handle_context_command(&mut config, command)?;
         }
         Some(Commands::Exec { playbook_path, input, json }) => {
-            execute_playbook(&client, &base_url, &playbook_path, input, json).await?;
+            execute_playbook(&client, &base_url, &playbook_path, input, None, json).await?;
         }
         Some(Commands::Register { resource }) => {
             match resource {
@@ -289,11 +311,17 @@ async fn main() -> Result<()> {
         }
         Some(Commands::Execute { command }) => {
             match command {
-                ExecuteCommand::Playbook { path, input, json } => {
-                    execute_playbook(&client, &base_url, &path, input, json).await?;
+                ExecuteCommand::Playbook { path, input, payload, json } => {
+                    execute_playbook(&client, &base_url, &path, input, payload, json).await?;
                 }
                 ExecuteCommand::Status { execution_id, json } => {
                     get_status(&client, &base_url, &execution_id, json).await?;
+                }
+                ExecuteCommand::Debug { execution_id, errors_only } => {
+                    debug_execution(&client, &base_url, &execution_id, errors_only).await?;
+                }
+                ExecuteCommand::Events { execution_id, json } => {
+                    get_execution_events(&client, &base_url, &execution_id, json).await?;
                 }
             }
         }
@@ -399,8 +427,10 @@ async fn register_resource(client: &Client, base_url: &str, resource_type: &str,
     Ok(())
 }
 
-async fn execute_playbook(client: &Client, base_url: &str, path: &str, input: Option<PathBuf>, json_only: bool) -> Result<()> {
-    let payload = if let Some(input_file) = input {
+async fn execute_playbook(client: &Client, base_url: &str, path: &str, input: Option<PathBuf>, payload_str: Option<String>, json_only: bool) -> Result<()> {
+    let payload = if let Some(inline_payload) = payload_str {
+        serde_json::from_str(&inline_payload).context("Failed to parse inline payload JSON")?
+    } else if let Some(input_file) = input {
         let content = fs::read_to_string(&input_file)
             .with_context(|| format!("Failed to read input file: {:?}", input_file))?;
         serde_json::from_str(&content).context("Failed to parse input JSON")?
@@ -458,6 +488,121 @@ async fn get_status(client: &Client, base_url: &str, execution_id: &str, json_on
     }
     Ok(())
 }
+
+async fn debug_execution(client: &Client, base_url: &str, execution_id: &str, errors_only: bool) -> Result<()> {
+    use serde_json::json;
+    
+    println!("=== NoETL Execution Debug Report ===");
+    println!("Execution ID: {}", execution_id);
+    println!("");
+
+    // Query events via postgres API
+    let query = format!(
+        "SELECT created_at, event_type, node_name, status, result, error FROM noetl.event WHERE execution_id = '{}' ORDER BY event_id",
+        execution_id
+    );
+    
+    let postgres_url = format!("{}/api/postgres/execute", base_url);
+    let body = json!({
+        "query": query,
+        "schema": "noetl"
+    });
+    
+    let events_response = client.post(&postgres_url)
+        .json(&body)
+        .send()
+        .await
+        .context("Failed to fetch execution events")?;
+
+    if !events_response.status().is_success() {
+        eprintln!("Failed to fetch events: {}", events_response.status());
+        return Ok(());
+    }
+
+    let events_data: serde_json::Value = events_response.json().await?;
+    let events = events_data["result"].as_array().context("No events array found")?;
+
+    if events.is_empty() {
+        println!("No events found for execution {}", execution_id);
+        return Ok(());
+    }
+
+    // Display summary
+    println!("=== EXECUTION SUMMARY ===");
+    if let (Some(first), Some(last)) = (events.first(), events.last()) {
+        println!("Start: {}", first[0].as_str().unwrap_or("N/A"));
+        println!("End: {}", last[0].as_str().unwrap_or("N/A"));
+        println!("Total Events: {}", events.len());
+    }
+    println!("");
+
+    // Display event timeline or errors
+    if errors_only {
+        println!("=== ERRORS ===");
+        for event in events {
+            let event_type = event[1].as_str().unwrap_or("");
+            let status = event[3].as_str().unwrap_or("");
+            
+            if status == "FAILED" || event_type == "call.error" {
+                let timestamp = event[0].as_str().unwrap_or("N/A");
+                let node_name = event[2].as_str().unwrap_or("N/A");
+                
+                println!("{} | {} | {} | {}", timestamp, event_type, node_name, status);
+                
+                // Display error from column 5 (error field)
+                if let Some(error) = event[5].as_str() {
+                    // Truncate long errors
+                    if error.len() > 200 {
+                        println!("  Error: {}...", &error[..200]);
+                    } else {
+                        println!("  Error: {}", error);
+                    }
+                }
+                println!("");
+            }
+        }
+    } else {
+        println!("=== EVENT TIMELINE ===");
+        for event in events {
+            let timestamp = event[0].as_str().unwrap_or("N/A");
+            let event_type = event[1].as_str().unwrap_or("");
+            let node_name = event[2].as_str().unwrap_or("N/A");
+            let status = event[3].as_str().unwrap_or("");
+            
+            println!("{} | {} | {} | {}", timestamp, event_type, node_name, status);
+        }
+    }
+
+    println!("");
+    println!("=== VIEW IN UI ===");
+    println!("{}/execution/{}", base_url, execution_id);
+    
+    Ok(())
+}
+
+async fn get_execution_events(client: &Client, base_url: &str, execution_id: &str, json_only: bool) -> Result<()> {
+    let url = format!("{}/api/execution/{}/events", base_url, execution_id);
+    let response = client.get(&url)
+        .send()
+        .await
+        .context("Failed to fetch execution events")?;
+
+    if response.status().is_success() {
+        let result: serde_json::Value = response.json().await?;
+        if json_only {
+            println!("{}", serde_json::to_string(&result)?);
+        } else {
+            println!("Events for execution {}:", execution_id);
+            println!("{}", serde_json::to_string_pretty(&result)?);
+        }
+    } else {
+        let status = response.status();
+        let text = response.text().await?;
+        eprintln!("Failed to get events: {} - {}", status, text);
+    }
+    Ok(())
+}
+
 
 async fn list_resources(client: &Client, base_url: &str, resource_type: &str, json_only: bool) -> Result<()> {
     let url = format!("{}/api/catalog/list/{}", base_url, resource_type);

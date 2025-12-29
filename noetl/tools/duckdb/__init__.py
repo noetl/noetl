@@ -118,10 +118,18 @@ def execute_duckdb_task(
             
             # Detect cloud URI scopes and configure cloud credentials if needed
             uri_scopes = detect_uri_scopes(rendered_commands)
+            print(f"[DUCKDB DEBUG] Detected URI scopes: {uri_scopes}", flush=True)
+            print(f"[DUCKDB DEBUG] task_config keys: {list(task_config.keys())}, gcs_credential={task_config.get('gcs_credential')}", flush=True)
+            print(f"[DUCKDB DEBUG] processed_task_with keys: {list(processed_task_with.keys())}, gcs_credential={processed_task_with.get('gcs_credential')}", flush=True)
+            logger.info(f"Detected URI scopes: {uri_scopes}")
+            logger.info(f"task_config keys: {list(task_config.keys())}, gcs_credential={task_config.get('gcs_credential')}")
+            logger.info(f"processed_task_with keys: {list(processed_task_with.keys())}, gcs_credential={processed_task_with.get('gcs_credential')}")
             if uri_scopes.get('gs') or uri_scopes.get('s3'):
+                print(f"[DUCKDB DEBUG] Calling configure_cloud_credentials...", flush=True)
                 cloud_secrets = configure_cloud_credentials(
                     conn, uri_scopes, task_config, processed_task_with
                 )
+                print(f"[DUCKDB DEBUG] Cloud secrets created: {cloud_secrets}", flush=True)
                 secrets_created += cloud_secrets
                 
             # Validate cloud output requirements

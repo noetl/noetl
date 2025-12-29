@@ -423,6 +423,7 @@ async def handle_event(req: EventRequest) -> EventResponse:
                             "tool_config": command.tool.config,
                             "args": command.args or {},
                             "render_context": command.render_context,
+                            "case": command.case,  # Pass case blocks to worker for immediate sink execution
                             # Add traceability fields as strings
                             "execution_id": str(command.execution_id),
                             "catalog_id": str(catalog_id)
