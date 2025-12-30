@@ -688,6 +688,7 @@ async def evaluate_execution(
                 "step_result",
                 "step_end",
                 "step_completed",
+                "step.exit",  # V2 worker lifecycle event for step completion
                 "iterator_completed",  # Allow loop completion to trigger workflow continuation
             ):
                 # First check if success retry should happen

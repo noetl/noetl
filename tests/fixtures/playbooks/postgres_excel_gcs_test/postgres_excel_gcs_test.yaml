@@ -3,20 +3,14 @@ kind: Playbook
 metadata:
   name: postgres_excel_gcs_test
   path: tests/postgres_excel_gcs
-  description: UPDATED VERSION Test postgres temp tables -> Excel multi-sheet -> GCS upload
+  description: Test postgres tables -> CSV via DuckDB to GCS -> Excel to GCS
 
 workload:
   pg_auth: pg_local
-  gcs_auth: gcs_oauth
+  gcs_credential: gcs_hmac_local
+  gcs_service_account: gcs_service_account
   gcs_bucket: noetl-demo-output
-  output_filename: test_export
-  server_url: http://noetl.noetl.svc.cluster.local:8082
-
-keychain:
-  - name: gcs_oauth
-    kind: credential_ref
-    scope: global
-    ref: gcs_service_account
+  output_filename: test_export_{{ execution_id }}
 
 workflow:
   - step: start
@@ -25,519 +19,84 @@ workflow:
       kind: postgres
       auth: "{{ workload.pg_auth }}"
       command: |
-        -- Create schema for test tables
         CREATE SCHEMA IF NOT EXISTS test_export;
-        
-        -- Drop tables if they exist
         DROP TABLE IF EXISTS test_export.employees CASCADE;
         DROP TABLE IF EXISTS test_export.products CASCADE;
         DROP TABLE IF EXISTS test_export.orders CASCADE;
-
-        -- Create persistent table 1: employees
-        CREATE TABLE test_export.employees (
-          emp_id INT,
-          emp_name VARCHAR(100),
-          department VARCHAR(50)
-        );
         
-        INSERT INTO test_export.employees VALUES 
-          (1, 'Alice Johnson', 'Engineering'),
-          (2, 'Bob Smith', 'Sales'),
-          (3, 'Carol Williams', 'Marketing');
+        CREATE TABLE test_export.employees (emp_id INT, emp_name VARCHAR(100), department VARCHAR(50));
+        INSERT INTO test_export.employees VALUES (1, 'Alice Johnson', 'Engineering'), (2, 'Bob Smith', 'Sales'), (3, 'Carol Williams', 'Marketing');
         
-        -- Create persistent table 2: products
-        CREATE TABLE test_export.products (
-          product_id INT,
-          product_name VARCHAR(100),
-          price DECIMAL(10,2)
-        );
+        CREATE TABLE test_export.products (product_id INT, product_name VARCHAR(100), price DECIMAL(10,2));
+        INSERT INTO test_export.products VALUES (101, 'Laptop', 999.99), (102, 'Mouse', 29.99), (103, 'Keyboard', 79.99);
         
-        INSERT INTO test_export.products VALUES 
-          (101, 'Laptop', 999.99),
-          (102, 'Mouse', 29.99),
-          (103, 'Keyboard', 79.99);
+        CREATE TABLE test_export.orders (order_id INT, customer_name VARCHAR(100), order_date DATE);
+        INSERT INTO test_export.orders VALUES (1001, 'John Doe', '2025-01-15'), (1002, 'Jane Smith', '2025-01-16'), (1003, 'Mike Brown', '2025-01-17');
         
-        -- Create persistent table 3: orders
-        CREATE TABLE test_export.orders (
-          order_id INT,
-          customer_name VARCHAR(100),
-          order_date DATE
-        );
-        
-        INSERT INTO test_export.orders VALUES 
-          (1001, 'John Doe', '2025-01-15'),
-          (1002, 'Jane Smith', '2025-01-16'),
-          (1003, 'Mike Brown', '2025-01-17');
-        
-        SELECT 'Tables created successfully' as status;
+        SELECT 'Tables created' as status;
     next:
-      - step: gcs_probe
+      - step: export_csv_to_gcs
 
-  - step: gcs_probe
-    desc: Probe GCS write with gcs_oauth before DuckDB COPY
-    tool:
-      kind: python
-      code: |
-        def main(gcs_auth, catalog_id, execution_id, server_url):
-          """Upload a tiny file to verify GCS permissions for gcs_auth."""
-          import httpx
-          import json
-          import os
-          import tempfile
-          from google.cloud import storage
-          from google.oauth2 import service_account
-
-          base = server_url.rstrip("/")
-          if not base.endswith("/api"):
-            base += "/api"
-
-          # Check if this is a keychain reference
-          is_keychain = gcs_auth.lower().startswith('keychain:') or gcs_auth.lower().startswith('kc:')
-          cred_name = gcs_auth.split(":", 1)[-1] if ':' in gcs_auth else gcs_auth
-
-          payload = None
-
-          if is_keychain:
-            # Use keychain API
-            keychain_url = f"{base}/keychain/{catalog_id}/{cred_name}"
-            params = {'scope_type': 'global'}
-            if execution_id:
-              params['execution_id'] = execution_id
-
-            resp = httpx.get(keychain_url, params=params, timeout=10.0)
-            resp.raise_for_status()
-            body = resp.json() or {}
-            payload = body.get('token_data') or body.get('data')
-          else:
-            # Try credentials API first
-            resp = httpx.get(f"{base}/credentials/{cred_name}?include_data=true", timeout=10.0)
-            if resp.status_code == 200:
-              payload = resp.json().get("data", {})
-              while isinstance(payload, dict) and "data" in payload:
-                payload = payload["data"]
-            elif resp.status_code == 404:
-              # Fallback to keychain API
-              keychain_url = f"{base}/keychain/{catalog_id}/{cred_name}"
-              params = {'scope_type': 'global'}
-              if execution_id:
-                params['execution_id'] = execution_id
-              kc_resp = httpx.get(keychain_url, params=params, timeout=10.0)
-              if kc_resp.status_code == 200:
-                body = kc_resp.json() or {}
-                payload = body.get('token_data') or body.get('data')
-              else:
-                kc_resp.raise_for_status()
-            else:
-              resp.raise_for_status()
-
-          if not payload:
-            raise RuntimeError(f"Failed to fetch credential or keychain data for {gcs_auth}")
-
-          sa = payload.get("service_account_json") or payload.get("service_account_key")
-          if isinstance(sa, str):
-            sa = json.loads(sa)
-          if not sa:
-            raise RuntimeError("Missing service_account_json or service_account_key in credential/keychain data")
-
-          creds = service_account.Credentials.from_service_account_info(sa)
-          client = storage.Client(credentials=creds, project=sa.get("project_id"))
-
-          bucket = client.bucket("noetl-demo-output")
-          blob = bucket.blob("exports/perm_check.txt")
-
-          with tempfile.NamedTemporaryFile("w", delete=False) as f:
-            f.write("ok")
-            path = f.name
-
-          blob.upload_from_filename(path, content_type="text/plain")
-          os.unlink(path)
-
-          return {
-            "status": "success",
-            "uri": f"gs://{bucket.name}/{blob.name}",
-            "message": "GCS probe upload succeeded"
-          }
-    args:
-      gcs_auth: "{{ workload.gcs_auth }}"
-      catalog_id: "{{ catalog_id }}"
-      execution_id: "{{ execution_id }}"
-      server_url: "{{ workload.server_url }}"
-    next:
-      - step: export_csv_local
-
-  - step: export_csv_local
-    desc: Export tables to local CSV files via DuckDB
+  - step: export_csv_to_gcs
+    desc: Export tables directly to GCS via DuckDB
     tool:
       kind: duckdb
       auth:
         pg_db:
           source: credential
-          type: postgres
+          tool: postgres
           key: "{{ workload.pg_auth }}"
+        gcs_secret:
+          source: credential
+          tool: hmac
+          key: "{{ workload.gcs_credential }}"
+          scope: gs://{{ workload.gcs_bucket }}
       commands: |
         INSTALL postgres; LOAD postgres;
+        INSTALL httpfs; LOAD httpfs;
         ATTACH '' AS pg_db (TYPE postgres, SECRET pg_db);
-
-        COPY (SELECT * FROM pg_db.test_export.employees ORDER BY emp_id)
-          TO '/tmp/{{ workload.output_filename }}_employees.csv'
-          (HEADER, DELIMITER ',');
-        COPY (SELECT * FROM pg_db.test_export.products ORDER BY product_id)
-          TO '/tmp/{{ workload.output_filename }}_products.csv'
-          (HEADER, DELIMITER ',');
-        COPY (SELECT * FROM pg_db.test_export.orders ORDER BY order_id)
-          TO '/tmp/{{ workload.output_filename }}_orders.csv'
-          (HEADER, DELIMITER ',');
-
-        SELECT
-          '/tmp/{{ workload.output_filename }}_employees.csv' AS employees_path,
-          '/tmp/{{ workload.output_filename }}_products.csv'  AS products_path,
-          '/tmp/{{ workload.output_filename }}_orders.csv'    AS orders_path;
+        
+        COPY (SELECT * FROM pg_db.test_export.employees ORDER BY emp_id) TO 'gs://{{ workload.gcs_bucket }}/exports/{{ workload.output_filename }}_employees.csv' (FORMAT CSV, HEADER TRUE);
+        COPY (SELECT * FROM pg_db.test_export.products ORDER BY product_id) TO 'gs://{{ workload.gcs_bucket }}/exports/{{ workload.output_filename }}_products.csv' (FORMAT CSV, HEADER TRUE);
+        COPY (SELECT * FROM pg_db.test_export.orders ORDER BY order_id) TO 'gs://{{ workload.gcs_bucket }}/exports/{{ workload.output_filename }}_orders.csv' (FORMAT CSV, HEADER TRUE);
+        
+        SELECT 'CSV files exported to GCS' AS status;
     next:
-      - step: upload_csv_to_gcs
+      - step: create_excel_locally
 
-  - step: upload_csv_to_gcs
-    desc: Upload CSV files to GCS using GCS plugin
+  - step: create_excel_locally
+    desc: Create Excel from postgres tables using DuckDB and upload to GCS
     tool:
-      kind: python
-      code: |
-        def main(gcs_auth, gcs_bucket, output_filename, catalog_id, execution_id, server_url):
-          """Upload CSV files to GCS"""
-          import httpx
-          import json
-          import os
-          from google.cloud import storage
-          from google.oauth2 import service_account
-
-          base = server_url.rstrip("/")
-          if not base.endswith("/api"):
-            base += "/api"
-
-          # Check if this is a keychain reference
-          is_keychain = gcs_auth.lower().startswith('keychain:') or gcs_auth.lower().startswith('kc:')
-          cred_name = gcs_auth.split(":", 1)[-1] if ':' in gcs_auth else gcs_auth
-
-          payload = None
-
-          if is_keychain:
-            # Use keychain API
-            keychain_url = f"{base}/keychain/{catalog_id}/{cred_name}"
-            params = {'scope_type': 'global'}
-            if execution_id:
-              params['execution_id'] = execution_id
-
-            resp = httpx.get(keychain_url, params=params, timeout=10.0)
-            resp.raise_for_status()
-            body = resp.json() or {}
-            payload = body.get('token_data') or body.get('data')
-          else:
-            # Try credentials API first
-            resp = httpx.get(f"{base}/credentials/{cred_name}?include_data=true", timeout=10.0)
-            if resp.status_code == 200:
-              payload = resp.json().get("data", {})
-              while isinstance(payload, dict) and "data" in payload:
-                payload = payload["data"]
-            elif resp.status_code == 404:
-              # Fallback to keychain API
-              keychain_url = f"{base}/keychain/{catalog_id}/{cred_name}"
-              params = {'scope_type': 'global'}
-              if execution_id:
-                params['execution_id'] = execution_id
-              kc_resp = httpx.get(keychain_url, params=params, timeout=10.0)
-              if kc_resp.status_code == 200:
-                body = kc_resp.json() or {}
-                payload = body.get('token_data') or body.get('data')
-              else:
-                kc_resp.raise_for_status()
-            else:
-              resp.raise_for_status()
-
-          if not payload:
-            raise RuntimeError(f"Failed to fetch credential or keychain data for {gcs_auth}")
-
-          sa = payload.get("service_account_json") or payload.get("service_account_key")
-          if isinstance(sa, str):
-            sa = json.loads(sa)
-          if not sa:
-            raise RuntimeError("Missing service_account_json or service_account_key in credential/keychain data")
-
-          creds = service_account.Credentials.from_service_account_info(sa)
-          client = storage.Client(credentials=creds, project=sa.get("project_id"))
-          bucket = client.bucket(gcs_bucket)
-
-          # Upload the three CSV files
-          files = [
-            (f"/tmp/{output_filename}_employees.csv", f"exports/{output_filename}_employees.csv"),
-            (f"/tmp/{output_filename}_products.csv", f"exports/{output_filename}_products.csv"),
-            (f"/tmp/{output_filename}_orders.csv", f"exports/{output_filename}_orders.csv")
-          ]
-
-          uploaded = []
-          for local_path, gcs_path in files:
-            if os.path.exists(local_path):
-              blob = bucket.blob(gcs_path)
-              blob.upload_from_filename(local_path, content_type="text/csv")
-              uploaded.append(f"gs://{gcs_bucket}/{gcs_path}")
-              os.remove(local_path)
-
-          return {
-            "status": "success",
-            "files_uploaded": len(uploaded),
-            "paths": uploaded
-          }
-      args:
-        gcs_auth: "{{ workload.gcs_auth }}"
-        gcs_bucket: "{{ workload.gcs_bucket }}"
-        output_filename: "{{ workload.output_filename }}"
-        catalog_id: "{{ catalog_id }}"
-        execution_id: "{{ execution_id }}"
-        server_url: "{{ workload.server_url }}"
-    next:
-      - step: create_excel_and_upload
-
-  - step: create_excel_and_upload
-    desc: Download CSVs from GCS, build Excel, upload via sink
-    tool:
-      kind: python
-      code: |
-        def main(gcs_auth, gcs_bucket, output_filename, catalog_id, execution_id, server_url):
-          """
-          1. Download CSVs from GCS using service account credential
-          2. Create multi-sheet Excel
-          3. Return Excel path for sink upload
-          """
-          import os
-          import csv
-          import httpx
-          import json
-          from google.cloud import storage
-          from google.oauth2 import service_account
-
-          def download_blob(client, bucket_name, blob_name, local_path):
-            bucket = client.bucket(bucket_name)
-            blob = bucket.blob(blob_name)
-            blob.download_to_filename(local_path)
-            return local_path
-
-          base = server_url.rstrip("/")
-          if not base.endswith("/api"):
-            base = base + "/api"
-
-          # Check if this is a keychain reference
-          is_keychain = gcs_auth.lower().startswith('keychain:') or gcs_auth.lower().startswith('kc:')
-          cred_name = gcs_auth.split(":", 1)[-1] if ':' in gcs_auth else gcs_auth
-
-          cred = None
-
-          if is_keychain:
-            # Use keychain API
-            keychain_url = f"{base}/keychain/{catalog_id}/{cred_name}"
-            params = {'scope_type': 'global'}
-            if execution_id:
-              params['execution_id'] = execution_id
-
-            resp = httpx.get(keychain_url, params=params, timeout=10.0)
-            resp.raise_for_status()
-            body = resp.json() or {}
-            cred = body.get('token_data') or body.get('data')
-          else:
-            # Try credentials API first
-            resp = httpx.get(f"{base}/credentials/{cred_name}?include_data=true", timeout=10.0)
-            if resp.status_code == 200:
-              body = resp.json() or {}
-              cred = body.get("data", {})
-              while isinstance(cred, dict) and "data" in cred and isinstance(cred["data"], dict):
-                cred = cred["data"]
-            elif resp.status_code == 404:
-              # Fallback to keychain API
-              keychain_url = f"{base}/keychain/{catalog_id}/{cred_name}"
-              params = {'scope_type': 'global'}
-              if execution_id:
-                params['execution_id'] = execution_id
-              kc_resp = httpx.get(keychain_url, params=params, timeout=10.0)
-              if kc_resp.status_code == 200:
-                body = kc_resp.json() or {}
-                cred = body.get('token_data') or body.get('data')
-              else:
-                kc_resp.raise_for_status()
-            else:
-              resp.raise_for_status()
-
-          if not cred:
-            raise RuntimeError(f"Failed to fetch credential or keychain data for {gcs_auth}")
-
-          sa = cred.get("service_account_json") or cred.get("service_account_key")
-          if isinstance(sa, str):
-            sa = json.loads(sa)
-          if not sa:
-            raise RuntimeError("Missing service_account_json or service_account_key in credential/keychain data")
-
-          credentials = service_account.Credentials.from_service_account_info(sa)
-          client = storage.Client(credentials=credentials, project=sa.get("project_id"))
-
-          gcs_prefix = f"exports/{output_filename}"
-          employees_blob = f"{gcs_prefix}_employees.csv"
-          products_blob = f"{gcs_prefix}_products.csv"
-          orders_blob = f"{gcs_prefix}_orders.csv"
-
-          employees_csv = f"/tmp/{output_filename}_employees.csv"
-          products_csv = f"/tmp/{output_filename}_products.csv"
-          orders_csv = f"/tmp/{output_filename}_orders.csv"
-
-          download_blob(client, gcs_bucket, employees_blob, employees_csv)
-          download_blob(client, gcs_bucket, products_blob, products_csv)
-          download_blob(client, gcs_bucket, orders_blob, orders_csv)
-
-          import xlsxwriter
-
-          excel_path = f"/tmp/{output_filename}.xlsx"
-          workbook = xlsxwriter.Workbook(excel_path)
-
-          header_format = workbook.add_format(
-            {
-              "bold": True,
-              "bg_color": "#D9E1F2",
-              "border": 1,
-              "align": "center",
-            }
-          )
-
-          csv_files = [
-            (employees_csv, "Employees"),
-            (products_csv, "Products"),
-            (orders_csv, "Orders"),
-          ]
-
-          for csv_path, sheet_name in csv_files:
-            worksheet = workbook.add_worksheet(sheet_name)
-            with open(csv_path, "r") as f:
-              reader = csv.reader(f)
-              for row_idx, row in enumerate(reader):
-                for col_idx, value in enumerate(row):
-                  if row_idx == 0:
-                    worksheet.write(row_idx, col_idx, value, header_format)
-                    worksheet.set_column(col_idx, col_idx, 20)
-                  else:
-                    worksheet.write(row_idx, col_idx, value)
-            os.remove(csv_path)
-
-          workbook.close()
-          file_size = os.path.getsize(excel_path)
-
-          return {
-            "status": "success",
-            "local_path": excel_path,
-            "sheets_created": len(csv_files),
-            "file_size_bytes": file_size,
-          }
-    args:
-      gcs_auth: "{{ workload.gcs_auth }}"
-      output_filename: "{{ workload.output_filename }}"
-      gcs_bucket: "{{ workload.gcs_bucket }}"
-      catalog_id: "{{ catalog_id }}"
-      execution_id: "{{ execution_id }}"
-      server_url: "{{ workload.server_url }}"
-    next:
-      - step: upload_excel_to_gcs
-
-  - step: upload_excel_to_gcs
-    desc: Upload Excel file to GCS
-    tool:
-      kind: python
-      code: |
-        def main(excel_path, gcs_auth, gcs_bucket, output_filename, catalog_id, execution_id, server_url):
-          """Upload Excel file to GCS"""
-          import httpx
-          import json
-          import os
-          from google.cloud import storage
-          from google.oauth2 import service_account
-
-          base = server_url.rstrip("/")
-          if not base.endswith("/api"):
-            base += "/api"
-
-          # Check if this is a keychain reference
-          is_keychain = gcs_auth.lower().startswith('keychain:') or gcs_auth.lower().startswith('kc:')
-          cred_name = gcs_auth.split(":", 1)[-1] if ':' in gcs_auth else gcs_auth
-
-          payload = None
-
-          if is_keychain:
-            # Use keychain API
-            keychain_url = f"{base}/keychain/{catalog_id}/{cred_name}"
-            params = {'scope_type': 'global'}
-            if execution_id:
-              params['execution_id'] = execution_id
-
-            resp = httpx.get(keychain_url, params=params, timeout=10.0)
-            resp.raise_for_status()
-            body = resp.json() or {}
-            payload = body.get('token_data') or body.get('data')
-          else:
-            # Try credentials API first
-            resp = httpx.get(f"{base}/credentials/{cred_name}?include_data=true", timeout=10.0)
-            if resp.status_code == 200:
-              payload = resp.json().get("data", {})
-              while isinstance(payload, dict) and "data" in payload:
-                payload = payload["data"]
-            elif resp.status_code == 404:
-              # Fallback to keychain API
-              keychain_url = f"{base}/keychain/{catalog_id}/{cred_name}"
-              params = {'scope_type': 'global'}
-              if execution_id:
-                params['execution_id'] = execution_id
-              kc_resp = httpx.get(keychain_url, params=params, timeout=10.0)
-              if kc_resp.status_code == 200:
-                body = kc_resp.json() or {}
-                payload = body.get('token_data') or body.get('data')
-              else:
-                kc_resp.raise_for_status()
-            else:
-              resp.raise_for_status()
-
-          if not payload:
-            raise RuntimeError(f"Failed to fetch credential or keychain data for {gcs_auth}")
-
-          sa = payload.get("service_account_json") or payload.get("service_account_key")
-          if isinstance(sa, str):
-            sa = json.loads(sa)
-          if not sa:
-            raise RuntimeError("Missing service_account_json or service_account_key in credential/keychain data")
-
-          creds = service_account.Credentials.from_service_account_info(sa)
-          client = storage.Client(credentials=creds, project=sa.get("project_id"))
-          bucket = client.bucket(gcs_bucket)
-
-          # Upload the Excel file
-          blob_name = f"exports/{output_filename}.xlsx"
-          blob = bucket.blob(blob_name)
-
-          if not os.path.exists(excel_path):
-            raise FileNotFoundError(f"Excel file not found: {excel_path}")
-
-          blob.upload_from_filename(
-            excel_path,
-            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-          )
-
-          # Clean up local file
-          os.remove(excel_path)
-
-          return {
-            "status": "success",
-            "uri": f"gs://{gcs_bucket}/{blob_name}",
-            "message": f"Excel file uploaded to GCS"
-          }
-    args:
-      excel_path: "{{ create_excel_and_upload.local_path }}"
-      gcs_auth: "{{ workload.gcs_auth }}"
-      gcs_bucket: "{{ workload.gcs_bucket }}"
-      output_filename: "{{ workload.output_filename }}"
-      catalog_id: "{{ catalog_id }}"
-      execution_id: "{{ execution_id }}"
-      server_url: "{{ workload.server_url }}"
-    next:
-      - step: cleanup
+      kind: duckdb
+      auth:
+        pg_db:
+          source: credential
+          tool: postgres
+          key: "{{ workload.pg_auth }}"
+      to_excel:
+        - query: "SELECT * FROM pg_db.test_export.employees ORDER BY emp_id"
+          sheet: "Employees"
+        - query: "SELECT * FROM pg_db.test_export.products ORDER BY product_id"
+          sheet: "Products"
+        - query: "SELECT * FROM pg_db.test_export.orders ORDER BY order_id"
+          sheet: "Orders"
+      output: "/tmp/test_export_{{ execution_id }}.xlsx"
+      commands: |
+        SELECT 'Excel file created' AS status;
+    case:
+      - when: "{{ event.name == 'step.exit' }}"
+        then:
+          sink:
+            tool:
+              kind: gcs
+              auth:
+                source: credential
+                tool: service_account
+                key: "{{ workload.gcs_service_account }}"
+              source_path: "/tmp/test_export_{{ execution_id }}.xlsx"
+              destination_uri: "gs://{{ workload.gcs_bucket }}/exports/test_export_{{ execution_id }}.xlsx"
+          next:
+            - step: cleanup
 
   - step: cleanup
     desc: Cleanup test tables
@@ -559,7 +118,4 @@ workflow:
       kind: python
       code: |
         def main():
-            return {
-                'status': 'completed',
-                'message': 'Successfully created Excel from postgres tables and uploaded to GCS'
-            }
+            return {'status': 'completed', 'message': 'CSV and Excel uploaded to GCS', 'csv_count': 3, 'excel_count': 1}

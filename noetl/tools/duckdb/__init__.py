@@ -237,6 +237,8 @@ def _setup_authentication(
             logger.debug("Using unified auth system")
             
             resolved_auth_map = resolve_unified_auth(auth_config, jinja_env, context)
+            print(f"[AUTH DEBUG] Resolved auth map: {list(resolved_auth_map.keys()) if resolved_auth_map else 'None'}", flush=True)
+            print(f"[AUTH DEBUG] Auth map details: {[(k, type(v)) for k, v in resolved_auth_map.items()] if resolved_auth_map else 'None'}", flush=True)
             
             if resolved_auth_map:
                 logger.info(f"Resolved auth aliases: {list(resolved_auth_map.keys())}")
@@ -247,13 +249,22 @@ def _setup_authentication(
                 
                 # Generate and execute secret creation statements
                 secret_statements = generate_duckdb_secrets(resolved_auth_map)
+                print(f"[AUTH DEBUG] Generated {len(secret_statements)} secret statements", flush=True)
+                print(f"[AUTH DEBUG] Statements: {secret_statements[:3] if secret_statements else 'None'}", flush=True)
                 logger.info(f"Generated {len(secret_statements)} secret statements")
-                for stmt in secret_statements:
+                for idx, stmt in enumerate(secret_statements):
                     # Log statement without revealing secrets
                     import re
                     redacted_stmt = re.sub(r"(SECRET|PASSWORD|KEY_ID|JSON_KEY)\s*'[^']*'", r"\1 '[REDACTED]'", stmt)
-                    logger.info(f"Executing unified auth secret: {redacted_stmt[:150]}...")
-                    connection.execute(stmt)
+                    print(f"[AUTH DEBUG] Executing statement {idx+1}/{len(secret_statements)}: {redacted_stmt[:100]}...", flush=True)
+                    logger.info(f"Executing unified auth secret {idx+1}: {redacted_stmt[:150]}...")
+                    try:
+                        connection.execute(stmt)
+                        print(f"[AUTH DEBUG] Statement {idx+1} executed successfully", flush=True)
+                    except Exception as stmt_err:
+                        print(f"[AUTH DEBUG] Statement {idx+1} FAILED: {stmt_err}", flush=True)
+                        logger.error(f"Failed to execute statement {idx+1}: {stmt_err}")
+                        raise
                 
                 secrets_created = len(secret_statements)
                 if secrets_created:

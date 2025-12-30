@@ -68,11 +68,13 @@ def _generate_single_secret(alias: str, auth_item: Any) -> List[str]:
     """
     try:
         if hasattr(auth_item, 'payload') and hasattr(auth_item, 'service'):
-            config = auth_item.payload
+            config = auth_item.payload or {}
             auth_type = auth_item.service
+            scope = getattr(auth_item, 'scope', None)
         elif isinstance(auth_item, dict):
             config = auth_item.get('payload') or auth_item.get('data') or auth_item
             auth_type = auth_item.get('service') or auth_item.get('type')
+            scope = auth_item.get('scope')
         else:
             logger.warning(f"Unknown auth item type for alias '{alias}': {type(auth_item)}")
             return []
@@ -83,7 +85,11 @@ def _generate_single_secret(alias: str, auth_item: Any) -> List[str]:
 
         auth_type = auth_type.lower()
         
-        if auth_type in ("gcs", "hmac"):
+        # Merge scope into config if not already present
+        if scope and 'scope' not in config:
+            config = {**config, 'scope': scope}
+        
+        if auth_type in ("gcs", "hmac", "gcs_service_account", "google_service_account"):
             return _generate_gcs_secret(alias, config)
         elif auth_type == "postgres":
             return _generate_postgres_secret(alias, config)
@@ -110,6 +116,9 @@ def _generate_gcs_secret(alias: str, config: Dict[str, Any]) -> List[str]:
     Returns:
         List of CREATE SECRET statements for GCS
     """
+    print(f"[GCS SECRET DEBUG] Generating secret for alias '{alias}'", flush=True)
+    print(f"[GCS SECRET DEBUG] Config keys: {list(config.keys())}", flush=True)
+    
     # Check for service account credentials
     service_account_json = (
         config.get("service_account_json") or 
@@ -117,6 +126,8 @@ def _generate_gcs_secret(alias: str, config: Dict[str, Any]) -> List[str]:
         config.get("token")
     )
     scope = config.get("scope")
+    
+    print(f"[GCS SECRET DEBUG] service_account_json: {bool(service_account_json)}, scope: {scope}", flush=True)
     
     statements = []
     
@@ -136,19 +147,18 @@ def _generate_gcs_secret(alias: str, config: Dict[str, Any]) -> List[str]:
         
         parts = [
             "TYPE gcs",
-            "PROVIDER SERVICE_ACCOUNT",
-            f"JSON_KEY '{escaped_json}'"
+            "PROVIDER CONFIG",
+            f"KEY_ID '{escaped_json}'"
         ]
         
         if actual_scope:
             parts.append(f"SCOPE '{escape_sql(actual_scope)}'")
             
         # Extension management statements
+        # Note: httpfs is required, gcs extension is optional and handled separately
         statements.extend([
             "INSTALL httpfs;",
-            "LOAD httpfs;",
-            "INSTALL gcs;",
-            "LOAD gcs;"
+            "LOAD httpfs;"
         ])
         
         # Main GCS secret
@@ -170,7 +180,7 @@ def _generate_gcs_secret(alias: str, config: Dict[str, Any]) -> List[str]:
             s3_https_alias = f"{alias}_s3_https_fallback"
             
             # Try PROVIDER GCS first
-            statements.append(f"CREATE OR REPLACE SECRET {s3_alias} (TYPE S3, PROVIDER GCS, JSON_KEY '{escaped_json}'{f', SCOPE {chr(39)}{escape_sql(actual_scope)}{chr(39)}' if actual_scope else ''}, ENDPOINT 'storage.googleapis.com', REGION 'auto', URL_STYLE 'path', USE_SSL 'true');")
+            statements.append(f"CREATE OR REPLACE SECRET {s3_alias} (TYPE S3, PROVIDER CONFIG, KEY_ID '{escaped_json}'{f', SCOPE {chr(39)}{escape_sql(actual_scope)}{chr(39)}' if actual_scope else ''}, ENDPOINT 'storage.googleapis.com', REGION 'auto', URL_STYLE 'path', USE_SSL 'true');")
             
             # And another simple S3 secret fallback using JSON as KEY_ID (some httpfs versions prefer this)
             statements.append(f"CREATE OR REPLACE SECRET {s3_alias}_simple (TYPE S3, KEY_ID '{escaped_json}'{f', SCOPE {chr(39)}{escape_sql(actual_scope)}{chr(39)}' if actual_scope else ''}, ENDPOINT 'storage.googleapis.com', REGION 'auto', URL_STYLE 'path', USE_SSL 'true');")
@@ -183,7 +193,7 @@ def _generate_gcs_secret(alias: str, config: Dict[str, Any]) -> List[str]:
                 https_scope = actual_scope.replace('gs://', 'https://storage.googleapis.com/')
                 
                 # Provider GCS for HTTPS
-                statements.append(f"CREATE OR REPLACE SECRET {s3_https_alias} (TYPE S3, PROVIDER GCS, JSON_KEY '{escaped_json}', SCOPE '{escape_sql(https_scope)}', ENDPOINT 'storage.googleapis.com', REGION 'auto', URL_STYLE 'path', USE_SSL 'true');")
+                statements.append(f"CREATE OR REPLACE SECRET {s3_https_alias} (TYPE S3, PROVIDER CONFIG, KEY_ID '{escaped_json}', SCOPE '{escape_sql(https_scope)}', ENDPOINT 'storage.googleapis.com', REGION 'auto', URL_STYLE 'path', USE_SSL 'true');")
                 
                 # Simple S3 for HTTPS
                 statements.append(f"CREATE OR REPLACE SECRET {s3_https_alias}_simple (TYPE S3, KEY_ID '{escaped_json}', SCOPE '{escape_sql(https_scope)}', ENDPOINT 'storage.googleapis.com', REGION 'auto', URL_STYLE 'path', USE_SSL 'true');")
@@ -196,8 +206,22 @@ def _generate_gcs_secret(alias: str, config: Dict[str, Any]) -> List[str]:
     key_id = config.get("key_id")
     secret_key = config.get("secret_key") or config.get("secret")
     
+    print(f"[GCS SECRET DEBUG] Using HMAC: key_id={bool(key_id)}, secret={bool(secret_key)}, scope={scope}", flush=True)
+    
     if not (key_id and secret_key):
         raise AuthenticationError(f"GCS secret '{alias}' missing key_id/secret_key or service_account_json")
+    
+    # Ensure scope has a trailing slash for prefix matching
+    actual_scope = scope
+    if actual_scope and actual_scope.startswith('gs://') and not actual_scope.endswith('/'):
+        actual_scope = f"{actual_scope}/"
+    
+    print(f"[GCS SECRET DEBUG] Normalized scope: {actual_scope}", flush=True)
+    
+    statements = [
+        "INSTALL httpfs;",
+        "LOAD httpfs;"
+    ]
     
     # Configure global S3 settings for GCS compatibility via httpfs
     statements.extend([
@@ -207,22 +231,20 @@ def _generate_gcs_secret(alias: str, config: Dict[str, Any]) -> List[str]:
         "SET s3_use_ssl=true;"
     ])
 
+    # Create GCS secret with HMAC credentials
     parts = [
         "TYPE gcs",
         f"KEY_ID '{escape_sql(key_id)}'",
         f"SECRET '{escape_sql(secret_key)}'"
     ]
     
-    if scope:
-        parts.append(f"SCOPE '{escape_sql(scope)}'")
+    if actual_scope:
+        parts.append(f"SCOPE '{escape_sql(actual_scope)}'")
     
-    statements = [
-        "INSTALL httpfs;",
-        "LOAD httpfs;",
-        "INSTALL gcs;",
-        "LOAD gcs;",
-        f"CREATE OR REPLACE SECRET {alias} (\n  {',\n  '.join(parts)}\n);"
-    ]
+    gcs_stmt = f"CREATE OR REPLACE SECRET {alias} (\n  {',\n  '.join(parts)}\n);"
+    statements.append(gcs_stmt)
+    
+    print(f"[GCS SECRET DEBUG] Created {len(statements)} statements for HMAC secret", flush=True)
     
     return statements
 

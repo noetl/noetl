@@ -79,30 +79,46 @@ def execute_sink_task(
         # Step 0: Render task_config to resolve any template variables
         # This ensures credential references like "{{ workload.gcs_auth }}" are resolved
         import json
+        
+        def render_value(value, context, path="root"):
+            """Recursively render a value (str, dict, list) with Jinja2."""
+            if isinstance(value, str):
+                # Render string templates
+                try:
+                    template = jinja_env.from_string(value)
+                    rendered = template.render(context)
+                    logger.critical(f"SINK.EXECUTOR: Rendered {path}: '{value}' -> '{rendered}'")
+                    return rendered
+                except Exception as e:
+                    logger.error(f"SINK.EXECUTOR: Failed to render string at {path}: '{value}' | Error: {e}", exc_info=True)
+                    raise ValueError(f"Template rendering failed at {path}: {e}")
+            elif isinstance(value, dict):
+                # Recursively render dict values
+                return {k: render_value(v, context, f"{path}.{k}") for k, v in value.items()}
+            elif isinstance(value, list):
+                # Recursively render list items
+                return [render_value(item, context, f"{path}[{i}]") for i, item in enumerate(value)]
+            else:
+                # Return non-string/dict/list values as-is
+                return value
+        
         rendered_task_config = {}
         if isinstance(task_config, dict):
+            logger.critical(f"SINK.EXECUTOR: Context keys: {list(context.keys()) if isinstance(context, dict) else type(context)}")
+            logger.critical(f"SINK.EXECUTOR: Context workload: {context.get('workload') if isinstance(context, dict) else 'N/A'}")
+            logger.critical(f"SINK.EXECUTOR: Original task_config: {task_config}")
+            
             try:
-                logger.info(f"SINK.EXECUTOR: Context keys: {list(context.keys()) if isinstance(context, dict) else type(context)}")
-                logger.info(f"SINK.EXECUTOR: Context workload: {context.get('workload') if isinstance(context, dict) else 'N/A'}")
-                
-                # Serialize to JSON string for rendering
-                task_config_str = json.dumps(task_config)
-                logger.info(f"SINK.EXECUTOR: Original task_config JSON: {task_config_str[:500]}...")
-                
-                # Render with Jinja2
-                template = jinja_env.from_string(task_config_str)
-                rendered_str = template.render(context)
-                logger.info(f"SINK.EXECUTOR: Rendered task_config JSON: {rendered_str[:500]}...")
-                
-                # Parse back to dict
-                rendered_task_config = json.loads(rendered_str)
-                logger.info(f"SINK.EXECUTOR: Rendered task config: {rendered_task_config}")
-            except json.JSONDecodeError as e:
-                logger.error(f"SINK.EXECUTOR: JSON parse error after template rendering: {e}")
-                logger.error(f"SINK.EXECUTOR: Problematic JSON: {rendered_str if 'rendered_str' in locals() else 'not available'}")
-                raise ValueError(f"expected token ':', got '}}'")
+                # Render dict recursively BEFORE any JSON operations
+                rendered_task_config = render_value(task_config, context)
+                logger.critical(f"SINK.EXECUTOR: Rendered task config SUCCESS: {rendered_task_config}")
+            except Exception as e:
+                logger.error(f"SINK.EXECUTOR: Template rendering error: {e}", exc_info=True)
+                logger.error(f"SINK.EXECUTOR: Problematic task_config: {task_config}")
+                raise ValueError(f"Template rendering failed: {e}")
         else:
             rendered_task_config = task_config
+            logger.critical(f"SINK.EXECUTOR: task_config not a dict, using as-is: {type(task_config)}")
         
         # Step 1: Extract sink configuration (now using rendered config)
         config = extract_sink_config(rendered_task_config)
