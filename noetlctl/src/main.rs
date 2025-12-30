@@ -53,11 +53,16 @@ enum Commands {
         #[command(subcommand)]
         command: ContextCommand,
     },
-    /// Execute a playbook
+    /// Execute a playbook (legacy command, use 'execute playbook' instead)
+    /// Examples:
+    ///     noetlctl exec my-playbook
+    ///     noetlctl exec workflows/data-pipeline --input params.json
+    ///     noetlctl --host=localhost --port=8082 exec etl-job --input /path/to/input.json --json
+    #[command(verbatim_doc_comment)]
     Exec {
         /// Playbook path/name as registered in catalog
         playbook_path: String,
-        
+
         /// Path to JSON file with parameters
         #[arg(short, long)]
         input: Option<PathBuf>,
@@ -71,7 +76,11 @@ enum Commands {
         #[command(subcommand)]
         resource: RegisterResource,
     },
-    /// Fetch execution status
+    /// Fetch execution status (legacy command, use 'execute status' instead)
+    /// Examples:
+    ///     noetlctl status 12345
+    ///     noetlctl --host=localhost --port=8082 status 12345 --json
+    #[command(verbatim_doc_comment)]
     Status {
         /// Execution ID
         execution_id: String,
@@ -80,9 +89,14 @@ enum Commands {
         #[arg(short, long)]
         json: bool,
     },
-    /// List resources in catalog
+    /// List resources in catalog (legacy command, use 'catalog list' instead)
+    /// Examples:
+    ///     noetlctl list Playbook
+    ///     noetlctl list Credential --json
+    ///     noetlctl --host=localhost --port=8082 list Playbook
+    #[command(verbatim_doc_comment)]
     List {
-        /// Resource type (e.g., Playbook)
+        /// Resource type (e.g., Playbook, Credential)
         resource_type: String,
 
         /// Emit only the JSON response
@@ -109,18 +123,34 @@ enum Commands {
 #[derive(Subcommand)]
 enum CatalogCommand {
     /// Register a resource (auto-detects type)
+    /// Example for playbooks:
+    ///     noetlctl catalog register tests/fixtures/playbooks/hello_world/hello_world.yaml
+    ///     noetlctl --host=localhost --port=8082 catalog register tests/fixtures/playbooks/hello_world/hello_world.yaml
+    /// Example for credential:
+    ///     noetlctl --host=localhost --port=8082 catalog register tests/fixtures/credentials/google_oauth.json
+    #[command(verbatim_doc_comment)]
     Register {
         /// Path to the resource file
         file: PathBuf,
     },
-    /// Get resource details
+    /// Get resource details from catalog
+    /// Examples:
+    ///     noetlctl catalog get my-playbook
+    ///     noetlctl --host=localhost --port=8082 catalog get workflows/data-pipeline
+    ///     noetlctl catalog get my-credential
+    #[command(verbatim_doc_comment)]
     Get {
         /// Resource path/name
         path: String,
     },
-    /// List resources
+    /// List resources in catalog by type
+    /// Examples:
+    ///     noetlctl catalog list Playbook
+    ///     noetlctl catalog list Credential
+    ///     noetlctl --host=localhost --port=8082 catalog list Playbook --json
+    #[command(verbatim_doc_comment)]
     List {
-        /// Resource type (e.g., Playbook)
+        /// Resource type (e.g., Playbook, Credential)
         resource_type: String,
 
         /// Emit only the JSON response
@@ -131,9 +161,14 @@ enum CatalogCommand {
 
 #[derive(Subcommand)]
 enum ExecuteCommand {
-    /// Execute a playbook
+    /// Execute a playbook with optional input parameters
+    /// Examples:
+    ///     noetlctl execute playbook my-playbook
+    ///     noetlctl execute playbook workflows/etl-pipeline --input params.json
+    ///     noetlctl --host=localhost --port=8082 execute playbook data-sync --input /path/to/input.json --json
+    #[command(verbatim_doc_comment)]
     Playbook {
-        /// Playbook path/name
+        /// Playbook path/name as registered in catalog
         path: String,
 
         /// Path to JSON file with parameters
@@ -144,7 +179,11 @@ enum ExecuteCommand {
         #[arg(short, long)]
         json: bool,
     },
-    /// Get execution status
+    /// Get execution status for a playbook run
+    /// Examples:
+    ///     noetlctl execute status 12345
+    ///     noetlctl --host=localhost --port=8082 execute status 12345 --json
+    #[command(verbatim_doc_comment)]
     Status {
         /// Execution ID
         execution_id: String,
@@ -157,7 +196,12 @@ enum ExecuteCommand {
 
 #[derive(Subcommand)]
 enum GetResource {
-    /// Get credential details
+    /// Get credential details with optional data inclusion
+    /// Examples:
+    ///     noetlctl get credential my-db-creds
+    ///     noetlctl get credential google_oauth --include_data=false
+    ///     noetlctl --host=localhost --port=8082 get credential aws-credentials
+    #[command(verbatim_doc_comment)]
     Credential {
         /// Name of the credential
         name: String,
@@ -170,13 +214,21 @@ enum GetResource {
 
 #[derive(Subcommand)]
 enum RegisterResource {
-    /// Register a credential
+    /// Register a credential from JSON file
+    /// Examples:
+    ///     noetlctl register credential --file credentials/postgres.json
+    ///     noetlctl --host=localhost --port=8082 register credential -f tests/fixtures/credentials/google_oauth.json
+    #[command(verbatim_doc_comment)]
     Credential {
         /// Path to credential file
         #[arg(short, long)]
         file: PathBuf,
     },
-    /// Register a playbook
+    /// Register a playbook from YAML file
+    /// Examples:
+    ///     noetlctl register playbook --file playbooks/my-workflow.yaml
+    ///     noetlctl --host=localhost --port=8082 register playbook -f tests/fixtures/playbooks/hello_world/hello_world.yaml
+    #[command(verbatim_doc_comment)]
     Playbook {
         /// Path to playbook file
         #[arg(short, long)]
@@ -186,26 +238,49 @@ enum RegisterResource {
 
 #[derive(Subcommand)]
 enum ContextCommand {
-    /// Add a new context
+    /// Add a new context for connecting to NoETL servers
+    /// Examples:
+    ///     noetlctl context add local --server-url=http://localhost:8082
+    ///     noetlctl context add prod --server-url=https://noetl.example.com --set-current
+    ///     noetlctl context add staging --server-url=http://staging:8082
+    #[command(verbatim_doc_comment)]
     Add {
+        /// Context name
         name: String,
+        /// Server URL (e.g., http://localhost:8082)
         #[arg(long)]
         server_url: String,
         /// Set as current context
         #[arg(long)]
         set_current: bool,
     },
-    /// List all contexts
+    /// List all configured contexts
+    /// Example:
+    ///     noetlctl context list
+    #[command(verbatim_doc_comment)]
     List,
-    /// Use a context
+    /// Switch to a different context
+    /// Examples:
+    ///     noetlctl context use local
+    ///     noetlctl context use prod
+    #[command(verbatim_doc_comment)]
     Use {
+        /// Context name to switch to
         name: String,
     },
     /// Delete a context
+    /// Examples:
+    ///     noetlctl context delete old-env
+    ///     noetlctl context delete staging
+    #[command(verbatim_doc_comment)]
     Delete {
+        /// Context name to delete
         name: String,
     },
-    /// Show current context
+    /// Show current active context
+    /// Example:
+    ///     noetlctl context current
+    #[command(verbatim_doc_comment)]
     Current,
 }
 
@@ -231,7 +306,8 @@ async fn main() -> Result<()> {
     } else if let (Some(host), Some(port)) = (cli.host.as_ref(), cli.port) {
         format!("http://{}:{}", host, port)
     } else {
-        config.get_current_context()
+        config
+            .get_current_context()
             .map(|(_, ctx)| ctx.server_url.clone())
             .unwrap_or_else(|| "http://localhost:8082".to_string())
     };
@@ -246,19 +322,21 @@ async fn main() -> Result<()> {
         Some(Commands::Context { command }) => {
             handle_context_command(&mut config, command)?;
         }
-        Some(Commands::Exec { playbook_path, input, json }) => {
+        Some(Commands::Exec {
+            playbook_path,
+            input,
+            json,
+        }) => {
             execute_playbook(&client, &base_url, &playbook_path, input, json).await?;
         }
-        Some(Commands::Register { resource }) => {
-            match resource {
-                RegisterResource::Credential { file } => {
-                    register_resource(&client, &base_url, "Credential", &file).await?;
-                }
-                RegisterResource::Playbook { file } => {
-                    register_resource(&client, &base_url, "Playbook", &file).await?;
-                }
+        Some(Commands::Register { resource }) => match resource {
+            RegisterResource::Credential { file } => {
+                register_resource(&client, &base_url, "Credential", &file).await?;
             }
-        }
+            RegisterResource::Playbook { file } => {
+                register_resource(&client, &base_url, "Playbook", &file).await?;
+            }
+        },
         Some(Commands::Status { execution_id, json }) => {
             get_status(&client, &base_url, &execution_id, json).await?;
         }
@@ -269,7 +347,8 @@ async fn main() -> Result<()> {
             match command {
                 CatalogCommand::Register { file } => {
                     // Auto-detect type from file content
-                    let content = fs::read_to_string(&file)?;
+                    let content =
+                        fs::read_to_string(&file).context(format!("Failed to read file: {:?}", file.display()))?;
                     let resource_type = if content.contains("kind: Credential") {
                         "Credential"
                     } else if content.contains("kind: Playbook") {
@@ -287,23 +366,19 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        Some(Commands::Execute { command }) => {
-            match command {
-                ExecuteCommand::Playbook { path, input, json } => {
-                    execute_playbook(&client, &base_url, &path, input, json).await?;
-                }
-                ExecuteCommand::Status { execution_id, json } => {
-                    get_status(&client, &base_url, &execution_id, json).await?;
-                }
+        Some(Commands::Execute { command }) => match command {
+            ExecuteCommand::Playbook { path, input, json } => {
+                execute_playbook(&client, &base_url, &path, input, json).await?;
             }
-        }
-        Some(Commands::Get { resource }) => {
-            match resource {
-                GetResource::Credential { name, include_data } => {
-                    get_credential(&client, &base_url, &name, include_data).await?;
-                }
+            ExecuteCommand::Status { execution_id, json } => {
+                get_status(&client, &base_url, &execution_id, json).await?;
             }
-        }
+        },
+        Some(Commands::Get { resource }) => match resource {
+            GetResource::Credential { name, include_data } => {
+                get_credential(&client, &base_url, &name, include_data).await?;
+            }
+        },
         None => {
             println!("Use --help for usage information or --interactive for TUI mode");
         }
@@ -314,7 +389,11 @@ async fn main() -> Result<()> {
 
 fn handle_context_command(config: &mut Config, command: ContextCommand) -> Result<()> {
     match command {
-        ContextCommand::Add { name, server_url, set_current } => {
+        ContextCommand::Add {
+            name,
+            server_url,
+            set_current,
+        } => {
             config.contexts.insert(name.clone(), Context { server_url });
             if set_current || config.current_context.is_none() {
                 config.current_context = Some(name.clone());
@@ -370,8 +449,7 @@ fn handle_context_command(config: &mut Config, command: ContextCommand) -> Resul
 }
 
 async fn register_resource(client: &Client, base_url: &str, resource_type: &str, file: &PathBuf) -> Result<()> {
-    let content = fs::read_to_string(file)
-        .with_context(|| format!("Failed to read file: {:?}", file))?;
+    let content = fs::read_to_string(file).context(format!("Failed to read file: {:?}", file))?;
     let content_base64 = BASE64_STANDARD.encode(content);
 
     let url = format!("{}/api/catalog/register", base_url);
@@ -380,7 +458,8 @@ async fn register_resource(client: &Client, base_url: &str, resource_type: &str,
         resource_type: resource_type.to_string(),
     };
 
-    let response = client.post(&url)
+    let response = client
+        .post(&url)
         .json(&request)
         .send()
         .await
@@ -399,10 +478,16 @@ async fn register_resource(client: &Client, base_url: &str, resource_type: &str,
     Ok(())
 }
 
-async fn execute_playbook(client: &Client, base_url: &str, path: &str, input: Option<PathBuf>, json_only: bool) -> Result<()> {
+async fn execute_playbook(
+    client: &Client,
+    base_url: &str,
+    path: &str,
+    input: Option<PathBuf>,
+    json_only: bool,
+) -> Result<()> {
     let payload = if let Some(input_file) = input {
-        let content = fs::read_to_string(&input_file)
-            .with_context(|| format!("Failed to read input file: {:?}", input_file))?;
+        let content =
+            fs::read_to_string(&input_file).context(format!("Failed to read input file: {:?}", input_file))?;
         serde_json::from_str(&content).context("Failed to parse input JSON")?
     } else {
         serde_json::Value::Object(serde_json::Map::new())
@@ -414,7 +499,8 @@ async fn execute_playbook(client: &Client, base_url: &str, path: &str, input: Op
         payload,
     };
 
-    let response = client.post(&url)
+    let response = client
+        .post(&url)
         .json(&request)
         .send()
         .await
@@ -439,10 +525,7 @@ async fn execute_playbook(client: &Client, base_url: &str, path: &str, input: Op
 
 async fn get_status(client: &Client, base_url: &str, execution_id: &str, json_only: bool) -> Result<()> {
     let url = format!("{}/api/execute/status/{}", base_url, execution_id);
-    let response = client.get(&url)
-        .send()
-        .await
-        .context("Failed to send status request")?;
+    let response = client.get(&url).send().await.context("Failed to send status request")?;
 
     if response.status().is_success() {
         let result: serde_json::Value = response.json().await?;
@@ -461,10 +544,7 @@ async fn get_status(client: &Client, base_url: &str, execution_id: &str, json_on
 
 async fn list_resources(client: &Client, base_url: &str, resource_type: &str, json_only: bool) -> Result<()> {
     let url = format!("{}/api/catalog/list/{}", base_url, resource_type);
-    let response = client.get(&url)
-        .send()
-        .await
-        .context("Failed to send list request")?;
+    let response = client.get(&url).send().await.context("Failed to send list request")?;
 
     if response.status().is_success() {
         let result: serde_json::Value = response.json().await?;
@@ -484,7 +564,8 @@ async fn list_resources(client: &Client, base_url: &str, resource_type: &str, js
 
 async fn get_catalog_resource(client: &Client, base_url: &str, path: &str) -> Result<()> {
     let url = format!("{}/api/catalog/get/{}", base_url, path);
-    let response = client.get(&url)
+    let response = client
+        .get(&url)
         .send()
         .await
         .context("Failed to send get catalog request")?;
@@ -502,7 +583,8 @@ async fn get_catalog_resource(client: &Client, base_url: &str, path: &str) -> Re
 
 async fn get_credential(client: &Client, base_url: &str, name: &str, include_data: bool) -> Result<()> {
     let url = format!("{}/api/credentials/{}?include_data={}", base_url, name, include_data);
-    let response = client.get(&url)
+    let response = client
+        .get(&url)
         .send()
         .await
         .context("Failed to send get credential request")?;
@@ -529,11 +611,7 @@ async fn run_tui(base_url: &str) -> Result<()> {
     let res = run_app(&mut terminal, app).await;
 
     disable_raw_mode()?;
-    execute!(
-        terminal.backend_mut(),
-        LeaveAlternateScreen,
-        DisableMouseCapture
-    )?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture)?;
     terminal.show_cursor()?;
 
     if let Err(err) = res {
@@ -566,13 +644,10 @@ impl App {
         if response.status().is_success() {
             let json: serde_json::Value = response.json().await?;
             if let Some(list) = json.as_array() {
-                self.playbooks = list
-                    .iter()
-                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                    .collect();
+                self.playbooks = list.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect();
             } else if let Some(obj) = json.as_object() {
-                 // Sometimes it might be an object where keys are paths
-                 self.playbooks = obj.keys().cloned().collect();
+                // Sometimes it might be an object where keys are paths
+                self.playbooks = obj.keys().cloned().collect();
             }
         }
         Ok(())
@@ -641,27 +716,14 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> Result
 fn ui(f: &mut Frame, app: &mut App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints(
-            [
-                Constraint::Length(3),
-                Constraint::Min(0),
-                Constraint::Length(3),
-            ]
-            .as_ref(),
-        )
+        .constraints([Constraint::Length(3), Constraint::Min(0), Constraint::Length(3)].as_ref())
         .split(f.size());
 
     let header = Paragraph::new("NoETL Control (noetlctl) - Playbooks")
         .block(Block::default().borders(Borders::ALL).title("Info"));
     f.render_widget(header, chunks[0]);
 
-    let items: Vec<ListItem> = app
-        .playbooks
-        .iter()
-        .map(|i| {
-            ListItem::new(i.as_str())
-        })
-        .collect();
+    let items: Vec<ListItem> = app.playbooks.iter().map(|i| ListItem::new(i.as_str())).collect();
 
     let list = List::new(items)
         .block(Block::default().borders(Borders::ALL).title("Playbooks"))
