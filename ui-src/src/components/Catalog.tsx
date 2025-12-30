@@ -162,7 +162,7 @@ const Catalog: React.FC = () => {
     try {
       let executePlaybookResponse = await apiService.executePlaybook(catalog_id);
       message.success(`Playbook execution started successfully! Execution ID: ${executePlaybookResponse.execution_id}`);
-      
+
       // Navigate to execution page
       navigate(`/execution/${executePlaybookResponse.execution_id}`);
     } catch (err: AxiosError<any, any> | any) {
@@ -365,6 +365,7 @@ const Catalog: React.FC = () => {
           value={searchQuery}
           onSearch={handleSearch}
           onChange={handleSearchInputChange}
+          data-pw={`catalog.search`}
         />
 
         {/* Playbooks list */}
@@ -443,6 +444,7 @@ const Catalog: React.FC = () => {
                       icon={<PlayCircleOutlined />}
                       onClick={() => handleExecutePlaybook(playbook.catalog_id)}
                       disabled={playbook.status !== "active"}
+                      data-pw={`catalog.execute`}
                     >
                       Execute
                     </Button>

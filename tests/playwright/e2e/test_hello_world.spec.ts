@@ -1,9 +1,9 @@
 import { test, expect, type Page } from '@playwright/test';
 import { execSync } from 'child_process';
 
-const NOETL_HOST = process.env.NOETL_HOST ?? 'localhost';
-const NOETL_PORT = process.env.NOETL_PORT ?? '8082';
-const BASE_URL = process.env.NOETL_BASE_URL ?? `http://${NOETL_HOST}:${NOETL_PORT}`;
+const NOETL_HOST = process.env.NOETL_HOST;
+const NOETL_PORT = process.env.NOETL_PORT;
+const BASE_URL = `http://${NOETL_HOST}:${NOETL_PORT}`;
 
 const CATALOG_URL = `${BASE_URL}/catalog`;
 
@@ -38,7 +38,7 @@ test.describe('Hello World', () => {
         await test.step('Wait: loader finishes (if present)', async () => {
             const loader = page.locator(`//*[text()='${LOADING_EXECUTIONS_TEXT}']`);
             await loader.waitFor({ state: 'visible', timeout: 5000 }).catch(() => { });
-            await loader.waitFor({ state: 'detached', timeout: 30000 }).catch(() => { });
+            await loader.waitFor({ state: 'detached' });
         });
 
         await test.step('Wait for completion, then reload', async () => {

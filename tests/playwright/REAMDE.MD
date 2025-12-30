@@ -13,5 +13,13 @@ source .venv/bin/activate
 pip install -e .      
 noetl register ./examples/weather/weather_example.yaml --host localhost --port 8082
 
-task kind-delete-cluster
-task ba
+git checkout master
+git pull
+git checkout e2e
+git merge master
+git push
+task noetl:k8s:reset
+
+cd tests/playwright
+npx playwright test --ui
+
