@@ -197,7 +197,7 @@ install_tools_macos() {
         "kind"
         "python@3.12"
         "pyenv"
-        "tfenv"
+        # "tfenv"
     )
     
     for tool in "${tools[@]}"; do
@@ -430,7 +430,7 @@ verify_tools() {
         "psql"
         "python3"
         "pyenv"
-        "tfenv"
+        # "tfenv"
         "uv"
     )
     

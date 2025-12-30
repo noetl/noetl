@@ -101,70 +101,64 @@ async def get_execution(execution_id: str):
             ORDER BY event_id
             """, {"execution_id": execution_id})
             rows = await cursor.fetchall()
-            if rows:
-                events = []
-                for row in rows:
-                    event_data = dict(row)
-                    event_data["execution_id"] = execution_id
-                    event_data["timestamp"] = row["created_at"].isoformat() if row["created_at"] else None
-                    if isinstance(row["context"], str):
-                        event_data["context"] = json.loads(row["context"])
-                    if isinstance(row["result"], str):
-                        try:
-                            event_data["result"] = json.loads(row["result"])
-                        except json.JSONDecodeError:
-                            event_data["result"] = row["result"]
-                    events.append(event_data)
-
-                execution_item = next((e for e in events if e.get("event_type") == "workflow.initialized"), None)
-                if execution_item is None:
-                    execution_item = events[0] if events else None
-
-                if execution_item is None:
-                    logger.error(f"No events found for execution_id: {execution_id}")
-                    raise HTTPException(status_code=404, detail=f"Execution {execution_id} not found")
-
-                playbook_path = "unknown"
-                if execution_item.get("catalog_id"):
+    if rows:
+        events = []
+        for row in rows:
+            event_data = dict(row)
+            event_data["execution_id"] = execution_id
+            event_data["timestamp"] = row["created_at"].isoformat() if row["created_at"] else None
+            if isinstance(row["context"], str):
+                event_data["context"] = json.loads(row["context"])
+            if isinstance(row["result"], str):
+                try:
+                    event_data["result"] = json.loads(row["result"])
+                except json.JSONDecodeError:
+                    event_data["result"] = row["result"]
+            events.append(event_data)
+        execution_item = next((e for e in events if e.get("event_type") == "workflow.initialized"), None)
+        if execution_item is None:
+            execution_item = events[0] if events else None
+        if execution_item is None:
+            logger.error(f"No events found for execution_id: {execution_id}")
+            raise HTTPException(status_code=404, detail=f"Execution {execution_id} not found")
+        playbook_path = "unknown"
+        if execution_item.get("catalog_id"):
+            async with get_pool_connection() as conn:
+                async with conn.cursor() as cursor:
                     await cursor.execute("""
                         SELECT path FROM noetl.catalog WHERE catalog_id = %s
                     """, (execution_item["catalog_id"],))
                     catalog_row = await cursor.fetchone()
-                    if catalog_row:
-                        playbook_path = catalog_row["path"]
-
+            if catalog_row:
+                playbook_path = catalog_row["path"]
+        return {
+            "execution_id": execution_id,
+            "path": playbook_path,
+            "status": events[-1].get("status"),
+            "start_time": execution_item["timestamp"],
+            "end_time": events[-1].get("timestamp") if events else None,
+            "parent_execution_id": execution_item.get("parent_execution_id"),
+            "events": events,
+        }
+    # Fallback: pull from in-memory v2 engine state (for newer engine runs)
+    if get_v2_engine:
+        try:
+            engine = get_v2_engine()
+            state = engine.state_store.get_state(execution_id)
+            if state:
+                path = None
+                if state.playbook and getattr(state.playbook, "metadata", None):
+                    path = state.playbook.metadata.get("path") or state.playbook.metadata.get("name")
+                status = "FAILED" if state.failed else "COMPLETED" if state.completed else "RUNNING"
                 return {
                     "execution_id": execution_id,
-                    "path": playbook_path,
-                    "status": events[-1].get("status"),
-                    "start_time": execution_item["timestamp"],
-                    "end_time": events[-1].get("timestamp") if events else None,
-                    "parent_execution_id": execution_item.get("parent_execution_id"),
-                    "events": events,
+                    "path": path or "unknown",
+                    "status": status,
+                    "start_time": None,
+                    "end_time": None,
+                    "parent_execution_id": state.parent_execution_id,
+                    "events": []
                 }
-
-            # Fallback: pull from in-memory v2 engine state (for newer engine runs)
-            if get_v2_engine:
-                try:
-                    engine = get_v2_engine()
-                    state = engine.state_store.get_state(execution_id)
-                    if state:
-                        path = None
-                        if state.playbook and getattr(state.playbook, "metadata", None):
-                            path = state.playbook.metadata.get("path") or state.playbook.metadata.get("name")
-
-                        status = "FAILED" if state.failed else "COMPLETED" if state.completed else "RUNNING"
-
-                        return {
-                            "execution_id": execution_id,
-                            "path": path or "unknown",
-                            "status": status,
-                            "start_time": None,
-                            "end_time": None,
-                            "parent_execution_id": state.parent_execution_id,
-                            "events": []
-                        }
-                except Exception as e:  # pragma: no cover
-                    logger.warning(f"V2 engine fallback failed for execution {execution_id}: {e}")
-
-            raise HTTPException(status_code=404, detail=f"Execution {execution_id} not found")
+        except Exception as e:  # pragma: no cover
+            logger.warning(f"V2 engine fallback failed for execution {execution_id}: {e}")
+    raise HTTPException(status_code=404, detail=f"Execution {execution_id} not found")
