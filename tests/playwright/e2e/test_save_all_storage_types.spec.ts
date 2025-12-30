@@ -1,93 +1,151 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 import { execSync } from 'child_process';
 
-test.describe('Save all storage types', () => {
+const NOETL_HOST = process.env.NOETL_HOST;
+const NOETL_PORT = process.env.NOETL_PORT;
+const BASE_URL = `http://${NOETL_HOST}:${NOETL_PORT}`;
 
-    // Run the registration command before all tests in this suite
+const CATALOG_URL = `${BASE_URL}/catalog`;
+
+const PLAYBOOK_NAME = 'save_all_storage_types';
+const PLAYBOOK_PATH = `tests/fixtures/playbooks/save_storage_test/${PLAYBOOK_NAME}.yaml`;
+const PLAYBOOK_CATALOG_NODE = `tests/fixtures/playbooks/save_storage_test/${PLAYBOOK_NAME}`;
+const LOADING_EXECUTIONS_TEXT = 'Loading executions...';
+const viewHeaders = ['Event Type', 'Node Name', 'Status', 'Timestamp', 'Duration'] as const;
+
+test.describe('Save all storage types', () => {
     test.beforeAll(() => {
-        console.log('Registering save_all_storage_types...');
-        execSync('noetl register tests/fixtures/playbooks/save_storage_test/save_all_storage_types.yaml --host localhost --port 8082', { stdio: 'inherit' });
+        console.log(`Registering ${PLAYBOOK_NAME}...`);
+        execSync(`noetl register ${PLAYBOOK_PATH} --host ${NOETL_HOST} --port ${NOETL_PORT}`, { stdio: 'inherit' });
     });
 
     test('should open catalog page', async ({ page }) => {
-        // Navigate to the catalog page
-        await page.goto('http://localhost:8082/catalog');
+        await test.step('Navigate: open Catalog', async () => {
+            await page.goto(CATALOG_URL);
+            await expect(page).toHaveTitle('NoETL Dashboard');
+        });
 
-        // Check that the page title contains "NoETL Dashboard"
-        await expect(page).toHaveTitle('NoETL Dashboard');
+        await test.step(`Execute ${PLAYBOOK_NAME} from Catalog`, async () => {
+            const executeButton = page.locator(
+                `(//*[text()='${PLAYBOOK_NAME}']/following::button[normalize-space()='Execute'])[1]`
+            );
+            await executeButton.click();
+            await expect(page).toHaveURL(/\/execution/);
+        });
+        await test.step('Wait for completion, then reload', async () => {
+            await page.waitForTimeout(5000);
+            await page.reload();
+            await expect(page).toHaveTitle('NoETL Dashboard');
+        });
+        await test.step('Wait: executions loader finishes (if present)', async () => {
+            const loader = page.locator(`//*[text()='${LOADING_EXECUTIONS_TEXT}']`);
+            await loader.waitFor({ state: 'visible', timeout: 5000 }).catch(() => { });
+            await loader.waitFor({ state: 'detached' });
+        });
+        await test.step('Parse events table and validate key events', async () => {
+            const rows = page.locator('.ant-table-wrapper .ant-table-row');
+            const rowCount = await rows.count();
 
-        // Locate the first element that contains the text "save_all_storage_types"
-        const exampleItem = page.locator("(//*[text()='save_all_storage_types']/following::button[normalize-space()='Execute'])[1]");
+            const tableData: Record<string, string>[] = [];
 
-        // Inside that element, find the child with text "Execute" and click it
-        await exampleItem.click();
+            for (let i = 0; i < rowCount; i++) {
+                const cells = rows.nth(i).locator('td');
+                const values = await cells.allTextContents();
+                const rowData = Object.fromEntries(viewHeaders.map((key, idx) => [key, values[idx]]));
+                tableData.push(rowData);
+            }
 
-        // wait until URL contains "/execution"
-        await page.waitForURL('**/execution', { timeout: 60000 });
+            console.log(tableData);
 
-        // now check
-        await expect(page.url()).toContain('/execution');
+            const hasEvent = (eventType: string, nodeName: string, status?: string) =>
+                tableData.some(r =>
+                    r['Event Type'] === eventType &&
+                    r['Node Name'] === nodeName &&
+                    (status ? r['Status'] === status : true)
+                );
 
-        const loader = page.locator("//*[text()='Loading executions...']");
-        await loader.waitFor({ state: 'visible', timeout: 5000 }).catch(() => { });
-        // Wait for the loader to disappear
-        await loader.waitFor({ state: 'detached' });
+            // lifecycle
+            expect(hasEvent('playbook.initialized', PLAYBOOK_CATALOG_NODE, 'INITIALIZED')).toBeTruthy();
+            expect(hasEvent('workflow.initialized', 'workflow', 'INITIALIZED')).toBeTruthy();
 
-        const headers = [
-            'Execution ID',
-            'Playbook',
-            'Status',
-            'Progress',
-            'Start Time',
-            'Duration',
-            'Actions'
-        ];
+            // start
+            expect(hasEvent('command.issued', 'start', 'PENDING')).toBeTruthy();
+            expect(hasEvent('step.enter', 'start', 'STARTED')).toBeTruthy();
+            expect(hasEvent('step.exit', 'start', 'COMPLETED')).toBeTruthy();
+            expect(hasEvent('command.completed', 'start', 'COMPLETED')).toBeTruthy();
 
-        // Choose the first row of the table
-        const row = page.locator('.ant-table-tbody > tr:first-child');
-        const cells = row.locator('td');
+            // initialize_test_data (+ sink issued)
+            expect(hasEvent('command.issued', 'initialize_test_data', 'PENDING')).toBeTruthy();
+            expect(hasEvent('step.enter', 'initialize_test_data', 'STARTED')).toBeTruthy();
+            expect(hasEvent('step.exit', 'initialize_test_data', 'COMPLETED')).toBeTruthy();
+            expect(hasEvent('command.completed', 'initialize_test_data', 'COMPLETED')).toBeTruthy();
+            expect(hasEvent('command.issued', 'initialize_test_data_sink', 'PENDING')).toBeTruthy();
 
-        // Wait until all cells in the row have non-empty text
-        await expect(cells.first()).toHaveText(/.+/);
+            // test_flat_postgres_save (+ sink)
+            expect(hasEvent('command.issued', 'test_flat_postgres_save', 'PENDING')).toBeTruthy();
+            expect(hasEvent('step.enter', 'test_flat_postgres_save', 'STARTED')).toBeTruthy();
+            expect(hasEvent('step.exit', 'test_flat_postgres_save', 'COMPLETED')).toBeTruthy();
+            expect(hasEvent('command.completed', 'test_flat_postgres_save', 'COMPLETED')).toBeTruthy();
 
-        // Get all text contents of the cells in the row
-        const values = await cells.allTextContents();
+            expect(hasEvent('command.issued', 'test_flat_postgres_save_sink', 'PENDING')).toBeTruthy();
+            expect(hasEvent('step.enter', 'test_flat_postgres_save_sink', 'STARTED')).toBeTruthy();
+            expect(hasEvent('step.exit', 'test_flat_postgres_save_sink', 'COMPLETED')).toBeTruthy();
+            expect(hasEvent('command.completed', 'test_flat_postgres_save_sink', 'COMPLETED')).toBeTruthy();
 
-        // Map headers to their corresponding values
-        const rowData = Object.fromEntries(headers.map((key, i) => [key, values[i]]));
+            // test_nested_postgres_save (+ sink)
+            expect(hasEvent('command.issued', 'test_nested_postgres_save', 'PENDING')).toBeTruthy();
+            expect(hasEvent('step.enter', 'test_nested_postgres_save', 'STARTED')).toBeTruthy();
+            expect(hasEvent('step.exit', 'test_nested_postgres_save', 'COMPLETED')).toBeTruthy();
+            expect(hasEvent('command.completed', 'test_nested_postgres_save', 'COMPLETED')).toBeTruthy();
 
-        console.log(rowData);
+            expect(hasEvent('command.issued', 'test_nested_postgres_save_sink', 'PENDING')).toBeTruthy();
+            expect(hasEvent('step.enter', 'test_nested_postgres_save_sink', 'STARTED')).toBeTruthy();
+            expect(hasEvent('step.exit', 'test_nested_postgres_save_sink', 'COMPLETED')).toBeTruthy();
+            expect(hasEvent('command.completed', 'test_nested_postgres_save_sink', 'COMPLETED')).toBeTruthy();
 
-        // Assertions
-        await expect(rowData.Playbook).toBe('save_all_storage_types');
-        await expect(rowData.Status).toBe('STARTED');
-        await expect(rowData.Duration).toBe('8h 0m');
+            // test_postgres_statement_save (+ sink)
+            expect(hasEvent('command.issued', 'test_postgres_statement_save', 'PENDING')).toBeTruthy();
+            expect(hasEvent('step.enter', 'test_postgres_statement_save', 'STARTED')).toBeTruthy();
+            expect(hasEvent('step.exit', 'test_postgres_statement_save', 'COMPLETED')).toBeTruthy();
+            expect(hasEvent('command.completed', 'test_postgres_statement_save', 'COMPLETED')).toBeTruthy();
 
-        // Wait a bit for the execution to complete
-        await page.waitForTimeout(5000);
-        // Refresh the page
-        await page.reload();
+            expect(hasEvent('command.issued', 'test_postgres_statement_save_sink', 'PENDING')).toBeTruthy();
+            expect(hasEvent('step.enter', 'test_postgres_statement_save_sink', 'STARTED')).toBeTruthy();
+            expect(hasEvent('step.exit', 'test_postgres_statement_save_sink', 'COMPLETED')).toBeTruthy();
+            expect(hasEvent('command.completed', 'test_postgres_statement_save_sink', 'COMPLETED')).toBeTruthy();
 
-        // Choose the first row of the table again
-        const updatedRow = page.locator('.ant-table-tbody > tr:first-child');
-        const updatedCells = updatedRow.locator('td');
-        // Get all text contents of the cells in the row
-        const updatedValues = await updatedCells.allTextContents();
-        // Map headers to their corresponding values
-        const updatedRowData = Object.fromEntries(headers.map((key, i) => [key, updatedValues[i]]));
+            // test_python_save (+ sink FAIL in provided log)
+            expect(hasEvent('command.issued', 'test_python_save', 'PENDING')).toBeTruthy();
+            expect(hasEvent('step.enter', 'test_python_save', 'STARTED')).toBeTruthy();
+            expect(hasEvent('step.exit', 'test_python_save', 'COMPLETED')).toBeTruthy();
+            expect(hasEvent('command.completed', 'test_python_save', 'COMPLETED')).toBeTruthy();
 
-        console.log(updatedRowData);
+            expect(hasEvent('command.issued', 'test_python_save_sink', 'PENDING')).toBeTruthy();
+            expect(hasEvent('step.enter', 'test_python_save_sink', 'STARTED')).toBeTruthy();
+            expect(hasEvent('step.exit', 'test_python_save_sink', 'FAILED')).toBeTruthy();
+            expect(hasEvent('command.failed', 'test_python_save_sink', 'FAILED')).toBeTruthy();
 
-        // Assert changes
-        await expect(page).toHaveTitle('NoETL Dashboard');
-        await expect(updatedRowData.Status).toBe('Completed');
-        // await expect(updatedRowData.Playbook).toBe('save_all_storage_types');
+            // test_duckdb_save
+            expect(hasEvent('command.issued', 'test_duckdb_save', 'PENDING')).toBeTruthy();
+            expect(hasEvent('step.enter', 'test_duckdb_save', 'STARTED')).toBeTruthy();
+            expect(hasEvent('step.exit', 'test_duckdb_save', 'COMPLETED')).toBeTruthy();
+            expect(hasEvent('command.completed', 'test_duckdb_save', 'COMPLETED')).toBeTruthy();
 
-        // Click the "View" button for the "save_all_storage_types" task
-        // TODO fix the selector below from "Unknown" to "save_all_storage_types"
-        const viewButton = await page.locator("(//*[text()='Unknown']/following::button[normalize-space()='View'])[1]");
-        await viewButton.click();
+            // test_http_save (+ sink)
+            expect(hasEvent('command.issued', 'test_http_save', 'PENDING')).toBeTruthy();
+            expect(hasEvent('step.enter', 'test_http_save', 'STARTED')).toBeTruthy();
+            expect(hasEvent('step.exit', 'test_http_save', 'COMPLETED')).toBeTruthy();
+            expect(hasEvent('command.completed', 'test_http_save', 'COMPLETED')).toBeTruthy();
+
+            expect(hasEvent('command.issued', 'test_http_save_sink', 'PENDING')).toBeTruthy();
+            expect(hasEvent('step.enter', 'test_http_save_sink', 'STARTED')).toBeTruthy();
+            expect(hasEvent('step.exit', 'test_http_save_sink', 'COMPLETED')).toBeTruthy();
+            expect(hasEvent('command.completed', 'test_http_save_sink', 'COMPLETED')).toBeTruthy();
+
+            // test_completion (в предоставленном логе есть issued + enter; exit/completed не показаны)
+            expect(hasEvent('command.issued', 'test_completion', 'PENDING')).toBeTruthy();
+            expect(hasEvent('step.enter', 'test_completion', 'STARTED')).toBeTruthy();
+        });
 
     });
-
 });

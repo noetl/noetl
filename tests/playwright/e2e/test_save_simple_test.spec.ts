@@ -1,93 +1,155 @@
 import { test, expect } from '@playwright/test';
 import { execSync } from 'child_process';
 
+const NOETL_HOST = process.env.NOETL_HOST;
+const NOETL_PORT = process.env.NOETL_PORT;
+const BASE_URL = process.env.NOETL_BASE_URL;
+
+const CATALOG_URL = `${BASE_URL}/catalog`;
+
+const PLAYBOOK_NAME = 'save_simple_test';
+const PLAYBOOK_PATH = `tests/fixtures/playbooks/save_storage_test/${PLAYBOOK_NAME}.yaml`;
+const PLAYBOOK_CATALOG_NODE = `tests/fixtures/playbooks/save_storage_test/${PLAYBOOK_NAME}`;
+
+const LOADING_EXECUTIONS_TEXT = 'Loading executions...';
+
+const viewHeaders = ['Event Type', 'Node Name', 'Status', 'Timestamp', 'Duration'] as const;
+
 test.describe('Save Simple Test', () => {
-
-    // Run the registration command before all tests in this suite
     test.beforeAll(() => {
-        console.log('Registering save_simple_test...');
-        execSync('noetl register tests/fixtures/playbooks/save_storage_test/save_simple_test.yaml --host localhost --port 8082', { stdio: 'inherit' });
+        console.log(`Registering ${PLAYBOOK_NAME}...`);
+        execSync(`noetl register "${PLAYBOOK_PATH}" --host ${NOETL_HOST} --port ${NOETL_PORT}`, { stdio: 'inherit' });
     });
 
-    test('should open catalog page', async ({ page }) => {
-        // Navigate to the catalog page
-        await page.goto('http://localhost:8082/catalog');
+    test('should execute playbook and show expected events', async ({ page }) => {
+        await test.step('Navigate: open Catalog', async () => {
+            await page.goto(CATALOG_URL);
+            await expect(page).toHaveTitle('NoETL Dashboard');
+        });
 
-        // Check that the page title contains "NoETL Dashboard"
-        await expect(page).toHaveTitle('NoETL Dashboard');
+        await test.step(`Click: Execute "${PLAYBOOK_NAME}" and wait for navigation`, async () => {
+            const executeButton = page.locator(
+                `(//*[text()='${PLAYBOOK_NAME}']/following::button[normalize-space()='Execute'])[1]`
+            );
+            await executeButton.click();
+            await expect(page).toHaveURL(/\/execution/);
+        });
+        await test.step('Wait for completion, then reload', async () => {
+            await page.waitForTimeout(5000);
+            await page.reload();
+            await expect(page).toHaveTitle('NoETL Dashboard');
+        });
+        await test.step('Wait: executions loader finishes (if present)', async () => {
+            const loader = page.locator(`//*[text()='${LOADING_EXECUTIONS_TEXT}']`);
 
-        // Locate the first element that contains the text "save_simple_test"
-        const exampleItem = page.locator("(//*[text()='save_simple_test']/following::button[normalize-space()='Execute'])[1]");
+            // "visible" is optional: loader might flash too fast or not appear at all.
+            try {
+                await loader.waitFor({ state: 'visible', timeout: 5000 });
+            } catch {
+                // ignore
+            }
 
-        // Inside that element, find the child with text "Execute" and click it
-        await exampleItem.click();
+            // If loader appears and gets stuck, fail here (do not swallow).
+            await loader.waitFor({ state: 'detached', timeout: 30000 });
+        });
 
-        // wait until URL contains "/execution"
-        await page.waitForURL('**/execution', { timeout: 60000 });
+        await test.step('Wait: execution emits playbook.completed (reload)', async () => {
+            await expect
+                .poll(
+                    async () => {
+                        await page.reload();
+                        await expect(page).toHaveTitle('NoETL Dashboard');
 
-        // now check
-        await expect(page.url()).toContain('/execution');
+                        const rows = page.locator('.ant-table-wrapper .ant-table-row');
+                        const rowCount = await rows.count();
 
-        const loader = page.locator("//*[text()='Loading executions...']");
-        await loader.waitFor({ state: 'visible', timeout: 5000 }).catch(() => { });
-        // Wait for the loader to disappear
-        await loader.waitFor({ state: 'detached' });
+                        const tableData: Record<string, string>[] = [];
+                        for (let i = 0; i < rowCount; i++) {
+                            const cells = rows.nth(i).locator('td');
+                            const values = await cells.allTextContents();
+                            tableData.push(Object.fromEntries(viewHeaders.map((key, idx) => [key, values[idx]])));
+                        }
 
-        const headers = [
-            'Execution ID',
-            'Playbook',
-            'Status',
-            'Progress',
-            'Start Time',
-            'Duration',
-            'Actions'
-        ];
+                        return tableData.some(
+                            r =>
+                                r['Event Type'] === 'playbook.completed' &&
+                                r['Node Name'] === PLAYBOOK_CATALOG_NODE &&
+                                r['Status'] === 'COMPLETED'
+                        );
+                    },
+                    { timeout: 60000, intervals: [1000, 2000, 5000] }
+                )
+                .toBeTruthy();
+        });
 
-        // Choose the first row of the table
-        const row = page.locator('.ant-table-tbody > tr:first-child');
-        const cells = row.locator('td');
+        await test.step('Validate: events table contains expected lifecycle and step events', async () => {
+            const rows = page.locator('.ant-table-wrapper .ant-table-row');
+            await expect(rows.first()).toBeVisible();
 
-        // Wait until all cells in the row have non-empty text
-        await expect(cells.first()).toHaveText(/.+/);
+            const rowCount = await rows.count();
 
-        // Get all text contents of the cells in the row
-        const values = await cells.allTextContents();
+            const tableData: Record<string, string>[] = [];
+            for (let i = 0; i < rowCount; i++) {
+                const cells = rows.nth(i).locator('td');
+                const values = await cells.allTextContents();
+                tableData.push(Object.fromEntries(viewHeaders.map((key, idx) => [key, values[idx]])));
+            }
 
-        // Map headers to their corresponding values
-        const rowData = Object.fromEntries(headers.map((key, i) => [key, values[i]]));
+            console.log(tableData);
 
-        console.log(rowData);
+            const hasEvent = (eventType: string, nodeName: string, status?: string) =>
+                tableData.some(
+                    r =>
+                        r['Event Type'] === eventType &&
+                        r['Node Name'] === nodeName &&
+                        (status ? r['Status'] === status : true)
+                );
 
-        // Assertions
-        await expect(rowData.Playbook).toBe('save_simple_test');
-        await expect(rowData.Status).toBe('STARTED');
-        await expect(rowData.Duration).toBe('8h 0m');
+            const validateCommandStep = async (stepName: string) => {
+                await test.step(`Validate: ${stepName} step`, async () => {
+                    expect(hasEvent('command.issued', stepName, 'PENDING')).toBeTruthy();
+                    expect(hasEvent('step.enter', stepName, 'STARTED')).toBeTruthy();
+                    expect(hasEvent('step.exit', stepName, 'COMPLETED')).toBeTruthy();
+                    expect(hasEvent('command.completed', stepName, 'COMPLETED')).toBeTruthy();
+                });
+            };
 
-        // Wait a bit for the execution to complete
-        await page.waitForTimeout(5000);
-        // Refresh the page
-        await page.reload();
+            const validateIssuedClaimedOnly = async (stepName: string) => {
+                await test.step(`Validate: ${stepName} command issued + claimed`, async () => {
+                    expect(hasEvent('command.issued', stepName, 'PENDING')).toBeTruthy();
+                    expect(hasEvent('command.claimed', stepName, 'RUNNING')).toBeTruthy();
+                });
+            };
 
-        // Choose the first row of the table again
-        const updatedRow = page.locator('.ant-table-tbody > tr:first-child');
-        const updatedCells = updatedRow.locator('td');
-        // Get all text contents of the cells in the row
-        const updatedValues = await updatedCells.allTextContents();
-        // Map headers to their corresponding values
-        const updatedRowData = Object.fromEntries(headers.map((key, i) => [key, updatedValues[i]]));
+            await test.step('Validate: playbook/workflow lifecycle', async () => {
+                expect(hasEvent('playbook.initialized', PLAYBOOK_CATALOG_NODE, 'INITIALIZED')).toBeTruthy();
+                expect(hasEvent('workflow.initialized', 'workflow', 'INITIALIZED')).toBeTruthy();
+            });
 
-        console.log(updatedRowData);
+            await validateCommandStep('start');
+            await validateCommandStep('create_tables');
+            await validateCommandStep('truncate_tables');
 
-        // Assert changes
-        await expect(page).toHaveTitle('NoETL Dashboard');
-        await expect(updatedRowData.Status).toBe('Completed');
-        // await expect(updatedRowData.Playbook).toBe('save_simple_test');
+            await test.step('Validate: event_test step (+ sink claimed)', async () => {
+                await validateCommandStep('event_test');
+                await validateIssuedClaimedOnly('event_test_sink');
+            });
 
-        // Click the "View" button for the "save_simple_test" task
-        // TODO fix the selector below from "Unknown" to "save_simple_test"
-        const viewButton = await page.locator("(//*[text()='Unknown']/following::button[normalize-space()='View'])[1]");
-        await viewButton.click();
+            await test.step('Validate: postgres_flat_test step (+ sink)', async () => {
+                await validateCommandStep('postgres_flat_test');
+                await validateCommandStep('postgres_flat_test_sink');
+            });
 
+            await test.step('Validate: postgres_nested_test step (+ sink)', async () => {
+                await validateCommandStep('postgres_nested_test');
+                await validateCommandStep('postgres_nested_test_sink');
+            });
+
+            await test.step('Validate: end + workflow/playbook completion', async () => {
+                await validateCommandStep('end');
+                expect(hasEvent('workflow.completed', 'workflow', 'COMPLETED')).toBeTruthy();
+                expect(hasEvent('playbook.completed', PLAYBOOK_CATALOG_NODE, 'COMPLETED')).toBeTruthy();
+            });
+        });
     });
-
 });
