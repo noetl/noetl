@@ -10,6 +10,7 @@ workload:
   gcs_auth: gcs_oauth
   gcs_bucket: noetl-demo-output
   output_filename: test_export
+  server_url: http://noetl.noetl.svc.cluster.local:8082
 
 keychain:
   - name: gcs_oauth
@@ -77,7 +78,7 @@ workflow:
     tool:
       kind: python
       code: |
-        def main(gcs_auth, catalog_id, execution_id):
+        def main(gcs_auth, catalog_id, execution_id, server_url):
           """Upload a tiny file to verify GCS permissions for gcs_auth."""
           import httpx
           import json
@@ -86,7 +87,7 @@ workflow:
           from google.cloud import storage
           from google.oauth2 import service_account
 
-          base = os.environ.get("NOETL_SERVER_URL", "http://noetl.noetl.svc.cluster.local:8082").rstrip("/")
+          base = server_url.rstrip("/")
           if not base.endswith("/api"):
             base += "/api"
 
@@ -108,12 +109,26 @@ workflow:
             body = resp.json() or {}
             payload = body.get('token_data') or body.get('data')
           else:
-            # Use credentials API
+            # Try credentials API first
             resp = httpx.get(f"{base}/credentials/{cred_name}?include_data=true", timeout=10.0)
-            resp.raise_for_status()
-            payload = resp.json().get("data", {})
-            while isinstance(payload, dict) and "data" in payload:
-              payload = payload["data"]
+            if resp.status_code == 200:
+              payload = resp.json().get("data", {})
+              while isinstance(payload, dict) and "data" in payload:
+                payload = payload["data"]
+            elif resp.status_code == 404:
+              # Fallback to keychain API
+              keychain_url = f"{base}/keychain/{catalog_id}/{cred_name}"
+              params = {'scope_type': 'global'}
+              if execution_id:
+                params['execution_id'] = execution_id
+              kc_resp = httpx.get(keychain_url, params=params, timeout=10.0)
+              if kc_resp.status_code == 200:
+                body = kc_resp.json() or {}
+                payload = body.get('token_data') or body.get('data')
+              else:
+                kc_resp.raise_for_status()
+            else:
+              resp.raise_for_status()
 
           if not payload:
             raise RuntimeError(f"Failed to fetch credential or keychain data for {gcs_auth}")
@@ -142,6 +157,11 @@ workflow:
             "uri": f"gs://{bucket.name}/{blob.name}",
             "message": "GCS probe upload succeeded"
           }
+    args:
+      gcs_auth: "{{ workload.gcs_auth }}"
+      catalog_id: "{{ catalog_id }}"
+      execution_id: "{{ execution_id }}"
+      server_url: "{{ workload.server_url }}"
     next:
       - step: export_csv_local
 
@@ -180,7 +200,7 @@ workflow:
     tool:
       kind: python
       code: |
-        def main(gcs_auth, gcs_bucket, output_filename, catalog_id, execution_id):
+        def main(gcs_auth, gcs_bucket, output_filename, catalog_id, execution_id, server_url):
           """Upload CSV files to GCS"""
           import httpx
           import json
@@ -188,7 +208,7 @@ workflow:
           from google.cloud import storage
           from google.oauth2 import service_account
 
-          base = os.environ.get("NOETL_SERVER_URL", "http://noetl.noetl.svc.cluster.local:8082").rstrip("/")
+          base = server_url.rstrip("/")
           if not base.endswith("/api"):
             base += "/api"
 
@@ -210,12 +230,26 @@ workflow:
             body = resp.json() or {}
             payload = body.get('token_data') or body.get('data')
           else:
-            # Use credentials API
+            # Try credentials API first
             resp = httpx.get(f"{base}/credentials/{cred_name}?include_data=true", timeout=10.0)
-            resp.raise_for_status()
-            payload = resp.json().get("data", {})
-            while isinstance(payload, dict) and "data" in payload:
-              payload = payload["data"]
+            if resp.status_code == 200:
+              payload = resp.json().get("data", {})
+              while isinstance(payload, dict) and "data" in payload:
+                payload = payload["data"]
+            elif resp.status_code == 404:
+              # Fallback to keychain API
+              keychain_url = f"{base}/keychain/{catalog_id}/{cred_name}"
+              params = {'scope_type': 'global'}
+              if execution_id:
+                params['execution_id'] = execution_id
+              kc_resp = httpx.get(keychain_url, params=params, timeout=10.0)
+              if kc_resp.status_code == 200:
+                body = kc_resp.json() or {}
+                payload = body.get('token_data') or body.get('data')
+              else:
+                kc_resp.raise_for_status()
+            else:
+              resp.raise_for_status()
 
           if not payload:
             raise RuntimeError(f"Failed to fetch credential or keychain data for {gcs_auth}")
@@ -256,6 +290,7 @@ workflow:
         output_filename: "{{ workload.output_filename }}"
         catalog_id: "{{ catalog_id }}"
         execution_id: "{{ execution_id }}"
+        server_url: "{{ workload.server_url }}"
     next:
       - step: create_excel_and_upload
 
@@ -264,7 +299,7 @@ workflow:
     tool:
       kind: python
       code: |
-        def main(gcs_auth, gcs_bucket, output_filename, catalog_id, execution_id):
+        def main(gcs_auth, gcs_bucket, output_filename, catalog_id, execution_id, server_url):
           """
           1. Download CSVs from GCS using service account credential
           2. Create multi-sheet Excel
@@ -283,9 +318,9 @@ workflow:
             blob.download_to_filename(local_path)
             return local_path
 
-          server_url = os.environ.get("NOETL_SERVER_URL", "http://noetl.noetl.svc.cluster.local:8082")
-          if not server_url.endswith("/api"):
-            server_url = server_url + "/api"
+          base = server_url.rstrip("/")
+          if not base.endswith("/api"):
+            base = base + "/api"
 
           # Check if this is a keychain reference
           is_keychain = gcs_auth.lower().startswith('keychain:') or gcs_auth.lower().startswith('kc:')
@@ -295,7 +330,7 @@ workflow:
 
           if is_keychain:
             # Use keychain API
-            keychain_url = f"{server_url}/keychain/{catalog_id}/{cred_name}"
+            keychain_url = f"{base}/keychain/{catalog_id}/{cred_name}"
             params = {'scope_type': 'global'}
             if execution_id:
               params['execution_id'] = execution_id
@@ -305,13 +340,27 @@ workflow:
             body = resp.json() or {}
             cred = body.get('token_data') or body.get('data')
           else:
-            # Use credentials API
-            resp = httpx.get(f"{server_url}/credentials/{cred_name}?include_data=true", timeout=10.0)
-            resp.raise_for_status()
-            body = resp.json() or {}
-            cred = body.get("data", {})
-            while isinstance(cred, dict) and "data" in cred and isinstance(cred["data"], dict):
-              cred = cred["data"]
+            # Try credentials API first
+            resp = httpx.get(f"{base}/credentials/{cred_name}?include_data=true", timeout=10.0)
+            if resp.status_code == 200:
+              body = resp.json() or {}
+              cred = body.get("data", {})
+              while isinstance(cred, dict) and "data" in cred and isinstance(cred["data"], dict):
+                cred = cred["data"]
+            elif resp.status_code == 404:
+              # Fallback to keychain API
+              keychain_url = f"{base}/keychain/{catalog_id}/{cred_name}"
+              params = {'scope_type': 'global'}
+              if execution_id:
+                params['execution_id'] = execution_id
+              kc_resp = httpx.get(keychain_url, params=params, timeout=10.0)
+              if kc_resp.status_code == 200:
+                body = kc_resp.json() or {}
+                cred = body.get('token_data') or body.get('data')
+              else:
+                kc_resp.raise_for_status()
+            else:
+              resp.raise_for_status()
 
           if not cred:
             raise RuntimeError(f"Failed to fetch credential or keychain data for {gcs_auth}")
@@ -386,18 +435,109 @@ workflow:
       gcs_bucket: "{{ workload.gcs_bucket }}"
       catalog_id: "{{ catalog_id }}"
       execution_id: "{{ execution_id }}"
-    case:
-      - when: "{{ event.name == 'call.done' and result.status == 'success' }}"
-        then:
-          sink:
-            tool:
-              kind: gcs
-              source: "{{ result.local_path }}"
-              destination: "gs://{{ workload.gcs_bucket }}/exports/{{ workload.output_filename }}.xlsx"
-              credential: "{{ workload.gcs_auth }}"
-              content_type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-          next:
-            - step: cleanup
+      server_url: "{{ workload.server_url }}"
+    next:
+      - step: upload_excel_to_gcs
+
+  - step: upload_excel_to_gcs
+    desc: Upload Excel file to GCS
+    tool:
+      kind: python
+      code: |
+        def main(excel_path, gcs_auth, gcs_bucket, output_filename, catalog_id, execution_id, server_url):
+          """Upload Excel file to GCS"""
+          import httpx
+          import json
+          import os
+          from google.cloud import storage
+          from google.oauth2 import service_account
+
+          base = server_url.rstrip("/")
+          if not base.endswith("/api"):
+            base += "/api"
+
+          # Check if this is a keychain reference
+          is_keychain = gcs_auth.lower().startswith('keychain:') or gcs_auth.lower().startswith('kc:')
+          cred_name = gcs_auth.split(":", 1)[-1] if ':' in gcs_auth else gcs_auth
+
+          payload = None
+
+          if is_keychain:
+            # Use keychain API
+            keychain_url = f"{base}/keychain/{catalog_id}/{cred_name}"
+            params = {'scope_type': 'global'}
+            if execution_id:
+              params['execution_id'] = execution_id
+
+            resp = httpx.get(keychain_url, params=params, timeout=10.0)
+            resp.raise_for_status()
+            body = resp.json() or {}
+            payload = body.get('token_data') or body.get('data')
+          else:
+            # Try credentials API first
+            resp = httpx.get(f"{base}/credentials/{cred_name}?include_data=true", timeout=10.0)
+            if resp.status_code == 200:
+              payload = resp.json().get("data", {})
+              while isinstance(payload, dict) and "data" in payload:
+                payload = payload["data"]
+            elif resp.status_code == 404:
+              # Fallback to keychain API
+              keychain_url = f"{base}/keychain/{catalog_id}/{cred_name}"
+              params = {'scope_type': 'global'}
+              if execution_id:
+                params['execution_id'] = execution_id
+              kc_resp = httpx.get(keychain_url, params=params, timeout=10.0)
+              if kc_resp.status_code == 200:
+                body = kc_resp.json() or {}
+                payload = body.get('token_data') or body.get('data')
+              else:
+                kc_resp.raise_for_status()
+            else:
+              resp.raise_for_status()
+
+          if not payload:
+            raise RuntimeError(f"Failed to fetch credential or keychain data for {gcs_auth}")
+
+          sa = payload.get("service_account_json") or payload.get("service_account_key")
+          if isinstance(sa, str):
+            sa = json.loads(sa)
+          if not sa:
+            raise RuntimeError("Missing service_account_json or service_account_key in credential/keychain data")
+
+          creds = service_account.Credentials.from_service_account_info(sa)
+          client = storage.Client(credentials=creds, project=sa.get("project_id"))
+          bucket = client.bucket(gcs_bucket)
+
+          # Upload the Excel file
+          blob_name = f"exports/{output_filename}.xlsx"
+          blob = bucket.blob(blob_name)
+
+          if not os.path.exists(excel_path):
+            raise FileNotFoundError(f"Excel file not found: {excel_path}")
+
+          blob.upload_from_filename(
+            excel_path,
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+          )
+
+          # Clean up local file
+          os.remove(excel_path)
+
+          return {
+            "status": "success",
+            "uri": f"gs://{gcs_bucket}/{blob_name}",
+            "message": f"Excel file uploaded to GCS"
+          }
+    args:
+      excel_path: "{{ create_excel_and_upload.local_path }}"
+      gcs_auth: "{{ workload.gcs_auth }}"
+      gcs_bucket: "{{ workload.gcs_bucket }}"
+      output_filename: "{{ workload.output_filename }}"
+      catalog_id: "{{ catalog_id }}"
+      execution_id: "{{ execution_id }}"
+      server_url: "{{ workload.server_url }}"
+    next:
+      - step: cleanup
 
   - step: cleanup
     desc: Cleanup test tables

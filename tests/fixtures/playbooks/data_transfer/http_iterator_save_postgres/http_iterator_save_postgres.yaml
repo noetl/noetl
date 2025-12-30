@@ -81,10 +81,10 @@ workflow:
               id: "{{ execution_id }}:{{ city.name }}"
               execution_id: "{{ execution_id }}"
               city_name: "{{ city.name }}"
-              temperature: {{ response.data.current.temperature_2m | float }}
-              latitude: {{ city.lat | float }}
-              longitude: {{ city.lon | float }}
-              http_status: {{ response.status_code | int }}
+              temperature: "{{ result.data.current.temperature_2m | float }}"
+              latitude: "{{ city.lat | float }}"
+              longitude: "{{ city.lon | float }}"
+              http_status: "{{ result.status_code | int }}"
       - when: "{{ event.name == 'call.done' and (response is not defined or response.status_code != 200) }}"
         then:
           log: "fetch_weather_data skipped for {{ city.name }}: status={{ response.status_code if response is defined else 'n/a' }}"
