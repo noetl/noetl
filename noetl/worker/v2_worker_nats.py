@@ -271,10 +271,12 @@ class V2Worker:
         jinja_env = Environment()
         
         # Build evaluation context with response
+        # Support both call.done and step.exit event names in conditions
+        # The engine uses step.exit for post-step sinks, so we provide both
         eval_context = {
             **render_context,
             'response': response,
-            'event': {'name': 'call.done'},  # Simulate call.done event
+            'event': {'name': 'step.exit'},  # Use step.exit to match playbook conditions
             'error': response.get('error') if isinstance(response, dict) else None
         }
         
@@ -302,9 +304,17 @@ class V2Worker:
             
             # Evaluate condition
             try:
-                template = jinja_env.from_string("{{ " + when_condition + " }}")
+                # when_condition is already a Jinja2 template (e.g., "{{ event.name == 'step.exit' }}")
+                # so render it directly without wrapping it again
+                template = jinja_env.from_string(when_condition)
                 result = template.render(eval_context)
-                condition_met = result.lower() in ('true', '1', 'yes')
+                # Result should be a boolean or string that evaluates to boolean
+                if isinstance(result, bool):
+                    condition_met = result
+                elif isinstance(result, str):
+                    condition_met = result.lower() in ('true', '1', 'yes')
+                else:
+                    condition_met = bool(result)
                 
                 logger.info(f"[SINK] Condition result: {result} -> {condition_met}")
                 
@@ -428,6 +438,17 @@ class V2Worker:
             
             # Execute tool
             response = await self._execute_tool(tool_kind, tool_config, args, step, render_context)
+            
+            print(f"\n{'='*80}")
+            print(f"[DEBUG] After tool execution for step: {step}")
+            print(f"[DEBUG] case_blocks type: {type(case_blocks)}, value: {case_blocks}")
+            print(f"[DEBUG] case_blocks is None: {case_blocks is None}")
+            print(f"[DEBUG] case_blocks bool: {bool(case_blocks)}")
+            if case_blocks:
+                print(f"[DEBUG] case_blocks length: {len(case_blocks)}")
+                for idx, cb in enumerate(case_blocks):
+                    print(f"[DEBUG] case_block[{idx}]: {cb}")
+            print(f"{'='*80}\n")
             
             logger.critical(f"[DEBUG] context has_case={'case' in context} | case_blocks={case_blocks is not None} | case_count={len(case_blocks) if case_blocks else 0}")
             

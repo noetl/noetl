@@ -52,12 +52,13 @@ def handle_gcs_storage(
         from noetl.tools.gcs import execute_gcs_task
 
         # Resolve source path from explicit config or rendered payloads
-        source = tool_config.get("source")
+        # Support both 'source' and 'source_path' fields
+        source = tool_config.get("source") or tool_config.get("source_path")
         if not source:
             if isinstance(rendered_data, str):
                 source = rendered_data
             elif isinstance(rendered_data, dict):
-                for key in ("local_path", "path", "file", "filepath", "filename", "output_path"):
+                for key in ("local_path", "path", "file", "filepath", "filename", "output_path", "source_path"):
                     if rendered_data.get(key):
                         source = rendered_data[key]
                         break
@@ -67,7 +68,8 @@ def handle_gcs_storage(
         logger.info(f"GCS.STORAGE: Source file: {source}")
 
         # Resolve destination URI
-        destination = tool_config.get("destination") or tool_config.get("uri")
+        # Support both 'destination', 'uri', and 'destination_uri' fields
+        destination = tool_config.get("destination") or tool_config.get("uri") or tool_config.get("destination_uri")
         if not destination:
             raise ValueError("GCS sink requires a destination GCS URI")
 

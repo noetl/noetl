@@ -73,23 +73,36 @@ def execute_sink_task(
         - meta: Metadata about tool operation
         - error: Error message (if error)
     """
+    print(f"\n{'='*80}")
+    print(f"SINK.EXECUTOR: execute_sink_task CALLED")
+    print(f"task_config keys: {list(task_config.keys()) if isinstance(task_config, dict) else type(task_config)}")
+    print(f"task_config: {task_config}")
+    print(f"{'='*80}\n")
     logger.critical(f"SINK.EXECUTOR: execute_sink_task CALLED | task_config={task_config}")
+    
+    print(f"[SINK DEBUG] About to check task_config type - isinstance={isinstance(task_config, dict)}")
+    print(f"[SINK DEBUG] Context type: {type(context)}")
+    print(f"[SINK DEBUG] jinja_env type: {type(jinja_env)}")
     
     try:
         # Step 0: Render task_config to resolve any template variables
         # This ensures credential references like "{{ workload.gcs_auth }}" are resolved
         import json
         
+        print(f"[SINK DEBUG] Defining render_value function...")
+        
         def render_value(value, context, path="root"):
             """Recursively render a value (str, dict, list) with Jinja2."""
+            print(f"[SINK DEBUG] render_value called: path={path}, value_type={type(value)}")
             if isinstance(value, str):
                 # Render string templates
                 try:
                     template = jinja_env.from_string(value)
                     rendered = template.render(context)
-                    logger.critical(f"SINK.EXECUTOR: Rendered {path}: '{value}' -> '{rendered}'")
+                    print(f"[SINK DEBUG] Rendered {path}: '{value}' -> '{rendered}'")
                     return rendered
                 except Exception as e:
+                    print(f"[SINK DEBUG] ERROR rendering {path}: {e}")
                     logger.error(f"SINK.EXECUTOR: Failed to render string at {path}: '{value}' | Error: {e}", exc_info=True)
                     raise ValueError(f"Template rendering failed at {path}: {e}")
             elif isinstance(value, dict):
@@ -104,14 +117,16 @@ def execute_sink_task(
         
         rendered_task_config = {}
         if isinstance(task_config, dict):
-            logger.critical(f"SINK.EXECUTOR: Context keys: {list(context.keys()) if isinstance(context, dict) else type(context)}")
-            logger.critical(f"SINK.EXECUTOR: Context workload: {context.get('workload') if isinstance(context, dict) else 'N/A'}")
-            logger.critical(f"SINK.EXECUTOR: Original task_config: {task_config}")
+            print(f"[SINK DEBUG] Task config is dict - starting render")
+            print(f"[SINK DEBUG] Context keys: {list(context.keys()) if isinstance(context, dict) else type(context)}")
+            print(f"[SINK DEBUG] Context workload: {context.get('workload') if isinstance(context, dict) else 'N/A'}")
+            print(f"[SINK DEBUG] Original task_config: {task_config}")
             
             try:
                 # Render dict recursively BEFORE any JSON operations
+                print(f"[SINK DEBUG] About to call render_value...")
                 rendered_task_config = render_value(task_config, context)
-                logger.critical(f"SINK.EXECUTOR: Rendered task config SUCCESS: {rendered_task_config}")
+                print(f"[SINK DEBUG] Rendered task config SUCCESS: {rendered_task_config}")
             except Exception as e:
                 logger.error(f"SINK.EXECUTOR: Template rendering error: {e}", exc_info=True)
                 logger.error(f"SINK.EXECUTOR: Problematic task_config: {task_config}")
@@ -121,7 +136,10 @@ def execute_sink_task(
             logger.critical(f"SINK.EXECUTOR: task_config not a dict, using as-is: {type(task_config)}")
         
         # Step 1: Extract sink configuration (now using rendered config)
+        print(f"[SINK DEBUG] About to call extract_sink_config...")
+        print(f"[SINK DEBUG] rendered_task_config: {rendered_task_config}")
         config = extract_sink_config(rendered_task_config)
+        print(f"[SINK DEBUG] extract_sink_config returned: {config}")
         
         kind = config['kind']
         logger.critical(f"SINK.EXECUTOR: Extracted sink config | kind={kind} | config={config}")
