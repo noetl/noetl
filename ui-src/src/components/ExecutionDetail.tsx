@@ -71,6 +71,8 @@ const ExecutionDetail: React.FC = () => {
         setLoading(true);
         setError(null);
         const data = await apiService.getExecution(id!);
+        data.events?.reverse(); // Show latest events first
+        console.log('data.events reversed on ui how mut');
         setExecution(data);
 
         // Extract events from execution data or create demo events if not available
@@ -84,6 +86,7 @@ const ExecutionDetail: React.FC = () => {
         setLoading(false);
       }
     };
+    fetchExecution();
     const fetchExecutionForTimeout = async () => {
       try {
 
@@ -100,11 +103,10 @@ const ExecutionDetail: React.FC = () => {
         setError("Failed to load execution details.");
       }
     };
-    fetchExecution();
     const interval = setInterval(() => {
       console.log('Refreshing execution data for id:', id);
       fetchExecutionForTimeout();
-    }, 2000); // Refresh every 2 seconds
+    }, 5000); // Refresh every 5 seconds
     return () => clearInterval(interval);
   }, [id]);
 
@@ -322,7 +324,7 @@ const ExecutionDetail: React.FC = () => {
       key: "duration",
       render: (d: number) => {
         if (!d || d === 0) return "-";
-        
+
         // Duration is in milliseconds
         if (d < 1000) {
           return `${d.toFixed(0)}ms`;

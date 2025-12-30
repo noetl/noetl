@@ -58,3 +58,6 @@ ci/.venv
 
 .git
 __pycache__
+
+# -- submodules --
+submodules/
