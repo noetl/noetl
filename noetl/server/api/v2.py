@@ -191,23 +191,25 @@ async def start_execution(req: StartExecutionRequest) -> StartExecutionResponse:
                         "max_attempts": command.max_attempts or 3,
                         "attempt": 1,
                         "playbook_path": path,
-                        "catalog_id": catalog_id,
+                        "catalog_id": str(catalog_id),
                         "metadata": command.metadata,
                         # Traceability fields
                         "execution_id": str(execution_id),
-                        "root_event_id": root_event_id,
-                        "event_chain": [root_event_id, playbook_init_event_id, event_id] if root_event_id else [event_id]
+                        "root_event_id": str(root_event_id) if root_event_id else None,
+                        "event_chain": [str(root_event_id) if root_event_id else None, str(playbook_init_event_id) if playbook_init_event_id else None, str(event_id)]
                     }
                     
                     # Ensure context has traceability fields
+                    # CRITICAL: Convert all IDs to strings to prevent JavaScript precision loss with Snowflake IDs
                     context_data = {
                         "tool_config": command.tool.config,
                         "args": command.args or {},
                         "render_context": command.render_context,
+                        "case": command.case,  # Include case blocks for worker-side execution
                         # Add traceability to context for easy access
                         "execution_id": str(execution_id),
-                        "catalog_id": catalog_id,
-                        "root_event_id": root_event_id
+                        "catalog_id": str(catalog_id),
+                        "root_event_id": str(root_event_id) if root_event_id else None
                     }
                     
                     # Insert command.issued event
@@ -421,7 +423,11 @@ async def handle_event(req: EventRequest) -> EventResponse:
                         Json({
                             "tool_config": command.tool.config,
                             "args": command.args or {},
-                            "render_context": command.render_context
+                            "render_context": command.render_context,
+                            "case": command.case,  # Pass case blocks to worker for immediate sink execution
+                            # Add traceability fields as strings
+                            "execution_id": str(command.execution_id),
+                            "catalog_id": str(catalog_id)
                         }),
                         Json({
                             "command_id": command_id,
@@ -430,9 +436,9 @@ async def handle_event(req: EventRequest) -> EventResponse:
                             "priority": command.priority,
                             "max_attempts": command.max_attempts or 3,
                             "attempt": 1,
-                            "catalog_id": catalog_id,
+                            "catalog_id": str(catalog_id),
                             "triggered_by": "event_handler",
-                            "triggering_event_id": triggering_event_id,
+                            "triggering_event_id": str(triggering_event_id) if triggering_event_id else None,
                             "metadata": command.metadata,
                             "event_type": event.name,
                             "event_step": event.step

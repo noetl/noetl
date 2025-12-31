@@ -20,7 +20,9 @@ def configure_cloud_credentials(
     connection: Any,
     uri_scopes: Dict[str, Set[str]],
     task_config: Dict[str, Any],
-    task_with: Dict[str, Any]
+    task_with: Dict[str, Any],
+    catalog_id: Optional[int] = None,
+    execution_id: Optional[int] = None
 ) -> int:
     """
     Auto-configure cloud credentials for detected URI scopes.
@@ -42,12 +44,26 @@ def configure_cloud_credentials(
     try:
         # Configure GCS credentials
         if uri_scopes.get('gs'):
-            gcs_count = _configure_gcs_credentials(connection, uri_scopes['gs'], task_config, task_with)
+            gcs_count = _configure_gcs_credentials(
+                connection,
+                uri_scopes['gs'],
+                task_config,
+                task_with,
+                catalog_id=catalog_id,
+                execution_id=execution_id,
+            )
             secrets_created += gcs_count
             
         # Configure S3 credentials  
         if uri_scopes.get('s3'):
-            s3_count = _configure_s3_credentials(connection, uri_scopes['s3'], task_config, task_with)
+            s3_count = _configure_s3_credentials(
+                connection,
+                uri_scopes['s3'],
+                task_config,
+                task_with,
+                catalog_id=catalog_id,
+                execution_id=execution_id,
+            )
             secrets_created += s3_count
             
         return secrets_created
@@ -60,10 +76,16 @@ def _configure_gcs_credentials(
     connection: Any,
     gcs_scopes: Set[str],
     task_config: Dict[str, Any],
-    task_with: Dict[str, Any]
+    task_with: Dict[str, Any],
+    catalog_id: Optional[int] = None,
+    execution_id: Optional[int] = None
 ) -> int:
     """
     Configure GCS credentials for detected scopes.
+    
+    Supports both service account key files and HMAC keys:
+    - Service account JSON: Uses TOKEN credential type with key file content
+    - HMAC keys: Uses KEY_ID/SECRET credential type
     
     Args:
         connection: DuckDB connection
@@ -86,6 +108,8 @@ def _configure_gcs_credentials(
         os.environ.get('NOETL_GCS_CREDENTIAL')
     )
     
+    logger.debug(f"[GCS DEBUG] credential lookup: task_config.gcs_credential={task_config.get('gcs_credential')}, task_with.gcs_credential={task_with.get('gcs_credential')}, resolved cred_name={cred_name}")
+    logger.info(f"GCS credential lookup: task_config.gcs_credential={task_config.get('gcs_credential')}, task_with.gcs_credential={task_with.get('gcs_credential')}, resolved cred_name={cred_name}")
     logger.debug(f"Auto-configuring GCS credentials with cred_name={cred_name}")
     
     if not cred_name:
@@ -93,82 +117,541 @@ def _configure_gcs_credentials(
         return 0
         
     try:
-        credential_data = _fetch_credential(cred_name)
+        logger.debug(f"[GCS DEBUG] About to fetch credential: {cred_name}")
+        credential_data = _fetch_credential(
+            cred_name,
+            catalog_id=catalog_id,
+            execution_id=execution_id,
+        )
+        logger.debug(f"[GCS DEBUG] Fetched credential_data keys: {list(credential_data.keys()) if credential_data else 'None'}")
         if not credential_data:
+            logger.debug(f"[GCS DEBUG] No credential data returned for {cred_name}")
             return 0
-            
-        key_id = credential_data.get('key_id')
-        secret = credential_data.get('secret_key') or credential_data.get('secret')
-        endpoint = credential_data.get('endpoint') or 'storage.googleapis.com'
-        region = credential_data.get('region') or 'auto'
-        url_style = credential_data.get('url_style') or 'path'
-        scope_from_cred = credential_data.get('scope')
         
-        if not (key_id and secret):
-            logger.warning("GCS credential missing key_id or secret, skipping auto-configuration")
-            return 0
-            
-        # Ensure httpfs extension is loaded
+        # Ensure extensions are installed and loaded
         try:
-            connection.execute("LOAD httpfs;")
-        except Exception:
-            pass
-            
-        # Use credential scope if provided, otherwise use detected scopes
-        scopes_to_configure = [scope_from_cred] if scope_from_cred else sorted(gcs_scopes)
-        secrets_created = 0
+            connection.execute("INSTALL httpfs; LOAD httpfs;")
+            logger.debug("[GCS DEBUG] httpfs extension installed and loaded")
+        except Exception as e:
+            logger.exception(f"[GCS DEBUG] Warning: failed to install/load httpfs: {e}")
+
+        # For modern DuckDB versions, we might also need the 'gcs' extension
+        try:
+            connection.execute("INSTALL gcs; LOAD gcs;")
+            logger.debug("[GCS DEBUG] gcs extension installed and loaded")
+        except Exception as e:
+            logger.exception(f"[GCS DEBUG] Warning: failed to install/load gcs: {e}")
         
+        # Check if this is a service account token/key file
+        service_account_key = credential_data.get('service_account_key')
+        service_account_json = credential_data.get('service_account_json')
+        token = credential_data.get('token')
+        
+        logger.debug(f"[GCS DEBUG] Credential type check: sa_key={bool(service_account_key)}, sa_json={bool(service_account_json)}, token={bool(token)}")
+        logger.info(f"GCS credential type detection: service_account_key={bool(service_account_key)}, service_account_json={bool(service_account_json)}, token={bool(token)}")
+        
+        if service_account_key or service_account_json or token:
+            # Use TOKEN-based authentication for service accounts
+            return _configure_gcs_token_auth(
+                connection, gcs_scopes, credential_data, cred_name
+            )
+        else:
+            # Use HMAC key-based authentication (legacy)
+            return _configure_gcs_hmac_auth(
+                connection, gcs_scopes, credential_data, cred_name
+            )
+            
+    except Exception as e:
+        logger.exception(f"Failed to auto-configure GCS credentials from '{cred_name}': {e}")
+        return 0
+
+
+def _configure_gcs_token_auth(
+    connection: Any,
+    gcs_scopes: Set[str],
+    credential_data: Dict[str, Any],
+    cred_name: str
+) -> int:
+    """
+    Configure GCS using service account token/key file authentication.
+    
+    DuckDB's httpfs extension supports GCS authentication via service account
+    key files. We write the JSON to a temp file and configure httpfs to use it.
+
+    Args:
+        connection: DuckDB connection
+        gcs_scopes: Set of GCS URI scopes
+        credential_data: Credential data
+        cred_name: Credential name for logging
+
+    Returns:
+        Number of GCS secrets created
+    """
+    # Support multiple field names for service account credentials
+    service_account_key = (
+        credential_data.get('service_account_key') or 
+        credential_data.get('service_account_json') or
+        credential_data.get('token')
+    )
+    scope_from_cred = credential_data.get('scope')
+
+    logger.debug(f"[TOKEN AUTH DEBUG] service_account_key type: {type(service_account_key)}, is_dict: {isinstance(service_account_key, dict)}")
+
+    if not service_account_key:
+        logger.debug(f"[TOKEN AUTH DEBUG] No service_account_key found!")
+        logger.warning(f"GCS credential '{cred_name}' missing service_account_key, service_account_json, or token")
+        return 0
+
+    # If service_account_key is a dict (JSON object), convert to JSON string
+    if isinstance(service_account_key, dict):
+        import json
+        service_account_key_str = json.dumps(service_account_key)
+        logger.debug(f"[TOKEN AUTH DEBUG] Converted dict to JSON string, length: {len(service_account_key_str)}")
+    else:
+        service_account_key_str = str(service_account_key)
+
+    # Use credential scope if provided, otherwise use detected scopes
+    scopes_to_configure = [scope_from_cred] if scope_from_cred else sorted(gcs_scopes)
+    secrets_created = 0
+
+    logger.debug(f"[TOKEN AUTH DEBUG] scopes_to_configure: {scopes_to_configure}")
+
+    # Write service account JSON to a persistent temp file
+    import tempfile
+    import os
+    temp_key_file = None
+    try:
+        # Create temp file that persists for the process lifetime
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+            f.write(service_account_key_str)
+            temp_key_file = f.name
+            logger.debug(f"[TOKEN AUTH DEBUG] Wrote service account JSON to {temp_key_file}")
+
+        # Set GOOGLE_APPLICATION_CREDENTIALS environment variable
+        # This is required for DuckDB's GCS extension to find the credentials
+        os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = temp_key_file
+        logger.debug(f"[TOKEN AUTH DEBUG] Set GOOGLE_APPLICATION_CREDENTIALS={temp_key_file}")
+        logger.info(f"Configured Google ADC with service account key file: {temp_key_file}")
+
+        # Configure httpfs to use the service account credentials
+        # Use SET to configure the GCS authentication for httpfs extension
+        try:
+            # Set the GCS service account path for httpfs
+            connection.execute("SET gcs_access_token='';")  # Clear any existing token
+            logger.debug("[TOKEN AUTH DEBUG] Cleared GCS access token")
+            
+            # Configure global S3 settings for GCS compatibility via httpfs
+            connection.execute("SET s3_url_style='path';")
+            connection.execute("SET s3_endpoint='storage.googleapis.com';")
+            connection.execute("SET s3_region='auto';")
+            connection.execute("SET s3_use_ssl=true;")
+            logger.debug("[TOKEN AUTH DEBUG] Configured global S3 settings for GCS compatibility")
+        except Exception as e:
+            logger.exception(f"[TOKEN AUTH DEBUG] Could not configure global S3 settings: {e}")
+
+        # Create DuckDB GCS secrets for each scope with explicit credential path
         for scope in scopes_to_configure:
             if not scope:
                 continue
-                
-            scope_tag = re.sub(r"[^a-zA-Z0-9_]+", "_", scope)
+
+            # DuckDB scope matching is prefix-based.
+            # We ensure the scope has the scheme and ends with a slash for better prefix matching.
+            actual_scope = scope
+            if actual_scope.startswith('gs://') and not actual_scope.endswith('/'):
+                actual_scope = f"{actual_scope}/"
+            
+            # For S3 fallback, we also want to match the translated HTTPS URL
+            https_scope = actual_scope.replace('gs://', 'https://storage.googleapis.com/')
+            
+            scope_tag = re.sub(r"[^a-zA-Z0-9_]+", "_", actual_scope.rstrip('/'))
             secret_name = f"noetl_auto_gcs_{scope_tag}"
+
+            logger.debug(f"[TOKEN AUTH DEBUG] Creating secret {secret_name} for scope {actual_scope}")
+
+            # Fallback for when modern providers are not available or fail
+            # We want to ensure S3 secrets are also created as fallbacks for httpfs
+            # We will try to create them using whatever method we can
             
-            # Try GCS-specific secret type first
-            ddl_gcs = f"""
-                CREATE OR REPLACE SECRET {secret_name} (
-                    TYPE GCS,
-                    KEY_ID '{escape_sql(key_id)}',
-                    SECRET '{escape_sql(secret)}',
-                    SCOPE '{escape_sql(scope)}'
-                );
-            """
-            
+            # Helper to create S3 fallback secrets
+            def create_s3_fallbacks(conn, name_base, sa_key, scope_gs, scope_https, key_file):
+                s3_count = 0
+                try:
+                    s3_name = f"{name_base}_s3_fallback"
+                    s3_https_name = f"{name_base}_s3_https_fallback"
+                    
+                    # Apply global S3 settings before creating secrets
+                    try:
+                        conn.execute("SET s3_url_style='path';")
+                        conn.execute("SET s3_endpoint='storage.googleapis.com';")
+                        conn.execute("SET s3_region='auto';")
+                        conn.execute("SET s3_use_ssl=true;")
+                    except Exception as set_ex:
+                        logger.exception(f"[TOKEN AUTH DEBUG] S3 fallback: could not set global settings: {set_ex}")
+
+                    if isinstance(sa_key, dict):
+                        import json
+                        escaped_json = json.dumps(sa_key).replace("'", "''")
+                        # Try PROVIDER GCS with JSON_KEY (requires httpfs + specific gcs bridge)
+                        try:
+                            conn.execute(f"CREATE OR REPLACE SECRET {s3_name} (TYPE S3, PROVIDER GCS, JSON_KEY '{escaped_json}', SCOPE '{escape_sql(scope_gs)}', ENDPOINT 'storage.googleapis.com', REGION 'auto', URL_STYLE 'path', USE_SSL 'true');")
+                            conn.execute(f"CREATE OR REPLACE SECRET {s3_https_name} (TYPE S3, PROVIDER GCS, JSON_KEY '{escaped_json}', SCOPE '{escape_sql(scope_https)}', ENDPOINT 'storage.googleapis.com', REGION 'auto', URL_STYLE 'path', USE_SSL 'true');")
+                            logger.debug(f"[TOKEN AUTH DEBUG] Created S3 fallback secrets with PROVIDER GCS for {scope_gs}")
+                            s3_count += 2
+                        except Exception as e:
+                            logger.exception(f"[TOKEN AUTH DEBUG] PROVIDER GCS failed, trying simple S3: {e}")
+                            # Try simple S3 secret with KEY_ID as JSON
+                            ddl_s3 = f"CREATE OR REPLACE SECRET {s3_name} (TYPE S3, KEY_ID '{escaped_json}', SCOPE '{escape_sql(scope_gs)}', ENDPOINT 'storage.googleapis.com', REGION 'auto', URL_STYLE 'path', USE_SSL 'true');"
+                            ddl_s3_https = f"CREATE OR REPLACE SECRET {s3_https_name} (TYPE S3, KEY_ID '{escaped_json}', SCOPE '{escape_sql(scope_https)}', ENDPOINT 'storage.googleapis.com', REGION 'auto', URL_STYLE 'path', USE_SSL 'true');"
+                            logger.exception(f"[TOKEN AUTH DEBUG] Executing simple S3 fallback: {ddl_s3[:150]}...")
+                            conn.execute(ddl_s3)
+                            conn.execute(ddl_s3_https)
+                            logger.exception(f"[TOKEN AUTH DEBUG] Created simple S3 fallback secrets for {scope_gs}")
+                            s3_count += 2
+
+                        # ALSO create a generic S3 secret without scope for storage.googleapis.com
+                        try:
+                            conn.execute(f"CREATE OR REPLACE SECRET {s3_name}_generic (TYPE S3, KEY_ID '{escaped_json}', ENDPOINT 'storage.googleapis.com', REGION 'auto', URL_STYLE 'path', USE_SSL 'true');")
+                            logger.debug(f"[TOKEN AUTH DEBUG] Created generic S3 fallback secret for storage.googleapis.com")
+                            s3_count += 1
+                        except Exception as e:
+                            logger.exception(f"[TOKEN AUTH DEBUG] Generic S3 fallback failed: {e}")
+                    else:
+                        # Try PROVIDER GCS with KEY_FILE
+                        try:
+                            conn.execute(f"CREATE OR REPLACE SECRET {s3_name} (TYPE S3, PROVIDER GCS, KEY_FILE '{key_file}', SCOPE '{escape_sql(scope_gs)}', ENDPOINT 'storage.googleapis.com', REGION 'auto', URL_STYLE 'path', USE_SSL 'true');")
+                            conn.execute(f"CREATE OR REPLACE SECRET {s3_https_name} (TYPE S3, PROVIDER GCS, KEY_FILE '{key_file}', SCOPE '{escape_sql(scope_https)}', ENDPOINT 'storage.googleapis.com', REGION 'auto', URL_STYLE 'path', USE_SSL 'true');")
+                            logger.debug(f"[TOKEN AUTH DEBUG] Created S3 fallback secrets with PROVIDER GCS and KEY_FILE for {scope_gs}")
+                            s3_count += 2
+                        except Exception as e:
+                            logger.exception(f"[TOKEN AUTH DEBUG] PROVIDER GCS with KEY_FILE failed, trying simple S3: {e}")
+                            # Try simple S3 secret with KEY_ID as file path
+                            ddl_s3 = f"CREATE OR REPLACE SECRET {s3_name} (TYPE S3, KEY_ID '{key_file}', SCOPE '{escape_sql(scope_gs)}', ENDPOINT 'storage.googleapis.com', REGION 'auto', URL_STYLE 'path', USE_SSL 'true');"
+                            ddl_s3_https = f"CREATE OR REPLACE SECRET {s3_https_name} (TYPE S3, KEY_ID '{key_file}', SCOPE '{escape_sql(scope_https)}', ENDPOINT 'storage.googleapis.com', REGION 'auto', URL_STYLE 'path', USE_SSL 'true');"
+                            logger.exception(f"[TOKEN AUTH DEBUG] Executing simple S3 fallback with KEY_FILE: {ddl_s3[:150]}...")
+                            conn.execute(ddl_s3)
+                            conn.execute(ddl_s3_https)
+                            logger.exception(f"[TOKEN AUTH DEBUG] Created simple S3 fallback secrets with KEY_FILE for {scope_gs}")
+                            s3_count += 2
+
+                        # ALSO create a generic S3 secret without scope for storage.googleapis.com
+                        try:
+                            conn.execute(f"CREATE OR REPLACE SECRET {s3_name}_generic (TYPE S3, KEY_ID '{key_file}', ENDPOINT 'storage.googleapis.com', REGION 'auto', URL_STYLE 'path', USE_SSL 'true');")
+                            logger.debug(f"[TOKEN AUTH DEBUG] Created generic S3 fallback secret with KEY_FILE for storage.googleapis.com")
+                            s3_count += 1
+                        except Exception as e:
+                            logger.exception(f"[TOKEN AUTH DEBUG] Generic S3 fallback with KEY_FILE failed: {e}")
+                except Exception as ex:
+                    logger.exception(f"[TOKEN AUTH DEBUG] S3 fallback creation failed: {ex}")
+                return s3_count
+
+            # Try PROVIDER SERVICE_ACCOUNT first (Modern DuckDB 1.1+)
             try:
-                connection.execute(ddl_gcs)
-                logger.info(f"Auto-configured GCS secret {secret_name} for {scope}")
+                # Use JSON_KEY if we have the dict, otherwise use KEY_FILE
+                if isinstance(service_account_key, dict):
+                    import json
+                    escaped_json = json.dumps(service_account_key).replace("'", "''")
+                    ddl_gcs_service_account = f"""
+                        CREATE OR REPLACE SECRET {secret_name} (
+                            TYPE GCS,
+                            PROVIDER SERVICE_ACCOUNT,
+                            JSON_KEY '{escaped_json}',
+                            SCOPE '{escape_sql(actual_scope)}'
+                        );
+                    """
+                else:
+                    ddl_gcs_service_account = f"""
+                        CREATE OR REPLACE SECRET {secret_name} (
+                            TYPE GCS,
+                            PROVIDER SERVICE_ACCOUNT,
+                            KEY_FILE '{temp_key_file}',
+                            SCOPE '{escape_sql(actual_scope)}'
+                        );
+                    """
+                # Redact JSON_KEY for logging
+                redacted_ddl = re.sub(r"JSON_KEY\s*'[^']*'", "JSON_KEY '[REDACTED]'", ddl_gcs_service_account)
+                logger.debug(f"[TOKEN AUTH DEBUG] Executing: {redacted_ddl}")
+                connection.execute(ddl_gcs_service_account)
+                
+                logger.debug(f"[TOKEN AUTH DEBUG] Secret with PROVIDER=SERVICE_ACCOUNT created successfully!")
+                logger.info(f"Auto-configured GCS secret {secret_name} for {actual_scope} with PROVIDER=SERVICE_ACCOUNT")
                 secrets_created += 1
-            except Exception:
-                # Fallback to S3 provider syntax
-                ddl_s3_provider = f"""
-                    CREATE OR REPLACE SECRET {secret_name} (
-                        TYPE S3,
-                        PROVIDER GCS,
-                        KEY_ID '{escape_sql(key_id)}',
-                        SECRET '{escape_sql(secret)}',
-                        REGION 'auto',
-                        ENDPOINT 'storage.googleapis.com',
-                        URL_STYLE 'path',
-                        SCOPE '{escape_sql(scope)}'
+            except Exception as e:
+                logger.exception(f"[TOKEN AUTH DEBUG] PROVIDER=SERVICE_ACCOUNT failed: {e}")
+
+                # Try PROVIDER config method (uses GOOGLE_APPLICATION_CREDENTIALS)
+                try:
+                    ddl_gcs_provider = f"""
+                        CREATE OR REPLACE SECRET {secret_name} (
+                            TYPE GCS,
+                            PROVIDER config,
+                            SCOPE '{escape_sql(actual_scope)}'
+                        );
+                    """
+                    logger.debug(f"[TOKEN AUTH DEBUG] Executing: {ddl_gcs_provider}")
+                    connection.execute(ddl_gcs_provider)
+                    logger.debug(f"[TOKEN AUTH DEBUG] Secret with PROVIDER=config created successfully!")
+                    logger.info(f"Auto-configured GCS secret {secret_name} for {actual_scope} with PROVIDER=config")
+                    secrets_created += 1
+                except Exception as e:
+                    logger.exception(f"[TOKEN AUTH DEBUG] PROVIDER=config method failed: {type(e).__name__}: {e}")
+
+                    # Fallback 1: try with KEY_ID parameter (for HMAC or legacy)
+                    try:
+                        # Don't use escape_sql on file path - it adds extra quotes
+                        ddl_gcs_key = f"""
+                            CREATE OR REPLACE SECRET {secret_name} (
+                                TYPE GCS,
+                                KEY_ID '{temp_key_file}',
+                                SCOPE '{escape_sql(actual_scope)}'
+                            );
+                        """
+                        logger.debug(f"[TOKEN AUTH DEBUG] Executing: {ddl_gcs_key}")
+                        connection.execute(ddl_gcs_key)
+                        logger.debug(f"[TOKEN AUTH DEBUG] Secret with KEY_ID parameter created successfully!")
+                        logger.info(f"Auto-configured GCS secret {secret_name} for {actual_scope} with KEY_ID")
+                        secrets_created += 1
+                    except Exception as e2:
+                        logger.exception(f"[TOKEN AUTH DEBUG] KEY_ID method failed: {type(e2).__name__}: {e2}")
+
+                        # Fallback 2: rely on environment variable only
+                        try:
+                            ddl_gcs_env = f"""
+                                CREATE OR REPLACE SECRET {secret_name} (
+                                    TYPE GCS,
+                                    SCOPE '{escape_sql(actual_scope)}'
+                                );
+                            """
+                            logger.debug(f"[TOKEN AUTH DEBUG] Executing: {ddl_gcs_env}")
+                            connection.execute(ddl_gcs_env)
+                            logger.debug(f"[TOKEN AUTH DEBUG] Secret with env fallback created successfully!")
+                            logger.info(f"Auto-configured GCS secret {secret_name} for {actual_scope} using environment variable")
+                            secrets_created += 1
+                        except Exception as e3:
+                            logger.exception(f"Failed to create GCS secret {secret_name}: {e3}")
+
+            # ALWAYS create S3 fallback secrets regardless of GCS success
+            # This is critical for httpfs compatibility when gcs extension is missing
+            logger.debug(f"[TOKEN AUTH DEBUG] Creating S3 fallbacks for {actual_scope}")
+            secrets_created += create_s3_fallbacks(connection, secret_name, service_account_key, actual_scope, https_scope, temp_key_file)
+
+        # ALWAYS create a default (unscoped) GCS secret as ultimate fallback
+        # This ensures any GCS operation can succeed even if scope matching fails
+        logger.debug(f"[TOKEN AUTH DEBUG] Creating default unscoped GCS secret")
+        default_secret_name = "noetl_auto_gcs_default"
+
+        # Try PROVIDER SERVICE_ACCOUNT first
+        try:
+            if isinstance(service_account_key, dict):
+                import json
+                escaped_json = json.dumps(service_account_key).replace("'", "''")
+                ddl_default_sa = f"""
+                    CREATE OR REPLACE SECRET {default_secret_name} (
+                        TYPE GCS,
+                        PROVIDER SERVICE_ACCOUNT,
+                        JSON_KEY '{escaped_json}'
                     );
                 """
-                connection.execute(ddl_s3_provider)
-                logger.info(f"Auto-configured GCS secret (S3 provider fallback) {secret_name} for {scope}")
+            else:
+                ddl_default_sa = f"""
+                    CREATE OR REPLACE SECRET {default_secret_name} (
+                        TYPE GCS,
+                        PROVIDER SERVICE_ACCOUNT,
+                        KEY_FILE '{temp_key_file}'
+                    );
+                """
+            connection.execute(ddl_default_sa)
+            logger.debug(f"[TOKEN AUTH DEBUG] Default secret with PROVIDER=SERVICE_ACCOUNT created!")
+            logger.info(f"Auto-configured default GCS secret with PROVIDER=SERVICE_ACCOUNT")
+            secrets_created += 1
+        except Exception as e:
+            logger.exception(f"[TOKEN AUTH DEBUG] Default PROVIDER=SERVICE_ACCOUNT failed: {e}")
+
+            # Try PROVIDER config method
+            try:
+                ddl_default_provider = f"""
+                    CREATE OR REPLACE SECRET {default_secret_name} (
+                        TYPE GCS,
+                        PROVIDER config
+                    );
+                """
+                connection.execute(ddl_default_provider)
+                logger.debug(f"[TOKEN AUTH DEBUG] Default secret with PROVIDER=config created!")
+                logger.info(f"Auto-configured default GCS secret with PROVIDER=config")
                 secrets_created += 1
-                
-        return secrets_created
+            except Exception as e:
+                logger.exception(f"[TOKEN AUTH DEBUG] Default PROVIDER=config failed: {e}")
+
+                # Fallback 1: try with KEY_ID
+                try:
+                    ddl_default_key = f"""
+                        CREATE OR REPLACE SECRET {default_secret_name} (
+                            TYPE GCS,
+                            KEY_ID '{temp_key_file}'
+                        );
+                    """
+                    connection.execute(ddl_default_key)
+                    logger.debug(f"[TOKEN AUTH DEBUG] Default secret with KEY_ID created!")
+                    logger.info(f"Auto-configured default GCS secret with KEY_ID")
+                    secrets_created += 1
+                except Exception as e2:
+                    logger.exception(f"[TOKEN AUTH DEBUG] Default KEY_ID failed: {e2}")
+
+                    # Fallback 2: environment variable
+                    try:
+                        ddl_default_env = f"""
+                            CREATE OR REPLACE SECRET {default_secret_name} (
+                                TYPE GCS
+                            );
+                        """
+                        connection.execute(ddl_default_env)
+                        logger.debug(f"[TOKEN AUTH DEBUG] Default secret with env created!")
+                        logger.info(f"Auto-configured default GCS secret using environment variable")
+                        secrets_created += 1
+                    except Exception as e3:
+                        logger.exception(f"Failed to create default GCS secret: {e3}")
+
+        # Also create unscoped S3 fallback secrets for storage.googleapis.com
+        try:
+            if isinstance(service_account_key, dict):
+                import json
+                escaped_json = json.dumps(service_account_key).replace("'", "''")
+                connection.execute(f"CREATE OR REPLACE SECRET noetl_auto_gcs_s3_default (TYPE S3, KEY_ID '{escaped_json}', ENDPOINT 'storage.googleapis.com', REGION 'auto', URL_STYLE 'path', USE_SSL 'true');")
+                logger.debug(f"[TOKEN AUTH DEBUG] Created unscoped S3 fallback secret for storage.googleapis.com")
+                secrets_created += 1
+            else:
+                connection.execute(f"CREATE OR REPLACE SECRET noetl_auto_gcs_s3_default (TYPE S3, KEY_ID '{temp_key_file}', ENDPOINT 'storage.googleapis.com', REGION 'auto', URL_STYLE 'path', USE_SSL 'true');")
+                logger.debug(f"[TOKEN AUTH DEBUG] Created unscoped S3 fallback secret with KEY_FILE for storage.googleapis.com")
+                secrets_created += 1
+        except Exception as e:
+            logger.exception(f"[TOKEN AUTH DEBUG] Unscoped S3 fallback failed: {e}")
+
+
+    finally:
+        # Keep temp file for process lifetime - DuckDB needs it
+        if temp_key_file:
+            logger.debug(f"[TOKEN AUTH DEBUG] Service account key file will persist at {temp_key_file}")
+    
+    logger.debug(f"[TOKEN AUTH DEBUG] Returning secrets_created={secrets_created}")
+    return secrets_created
+
+
+def _configure_gcs_hmac_auth(
+    connection: Any,
+    gcs_scopes: Set[str],
+    credential_data: Dict[str, Any],
+    cred_name: str
+) -> int:
+    """
+    Configure GCS using HMAC key-based authentication (legacy).
+    
+    Args:
+        connection: DuckDB connection
+        gcs_scopes: Set of GCS URI scopes
+        credential_data: Credential data
+        cred_name: Credential name for logging
         
-    except Exception as e:
-        logger.warning(f"Failed to auto-configure GCS credentials from '{cred_name}': {e}")
+    Returns:
+        Number of GCS secrets created
+    """
+    key_id = credential_data.get('key_id')
+    secret = credential_data.get('secret_key') or credential_data.get('secret')
+    endpoint = credential_data.get('endpoint') or 'storage.googleapis.com'
+    region = credential_data.get('region') or 'auto'
+    url_style = credential_data.get('url_style') or 'path'
+    scope_from_cred = credential_data.get('scope')
+    
+    if not (key_id and secret):
+        logger.warning(f"GCS credential '{cred_name}' missing key_id or secret")
         return 0
+
+    # Ensure extensions are installed and loaded
+    try:
+        connection.execute("INSTALL httpfs; LOAD httpfs;")
+        connection.execute("INSTALL gcs; LOAD gcs;")
+    except Exception:
+        pass
+            
+    # Use credential scope if provided, otherwise use detected scopes
+    scopes_to_configure = [scope_from_cred] if scope_from_cred else sorted(gcs_scopes)
+    secrets_created = 0
+    
+    for scope in scopes_to_configure:
+        if not scope:
+            continue
+            
+        # DuckDB scope matching is prefix-based.
+        # We ensure the scope has the scheme and ends with a slash for better prefix matching.
+        actual_scope = scope
+        if actual_scope.startswith('gs://') and not actual_scope.endswith('/'):
+            actual_scope = f"{actual_scope}/"
+        
+        # For S3 fallback, we also want to match the translated HTTPS URL
+        https_scope = actual_scope.replace('gs://', 'https://storage.googleapis.com/')
+        
+        scope_tag = re.sub(r"[^a-zA-Z0-9_]+", "_", actual_scope.rstrip('/'))
+        secret_name = f"noetl_auto_gcs_{scope_tag}"
+        
+        # Configure global S3 settings for GCS compatibility via httpfs (HMAC case)
+        try:
+            connection.execute("SET s3_url_style='path';")
+            connection.execute("SET s3_endpoint='storage.googleapis.com';")
+            connection.execute("SET s3_region='auto';")
+            connection.execute("SET s3_use_ssl=true;")
+        except Exception:
+            pass
+
+        # Try GCS-specific secret type first
+        ddl_gcs = f"""
+            CREATE OR REPLACE SECRET {secret_name} (
+                TYPE GCS,
+                KEY_ID '{escape_sql(key_id)}',
+                SECRET '{escape_sql(secret)}',
+                SCOPE '{escape_sql(actual_scope)}'
+            );
+        """
+        
+        try:
+            connection.execute(ddl_gcs)
+            logger.info(f"Auto-configured GCS secret (HMAC) {secret_name} for {actual_scope}")
+            secrets_created += 1
+        except Exception:
+            # Fallback to S3 provider syntax
+            ddl_s3_provider = f"""
+                CREATE OR REPLACE SECRET {secret_name} (
+                    TYPE S3,
+                    PROVIDER GCS,
+                    KEY_ID '{escape_sql(key_id)}',
+                    SECRET '{escape_sql(secret)}',
+                    REGION 'auto',
+                    ENDPOINT 'storage.googleapis.com',
+                    URL_STYLE 'path',
+                    SCOPE '{escape_sql(actual_scope)}'
+                );
+            """
+            connection.execute(ddl_s3_provider)
+            logger.info(f"Auto-configured GCS secret (S3 provider fallback) {secret_name} for {actual_scope}")
+            secrets_created += 1
+            
+        # ALSO create an S3 secret fallback using key/secret for this scope
+        try:
+            s3_name = f"{secret_name}_s3_fallback"
+            s3_https_name = f"{secret_name}_s3_https_fallback"
+            connection.execute(f"CREATE OR REPLACE SECRET {s3_name} (TYPE S3, KEY_ID '{escape_sql(key_id)}', SECRET '{escape_sql(secret)}', SCOPE '{escape_sql(actual_scope)}', ENDPOINT 'storage.googleapis.com', REGION 'auto', URL_STYLE 'path', USE_SSL 'true');")
+            connection.execute(f"CREATE OR REPLACE SECRET {s3_https_name} (TYPE S3, KEY_ID '{escape_sql(key_id)}', SECRET '{escape_sql(secret)}', SCOPE '{escape_sql(https_scope)}', ENDPOINT 'storage.googleapis.com', REGION 'auto', URL_STYLE 'path', USE_SSL 'true');")
+            secrets_created += 2
+        except Exception:
+            pass
+            
+    return secrets_created
 
 
 def _configure_s3_credentials(
     connection: Any,
     s3_scopes: Set[str],
     task_config: Dict[str, Any],
-    task_with: Dict[str, Any]
+    task_with: Dict[str, Any],
+    catalog_id: Optional[int] = None,
+    execution_id: Optional[int] = None
 ) -> int:
     """
     Configure S3 credentials for detected scopes.
@@ -201,7 +684,11 @@ def _configure_s3_credentials(
         return 0
         
     try:
-        credential_data = _fetch_credential(cred_name)
+        credential_data = _fetch_credential(
+            cred_name,
+            catalog_id=catalog_id,
+            execution_id=execution_id,
+        )
         if not credential_data:
             return 0
             
@@ -267,43 +754,116 @@ def _configure_s3_credentials(
         return 0
 
 
-def _fetch_credential(credential_name: str) -> Optional[Dict[str, Any]]:
-    """
-    Fetch credential data from the NoETL server.
-    
-    Args:
-        credential_name: Name of the credential to fetch
-        
-    Returns:
-        Credential data dictionary or None if not found
-        
-    Raises:
-        AuthenticationError: If credential fetch fails
+def _fetch_credential(
+    credential_name: str,
+    catalog_id: Optional[int] = None,
+    execution_id: Optional[int] = None
+) -> Optional[Dict[str, Any]]:
+    """Fetch credential or keychain data from the NoETL API.
+
+    Tries the credentials API first. If the credential is missing or the
+    caller explicitly requested a keychain entry (keychain: prefix), falls
+    back to the keychain API using catalog_id/NOETL_CATALOG_ID.
     """
     try:
-        base_url = os.environ.get('NOETL_SERVER_URL', 'http://localhost:8082').rstrip('/')
+        logger.debug(f"[FETCH_CRED DEBUG] Starting credential fetch for '{credential_name}', catalog_id={catalog_id}, execution_id={execution_id}")
+
+        base_url = os.environ.get('NOETL_SERVER_URL', 'http://noetl.noetl.svc.cluster.local:8082').rstrip('/')
         if not base_url.endswith('/api'):
             base_url = base_url + '/api'
-            
-        url = f"{base_url}/credentials/{credential_name}?include_data=true"
-        
+
+        logger.debug(f"[FETCH_CRED DEBUG] base_url={base_url}")
+
+        # Allow hints like "keychain:name" or "kc:name"
+        use_keychain_hint = False
+        name = credential_name
+        if isinstance(name, str):
+            lowered = name.lower()
+            if lowered.startswith('keychain:') or lowered.startswith('kc:'):
+                use_keychain_hint = True
+                name = name.split(':', 1)[1]
+                logger.debug(f"[FETCH_CRED DEBUG] Keychain hint detected, extracted name='{name}'")
+
+        def _parse_credential_response(resp_json: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+            raw = (resp_json or {}).get('data') or {}
+            if isinstance(raw, dict) and isinstance(raw.get('data'), dict):
+                return raw.get('data')
+            return raw if isinstance(raw, dict) else None
+
         with httpx.Client(timeout=5.0) as client:
-            response = client.get(url)
-            
-            if response.status_code == 200:
-                body = response.json() or {}
-                raw = body.get('data') or {}
-                
-                # Handle nested data structure
-                if isinstance(raw, dict) and isinstance(raw.get('data'), dict):
-                    payload = raw.get('data')
+            credential_payload: Optional[Dict[str, Any]] = None
+
+            if not use_keychain_hint:
+                logger.debug(f"[FETCH_CRED DEBUG] Trying credentials API for '{name}'")
+                cred_url = f"{base_url}/credentials/{name}?include_data=true"
+                response = client.get(cred_url)
+                logger.debug(f"[FETCH_CRED DEBUG] Credentials API response: {response.status_code}")
+
+                if response.status_code == 200:
+                    credential_payload = _parse_credential_response(response.json())
+                    logger.debug(f"[FETCH_CRED DEBUG] Credentials API returned payload: {bool(credential_payload)}")
+                elif response.status_code != 404:
+                    logger.debug(f"[FETCH_CRED DEBUG] Credentials API error: {response.status_code}")
+                    logger.warning(
+                        f"Failed to fetch credential '{name}': HTTP {response.status_code}"
+                    )
                 else:
-                    payload = raw
-                    
-                return payload if isinstance(payload, dict) else {}
-            else:
-                logger.warning(f"Failed to fetch credential '{credential_name}': HTTP {response.status_code}")
-                return None
-                
+                    logger.debug(f"[FETCH_CRED DEBUG] Credential not found (404), will try keychain")
+
+            # If credential fetch failed or keychain was requested, try keychain API
+            if credential_payload is None:
+                logger.debug(f"[FETCH_CRED DEBUG] Attempting keychain fallback...")
+                catalog_val = catalog_id or os.environ.get('NOETL_CATALOG_ID')
+                logger.debug(f"[FETCH_CRED DEBUG] catalog_val={catalog_val}, catalog_id={catalog_id}, env={os.environ.get('NOETL_CATALOG_ID')}")
+
+                if catalog_val:
+                    keychain_url = f"{base_url}/keychain/{catalog_val}/{name}"
+                    params = {'scope_type': 'global'}
+                    if execution_id:
+                        params['execution_id'] = execution_id
+
+                    logger.debug(f"[FETCH_CRED DEBUG] Keychain URL: {keychain_url}, params={params}")
+
+                    kc_resp = client.get(keychain_url, params=params)
+                    logger.debug(f"[FETCH_CRED DEBUG] Keychain API response: {kc_resp.status_code}")
+
+                    if kc_resp.status_code == 200:
+                        body = kc_resp.json() or {}
+                        logger.debug(f"[FETCH_CRED DEBUG] Keychain response body keys: {list(body.keys())}")
+                        token_data = body.get('token_data') or body.get('data')
+                        logger.debug(f"[FETCH_CRED DEBUG] token_data type: {type(token_data)}, is_dict: {isinstance(token_data, dict)}")
+
+                        # status=expired is still a miss for our purposes
+                        status = body.get('status')
+                        logger.debug(f"[FETCH_CRED DEBUG] Keychain status: {status}")
+
+                        if status == 'expired' and body.get('auto_renew'):
+                            logger.debug(f"[FETCH_CRED DEBUG] Keychain entry is expired")
+                            logger.warning(
+                                f"Keychain entry '{name}' for catalog {catalog_val} is expired"
+                            )
+                        else:
+                            result = token_data if isinstance(token_data, dict) else None
+                            logger.debug(f"[FETCH_CRED DEBUG] Returning keychain data: {bool(result)}")
+                            if result:
+                                logger.debug(f"[FETCH_CRED DEBUG] Keychain data keys: {list(result.keys())}")
+                            return result
+                    elif kc_resp.status_code != 404:
+                        logger.debug(f"[FETCH_CRED DEBUG] Keychain API error: {kc_resp.status_code}, body: {kc_resp.text[:200]}")
+                        logger.warning(
+                            f"Failed to fetch keychain '{name}' (catalog {catalog_val}): HTTP {kc_resp.status_code}"
+                        )
+                    else:
+                        logger.debug(f"[FETCH_CRED DEBUG] Keychain entry not found (404)")
+                else:
+                    logger.debug(f"[FETCH_CRED DEBUG] No catalog_id available for keychain lookup")
+                    logger.debug(
+                        f"No catalog_id available for keychain lookup of '{name}', skipping keychain fallback"
+                    )
+
+            logger.debug(f"[FETCH_CRED DEBUG] Returning credential_payload: {bool(credential_payload)}")
+            return credential_payload if isinstance(credential_payload, dict) else None
+
     except Exception as e:
+        logger.exception(f"[FETCH_CRED DEBUG] Exception during fetch: {type(e).__name__}: {e}")
         raise AuthenticationError(f"Failed to fetch credential '{credential_name}': {e}")
