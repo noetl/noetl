@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.4.0](https://github.com/noetl/noetl/compare/v2.3.3...v2.4.0) (2025-12-31)
+
+### Features
+
+* add comprehensive PostgreSQL to Excel to GCS pipeline test ([09bc909](https://github.com/noetl/noetl/commit/09bc909846d99cc85511b438f8ff682b617d9210))
+
+### Bug Fixes
+
+* add GCS plugin for file upload tasks ([1842076](https://github.com/noetl/noetl/commit/1842076d6b4f91091a75b30e30eb7bcf05e18c3d))
+* document postgres excel gcs troubleshooting ([b2c0138](https://github.com/noetl/noetl/commit/b2c01389cc93fb1cc347ccd0b8e00103ce5f178b))
+* excel handling ([be435ff](https://github.com/noetl/noetl/commit/be435ff4eb6bedde18ec482734d1d670c610c3ca))
+
 ## [2.3.3](https://github.com/noetl/noetl/compare/v2.3.2...v2.3.3) (2025-12-26)
 
 ### Bug Fixes
