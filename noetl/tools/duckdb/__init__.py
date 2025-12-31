@@ -308,3 +308,4 @@ __all__ = ['execute_duckdb_task', 'get_duckdb_connection']
 
 # Legacy compatibility exports for internal functions used by tests
 from .sql.rendering import render_deep as _render_deep, escape_sql as _escape_sql
+

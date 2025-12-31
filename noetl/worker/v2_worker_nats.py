@@ -273,9 +273,21 @@ class V2Worker:
         # Build evaluation context with response
         # Support both call.done and step.exit event names in conditions
         # The engine uses step.exit for post-step sinks, so we provide both
+        
+        # Extract result from response for template access
+        # Normalize response: if it has 'data' key, unwrap it for cleaner access
+        current_result = (
+            response.get("data")
+            if isinstance(response, dict) and response.get("data") is not None
+            else response
+        )
+        
         eval_context = {
             **render_context,
             'response': response,
+            'result': current_result,  # Add result for {{ result }} templates
+            'data': current_result,    # Add data for {{ data }} templates
+            'this': response,          # Add this for {{ this }} (full response)
             'event': {'name': 'step.exit'},  # Use step.exit to match playbook conditions
             'error': response.get('error') if isinstance(response, dict) else None
         }

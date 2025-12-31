@@ -395,7 +395,8 @@ class JobExecutor:
             exec_ctx_with_result["this"] = result
             exec_ctx_with_result["data"] = current_result  # FORCE override, don't use setdefault
             logger.critical(f"SINK_CONTEXT: Context assigned | result type={type(exec_ctx_with_result.get('result'))} | data type={type(exec_ctx_with_result.get('data'))}")
-        except Exception:
+        except Exception as e:
+            logger.error(f"SINK_CONTEXT: Exception while setting result/data in context: {e}", exc_info=True)
             exec_ctx_with_result = exec_ctx
 
         from noetl.core.storage import execute_sink_task as _do_sink

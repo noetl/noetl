@@ -205,6 +205,7 @@ async def start_execution(req: StartExecutionRequest) -> StartExecutionResponse:
                         "tool_config": command.tool.config,
                         "args": command.args or {},
                         "render_context": command.render_context,
+                        "case": command.case,  # Include case blocks for worker-side execution
                         # Add traceability to context for easy access
                         "execution_id": str(execution_id),
                         "catalog_id": str(catalog_id),
