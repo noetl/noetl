@@ -91,3 +91,9 @@ Excel file structure:
 - Temp tables are session-scoped and automatically cleaned up
 - Excel file is created in `/tmp` and cleaned up after upload
 - GCS path includes timestamp to avoid conflicts: `exports/{filename}.xlsx`
+
+## Troubleshooting
+
+- If the playbook cannot connect to PostgreSQL, confirm the `pg_auth` credential exists in the catalog and the `noetl` server can reach the database using the configured host/port.
+- Missing GCS uploads typically mean the `gcs_auth` credential lacks write rights or the bucket does not exist; grant the service account `storage.objects.create` on `noetl-test-exports` and verify connectivity with `gsutil ls gs://noetl-test-exports`.
+- For detailed tool output, tail the server/worker logs (`kubectl -n noetl logs deployment/noetl-server`, `deployment/noetl-worker`) and search for `SINK.EXECUTOR` or `duckdb` entries now routed through the structured logger.
