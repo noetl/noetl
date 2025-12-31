@@ -118,14 +118,14 @@ def execute_duckdb_task(
             
             # Detect cloud URI scopes and configure cloud credentials if needed
             uri_scopes = detect_uri_scopes(rendered_commands)
-            print(f"[DUCKDB DEBUG] Detected URI scopes: {uri_scopes}", flush=True)
-            print(f"[DUCKDB DEBUG] task_config keys: {list(task_config.keys())}, gcs_credential={task_config.get('gcs_credential')}", flush=True)
-            print(f"[DUCKDB DEBUG] processed_task_with keys: {list(processed_task_with.keys())}, gcs_credential={processed_task_with.get('gcs_credential')}", flush=True)
+            logger.debug(f"[DUCKDB DEBUG] Detected URI scopes: {uri_scopes}")
+            logger.debug(f"[DUCKDB DEBUG] task_config keys: {list(task_config.keys())}, gcs_credential={task_config.get('gcs_credential')}")
+            logger.debug(f"[DUCKDB DEBUG] processed_task_with keys: {list(processed_task_with.keys())}, gcs_credential={processed_task_with.get('gcs_credential')}")
             logger.info(f"Detected URI scopes: {uri_scopes}")
             logger.info(f"task_config keys: {list(task_config.keys())}, gcs_credential={task_config.get('gcs_credential')}")
             logger.info(f"processed_task_with keys: {list(processed_task_with.keys())}, gcs_credential={processed_task_with.get('gcs_credential')}")
             if uri_scopes.get('gs') or uri_scopes.get('s3'):
-                print(f"[DUCKDB DEBUG] Calling configure_cloud_credentials...", flush=True)
+                logger.debug(f"[DUCKDB DEBUG] Calling configure_cloud_credentials...")
                 cloud_secrets = configure_cloud_credentials(
                     conn,
                     uri_scopes,
@@ -134,16 +134,16 @@ def execute_duckdb_task(
                     catalog_id=context.get('catalog_id'),
                     execution_id=context.get('execution_id'),
                 )
-                print(f"[DUCKDB DEBUG] Cloud secrets created: {cloud_secrets}", flush=True)
+                logger.debug(f"[DUCKDB DEBUG] Cloud secrets created: {cloud_secrets}")
                 secrets_created += cloud_secrets
             
             # Diagnostic: List all secrets
             try:
                 secrets_list = conn.execute("SELECT name, type, provider, scope FROM duckdb_secrets()").fetchall()
-                print(f"[DUCKDB DEBUG] Current DuckDB secrets: {secrets_list}", flush=True)
+                logger.debug(f"[DUCKDB DEBUG] Current DuckDB secrets: {secrets_list}")
                 logger.info(f"Current DuckDB secrets: {secrets_list}")
             except Exception as e:
-                print(f"[DUCKDB DEBUG] Could not list secrets: {e}", flush=True)
+                logger.debug(f"[DUCKDB DEBUG] Could not list secrets: {e}")
                 
             # Validate cloud output requirements
             require_cloud = bool(processed_task_with.get('require_cloud_output') or task_config.get('require_cloud_output'))
@@ -237,8 +237,8 @@ def _setup_authentication(
             logger.debug("Using unified auth system")
             
             resolved_auth_map = resolve_unified_auth(auth_config, jinja_env, context)
-            print(f"[AUTH DEBUG] Resolved auth map: {list(resolved_auth_map.keys()) if resolved_auth_map else 'None'}", flush=True)
-            print(f"[AUTH DEBUG] Auth map details: {[(k, type(v)) for k, v in resolved_auth_map.items()] if resolved_auth_map else 'None'}", flush=True)
+            logger.debug(f"[AUTH DEBUG] Resolved auth map: {list(resolved_auth_map.keys()) if resolved_auth_map else 'None'}")
+            logger.debug(f"[AUTH DEBUG] Auth map details: {[(k, type(v)) for k, v in resolved_auth_map.items()] if resolved_auth_map else 'None'}")
             
             if resolved_auth_map:
                 logger.info(f"Resolved auth aliases: {list(resolved_auth_map.keys())}")
@@ -249,20 +249,20 @@ def _setup_authentication(
                 
                 # Generate and execute secret creation statements
                 secret_statements = generate_duckdb_secrets(resolved_auth_map)
-                print(f"[AUTH DEBUG] Generated {len(secret_statements)} secret statements", flush=True)
-                print(f"[AUTH DEBUG] Statements: {secret_statements[:3] if secret_statements else 'None'}", flush=True)
+                logger.debug(f"[AUTH DEBUG] Generated {len(secret_statements)} secret statements")
+                logger.debug(f"[AUTH DEBUG] Statements: {secret_statements[:3] if secret_statements else 'None'}")
                 logger.info(f"Generated {len(secret_statements)} secret statements")
                 for idx, stmt in enumerate(secret_statements):
                     # Log statement without revealing secrets
                     import re
                     redacted_stmt = re.sub(r"(SECRET|PASSWORD|KEY_ID|JSON_KEY)\s*'[^']*'", r"\1 '[REDACTED]'", stmt)
-                    print(f"[AUTH DEBUG] Executing statement {idx+1}/{len(secret_statements)}: {redacted_stmt[:100]}...", flush=True)
+                    logger.debug(f"[AUTH DEBUG] Executing statement {idx+1}/{len(secret_statements)}: {redacted_stmt[:100]}...")
                     logger.info(f"Executing unified auth secret {idx+1}: {redacted_stmt[:150]}...")
                     try:
                         connection.execute(stmt)
-                        print(f"[AUTH DEBUG] Statement {idx+1} executed successfully", flush=True)
+                        logger.debug(f"[AUTH DEBUG] Statement {idx+1} executed successfully")
                     except Exception as stmt_err:
-                        print(f"[AUTH DEBUG] Statement {idx+1} FAILED: {stmt_err}", flush=True)
+                        logger.debug(f"[AUTH DEBUG] Statement {idx+1} FAILED: {stmt_err}")
                         logger.error(f"Failed to execute statement {idx+1}: {stmt_err}")
                         raise
                 

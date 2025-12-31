@@ -451,18 +451,16 @@ class V2Worker:
             # Execute tool
             response = await self._execute_tool(tool_kind, tool_config, args, step, render_context)
             
-            print(f"\n{'='*80}")
-            print(f"[DEBUG] After tool execution for step: {step}")
-            print(f"[DEBUG] case_blocks type: {type(case_blocks)}, value: {case_blocks}")
-            print(f"[DEBUG] case_blocks is None: {case_blocks is None}")
-            print(f"[DEBUG] case_blocks bool: {bool(case_blocks)}")
+            logger.debug(f"[DEBUG] After tool execution for step: {step}")
+            logger.debug(f"[DEBUG] case_blocks type: {type(case_blocks)}, value: {case_blocks}")
+            logger.debug(f"[DEBUG] case_blocks is None: {case_blocks is None}")
+            logger.debug(f"[DEBUG] case_blocks bool: {bool(case_blocks)}")
             if case_blocks:
-                print(f"[DEBUG] case_blocks length: {len(case_blocks)}")
+                logger.debug(f"[DEBUG] case_blocks length: {len(case_blocks)}")
                 for idx, cb in enumerate(case_blocks):
-                    print(f"[DEBUG] case_block[{idx}]: {cb}")
-            print(f"{'='*80}\n")
-            
-            logger.critical(f"[DEBUG] context has_case={'case' in context} | case_blocks={case_blocks is not None} | case_count={len(case_blocks) if case_blocks else 0}")
+                    logger.debug(f"[DEBUG] case_block[{idx}]: {cb}")
+
+            logger.debug(f"[DEBUG] context has_case={'case' in context} | case_blocks={case_blocks is not None} | case_count={len(case_blocks) if case_blocks else 0}")
             
             # SINK EXECUTION: Check for case blocks with sinks and execute immediately
             if case_blocks:
@@ -569,7 +567,7 @@ class V2Worker:
                 
             except Exception as emit_error:
                 # Event emission failed - try to report failure
-                logger.error(f"Failed to emit success events for {step}: {emit_error}", exc_info=True)
+                logger.exception(f"Failed to emit success events for {step}: {emit_error}")
                 try:
                     # Attempt to emit command.failed to mark execution as failed
                     if command_id:
@@ -585,7 +583,7 @@ class V2Worker:
                             }
                         )
                 except Exception as recovery_error:
-                    logger.error(f"Failed to emit recovery failure event: {recovery_error}", exc_info=True)
+                    logger.exception(f"Failed to emit recovery failure event: {recovery_error}")
                 # Re-raise so the command handler knows it failed
                 raise emit_error
             
@@ -760,7 +758,7 @@ class V2Worker:
                             has_pagination_retry = True
                             break
             
-            logger.critical(f"HTTP TOOL: config_keys={list(config.keys()) if isinstance(config, dict) else 'not dict'} | retry={retry_config is not None} | policies={len(retry_config) if isinstance(retry_config, list) else 0} | has_pagination={has_pagination_retry}")
+            logger.debug(f"HTTP TOOL: config_keys={list(config.keys()) if isinstance(config, dict) else 'not dict'} | retry={retry_config is not None} | policies={len(retry_config) if isinstance(retry_config, list) else 0} | has_pagination={has_pagination_retry}")
             
             if has_pagination_retry:
                 logger.info("HTTP tool using execute_with_retry for pagination sink support")

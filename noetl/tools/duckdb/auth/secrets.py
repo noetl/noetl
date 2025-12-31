@@ -116,8 +116,8 @@ def _generate_gcs_secret(alias: str, config: Dict[str, Any]) -> List[str]:
     Returns:
         List of CREATE SECRET statements for GCS
     """
-    print(f"[GCS SECRET DEBUG] Generating secret for alias '{alias}'", flush=True)
-    print(f"[GCS SECRET DEBUG] Config keys: {list(config.keys())}", flush=True)
+    logger.debug(f"[GCS SECRET DEBUG] Generating secret for alias '{alias}'")
+    logger.debug(f"[GCS SECRET DEBUG] Config keys: {list(config.keys())}")
     
     # Check for service account credentials
     service_account_json = (
@@ -127,7 +127,7 @@ def _generate_gcs_secret(alias: str, config: Dict[str, Any]) -> List[str]:
     )
     scope = config.get("scope")
     
-    print(f"[GCS SECRET DEBUG] service_account_json: {bool(service_account_json)}, scope: {scope}", flush=True)
+    logger.debug(f"[GCS SECRET DEBUG] service_account_json: {bool(service_account_json)}, scope: {scope}")
     
     statements = []
     
@@ -206,7 +206,7 @@ def _generate_gcs_secret(alias: str, config: Dict[str, Any]) -> List[str]:
     key_id = config.get("key_id")
     secret_key = config.get("secret_key") or config.get("secret")
     
-    print(f"[GCS SECRET DEBUG] Using HMAC: key_id={bool(key_id)}, secret={bool(secret_key)}, scope={scope}", flush=True)
+    logger.debug(f"[GCS SECRET DEBUG] Using HMAC: key_id={bool(key_id)}, secret={bool(secret_key)}, scope={scope}")
     
     if not (key_id and secret_key):
         raise AuthenticationError(f"GCS secret '{alias}' missing key_id/secret_key or service_account_json")
@@ -216,7 +216,7 @@ def _generate_gcs_secret(alias: str, config: Dict[str, Any]) -> List[str]:
     if actual_scope and actual_scope.startswith('gs://') and not actual_scope.endswith('/'):
         actual_scope = f"{actual_scope}/"
     
-    print(f"[GCS SECRET DEBUG] Normalized scope: {actual_scope}", flush=True)
+    logger.debug(f"[GCS SECRET DEBUG] Normalized scope: {actual_scope}")
     
     statements = [
         "INSTALL httpfs;",
@@ -244,7 +244,7 @@ def _generate_gcs_secret(alias: str, config: Dict[str, Any]) -> List[str]:
     gcs_stmt = f"CREATE OR REPLACE SECRET {alias} (\n  {',\n  '.join(parts)}\n);"
     statements.append(gcs_stmt)
     
-    print(f"[GCS SECRET DEBUG] Created {len(statements)} statements for HMAC secret", flush=True)
+    logger.debug(f"[GCS SECRET DEBUG] Created {len(statements)} statements for HMAC secret")
     
     return statements
 
