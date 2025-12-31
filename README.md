@@ -9,7 +9,7 @@ __NoETL__ is an automation framework for Data Mash and MLOps orchestration.
 
 ## Documentation
 
-For the introduction, system overview, architecture, and the semantic execution pipeline, see the [Introduction document](https://noetl.io/docs/introduction).
+For the introduction, system overview, architecture, and the semantic execution pipeline, see the [Introduction document](https://noetl.io/documentation/docs/introduction.md)).
 
 ## AI & Domain Data-Driven Design
 
