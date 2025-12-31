@@ -336,19 +336,6 @@ async def execute_python_task_async(
             else:
                 raise ValueError("No code provided. Expected 'script', 'code_b64', 'code_base64', or inline 'code' string in task configuration")
 
-        # Validate user code doesn't contain import statements (must use libs attribute)
-        # Check BEFORE prepending library imports
-        code_lines = code.split('\n')
-        for line_num, line in enumerate(code_lines, 1):
-            stripped = line.strip()
-            if stripped.startswith('import ') or stripped.startswith('from '):
-                raise ValueError(
-                    f"Import statements not allowed in code (line {line_num}). "
-                    f"Use 'libs' attribute to declare dependencies: {stripped}"
-                )
-        
-        logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: User code validated - no import statements found")
-
         # Prepend library imports if specified via 'libs'
         libs_config = task_config.get('libs')
         if libs_config:
