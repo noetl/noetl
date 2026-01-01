@@ -13,40 +13,39 @@ The workflow accepts a natural language travel query (e.g., "I want a one-way fl
 
 ## Architecture
 
-### Workflow Steps (11 total)
+### Workflow Steps (10 total)
 
-1. **start** - Initialize workflow
-2. **create_results_table** - Create `api_results` table for final output
-3. **create_amadeus_ai_event_table** - Create `amadeus_ai_events` table for API call logging
-4. **get_amadeus_token** - Obtain OAuth access token from Amadeus
-5. **translate_query_to_amadeus** - Use OpenAI to convert natural language to API parameters
-6. **store_openai_query_event** - Log OpenAI translation in database
-7. **parse_openai_response** - Extract endpoint and params from OpenAI response
-8. **execute_amadeus_query** - Call Amadeus Flight Offers API
-9. **store_amadeus_query_event** - Log Amadeus API call
-10. **translate_amadeus_response** - Use OpenAI to convert JSON to natural language
-11. **store_openai_response_event** - Log OpenAI translation
-12. **insert_final_result** - Store final natural language result
-13. **end** - Complete workflow
+1. **start** - Initialize workflow and create database tables
+2. **translate_query_to_amadeus** - Use OpenAI to convert natural language to API parameters
+3. **store_openai_query_event** - Log OpenAI translation in database
+4. **parse_openai_response** - Extract endpoint and params from OpenAI response (Python tool)
+5. **execute_amadeus_query** - Call Amadeus Flight Offers API with OAuth token
+6. **store_amadeus_query_event** - Log Amadeus API call
+7. **translate_amadeus_response** - Use OpenAI to convert JSON to natural language
+8. **store_openai_response_event** - Log OpenAI translation
+9. **insert_final_result** - Store final natural language result
+10. **end** - Complete workflow (Python tool)
 
 ### Key Features
 
-**Google Secret Manager Integration**: All API credentials are retrieved from Google Secret Manager using OAuth authentication:
-- Amadeus API client ID and secret
-- OpenAI API key
+**Keychain-Based Authentication**: Uses NoETL v2's keychain system for declarative credential management:
+- `openai_token` - GCP Secret Manager integration for OpenAI API key
+- `amadeus_credentials` - GCP Secret Manager for Amadeus client ID/secret
+- `amadeus_token` - OAuth2 client credentials flow with auto-renewal
 
-**Declarative Authentication**: Uses NoETL's unified auth system with provider-based resolution:
+**Python Tool Structure**: Python steps use the standardized v2 format:
 ```yaml
-auth:
-  amadeus:
-    type: oauth2_client_credentials
-    provider: secret_manager
-    client_id_key: '{{ workload.amadeus_key_path }}'
-    client_secret_key: '{{ workload.amadeus_secret_path }}'
-    oauth_credential: '{{ workload.oauth_cred }}'
+tool:
+  kind: python
+  auth: {}  # Optional authentication references
+  libs:     # Required library imports
+    json: json
+  args:     # Input arguments from workflow context
+    input_data: '{{ previous_step.data }}'
+  code: |
+    # Direct code execution (no def main wrapper)
+    result = {"status": "success", "data": processed_value}
 ```
-
-**Credential Caching**: Secrets are cached with 1-hour TTL at execution scope for performance.
 
 **AI Model Selection**: Uses `gpt-4o-mini` for cost-effective structured output tasks (60% cheaper than gpt-4o).
 
@@ -78,27 +77,72 @@ Update the `workload` section in `amadeus_ai_api.yaml`:
 
 ```yaml
 workload:
-  oauth_cred: google_oauth  # Your Google OAuth credential name
+  pg_auth: pg_local
+  gcp_auth: google_oauth
   openai_secret_path: projects/YOUR-PROJECT-ID/secrets/openai-api-key/versions/1
   amadeus_key_path: projects/YOUR-PROJECT-ID/secrets/api-key-test-api-amadeus-com/versions/1
   amadeus_secret_path: projects/YOUR-PROJECT-ID/secrets/api-secret-test-api-amadeus-com/versions/1
   query: I want a one-way flight from SFO to JFK on March 15, 2026 for 1 adult
+
+keychain:
+  - name: openai_token
+    kind: secret_manager
+    provider: gcp
+    scope: global
+    auth: "{{ workload.gcp_auth }}"
+    map:
+      api_key: '{{ workload.openai_secret_path }}'
+
+  - name: amadeus_credentials
+    kind: secret_manager
+    provider: gcp
+    scope: global
+    auth: "{{ workload.gcp_auth }}"
+    map:
+      client_id: '{{ workload.amadeus_key_path }}'
+      client_secret: '{{ workload.amadeus_secret_path }}'
+
+  - name: amadeus_token
+    kind: oauth2
+    scope: global
+    auto_renew: true
+    endpoint: https://test.api.amadeus.com/v1/security/oauth2/token
+    method: POST
+    headers:
+      Content-Type: application/x-www-form-urlencoded
+    data:
+      grant_type: client_credentials
+      client_id: '{{ keychain.amadeus_credentials.client_id }}'
+      client_secret: '{{ keychain.amadeus_credentials.client_secret }}'
 ```
 
 ## Execution
 
-### Using NoETL CLI
+### Using noetlctl (Recommended)
 
 ```bash
 # Register the playbook
-task register-playbook PLAYBOOK=tests/fixtures/playbooks/api_integration/amadeus_ai_api
+noetlctl catalog register tests/fixtures/playbooks/api_integration/amadeus_ai_api/amadeus_ai_api.yaml
 
-# Execute via API (Phase 1)
+# Execute the playbook
+noetlctl execute playbook api_integration/amadeus_ai_api --json
+
+# Get execution status (replace <EXECUTION_ID> with the id returned from execute)
+noetlctl execute status <EXECUTION_ID> --json
+
+# Alternative: Direct execution using path
+noetlctl exec api_integration/amadeus_ai_api
+```
+
+### Using REST API (Alternative)
+
+```bash
+# Execute via REST API
 curl -X POST http://localhost:8082/api/run/playbook \
   -H "Content-Type: application/json" \
   -d '{"path": "api_integration/amadeus_ai_api", "args": {"query": "I want a one-way flight from SFO to JFK on March 15, 2026 for 1 adult"}}'
 
-# Poll execution status/result via NoETL REST
+# Poll execution status/result
 # Replace <EXECUTION_ID> with the id returned from the call above
 curl -s http://localhost:8082/api/executions/<EXECUTION_ID> | jq .
 ```
@@ -168,72 +212,162 @@ curl -s http://localhost:8082/api/executions/<EXECUTION_ID> | jq .
 
 Note: NATS-based live subscriptions are planned for the next phase. The WebSocket endpoint `/ws` is disabled in Phase 1; polling the REST endpoint is the supported method to retrieve the final markdown result and/or status updates.
 
-## Authentication Architecture
+## Python Tool Pattern (v2)
 
-### Secret Manager Provider
+The playbook uses NoETL v2's standardized python tool structure:
 
-The `secret_manager` provider enables fetching credentials from external secret management systems:
+### Structure
+```yaml
+tool:
+  kind: python
+  auth: {}      # Optional: authentication references (e.g., {pg: "{{ workload.pg_auth }}"})
+  libs:         # Required: library imports as key-value pairs
+    json: json
+    datetime: datetime
+  args:         # Required: input arguments from workflow context
+    input_data: '{{ previous_step.data }}'
+    config: '{{ workload.settings }}'
+  code: |
+    # Direct code execution - no def main() wrapper
+    # Access inputs via variable names from args section
+    processed = json.loads(input_data)
+    
+    # Assign result to 'result' variable (not return statement)
+    result = {
+        "status": "success",
+        "data": processed
+    }
+```
+
+### Key Principles
+- **No Function Wrappers**: Code executes directly without `def main()` functions
+- **Result Assignment**: Use `result = {...}` instead of `return {...}`
+- **Library Imports**: Declare all imports in `libs` section with `import_name: module_name` format
+- **Input Arguments**: All inputs passed via `args` section, accessible as variables in code
+- **Authentication**: Optional `auth` section for credential references
+
+### Examples from Playbook
+
+**parse_openai_response step**:
+```yaml
+tool:
+  kind: python
+  auth: {}
+  libs:
+    json: json
+  args:
+    openai_response: '{{ translate_query_to_amadeus.data }}'
+  code: |
+    try:
+        if not openai_response or not openai_response.get('choices'):
+            result = {"status": "error", "message": "No response from OpenAI"}
+        else:
+            content = openai_response['choices'][0]['message']['content'].strip()
+            parsed = json.loads(content)
+            result = {"status": "success", "endpoint": parsed.get('endpoint'), "params": parsed.get('params')}
+    except Exception as e:
+        result = {"status": "error", "message": f"Failed to parse: {str(e)}"}
+```
+
+**end step**:
+```yaml
+tool:
+  kind: python
+  auth: {}
+  libs: {}
+  args: {}
+  code: |
+    result = {"status": "completed", "message": "Workflow completed successfully"}
+```
+
+## Authentication Architecture (v2)
+
+### Keychain System
+
+NoETL v2 uses a declarative keychain system for credential management:
 
 ```yaml
-auth:
-  alias_name:
-    type: bearer|oauth2_client_credentials|api_key|basic
-    provider: secret_manager
-    key: path/to/secret  # For single-value secrets
-    # OR
-    client_id_key: path/to/client_id  # For oauth2_client_credentials
-    client_secret_key: path/to/client_secret
-    oauth_credential: google_oauth  # OAuth token for Secret Manager API
+keychain:
+  - name: credential_name     # Reference as {{ keychain.credential_name.field }}
+    kind: secret_manager|oauth2|basic|bearer
+    provider: gcp|aws|azure    # For secret_manager kind
+    scope: global|execution    # Credential lifecycle
+    auth: "{{ workload.auth_reference }}"  # For accessing secret provider
+    map:                       # Field mapping from secrets
+      field_name: 'secret/path'
+```
+
+### Secret Manager Integration
+
+Fetch credentials from Google Secret Manager:
+
+```yaml
+keychain:
+  - name: openai_token
+    kind: secret_manager
+    provider: gcp
+    scope: global
+    auth: "{{ workload.gcp_auth }}"
+    map:
+      api_key: '{{ workload.openai_secret_path }}'
 ```
 
 **How it works**:
-1. Auth resolver detects `provider: secret_manager`
-2. Fetches OAuth token from `oauth_credential` reference
-3. Calls Secret Manager API with Bearer token
-4. Decodes base64-encoded secret value
-5. Caches credential for 1 hour (execution-scoped)
-6. Injects credential into template context as `{{ auth.alias_name.field }}`
+1. Keychain entry references GCP auth credential
+2. Fetches secret from Secret Manager using OAuth token
+3. Caches credential at specified scope (global or execution)
+4. Injects credential into template context as `{{ keychain.openai_token.api_key }}`
 
 ### OAuth2 Client Credentials Flow
 
 For APIs requiring OAuth client credentials (like Amadeus):
 
 ```yaml
-auth:
-  amadeus:
-    type: oauth2_client_credentials
-    provider: secret_manager
-    client_id_key: '{{ workload.amadeus_key_path }}'
-    client_secret_key: '{{ workload.amadeus_secret_path }}'
-    oauth_credential: '{{ workload.oauth_cred }}'
-data:
-  grant_type: client_credentials
-  client_id: '{{ auth.amadeus.client_id }}'
-  client_secret: '{{ auth.amadeus.client_secret }}'
+keychain:
+  - name: amadeus_credentials
+    kind: secret_manager
+    provider: gcp
+    scope: global
+    auth: "{{ workload.gcp_auth }}"
+    map:
+      client_id: '{{ workload.amadeus_key_path }}'
+      client_secret: '{{ workload.amadeus_secret_path }}'
+
+  - name: amadeus_token
+    kind: oauth2
+    scope: global
+    auto_renew: true
+    endpoint: https://test.api.amadeus.com/v1/security/oauth2/token
+    method: POST
+    headers:
+      Content-Type: application/x-www-form-urlencoded
+    data:
+      grant_type: client_credentials
+      client_id: '{{ keychain.amadeus_credentials.client_id }}'
+      client_secret: '{{ keychain.amadeus_credentials.client_secret }}'
 ```
 
-The auth system:
+The keychain system:
 - Fetches both `client_id` and `client_secret` from Secret Manager
-- Makes them available in templates as `auth.amadeus.client_id` and `auth.amadeus.client_secret`
-- HTTP tool sends them in the OAuth token request
+- Uses them to obtain OAuth access token
+- Automatically renews token when `auto_renew: true`
+- Makes token available as `{{ keychain.amadeus_token.access_token }}`
 
 ### Bearer Token Authentication
 
 For APIs requiring Bearer tokens (like OpenAI):
 
 ```yaml
-auth:
-  openai:
-    type: bearer
-    provider: secret_manager
-    key: '{{ workload.openai_secret_path }}'
-    oauth_credential: '{{ workload.oauth_cred }}'
+# In HTTP step
+tool:
+  kind: http
+  method: POST
+  endpoint: https://api.openai.com/v1/chat/completions
+  headers:
+    Authorization: "Bearer {{ keychain.openai_token.api_key }}"
+  payload:
+    model: gpt-4o-mini
 ```
-
-The auth system:
-- Fetches the API key from Secret Manager
-- Automatically injects `Authorization: Bearer {token}` header
-- Token available in templates as `auth.openai.token`
 
 ## Error Handling
 
@@ -258,17 +392,18 @@ ORDER BY created_at DESC;
 - Output: $0.60/1M tokens (vs $10.00/1M)
 - **Savings**: 60% reduction for structured output tasks
 
-**Credential Caching**: Reduces Secret Manager API calls:
-- First execution: 3 Secret Manager calls
-- Subsequent executions (within 1 hour): 0 Secret Manager calls
+**Keychain Credential Caching**: Reduces Secret Manager API calls:
+- First execution: 3 Secret Manager calls (openai_token + amadeus_credentials)
+- Subsequent executions (with global scope): Credentials reused from cache
+- OAuth token auto-renewal: Only when token expires
 
 ## Security Best Practices
 
 1. **No Hardcoded Secrets**: All credentials stored in Secret Manager
 2. **OAuth Authentication**: Service accounts with minimal permissions
-3. **Execution-Scoped Cache**: Credentials isolated per execution
+3. **Keychain Scope Management**: Credentials isolated by scope (global/execution)
 4. **SQL Injection Protection**: Dollar-quoting for JSON data
-5. **Short-Lived Tokens**: Amadeus OAuth tokens valid for ~30 minutes
+5. **Short-Lived Tokens**: OAuth tokens with automatic renewal
 
 ## Troubleshooting
 
@@ -276,7 +411,28 @@ ORDER BY created_at DESC;
 Update the query date to a future date in `workload.query`.
 
 ### "Auth missing 'key'" Error
-Ensure Secret Manager paths are correct and OAuth credential has access.
+Ensure Secret Manager paths are correct in keychain entries and GCP auth credential has access.
+
+### "Invalid keychain reference" Error
+Check that keychain names are correctly referenced in template expressions (e.g., `{{ keychain.openai_token.api_key }}`).
+
+### Python Tool Errors
+Verify python tools follow v2 structure:
+```yaml
+# ❌ Bad (v1 style with def main)
+code: |
+  def main(input_data):
+      return {"result": input_data}
+
+# ✅ Good (v2 style)
+tool:
+  kind: python
+  libs: {}
+  args:
+    input_data: '{{ step.data }}'
+  code: |
+    result = {"result": input_data}
+```
 
 ### "syntax error at or near" in SQL
 Check that Jinja2 templates use inline conditionals, not multi-line blocks:
