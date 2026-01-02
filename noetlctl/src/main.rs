@@ -118,6 +118,25 @@ enum Commands {
         #[command(subcommand)]
         resource: GetResource,
     },
+    /// Execute SQL query via NoETL Postgres API
+    /// Examples:
+    ///     noetlctl query "SELECT * FROM noetl.keychain LIMIT 5"
+    ///     noetlctl query "SELECT * FROM noetl.keychain WHERE execution_id = 123" --schema noetl
+    ///     noetlctl query "SELECT * FROM my_table" --format json
+    ///     noetlctl query "SELECT * FROM users" --schema public --format table
+    #[command(verbatim_doc_comment)]
+    Query {
+        /// SQL query to execute
+        query: String,
+
+        /// Database schema (default: noetl)
+        #[arg(short, long, default_value = "noetl")]
+        schema: String,
+
+        /// Output format: table or json
+        #[arg(short, long, default_value = "table")]
+        format: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -379,6 +398,9 @@ async fn main() -> Result<()> {
                 get_credential(&client, &base_url, &name, include_data).await?;
             }
         },
+        Some(Commands::Query { query, schema, format }) => {
+            execute_query(&client, &base_url, &query, &schema, &format).await?;
+        },
         None => {
             println!("Use --help for usage information or --interactive for TUI mode");
         }
@@ -598,6 +620,193 @@ async fn get_credential(client: &Client, base_url: &str, name: &str, include_dat
         eprintln!("Failed to get credential: {} - {}", status, text);
     }
     Ok(())
+}
+
+async fn execute_query(client: &Client, base_url: &str, query: &str, schema: &str, format: &str) -> Result<()> {
+    let url = format!("{}/api/postgres/execute", base_url);
+    
+    let payload = serde_json::json!({
+        "query": query,
+        "schema": schema
+    });
+
+    let response = client
+        .post(&url)
+        .header("Content-Type", "application/json")
+        .json(&payload)
+        .send()
+        .await
+        .context("Failed to send query request")?;
+
+    if response.status().is_success() {
+        let result: serde_json::Value = response.json().await?;
+        
+        match format {
+            "json" => {
+                // Pretty print JSON
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            }
+            "table" => {
+                // Extract column names from query
+                let column_names = extract_column_names(query);
+                // Format as table
+                format_as_table(&result, &column_names)?;
+            }
+            _ => {
+                eprintln!("Unknown format: {}. Use 'table' or 'json'", format);
+                std::process::exit(1);
+            }
+        }
+    } else {
+        let status = response.status();
+        let text = response.text().await?;
+        eprintln!("Failed to execute query: {} - {}", status, text);
+        std::process::exit(1);
+    }
+
+    Ok(())
+}
+
+fn extract_column_names(query: &str) -> Vec<String> {
+    // Simple column name extraction from SELECT query
+    let query_upper = query.to_uppercase();
+    
+    // Find SELECT and FROM positions
+    if let Some(select_pos) = query_upper.find("SELECT") {
+        let after_select = &query[select_pos + 6..].trim_start();
+        
+        // Find FROM keyword
+        let from_pos = after_select.to_uppercase().find(" FROM");
+        let columns_str = if let Some(pos) = from_pos {
+            &after_select[..pos]
+        } else {
+            after_select
+        };
+        
+        // Split by comma and clean up
+        let columns: Vec<String> = columns_str
+            .split(',')
+            .map(|s| {
+                let s = s.trim();
+                // Handle aliases (AS keyword)
+                if let Some(as_pos) = s.to_uppercase().rfind(" AS ") {
+                    s[as_pos + 4..].trim().to_string()
+                } else {
+                    // Get the last part after dot (for qualified names like table.column)
+                    s.split('.').last().unwrap_or(s).trim().to_string()
+                }
+            })
+            .collect();
+        
+        columns
+    } else {
+        Vec::new()
+    }
+}
+
+fn format_as_table(result: &serde_json::Value, column_names: &[String]) -> Result<()> {
+    // Check if result has the expected structure
+    if let Some(result_array) = result.get("result").and_then(|r| r.as_array()) {
+        if result_array.is_empty() {
+            println!("(0 rows)");
+            return Ok(());
+        }
+
+        // The API returns result as array of arrays: [[val1, val2], [val3, val4]]
+        // We need to determine column count from first row
+        let first_row = &result_array[0];
+        if let Some(row_array) = first_row.as_array() {
+            let col_count = row_array.len();
+            
+            // Use extracted column names if available and count matches, otherwise fall back to generic
+            let columns: Vec<String> = if column_names.len() == col_count {
+                column_names.to_vec()
+            } else {
+                (1..=col_count).map(|i| format!("column_{}", i)).collect()
+            };
+            
+            // Calculate column widths
+            let mut col_widths: Vec<usize> = columns.iter().map(|c| c.len()).collect();
+            
+            for row in result_array {
+                if let Some(row_array) = row.as_array() {
+                    for (i, val) in row_array.iter().enumerate() {
+                        if i < col_widths.len() {
+                            let val_str = format_value(val);
+                            col_widths[i] = col_widths[i].max(val_str.len());
+                        }
+                    }
+                }
+            }
+
+            // Print header
+            print!("┌");
+            for (i, width) in col_widths.iter().enumerate() {
+                print!("{}", "─".repeat(width + 2));
+                if i < col_widths.len() - 1 {
+                    print!("┬");
+                }
+            }
+            println!("┐");
+
+            print!("│");
+            for (i, col) in columns.iter().enumerate() {
+                print!(" {:width$} │", col, width = col_widths[i]);
+            }
+            println!();
+
+            print!("├");
+            for (i, width) in col_widths.iter().enumerate() {
+                print!("{}", "─".repeat(width + 2));
+                if i < col_widths.len() - 1 {
+                    print!("┼");
+                }
+            }
+            println!("┤");
+
+            // Print rows
+            for row in result_array {
+                if let Some(row_array) = row.as_array() {
+                    print!("│");
+                    for (i, val) in row_array.iter().enumerate() {
+                        if i < col_widths.len() {
+                            let val_str = format_value(val);
+                            print!(" {:width$} │", val_str, width = col_widths[i]);
+                        }
+                    }
+                    println!();
+                }
+            }
+
+            print!("└");
+            for (i, width) in col_widths.iter().enumerate() {
+                print!("{}", "─".repeat(width + 2));
+                if i < col_widths.len() - 1 {
+                    print!("┴");
+                }
+            }
+            println!("┘");
+
+            println!("({} rows)", result_array.len());
+        }
+    } else {
+        // Fallback to pretty JSON if structure doesn't match
+        println!("{}", serde_json::to_string_pretty(result)?);
+    }
+
+    Ok(())
+}
+
+fn format_value(val: &serde_json::Value) -> String {
+    match val {
+        serde_json::Value::Null => "NULL".to_string(),
+        serde_json::Value::Bool(b) => b.to_string(),
+        serde_json::Value::Number(n) => n.to_string(),
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Array(_) | serde_json::Value::Object(_) => {
+            serde_json::to_string(val).unwrap_or_else(|_| "{}".to_string())
+        }
+    }
 }
 
 async fn run_tui(base_url: &str) -> Result<()> {

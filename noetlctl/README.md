@@ -94,6 +94,39 @@ Get credential details:
 noetlctl get credential gcs_service_account --include-data
 ```
 
+#### SQL Query Execution
+
+Execute SQL queries via NoETL Postgres API:
+
+```bash
+# Query with table format (default)
+noetlctl query "SELECT * FROM noetl.keychain LIMIT 5"
+
+# Query with specific schema
+noetlctl query "SELECT execution_id, credential_name FROM noetl.keychain WHERE execution_id = 12345" --schema noetl
+
+# Query with JSON output
+noetlctl query "SELECT * FROM noetl.event ORDER BY created_at DESC LIMIT 10" --format json
+
+# Query public schema tables
+noetlctl query "SELECT * FROM users LIMIT 5" --schema public --format table
+```
+
+**Output Formats:**
+- `table` (default): Formatted ASCII table with borders
+- `json`: Pretty-printed JSON output
+
+**Example Output (table format):**
+```
+┌────────────────────┬────────────────┬──────────────┐
+│ execution_id       │ credential_name│ access_count │
+├────────────────────┼────────────────┼──────────────┤
+│ 507861119290048685 │ openai-api-key │ 0            │
+│ 507861119290048686 │ postgres-creds │ 2            │
+└────────────────────┴────────────────┴──────────────┘
+(2 rows)
+```
+
 #### Registering (Legacy/Explicit)
 
 Register a Credential:
