@@ -8,7 +8,7 @@ The credential caching system provides execution-scoped caching for external sec
 
 - **Scope**: Per-execution isolation (different executions don't share cache)
 - **TTL**: 1 hour (3600 seconds)
-- **Storage**: PostgreSQL table `noetl.auth_cache` with encrypted JSON data
+- **Storage**: PostgreSQL table `noetl.keychain` with encrypted JSON data
 - **Performance**: ~30x faster retrieval (5-10ms cache hit vs 200-300ms Secret Manager API call)
 
 ## Test Playbook: `test_cache_simple.yaml`
@@ -20,7 +20,7 @@ A minimal test playbook that makes two OpenAI API calls using the same secret to
 1. **start** - Initialize cache test (Python tool)
 2. **first_openai_call** - Fetches OpenAI API key from Google Secret Manager
    - Cache MISS: Secret fetched from Google Secret Manager (~200-300ms)
-   - Secret stored in `auth_cache` table
+   - Secret stored in `keychain` table
    - Makes OpenAI API call
 3. **second_openai_call** - Uses the same OpenAI API key
    - Cache HIT: Secret retrieved from database cache (~5-10ms)
@@ -116,7 +116,7 @@ SELECT
   created_at,
   accessed_at,
   accessed_at > created_at as was_accessed_after_creation
-FROM noetl.auth_cache 
+FROM noetl.keychain 
 WHERE execution_id = 507861119290048685;
 ```
 
@@ -144,13 +144,13 @@ WHERE execution_id = 507861119290048685;
    - Event loop detection prevents "already running" errors
 
 5. **Database Migration**:
-   - Renamed table: `credential_cache` → `auth_cache`
-   - Migration: `scripts/migrate_credential_cache_to_auth_cache.sql`
+   - Table: `noetl.keychain` stores cached credentials
+   - Migration: See database schema changes
 
-### Table Schema: `noetl.auth_cache`
+### Table Schema: `noetl.keychain`
 
 ```sql
-CREATE TABLE noetl.auth_cache (
+CREATE TABLE noetl.keychain (
   credential_name TEXT NOT NULL,
   credential_type TEXT NOT NULL,
   scope_type TEXT NOT NULL,
@@ -184,7 +184,7 @@ CREATE TABLE noetl.auth_cache (
 
 4. **Database Access**:
    - PostgreSQL database accessible
-   - `noetl.auth_cache` table exists
+   - `noetl.keychain` table exists
 
 ### Execute Test
 
@@ -228,7 +228,7 @@ curl -s http://localhost:8082/api/executions/<EXECUTION_ID> | jq .
 curl -X POST http://localhost:8082/api/postgres/execute \
   -H "Content-Type: application/json" \
   -d '{
-    "query": "SELECT credential_name, credential_type, execution_id, access_count, created_at, accessed_at, accessed_at > created_at as was_accessed_after_creation FROM noetl.auth_cache WHERE execution_id = YOUR_EXECUTION_ID",
+    "query": "SELECT credential_name, credential_type, execution_id, access_count, created_at, accessed_at, accessed_at > created_at as was_accessed_after_creation FROM noetl.keychain WHERE execution_id = YOUR_EXECUTION_ID",
     "schema": "noetl"
   }' | jq .
 ```
@@ -247,7 +247,7 @@ SELECT
   created_at,
   accessed_at,
   accessed_at > created_at as was_accessed_after_creation
-FROM noetl.auth_cache 
+FROM noetl.keychain 
 WHERE execution_id = YOUR_EXECUTION_ID;
 
 -- View all recent cache entries
@@ -258,7 +258,7 @@ SELECT
   created_at,
   accessed_at,
   accessed_at - created_at as cache_delay
-FROM noetl.auth_cache 
+FROM noetl.keychain 
 ORDER BY created_at DESC 
 LIMIT 10;
 
@@ -267,7 +267,7 @@ SELECT
   COUNT(*) as total_entries,
   AVG(access_count) as avg_access_count,
   MAX(access_count) as max_access_count
-FROM noetl.auth_cache;
+FROM noetl.keychain;
 ```
 
 ### Expected Output
