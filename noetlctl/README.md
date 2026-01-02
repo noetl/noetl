@@ -1,6 +1,6 @@
-# noetlctl (v2.1.2)
+# noetl CLI (v2.1.2)
 
-NoETL Command Line Tool and Interactive TUI.
+NoETL Command Line Tool - Rust-based CLI for managing NoETL server, workers, and resources.
 
 ## Installation
 
@@ -8,12 +8,12 @@ NoETL Command Line Tool and Interactive TUI.
 
 Build and place the binary in the project's `bin/` directory:
 ```bash
-task noetlctl:local:build
+task noetl:local:build
 ```
 
 Install to `~/.local/bin/`:
 ```bash
-task noetlctl:local:install
+task noetl:local:install
 ```
 
 ### Manual Build
@@ -22,38 +22,81 @@ task noetlctl:local:install
 cargo build --release
 ```
 
-The binary will be available at `target/release/noetlctl`.
+The binary will be available at `target/release/noetl`.
 
 ## Usage
 
 Check version:
 ```bash
-noetlctl --version
+noetl --version
+```
+
+### Server Management
+
+Start NoETL server:
+```bash
+noetl server start
+noetl server start --init-db  # Initialize database on startup
+```
+
+Stop NoETL server:
+```bash
+noetl server stop
+noetl server stop --force  # Force stop without confirmation
+```
+
+### Worker Management
+
+Start NoETL worker:
+```bash
+noetl worker start
+noetl worker start --max-workers 4
+noetl worker start --v2  # Use v2 event-driven architecture
+noetl worker start --max-workers 8 --v2
+```
+
+Stop NoETL worker:
+```bash
+noetl worker stop  # Interactive selection if multiple workers
+noetl worker stop --name my-worker
+noetl worker stop --name my-worker --force
+```
+
+### Database Management
+
+Initialize database schema:
+```bash
+noetl db init
+```
+
+Validate database schema:
+```bash
+noetl db validate
 ```
 
 ### Configuration and Contexts
 
-`noetlctl` supports multiple contexts to manage different server environments.
+`noetl` supports multiple contexts to manage different server environments.
 
 #### Add a Context
 ```bash
-noetlctl context add local --server-url http://localhost:8082 --set-current
-noetlctl context add prod --server-url http://noetl-server:8082
+noetl context add local --server-url http://localhost:8082 --set-current
+noetl context add prod --server-url http://noetl-server:8082
 ```
 
 #### List Contexts
 ```bash
-noetlctl context list
+noetl context list
 ```
 
 #### Switch Context
 ```bash
-noetlctl context use prod
+noetl context use prod
 ```
 
 #### Show Current Context
 ```bash
-noetlctl context current
+noetl context current
 ```
 
 ### CLI Mode
@@ -62,36 +105,36 @@ noetlctl context current
 
 Register a resource (auto-detects kind: Credential or Playbook):
 ```bash
-noetlctl catalog register tests/fixtures/playbooks/data_transfer/http_to_postgres_transfer/http_to_postgres_transfer.yaml
+noetl catalog register tests/fixtures/playbooks/data_transfer/http_to_postgres_transfer/http_to_postgres_transfer.yaml
 ```
 
 Get resource details:
 ```bash
-noetlctl catalog get tests/fixtures/playbooks/data_transfer/http_iterator_save_postgres
+noetl catalog get tests/fixtures/playbooks/data_transfer/http_iterator_save_postgres
 ```
 
 List resources:
 ```bash
-noetlctl catalog list Playbook --json
+noetl catalog list Playbook --json
 ```
 
 #### Execution
 
 Execute a playbook:
 ```bash
-noetlctl execute playbook tests/fixtures/playbooks/regression_test/master_regression_test --json
+noetl execute playbook tests/fixtures/playbooks/regression_test/master_regression_test --json
 ```
 
 Get execution status:
 ```bash
-noetlctl execute status 522107710393811426 --json
+noetl execute status 522107710393811426 --json
 ```
 
 #### Credentials
 
 Get credential details:
 ```bash
-noetlctl get credential gcs_service_account --include-data
+noetl get credential gcs_service_account --include-data
 ```
 
 #### SQL Query Execution
@@ -100,16 +143,16 @@ Execute SQL queries via NoETL Postgres API:
 
 ```bash
 # Query with table format (default)
-noetlctl query "SELECT * FROM noetl.keychain LIMIT 5"
+noetl query "SELECT * FROM noetl.keychain LIMIT 5"
 
 # Query with specific schema
-noetlctl query "SELECT execution_id, credential_name FROM noetl.keychain WHERE execution_id = 12345" --schema noetl
+noetl query "SELECT execution_id, credential_name FROM noetl.keychain WHERE execution_id = 12345" --schema noetl
 
 # Query with JSON output
-noetlctl query "SELECT * FROM noetl.event ORDER BY created_at DESC LIMIT 10" --format json
+noetl query "SELECT * FROM noetl.event ORDER BY created_at DESC LIMIT 10" --format json
 
 # Query public schema tables
-noetlctl query "SELECT * FROM users LIMIT 5" --schema public --format table
+noetl query "SELECT * FROM users LIMIT 5" --schema public --format table
 ```
 
 **Output Formats:**
@@ -131,37 +174,37 @@ noetlctl query "SELECT * FROM users LIMIT 5" --schema public --format table
 
 Register a Credential:
 ```bash
-noetlctl register credential -f tests/fixtures/credentials/pg_k8s.json
+noetl register credential -f tests/fixtures/credentials/pg_k8s.json
 ```
 
 Register a Playbook:
 ```bash
-noetlctl register playbook -f tests/fixtures/playbooks/api_integration/auth0/provision_auth_schema.yaml
+noetl register playbook -f tests/fixtures/playbooks/api_integration/auth0/provision_auth_schema.yaml
 ```
 
 #### Direct Execution/Status/List
 
 Execute a Playbook:
 ```bash
-noetlctl exec api_integration/auth0/provision_auth_schema
+noetl exec api_integration/auth0/provision_auth_schema
 ```
 
 Get Execution Status:
 ```bash
-noetlctl status <execution_id>
+noetl status <execution_id>
 ```
 
 List Resources:
 ```bash
-noetlctl list Playbook
+noetl list Playbook
 ```
 
 ### Interactive TUI Mode
 
-Run `noetlctl` with the `-i` or `--interactive` flag:
+Run `noetl` with the `-i` or `--interactive` flag:
 
 ```bash
-noetlctl --interactive
+noetl --interactive
 ```
 
 - **Navigation**: Use Up/Down arrows or `j`/`k` to navigate lists.
@@ -171,6 +214,6 @@ noetlctl --interactive
 ## Docker
 
 ```bash
-docker build -t noetlctl .
-docker run --rm noetlctl --help
+docker build -t noetl .
+docker run --rm noetl --help
 ```

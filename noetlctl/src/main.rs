@@ -23,7 +23,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 #[derive(Parser)]
-#[command(name = "noetlctl")]
+#[command(name = "noetl")]
 #[command(version, about = "NoETL Command Line Tool", long_about = None)]
 struct Cli {
     #[command(subcommand)]
@@ -120,10 +120,10 @@ enum Commands {
     },
     /// Execute SQL query via NoETL Postgres API
     /// Examples:
-    ///     noetlctl query "SELECT * FROM noetl.keychain LIMIT 5"
-    ///     noetlctl query "SELECT * FROM noetl.keychain WHERE execution_id = 123" --schema noetl
-    ///     noetlctl query "SELECT * FROM my_table" --format json
-    ///     noetlctl query "SELECT * FROM users" --schema public --format table
+    ///     noetl query "SELECT * FROM noetl.keychain LIMIT 5"
+    ///     noetl query "SELECT * FROM noetl.keychain WHERE execution_id = 123" --schema noetl
+    ///     noetl query "SELECT * FROM my_table" --format json
+    ///     noetl query "SELECT * FROM users" --schema public --format table
     #[command(verbatim_doc_comment)]
     Query {
         /// SQL query to execute
@@ -136,6 +136,38 @@ enum Commands {
         /// Output format: table or json
         #[arg(short, long, default_value = "table")]
         format: String,
+    },
+    /// Server management
+    /// Examples:
+    ///     noetl server start
+    ///     noetl server start --init-db
+    ///     noetl server stop
+    ///     noetl server stop --force
+    #[command(verbatim_doc_comment)]
+    Server {
+        #[command(subcommand)]
+        command: ServerCommand,
+    },
+    /// Worker management
+    /// Examples:
+    ///     noetl worker start
+    ///     noetl worker start --max-workers 4
+    ///     noetl worker start --v2
+    ///     noetl worker stop
+    ///     noetl worker stop --name my-worker --force
+    #[command(verbatim_doc_comment)]
+    Worker {
+        #[command(subcommand)]
+        command: WorkerCommand,
+    },
+    /// Database management
+    /// Examples:
+    ///     noetl db init
+    ///     noetl db validate
+    #[command(verbatim_doc_comment)]
+    Db {
+        #[command(subcommand)]
+        command: DbCommand,
     },
 }
 
@@ -253,6 +285,79 @@ enum RegisterResource {
         #[arg(short, long)]
         file: PathBuf,
     },
+}
+
+#[derive(Subcommand)]
+enum ServerCommand {
+    /// Start NoETL server
+    /// Examples:
+    ///     noetl server start
+    ///     noetl server start --init-db
+    #[command(verbatim_doc_comment)]
+    Start {
+        /// Initialize database schema on startup
+        #[arg(long)]
+        init_db: bool,
+    },
+    /// Stop NoETL server
+    /// Examples:
+    ///     noetl server stop
+    ///     noetl server stop --force
+    #[command(verbatim_doc_comment)]
+    Stop {
+        /// Force stop without confirmation
+        #[arg(short, long)]
+        force: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum WorkerCommand {
+    /// Start NoETL worker pool
+    /// Examples:
+    ///     noetl worker start
+    ///     noetl worker start --max-workers 4
+    ///     noetl worker start --v2
+    ///     noetl worker start --max-workers 8 --v2
+    #[command(verbatim_doc_comment)]
+    Start {
+        /// Maximum number of worker threads
+        #[arg(short = 'm', long)]
+        max_workers: Option<usize>,
+        
+        /// Use v2 worker architecture (event-driven NATS)
+        #[arg(long)]
+        v2: bool,
+    },
+    /// Stop NoETL worker
+    /// Examples:
+    ///     noetl worker stop
+    ///     noetl worker stop --name my-worker
+    ///     noetl worker stop --name my-worker --force
+    #[command(verbatim_doc_comment)]
+    Stop {
+        /// Worker name to stop (if not specified, lists all workers)
+        #[arg(short = 'n', long)]
+        name: Option<String>,
+        
+        /// Force stop without confirmation
+        #[arg(short, long)]
+        force: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum DbCommand {
+    /// Initialize NoETL database schema
+    /// Example:
+    ///     noetl db init
+    #[command(verbatim_doc_comment)]
+    Init,
+    /// Validate NoETL database schema
+    /// Example:
+    ///     noetl db validate
+    #[command(verbatim_doc_comment)]
+    Validate,
 }
 
 #[derive(Subcommand)]
@@ -400,6 +505,30 @@ async fn main() -> Result<()> {
         },
         Some(Commands::Query { query, schema, format }) => {
             execute_query(&client, &base_url, &query, &schema, &format).await?;
+        },
+        Some(Commands::Server { command }) => match command {
+            ServerCommand::Start { init_db } => {
+                start_server(init_db).await?;
+            }
+            ServerCommand::Stop { force } => {
+                stop_server(force).await?;
+            }
+        },
+        Some(Commands::Worker { command }) => match command {
+            WorkerCommand::Start { max_workers, v2 } => {
+                start_worker(max_workers, v2).await?;
+            }
+            WorkerCommand::Stop { name, force } => {
+                stop_worker(name, force).await?;
+            }
+        },
+        Some(Commands::Db { command }) => match command {
+            DbCommand::Init => {
+                db_init(&client, &base_url).await?;
+            }
+            DbCommand::Validate => {
+                db_validate(&client, &base_url).await?;
+            }
         },
         None => {
             println!("Use --help for usage information or --interactive for TUI mode");
@@ -943,4 +1072,446 @@ fn ui(f: &mut Frame, app: &mut App) {
     let footer = Paragraph::new("q: Quit | r: Refresh | ↑/↓: Navigate")
         .block(Block::default().borders(Borders::ALL).title("Help"));
     f.render_widget(footer, chunks[2]);
+}
+
+// ============================================================================
+// Server Management
+// ============================================================================
+
+async fn start_server(init_db: bool) -> Result<()> {
+    use std::process::{Command, Stdio};
+    use std::net::TcpStream;
+    
+    let pid_dir = dirs::home_dir()
+        .context("Could not determine home directory")?
+        .join(".noetl");
+    std::fs::create_dir_all(&pid_dir)?;
+    
+    let pid_file = pid_dir.join("noetl_server.pid");
+    
+    // Check if server is already running
+    if pid_file.exists() {
+        let pid_str = std::fs::read_to_string(&pid_file)?;
+        if let Ok(pid) = pid_str.trim().parse::<i32>() {
+            if process_exists(pid) {
+                println!("Server already running with PID {} (PID file: {})", pid, pid_file.display());
+                println!("Use 'noetl server stop' to stop it first.");
+                return Ok(());
+            } else {
+                println!("Found stale PID file. Removing it.");
+                std::fs::remove_file(&pid_file)?;
+            }
+        }
+    }
+    
+    // Get server configuration from environment
+    let host = std::env::var("NOETL_HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
+    let port = std::env::var("NOETL_PORT").unwrap_or_else(|_| "8082".to_string());
+    
+    // Check port availability
+    if let Ok(_stream) = TcpStream::connect(format!("{}:{}", if host == "0.0.0.0" { "127.0.0.1" } else { &host }, port)) {
+        eprintln!("Error: Port {}:{} is already in use", host, port);
+        return Err(anyhow::anyhow!("Port already in use"));
+    }
+    
+    println!("Starting NoETL server at http://{}:{}...", host, port);
+    
+    // Spawn Python server subprocess
+    let mut cmd = Command::new("python");
+    cmd.args(&["-m", "uvicorn", "noetl.server:create_app", "--factory"])
+       .arg("--host").arg(&host)
+       .arg("--port").arg(&port)
+       .stdout(Stdio::null())
+       .stderr(Stdio::null());
+    
+    // Set environment variables
+    if let Ok(val) = std::env::var("NOETL_ENABLE_UI") {
+        cmd.env("NOETL_ENABLE_UI", val);
+    }
+    if let Ok(val) = std::env::var("NOETL_DEBUG") {
+        cmd.env("NOETL_DEBUG", val);
+    }
+    
+    let child = cmd.spawn()
+        .context("Failed to spawn server process. Is Python and noetl package installed?")?;
+    
+    let pid = child.id();
+    
+    // Write PID file
+    std::fs::write(&pid_file, pid.to_string())?;
+    println!("Server started with PID {}", pid);
+    println!("PID file: {}", pid_file.display());
+    
+    // Optional: Initialize database
+    if init_db {
+        println!("Waiting for server to be ready...");
+        tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+        
+        let client = Client::new();
+        let base_url = format!("http://localhost:{}", port);
+        
+        println!("Initializing database schema...");
+        let response = client
+            .post(&format!("{}/api/db/init", base_url))
+            .send()
+            .await;
+        
+        match response {
+            Ok(resp) if resp.status().is_success() => {
+                println!("Database initialized successfully.");
+            }
+            Ok(resp) => {
+                eprintln!("Warning: Database initialization returned status {}", resp.status());
+            }
+            Err(e) => {
+                eprintln!("Warning: Could not initialize database: {}", e);
+            }
+        }
+    }
+    
+    Ok(())
+}
+
+async fn stop_server(force: bool) -> Result<()> {
+    let pid_dir = dirs::home_dir()
+        .context("Could not determine home directory")?
+        .join(".noetl");
+    let pid_file = pid_dir.join("noetl_server.pid");
+    
+    if !pid_file.exists() {
+        println!("No running NoETL server found (no PID file at {}).", pid_file.display());
+        return Ok(());
+    }
+    
+    let pid_str = std::fs::read_to_string(&pid_file)?;
+    let pid: i32 = pid_str.trim().parse()
+        .context("Invalid PID in file")?;
+    
+    if !process_exists(pid) {
+        println!("Process {} not found. The server may have been stopped already.", pid);
+        std::fs::remove_file(&pid_file)?;
+        return Ok(());
+    }
+    
+    if !force {
+        print!("Stop NoETL server with PID {}? [y/N]: ", pid);
+        std::io::Write::flush(&mut std::io::stdout())?;
+        
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input)?;
+        
+        if !input.trim().eq_ignore_ascii_case("y") {
+            println!("Operation cancelled.");
+            return Ok(());
+        }
+    }
+    
+    println!("Stopping NoETL server with PID {}...", pid);
+    
+    // Send SIGTERM
+    send_signal(pid, nix::sys::signal::Signal::SIGTERM)?;
+    
+    // Wait for graceful shutdown (10 seconds)
+    for _ in 0..20 {
+        if !process_exists(pid) {
+            std::fs::remove_file(&pid_file)?;
+            println!("NoETL server stopped successfully.");
+            return Ok(());
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+    }
+    
+    // Force kill if still running
+    if force {
+        println!("Server didn't stop gracefully. Force killing...");
+        send_signal(pid, nix::sys::signal::Signal::SIGKILL)?;
+    } else {
+        print!("Server didn't stop gracefully. Force kill? [y/N]: ");
+        std::io::Write::flush(&mut std::io::stdout())?;
+        
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input)?;
+        
+        if input.trim().eq_ignore_ascii_case("y") {
+            println!("Force killing NoETL server with PID {}...", pid);
+            send_signal(pid, nix::sys::signal::Signal::SIGKILL)?;
+        }
+    }
+    
+    std::fs::remove_file(&pid_file)?;
+    println!("NoETL server stopped.");
+    
+    Ok(())
+}
+
+// ============================================================================
+// Worker Management
+// ============================================================================
+
+async fn start_worker(max_workers: Option<usize>, v2: bool) -> Result<()> {
+    use std::process::{Command, Stdio};
+    
+    let pid_dir = dirs::home_dir()
+        .context("Could not determine home directory")?
+        .join(".noetl");
+    std::fs::create_dir_all(&pid_dir)?;
+    
+    // Determine worker name based on pool config
+    let worker_name = std::env::var("NOETL_WORKER_POOL_NAME")
+        .unwrap_or_else(|_| "default".to_string())
+        .replace("-", "_");
+    
+    let pid_file = pid_dir.join(format!("noetl_worker_{}.pid", worker_name));
+    
+    // Check if worker is already running
+    if pid_file.exists() {
+        let pid_str = std::fs::read_to_string(&pid_file)?;
+        if let Ok(pid) = pid_str.trim().parse::<i32>() {
+            if process_exists(pid) {
+                println!("Worker '{}' already running with PID {}", worker_name, pid);
+                println!("Use 'noetl worker stop --name {}' to stop it first.", worker_name);
+                return Ok(());
+            } else {
+                println!("Found stale PID file. Removing it.");
+                std::fs::remove_file(&pid_file)?;
+            }
+        }
+    }
+    
+    println!("Starting NoETL worker '{}'{}...", 
+        worker_name, 
+        if v2 { " (v2 architecture)" } else { "" }
+    );
+    
+    // Build Python worker command
+    let mut cmd = Command::new("python");
+    cmd.args(&["-m", "noetl.cli.ctl", "worker", "start"]);
+    
+    if let Some(workers) = max_workers {
+        cmd.arg("--max-workers").arg(workers.to_string());
+    }
+    
+    if v2 {
+        cmd.arg("--v2");
+    }
+    
+    cmd.stdout(Stdio::null())
+       .stderr(Stdio::null());
+    
+    let child = cmd.spawn()
+        .context("Failed to spawn worker process. Is Python and noetl package installed?")?;
+    
+    let pid = child.id();
+    
+    // Write PID file
+    std::fs::write(&pid_file, pid.to_string())?;
+    println!("Worker '{}' started with PID {}", worker_name, pid);
+    println!("PID file: {}", pid_file.display());
+    
+    Ok(())
+}
+
+async fn stop_worker(name: Option<String>, force: bool) -> Result<()> {
+    use std::io::Write;
+    
+    let pid_dir = dirs::home_dir()
+        .context("Could not determine home directory")?
+        .join(".noetl");
+    
+    // If no name provided, list workers and prompt
+    let pid_file = if let Some(worker_name) = name {
+        let normalized_name = worker_name.replace("-", "_");
+        pid_dir.join(format!("noetl_worker_{}.pid", normalized_name))
+    } else {
+        // List all worker PID files
+        let entries = std::fs::read_dir(&pid_dir)?
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .starts_with("noetl_worker_")
+                    && e.file_name().to_string_lossy().ends_with(".pid")
+            })
+            .collect::<Vec<_>>();
+        
+        if entries.is_empty() {
+            println!("No running NoETL worker services found.");
+            return Ok(());
+        }
+        
+        println!("Running workers:");
+        for (i, entry) in entries.iter().enumerate() {
+            let worker_name = entry.file_name()
+                .to_string_lossy()
+                .strip_prefix("noetl_worker_")
+                .and_then(|s| s.strip_suffix(".pid"))
+                .unwrap_or("unknown")
+                .to_string();
+            
+            if let Ok(pid_str) = std::fs::read_to_string(entry.path()) {
+                println!("  {}. {} (PID: {})", i + 1, worker_name, pid_str.trim());
+            } else {
+                println!("  {}. {} (PID file corrupted)", i + 1, worker_name);
+            }
+        }
+        
+        if entries.len() == 1 {
+            entries[0].path()
+        } else {
+            print!("Enter the number of the worker to stop: ");
+            std::io::stdout().flush()?;
+            
+            let mut input = String::new();
+            std::io::stdin().read_line(&mut input)?;
+            
+            let choice: usize = input.trim().parse()
+                .context("Invalid number")?;
+            
+            if choice < 1 || choice > entries.len() {
+                return Err(anyhow::anyhow!("Invalid choice"));
+            }
+            
+            entries[choice - 1].path()
+        }
+    };
+    
+    if !pid_file.exists() {
+        println!("Worker PID file not found: {}", pid_file.display());
+        return Ok(());
+    }
+    
+    let pid_str = std::fs::read_to_string(&pid_file)?;
+    let pid: i32 = pid_str.trim().parse()
+        .context("Invalid PID in file")?;
+    
+    if !process_exists(pid) {
+        println!("Process {} not found. The worker may have been stopped already.", pid);
+        std::fs::remove_file(&pid_file)?;
+        return Ok(());
+    }
+    
+    if !force {
+        print!("Stop NoETL worker with PID {}? [y/N]: ", pid);
+        std::io::Write::flush(&mut std::io::stdout())?;
+        
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input)?;
+        
+        if !input.trim().eq_ignore_ascii_case("y") {
+            println!("Operation cancelled.");
+            return Ok(());
+        }
+    }
+    
+    println!("Stopping NoETL worker with PID {}...", pid);
+    
+    // Send SIGTERM
+    send_signal(pid, nix::sys::signal::Signal::SIGTERM)?;
+    
+    // Wait for graceful shutdown (10 seconds)
+    for _ in 0..20 {
+        if !process_exists(pid) {
+            std::fs::remove_file(&pid_file)?;
+            println!("NoETL worker stopped successfully.");
+            return Ok(());
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+    }
+    
+    // Force kill if still running
+    if force {
+        println!("Worker didn't stop gracefully. Force killing...");
+        send_signal(pid, nix::sys::signal::Signal::SIGKILL)?;
+    } else {
+        print!("Worker didn't stop gracefully. Force kill? [y/N]: ");
+        std::io::Write::flush(&mut std::io::stdout())?;
+        
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input)?;
+        
+        if input.trim().eq_ignore_ascii_case("y") {
+            println!("Force killing NoETL worker with PID {}...", pid);
+            send_signal(pid, nix::sys::signal::Signal::SIGKILL)?;
+        }
+    }
+    
+    std::fs::remove_file(&pid_file)?;
+    println!("NoETL worker stopped.");
+    
+    Ok(())
+}
+
+// ============================================================================
+// Database Management
+// ============================================================================
+
+async fn db_init(client: &Client, base_url: &str) -> Result<()> {
+    println!("Initializing NoETL database schema...");
+    
+    let url = format!("{}/api/db/init", base_url);
+    let response = client
+        .post(&url)
+        .send()
+        .await
+        .context("Failed to send database init request")?;
+    
+    if response.status().is_success() {
+        let result: serde_json::Value = response.json().await?;
+        println!("Database initialized successfully:");
+        println!("{}", serde_json::to_string_pretty(&result)?);
+    } else {
+        let status = response.status();
+        let text = response.text().await?;
+        eprintln!("Failed to initialize database: {} - {}", status, text);
+        return Err(anyhow::anyhow!("Database initialization failed"));
+    }
+    
+    Ok(())
+}
+
+async fn db_validate(client: &Client, base_url: &str) -> Result<()> {
+    println!("Validating NoETL database schema...");
+    
+    let url = format!("{}/api/db/validate", base_url);
+    let response = client
+        .get(&url)
+        .send()
+        .await
+        .context("Failed to send database validate request")?;
+    
+    if response.status().is_success() {
+        let result: serde_json::Value = response.json().await?;
+        println!("Database validation result:");
+        println!("{}", serde_json::to_string_pretty(&result)?);
+    } else {
+        let status = response.status();
+        let text = response.text().await?;
+        eprintln!("Failed to validate database: {} - {}", status, text);
+        return Err(anyhow::anyhow!("Database validation failed"));
+    }
+    
+    Ok(())
+}
+
+// ============================================================================
+// Helper Functions for Process Management
+// ============================================================================
+
+fn process_exists(pid: i32) -> bool {
+    use sysinfo::{ProcessesToUpdate, System};
+    
+    let mut system = System::new_all();
+    system.refresh_processes(ProcessesToUpdate::All);
+    
+    system.process(sysinfo::Pid::from(pid as usize)).is_some()
+}
+
+fn send_signal(pid: i32, signal: nix::sys::signal::Signal) -> Result<()> {
+    use nix::sys::signal::kill;
+    use nix::unistd::Pid;
+    
+    kill(Pid::from_raw(pid), signal)
+        .context("Failed to send signal to process")?;
+    
+    Ok(())
 }
