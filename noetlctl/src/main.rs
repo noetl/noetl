@@ -152,7 +152,6 @@ enum Commands {
     /// Examples:
     ///     noetl worker start
     ///     noetl worker start --max-workers 4
-    ///     noetl worker start --v2
     ///     noetl worker stop
     ///     noetl worker stop --name my-worker --force
     #[command(verbatim_doc_comment)]
@@ -168,6 +167,27 @@ enum Commands {
     Db {
         #[command(subcommand)]
         command: DbCommand,
+    },
+    /// Build Docker images
+    /// Examples:
+    ///     noetl build
+    ///     noetl build --no-cache
+    #[command(verbatim_doc_comment)]
+    Build {
+        /// Build without cache
+        #[arg(long)]
+        no_cache: bool,
+    },
+    /// Kubernetes deployment management
+    /// Examples:
+    ///     noetl k8s deploy
+    ///     noetl k8s redeploy
+    ///     noetl k8s reset
+    ///     noetl k8s remove
+    #[command(verbatim_doc_comment)]
+    K8s {
+        #[command(subcommand)]
+        command: K8sCommand,
     },
 }
 
@@ -317,17 +337,11 @@ enum WorkerCommand {
     /// Examples:
     ///     noetl worker start
     ///     noetl worker start --max-workers 4
-    ///     noetl worker start --v2
-    ///     noetl worker start --max-workers 8 --v2
     #[command(verbatim_doc_comment)]
     Start {
         /// Maximum number of worker threads
         #[arg(short = 'm', long)]
         max_workers: Option<usize>,
-        
-        /// Use v2 worker architecture (event-driven NATS)
-        #[arg(long)]
-        v2: bool,
     },
     /// Stop NoETL worker
     /// Examples:
@@ -358,6 +372,40 @@ enum DbCommand {
     ///     noetl db validate
     #[command(verbatim_doc_comment)]
     Validate,
+}
+
+#[derive(Subcommand)]
+enum K8sCommand {
+    /// Deploy NoETL to Kubernetes (kind cluster)
+    /// Example:
+    ///     noetl k8s deploy
+    #[command(verbatim_doc_comment)]
+    Deploy,
+    /// Remove NoETL from Kubernetes
+    /// Example:
+    ///     noetl k8s remove
+    #[command(verbatim_doc_comment)]
+    Remove,
+    /// Rebuild and redeploy NoETL to Kubernetes
+    /// Example:
+    ///     noetl k8s redeploy
+    ///     noetl k8s redeploy --no-cache
+    #[command(verbatim_doc_comment)]
+    Redeploy {
+        /// Build without cache
+        #[arg(long)]
+        no_cache: bool,
+    },
+    /// Reset NoETL: rebuild, redeploy, reset schema, and setup test environment
+    /// Example:
+    ///     noetl k8s reset
+    ///     noetl k8s reset --no-cache
+    #[command(verbatim_doc_comment)]
+    Reset {
+        /// Build without cache
+        #[arg(long)]
+        no_cache: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -515,8 +563,8 @@ async fn main() -> Result<()> {
             }
         },
         Some(Commands::Worker { command }) => match command {
-            WorkerCommand::Start { max_workers, v2 } => {
-                start_worker(max_workers, v2).await?;
+            WorkerCommand::Start { max_workers } => {
+                start_worker(max_workers).await?;
             }
             WorkerCommand::Stop { name, force } => {
                 stop_worker(name, force).await?;
@@ -528,6 +576,23 @@ async fn main() -> Result<()> {
             }
             DbCommand::Validate => {
                 db_validate(&client, &base_url).await?;
+            }
+        },
+        Some(Commands::Build { no_cache }) => {
+            build_docker_image(no_cache).await?;
+        },
+        Some(Commands::K8s { command }) => match command {
+            K8sCommand::Deploy => {
+                k8s_deploy().await?;
+            }
+            K8sCommand::Remove => {
+                k8s_remove().await?;
+            }
+            K8sCommand::Redeploy { no_cache } => {
+                k8s_redeploy(no_cache).await?;
+            }
+            K8sCommand::Reset { no_cache } => {
+                k8s_reset(no_cache).await?;
             }
         },
         None => {
@@ -1248,7 +1313,7 @@ async fn stop_server(force: bool) -> Result<()> {
 // Worker Management
 // ============================================================================
 
-async fn start_worker(max_workers: Option<usize>, v2: bool) -> Result<()> {
+async fn start_worker(max_workers: Option<usize>) -> Result<()> {
     use std::process::{Command, Stdio};
     
     let pid_dir = dirs::home_dir()
@@ -1278,21 +1343,14 @@ async fn start_worker(max_workers: Option<usize>, v2: bool) -> Result<()> {
         }
     }
     
-    println!("Starting NoETL worker '{}'{}...", 
-        worker_name, 
-        if v2 { " (v2 architecture)" } else { "" }
-    );
+    println!("Starting NoETL worker '{}' (v2 architecture)...", worker_name);
     
-    // Build Python worker command
+    // Build Python worker command - always use v2
     let mut cmd = Command::new("python");
-    cmd.args(&["-m", "noetl.cli.ctl", "worker", "start"]);
+    cmd.args(&["-m", "noetl.cli.ctl", "worker", "start", "--v2"]);
     
     if let Some(workers) = max_workers {
         cmd.arg("--max-workers").arg(workers.to_string());
-    }
-    
-    if v2 {
-        cmd.arg("--v2");
     }
     
     cmd.stdout(Stdio::null())
@@ -1512,6 +1570,250 @@ fn send_signal(pid: i32, signal: nix::sys::signal::Signal) -> Result<()> {
     
     kill(Pid::from_raw(pid), signal)
         .context("Failed to send signal to process")?;
+    
+    Ok(())
+}
+
+// ============================================================================
+// Build Commands
+// ============================================================================
+
+async fn build_docker_image(no_cache: bool) -> Result<()> {
+    use std::process::Command;
+    use std::io::{BufRead, BufReader};
+    use chrono::Local;
+    
+    let registry = "local";
+    let image_name = "noetl";
+    let image_tag = Local::now().format("%Y-%m-%d-%H-%M").to_string();
+    
+    println!("Building Docker image: {}/{}:{}", registry, image_name, image_tag);
+    
+    let cache_arg = if no_cache { "--no-cache" } else { "" };
+    
+    let mut cmd = Command::new("docker");
+    cmd.arg("build");
+    
+    if no_cache {
+        cmd.arg(cache_arg);
+    }
+    
+    cmd.arg("-t")
+       .arg(format!("{}/{}:{}", registry, image_name, image_tag))
+       .arg("-f")
+       .arg("docker/noetl/dev/Dockerfile")
+       .arg(".")
+       .stdout(std::process::Stdio::piped())
+       .stderr(std::process::Stdio::piped());
+    
+    cmd.env("DOCKER_BUILDKIT", "0");
+    
+    println!("Running: docker build{} -t {}/{}:{} -f docker/noetl/dev/Dockerfile .", 
+        if no_cache { " --no-cache" } else { "" }, registry, image_name, image_tag);
+    
+    let mut child = cmd.spawn()
+        .context("Failed to spawn docker build command")?;
+    
+    // Stream stdout
+    if let Some(stdout) = child.stdout.take() {
+        let reader = BufReader::new(stdout);
+        for line in reader.lines() {
+            if let Ok(line) = line {
+                println!("{}", line);
+            }
+        }
+    }
+    
+    let status = child.wait()?;
+    
+    if !status.success() {
+        return Err(anyhow::anyhow!("Docker build failed with status: {}", status));
+    }
+    
+    // Save image tag to file
+    std::fs::write(".noetl_last_build_tag.txt", &image_tag)?;
+    println!("✓ Image built successfully: {}/{}:{}", registry, image_name, image_tag);
+    println!("✓ Tag saved to .noetl_last_build_tag.txt");
+    
+    Ok(())
+}
+
+// ============================================================================
+// Kubernetes Commands
+// ============================================================================
+
+async fn k8s_deploy() -> Result<()> {
+    use std::process::Command;
+    
+    println!("Deploying NoETL to Kubernetes...");
+    
+    // Read image tag
+    let image_tag = std::fs::read_to_string(".noetl_last_build_tag.txt")
+        .context("Failed to read .noetl_last_build_tag.txt - have you built the image?")?;
+    let image_tag = image_tag.trim();
+    
+    let registry = "local";
+    let image_name = "noetl";
+    let full_image = format!("{}/{}:{}", registry, image_name, image_tag);
+    
+    println!("Using image: {}", full_image);
+    
+    // Load image to kind cluster
+    println!("Loading image to kind cluster...");
+    run_command(&["kind", "load", "docker-image", &full_image, "--name", "noetl"])?;
+    
+    // Set kubectl context
+    println!("Setting kubectl context to kind-noetl...");
+    run_command(&["kubectl", "config", "use-context", "kind-noetl"])?;
+    
+    // Apply namespace
+    println!("Creating namespace...");
+    run_command(&["kubectl", "apply", "-f", "ci/manifests/noetl/namespace/namespace.yaml"])?;
+    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+    
+    // Update image in deployment files using yq
+    println!("Updating deployment image references...");
+    update_deployment_image("ci/manifests/noetl/server-deployment.yaml", &full_image)?;
+    update_deployment_image("ci/manifests/noetl/worker-deployment.yaml", &full_image)?;
+    
+    // Apply manifests
+    println!("Applying Kubernetes manifests...");
+    run_command(&["kubectl", "apply", "-f", "ci/manifests/noetl/"])?;
+    
+    // Restore original image placeholders
+    println!("Restoring deployment templates...");
+    update_deployment_image("ci/manifests/noetl/server-deployment.yaml", "image_name:image_tag")?;
+    update_deployment_image("ci/manifests/noetl/worker-deployment.yaml", "image_name:image_tag")?;
+    
+    println!("✓ NoETL deployed successfully");
+    println!("  UI:  http://localhost:8082");
+    println!("  API: http://localhost:8082/docs");
+    
+    Ok(())
+}
+
+async fn k8s_remove() -> Result<()> {
+    println!("Removing NoETL from Kubernetes...");
+    
+    // Set kubectl context
+    run_command(&["kubectl", "config", "use-context", "kind-noetl"])?;
+    
+    // Delete manifests
+    run_command(&["kubectl", "delete", "-f", "ci/manifests/noetl/"])?;
+    
+    println!("✓ NoETL removed successfully");
+    
+    Ok(())
+}
+
+async fn k8s_redeploy(no_cache: bool) -> Result<()> {
+    println!("Rebuilding and redeploying NoETL...");
+    
+    // Build image
+    build_docker_image(no_cache).await?;
+    
+    // Remove existing deployment
+    k8s_remove().await.ok(); // Ignore errors if not deployed
+    
+    // Load image to kind
+    let image_tag = std::fs::read_to_string(".noetl_last_build_tag.txt")?.trim().to_string();
+    println!("Loading image to kind cluster...");
+    run_command(&["kind", "load", "docker-image", &format!("local/noetl:{}", image_tag), "--name", "noetl"])?;
+    
+    // Deploy
+    k8s_deploy().await?;
+    
+    println!("✓ NoETL redeployed successfully");
+    
+    Ok(())
+}
+
+async fn k8s_reset(no_cache: bool) -> Result<()> {
+    println!("Resetting NoETL (full rebuild + schema reset + test setup)...");
+    
+    // Reset postgres schema
+    println!("Resetting Postgres schema...");
+    run_command(&["task", "postgres:k8s:schema-reset"])?;
+    
+    // Redeploy
+    k8s_redeploy(no_cache).await?;
+    
+    // Install noetl CLI with dev extras
+    println!("Installing NoETL CLI with dev dependencies...");
+    run_command(&["uv", "pip", "install", "-e", ".[dev]"])?;
+    
+    // Wait for deployment to be ready
+    println!("Waiting for deployment to be ready...");
+    tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
+    
+    // Setup test environment
+    println!("Setting up test environment...");
+    run_command(&["task", "test:k8s:setup-environment"])?;
+    run_command(&["task", "test:k8s:create-tables"])?;
+    run_command(&["task", "test:k8s:register-credentials"])?;
+    
+    println!("✓ NoETL reset complete");
+    println!("  UI:  http://localhost:8082");
+    println!("  API: http://localhost:8082/docs");
+    
+    Ok(())
+}
+
+// Helper functions for k8s commands
+fn run_command(args: &[&str]) -> Result<()> {
+    use std::process::Command;
+    
+    let output = Command::new(args[0])
+        .args(&args[1..])
+        .output()
+        .context(format!("Failed to execute: {}", args.join(" ")))?;
+    
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow::anyhow!("Command failed: {}\n{}", args.join(" "), stderr));
+    }
+    
+    print!("{}", String::from_utf8_lossy(&output.stdout));
+    
+    Ok(())
+}
+
+fn update_deployment_image(file_path: &str, image: &str) -> Result<()> {
+    use std::process::Command;
+    
+    // Check which yq version is installed
+    let yq_version = Command::new("yq")
+        .arg("--version")
+        .output();
+    
+    let is_mikefarah = if let Ok(output) = yq_version {
+        String::from_utf8_lossy(&output.stdout).contains("mikefarah") ||
+        String::from_utf8_lossy(&output.stderr).contains("mikefarah")
+    } else {
+        false
+    };
+    
+    if is_mikefarah {
+        // mikefarah/yq (v4+)
+        Command::new("yq")
+            .arg("-i")
+            .arg(format!(".spec.template.spec.containers[0].image = \"{}\"", image))
+            .arg(file_path)
+            .output()
+            .context("Failed to update deployment with yq")?;
+    } else {
+        // kislyuk/yq (python version)
+        let temp_file = format!("{}.tmp", file_path);
+        Command::new("yq")
+            .arg("-y")
+            .arg(format!(".spec.template.spec.containers[0].image = \"{}\"", image))
+            .arg(file_path)
+            .stdout(std::fs::File::create(&temp_file)?)
+            .output()
+            .context("Failed to update deployment with yq")?;
+        
+        std::fs::rename(&temp_file, file_path)?;
+    }
     
     Ok(())
 }

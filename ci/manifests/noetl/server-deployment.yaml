@@ -31,8 +31,8 @@ spec:
               mountPath: /opt/noetl/data
             - name: noetl-logs
               mountPath: /opt/noetl/logs
-          command: ["/opt/noetl/.venv/bin/python3"]
-          args: ["-m", "uvicorn", "noetl.server:create_app", "--factory", "--host", "0.0.0.0", "--port", "8082", "--log-level", "error"]
+          command: ["noetl"]
+          args: ["server", "start"]
           resources:
             limits:
               cpu: "1"

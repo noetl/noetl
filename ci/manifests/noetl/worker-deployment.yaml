@@ -36,14 +36,10 @@ spec:
           image: image_name:image_tag
           imagePullPolicy: IfNotPresent
           command:
-            - /opt/noetl/.venv/bin/python3
-            - -u
-            - -m
-            - noetl.main
+            - noetl
           args:
             - worker
             - start
-            - --v2
           envFrom:
             - configMapRef:
                 name: noetl-config

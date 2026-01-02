@@ -47,12 +47,11 @@ noetl server stop --force  # Force stop without confirmation
 
 ### Worker Management
 
-Start NoETL worker:
+Start NoETL worker (v2 event-driven architecture):
 ```bash
 noetl worker start
 noetl worker start --max-workers 4
-noetl worker start --v2  # Use v2 event-driven architecture
-noetl worker start --max-workers 8 --v2
+noetl worker start --max-workers 8
 ```
 
 Stop NoETL worker:
@@ -73,6 +72,50 @@ Validate database schema:
 ```bash
 noetl db validate
 ```
+
+### Build Management
+
+Build NoETL Docker image:
+```bash
+noetl build
+noetl build --no-cache  # Build without using cache
+```
+
+The build command:
+- Builds the Docker image with a timestamp-based tag
+- Saves the tag to `.noetl_last_build_tag.txt` for deployment use
+- Streams build output to console
+- Replaces `task docker-build-noetl`
+
+### Kubernetes Management
+
+Deploy NoETL to kind cluster:
+```bash
+noetl k8s deploy
+```
+
+Remove NoETL from cluster:
+```bash
+noetl k8s remove
+```
+
+Rebuild and redeploy:
+```bash
+noetl k8s redeploy
+noetl k8s redeploy --no-cache  # Rebuild without cache
+```
+
+Full reset (schema reset + redeploy + test setup):
+```bash
+noetl k8s reset
+noetl k8s reset --no-cache  # Reset with clean build
+```
+
+The k8s commands:
+- `deploy`: Applies Kubernetes manifests to kind cluster
+- `remove`: Deletes NoETL resources from cluster
+- `redeploy`: Builds image, loads to kind, and deploys (replaces `task noetl:k8s:redeploy`)
+- `reset`: Full workflow - resets database schema, redeploys, runs test setup (replaces `task noetl:k8s:reset`)
 
 ### Configuration and Contexts
 
@@ -211,9 +254,46 @@ noetl --interactive
 - **Refresh**: Press `r` to refresh the data.
 - **Quit**: Press `q` to exit.
 
-## Docker
+## Docker Integration
 
-```bash
-docker build -t noetl .
-docker run --rm noetl --help
+The `noetl` binary is built into the Docker image using a multi-stage build:
+
+```dockerfile
+# Rust builder stage compiles the CLI
+FROM rust:1.75-slim as rust-builder
+WORKDIR /build
+COPY noetlctl/ ./
+RUN cargo build --release
+
+# Production stage includes the binary
+COPY --from=rust-builder /build/target/release/noetl /usr/local/bin/noetl
 ```
+
+The Kubernetes manifests use the Rust CLI for server and worker management:
+
+**Server deployment:**
+```yaml
+command: ["noetl"]
+args: ["server", "start"]
+```
+
+**Worker deployment:**
+```yaml
+command: ["noetl"]
+args: ["worker", "start"]
+```
+
+This provides a unified binary for both local development and containerized deployments.
+
+## Command Mapping
+
+The Rust CLI replaces several task commands:
+
+| Task Command | noetl Command |
+|-------------|---------------|
+| `task docker-build-noetl` | `noetl build` |
+| `task noetl:k8s:deploy` | `noetl k8s deploy` |
+| `task noetl:k8s:redeploy` | `noetl k8s redeploy` |
+| `task noetl:k8s:reset` | `noetl k8s reset` |
+| `task noetl:server:start` | `noetl server start` |
+| `task noetl:worker:start` | `noetl worker start` |

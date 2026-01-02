@@ -6,6 +6,13 @@ COPY ui-src ./ui-src
 ENV VITE_API_BASE_URL=/api
 RUN cd ui-src && npm run build
 
+FROM rust:1.83-slim AS rust-builder
+WORKDIR /build
+RUN apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
+COPY noetlctl/Cargo.toml noetlctl/Cargo.lock ./
+COPY noetlctl/src ./src
+RUN cargo build --release
+
 FROM python:3.12-slim AS builder
 
 # Install uv directly instead of copying from ghcr.io
@@ -47,6 +54,7 @@ RUN apt-get update && apt-get --no-install-recommends install -y \
 # RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
 COPY --from=builder /opt/noetl/.venv /opt/noetl/.venv
+COPY --from=rust-builder /build/target/release/noetl /usr/local/bin/noetl
 
 WORKDIR /opt/noetl
 
