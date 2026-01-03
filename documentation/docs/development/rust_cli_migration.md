@@ -2,299 +2,176 @@
 sidebar_position: 10
 ---
 
-# Rust CLI Architecture and Migration
+# Rust CLI Architecture
 
-## Overview
-
-This document details the complete architecture of NoETL's Rust-based CLI and how it integrates with the Python application. The migration from Python Typer CLI to Rust Clap CLI has been completed across all deployment targets: Docker, Kubernetes, local development, and PyPI distribution.
+Complete architecture documentation for NoETL's Rust-based CLI and its integration with Python components.
 
 **Migration Status**: ✅ Complete (All 3 Phases Implemented)
 
-**Migration Status**: ✅ Complete (All 3 Phases Implemented)
+## Quick Overview
 
-## Architecture Overview
-
-### Command Flow
+NoETL uses a hybrid architecture where a Rust binary (fast, native) handles CLI operations and spawns Python processes (rich ecosystem) for server and worker functionality.
 
 ```
-User Command: noetl server start
-       ↓
-   Rust Binary (noetlctl/src/main.rs)
-       ↓
-   Clap Argument Parsing
-       ↓
-   Match Command Pattern
-       ↓
-   ┌──────────────┴──────────────┐
-   ↓                             ↓
-Server/Worker Commands      Other Commands
-   ↓                             ↓
-Spawn Python Process        Native Rust Execution
-   ↓                             ↓
-python -m noetl.server      - Catalog operations
-python -m noetl.worker      - Execution API calls
-                            - Status queries
-                            - TUI interface
+┌─────────────────────────────────────────────────────┐
+│  User Command: noetl server start                  │
+└─────────────────┬───────────────────────────────────┘
+                  ↓
+┌─────────────────────────────────────────────────────┐
+│  Rust CLI Binary (noetlctl/src/main.rs)           │
+│  - Argument parsing (Clap)                         │
+│  - PID management                                  │
+│  - Process spawning                                │
+│  - Signal handling                                 │
+└─────────────────┬───────────────────────────────────┘
+                  ↓
+┌─────────────────────────────────────────────────────┐
+│  Python Subprocess: python -m noetl.server         │
+│  - FastAPI server (noetl/server/__main__.py)      │
+│  - Uvicorn ASGI server                            │
+│  - Database operations                            │
+│  - API endpoints                                  │
+└─────────────────────────────────────────────────────┘
 ```
 
-### Component Interaction
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│  Rust CLI (noetl binary)                                    │
-│  Location: noetlctl/src/main.rs                             │
-│  ┌────────────────┬──────────────────┬────────────────────┐ │
-│  │ Build Commands │ K8s Commands     │ Server/Worker Mgmt  │ │
-│  │ - docker build │ - deploy         │ - start/stop        │ │
-│  │ - image tag    │ - remove         │ - PID management    │ │
-│  │                │ - redeploy       │ - Signal handling   │ │
-│  └────────────────┴──────────────────┴────────────────────┘ │
-│  ┌────────────────────────────────────────────────────────┐ │
-│  │ REST API Commands (Native Rust)                        │ │
-│  │ - Catalog: register, list, get                         │ │
-│  │ - Execute: playbook execution                          │ │
-│  │ - Credential: management                               │ │
-│  │ - Query: SQL execution                                 │ │
-│  │ - Status: server health                                │ │
-│  │ - TUI: interactive interface                           │ │
-│  └────────────────────────────────────────────────────────┘ │
-└─────────────────────────────────────────────────────────────┘
-                          ↓
-                   Spawns subprocess
-                          ↓
-┌─────────────────────────────────────────────────────────────┐
-│  Python Application Modules                                  │
-│  ┌─────────────────────┬──────────────────────────────────┐ │
-│  │ noetl/server/       │ noetl/worker/                    │ │
-│  │ __main__.py         │ __main__.py                      │ │
-│  │ ↓                   │ ↓                                │ │
-│  │ app.py              │ v2_worker_nats.py                │ │
-│  │ ↓                   │ ↓                                │ │
-│  │ FastAPI Server      │ NATS Subscriber + Job Executor   │ │
-│  └─────────────────────┴──────────────────────────────────┘ │
-└─────────────────────────────────────────────────────────────┘
-```
-
-## Deployment Architecture
+## Deployment Targets
 
 ### 1. Docker Containers
 
 **Multi-Stage Build** (`docker/noetl/dev/Dockerfile`):
 
 ```dockerfile
-# Stage 1: Build React UI
+# Stage 1: UI Build (Node.js)
 FROM node:20-alpine AS ui-builder
-WORKDIR /ui
 COPY ui-src/ ./ui-src/
 RUN cd ui-src && npm ci && npm run build
 
-# Stage 2: Build Rust CLI Binary
+# Stage 2: Rust Binary (Cargo)
 FROM rust:1.83-slim AS rust-builder
-WORKDIR /build
 COPY noetlctl/ ./
 RUN cargo build --release
-# Produces: target/release/noetl (5.5MB)
+# Output: target/release/noetl (5.5MB)
 
-# Stage 3: Build Python Environment
+# Stage 3: Python Environment (uv)
 FROM python:3.12-slim AS builder
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-dev --no-install-project
+RUN uv sync --frozen --no-dev
 COPY noetl/ ./noetl/
-COPY --from=ui-builder /ui/ui-src/dist ./noetl/core/ui
 RUN uv pip install -e .
 
 # Stage 4: Production Image
 FROM python:3.12-slim AS production
 COPY --from=builder /opt/noetl/.venv /opt/noetl/.venv
 COPY --from=rust-builder /build/target/release/noetl /usr/local/bin/noetl
-COPY --from=builder /opt/noetl/noetl ./noetl
+COPY --from=ui-builder /ui/ui-src/dist ./noetl/core/ui
 ENV PATH="/opt/noetl/.venv/bin:$PATH"
-CMD ["python", "-m", "noetl.server", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["python", "-m", "noetl.server"]
 ```
 
 **Key Points:**
-- Rust binary compiled separately in dedicated stage
-- Binary copied to `/usr/local/bin/noetl` in production image
-- Default CMD uses Python directly (can be overridden)
-- Rust CLI available for management commands in running container
+- Separate build stages for isolation and caching
+- Rust binary at `/usr/local/bin/noetl`
+- Python environment at `/opt/noetl/.venv`
+- Can override CMD with `command: [noetl, server, start]`
 
-### 2. Kubernetes Deployments
+### 2. Kubernetes
 
-**Server Deployment** (`ci/manifests/noetl/server-deployment.yaml`):
+**Server Deployment**:
 ```yaml
 containers:
   - name: server
     image: ghcr.io/noetl/noetl:latest
-    command: [noetl]           # Rust binary
-    args: [server, start]      # Calls Python via wrapper
-    ports:
-      - containerPort: 8082
+    command: [noetl]
+    args: [server, start]
 ```
 
-**Worker Deployment** (`ci/manifests/noetl/worker-deployment.yaml`):
+**Worker Deployment**:
 ```yaml
 containers:
   - name: worker
-    image: ghcr.io/noetl/noetl:latest
-    command: [noetl]           # Rust binary
-    args: [worker, start]      # Calls Python via wrapper
+    command: [noetl]
+    args: [worker, start]
 ```
 
-**Execution Flow in K8s:**
-1. Container starts with `command: [noetl]`
-2. Rust CLI receives `worker start` arguments
-3. Rust spawns: `python -m noetl.worker`
-4. Python worker module starts v2_worker_nats
-5. Worker connects to NATS and starts processing
+**Flow**: Pod starts → Rust CLI → Spawns `python -m noetl.worker` → Connects to NATS
 
 ### 3. Local Development
 
-**Binary Installation:**
 ```bash
-# Build Rust CLI
+# Build and install
 cd noetlctl && cargo build --release
-
-# Install to project bin directory
 mkdir -p ../bin
 cp target/release/noetl ../bin/noetl
-chmod +x ../bin/noetl
 
-# Add to PATH (in shell profile)
-export PATH="/path/to/noetl/bin:$PATH"
-```
-
-**Usage:**
-```bash
-# Build and deploy
+# Usage
+./bin/noetl server start --init-db
+./bin/noetl worker start
 ./bin/noetl build
 ./bin/noetl k8s deploy
-
-# Start server locally
-./bin/noetl server start --init-db
-
-# Start worker locally
-./bin/noetl worker start
-
-# Database operations
-./bin/noetl db init
-./bin/noetl db validate
-
-# Kubernetes management
-./bin/noetl k8s redeploy
-./bin/noetl k8s reset
-./bin/noetl k8s remove
 ```
 
 ### 4. PyPI Distribution
 
-**Wheel Structure:**
+**Wheel Contents**:
 ```
-noetl-2.4.0-py3-none-any.whl
+noetl-2.4.0-py3-none-any.whl/
 ├── noetl/
-│   ├── __init__.py
-│   ├── main.py (deprecated, shows error)
-│   ├── cli_wrapper.py (Python wrapper)
-│   ├── server/
-│   │   ├── __main__.py (entry point)
-│   │   └── ... (FastAPI app)
-│   ├── worker/
-│   │   ├── __main__.py (entry point)
-│   │   └── v2_worker_nats.py
-│   ├── bin/
-│   │   └── noetl (Rust binary, 5.7MB)
-│   └── ... (other Python modules)
-├── noetl-2.4.0.dist-info/
-│   ├── entry_points.txt
-│   │   [console_scripts]
-│   │   noetl = noetl.cli_wrapper:main
-│   └── ...
+│   ├── cli_wrapper.py       # Entry point wrapper
+│   ├── server/__main__.py   # Server entry
+│   ├── worker/__main__.py   # Worker entry
+│   ├── bin/noetl           # Rust binary (5.7MB)
+│   └── ... (Python modules)
+└── noetl-2.4.0.dist-info/
+    └── entry_points.txt    # noetl = noetl.cli_wrapper:main
 ```
 
-**Installation Flow:**
+**Installation Flow**:
 ```bash
 pip install noetl
-# 1. Downloads wheel from PyPI
-# 2. Extracts to site-packages/noetl/
-# 3. Creates console script: /usr/local/bin/noetl → cli_wrapper.py
-# 4. cli_wrapper finds bundled binary at noetl/bin/noetl
-# 5. Executes binary with all command-line arguments
+# Creates: ~/.local/bin/noetl → cli_wrapper.py → noetl/bin/noetl
 ```
 
-**Wrapper Mechanism** (`noetl/cli_wrapper.py`):
+**Wrapper** (`noetl/cli_wrapper.py`):
 ```python
-def get_noetl_binary():
-    """Locate the bundled Rust binary."""
-    import noetl
-    package_dir = Path(noetl.__file__).parent
-    binary_path = package_dir / 'bin' / 'noetl'
-    return binary_path
-
 def main():
-    """Execute the bundled Rust binary."""
-    binary_path = get_noetl_binary()
-    result = subprocess.run([str(binary_path)] + sys.argv[1:])
-    sys.exit(result.returncode)
+    binary_path = Path(noetl.__file__).parent / 'bin' / 'noetl'
+    subprocess.run([str(binary_path)] + sys.argv[1:])
 ```
 
 ## Implementation Details
 
 ### Server Management
 
-**Start Server** (`noetlctl/src/main.rs:start_server()`):
-
+**Start Server** (Rust):
 ```rust
 async fn start_server(init_db: bool) -> Result<()> {
-    // 1. Check for existing PID file
-    let pid_file = dirs::home_dir()?.join(".noetl/noetl_server.pid");
-    if pid_file.exists() {
-        let pid = read_pid_file(&pid_file)?;
-        if process_exists(pid) {
-            println!("Server already running (PID: {})", pid);
-            return Ok(());
-        }
-        // Remove stale PID file
-        fs::remove_file(&pid_file)?;
+    // 1. Check PID file (~/.noetl/noetl_server.pid)
+    if pid_file.exists() && process_exists(read_pid()?) {
+        return Err("Already running");
     }
     
-    // 2. Get configuration from environment
-    let host = env::var("NOETL_HOST").unwrap_or("0.0.0.0".into());
-    let port = env::var("NOETL_PORT").unwrap_or("8082".into());
-    
-    // 3. Check port availability
-    if TcpStream::connect(format!("{}:{}", host, port)).is_ok() {
-        return Err(anyhow!("Port {}:{} already in use", host, port));
+    // 2. Check port availability
+    let port = env::var("NOETL_PORT").unwrap_or("8082");
+    if TcpStream::connect(format!("0.0.0.0:{}", port)).is_ok() {
+        return Err("Port in use");
     }
     
-    // 4. Spawn Python server subprocess
-    let mut cmd = Command::new("python");
-    cmd.args(&["-m", "noetl.server"])
-       .arg("--host").arg(&host)
-       .arg("--port").arg(&port);
+    // 3. Spawn Python subprocess
+    let child = Command::new("python")
+        .args(&["-m", "noetl.server", "--port", &port])
+        .arg(if init_db { "--init-db" } else { "" })
+        .spawn()?;
     
-    if init_db {
-        cmd.arg("--init-db");
-    }
-    
-    cmd.stdout(Stdio::null())
-       .stderr(Stdio::null());
-    
-    let child = cmd.spawn()?;
-    
-    // 5. Write PID file
-    fs::create_dir_all(pid_file.parent().unwrap())?;
-    fs::write(&pid_file, child.id().to_string())?;
-    
-    println!("Server started (PID: {})", child.id());
+    // 4. Write PID file
+    fs::write(pid_file, child.id().to_string())?;
     Ok(())
 }
 ```
 
-**Python Server Entry Point** (`noetl/server/__main__.py`):
-
+**Server Entry Point** (Python):
 ```python
+# noetl/server/__main__.py
 def main():
-    """Start NoETL FastAPI server."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8082)
@@ -302,110 +179,57 @@ def main():
     args = parser.parse_args()
     
     if args.init_db:
-        from noetl.database.manager import initialize_db
         asyncio.run(initialize_db())
     
-    import uvicorn
     from noetl.server.app import create_app
-    
-    app = create_app()
-    uvicorn.run(app, host=args.host, port=args.port)
+    uvicorn.run(create_app(), host=args.host, port=args.port)
 ```
 
-**Stop Server** (`noetlctl/src/main.rs:stop_server()`):
-
+**Stop Server** (Rust):
 ```rust
 async fn stop_server(force: bool) -> Result<()> {
-    let pid_file = dirs::home_dir()?.join(".noetl/noetl_server.pid");
-    
-    if !pid_file.exists() {
-        println!("No server PID file found");
-        return Ok(());
-    }
-    
-    let pid = read_pid_file(&pid_file)?;
-    
-    if !process_exists(pid) {
-        println!("Server not running (stale PID file)");
-        fs::remove_file(&pid_file)?;
-        return Ok(());
-    }
+    let pid = read_pid_file()?;
     
     // Send SIGTERM for graceful shutdown
-    println!("Stopping server (PID: {})...", pid);
     send_signal(pid, Signal::SIGTERM)?;
     
-    // Wait up to 10 seconds for graceful shutdown
+    // Wait 10 seconds
     for _ in 0..20 {
-        if !process_exists(pid) {
-            fs::remove_file(&pid_file)?;
-            println!("Server stopped successfully");
+        if !process_exists(pid)? {
+            fs::remove_file(pid_file)?;
             return Ok(());
         }
         tokio::time::sleep(Duration::from_millis(500)).await;
     }
     
-    // Force kill if requested or confirmed
-    if force || confirm_force_kill()? {
-        println!("Force killing server...");
+    // Force kill if requested
+    if force {
         send_signal(pid, Signal::SIGKILL)?;
-        fs::remove_file(&pid_file)?;
     }
-    
     Ok(())
 }
 ```
 
 ### Worker Management
 
-**Start Worker** (`noetlctl/src/main.rs:start_worker()`):
-
+**Start Worker** (Rust):
 ```rust
-async fn start_worker(max_workers: Option<usize>) -> Result<()> {
-    let worker_name = "worker-01"; // Default name
-    let pid_file = dirs::home_dir()?
-        .join(format!(".noetl/noetl_worker_{}.pid", worker_name));
+async fn start_worker(_max_workers: Option<usize>) -> Result<()> {
+    let child = Command::new("python")
+        .args(&["-m", "noetl.worker"])
+        .spawn()?;
     
-    // Check for existing worker
-    if pid_file.exists() {
-        let pid = read_pid_file(&pid_file)?;
-        if process_exists(pid) {
-            println!("Worker '{}' already running (PID: {})", worker_name, pid);
-            return Ok(());
-        }
-        fs::remove_file(&pid_file)?;
-    }
-    
-    println!("Starting worker '{}'...", worker_name);
-    
-    // Spawn Python worker subprocess
-    let mut cmd = Command::new("python");
-    cmd.args(&["-m", "noetl.worker"]);
-    
-    cmd.stdout(Stdio::null())
-       .stderr(Stdio::null());
-    
-    let child = cmd.spawn()?;
-    
-    // Write PID file
-    fs::create_dir_all(pid_file.parent().unwrap())?;
-    fs::write(&pid_file, child.id().to_string())?;
-    
-    println!("Worker started (PID: {})", child.id());
+    fs::write(pid_file, child.id().to_string())?;
     Ok(())
 }
 ```
 
-**Python Worker Entry Point** (`noetl/worker/__main__.py`):
-
+**Worker Entry Point** (Python):
 ```python
+# noetl/worker/__main__.py
 def main():
-    """Start NoETL V2 worker."""
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--nats-url",
-        default="nats://noetl:noetl@nats.nats.svc.cluster.local:4222"
-    )
+    parser.add_argument("--nats-url", default="nats://...")
     parser.add_argument("--server-url", default=None)
     args = parser.parse_args()
     
@@ -413,953 +237,243 @@ def main():
     run_worker_v2_sync(nats_url=args.nats_url, server_url=args.server_url)
 ```
 
-**Worker Architecture** (`noetl/worker/v2_worker_nats.py`):
-
+**Worker Architecture** (Python):
 ```python
-async def run_v2_worker(worker_id: str, nats_url: str, server_url: str):
-    """Main worker event loop."""
+# noetl/worker/v2_worker_nats.py
+async def run_v2_worker(worker_id, nats_url, server_url):
     # 1. Connect to NATS
-    subscriber = NATSCommandSubscriber(
-        nats_url=nats_url,
-        worker_id=worker_id
-    )
+    subscriber = NATSCommandSubscriber(nats_url, worker_id)
     await subscriber.connect()
     
-    # 2. Create worker instance
-    worker = V2Worker(
-        worker_id=worker_id,
-        nats_url=nats_url,
-        server_url=server_url
-    )
-    
-    # 3. Subscribe to command notifications
-    async def handle_command(msg: dict):
-        execution_id = msg['execution_id']
-        queue_id = msg['queue_id']
-        step = msg['step']
-        server_url = msg['server_url']
-        
-        # Fetch full command from server
-        command = await worker.fetch_command(server_url, queue_id)
-        
-        # Execute based on tool.kind
-        result = await worker.execute_command(command)
-        
-        # Emit result event to server
-        await worker.report_event(execution_id, step, result)
+    # 2. Subscribe to commands
+    async def handle_command(msg):
+        command = await fetch_command(msg['queue_id'])
+        result = await execute_command(command)
+        await report_event(msg['execution_id'], result)
     
     await subscriber.subscribe(handle_command)
     
-    # 4. Keep running until interrupted
-    try:
-        while worker._running:
-            await asyncio.sleep(1)
-    except KeyboardInterrupt:
-        await worker.cleanup()
+    # 3. Keep running
+    while running:
+        await asyncio.sleep(1)
 ```
 
-### Build and Deployment Commands
+### Build Commands
 
-**Docker Build** (`noetlctl/src/main.rs:build_docker_image()`):
-
+**Docker Build** (Rust):
 ```rust
 async fn build_docker_image(no_cache: bool) -> Result<()> {
-    let timestamp = chrono::Local::now().format("%Y-%m-%d-%H-%M");
-    let tag = format!("local/noetl:{}", timestamp);
+    let tag = format!("local/noetl:{}", timestamp());
     
-    println!("Building Docker image: {}", tag);
+    Command::new("docker")
+        .args(&["build", "-f", "docker/noetl/dev/Dockerfile"])
+        .arg("-t").arg(&tag)
+        .arg(if no_cache { "--no-cache" } else { "" })
+        .status()?;
     
-    let mut cmd = Command::new("docker");
-    cmd.arg("build")
-       .arg("-f").arg("docker/noetl/dev/Dockerfile")
-       .arg("-t").arg(&tag)
-       .arg(".");
-    
-    if no_cache {
-        cmd.arg("--no-cache");
-    }
-    
-    let status = cmd.status()?;
-    if !status.success() {
-        return Err(anyhow!("Docker build failed"));
-    }
-    
-    // Save tag to file for k8s deploy
     fs::write(".noetl_last_build_tag.txt", &tag)?;
-    println!("Image built: {}", tag);
     Ok(())
 }
 ```
 
-**Kubernetes Deploy** (`noetlctl/src/main.rs:k8s_deploy()`):
-
+**Kubernetes Deploy** (Rust):
 ```rust
 async fn k8s_deploy() -> Result<()> {
-    // 1. Get last built image tag
     let tag = fs::read_to_string(".noetl_last_build_tag.txt")?;
     
-    // 2. Load image into kind cluster
-    println!("Loading image into kind cluster...");
-    run_command(&["kind", "load", "docker-image", &tag, "--name", "noetl"])?;
+    // Load image into kind cluster
+    run_command(&["kind", "load", "docker-image", &tag])?;
     
-    // 3. Update manifests with new image tag
+    // Update manifests
     update_manifest_image("ci/manifests/noetl/server-deployment.yaml", &tag)?;
-    update_manifest_image("ci/manifests/noetl/worker-deployment.yaml", &tag)?;
     
-    // 4. Apply manifests
-    println!("Deploying to Kubernetes...");
+    // Apply manifests
     run_command(&["kubectl", "apply", "-f", "ci/manifests/noetl/"])?;
     
-    // 5. Wait for rollout
-    run_command(&[
-        "kubectl", "rollout", "status", "deployment/noetl-server",
-        "-n", "noetl", "--timeout=120s"
-    ])?;
-    
-    println!("Deployment complete");
+    // Wait for rollout
+    run_command(&["kubectl", "rollout", "status", "deployment/noetl-server"])?;
     Ok(())
 }
 ```
 
 ## Migration History
 
-### Phase 1: Docker & Kubernetes Integration (Complete)
-## Migration History
-
-### Phase 1: Docker & Kubernetes Integration (Complete)
-
+### Phase 1: Docker & Kubernetes (Complete)
 **Commit**: `58ab80f3`
 
-**Changes:**
-- Updated `docker/noetl/dev/Dockerfile` to Rust 1.83-slim with multi-stage build
-- Added rust-builder stage to compile noetl binary
-- Installed binary to `/usr/local/bin/noetl` in production image
-- Updated K8s manifests to use `command: [noetl]`
+- Updated Dockerfile to Rust 1.83 with multi-stage build
+- Installed binary to `/usr/local/bin/noetl`
+- Updated K8s manifests: `command: [noetl]`
 - Created `./bin/noetl` for local development
-- Updated all documentation (noetlctl → noetl rename)
-- Added kind load to k8s deploy command
-- Updated noetlctl/README.md with all Phase 1 features
+- Added kind load to k8s deploy
+- Renamed all references: noetlctl → noetl
 
-**Result**: Rust CLI fully integrated into Docker and Kubernetes workflows
+**Result**: Rust CLI in Docker and Kubernetes
 
 ### Phase 2: PyPI Bundling (Complete)
-
 **Commit**: `059a2d35`
 
-**Changes:**
-- Created `noetl/cli_wrapper.py` - Python entry point that executes bundled binary
-- Created `noetl/install.py` - Optional binary installation helper
+- Created `noetl/cli_wrapper.py` (executes bundled binary)
 - Updated `pyproject.toml`:
-  - Changed `project.scripts` from `noetl.main:main` to `noetl.cli_wrapper:main`
-  - Added `noetl/bin/noetl` to package data
-- Updated `.github/workflows/build_on_release.yml`:
-  - Install Rust 1.83 toolchain
-  - Compile binary with `cargo build --release`
-  - Copy to `noetl/bin/` before packaging
+  - Scripts: `noetl = noetl.cli_wrapper:main`
+  - Package data: `noetl/bin/noetl`
+- Updated GitHub workflow to compile binary before packaging
 - Added `noetl/bin/` to `.gitignore`
-- Created `documentation/docs/development/pypi_rust_bundling.md`
 
-**Build Process:**
+**Build Process**:
 ```bash
-# 1. Compile Rust binary
-cd noetlctl && cargo build --release
-
-# 2. Copy to package data
-mkdir -p noetl/bin
-cp noetlctl/target/release/noetl noetl/bin/noetl
-
-# 3. Build wheel (includes 5.7MB binary)
-uv build
-
-# 4. Publish to PyPI
-uv publish
+cargo build --release                    # Compile
+cp noetlctl/target/release/noetl noetl/bin/  # Copy
+uv build                                 # Package (5.7MB wheel)
+uv publish                               # Upload to PyPI
 ```
 
-**Result**: PyPI packages include pre-compiled Rust binary, users get working `noetl` command after `pip install`
+**Result**: `pip install noetl` includes working `noetl` command
 
 ### Phase 3: Python CLI Removal (Complete)
-
 **Commit**: `6823d3d5`
 
-**Changes:**
-- **Deleted**: `noetl/cli/ctl.py` (1,031 lines) - Entire Typer-based CLI
+- **Deleted**: `noetl/cli/ctl.py` (1,031 lines)
 - **Deleted**: `noetl/cli/__init__.py`
-- **Removed**: `typer>=0.15.3` dependency from `pyproject.toml`
-- **Updated**: `noetl/main.py` with deprecation notice and error message
-- **Created**: `noetl/server/__main__.py` - Direct entry point for server
-- **Created**: `noetl/worker/__main__.py` - Direct entry point for worker
-- **Updated**: `noetlctl/src/main.rs`:
-  - Server start: `python -m noetl.server` instead of old CLI
-  - Worker start: `python -m noetl.worker` instead of old CLI
+- **Removed**: `typer>=0.15.3` dependency
+- **Created**: `noetl/server/__main__.py`
+- **Created**: `noetl/worker/__main__.py`
+- **Updated**: Rust CLI to call Python modules directly
 
-**Before:**
-```
-Rust CLI → python -m noetl.cli.ctl worker start --v2
-```
+**Before**: `Rust → python -m noetl.cli.ctl worker start`  
+**After**: `Rust → python -m noetl.worker`
 
-**After:**
-```
-Rust CLI → python -m noetl.worker
-```
-
-**Result**: Python CLI completely removed, Rust CLI is sole interface
+**Result**: Python CLI completely removed
 
 ## Technical Specifications
 
-### Binary Size and Performance
+### Performance
+- **Binary size**: 5.5MB (release)
+- **Startup time**: ~10ms (CLI parsing)
+- **Memory**: ~2MB idle
+- **Python subprocess**: ~300-500ms startup, 50-100MB memory
 
-**Rust Binary:**
-- Compiled size: 5.5MB (release mode with optimization)
-- Startup time: ~10ms (CLI argument parsing)
-- Memory footprint: ~2MB (idle)
-
-**Python Subprocess Spawning:**
-- Server start time: ~500ms (FastAPI initialization)
-- Worker start time: ~300ms (NATS connection)
-- Memory: ~50-100MB (Python process + dependencies)
-
-### PID File Management
-
-**Location**: `~/.noetl/`
-- `noetl_server.pid` - Server process ID
-- `noetl_worker_{name}.pid` - Worker process IDs
-
-**Format**: Plain text file with single line containing PID
-
-**Cleanup Strategy:**
-- Removed on graceful shutdown
-- Validated on startup (stale file detection)
-- Used for process existence checks
+### PID Management
+- **Location**: `~/.noetl/`
+- **Files**: `noetl_server.pid`, `noetl_worker_{name}.pid`
+- **Format**: Plain text with PID
+- **Cleanup**: Removed on shutdown, validated on startup
 
 ### Signal Handling
-
-**SIGTERM** (Graceful Shutdown):
-- Server: Completes active requests, closes connections
-- Worker: Finishes current job, disconnects from NATS
-- Timeout: 10 seconds
-
-**SIGKILL** (Force Termination):
-- Only used after SIGTERM timeout
-- Requires confirmation unless `--force` flag
-- Immediate process termination
+- **SIGTERM**: Graceful shutdown (10s timeout)
+- **SIGKILL**: Force termination (after timeout or with `--force`)
 
 ### Environment Variables
+**Server**:
+- `NOETL_HOST` (default: 0.0.0.0)
+- `NOETL_PORT` (default: 8082)
+- `NOETL_ENABLE_UI` (default: false)
 
-**Server:**
-- `NOETL_HOST` - Bind address (default: 0.0.0.0)
-- `NOETL_PORT` - Bind port (default: 8082)
-- `NOETL_ENABLE_UI` - Enable web UI (default: false)
-- `NOETL_DEBUG` - Debug mode (default: false)
+**Worker**:
+- `NATS_URL` (NATS connection string)
+- `NOETL_SERVER_URL` (API endpoint)
 
-**Worker:**
-- `NATS_URL` - NATS connection string
-- `NOETL_SERVER_URL` - Server API URL
-- `NOETL_WORKER_POOL_SIZE` - Thread pool size
-
-**Database:**
+**Database**:
 - `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_DB`
 - `POSTGRES_USER`, `POSTGRES_PASSWORD`
 
 ## Platform Support
 
-### Supported Platforms
+**Current**:
+- Linux x86_64 ✅
+- macOS arm64 (Apple Silicon) ✅
+- macOS x86_64 (Intel) ✅
 
-**Current (Phase 2):**
-- Linux x86_64 (tested in CI/CD)
-- macOS arm64 (Apple Silicon, local dev)
-- macOS x86_64 (Intel, local dev)
-
-**Future (with cibuildwheel):**
-- Linux aarch64 (ARM servers)
-- Windows x86_64 (AMD64)
-
-### Cross-Platform Considerations
-
-**Unix vs Windows:**
-- Signal handling: SIGTERM/SIGKILL (Unix) vs TerminateProcess (Windows)
-- PID files: `~/.noetl/` vs `%USERPROFILE%\.noetl\`
-- Binary name: `noetl` (Unix) vs `noetl.exe` (Windows)
-
-**Path Resolution:**
-- Uses `dirs` crate for cross-platform home directory
-- Python subprocess: `Command::new("python")` works on all platforms
+**Future** (with cibuildwheel):
+- Linux aarch64 (ARM)
+- Windows x86_64
 
 ## Dependencies
 
-### Rust Dependencies (`noetlctl/Cargo.toml`)
-
+### Rust (`noetlctl/Cargo.toml`)
 ```toml
-[dependencies]
 clap = { version = "4.5", features = ["derive"] }
 reqwest = { version = "0.12", features = ["json"] }
 tokio = { version = "1", features = ["full", "process"] }
 dirs = "5.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-serde_yaml = "0.9"
-base64 = "0.22"
 anyhow = "1.0"
-ratatui = "0.26"          # TUI interface
-crossterm = "0.27"        # Terminal control
-chrono = "0.4"            # Timestamps
-dotenvy = "0.15"          # Environment loading
-tracing = "0.1"           # Logging
-tracing-subscriber = "0.3"
-sysinfo = "0.31"          # Process management
-nix = "0.29"              # Unix signals
+chrono = "0.4"
+sysinfo = "0.31"    # Process management
+nix = "0.29"        # Unix signals
 ```
 
-### Python Dependencies (Removed)
-
+### Python (Removed)
 ```toml
-# Removed in Phase 3
-typer >= 0.15.3  ❌ (was used for CLI framework)
-```
-
-**Still Required:**
-```toml
-click >= 8.1.0  ✅ (dependency of other packages, not CLI)
-```
-
-## Testing Strategy
-
-### Unit Tests (Rust)
-
-```rust
-// noetlctl/src/main.rs tests
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn test_pid_file_management() {
-        // Test PID write/read/delete
-    }
-    
-    #[test]
-    fn test_process_exists() {
-        // Test process existence check
-    }
-    
-    #[test]
-    fn test_image_tag_parsing() {
-        // Test Docker tag generation
-    }
-}
-```
-
-### Integration Tests
-
-```bash
-# Test complete server lifecycle
-./bin/noetl server start
-./bin/noetl server stop
-
-# Test worker lifecycle
-./bin/noetl worker start
-./bin/noetl worker stop
-
-# Test build and deploy
-./bin/noetl build
-./bin/noetl k8s deploy
-./bin/noetl k8s remove
-
-# Test PyPI installation
-pip install dist/noetl-*.whl
-noetl --version
-noetl server --help
-```
-
-### Kubernetes Tests
-
-```bash
-# Deploy and verify
-./bin/noetl k8s deploy
-kubectl get pods -n noetl
-kubectl logs -n noetl deployment/noetl-server
-kubectl logs -n noetl deployment/noetl-worker
-
-# Health checks
-curl http://localhost:8082/api/health
+typer >= 0.15.3  ❌ Removed in Phase 3
 ```
 
 ## Troubleshooting
 
-### Common Issues
-
-**Issue**: `noetl: command not found` after pip install
-
-**Solution**:
+### Command not found
 ```bash
 # Check installation
 pip show noetl
-
-# Check PATH
-echo $PATH
-
-# Find binary location
 python -c "import noetl; import shutil; print(shutil.which('noetl'))"
 
 # Manual execution
 python -m noetl.cli_wrapper --version
 ```
 
-**Issue**: Server fails to start - "Port already in use"
-
-**Solution**:
+### Port already in use
 ```bash
-# Find process using port 8082
 lsof -i :8082
-
-# Kill existing process
 ./bin/noetl server stop --force
-
-# Or use different port
 NOETL_PORT=8083 ./bin/noetl server start
 ```
 
-**Issue**: Worker not receiving jobs
-
-**Solution**:
+### Worker not receiving jobs
 ```bash
-# Check NATS connection
-kubectl logs -n nats deployment/nats
-
-# Check worker logs
 kubectl logs -n noetl deployment/noetl-worker
-
-# Verify environment variables
 kubectl describe pod -n noetl -l app=noetl-worker
 ```
 
-**Issue**: Docker build fails - Rust compilation error
-
-**Solution**:
+### Docker build fails
 ```bash
-# Update Rust version in Dockerfile
-FROM rust:1.83-slim AS rust-builder
-
-# Clear build cache
 ./bin/noetl build --no-cache
-
-# Check Cargo.lock compatibility
 cd noetlctl && cargo update
 ```
 
 ## Performance Benchmarks
 
-### CLI Startup Time
-
+**CLI Startup**:
 ```bash
-# Rust CLI (native)
 $ time ./bin/noetl --version
 noetl 2.1.2
 real    0m0.012s
-
-# Old Python CLI (for comparison)
-$ time python -m noetl.cli.ctl --version
-# (Would have been ~200-300ms due to Python import time)
 ```
 
-### Docker Build Time
+**Docker Build Time**:
+- First build: ~6 minutes
+- Incremental: ~30 seconds (with cache)
 
-```
-Stage               Time
-----------------------------------
-ui-builder          45s   (npm ci + build)
-rust-builder        180s  (cargo build --release)
-python-builder      120s  (uv sync + pip install)
-Total              ~6min (first build)
-Total (cached)     ~30s  (incremental)
-```
-
-### Binary Distribution Size
-
-```
-Component                    Size
-----------------------------------------
-Rust binary (release)        5.5 MB
-Python wheel (with binary)   12.3 MB
-Docker image (compressed)    450 MB
-Docker image (uncompressed)  1.2 GB
-```
-
-## Future Enhancements
-
-### Planned Features
-
-1. **Multi-Platform Wheels** - Use cibuildwheel for Windows, Linux ARM
-2. **Config File Support** - `~/.noetl/config.toml` for default settings
-3. **Shell Completions** - Generate completions for bash/zsh/fish
-4. **Native Worker Implementation** - Implement worker logic in Rust
-5. **Logging Control** - Add `--verbose` flag for detailed output
-
-### Optimization Opportunities
-
-1. **Binary Size Reduction**:
-   - Use `strip` to remove debug symbols
-   - Enable link-time optimization (LTO)
-   - Target: <3MB binary size
-
-2. **Startup Time**:
-   - Lazy initialization of unused modules
-   - Optimize dependency tree
-   - Target: <5ms CLI startup
-
-3. **Memory Usage**:
-   - Use `jemalloc` allocator
-   - Profile memory allocations
-   - Target: <1MB idle memory
+**Binary Distribution**:
+- Rust binary: 5.5 MB
+- Python wheel: 12.3 MB (with binary)
+- Docker image: 450 MB (compressed)
 
 ## References
 
-### Documentation
-- [Rust CLI Architecture](./rust_cli_migration.md) (this document)
-- [PyPI Rust Bundling](./pypi_rust_bundling.md)
-- [Docker Build Process](../../docker/README.md)
+### Internal Documentation
+- [PyPI Bundling](./pypi_rust_bundling.md)
+- [Docker Build](../../docker/README.md)
 - [Kubernetes Deployment](../../ci/README.md)
 
 ### External Resources
-- [Clap Documentation](https://docs.rs/clap/) - CLI argument parsing
-- [Tokio Documentation](https://docs.rs/tokio/) - Async runtime
-- [sysinfo Documentation](https://docs.rs/sysinfo/) - Process management
-- [setuptools-rust](https://github.com/PyO3/setuptools-rust) - Python + Rust integration
-- [cibuildwheel](https://cibuildwheel.readthedocs.io/) - Multi-platform wheel building
+- [Clap](https://docs.rs/clap/) - CLI parsing
+- [Tokio](https://docs.rs/tokio/) - Async runtime
+- [sysinfo](https://docs.rs/sysinfo/) - Process management
 
 ### Related Commits
-- `58ab80f3` - Phase 1: Docker & K8s integration
-- `213cd01e` - Documentation updates (noetlctl → noetl)
-- `24e8266d` - AI coding agent instructions update
+- `58ab80f3` - Phase 1: Docker & K8s
+- `213cd01e` - Documentation updates
+- `24e8266d` - AI instructions
 - `059a2d35` - Phase 2: PyPI bundling
 - `6823d3d5` - Phase 3: Python CLI removal
-
-**Server Management:**
-- `noetl server start [--init-db]` - Start FastAPI server with Uvicorn/Gunicorn
-  - Reads config from environment (host, port, workers, reload, debug, enable_ui)
-  - Manages PID file (`~/.noetl/noetl_server.pid`)
-  - Port conflict detection
-  - Database initialization (optional)
-  - Spawns subprocess with proper environment variables
-- `noetl server stop [--force]` - Stop running server by PID or port detection
-
-**Worker Management:**
-- `noetl worker start [--max-workers N] [--v2]` - Start worker pool
-  - v1: ScalableQueueWorkerPool (asyncio-based polling)
-  - v2: Event-driven NATS architecture
-  - Manages PID files (`~/.noetl/noetl_worker_{name}.pid`)
-  - Signal handling (SIGTERM, SIGINT)
-- `noetl worker stop [--name NAME] [--force]` - Stop worker by name or list/select
-
-**Database Management:**
-- `noetl db init` - Initialize database schema
-- `noetl db validate` - Validate database schema
-- Other db commands...
-
-**Entry Point:**
-- `pyproject.toml`: `noetl = "noetl.main:main"`
-- `noetl/main.py`: Imports and runs `cli_app` from `noetl.cli.ctl`
-
-### Rust CLI (noetl/src/main.rs)
-Commands currently implemented in Rust Clap:
-
-**Catalog Management:**
-- `noetl catalog register <path>` - Register playbook/credential from YAML file
-- `noetl catalog get <path>` - Get resource details
-- `noetl catalog list <type>` - List resources by type
-
-**Execution:**
-- `noetl execute playbook <path> [--input <file>]` - Execute playbook
-
-**Credentials:**
-- `noetl credential get <name> [--include-data]` - Get credential details
-
-**SQL Query:**
-- `noetl query "<sql>" [--schema <name>] [--format table|json]` - Execute SQL queries
-
-**Status:**
-- `noetl status` - Get server status
-
-**TUI:**
-- `noetl tui` - Interactive terminal UI
-
-## Migration Steps
-
-### Phase 1: Rename Binary and Add Server/Worker Commands
-
-#### 1.1 Rename noetl to noetl
-- [ ] Update `noetl/Cargo.toml`: Change `name = "noetl"` to `name = "noetl"`
-- [ ] Update README references from `noetl` to `noetl`
-- [ ] Update all internal documentation
-
-#### 1.2 Add Server Management Commands
-- [ ] Implement `noetl server start [--init-db]`
-  - Spawn Python server subprocess: `python -m uvicorn noetl.server:create_app --factory`
-  - Pass environment variables from config
-  - Manage PID file creation/cleanup
-  - Port conflict detection
-  - Optional database initialization via REST API call
-- [ ] Implement `noetl server stop [--force]`
-  - Read PID from `~/.noetl/noetl_server.pid`
-  - Send SIGTERM, wait for graceful shutdown (10s timeout)
-  - Optional SIGKILL with `--force`
-  - Port-based fallback if PID file missing
-
-#### 1.3 Add Worker Management Commands
-- [ ] Implement `noetl worker start [--max-workers N] [--v2]`
-  - Spawn Python worker subprocess with proper environment
-  - Support v1 (default) and v2 (--v2 flag) architectures
-  - Manage PID file (`~/.noetl/noetl_worker_{name}.pid`)
-  - Pass max-workers to Python if specified
-- [ ] Implement `noetl worker stop [--name NAME] [--force]`
-  - List available workers if --name not provided
-  - Interactive selection from list
-  - SIGTERM → SIGKILL escalation
-  - PID file cleanup
-
-#### 1.4 Add Database Commands
-- [ ] Implement `noetl db init` - Call REST API `/api/db/init` or spawn Python subprocess
-- [ ] Implement `noetl db validate` - Call REST API or subprocess
-- [ ] Consider other db commands from Python CLI
-
-### Phase 2: Bundle Rust Binary with Python Package
-
-#### 2.1 Setup setuptools-rust
-```toml
-# pyproject.toml additions
-[build-system]
-requires = ["setuptools>=45", "wheel", "setuptools-rust>=1.9.0"]
-build-backend = "setuptools.build_meta"
-
-[tool.setuptools-rust]
-# Renamed from noetl to noetl
-[[tool.setuptools-rust.bins]]
-name = "noetl"
-path = "noetl/src/main.rs"
-```
-
-#### 2.2 Update setup.py (if needed)
-Create `setup.py` if not exists for setuptools-rust integration:
-```python
-from setuptools import setup
-from setuptools_rust import Bin, RustExtension
-
-setup(
-    rust_extensions=[
-        Bin("noetl", path="noetl/Cargo.toml"),
-    ],
-    zip_safe=False,
-)
-```
-
-#### 2.3 Cross-Platform Compilation
-Options for building wheels for multiple platforms:
-
-**Option A: cibuildwheel (Recommended)**
-- Use GitHub Actions with `cibuildwheel`
-- Automatically builds wheels for:
-  - Linux: x86_64, aarch64 (via QEMU)
-  - macOS: x86_64 (Intel), arm64 (Apple Silicon)
-  - Windows: x86_64
-- `.github/workflows/build-wheels.yml`:
-  ```yaml
-  name: Build Wheels
-  on: [push, pull_request]
-  jobs:
-    build_wheels:
-      name: Build wheels on ${{ matrix.os }}
-      runs-on: ${{ matrix.os }}
-      strategy:
-        matrix:
-          os: [ubuntu-22.04, macos-13, macos-14, windows-2022]
-      steps:
-        - uses: actions/checkout@v4
-        - uses: dtolnay/rust-toolchain@stable
-        - name: Build wheels
-          uses: pypa/cibuildwheel@v2.16.5
-          env:
-            CIBW_BUILD: "cp312-*"
-            CIBW_ARCHS_LINUX: "x86_64 aarch64"
-            CIBW_ARCHS_MACOS: "x86_64 arm64"
-            CIBW_ARCHS_WINDOWS: "AMD64"
-        - uses: actions/upload-artifact@v4
-          with:
-            name: wheels-${{ matrix.os }}
-            path: ./wheelhouse/*.whl
-  ```
-
-**Option B: Manual cross-compilation**
-- Linux: Use `cross` crate for cross-compilation
-- macOS: Use `cargo build --target x86_64-apple-darwin` and `--target aarch64-apple-darwin`
-- Windows: Use `cargo build --target x86_64-pc-windows-gnu`
-
-#### 2.4 PyPI Distribution
-- [ ] Update version in both `Cargo.toml` and `pyproject.toml` to match
-- [ ] Build wheels with setuptools-rust: `python -m build`
-- [ ] Test installation: `pip install dist/noetl-*.whl`
-- [ ] Verify `noetl` binary in PATH after install
-- [ ] Publish to PyPI: `twine upload dist/*`
-
-### Phase 3: Remove Python CLI
-
-#### 3.1 Remove Python CLI Code
-- [ ] Delete `noetl/cli/ctl.py`
-- [ ] Delete `noetl/cli/__init__.py` (if empty)
-- [ ] Update `noetl/main.py` to print message directing users to Rust CLI
-- [ ] Remove Typer dependency from `pyproject.toml` (keep if used elsewhere)
-
-#### 3.2 Update Documentation
-- [ ] Update all READMEs with new `noetl` command examples
-- [ ] Update `documentation/docs/` with Rust CLI usage
-- [ ] Update taskfile.yml tasks to use `noetl` instead of Python CLI
-- [ ] Update test fixtures and integration tests
-
-#### 3.3 Deprecation Path
-**Option A: Immediate removal** (breaking change)
-- Bump major version (3.0.0)
-- Document migration in CHANGELOG.md
-
-**Option B: Gradual deprecation** (safer)
-- Keep Python CLI for 1-2 versions with deprecation warnings
-- Show message: "Python CLI is deprecated, use Rust CLI instead"
-- Remove in version 3.0.0
-
-## Implementation Details
-
-### Rust CLI Structure
-
-```rust
-// noetl/src/main.rs additions
-
-#[derive(Subcommand)]
-enum ServerCommand {
-    /// Start NoETL server
-    Start {
-        /// Initialize database schema on startup
-        #[arg(long)]
-        init_db: bool,
-    },
-    /// Stop NoETL server
-    Stop {
-        /// Force stop without confirmation
-        #[arg(short, long)]
-        force: bool,
-    },
-}
-
-#[derive(Subcommand)]
-enum WorkerCommand {
-    /// Start NoETL worker pool
-    Start {
-        /// Maximum number of worker threads
-        #[arg(short = 'm', long)]
-        max_workers: Option<usize>,
-        
-        /// Use v2 worker architecture (event-driven NATS)
-        #[arg(long)]
-        v2: bool,
-    },
-    /// Stop NoETL worker
-    Stop {
-        /// Worker name to stop
-        #[arg(short = 'n', long)]
-        name: Option<String>,
-        
-        /// Force stop without confirmation
-        #[arg(short, long)]
-        force: bool,
-    },
-}
-
-#[derive(Subcommand)]
-enum DbCommand {
-    /// Initialize database schema
-    Init,
-    /// Validate database schema
-    Validate,
-}
-
-// Add to main Commands enum
-#[derive(Subcommand)]
-enum Commands {
-    // ... existing commands ...
-    
-    /// Server management
-    Server {
-        #[command(subcommand)]
-        command: ServerCommand,
-    },
-    
-    /// Worker management
-    Worker {
-        #[command(subcommand)]
-        command: WorkerCommand,
-    },
-    
-    /// Database management
-    Db {
-        #[command(subcommand)]
-        command: DbCommand,
-    },
-}
-```
-
-### Process Management Strategy
-
-**Server Start:**
-```rust
-async fn start_server(init_db: bool) -> Result<()> {
-    // 1. Read config from environment or config file
-    // 2. Check for existing PID file
-    // 3. Check port availability
-    // 4. Spawn Python server subprocess
-    let mut cmd = Command::new("python");
-    cmd.args(&["-m", "uvicorn", "noetl.server:create_app", "--factory"])
-       .args(&["--host", &host, "--port", &port])
-       .env("NOETL_ENABLE_UI", &enable_ui)
-       // ... other env vars
-       .stdout(Stdio::piped())
-       .stderr(Stdio::piped());
-    
-    let child = cmd.spawn()?;
-    
-    // 5. Write PID file
-    fs::write(pid_path, child.id().to_string())?;
-    
-    // 6. Optional: Call init-db REST API if flag set
-    if init_db {
-        // Wait for server to be ready
-        wait_for_server(&base_url, Duration::from_secs(30)).await?;
-        // Call /api/db/init
-        client.post(&format!("{}/api/db/init", base_url)).send().await?;
-    }
-    
-    Ok(())
-}
-```
-
-**Process Stop:**
-```rust
-fn stop_process(pid_path: &Path, force: bool) -> Result<()> {
-    // 1. Read PID from file
-    let pid = fs::read_to_string(pid_path)?.trim().parse()?;
-    
-    // 2. Check if process exists
-    if !process_exists(pid)? {
-        eprintln!("Process {} not found", pid);
-        fs::remove_file(pid_path)?;
-        return Ok(());
-    }
-    
-    // 3. Confirm unless force
-    if !force {
-        print!("Stop process {}? [y/N]: ", pid);
-        // ... confirmation logic
-    }
-    
-    // 4. Send SIGTERM
-    send_signal(pid, Signal::SIGTERM)?;
-    
-    // 5. Wait for graceful shutdown (10s)
-    for _ in 0..20 {
-        if !process_exists(pid)? {
-            fs::remove_file(pid_path)?;
-            return Ok(());
-        }
-        thread::sleep(Duration::from_millis(500));
-    }
-    
-    // 6. Force kill if still running
-    if force || confirm_force_kill() {
-        send_signal(pid, Signal::SIGKILL)?;
-    }
-    
-    fs::remove_file(pid_path)?;
-    Ok(())
-}
-```
-
-### Dependencies to Add
-
-```toml
-# noetl/Cargo.toml
-[dependencies]
-# ... existing ...
-nix = "0.27"  # For Unix signals (SIGTERM, SIGKILL)
-sysinfo = "0.30"  # For process management
-tokio = { version = "1", features = ["process", "time"] }
-```
-
-## Testing Strategy
-
-### Unit Tests
-- [ ] Test PID file creation/deletion
-- [ ] Test process spawning with correct arguments
-- [ ] Test signal handling (SIGTERM, SIGKILL)
-- [ ] Test environment variable propagation
-
-### Integration Tests
-- [ ] Test full server start/stop cycle
-- [ ] Test full worker start/stop cycle
-- [ ] Test with v1 and v2 worker architectures
-- [ ] Test init-db flag functionality
-- [ ] Test port conflict detection
-
-### Cross-Platform Tests
-- [ ] Test on Linux (x86_64, aarch64)
-- [ ] Test on macOS (Intel, Apple Silicon)
-- [ ] Test on Windows (x86_64)
-- [ ] Verify binary bundling in wheels for all platforms
-
-## Rollout Plan
-
-### Version 2.5.0 (Parallel Existence)
-- Add server/worker commands to Rust CLI
-- Keep Python CLI functional
-- Add deprecation warnings to Python CLI
-- Update documentation to show both options
-
-### Version 2.6.0 (Transition)
-- Make Rust CLI the default recommendation
-- Python CLI shows migration notice
-- Bundle Rust binary with PyPI package
-
-### Version 3.0.0 (Breaking Change)
-- Remove Python CLI entirely
-- `noetl` command is Rust binary only
-- Update all documentation
-
-## Risk Mitigation
-
-### Risks
-1. **Cross-platform compilation complexity** - Different behavior on Windows vs Unix
-2. **Python subprocess management** - Process lifecycle, environment passing
-3. **Backwards compatibility** - Existing scripts/tools using Python CLI
-4. **PyPI wheel distribution** - Large binary sizes, platform-specific wheels
-
-### Mitigation Strategies
-1. **Comprehensive testing** - CI/CD for all target platforms
-2. **Feature parity verification** - Checklist to ensure no regression
-3. **Gradual rollout** - Deprecation period for Python CLI
-4. **Fallback mechanism** - Document Python CLI usage for emergency rollback
-
-## Success Criteria
-
-- [ ] Rust CLI has 100% feature parity with Python CLI for server/worker management
-- [ ] `pip install noetl` installs working `noetl` binary on Linux/macOS/Windows
-- [ ] Binary works on x86_64 and aarch64 architectures
-- [ ] All integration tests pass with Rust CLI
-- [ ] Documentation updated with Rust CLI examples
-- [ ] No performance regression in server/worker startup
-- [ ] Binary size < 20MB (optimized release build)
-
-## Timeline Estimate
-
-- **Phase 1** (Rust CLI commands): 3-5 days
-- **Phase 2** (PyPI bundling): 2-3 days
-- **Phase 3** (Cleanup & testing): 2-3 days
-- **Total**: 7-11 days
-
-## References
-
-- setuptools-rust: https://github.com/PyO3/setuptools-rust
-- cibuildwheel: https://cibuildwheel.readthedocs.io/
-- Clap command-line parser: https://docs.rs/clap/
-- Process management in Rust: https://docs.rs/sysinfo/
+- `b9699641` - Documentation (this file)
