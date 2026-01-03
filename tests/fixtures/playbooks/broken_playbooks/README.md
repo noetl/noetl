@@ -58,7 +58,7 @@ def test_playbook_validation_tool_required():
 
 ```bash
 # Attempt to register the broken playbook (should fail)
-noetlctl catalog register tests/fixtures/playbooks/broken_playbooks/should_error_tool_is_required.yaml
+noetl catalog register tests/fixtures/playbooks/broken_playbooks/should_error_tool_is_required.yaml
 
 # Expected output (actual Pydantic validation errors):
 # Failed to execute playbook. 4 validation errors for Playbook

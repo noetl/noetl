@@ -118,20 +118,20 @@ keychain:
 
 ## Execution
 
-### Using noetlctl (Recommended)
+### Using noetl (Recommended)
 
 ```bash
 # Register the playbook
-noetlctl catalog register tests/fixtures/playbooks/api_integration/amadeus_ai_api/amadeus_ai_api.yaml
+noetl catalog register tests/fixtures/playbooks/api_integration/amadeus_ai_api/amadeus_ai_api.yaml
 
 # Execute the playbook
-noetlctl execute playbook api_integration/amadeus_ai_api --json
+noetl execute playbook api_integration/amadeus_ai_api --json
 
 # Get execution status (replace <EXECUTION_ID> with the id returned from execute)
-noetlctl execute status <EXECUTION_ID> --json
+noetl execute status <EXECUTION_ID> --json
 
 # Alternative: Direct execution using path
-noetlctl exec api_integration/amadeus_ai_api
+noetl exec api_integration/amadeus_ai_api
 ```
 
 ### Using REST API (Alternative)

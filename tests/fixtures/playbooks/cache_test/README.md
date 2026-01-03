@@ -188,17 +188,17 @@ CREATE TABLE noetl.keychain (
 
 ### Execute Test
 
-#### Using noetlctl (Recommended)
+#### Using noetl (Recommended)
 
 ```bash
 # Register the playbook
-noetlctl catalog register tests/fixtures/playbooks/cache_test/test_cache_simple.yaml
+noetl catalog register tests/fixtures/playbooks/cache_test/test_cache_simple.yaml
 
 # Execute the playbook
-noetlctl execute playbook test/cache_simple --json
+noetl execute playbook test/cache_simple --json
 
 # Get execution status (replace <EXECUTION_ID> with returned id)
-noetlctl execute status <EXECUTION_ID> --json
+noetl execute status <EXECUTION_ID> --json
 ```
 
 #### Using REST API

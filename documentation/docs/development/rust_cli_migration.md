@@ -6,12 +6,12 @@ sidebar_position: 10
 
 ## Overview
 
-This document outlines the plan to migrate the NoETL Python CLI (`noetl/cli/ctl.py`) to a Rust-based CLI (`noetlctl` → `noetl`) and bundle it with the Python package for distribution via PyPI.
+This document outlines the plan to migrate the NoETL Python CLI (`noetl/cli/ctl.py`) to a Rust-based CLI (`noetl` → `noetl`) and bundle it with the Python package for distribution via PyPI.
 
 ## Goals
 
 1. **Replace Python CLI with Rust** - Migrate all server/worker management commands from Python Typer CLI to Rust Clap CLI
-2. **Rename binary** - Change `noetlctl` to `noetl` as the primary executable name
+2. **Rename binary** - Change `noetl` to `noetl` as the primary executable name
 3. **Bundle with PyPI package** - Include pre-compiled Rust binaries for all major platforms when users `pip install noetl`
 4. **Cross-platform support** - Build for multiple architectures (x86_64, aarch64) on Linux, macOS, Windows
 5. **Remove Python CLI** - Delete `noetl/cli/ctl.py` and related Python CLI code once migration is complete
@@ -47,36 +47,36 @@ Commands currently implemented in Python Typer:
 - `pyproject.toml`: `noetl = "noetl.main:main"`
 - `noetl/main.py`: Imports and runs `cli_app` from `noetl.cli.ctl`
 
-### Rust CLI (noetlctl/src/main.rs)
+### Rust CLI (noetl/src/main.rs)
 Commands currently implemented in Rust Clap:
 
 **Catalog Management:**
-- `noetlctl catalog register <path>` - Register playbook/credential from YAML file
-- `noetlctl catalog get <path>` - Get resource details
-- `noetlctl catalog list <type>` - List resources by type
+- `noetl catalog register <path>` - Register playbook/credential from YAML file
+- `noetl catalog get <path>` - Get resource details
+- `noetl catalog list <type>` - List resources by type
 
 **Execution:**
-- `noetlctl execute playbook <path> [--input <file>]` - Execute playbook
+- `noetl execute playbook <path> [--input <file>]` - Execute playbook
 
 **Credentials:**
-- `noetlctl credential get <name> [--include-data]` - Get credential details
+- `noetl credential get <name> [--include-data]` - Get credential details
 
 **SQL Query:**
-- `noetlctl query "<sql>" [--schema <name>] [--format table|json]` - Execute SQL queries
+- `noetl query "<sql>" [--schema <name>] [--format table|json]` - Execute SQL queries
 
 **Status:**
-- `noetlctl status` - Get server status
+- `noetl status` - Get server status
 
 **TUI:**
-- `noetlctl tui` - Interactive terminal UI
+- `noetl tui` - Interactive terminal UI
 
 ## Migration Steps
 
 ### Phase 1: Rename Binary and Add Server/Worker Commands
 
-#### 1.1 Rename noetlctl to noetl
-- [ ] Update `noetlctl/Cargo.toml`: Change `name = "noetlctl"` to `name = "noetl"`
-- [ ] Update README references from `noetlctl` to `noetl`
+#### 1.1 Rename noetl to noetl
+- [ ] Update `noetl/Cargo.toml`: Change `name = "noetl"` to `name = "noetl"`
+- [ ] Update README references from `noetl` to `noetl`
 - [ ] Update all internal documentation
 
 #### 1.2 Add Server Management Commands
@@ -119,10 +119,10 @@ requires = ["setuptools>=45", "wheel", "setuptools-rust>=1.9.0"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools-rust]
-# Renamed from noetlctl to noetl
+# Renamed from noetl to noetl
 [[tool.setuptools-rust.bins]]
 name = "noetl"
-path = "noetlctl/src/main.rs"
+path = "noetl/src/main.rs"
 ```
 
 #### 2.2 Update setup.py (if needed)
@@ -133,7 +133,7 @@ from setuptools_rust import Bin, RustExtension
 
 setup(
     rust_extensions=[
-        Bin("noetl", path="noetlctl/Cargo.toml"),
+        Bin("noetl", path="noetl/Cargo.toml"),
     ],
     zip_safe=False,
 )
@@ -216,7 +216,7 @@ Options for building wheels for multiple platforms:
 ### Rust CLI Structure
 
 ```rust
-// noetlctl/src/main.rs additions
+// noetl/src/main.rs additions
 
 #[derive(Subcommand)]
 enum ServerCommand {
@@ -369,7 +369,7 @@ fn stop_process(pid_path: &Path, force: bool) -> Result<()> {
 ### Dependencies to Add
 
 ```toml
-# noetlctl/Cargo.toml
+# noetl/Cargo.toml
 [dependencies]
 # ... existing ...
 nix = "0.27"  # For Unix signals (SIGTERM, SIGKILL)
