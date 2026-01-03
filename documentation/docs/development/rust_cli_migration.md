@@ -74,6 +74,34 @@ CMD ["python", "-m", "noetl.server"]
 - Python environment at `/opt/noetl/.venv`
 - Can override CMD with `command: [noetl, server, start]`
 
+**Platform Support:**
+
+The CLI supports building Docker images for different platforms via the `--platform` argument:
+
+```bash
+# Build for Linux AMD64 (default, for Kubernetes/Kind)
+./bin/noetl build                           # Uses linux/amd64
+./bin/noetl build --platform linux/amd64
+
+# Build for Mac Silicon (local development)
+./bin/noetl build --platform linux/arm64
+
+# K8s commands also support platform
+./bin/noetl k8s redeploy --platform linux/arm64
+./bin/noetl k8s reset --platform linux/amd64
+```
+
+**Why This Matters:**
+- **Mac Silicon (M1/M2/M3)**: Docker Desktop defaults to `linux/arm64` but Kubernetes Kind clusters run `linux/amd64`
+- **Cross-Compilation**: Building for the wrong platform causes containers to fail silently or OOMKill in K8s
+- **Local Testing**: Use `linux/arm64` for faster local Docker runs on Mac Silicon
+- **Production**: Always use `linux/amd64` for Kubernetes deployments
+
+**Default Behavior:**
+- All build commands default to `linux/amd64` for Kind/K8s compatibility
+- On Mac Silicon, this triggers Docker's cross-compilation (slower but correct)
+- Override with `--platform` flag when needed for local-only images
+
 ### 2. Kubernetes
 
 **Server Deployment**:

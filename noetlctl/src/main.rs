@@ -172,11 +172,16 @@ enum Commands {
     /// Examples:
     ///     noetl build
     ///     noetl build --no-cache
+    ///     noetl build --platform linux/arm64
     #[command(verbatim_doc_comment)]
     Build {
         /// Build without cache
         #[arg(long)]
         no_cache: bool,
+        
+        /// Target platform for the Docker image (e.g., linux/amd64, linux/arm64)
+        #[arg(long, default_value = "linux/amd64")]
+        platform: String,
     },
     /// Kubernetes deployment management
     /// Examples:
@@ -390,21 +395,31 @@ enum K8sCommand {
     /// Example:
     ///     noetl k8s redeploy
     ///     noetl k8s redeploy --no-cache
+    ///     noetl k8s redeploy --platform linux/arm64
     #[command(verbatim_doc_comment)]
     Redeploy {
         /// Build without cache
         #[arg(long)]
         no_cache: bool,
+        
+        /// Target platform for the Docker image (e.g., linux/amd64, linux/arm64)
+        #[arg(long, default_value = "linux/amd64")]
+        platform: String,
     },
     /// Reset NoETL: rebuild, redeploy, reset schema, and setup test environment
     /// Example:
     ///     noetl k8s reset
     ///     noetl k8s reset --no-cache
+    ///     noetl k8s reset --platform linux/arm64
     #[command(verbatim_doc_comment)]
     Reset {
         /// Build without cache
         #[arg(long)]
         no_cache: bool,
+        
+        /// Target platform for the Docker image (e.g., linux/amd64, linux/arm64)
+        #[arg(long, default_value = "linux/amd64")]
+        platform: String,
     },
 }
 
@@ -578,8 +593,8 @@ async fn main() -> Result<()> {
                 db_validate(&client, &base_url).await?;
             }
         },
-        Some(Commands::Build { no_cache }) => {
-            build_docker_image(no_cache).await?;
+        Some(Commands::Build { no_cache, platform }) => {
+            build_docker_image(no_cache, &platform).await?;
         },
         Some(Commands::K8s { command }) => match command {
             K8sCommand::Deploy => {
@@ -588,11 +603,11 @@ async fn main() -> Result<()> {
             K8sCommand::Remove => {
                 k8s_remove().await?;
             }
-            K8sCommand::Redeploy { no_cache } => {
-                k8s_redeploy(no_cache).await?;
+            K8sCommand::Redeploy { no_cache, platform } => {
+                k8s_redeploy(no_cache, &platform).await?;
             }
-            K8sCommand::Reset { no_cache } => {
-                k8s_reset(no_cache).await?;
+            K8sCommand::Reset { no_cache, platform } => {
+                k8s_reset(no_cache, &platform).await?;
             }
         },
         None => {
@@ -1580,7 +1595,7 @@ fn send_signal(pid: i32, signal: nix::sys::signal::Signal) -> Result<()> {
 // Build Commands
 // ============================================================================
 
-async fn build_docker_image(no_cache: bool) -> Result<()> {
+async fn build_docker_image(no_cache: bool, platform: &str) -> Result<()> {
     use std::process::Command;
     use std::io::{BufRead, BufReader};
     use chrono::Local;
@@ -1590,6 +1605,7 @@ async fn build_docker_image(no_cache: bool) -> Result<()> {
     let image_tag = Local::now().format("%Y-%m-%d-%H-%M").to_string();
     
     println!("Building Docker image: {}/{}:{}", registry, image_name, image_tag);
+    println!("Target platform: {}", platform);
     
     let cache_arg = if no_cache { "--no-cache" } else { "" };
     
@@ -1599,6 +1615,10 @@ async fn build_docker_image(no_cache: bool) -> Result<()> {
     if no_cache {
         cmd.arg(cache_arg);
     }
+    
+    // Build for specified platform (default: linux/amd64 for Kind/K8s compatibility)
+    cmd.arg("--platform")
+       .arg(platform);
     
     cmd.arg("-t")
        .arg(format!("{}/{}:{}", registry, image_name, image_tag))
@@ -1610,8 +1630,8 @@ async fn build_docker_image(no_cache: bool) -> Result<()> {
     
     cmd.env("DOCKER_BUILDKIT", "0");
     
-    println!("Running: docker build{} -t {}/{}:{} -f docker/noetl/dev/Dockerfile .", 
-        if no_cache { " --no-cache" } else { "" }, registry, image_name, image_tag);
+    println!("Running: docker build{} --platform {} -t {}/{}:{} -f docker/noetl/dev/Dockerfile .", 
+        if no_cache { " --no-cache" } else { "" }, platform, registry, image_name, image_tag);
     
     let mut child = cmd.spawn()
         .context("Failed to spawn docker build command")?;
@@ -1706,11 +1726,11 @@ async fn k8s_remove() -> Result<()> {
     Ok(())
 }
 
-async fn k8s_redeploy(no_cache: bool) -> Result<()> {
+async fn k8s_redeploy(no_cache: bool, platform: &str) -> Result<()> {
     println!("Rebuilding and redeploying NoETL...");
     
     // Build image
-    build_docker_image(no_cache).await?;
+    build_docker_image(no_cache, platform).await?;
     
     // Remove existing deployment
     k8s_remove().await.ok(); // Ignore errors if not deployed
@@ -1728,7 +1748,7 @@ async fn k8s_redeploy(no_cache: bool) -> Result<()> {
     Ok(())
 }
 
-async fn k8s_reset(no_cache: bool) -> Result<()> {
+async fn k8s_reset(no_cache: bool, platform: &str) -> Result<()> {
     println!("Resetting NoETL (full rebuild + schema reset + test setup)...");
     
     // Reset postgres schema
@@ -1736,7 +1756,7 @@ async fn k8s_reset(no_cache: bool) -> Result<()> {
     run_command(&["task", "postgres:k8s:schema-reset"])?;
     
     // Redeploy
-    k8s_redeploy(no_cache).await?;
+    k8s_redeploy(no_cache, platform).await?;
     
     // Install noetl CLI with dev extras
     println!("Installing NoETL CLI with dev dependencies...");
