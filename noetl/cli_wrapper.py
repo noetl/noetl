@@ -12,7 +12,19 @@ from pathlib import Path
 
 
 def get_noetl_binary():
-    """Get the path to the bundled noetl binary."""
+    """Get the path to the noetl binary.
+    
+    First checks if 'noetl' is in PATH (Docker/K8s deployment).
+    Falls back to bundled binary in package (PyPI wheel).
+    """
+    import shutil
+    
+    # Check if noetl is in PATH (Docker/K8s environments)
+    path_binary = shutil.which('noetl')
+    if path_binary:
+        return path_binary
+    
+    # Fall back to bundled binary (PyPI wheel)
     import noetl
     package_dir = Path(noetl.__file__).parent
     binary_name = 'noetl.exe' if sys.platform == 'win32' else 'noetl'

@@ -32,11 +32,11 @@ spec:
             - name: noetl-logs
               mountPath: /opt/noetl/logs
           command: ["noetl"]
-          args: ["server", "start"]
+          args: ["server", "start", "--init-db"]
           resources:
             limits:
-              cpu: "1"
-              memory: "1Gi"
+              cpu: "2"
+              memory: "2Gi"
             requests:
               cpu: "100m"
               memory: "256Mi"

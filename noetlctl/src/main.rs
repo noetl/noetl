@@ -1318,7 +1318,7 @@ async fn stop_server(force: bool) -> Result<()> {
 // Worker Management
 // ============================================================================
 
-async fn start_worker(max_workers: Option<usize>) -> Result<()> {
+async fn start_worker(_max_workers: Option<usize>) -> Result<()> {
     use std::process::{Command, Stdio};
     
     let pid_dir = dirs::home_dir()
@@ -1645,8 +1645,6 @@ async fn build_docker_image(no_cache: bool) -> Result<()> {
 // ============================================================================
 
 async fn k8s_deploy() -> Result<()> {
-    use std::process::Command;
-    
     println!("Deploying NoETL to Kubernetes...");
     
     // Read image tag

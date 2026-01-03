@@ -70,10 +70,8 @@ ENV PATH="/opt/noetl/.venv/bin:$PATH"
 
 ENV NOETL_ENABLE_UI=false
 
-# Default command runs the server, but can be overridden with environment variables:
-# - Set NOETL_RUN_MODE=server for the default server mode
-# - Set NOETL_RUN_MODE=worker and NOETL_PLAYBOOK_PATH for worker mode
-# - Set NOETL_RUN_MODE=cli for CLI mode
-CMD ["python", "-m", "noetl.main", "server", "start", "--host", "0.0.0.0", "--port", "8080"]
+# Default command: Use Rust CLI to start server
+# The noetl binary spawns python -m noetl.server
+CMD ["noetl", "server", "start", "--host", "0.0.0.0", "--port", "8082"]
 
 # ===
