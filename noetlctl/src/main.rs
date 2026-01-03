@@ -1181,12 +1181,17 @@ async fn start_server(init_db: bool) -> Result<()> {
     
     println!("Starting NoETL server at http://{}:{}...", host, port);
     
-    // Spawn Python server subprocess
+    // Spawn Python server subprocess using new entry point
     let mut cmd = Command::new("python");
-    cmd.args(&["-m", "uvicorn", "noetl.server:create_app", "--factory"])
+    cmd.args(&["-m", "noetl.server"])
        .arg("--host").arg(&host)
-       .arg("--port").arg(&port)
-       .stdout(Stdio::null())
+       .arg("--port").arg(&port);
+    
+    if init_db {
+        cmd.arg("--init-db");
+    }
+    
+    cmd.stdout(Stdio::null())
        .stderr(Stdio::null());
     
     // Set environment variables
@@ -1345,13 +1350,10 @@ async fn start_worker(max_workers: Option<usize>) -> Result<()> {
     
     println!("Starting NoETL worker '{}' (v2 architecture)...", worker_name);
     
-    // Build Python worker command - always use v2
+    // Build Python worker command - execute worker module directly
+    // python -m noetl.worker starts V2 worker via __main__.py
     let mut cmd = Command::new("python");
-    cmd.args(&["-m", "noetl.cli.ctl", "worker", "start", "--v2"]);
-    
-    if let Some(workers) = max_workers {
-        cmd.arg("--max-workers").arg(workers.to_string());
-    }
+    cmd.args(&["-m", "noetl.worker"]);
     
     cmd.stdout(Stdio::null())
        .stderr(Stdio::null());
