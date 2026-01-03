@@ -87,6 +87,29 @@ jobs:
       - name: Copy built UI artifacts to noetl/core/ui
         run: cp -R ui-src/dist/* noetl/core/ui/
 
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.83
+
+      - name: Cache Cargo build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            noetlctl/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build Rust binary
+        run: |
+          cd noetlctl
+          cargo build --release
+          cd ..
+          mkdir -p noetl/bin
+          cp noetlctl/target/release/noetl noetl/bin/noetl
+          chmod +x noetl/bin/noetl
+
       - name: Install NoETL dependencies
         run: uv sync --locked --all-extras
         # --all-extras Include all optional dependencies.
