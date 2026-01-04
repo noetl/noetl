@@ -1327,17 +1327,16 @@ class V2Worker:
         name: str,
         payload: dict
     ):
-        """Emit an event to the server."""
+        """Emit an event to the server using the broker API schema."""
         if not self._http_client:
             raise RuntimeError("HTTP client not initialized")
         
         event_url = f"{server_url.rstrip('/')}/api/events"
         event_data = {
             "execution_id": str(execution_id),
-            "step": step,
-            "name": name,
-            "payload": payload,
-            "worker_id": self.worker_id
+            "event_type": name,  # Map to event_type (EventType enum)
+            "node_name": step,   # Map step to node_name
+            "payload": payload
         }
         
         logger.info(f"[HTTP] POST {event_url} - Event: {name} for {step} (execution {execution_id})")
