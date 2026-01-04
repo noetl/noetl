@@ -43,9 +43,10 @@ class V2Worker:
         nats_url: Optional[str] = None,
         server_url: Optional[str] = None
     ):
-        from noetl.core.config import settings
+        from noetl.core.config import get_worker_settings
+        worker_settings = get_worker_settings()
         self.worker_id = worker_id
-        self.nats_url = nats_url or settings.nats_url
+        self.nats_url = nats_url or worker_settings.nats_url
         self.server_url = server_url  # Fallback, usually comes from notification
         self._running = False
         self._http_client: Optional[httpx.AsyncClient] = None
@@ -53,13 +54,15 @@ class V2Worker:
     
     async def start(self):
         """Start the worker NATS subscription."""
-        from noetl.core.config import settings
+        from noetl.core.config import get_worker_settings
+        worker_settings = get_worker_settings()
         self._running = True
         self._http_client = httpx.AsyncClient(timeout=30.0)
         self._nats_subscriber = NATSCommandSubscriber(
             nats_url=self.nats_url,
-            subject=settings.nats_subject,
-            consumer_name=settings.nats_consumer
+            subject=worker_settings.nats_subject,
+            consumer_name=worker_settings.nats_consumer,
+            stream_name=worker_settings.nats_stream
         )
         
         logger.info(f"Worker {self.worker_id} starting (NATS: {self.nats_url})")
@@ -698,8 +701,9 @@ class V2Worker:
             server_url = context.get('server_url', 'http://noetl.noetl.svc.cluster.local:8082')
             
             # Get refresh threshold from settings
-            from noetl.core.config import settings
-            refresh_threshold = getattr(settings, 'keychain_refresh_threshold', 300)
+            from noetl.core.config import get_worker_settings
+            worker_settings = get_worker_settings()
+            refresh_threshold = worker_settings.keychain_refresh_threshold
             
             context = await populate_keychain_context(
                 task_config=task_config_combined,
@@ -1327,6 +1331,7 @@ class V2Worker:
         if not self._http_client:
             raise RuntimeError("HTTP client not initialized")
         
+        event_url = f"{server_url.rstrip('/')}/api/events"
         event_data = {
             "execution_id": str(execution_id),
             "step": step,
@@ -1335,18 +1340,20 @@ class V2Worker:
             "worker_id": self.worker_id
         }
         
+        logger.info(f"[HTTP] POST {event_url} - Event: {name} for {step} (execution {execution_id})")
+        
         try:
             response = await self._http_client.post(
-                f"{server_url.rstrip('/')}/api/events",
+                event_url,
                 json=event_data,
                 timeout=10.0
             )
             response.raise_for_status()
             
-            logger.debug(f"Emitted event {name} for {step} (execution {execution_id})")
+            logger.info(f"[HTTP] Event {name} sent successfully - Status: {response.status_code}")
             
         except Exception as e:
-            logger.error(f"Failed to emit event {name}: {e}")
+            logger.error(f"[HTTP] Failed to emit event {name} to {event_url}: {e}", exc_info=True)
             raise
 
 
