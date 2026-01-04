@@ -18,8 +18,11 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 FIXTURE_ROOT="$REPO_ROOT/tests/fixtures/playbooks"
-NOETL_CLI="$REPO_ROOT/.venv/bin/noetl"
+
+# Use Rust CLI binary
+NOETL_CLI="$REPO_ROOT/bin/noetl"
 if [ ! -x "$NOETL_CLI" ]; then
+  # Fallback to PATH if bin/noetl doesn't exist
   NOETL_CLI="noetl"
 fi
 
@@ -38,7 +41,7 @@ while IFS= read -r -d '' playbook; do
   rel_path="${playbook#$REPO_ROOT/}"
   echo "Loading $rel_path"
 
-  if "$NOETL_CLI" register "$rel_path" --port "$PORT" --host "$HOST"; then
+  if "$NOETL_CLI" --host "$HOST" --port "$PORT" register playbook --file "$rel_path"; then
     echo "✓ loaded $rel_path"
   else
     echo "✗ Failed $rel_path"

@@ -11,7 +11,6 @@ from noetl.core.logger import setup_logger
 
 from noetl.tools.duckdb.types import TaskResult
 from noetl.tools.duckdb.errors import SQLExecutionError, ExcelExportError
-from noetl.tools.duckdb.excel import ExcelExportManager
 
 logger = setup_logger(__name__, include_location=True)
 
@@ -20,7 +19,7 @@ def execute_sql_commands(
     connection: Any, 
     commands: List[str],
     task_id: str,
-    excel_manager: Optional[ExcelExportManager] = None
+    excel_manager: Optional[Any] = None
 ) -> Dict[str, Any]:
     """
     Execute a list of SQL commands against a DuckDB connection.

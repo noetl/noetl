@@ -98,7 +98,12 @@ tasks:
         echo "Installing NoETL in editable mode with dev dependencies..."
         uv pip install --editable .
         echo "Installation complete"
-        echo "Activate with: source .venv/bin/activate"
+
+  noetl:local:setup-dev:
+    desc: Setup local development environment (UI assets + Rust CLI)
+    aliases: [setup-local-dev, dev-setup]
+    cmds:
+      - ./scripts/setup_local_dev.sh
 
   noetl:local:install:
     desc: Install NoETL in editable mode

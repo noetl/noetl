@@ -175,6 +175,86 @@ tasks:
       - ./tests/fixtures/register_test_playbooks.sh {{ .NOETL_HOST }} {{ .NOETL_PORT }}
       - echo "=== All test playbooks registered successfully ==="
 
+  test:local:register-credentials:
+    desc: Register test credentials to local server
+    aliases: [rtc-local, register-test-credentials-local]
+    cmds:
+      - echo "=== Registering pg_k8s credential ==="
+      - |
+        if command -v jq >/dev/null 2>&1; then
+          curl -sS -X POST "http://localhost:8083/api/credentials" \
+            -H 'Content-Type: application/json' \
+            --data-binary @tests/fixtures/credentials/pg_k8s.json | jq -C .
+        else
+          curl -sS -X POST "http://localhost:8083/api/credentials" \
+            -H 'Content-Type: application/json' \
+            --data-binary @tests/fixtures/credentials/pg_k8s.json
+        fi
+      - echo "\n=== Registering gcs_hmac_local credential ==="
+      - |
+        if command -v jq >/dev/null 2>&1; then
+          curl -sS -X POST "http://localhost:8083/api/credentials" \
+            -H 'Content-Type: application/json' \
+            --data-binary @tests/fixtures/credentials/gcs_hmac_local.json | jq -C .
+        else
+          curl -sS -X POST "http://localhost:8083/api/credentials" \
+            -H 'Content-Type: application/json' \
+            --data-binary @tests/fixtures/credentials/gcs_hmac_local.json
+        fi
+      - echo "\n=== Registering pg_local credential ==="
+      - |
+        if command -v jq >/dev/null 2>&1; then
+          curl -sS -X POST "http://localhost:8083/api/credentials" \
+            -H 'Content-Type: application/json' \
+            --data-binary @tests/fixtures/credentials/pg_local.json | jq -C .
+        else
+          curl -sS -X POST "http://localhost:8083/api/credentials" \
+            -H 'Content-Type: application/json' \
+            --data-binary @tests/fixtures/credentials/pg_local.json
+        fi
+      - echo "\n=== Registering sf_test credential ==="
+      - |
+        if command -v jq >/dev/null 2>&1; then
+          curl -sS -X POST "http://localhost:8083/api/credentials" \
+            -H 'Content-Type: application/json' \
+            --data-binary @tests/fixtures/credentials/sf_test.json | jq -C .
+        else
+          curl -sS -X POST "http://localhost:8083/api/credentials" \
+            -H 'Content-Type: application/json' \
+            --data-binary @tests/fixtures/credentials/sf_test.json
+        fi
+      - echo "\n=== Registering google_oauth credential ==="
+      - |
+        if command -v jq >/dev/null 2>&1; then
+          curl -sS -X POST "http://localhost:8083/api/credentials" \
+            -H 'Content-Type: application/json' \
+            --data-binary @tests/fixtures/credentials/google_oauth.json | jq -C .
+        else
+          curl -sS -X POST "http://localhost:8083/api/credentials" \
+            -H 'Content-Type: application/json' \
+            --data-binary @tests/fixtures/credentials/google_oauth.json
+        fi
+      - echo "\n=== Registering gcs_service_account credential ==="
+      - |
+        if command -v jq >/dev/null 2>&1; then
+          curl -sS -X POST "http://localhost:8083/api/credentials" \
+            -H 'Content-Type: application/json' \
+            --data-binary @tests/fixtures/credentials/gcs_service_account_noetl.json | jq -C .
+        else
+          curl -sS -X POST "http://localhost:8083/api/credentials" \
+            -H 'Content-Type: application/json' \
+            --data-binary @tests/fixtures/credentials/gcs_service_account_noetl.json
+        fi
+      - echo "\n=== Test credentials registered successfully ==="
+
+  test:local:register-playbooks:
+    desc: Register all test playbooks to local server
+    aliases: [rtp-local, register-test-playbooks-local]
+    cmds:
+      - echo "=== Registering all test playbooks ==="
+      - ./tests/fixtures/register_test_playbooks.sh localhost 8083
+      - echo "=== All test playbooks registered successfully ==="
+
   test:k8s:setup-environment:
   # before run we need go to https://console.cloud.google.com/security/secret-manager/secret/gcs_hmac_local/versions?project=noetl-demo-19700101
   # copy and paste to tests/fixtures/credentials/gcs_hmac_local.json the values for key_id and secret
@@ -197,7 +277,7 @@ tasks:
     cmds:
       - task: kubectl:local:context-set-kind
       - echo "=== Creating database tables for save storage tests ==="
-      - .venv/bin/noetl execute playbook "tests/fixtures/playbooks/save_storage_test/create_tables" --host {{.NOETL_HOST}} --port {{.NOETL_PORT}} --json
+      - bin/noetl --host {{.NOETL_HOST}} --port {{.NOETL_PORT}} execute playbook "tests/fixtures/playbooks/save_storage_test/create_tables" --json
       - sleep 10
       - echo "=== Database tables created successfully ==="
 
@@ -234,7 +314,7 @@ tasks:
     cmds:
       - task: kubectl:local:context-set-kind
       - echo "=== Registering container_postgres_init playbook ==="
-      - .venv/bin/noetl register tests/fixtures/playbooks/container_postgres_init/container_postgres_init.yaml --host {{.NOETL_HOST}} --port {{.NOETL_PORT}}
+      - bin/noetl --host {{.NOETL_HOST}} --port {{.NOETL_PORT}} register playbook --file tests/fixtures/playbooks/container_postgres_init/container_postgres_init.yaml
       - echo "=== Playbook registered successfully ==="
 
   test:container:execute:
@@ -243,7 +323,7 @@ tasks:
     cmds:
       - task: kubectl:local:context-set-kind
       - echo "=== Executing container_postgres_init playbook ==="
-      - .venv/bin/noetl execute playbook tests/fixtures/playbooks/container_postgres_init --host {{.NOETL_HOST}} --port {{.NOETL_PORT}} --json
+      - bin/noetl --host {{.NOETL_HOST}} --port {{.NOETL_PORT}} execute playbook tests/fixtures/playbooks/container_postgres_init --json
       - echo "=== Playbook execution completed ==="
 
   test:container:verify:

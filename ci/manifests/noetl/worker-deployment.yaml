@@ -36,34 +36,13 @@ spec:
           image: image_name:image_tag
           imagePullPolicy: IfNotPresent
           command:
-            - noetl
+            - python
           args:
-            - worker
-            - start
+            - -m
+            - noetl.worker
           envFrom:
             - configMapRef:
-                name: noetl-config
-            - secretRef:
-                name: noetl-secret
-          env:
-            - name: NOETL_RUN_MODE
-              value: "worker"
-            - name: NOETL_WORKER_MODE
-              value: "true"
-            - name: NOETL_SERVER_URL
-              value: "http://noetl.noetl.svc.cluster.local:8082"
-            - name: NOETL_WORKER_POOL_RUNTIME
-              value: "cpu"
-            - name: NOETL_WORKER_POOL_NAME
-              value: "worker-cpu-01-k8s"
-            - name: NATS_URL
-              value: "nats://noetl:noetl@nats.nats.svc.cluster.local:4222"
-            - name: NATS_USER
-              value: noetl
-            - name: NATS_PASSWORD
-              value: noetl
-            - name: SERVER_API_URL
-              value: "http://noetl.noetl.svc.cluster.local:8082"
+                name: noetl-worker-config
           volumeMounts:
             - name: noetl-data
               mountPath: /opt/noetl/data

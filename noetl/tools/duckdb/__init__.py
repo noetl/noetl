@@ -28,7 +28,6 @@ from noetl.tools.duckdb.extensions import get_required_extensions, install_and_l
 from noetl.tools.duckdb.auth import resolve_unified_auth, generate_duckdb_secrets
 from noetl.tools.duckdb.sql import render_commands, execute_sql_commands, serialize_results, create_task_result
 from noetl.tools.duckdb.cloud import detect_uri_scopes, configure_cloud_credentials, validate_cloud_output_requirement
-from noetl.tools.duckdb.excel import ExcelExportManager
 from noetl.tools.duckdb.types import JinjaEnvironment, ContextDict, LogEventCallback
 from noetl.tools.duckdb.errors import DuckDBPluginError
 
@@ -150,12 +149,11 @@ def execute_duckdb_task(
             validate_cloud_output_requirement(rendered_commands, require_cloud)
             
             # Execute SQL commands
-            excel_manager = ExcelExportManager(auth_map=resolved_auth_map)
             results = execute_sql_commands(
                 conn,
                 rendered_commands,
                 task_id,
-                excel_manager=excel_manager
+                excel_manager=None
             )
             
             # Add metadata to results
