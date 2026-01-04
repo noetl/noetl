@@ -1331,7 +1331,7 @@ class V2Worker:
         if not self._http_client:
             raise RuntimeError("HTTP client not initialized")
         
-        event_url = f"{server_url.rstrip('/')}/api/v2/events"
+        event_url = f"{server_url.rstrip('/')}/api/events"
         event_data = {
             "execution_id": str(execution_id),
             "step": step,
