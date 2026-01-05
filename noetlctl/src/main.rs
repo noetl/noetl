@@ -1629,6 +1629,8 @@ async fn build_docker_image(no_cache: bool, platform: &str) -> Result<()> {
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
 
+    println!("cwd = {:?}", std::env::current_dir()?);
+
     cmd.env("DOCKER_BUILDKIT", "0");
 
     println!(
