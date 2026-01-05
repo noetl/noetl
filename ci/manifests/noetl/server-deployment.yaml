@@ -23,7 +23,7 @@ spec:
             - containerPort: 8082
           envFrom:
             - configMapRef:
-                name: noetl-config
+                name: noetl-server-config
             - secretRef:
                 name: noetl-secret
           volumeMounts:
@@ -31,12 +31,12 @@ spec:
               mountPath: /opt/noetl/data
             - name: noetl-logs
               mountPath: /opt/noetl/logs
-          command: ["/opt/noetl/.venv/bin/python3"]
-          args: ["-m", "uvicorn", "noetl.server:create_app", "--factory", "--host", "0.0.0.0", "--port", "8082", "--log-level", "error"]
+          command: ["python"]
+          args: ["-m", "noetl.server", "--host", "0.0.0.0", "--port", "8082"]
           resources:
             limits:
-              cpu: "1"
-              memory: "1Gi"
+              cpu: "2"
+              memory: "2Gi"
             requests:
               cpu: "100m"
               memory: "256Mi"
@@ -44,18 +44,18 @@ spec:
             httpGet:
               path: /api/health
               port: 8082
-            initialDelaySeconds: 30
+            initialDelaySeconds: 120
             periodSeconds: 10
             timeoutSeconds: 5
-            failureThreshold: 3
+            failureThreshold: 6
           readinessProbe:
             httpGet:
               path: /api/health
               port: 8082
-            initialDelaySeconds: 5
-            periodSeconds: 5
-            timeoutSeconds: 3
-            failureThreshold: 3
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 12
       volumes:
         - name: noetl-data
           persistentVolumeClaim:

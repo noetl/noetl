@@ -18,7 +18,8 @@ logs/
 .env.prod
 .env.local
 .env.*
-!.env.docker
+!.env.server
+!.env.worker
 .secrets/
 node_modules/
 data/noetldb/
@@ -33,6 +34,8 @@ tests/fixtures/playbooks/**/temp/
 !.github/workflows
 !.gitignore
 !.dockerignore
+!.env.server
+!.env.worker
 # Virtual environments
 publish_env/
 test_env/
@@ -84,3 +87,4 @@ bhs-state-program-analytics.code-workspace
 # Local repositories (not tracked as submodules)
 .gitmodules
 submodules/
+/noetl/bin/

@@ -8,23 +8,54 @@ The credential caching system provides execution-scoped caching for external sec
 
 - **Scope**: Per-execution isolation (different executions don't share cache)
 - **TTL**: 1 hour (3600 seconds)
-- **Storage**: PostgreSQL table `noetl.auth_cache` with encrypted JSON data
+- **Storage**: PostgreSQL table `noetl.keychain` with encrypted JSON data
 - **Performance**: ~30x faster retrieval (5-10ms cache hit vs 200-300ms Secret Manager API call)
 
 ## Test Playbook: `test_cache_simple.yaml`
 
 A minimal test playbook that makes two OpenAI API calls using the same secret to demonstrate cache hit behavior.
 
-### Workflow Steps
+### Workflow Steps (4 total)
 
-1. **first_openai_call**: Fetches OpenAI API key from Google Secret Manager
+1. **start** - Initialize cache test (Python tool)
+2. **first_openai_call** - Fetches OpenAI API key from Google Secret Manager
    - Cache MISS: Secret fetched from Google Secret Manager (~200-300ms)
-   - Secret stored in `auth_cache` table
+   - Secret stored in `keychain` table
    - Makes OpenAI API call
-
-2. **second_openai_call**: Uses the same OpenAI API key
+3. **second_openai_call** - Uses the same OpenAI API key
    - Cache HIT: Secret retrieved from database cache (~5-10ms)
    - Makes OpenAI API call
+4. **end** - Complete workflow (Python tool)
+
+### Key Features
+
+**Python Tool Structure (v2)**: Uses standardized python tool format:
+```yaml
+tool:
+  kind: python
+  auth: {}      # Optional: authentication references
+  libs: {}      # Required: library imports (empty if none needed)
+  args: {}      # Required: input arguments (empty if none needed)
+  code: |
+    # Direct code execution - no def main() wrapper
+    result = {"status": "initialized"}
+```
+
+**Secret Manager Authentication**: Uses provider-based auth resolution:
+```yaml
+auth:
+  openai:
+    type: bearer
+    provider: secret_manager
+    key: '{{ workload.openai_secret_path }}'
+    oauth_credential: '{{ workload.oauth_cred }}'
+```
+
+**Cache Behavior**:
+- First call: Cache MISS → fetch from Secret Manager → store in cache
+- Second call: Cache HIT → retrieve from database → skip Secret Manager API
+- Execution-scoped: Cache isolated per execution_id
+- TTL: 1 hour (3600 seconds)
 
 ### Expected Behavior
 
@@ -85,7 +116,7 @@ SELECT
   created_at,
   accessed_at,
   accessed_at > created_at as was_accessed_after_creation
-FROM noetl.auth_cache 
+FROM noetl.keychain 
 WHERE execution_id = 507861119290048685;
 ```
 
@@ -113,13 +144,13 @@ WHERE execution_id = 507861119290048685;
    - Event loop detection prevents "already running" errors
 
 5. **Database Migration**:
-   - Renamed table: `credential_cache` → `auth_cache`
-   - Migration: `scripts/migrate_credential_cache_to_auth_cache.sql`
+   - Table: `noetl.keychain` stores cached credentials
+   - Migration: See database schema changes
 
-### Table Schema: `noetl.auth_cache`
+### Table Schema: `noetl.keychain`
 
 ```sql
-CREATE TABLE noetl.auth_cache (
+CREATE TABLE noetl.keychain (
   credential_name TEXT NOT NULL,
   credential_type TEXT NOT NULL,
   scope_type TEXT NOT NULL,
@@ -140,13 +171,37 @@ CREATE TABLE noetl.auth_cache (
 
 ### Prerequisites
 
-1. Kubernetes cluster running (kind or other)
-2. NoETL deployed with latest image
-3. Credentials registered: `task test:k8s:register-credentials`
-4. Playbooks registered: `task test:k8s:register-playbooks`
-5. Google OAuth credential configured (`google_oauth`)
+1. **NoETL Cluster Running**:
+   - Kubernetes cluster with NoETL server and workers deployed
+   - Or local NoETL server running
+
+2. **Credentials Configured**:
+   - Google OAuth credential (`google_oauth`) registered in NoETL
+   - Access to Google Secret Manager with required secrets
+
+3. **Secrets in Google Secret Manager**:
+   - OpenAI API key at `projects/{project-id}/secrets/openai-api-key/versions/1`
+
+4. **Database Access**:
+   - PostgreSQL database accessible
+   - `noetl.keychain` table exists
 
 ### Execute Test
+
+#### Using noetl (Recommended)
+
+```bash
+# Register the playbook
+noetl catalog register tests/fixtures/playbooks/cache_test/test_cache_simple.yaml
+
+# Execute the playbook
+noetl execute playbook test/cache_simple --json
+
+# Get execution status (replace <EXECUTION_ID> with returned id)
+noetl execute status <EXECUTION_ID> --json
+```
+
+#### Using REST API
 
 ```bash
 # Execute playbook
@@ -160,10 +215,30 @@ curl -X POST "http://localhost:8082/api/run/playbook" \
 # Wait for completion (2-3 seconds)
 sleep 5
 
-# Check cache table
-PGPASSWORD=noetl psql -h localhost -p 54321 -U noetl -d demo_noetl << 'EOF'
-\pset pager off
-\x on
+# Get execution status
+curl -s http://localhost:8082/api/executions/<EXECUTION_ID> | jq .
+```
+
+### Verify Cache Behavior
+
+#### Query Cache Table via NoETL REST API
+
+```bash
+# Get cache entry for execution
+curl -X POST http://localhost:8082/api/postgres/execute \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "SELECT credential_name, credential_type, execution_id, access_count, created_at, accessed_at, accessed_at > created_at as was_accessed_after_creation FROM noetl.keychain WHERE execution_id = YOUR_EXECUTION_ID",
+    "schema": "noetl"
+  }' | jq .
+```
+
+#### Using SQL Client (psql, DBeaver)
+
+```sql
+-- Check cache entry
+```sql
+-- Check cache entry
 SELECT 
   credential_name,
   credential_type,
@@ -172,18 +247,95 @@ SELECT
   created_at,
   accessed_at,
   accessed_at > created_at as was_accessed_after_creation
-FROM noetl.auth_cache 
+FROM noetl.keychain 
+WHERE execution_id = YOUR_EXECUTION_ID;
+
+-- View all recent cache entries
+SELECT 
+  credential_name,
+  execution_id,
+  access_count,
+  created_at,
+  accessed_at,
+  accessed_at - created_at as cache_delay
+FROM noetl.keychain 
 ORDER BY created_at DESC 
-LIMIT 1;
-EOF
+LIMIT 10;
+
+-- Check cache hit rate for all executions
+SELECT 
+  COUNT(*) as total_entries,
+  AVG(access_count) as avg_access_count,
+  MAX(access_count) as max_access_count
+FROM noetl.keychain;
 ```
 
 ### Expected Output
 
-- Execution completes successfully
-- `auth_cache` table contains 1 entry
-- `accessed_at > created_at` is `true`
-- Cache delay is 1-2 seconds (time between API calls)
+**Execution Status**: ✅ COMPLETED
+
+**Cache Entry**:
+- `credential_name`: Secret path from Google Secret Manager
+- `credential_type`: `secret_manager`
+- `scope_type`: `execution`
+- `execution_id`: Unique execution identifier
+- `access_count`: Should be 0 (first access doesn't increment counter)
+- `created_at`: Timestamp when secret was first fetched
+- `accessed_at`: Timestamp when secret was last retrieved from cache
+- **Key Validation**: `accessed_at > created_at` should be `true` (proves cache was hit)
+- `cache_delay`: Time between cache creation and access (typically 1-2 seconds)
+
+**Performance Improvement**:
+- Cache MISS (first call): ~200-300ms (Secret Manager API)
+- Cache HIT (second call): ~5-10ms (Database retrieval)
+- **Speedup**: ~30x faster credential retrieval
+
+## Python Tool Pattern (v2)
+
+This playbook demonstrates NoETL v2's standardized python tool structure:
+
+### Structure
+```yaml
+tool:
+  kind: python
+  auth: {}      # Optional: authentication references
+  libs: {}      # Required: library imports (empty if none needed)
+  args: {}      # Required: input arguments (empty if none needed)
+  code: |
+    # Direct code execution - no def main() wrapper
+    # Assign result to 'result' variable (not return statement)
+    result = {"status": "initialized"}
+```
+
+### Key Principles
+- **No Function Wrappers**: Code executes directly without `def main()` functions
+- **Result Assignment**: Use `result = {...}` instead of `return {...}`
+- **Empty Sections**: Even if not needed, include empty `auth: {}`, `libs: {}`, `args: {}`
+- **Simplicity**: For simple status returns, no imports or args needed
+
+### Examples from Playbook
+
+**start step**:
+```yaml
+tool:
+  kind: python
+  auth: {}
+  libs: {}
+  args: {}
+  code: |
+    result = {"status": "initialized"}
+```
+
+**end step**:
+```yaml
+tool:
+  kind: python
+  auth: {}
+  libs: {}
+  args: {}
+  code: |
+    result = {"status": "complete"}
+```
 
 ## Troubleshooting
 

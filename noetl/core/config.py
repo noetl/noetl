@@ -81,26 +81,34 @@ def load_env_if_present(force_reload: bool = False) -> None:
 def validate_mandatory_env_vars():
     """
     Validate that all mandatory environment variables are present and not empty.
+    Only validates SERVER-specific variables if NOETL_RUN_MODE=server.
     Exit immediately if any are missing.
     """
+    run_mode = os.environ.get('NOETL_RUN_MODE', 'server').lower()
+    
+    # Common mandatory vars (both server and worker)
     mandatory_vars = [
-        # Admin DB
-        'POSTGRES_USER', 'POSTGRES_PASSWORD', 'POSTGRES_DB', 'POSTGRES_HOST', 'POSTGRES_PORT',
-        # NoETL principal
-        'NOETL_USER', 'NOETL_PASSWORD', 'NOETL_SCHEMA',
-        # Runtime config
-        'NOETL_HOST', 'NOETL_PORT', 'NOETL_ENABLE_UI', 'NOETL_DEBUG',
-        # Server identity
-        'NOETL_SERVER_URL', 'NOETL_SERVER_NAME',
-        # Server runtime
-        'NOETL_SERVER', 'NOETL_SERVER_WORKERS', 'NOETL_SERVER_RELOAD',
-        # Server runtime tuning (required)
-        'NOETL_AUTO_RECREATE_RUNTIME', 'NOETL_HEARTBEAT_RETRY_AFTER',
-        'NOETL_RUNTIME_SWEEP_INTERVAL', 'NOETL_RUNTIME_OFFLINE_SECONDS',
-        'NOETL_DISABLE_METRICS', 'NOETL_SERVER_METRICS_INTERVAL',
-        # Drop schema control
-        'NOETL_DROP_SCHEMA'
+        'NOETL_SERVER_URL',
     ]
+    
+    # Server-only mandatory vars
+    if run_mode == 'server':
+        mandatory_vars.extend([
+            # NoETL system database (SERVER ONLY)
+            'POSTGRES_HOST', 'POSTGRES_PORT',
+            # NoETL principal
+            'NOETL_USER', 'NOETL_PASSWORD', 'NOETL_SCHEMA',
+            # Runtime config
+            'NOETL_HOST', 'NOETL_PORT', 'NOETL_ENABLE_UI', 'NOETL_DEBUG',
+            # Server identity
+            'NOETL_SERVER_NAME',
+            # Server runtime
+            'NOETL_SERVER', 'NOETL_SERVER_WORKERS', 'NOETL_SERVER_RELOAD',
+            # Server runtime tuning
+            'NOETL_AUTO_RECREATE_RUNTIME', 'NOETL_HEARTBEAT_RETRY_AFTER',
+            'NOETL_RUNTIME_SWEEP_INTERVAL', 'NOETL_RUNTIME_OFFLINE_SECONDS',
+            'NOETL_DISABLE_METRICS', 'NOETL_SERVER_METRICS_INTERVAL',
+        ])
 
     missing_vars = []
     empty_vars = []
@@ -146,29 +154,23 @@ class Settings(BaseModel):
     app_name: str = "NoETL"
     app_version: str = "0.1.39"
 
-    # Runtime configuration (required; no defaults)
-    host: str = Field(..., alias="NOETL_HOST")
-    port: int = Field(..., alias="NOETL_PORT")
-    enable_ui: bool = Field(..., alias="NOETL_ENABLE_UI")
-    debug: bool = Field(..., alias="NOETL_DEBUG")
+    # Runtime configuration (SERVER ONLY - optional for workers)
+    host: Optional[str] = Field(None, alias="NOETL_HOST")
+    port: Optional[int] = Field(None, alias="NOETL_PORT")
+    enable_ui: Optional[bool] = Field(None, alias="NOETL_ENABLE_UI")
+    debug: Optional[bool] = Field(None, alias="NOETL_DEBUG")
 
-    # Database configuration (required)
-    postgres_user: str = Field(..., alias="POSTGRES_USER")
-    postgres_password: str = Field(..., alias="POSTGRES_PASSWORD") 
-    postgres_db: str = Field(..., alias="POSTGRES_DB")
-    postgres_host: str = Field(..., alias="POSTGRES_HOST")
-    postgres_port: str = Field(..., alias="POSTGRES_PORT")
+    # Database configuration (SERVER ONLY - optional for workers)
+    postgres_user: Optional[str] = Field(None, alias="POSTGRES_USER")
+    postgres_password: Optional[str] = Field(None, alias="POSTGRES_PASSWORD") 
+    postgres_db: Optional[str] = Field(None, alias="POSTGRES_DB")
+    postgres_host: Optional[str] = Field(None, alias="POSTGRES_HOST")
+    postgres_port: Optional[str] = Field(None, alias="POSTGRES_PORT")
 
-    # NoETL-specific DB principal (required)
-    noetl_user: str = Field(..., alias="NOETL_USER")
-    noetl_password: str = Field(..., alias="NOETL_PASSWORD")
-    noetl_schema: str = Field(..., alias="NOETL_SCHEMA")
-
-    # Drop schema flag (required; admin will drop schema when true)
-    noetl_drop_schema: bool = Field(..., alias="NOETL_DROP_SCHEMA")
-
-    # Schema validation / ensure flag (renamed from NOETL_SCHEMA_ENSURE)
-    schema_validate: bool = Field(..., alias="NOETL_SCHEMA_VALIDATE")
+    # NoETL-specific DB principal (SERVER ONLY - optional for workers)
+    noetl_user: Optional[str] = Field(None, alias="NOETL_USER")
+    noetl_password: Optional[str] = Field(None, alias="NOETL_PASSWORD")
+    noetl_schema: Optional[str] = Field(None, alias="NOETL_SCHEMA")
 
     # NATS Configuration
     nats_url: str = Field(default="nats://noetl:noetl@localhost:30422", alias="NATS_URL")
@@ -181,26 +183,29 @@ class Settings(BaseModel):
     # Keychain configuration
     keychain_refresh_threshold: int = Field(default=300, alias="NOETL_KEYCHAIN_REFRESH_THRESHOLD")  # seconds (5min default)
 
-    # Server identity and base URL (required)
+    # Server identity and base URL
     server_url: str = Field(..., alias="NOETL_SERVER_URL")
-    server_name: str = Field(..., alias="NOETL_SERVER_NAME")
+    server_name: Optional[str] = Field(None, alias="NOETL_SERVER_NAME")
 
-    # Server runtime (required; no defaults)
-    server_runtime: str = Field(..., alias="NOETL_SERVER")            # "uvicorn" | "gunicorn" | "auto"
-    server_workers: int = Field(..., alias="NOETL_SERVER_WORKERS")    # >= 1
-    server_reload: bool = Field(..., alias="NOETL_SERVER_RELOAD")     # true/false
-    auto_recreate_runtime: bool = Field(..., alias="NOETL_AUTO_RECREATE_RUNTIME")
-    heartbeat_retry_after: int = Field(..., alias="NOETL_HEARTBEAT_RETRY_AFTER")
-    runtime_sweep_interval: float = Field(..., alias="NOETL_RUNTIME_SWEEP_INTERVAL")
-    runtime_offline_seconds: int = Field(..., alias="NOETL_RUNTIME_OFFLINE_SECONDS")
-    disable_metrics: bool = Field(..., alias="NOETL_DISABLE_METRICS")
-    server_metrics_interval: float = Field(..., alias="NOETL_SERVER_METRICS_INTERVAL")
+    # Server runtime (SERVER ONLY - optional for workers)
+    server_runtime: Optional[str] = Field(None, alias="NOETL_SERVER")
+    server_workers: Optional[int] = Field(None, alias="NOETL_SERVER_WORKERS")
+    server_reload: Optional[bool] = Field(None, alias="NOETL_SERVER_RELOAD")
+    auto_recreate_runtime: Optional[bool] = Field(None, alias="NOETL_AUTO_RECREATE_RUNTIME")
+    heartbeat_retry_after: Optional[int] = Field(None, alias="NOETL_HEARTBEAT_RETRY_AFTER")
+    runtime_sweep_interval: Optional[float] = Field(None, alias="NOETL_RUNTIME_SWEEP_INTERVAL")
+    runtime_offline_seconds: Optional[int] = Field(None, alias="NOETL_RUNTIME_OFFLINE_SECONDS")
+    disable_metrics: Optional[bool] = Field(None, alias="NOETL_DISABLE_METRICS")
+    server_metrics_interval: Optional[float] = Field(None, alias="NOETL_SERVER_METRICS_INTERVAL")
     server_labels_raw: Optional[str] = Field(None, alias="NOETL_SERVER_LABELS")
     hostname_env: Optional[str] = Field(None, alias="HOSTNAME")
 
     @field_validator('postgres_user', 'postgres_password', 'postgres_db', 'postgres_host',
                      'postgres_port', 'noetl_user', 'noetl_password', 'noetl_schema', 'host', 'server_runtime', 'server_url', 'server_name', mode='before')
     def validate_not_empty_str(cls, v):
+        # Allow None for optional fields
+        if v is None:
+            return None
         if not isinstance(v, str) or not v.strip():
             raise ValueError("Value cannot be empty or whitespace only")
         return v.strip()
@@ -208,13 +213,14 @@ class Settings(BaseModel):
     @field_validator(
         'enable_ui',
         'debug',
-        'noetl_drop_schema',
         'server_reload',
         'auto_recreate_runtime',
         'disable_metrics',
         mode='before'
     )
     def coerce_bool(cls, v):
+        if v is None:
+            return None
         if isinstance(v, bool):
             return v
         if not isinstance(v, str):
@@ -228,14 +234,38 @@ class Settings(BaseModel):
 
     @field_validator('runtime_sweep_interval', 'server_metrics_interval', mode='before')
     def coerce_float(cls, v):
+        if v is None:
+            return None
         if isinstance(v, (int, float)):
             return float(v)
         if isinstance(v, str):
             return float(v.strip())
         raise ValueError("Expected float-compatible value")
 
+    @field_validator('port', mode='before')
+    def coerce_port(cls, v):
+        """Handle NOETL_PORT which may be polluted by Kubernetes service variable."""
+        if v is None:
+            return None
+        if isinstance(v, int):
+            return v
+        if isinstance(v, str):
+            # Handle Kubernetes service URL format (e.g., "tcp://10.96.194.170:8082")
+            # K8s automatically creates NOETL_PORT env var based on service name
+            if v.startswith("tcp://") or v.startswith("http://") or v.startswith("https://"):
+                import re
+                port_match = re.search(r':(\d+)$', v)
+                if port_match:
+                    return int(port_match.group(1))
+                # If no port in URL, return None (optional field)
+                return None
+            return int(v.strip())
+        raise ValueError("Expected integer or port URL string")
+    
     @field_validator('runtime_offline_seconds', 'heartbeat_retry_after', 'server_workers', mode='before')
     def coerce_int(cls, v):
+        if v is None:
+            return None
         if isinstance(v, int):
             return v
         if isinstance(v, str):
@@ -385,6 +415,17 @@ class WorkerSettings(BaseModel):
     port: str = Field("8082", alias="NOETL_PORT")
     server_name: Optional[str] = Field(None, alias="NOETL_SERVER_NAME")
     max_workers: int = Field(8, alias="NOETL_MAX_WORKERS")
+    
+    # NATS Configuration (worker needs these)
+    nats_url: str = Field(default="nats://noetl:noetl@localhost:30422", alias="NATS_URL")
+    nats_user: str = Field(default="noetl", alias="NATS_USER")
+    nats_password: str = Field(default="noetl", alias="NATS_PASSWORD")
+    nats_stream: str = Field(default="NOETL_COMMANDS", alias="NATS_STREAM")
+    nats_consumer: str = Field(default="noetl_worker_pool", alias="NATS_CONSUMER")
+    nats_subject: str = Field(default="noetl.commands", alias="NATS_SUBJECT")
+    
+    # Keychain configuration
+    keychain_refresh_threshold: int = Field(default=300, alias="NOETL_KEYCHAIN_REFRESH_THRESHOLD")
 
     @field_validator('pool_runtime', mode='before')
     def normalize_runtime(cls, v):
@@ -548,46 +589,37 @@ def get_settings(reload: bool = False) -> Settings:
         validate_mandatory_env_vars()
 
         try:
-            # Backward compatibility: map deprecated NOETL_SCHEMA_ENSURE -> NOETL_SCHEMA_VALIDATE if new not set
-            if 'NOETL_SCHEMA_VALIDATE' not in os.environ and 'NOETL_SCHEMA_ENSURE' in os.environ:
-                os.environ['NOETL_SCHEMA_VALIDATE'] = os.environ['NOETL_SCHEMA_ENSURE']
-                logger.warning("DEPRECATED: NOETL_SCHEMA_ENSURE detected -> set NOETL_SCHEMA_VALIDATE (will be removed soon).")
-            if 'NOETL_SCHEMA_VALIDATE' not in os.environ:
-                raise RuntimeError("Missing required environment variable NOETL_SCHEMA_VALIDATE (true/false)")
-
             _settings = Settings(
                 raw_env=dict(os.environ),
-                # Admin DB
-                POSTGRES_USER=os.environ['POSTGRES_USER'],
-                POSTGRES_PASSWORD=os.environ['POSTGRES_PASSWORD'],
-                POSTGRES_DB=os.environ['POSTGRES_DB'],
-                POSTGRES_HOST=os.environ['POSTGRES_HOST'],
-                POSTGRES_PORT=os.environ['POSTGRES_PORT'],
-                # NoETL principal
-                NOETL_USER=os.environ['NOETL_USER'],
-                NOETL_PASSWORD=os.environ['NOETL_PASSWORD'],
-                NOETL_SCHEMA=os.environ['NOETL_SCHEMA'],
-                # Runtime
-                NOETL_HOST=os.environ['NOETL_HOST'],
-                NOETL_PORT=os.environ['NOETL_PORT'],
-                NOETL_ENABLE_UI=os.environ['NOETL_ENABLE_UI'],
-                NOETL_DEBUG=os.environ['NOETL_DEBUG'],
+                # Admin DB (optional - only required for server)
+                POSTGRES_USER=os.environ.get('POSTGRES_USER'),
+                POSTGRES_PASSWORD=os.environ.get('POSTGRES_PASSWORD'),
+                POSTGRES_DB=os.environ.get('POSTGRES_DB'),
+                POSTGRES_HOST=os.environ.get('POSTGRES_HOST'),
+                POSTGRES_PORT=os.environ.get('POSTGRES_PORT'),
+                # NoETL principal (optional - only required for server)
+                NOETL_USER=os.environ.get('NOETL_USER'),
+                NOETL_PASSWORD=os.environ.get('NOETL_PASSWORD'),
+                NOETL_SCHEMA=os.environ.get('NOETL_SCHEMA'),
+                # Runtime (optional - only required for server)
+                NOETL_HOST=os.environ.get('NOETL_HOST'),
+                NOETL_PORT=os.environ.get('NOETL_PORT'),
+                NOETL_ENABLE_UI=os.environ.get('NOETL_ENABLE_UI'),
+                NOETL_DEBUG=os.environ.get('NOETL_DEBUG'),
                 # Server identity
                 NOETL_SERVER_URL=os.environ['NOETL_SERVER_URL'],
-                NOETL_SERVER_NAME=os.environ['NOETL_SERVER_NAME'],
-                # Server runtime config
-                NOETL_SERVER=os.environ['NOETL_SERVER'],
-                NOETL_SERVER_WORKERS=os.environ['NOETL_SERVER_WORKERS'],
-                NOETL_SERVER_RELOAD=os.environ['NOETL_SERVER_RELOAD'],
-                # Drop schema & validation
-                NOETL_DROP_SCHEMA=os.environ['NOETL_DROP_SCHEMA'],
-                NOETL_SCHEMA_VALIDATE=os.environ['NOETL_SCHEMA_VALIDATE'],
-                NOETL_AUTO_RECREATE_RUNTIME=os.environ['NOETL_AUTO_RECREATE_RUNTIME'],
-                NOETL_HEARTBEAT_RETRY_AFTER=os.environ['NOETL_HEARTBEAT_RETRY_AFTER'],
-                NOETL_RUNTIME_SWEEP_INTERVAL=os.environ['NOETL_RUNTIME_SWEEP_INTERVAL'],
-                NOETL_RUNTIME_OFFLINE_SECONDS=os.environ['NOETL_RUNTIME_OFFLINE_SECONDS'],
-                NOETL_DISABLE_METRICS=os.environ['NOETL_DISABLE_METRICS'],
-                NOETL_SERVER_METRICS_INTERVAL=os.environ['NOETL_SERVER_METRICS_INTERVAL'],
+                NOETL_SERVER_NAME=os.environ.get('NOETL_SERVER_NAME'),
+                # Server runtime config (optional - only required for server)
+                NOETL_SERVER=os.environ.get('NOETL_SERVER'),
+                NOETL_SERVER_WORKERS=os.environ.get('NOETL_SERVER_WORKERS'),
+                NOETL_SERVER_RELOAD=os.environ.get('NOETL_SERVER_RELOAD'),
+                # Server runtime tuning (optional - only required for server)
+                NOETL_AUTO_RECREATE_RUNTIME=os.environ.get('NOETL_AUTO_RECREATE_RUNTIME'),
+                NOETL_HEARTBEAT_RETRY_AFTER=os.environ.get('NOETL_HEARTBEAT_RETRY_AFTER'),
+                NOETL_RUNTIME_SWEEP_INTERVAL=os.environ.get('NOETL_RUNTIME_SWEEP_INTERVAL'),
+                NOETL_RUNTIME_OFFLINE_SECONDS=os.environ.get('NOETL_RUNTIME_OFFLINE_SECONDS'),
+                NOETL_DISABLE_METRICS=os.environ.get('NOETL_DISABLE_METRICS'),
+                NOETL_SERVER_METRICS_INTERVAL=os.environ.get('NOETL_SERVER_METRICS_INTERVAL'),
                 NOETL_SERVER_LABELS=os.environ.get('NOETL_SERVER_LABELS'),
                 HOSTNAME=os.environ.get('HOSTNAME'),
                 # NATS Configuration
@@ -600,6 +632,12 @@ def get_settings(reload: bool = False) -> Settings:
             )
         except Exception as e:
             logger.critical(f"Failed to initialize settings: {e}")
+            logger.critical("Environment variables at time of failure:")
+            for key in ['NOETL_HOST', 'NOETL_PORT', 'NOETL_SERVER_WORKERS', 'NOETL_SERVER_RELOAD', 
+                       'NOETL_AUTO_RECREATE_RUNTIME', 'NOETL_HEARTBEAT_RETRY_AFTER',
+                       'NOETL_RUNTIME_SWEEP_INTERVAL', 'NOETL_RUNTIME_OFFLINE_SECONDS',
+                       'NOETL_SERVER_METRICS_INTERVAL']:
+                logger.critical(f"  {key}={os.environ.get(key, '<NOT SET>')}")
             sys.exit(1)
 
     return _settings
@@ -633,6 +671,14 @@ def get_worker_settings(reload: bool = False) -> WorkerSettings:
             NOETL_PORT=env.get('NOETL_PORT', '8082'),
             NOETL_SERVER_NAME=env.get('NOETL_SERVER_NAME'),
             NOETL_MAX_WORKERS=env.get('NOETL_MAX_WORKERS', '8'),
+            # NATS Configuration
+            NATS_URL=env.get('NATS_URL', 'nats://noetl:noetl@localhost:30422'),
+            NATS_USER=env.get('NATS_USER', 'noetl'),
+            NATS_PASSWORD=env.get('NATS_PASSWORD', 'noetl'),
+            NATS_STREAM=env.get('NATS_STREAM', 'NOETL_COMMANDS'),
+            NATS_CONSUMER=env.get('NATS_CONSUMER', 'noetl_worker_pool'),
+            NATS_SUBJECT=env.get('NATS_SUBJECT', 'noetl.commands'),
+            NOETL_KEYCHAIN_REFRESH_THRESHOLD=env.get('NOETL_KEYCHAIN_REFRESH_THRESHOLD', '300'),
         )
     return _worker_settings
 

@@ -314,9 +314,9 @@ tests/fixtures/credentials/
 
 ```bash
 # 1. Provision schema
-noetlctl register-credential -f tests/fixtures/credentials/pg_k8s.json
-noetlctl register-playbook -f tests/fixtures/playbooks/api_integration/auth0/provision_auth_schema.yaml
-noetlctl exec api_integration/auth0/provision_auth_schema
+noetl register-credential -f tests/fixtures/credentials/pg_k8s.json
+noetl register-playbook -f tests/fixtures/playbooks/api_integration/auth0/provision_auth_schema.yaml
+noetl exec api_integration/auth0/provision_auth_schema
 
 # 2. Change password
 psql -h localhost -p 54321 -U demo -d demo_noetl -c \
@@ -324,12 +324,12 @@ psql -h localhost -p 54321 -U demo -d demo_noetl -c \
 
 # 3. Register auth credential
 # Edit pg_auth_user.json with new password
-noetlctl register-credential -f tests/fixtures/credentials/pg_auth_user.json
+noetl register-credential -f tests/fixtures/credentials/pg_auth_user.json
 
 # 4. Register auth playbooks
-noetlctl register-playbook -f tests/fixtures/playbooks/api_integration/auth0/auth0_login.yaml
-noetlctl register-playbook -f tests/fixtures/playbooks/api_integration/auth0/auth0_validate_session.yaml
-noetlctl register-playbook -f tests/fixtures/playbooks/api_integration/auth0/check_playbook_access.yaml
+noetl register-playbook -f tests/fixtures/playbooks/api_integration/auth0/auth0_login.yaml
+noetl register-playbook -f tests/fixtures/playbooks/api_integration/auth0/auth0_validate_session.yaml
+noetl register-playbook -f tests/fixtures/playbooks/api_integration/auth0/check_playbook_access.yaml
 ```
 
 ## Key Features

@@ -77,15 +77,17 @@ class ExecutionEventEmitter:
                 logger.warning(f"Invalid parent_event_id: {parent_event_id}, setting to None")
         
         context = {
+            "catalog_id": str(catalog_id),
+            "execution_id": str(execution_id),
             "path": path,
             "version": version,
             "workload": workload
         }
         
         if parent_execution_id_int:
-            context["parent_execution_id"] = parent_execution_id_int
+            context["parent_execution_id"] = str(parent_execution_id_int)
         if parent_event_id_int:
-            context["parent_event_id"] = parent_event_id_int
+            context["parent_event_id"] = str(parent_event_id_int)
         
         meta = {
             "emitted_at": datetime.utcnow().isoformat(),

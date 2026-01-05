@@ -1,6 +1,6 @@
 [project]
 name = "noetl"
-version = "2.3.3"
+version = "2.5.0"
 description = "A framework to build and run data pipelines and workflows."
 authors = [
     { name = "Kadyapam", email = "182583029+kadyapam@users.noreply.github.com" },
@@ -36,6 +36,7 @@ dependencies = [
     "requests>=2.32.3",
     "httpx>=0.28.1",
     "google-auth>=2.27.0",
+    "google-cloud-storage>=2.18.0",
     "python-multipart==0.0.20",
     "PyYAML>=6.0.1",
     "Jinja2>=3.1.6",
@@ -44,7 +45,6 @@ dependencies = [
     "PyJWT>=2.8.0",
     "urllib3>=2.3",
     "Authlib>=1.6.5",
-    "typer>=0.15.3",
     "click>=8.1.0,<8.2.1",
     "psutil>=7.0.0",
     "memray>=1.17.2",
@@ -85,7 +85,7 @@ notebook = [
 ]
 
 [project.scripts]
-noetl = "noetl.main:main"
+noetl = "noetl.cli_wrapper:main"
 
 [project.urls]
 Homepage = "https://noetl.io"
@@ -101,7 +101,7 @@ where = ["."]
 include = ["noetl*"]
 
 [tool.setuptools.package-data]
-"noetl" = ["core/ui/**/*", "database/ddl/**/*"]
+"noetl" = ["core/ui/**/*", "database/ddl/**/*", "bin/noetl"]
 
 [dependency-groups]
 dev = ["build>=1.2.2.post1", "twine>=6.1.0"]

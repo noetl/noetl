@@ -33,18 +33,18 @@ Complete testing guide for Auth0 authentication and authorization integration wi
 **Steps**:
 ```bash
 # 1. Register admin credential
-noetlctl register-credential --file tests/fixtures/credentials/pg_k8s.json
+noetl register-credential --file tests/fixtures/credentials/pg_k8s.json
 
 # 2. Upload SQL script to GCS (if using remote script)
 gsutil cp tests/fixtures/playbooks/api_integration/auth0/sql/provision_auth_schema.sql \
   gs://noetl-scripts/auth0/
 
 # 3. Register provisioning playbook
-noetlctl register-playbook \
+noetl register-playbook \
   --file tests/fixtures/playbooks/api_integration/auth0/provision_auth_schema.yaml
 
 # 4. Execute provisioning
-noetlctl exec api_integration/auth0/provision_auth_schema
+noetl exec api_integration/auth0/provision_auth_schema
 ```
 
 **Expected Result**:
@@ -131,7 +131,7 @@ cat > tests/fixtures/credentials/pg_auth_user.json <<EOF
 EOF
 
 # 3. Register credential
-noetlctl register-credential --file tests/fixtures/credentials/pg_auth_user.json
+noetl register-credential --file tests/fixtures/credentials/pg_auth_user.json
 ```
 
 ### 3. Register Authentication Playbooks
@@ -139,20 +139,20 @@ noetlctl register-credential --file tests/fixtures/credentials/pg_auth_user.json
 **Steps**:
 ```bash
 # Register all auth playbooks
-noetlctl register-playbook \
+noetl register-playbook \
   --file tests/fixtures/playbooks/api_integration/auth0/auth0_login.yaml
 
-noetlctl register-playbook \
+noetl register-playbook \
   --file tests/fixtures/playbooks/api_integration/auth0/auth0_validate_session.yaml
 
-noetlctl register-playbook \
+noetl register-playbook \
   --file tests/fixtures/playbooks/api_integration/auth0/check_playbook_access.yaml
 ```
 
 **Verification**:
 ```bash
 # List registered playbooks
-noetlctl catalog list --filter "path like 'api_integration/auth0%'"
+noetl catalog list --filter "path like 'api_integration/auth0%'"
 
 # Expected output:
 # - api_integration/auth0/provision_auth_schema
@@ -276,7 +276,7 @@ export VIEWER_TOKEN="<viewer_token>"
 **Steps**:
 ```bash
 # Test admin session validation
-noetlctl exec api_integration/auth0/auth0_validate_session \
+noetl exec api_integration/auth0/auth0_validate_session \
   --payload "{
     \"session_token\": \"$ADMIN_TOKEN\",
     \"validate_auth0\": false,
@@ -336,7 +336,7 @@ LIMIT 1;
 **Test invalid session**:
 ```bash
 # Test with non-existent token
-noetlctl exec api_integration/auth0/auth0_validate_session \
+noetl exec api_integration/auth0/auth0_validate_session \
   --payload '{
     "session_token": "invalid_token_123",
     "validate_auth0": false
@@ -361,7 +361,7 @@ noetlctl exec api_integration/auth0/auth0_validate_session \
 **Steps**:
 ```bash
 # Test system playbook access (admin only)
-noetlctl exec api_integration/auth0/check_playbook_access \
+noetl exec api_integration/auth0/check_playbook_access \
   --payload "{
     \"session_token\": \"$ADMIN_TOKEN\",
     \"playbook_path\": \"system/admin/backup\",
@@ -401,7 +401,7 @@ noetlctl exec api_integration/auth0/check_playbook_access \
 **Steps**:
 ```bash
 # Test data playbook access (should succeed)
-noetlctl exec api_integration/auth0/check_playbook_access \
+noetl exec api_integration/auth0/check_playbook_access \
   --payload "{
     \"session_token\": \"$DEV_TOKEN\",
     \"playbook_path\": \"data/etl/load_users\",
@@ -411,7 +411,7 @@ noetlctl exec api_integration/auth0/check_playbook_access \
 # Expected: {"allowed": true, ...}
 
 # Test system playbook access (should fail)
-noetlctl exec api_integration/auth0/check_playbook_access \
+noetl exec api_integration/auth0/check_playbook_access \
   --payload "{
     \"session_token\": \"$DEV_TOKEN\",
     \"playbook_path\": \"system/admin/backup\",
@@ -438,7 +438,7 @@ WHERE r.role_name = 'developer';
 **Steps**:
 ```bash
 # Test data playbook access (should succeed)
-noetlctl exec api_integration/auth0/check_playbook_access \
+noetl exec api_integration/auth0/check_playbook_access \
   --payload "{
     \"session_token\": \"$ANALYST_TOKEN\",
     \"playbook_path\": \"data/reports/monthly\",
@@ -448,7 +448,7 @@ noetlctl exec api_integration/auth0/check_playbook_access \
 # Expected: {"allowed": true}
 
 # Test modify action (should fail - analyst can't modify)
-noetlctl exec api_integration/auth0/check_playbook_access \
+noetl exec api_integration/auth0/check_playbook_access \
   --payload "{
     \"session_token\": \"$ANALYST_TOKEN\",
     \"playbook_path\": \"data/reports/monthly\",
@@ -465,7 +465,7 @@ noetlctl exec api_integration/auth0/check_playbook_access \
 **Steps**:
 ```bash
 # Test view action (should succeed)
-noetlctl exec api_integration/auth0/check_playbook_access \
+noetl exec api_integration/auth0/check_playbook_access \
   --payload "{
     \"session_token\": \"$VIEWER_TOKEN\",
     \"playbook_path\": \"data/reports/monthly\",
@@ -475,7 +475,7 @@ noetlctl exec api_integration/auth0/check_playbook_access \
 # Expected: {"allowed": true}
 
 # Test execute action (should fail)
-noetlctl exec api_integration/auth0/check_playbook_access \
+noetl exec api_integration/auth0/check_playbook_access \
   --payload "{
     \"session_token\": \"$VIEWER_TOKEN\",
     \"playbook_path\": \"data/reports/monthly\",
@@ -514,7 +514,7 @@ RETURNING session_token;
 
 ```bash
 # Test validation with expired token
-noetlctl exec api_integration/auth0/auth0_validate_session \
+noetl exec api_integration/auth0/auth0_validate_session \
   --payload "{
     \"session_token\": \"$EXPIRED_TOKEN\",
     \"validate_auth0\": false
@@ -612,7 +612,7 @@ LIMIT 10;
 **Steps**:
 ```bash
 # Attempt SQL injection in session token
-noetlctl exec api_integration/auth0/auth0_validate_session \
+noetl exec api_integration/auth0/auth0_validate_session \
   --payload '{
     "session_token": "'; DROP TABLE auth.users; --",
     "validate_auth0": false
@@ -698,11 +698,11 @@ SESSION_TOKEN=$(psql -h localhost -p 54321 -U demo -d demo_noetl -t -c \
 echo "Session token: $SESSION_TOKEN"
 
 # 2. Validate session
-noetlctl exec api_integration/auth0/auth0_validate_session \
+noetl exec api_integration/auth0/auth0_validate_session \
   --payload "{\"session_token\": \"$SESSION_TOKEN\", \"validate_auth0\": false}"
 
 # 3. Check playbook permission
-noetlctl exec api_integration/auth0/check_playbook_access \
+noetl exec api_integration/auth0/check_playbook_access \
   --payload "{
     \"session_token\": \"$SESSION_TOKEN\",
     \"playbook_path\": \"data/test/simple\",
@@ -710,7 +710,7 @@ noetlctl exec api_integration/auth0/check_playbook_access \
   }"
 
 # 4. If allowed, execute playbook (mock - would be done by gateway)
-# noetlctl exec data/test/simple --payload '{...}'
+# noetl exec data/test/simple --payload '{...}'
 
 # 5. Verify audit trail
 psql -h localhost -p 54321 -U demo -d demo_noetl -c \

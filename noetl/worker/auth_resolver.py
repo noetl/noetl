@@ -265,14 +265,21 @@ def _resolve_single_auth_item(
         
         # Resolve based on source type
         if source == 'credential':
-            key = auth_spec.get('key')
+            # Support both 'key' and 'credential' fields
+            key = auth_spec.get('key') or auth_spec.get('credential')
             if not key:
-                raise ValueError(f"Auth '{alias}' with source=credential missing 'key'")
+                raise ValueError(f"Auth '{alias}' with source=credential missing 'key' or 'credential'")
             
             payload = _fetch_credential_data(key)
             
             # Override service if specified in auth spec
-            service = auth_spec.get('service') or auth_spec.get('type') or payload.get('service')
+            # Support 'tool' field as alias for 'service' (for tool-style auth specs)
+            service = (
+                auth_spec.get('service') or 
+                auth_spec.get('type') or 
+                auth_spec.get('tool') or  # NEW: Support tool field
+                payload.get('service')
+            )
             
             # Merge fields if provided
             fields = auth_spec.get('fields', {})

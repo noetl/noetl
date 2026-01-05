@@ -64,7 +64,20 @@ Note about ports you may see in kubectl vs. on the host:
 - PostgreSQL Pod (5432)  (ClusterIP service)   
 
 ### 3. Build noetl
+
+**Option A: Using Rust CLI (Recommended)**
+```bash
+./bin/noetl build
+# or without cache:
+./bin/noetl build --no-cache
 ```
+The Rust CLI automatically:
+- Generates timestamp-based tag (YYYY-MM-DD-HH-MM)
+- Saves tag to `.noetl_last_build_tag.txt`
+- Streams build output to console
+
+**Option B: Using Task**
+```bash
 task docker-build-noetl
 ```
 The image will be built with a temporary tag in the following format: YYYY-MM-DD-hh-mm.
@@ -88,10 +101,60 @@ task show-kind-images
 ```
 
 ### 6. Deploy noetl
+
+**Option A: Using Rust CLI (Recommended)**
+```bash
+./bin/noetl k8s deploy
 ```
+The Rust CLI automatically:
+- Reads image tag from `.noetl_last_build_tag.txt`
+- Loads image into kind cluster (`kind load docker-image`)
+- Updates deployment manifests with correct image reference
+- Applies Kubernetes manifests
+- Restores original manifest templates
+
+**Option B: Using Task**
+```bash
 task deploy-noetl
 ```
+Note: When using task, you must manually run `task load-noetl-image` (step 4) before deploying.
+
+---
+
 The noetl service port `8082` is exposed as port `8082` on the host system. Container folders `/opt/noetl/data` and `/opt/noetl/logs` are mounted to the host folders `ci/kind/cache/noetl-data` and `ci/kind/cache/noetl-logs`,respectively. The container status can be checked at http://localhost:8082/api/health
+
+### Rust CLI Kubernetes Commands
+
+The `noetl` Rust CLI provides additional K8s management commands:
+
+**Rebuild and Redeploy:**
+```bash
+./bin/noetl k8s redeploy
+# or without cache:
+./bin/noetl k8s redeploy --no-cache
+```
+This command:
+1. Builds the Docker image
+2. Removes existing deployment
+3. Loads image to kind cluster
+4. Deploys to Kubernetes
+
+**Full Reset (Schema + Redeploy + Test Setup):**
+```bash
+./bin/noetl k8s reset
+# or without cache:
+./bin/noetl k8s reset --no-cache
+```
+This command performs a complete reset:
+1. Resets Postgres schema (`task postgres:k8s:schema-reset`)
+2. Rebuilds and redeploys NoETL
+3. Installs NoETL CLI with dev dependencies
+4. Sets up test environment (tables, credentials)
+
+**Remove NoETL:**
+```bash
+./bin/noetl k8s remove
+```
 
 
 ## Install VictoriaMetrics stack

@@ -18,29 +18,40 @@ AUTH_TYPE_EXTENSIONS = {
     AuthType.MYSQL: ['mysql'],
     AuthType.SQLITE: [],  # Built-in
     AuthType.SNOWFLAKE: ['snowflake'],
-    AuthType.GCS: ['httpfs'],
-    AuthType.GCS_HMAC: ['httpfs'],
+    AuthType.GCS: ['httpfs', 'gcs'],
+    AuthType.GCS_HMAC: ['httpfs', 'gcs'],
     AuthType.S3: ['httpfs'],
     AuthType.S3_HMAC: ['httpfs'],
 }
 
 
-def get_required_extensions(resolved_auth_map: Dict[str, Dict[str, Any]]) -> Set[str]:
+def get_required_extensions(resolved_auth_map: Dict[str, Any]) -> Set[str]:
     """
     Determine required DuckDB extensions based on resolved authentication configuration.
     
     Args:
-        resolved_auth_map: Map of auth alias to resolved auth data
+        resolved_auth_map: Map of auth alias to resolved auth data (ResolvedAuthItem objects)
         
     Returns:
         Set of extension names to install/load
     """
     extensions = set()
     
-    for alias, auth_data in resolved_auth_map.items():
+    for alias, auth_item in resolved_auth_map.items():
         try:
-            auth_type_str = auth_data.get('type', '').lower()
+            # Handle both ResolvedAuthItem object and dictionary
+            auth_type_str = None
+            if hasattr(auth_item, 'service'):
+                auth_type_str = auth_item.service
+            elif isinstance(auth_item, dict):
+                auth_type_str = auth_item.get('service') or auth_item.get('type')
             
+            if not auth_type_str:
+                logger.debug(f"Auth alias '{alias}' has no service/type, skipping extension detection")
+                continue
+                
+            auth_type_str = auth_type_str.lower()
+
             # Map string types to AuthType enum
             auth_type = None
             for auth_enum in AuthType:

@@ -93,7 +93,7 @@ The V2 architecture now uses NATS JetStream for event-driven worker coordination
 ### 4. CLI Integration (`noetl/cli/ctl.py`)
 
 ```bash
-noetlctl worker start --v2
+noetl worker start --v2
 ```
 
 Reads configuration from:

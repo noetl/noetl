@@ -20,7 +20,10 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 from urllib.parse import quote, urlparse
 
 import fsspec
-import polars as pl
+
+# Lazy import polars to avoid ARM64 CPU check at module load time
+# Import inside functions that actually need it
+# import polars as pl  # Moved to lazy import
 
 try:  # pragma: no cover - executed at import time
     import xlsxwriter  # type: ignore
@@ -52,7 +55,7 @@ class ExcelExportRequest:
 
     destination: str
     sheet_name: str
-    dataframe: pl.DataFrame
+    dataframe: "pl.DataFrame"  # String annotation to avoid importing polars at module level
     write_mode: str
     source_sql: str
     command_index: int
