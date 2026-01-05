@@ -18,8 +18,11 @@ git pull
 git checkout e2e
 git merge master
 git push
-task noetl:k8s:reset
+task noetl:k8s:reset 
+(If the Docker command detects more than 30 MB of data being transferred, you need to add the files being uploaded to the .dockerignore file.)
 
+uv venv
+source .venv/bin/activate 
 cd tests/playwright
 npx playwright test --ui
 

@@ -66,85 +66,54 @@ test.describe('Save edge cases', () => {
                         (status ? r['Status'] === status : true)
                 );
 
-            // lifecycle
-            expect(hasEvent('playbook.initialized', PLAYBOOK_CATALOG_NODE, 'INITIALIZED')).toBeTruthy();
-            expect(hasEvent('workflow.initialized', 'workflow', 'INITIALIZED')).toBeTruthy();
+            const validateCommandStepCompleted = async (stepName: string) => {
+                await test.step(`Validate: ${stepName} step`, async () => {
+                    expect(hasEvent('command.issued', stepName, 'PENDING')).toBeTruthy();
+                    expect(hasEvent('step.enter', stepName, 'STARTED')).toBeTruthy();
+                    expect(hasEvent('step.exit', stepName, 'COMPLETED')).toBeTruthy();
+                    expect(hasEvent('command.completed', stepName, 'COMPLETED')).toBeTruthy();
+                });
+            };
 
-            // start
-            expect(hasEvent('command.issued', 'start', 'PENDING')).toBeTruthy();
-            expect(hasEvent('step.enter', 'start', 'STARTED')).toBeTruthy();
-            expect(hasEvent('step.exit', 'start', 'COMPLETED')).toBeTruthy();
-            expect(hasEvent('command.completed', 'start', 'COMPLETED')).toBeTruthy();
+            const validateCommandStepFailed = async (stepName: string) => {
+                await test.step(`Validate: ${stepName} step (FAILED)`, async () => {
+                    expect(hasEvent('command.issued', stepName, 'PENDING')).toBeTruthy();
+                    expect(hasEvent('step.enter', stepName, 'STARTED')).toBeTruthy();
+                    expect(hasEvent('step.exit', stepName, 'FAILED')).toBeTruthy();
+                    expect(hasEvent('command.failed', stepName, 'FAILED')).toBeTruthy();
+                });
+            };
 
-            // test_mixed_types (+ sink)
-            expect(hasEvent('command.issued', 'test_mixed_types', 'PENDING')).toBeTruthy();
-            expect(hasEvent('step.enter', 'test_mixed_types', 'STARTED')).toBeTruthy();
-            expect(hasEvent('step.exit', 'test_mixed_types', 'COMPLETED')).toBeTruthy();
-            expect(hasEvent('command.completed', 'test_mixed_types', 'COMPLETED')).toBeTruthy();
+            await test.step('Validate: playbook/workflow lifecycle', async () => {
+                expect(hasEvent('playbook.initialized', PLAYBOOK_CATALOG_NODE, 'INITIALIZED')).toBeTruthy();
+                expect(hasEvent('workflow.initialized', 'workflow', 'INITIALIZED')).toBeTruthy();
+            });
 
-            expect(hasEvent('command.issued', 'test_mixed_types_sink', 'PENDING')).toBeTruthy();
-            expect(hasEvent('step.enter', 'test_mixed_types_sink', 'STARTED')).toBeTruthy();
-            expect(hasEvent('step.exit', 'test_mixed_types_sink', 'COMPLETED')).toBeTruthy();
-            expect(hasEvent('command.completed', 'test_mixed_types_sink', 'COMPLETED')).toBeTruthy();
+            await validateCommandStepCompleted('start');
 
-            // test_special_characters (+ sink)
-            expect(hasEvent('command.issued', 'test_special_characters', 'PENDING')).toBeTruthy();
-            expect(hasEvent('step.enter', 'test_special_characters', 'STARTED')).toBeTruthy();
-            expect(hasEvent('step.exit', 'test_special_characters', 'COMPLETED')).toBeTruthy();
-            expect(hasEvent('command.completed', 'test_special_characters', 'COMPLETED')).toBeTruthy();
+            await validateCommandStepCompleted('test_mixed_types');
+            await validateCommandStepCompleted('test_mixed_types_sink');
 
-            expect(hasEvent('command.issued', 'test_special_characters_sink', 'PENDING')).toBeTruthy();
-            expect(hasEvent('step.enter', 'test_special_characters_sink', 'STARTED')).toBeTruthy();
-            expect(hasEvent('step.exit', 'test_special_characters_sink', 'COMPLETED')).toBeTruthy();
-            expect(hasEvent('command.completed', 'test_special_characters_sink', 'COMPLETED')).toBeTruthy();
+            await validateCommandStepCompleted('test_special_characters');
+            await validateCommandStepCompleted('test_special_characters_sink');
 
-            // test_empty_data (+ sink FAILED)
-            expect(hasEvent('command.issued', 'test_empty_data', 'PENDING')).toBeTruthy();
-            expect(hasEvent('step.enter', 'test_empty_data', 'STARTED')).toBeTruthy();
-            expect(hasEvent('step.exit', 'test_empty_data', 'COMPLETED')).toBeTruthy();
-            expect(hasEvent('command.completed', 'test_empty_data', 'COMPLETED')).toBeTruthy();
+            await validateCommandStepCompleted('test_empty_data');
+            await validateCommandStepFailed('test_empty_data_sink');
 
-            expect(hasEvent('command.issued', 'test_empty_data_sink', 'PENDING')).toBeTruthy();
-            expect(hasEvent('step.enter', 'test_empty_data_sink', 'STARTED')).toBeTruthy();
-            expect(hasEvent('step.exit', 'test_empty_data_sink', 'FAILED')).toBeTruthy();
-            expect(hasEvent('command.failed', 'test_empty_data_sink', 'FAILED')).toBeTruthy();
+            await validateCommandStepCompleted('test_large_payload');
 
-            // test_large_payload
-            expect(hasEvent('command.issued', 'test_large_payload', 'PENDING')).toBeTruthy();
-            expect(hasEvent('step.enter', 'test_large_payload', 'STARTED')).toBeTruthy();
-            expect(hasEvent('step.exit', 'test_large_payload', 'COMPLETED')).toBeTruthy();
-            expect(hasEvent('command.completed', 'test_large_payload', 'COMPLETED')).toBeTruthy();
+            await validateCommandStepCompleted('test_error_recovery');
+            await validateCommandStepCompleted('test_error_recovery_sink');
 
-            // test_error_recovery (+ sink)
-            expect(hasEvent('command.issued', 'test_error_recovery', 'PENDING')).toBeTruthy();
-            expect(hasEvent('step.enter', 'test_error_recovery', 'STARTED')).toBeTruthy();
-            expect(hasEvent('step.exit', 'test_error_recovery', 'COMPLETED')).toBeTruthy();
-            expect(hasEvent('command.completed', 'test_error_recovery', 'COMPLETED')).toBeTruthy();
+            await validateCommandStepCompleted('test_completion_summary');
+            await validateCommandStepCompleted('test_completion_summary_sink');
 
-            expect(hasEvent('command.issued', 'test_error_recovery_sink', 'PENDING')).toBeTruthy();
-            expect(hasEvent('step.enter', 'test_error_recovery_sink', 'STARTED')).toBeTruthy();
-            expect(hasEvent('step.exit', 'test_error_recovery_sink', 'COMPLETED')).toBeTruthy();
-            expect(hasEvent('command.completed', 'test_error_recovery_sink', 'COMPLETED')).toBeTruthy();
+            await validateCommandStepCompleted('end');
 
-            // test_completion_summary (+ sink)
-            expect(hasEvent('command.issued', 'test_completion_summary', 'PENDING')).toBeTruthy();
-            expect(hasEvent('step.enter', 'test_completion_summary', 'STARTED')).toBeTruthy();
-            expect(hasEvent('step.exit', 'test_completion_summary', 'COMPLETED')).toBeTruthy();
-            expect(hasEvent('command.completed', 'test_completion_summary', 'COMPLETED')).toBeTruthy();
-
-            expect(hasEvent('command.issued', 'test_completion_summary_sink', 'PENDING')).toBeTruthy();
-            expect(hasEvent('step.enter', 'test_completion_summary_sink', 'STARTED')).toBeTruthy();
-            expect(hasEvent('step.exit', 'test_completion_summary_sink', 'COMPLETED')).toBeTruthy();
-            expect(hasEvent('command.completed', 'test_completion_summary_sink', 'COMPLETED')).toBeTruthy();
-
-            // end + completion
-            expect(hasEvent('command.issued', 'end', 'PENDING')).toBeTruthy();
-            expect(hasEvent('step.enter', 'end', 'STARTED')).toBeTruthy();
-            expect(hasEvent('step.exit', 'end', 'COMPLETED')).toBeTruthy();
-            expect(hasEvent('command.completed', 'end', 'COMPLETED')).toBeTruthy();
-
-            expect(hasEvent('workflow.completed', 'workflow', 'COMPLETED')).toBeTruthy();
-            expect(hasEvent('playbook.completed', PLAYBOOK_CATALOG_NODE, 'COMPLETED')).toBeTruthy();
+            await test.step('Validate: workflow/playbook completion', async () => {
+                expect(hasEvent('workflow.completed', 'workflow', 'COMPLETED')).toBeTruthy();
+                expect(hasEvent('playbook.completed', PLAYBOOK_CATALOG_NODE, 'COMPLETED')).toBeTruthy();
+            });
         });
     });
 });

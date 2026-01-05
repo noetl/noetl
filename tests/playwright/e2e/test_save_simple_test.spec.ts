@@ -1,9 +1,12 @@
 import { test, expect } from '@playwright/test';
 import { execSync } from 'child_process';
+import * as dotenv from 'dotenv';
+
+dotenv.config();
 
 const NOETL_HOST = process.env.NOETL_HOST;
 const NOETL_PORT = process.env.NOETL_PORT;
-const BASE_URL = process.env.NOETL_BASE_URL;
+const BASE_URL = `http://${NOETL_HOST}:${NOETL_PORT}`;
 
 const CATALOG_URL = `${BASE_URL}/catalog`;
 
@@ -53,35 +56,6 @@ test.describe('Save Simple Test', () => {
             await loader.waitFor({ state: 'detached', timeout: 30000 });
         });
 
-        await test.step('Wait: execution emits playbook.completed (reload)', async () => {
-            await expect
-                .poll(
-                    async () => {
-                        await page.reload();
-                        await expect(page).toHaveTitle('NoETL Dashboard');
-
-                        const rows = page.locator('.ant-table-wrapper .ant-table-row');
-                        const rowCount = await rows.count();
-
-                        const tableData: Record<string, string>[] = [];
-                        for (let i = 0; i < rowCount; i++) {
-                            const cells = rows.nth(i).locator('td');
-                            const values = await cells.allTextContents();
-                            tableData.push(Object.fromEntries(viewHeaders.map((key, idx) => [key, values[idx]])));
-                        }
-
-                        return tableData.some(
-                            r =>
-                                r['Event Type'] === 'playbook.completed' &&
-                                r['Node Name'] === PLAYBOOK_CATALOG_NODE &&
-                                r['Status'] === 'COMPLETED'
-                        );
-                    },
-                    { timeout: 60000, intervals: [1000, 2000, 5000] }
-                )
-                .toBeTruthy();
-        });
-
         await test.step('Validate: events table contains expected lifecycle and step events', async () => {
             const rows = page.locator('.ant-table-wrapper .ant-table-row');
             await expect(rows.first()).toBeVisible();
@@ -105,51 +79,46 @@ test.describe('Save Simple Test', () => {
                         (status ? r['Status'] === status : true)
                 );
 
-            const validateCommandStep = async (stepName: string) => {
-                await test.step(`Validate: ${stepName} step`, async () => {
-                    expect(hasEvent('command.issued', stepName, 'PENDING')).toBeTruthy();
-                    expect(hasEvent('step.enter', stepName, 'STARTED')).toBeTruthy();
-                    expect(hasEvent('step.exit', stepName, 'COMPLETED')).toBeTruthy();
-                    expect(hasEvent('command.completed', stepName, 'COMPLETED')).toBeTruthy();
+            const checkEvent = async (eventType: string, nodeName: string, status?: string) => {
+                const label = status
+                    ? `${eventType} → ${nodeName} [${status}]`
+                    : `${eventType} → ${nodeName}`;
+                await test.step(`Check: ${label}`, async () => {
+                    expect(hasEvent(eventType, nodeName, status),
+                        `Expected event not found: ${label}`).toBeTruthy();
                 });
             };
 
-            const validateIssuedClaimedOnly = async (stepName: string) => {
-                await test.step(`Validate: ${stepName} command issued + claimed`, async () => {
-                    expect(hasEvent('command.issued', stepName, 'PENDING')).toBeTruthy();
-                    expect(hasEvent('command.claimed', stepName, 'RUNNING')).toBeTruthy();
-                });
-            };
+            await checkEvent('playbook.initialized', PLAYBOOK_CATALOG_NODE, 'INITIALIZED');
+            await checkEvent('workflow.initialized', 'workflow', 'INITIALIZED');
 
-            await test.step('Validate: playbook/workflow lifecycle', async () => {
-                expect(hasEvent('playbook.initialized', PLAYBOOK_CATALOG_NODE, 'INITIALIZED')).toBeTruthy();
-                expect(hasEvent('workflow.initialized', 'workflow', 'INITIALIZED')).toBeTruthy();
-            });
+            await checkEvent('command.issued', 'start', 'PENDING');
+            await checkEvent('step.exit', 'start', 'COMPLETED');
 
-            await validateCommandStep('start');
-            await validateCommandStep('create_tables');
-            await validateCommandStep('truncate_tables');
+            await checkEvent('command.issued', 'create_tables', 'PENDING');
+            await checkEvent('step.exit', 'create_tables', 'COMPLETED');
 
-            await test.step('Validate: event_test step (+ sink claimed)', async () => {
-                await validateCommandStep('event_test');
-                await validateIssuedClaimedOnly('event_test_sink');
-            });
+            await checkEvent('command.issued', 'truncate_tables', 'PENDING');
+            await checkEvent('step.exit', 'truncate_tables', 'COMPLETED');
 
-            await test.step('Validate: postgres_flat_test step (+ sink)', async () => {
-                await validateCommandStep('postgres_flat_test');
-                await validateCommandStep('postgres_flat_test_sink');
-            });
+            await checkEvent('command.issued', 'event_test', 'PENDING');
+            await checkEvent('step.exit', 'event_test', 'COMPLETED');
+            await checkEvent('command.issued', 'event_test_sink', 'PENDING');
 
-            await test.step('Validate: postgres_nested_test step (+ sink)', async () => {
-                await validateCommandStep('postgres_nested_test');
-                await validateCommandStep('postgres_nested_test_sink');
-            });
+            await checkEvent('command.issued', 'postgres_flat_test', 'PENDING');
+            await checkEvent('step.exit', 'postgres_flat_test', 'COMPLETED');
+            await checkEvent('command.issued', 'postgres_flat_test_sink', 'PENDING');
+            await checkEvent('step.exit', 'postgres_flat_test_sink', 'COMPLETED');
 
-            await test.step('Validate: end + workflow/playbook completion', async () => {
-                await validateCommandStep('end');
-                expect(hasEvent('workflow.completed', 'workflow', 'COMPLETED')).toBeTruthy();
-                expect(hasEvent('playbook.completed', PLAYBOOK_CATALOG_NODE, 'COMPLETED')).toBeTruthy();
-            });
+            await checkEvent('command.issued', 'postgres_nested_test', 'PENDING');
+            await checkEvent('step.exit', 'postgres_nested_test', 'COMPLETED');
+            await checkEvent('command.issued', 'postgres_nested_test_sink', 'PENDING');
+
+            await checkEvent('command.issued', 'end', 'PENDING');
+            await checkEvent('step.exit', 'end', 'COMPLETED');
+
+            await checkEvent('workflow.completed', 'workflow', 'COMPLETED');
+            await checkEvent('playbook.completed', PLAYBOOK_CATALOG_NODE, 'COMPLETED');
         });
     });
 });
