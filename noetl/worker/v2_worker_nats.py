@@ -1344,7 +1344,7 @@ class V2Worker:
         name: str,
         payload: dict
     ):
-        """Emit an event to the server using the v2 API schema."""
+        """Emit an event to the server using the v2 API schema with retry logic."""
         if not self._http_client:
             raise RuntimeError("HTTP client not initialized")
         
@@ -1357,21 +1357,33 @@ class V2Worker:
             "worker_id": self.worker_id
         }
         
-        logger.info(f"[HTTP] POST {event_url} - Event: {name} for {step} (execution {execution_id})")
+        max_retries = 3
+        base_delay = 0.5
         
-        try:
-            response = await self._http_client.post(
-                event_url,
-                json=event_data,
-                timeout=10.0
-            )
-            response.raise_for_status()
-            
-            logger.info(f"[HTTP] Event {name} sent successfully - Status: {response.status_code}")
-            
-        except Exception as e:
-            logger.error(f"[HTTP] Failed to emit event {name} to {event_url}: {e}", exc_info=True)
-            raise
+        for attempt in range(max_retries):
+            try:
+                logger.info(f"[HTTP] POST {event_url} - Event: {name} for {step} (execution {execution_id}) - Attempt {attempt + 1}/{max_retries}")
+                
+                response = await self._http_client.post(
+                    event_url,
+                    json=event_data,
+                    timeout=10.0
+                )
+                response.raise_for_status()
+                
+                logger.info(f"[HTTP] Event {name} sent successfully - Status: {response.status_code}")
+                return  # Success - exit retry loop
+                
+            except Exception as e:
+                is_last_attempt = (attempt == max_retries - 1)
+                
+                if is_last_attempt:
+                    logger.error(f"[HTTP] Failed to emit event {name} after {max_retries} attempts: {e}", exc_info=True)
+                    raise RuntimeError(f"Event emission failed after {max_retries} retries: {e}") from e
+                else:
+                    delay = base_delay * (2 ** attempt)  # Exponential backoff
+                    logger.warning(f"[HTTP] Event {name} emission failed (attempt {attempt + 1}/{max_retries}): {e}. Retrying in {delay}s...")
+                    await asyncio.sleep(delay)
 
 
 async def run_v2_worker(

@@ -7,7 +7,7 @@ metadata:
   version: "2.0"
 
 workload:
-  pg_auth: pg_local
+  pg_auth: pg_k8s
   gcp_auth: google_oauth
   openai_secret_path: projects/1014428265962/secrets/openai-api-key/versions/1
   amadeus_key_path: projects/1014428265962/secrets/api-key-test-api-amadeus-com/versions/1
