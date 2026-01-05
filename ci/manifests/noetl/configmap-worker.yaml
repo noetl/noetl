@@ -10,7 +10,7 @@ metadata:
 data:
   # Timezone - Must match Postgres timezone for correct timestamp handling
   TZ: "UTC"
-  LOG_LEVEL: "INFO"
+  LOG_LEVEL: "DEBUG"
   PYTHONPATH: "/opt/noetl"
   NOETL_RUN_MODE: "worker"
   NOETL_DATA_DIR: "/opt/noetl/data"

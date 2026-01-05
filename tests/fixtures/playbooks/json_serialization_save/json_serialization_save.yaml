@@ -3,7 +3,7 @@ kind: Playbook
 
 metadata:
   name: json_serialization_save
-  path: tests/fixtures/playbooks/json_serialization_save
+  path: tests/fixtures/playbooks/json_serialization_save/json_serialization_save
 
 workload:
   pg_auth: pg_local

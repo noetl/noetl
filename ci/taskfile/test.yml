@@ -486,6 +486,7 @@ tasks:
     desc: Setup and run complete regression test suite
     aliases: [trf, test-regression-full]
     cmds:
+      - task: test:k8s:register-playbooks
       - task: test:regression:setup
       - task: test:regression:run
 

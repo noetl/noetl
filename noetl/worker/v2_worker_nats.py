@@ -278,19 +278,14 @@ class V2Worker:
         # The engine uses step.exit for post-step sinks, so we provide both
         
         # Extract result from response for template access
-        # Normalize response: if it has 'data' key, unwrap it for cleaner access
-        current_result = (
-            response.get("data")
-            if isinstance(response, dict) and response.get("data") is not None
-            else response
-        )
+        # Keep response structure intact so templates can access result.data
+        # (HTTP responses are {id, status, data: [...]})
         
         eval_context = {
             **render_context,
             'response': response,
-            'result': current_result,  # Add result for {{ result }} templates
-            'data': current_result,    # Add data for {{ data }} templates
-            'this': response,          # Add this for {{ this }} (full response)
+            'result': response,  # Keep full response structure for {{ result.data }} access
+            'this': response,    # Add this for {{ this }} (full response)
             'event': {'name': 'step.exit'},  # Use step.exit to match playbook conditions
             'error': response.get('error') if isinstance(response, dict) else None
         }
@@ -303,19 +298,35 @@ class V2Worker:
             when_condition = case.get('when')
             then_block = case.get('then')
             
-            if not when_condition or not then_block or not isinstance(then_block, dict):
+            if not when_condition or not then_block:
                 continue
             
-            # Extract case components (order doesn't matter in YAML)
-            collect_config = then_block.get('collect')
-            sink_config = then_block.get('sink')
-            retry_config = then_block.get('retry')
+            # Normalize then_block to list format (supports both dict and list)
+            then_actions = then_block if isinstance(then_block, list) else [then_block]
+            
+            # Look for sink in any of the then actions
+            sink_config = None
+            collect_config = None
+            retry_config = None
+            
+            for action in then_actions:
+                if not isinstance(action, dict):
+                    continue
+                if 'sink' in action:
+                    sink_config = action['sink']
+                if 'collect' in action:
+                    collect_config = action['collect']
+                if 'retry' in action:
+                    retry_config = action['retry']
             
             # Skip if no sink to execute (we only care about sinks here)
             if not sink_config:
                 continue
             
             logger.info(f"[SINK] Case block {idx} has sink, evaluating condition: {when_condition}")
+            logger.info(f"[SINK] eval_context keys: {list(eval_context.keys())}")
+            logger.info(f"[SINK] event.name: {eval_context.get('event', {}).get('name', 'NOT_FOUND')}")
+            logger.info(f"[SINK] response defined: {'response' in eval_context}, response: {eval_context.get('response', 'NOT_FOUND')}")
             
             # Evaluate condition
             try:
@@ -454,6 +465,11 @@ class V2Worker:
             # Execute tool
             response = await self._execute_tool(tool_kind, tool_config, args, step, render_context)
             
+            # CRITICAL: Log case blocks at INFO level for debugging
+            logger.info(f"[CASE-CHECK] After tool execution for step: {step} | case_blocks present: {case_blocks is not None} | type: {type(case_blocks)}")
+            if case_blocks:
+                logger.info(f"[CASE-CHECK] case_blocks length: {len(case_blocks)} | value: {case_blocks}")
+            
             logger.debug(f"[DEBUG] After tool execution for step: {step}")
             logger.debug(f"[DEBUG] case_blocks type: {type(case_blocks)}, value: {case_blocks}")
             logger.debug(f"[DEBUG] case_blocks is None: {case_blocks is None}")
@@ -467,6 +483,7 @@ class V2Worker:
             
             # SINK EXECUTION: Check for case blocks with sinks and execute immediately
             if case_blocks:
+                logger.info(f"[CASE-CHECK] Executing case sinks for {step}")
                 await self._execute_case_sinks(
                     case_blocks,
                     response,

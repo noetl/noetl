@@ -3,7 +3,7 @@ kind: Playbook
 
 metadata:
   name: iterator_save_test
-  path: tests/iterator_save_test
+  path: tests/fixtures/playbooks/iterator_save_test/iterator_save_test
 
 workload:
   pg_auth: pg_local

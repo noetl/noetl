@@ -66,18 +66,12 @@ tasks:
       - task: noetl:k8s:deploy
 
   noetl:k8s:reset:
-    desc: Build noetl and redeploy with new schema and tests playbooks in kind cluster
+    desc: Build noetl and redeploy with new schema and tests playbooks in kind cluster using Rust CLI
     aliases: [nreset, noetl-reset]
     vars:
       CACHE: '{{ if (eq .CLI_ARGS "cache")}}{{ else }}--no-cache{{ end }}'
     cmds:
-      - task: postgres:k8s:schema-reset
-      - task: noetl:k8s:redeploy
-      - uv pip install -e ".[dev]" # noetl CLI with dev extras
-      - sleep 30
-      - task: test:k8s:setup-environment
-      - task: test:k8s:create-tables
-      - task: test:k8s:register-credentials
+      - ./bin/noetl k8s reset
       - echo "UI :http://localhost:8082"
       - echo "API :http://localhost:8082/docs"
 
