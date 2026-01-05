@@ -22,7 +22,7 @@ workflow:
       args: {}
     
     case:
-      - when: "{{ event.name == 'call.done' }}"
+      - when: "{{ event.name == 'step.exit' }}"
         then:
           next:
             - step: end

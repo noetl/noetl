@@ -43,9 +43,10 @@ class V2Worker:
         nats_url: Optional[str] = None,
         server_url: Optional[str] = None
     ):
-        from noetl.core.config import settings
+        from noetl.core.config import get_worker_settings
+        worker_settings = get_worker_settings()
         self.worker_id = worker_id
-        self.nats_url = nats_url or settings.nats_url
+        self.nats_url = nats_url or worker_settings.nats_url
         self.server_url = server_url  # Fallback, usually comes from notification
         self._running = False
         self._http_client: Optional[httpx.AsyncClient] = None
@@ -53,13 +54,15 @@ class V2Worker:
     
     async def start(self):
         """Start the worker NATS subscription."""
-        from noetl.core.config import settings
+        from noetl.core.config import get_worker_settings
+        worker_settings = get_worker_settings()
         self._running = True
         self._http_client = httpx.AsyncClient(timeout=30.0)
         self._nats_subscriber = NATSCommandSubscriber(
             nats_url=self.nats_url,
-            subject=settings.nats_subject,
-            consumer_name=settings.nats_consumer
+            subject=worker_settings.nats_subject,
+            consumer_name=worker_settings.nats_consumer,
+            stream_name=worker_settings.nats_stream
         )
         
         logger.info(f"Worker {self.worker_id} starting (NATS: {self.nats_url})")
@@ -244,7 +247,7 @@ class V2Worker:
     
     async def _execute_case_sinks(
         self,
-        tool_config: dict,
+        case_blocks: list,
         response: Any,
         render_context: dict,
         server_url: str,
@@ -261,8 +264,7 @@ class V2Worker:
         from jinja2 import Environment
         from noetl.tools.postgres import execute_postgres_task
         
-        # Check if tool_config has case blocks
-        case_blocks = tool_config.get('case')
+        # Check if case_blocks provided
         if not case_blocks or not isinstance(case_blocks, list):
             return
         
@@ -272,10 +274,19 @@ class V2Worker:
         jinja_env = Environment()
         
         # Build evaluation context with response
+        # Support both call.done and step.exit event names in conditions
+        # The engine uses step.exit for post-step sinks, so we provide both
+        
+        # Extract result from response for template access
+        # Keep response structure intact so templates can access result.data
+        # (HTTP responses are {id, status, data: [...]})
+        
         eval_context = {
             **render_context,
             'response': response,
-            'event': {'name': 'call.done'},  # Simulate call.done event
+            'result': response,  # Keep full response structure for {{ result.data }} access
+            'this': response,    # Add this for {{ this }} (full response)
+            'event': {'name': 'step.exit'},  # Use step.exit to match playbook conditions
             'error': response.get('error') if isinstance(response, dict) else None
         }
         
@@ -287,25 +298,49 @@ class V2Worker:
             when_condition = case.get('when')
             then_block = case.get('then')
             
-            if not when_condition or not then_block or not isinstance(then_block, dict):
+            if not when_condition or not then_block:
                 continue
             
-            # Extract case components (order doesn't matter in YAML)
-            collect_config = then_block.get('collect')
-            sink_config = then_block.get('sink')
-            retry_config = then_block.get('retry')
+            # Normalize then_block to list format (supports both dict and list)
+            then_actions = then_block if isinstance(then_block, list) else [then_block]
+            
+            # Look for sink in any of the then actions
+            sink_config = None
+            collect_config = None
+            retry_config = None
+            
+            for action in then_actions:
+                if not isinstance(action, dict):
+                    continue
+                if 'sink' in action:
+                    sink_config = action['sink']
+                if 'collect' in action:
+                    collect_config = action['collect']
+                if 'retry' in action:
+                    retry_config = action['retry']
             
             # Skip if no sink to execute (we only care about sinks here)
             if not sink_config:
                 continue
             
             logger.info(f"[SINK] Case block {idx} has sink, evaluating condition: {when_condition}")
+            logger.info(f"[SINK] eval_context keys: {list(eval_context.keys())}")
+            logger.info(f"[SINK] event.name: {eval_context.get('event', {}).get('name', 'NOT_FOUND')}")
+            logger.info(f"[SINK] response defined: {'response' in eval_context}, response: {eval_context.get('response', 'NOT_FOUND')}")
             
             # Evaluate condition
             try:
-                template = jinja_env.from_string("{{ " + when_condition + " }}")
+                # when_condition is already a Jinja2 template (e.g., "{{ event.name == 'step.exit' }}")
+                # so render it directly without wrapping it again
+                template = jinja_env.from_string(when_condition)
                 result = template.render(eval_context)
-                condition_met = result.lower() in ('true', '1', 'yes')
+                # Result should be a boolean or string that evaluates to boolean
+                if isinstance(result, bool):
+                    condition_met = result
+                elif isinstance(result, str):
+                    condition_met = result.lower() in ('true', '1', 'yes')
+                else:
+                    condition_met = bool(result)
                 
                 logger.info(f"[SINK] Condition result: {result} -> {condition_met}")
                 
@@ -317,71 +352,48 @@ class V2Worker:
                 
                 logger.info(f"[SINK] Executing sink for case {idx}")
                 
-                # Extract sink configuration
-                sink_tool = sink_config.get('tool', {})
-                sink_kind = sink_tool.get('kind', 'postgres')  # Default to postgres
-                sink_auth = sink_tool.get('auth')  # Auth is under tool: in YAML
+                # Use the centralized sink executor instead of postgres-only handling
+                from noetl.core.storage import execute_sink_task
                 
-                # Support multiple field names for SQL command: statement, command, cmds, query, sql
-                # These are also under tool: in the YAML structure
-                sink_command = (
-                    sink_tool.get('statement') or 
-                    sink_tool.get('command') or 
-                    sink_tool.get('cmds') or
-                    sink_tool.get('query') or
-                    sink_tool.get('sql')
-                )
-                
-                if not sink_command:
-                    logger.warning(f"[SINK] No command/statement in sink config, skipping")
-                    continue
-                
-                # Build sink task config with all supported field names
-                # Postgres plugin accepts: statement, query, sql, or command
+                # Build sink task config for execute_sink_task
+                # The sink config is already structured under 'tool:' key
                 sink_task_config = {
-                    'kind': sink_kind,
-                    'auth': sink_auth,
-                    'statement': sink_command,  # Primary field for postgres plugin
-                    'command': sink_command,     # Alternative
-                    'cmds': sink_command,        # Alternative
-                    'query': sink_command,       # Alternative
-                    'sql': sink_command,         # Alternative
-                    'name': f"{step}_sink_{idx}"
+                    'sink': sink_config  # Pass the entire sink configuration
                 }
                 
-                logger.critical(f"[SINK] Sink task config: {sink_task_config} | command={sink_command} | keys={list(sink_task_config.keys())}")
+                logger.info(f"[SINK] Delegating to execute_sink_task with config: {sink_task_config}")
+                logger.info(f"[SINK] Context keys: {list(eval_context.keys()) if isinstance(eval_context, dict) else type(eval_context)}")
+                logger.info(f"[SINK] Workload in context: {'workload' in eval_context}")
                 
-                # Execute sink (currently only postgres supported)
-                if sink_kind == 'postgres':
-                    loop = asyncio.get_running_loop()
-                    sink_result = await loop.run_in_executor(
-                        None,
-                        lambda: execute_postgres_task(
-                            sink_task_config,
-                            eval_context,
-                            jinja_env,
-                            {}
-                        )
+                # Execute sink via centralized executor (supports all tool types)
+                loop = asyncio.get_running_loop()
+                sink_result = await loop.run_in_executor(
+                    None,
+                    lambda: execute_sink_task(
+                        sink_task_config,
+                        eval_context,
+                        jinja_env,
+                        None  # task_with - not needed for case sinks
                     )
-                    
-                    logger.info(f"[SINK] Sink executed successfully: {sink_result}")
-                    
-                    # Report sink execution via event
-                    await self._emit_event(
-                        server_url,
-                        execution_id,
-                        step,
-                        "sink.executed",
-                        {
-                            "case_index": idx,
-                            "sink_type": sink_kind,
-                            "result": sink_result,
-                            "has_collect": collect_config is not None,
-                            "has_retry": retry_config is not None
-                        }
-                    )
-                else:
-                    logger.warning(f"[SINK] Unsupported sink type: {sink_kind}")
+                )
+                
+                logger.info(f"[SINK] Sink executed successfully: {sink_result}")
+                
+                # Report sink execution via event
+                sink_kind = sink_config.get('tool', {}).get('kind', 'unknown')
+                await self._emit_event(
+                    server_url,
+                    execution_id,
+                    step,
+                    "sink.executed",
+                    {
+                        "case_index": idx,
+                        "sink_type": sink_kind,
+                        "result": sink_result,
+                        "has_collect": collect_config is not None,
+                        "has_retry": retry_config is not None
+                    }
+                )
                     
             except Exception as e:
                 logger.error(f"[SINK] Error executing sink for case {idx}: {e}", exc_info=True)
@@ -410,6 +422,7 @@ class V2Worker:
         tool_config = context.get("tool_config", {})
         args = context.get("args", {})
         render_context = context.get("render_context", {})  # Full render context from engine
+        case_blocks = context.get("case")  # Case blocks from server for immediate execution
         
         # CRITICAL: Merge tool_config.args with top-level args
         # In V2 DSL, step args are often defined within the tool block
@@ -452,17 +465,33 @@ class V2Worker:
             # Execute tool
             response = await self._execute_tool(tool_kind, tool_config, args, step, render_context)
             
-            logger.critical(f"[DEBUG] tool_config keys={list(tool_config.keys())} | has_case={'case' in tool_config} | case_count={len(tool_config.get('case', []))}")
+            # CRITICAL: Log case blocks at INFO level for debugging
+            logger.info(f"[CASE-CHECK] After tool execution for step: {step} | case_blocks present: {case_blocks is not None} | type: {type(case_blocks)}")
+            if case_blocks:
+                logger.info(f"[CASE-CHECK] case_blocks length: {len(case_blocks)} | value: {case_blocks}")
+            
+            logger.debug(f"[DEBUG] After tool execution for step: {step}")
+            logger.debug(f"[DEBUG] case_blocks type: {type(case_blocks)}, value: {case_blocks}")
+            logger.debug(f"[DEBUG] case_blocks is None: {case_blocks is None}")
+            logger.debug(f"[DEBUG] case_blocks bool: {bool(case_blocks)}")
+            if case_blocks:
+                logger.debug(f"[DEBUG] case_blocks length: {len(case_blocks)}")
+                for idx, cb in enumerate(case_blocks):
+                    logger.debug(f"[DEBUG] case_block[{idx}]: {cb}")
+
+            logger.debug(f"[DEBUG] context has_case={'case' in context} | case_blocks={case_blocks is not None} | case_count={len(case_blocks) if case_blocks else 0}")
             
             # SINK EXECUTION: Check for case blocks with sinks and execute immediately
-            await self._execute_case_sinks(
-                tool_config,
-                response,
-                render_context,
-                server_url,
-                execution_id,
-                step
-            )
+            if case_blocks:
+                logger.info(f"[CASE-CHECK] Executing case sinks for {step}")
+                await self._execute_case_sinks(
+                    case_blocks,
+                    response,
+                    render_context,
+                    server_url,
+                    execution_id,
+                    step
+                )
             
             # Check if tool returned error status
             tool_error = None
@@ -558,7 +587,7 @@ class V2Worker:
                 
             except Exception as emit_error:
                 # Event emission failed - try to report failure
-                logger.error(f"Failed to emit success events for {step}: {emit_error}", exc_info=True)
+                logger.exception(f"Failed to emit success events for {step}: {emit_error}")
                 try:
                     # Attempt to emit command.failed to mark execution as failed
                     if command_id:
@@ -574,7 +603,7 @@ class V2Worker:
                             }
                         )
                 except Exception as recovery_error:
-                    logger.error(f"Failed to emit recovery failure event: {recovery_error}", exc_info=True)
+                    logger.exception(f"Failed to emit recovery failure event: {recovery_error}")
                 # Re-raise so the command handler knows it failed
                 raise emit_error
             
@@ -650,6 +679,7 @@ class V2Worker:
         from noetl.tools.postgres import execute_postgres_task
         from noetl.tools.duckdb import execute_duckdb_task
         from noetl.tools.snowflake import execute_snowflake_task
+        from noetl.tools.gcs import execute_gcs_task
         from noetl.tools.transfer import execute_transfer_action
         from noetl.tools.transfer.snowflake_transfer import execute_snowflake_transfer_action
         from noetl.tools.script import execute_script_task
@@ -688,8 +718,9 @@ class V2Worker:
             server_url = context.get('server_url', 'http://noetl.noetl.svc.cluster.local:8082')
             
             # Get refresh threshold from settings
-            from noetl.core.config import settings
-            refresh_threshold = getattr(settings, 'keychain_refresh_threshold', 300)
+            from noetl.core.config import get_worker_settings
+            worker_settings = get_worker_settings()
+            refresh_threshold = worker_settings.keychain_refresh_threshold
             
             context = await populate_keychain_context(
                 task_config=task_config_combined,
@@ -748,7 +779,7 @@ class V2Worker:
                             has_pagination_retry = True
                             break
             
-            logger.critical(f"HTTP TOOL: config_keys={list(config.keys()) if isinstance(config, dict) else 'not dict'} | retry={retry_config is not None} | policies={len(retry_config) if isinstance(retry_config, list) else 0} | has_pagination={has_pagination_retry}")
+            logger.debug(f"HTTP TOOL: config_keys={list(config.keys()) if isinstance(config, dict) else 'not dict'} | retry={retry_config is not None} | policies={len(retry_config) if isinstance(retry_config, list) else 0} | has_pagination={has_pagination_retry}")
             
             if has_pagination_retry:
                 logger.info("HTTP tool using execute_with_retry for pagination sink support")
@@ -808,10 +839,12 @@ class V2Worker:
             
         elif tool_kind == "postgres":
             # Use plugin's execute_postgres_task (sync function - run in executor)
+            # Pass full tool config as task_with to ensure auth is available
+            task_with = {**config, **args}  # Merge config (has auth) with args
             loop = asyncio.get_running_loop()
             result = await loop.run_in_executor(
                 None, 
-                lambda: execute_postgres_task(task_config, context, jinja_env, args)
+                lambda: execute_postgres_task(task_config, context, jinja_env, task_with)
             )
             # Check if plugin returned error status
             if isinstance(result, dict) and result.get('status') == 'error':
@@ -821,10 +854,12 @@ class V2Worker:
             
         elif tool_kind == "duckdb":
             # Use plugin's execute_duckdb_task (sync function - run in executor)
+            # Pass full tool config as task_with to ensure auth is available
+            task_with = {**config, **args}  # Merge config (has auth) with args
             loop = asyncio.get_running_loop()
             result = await loop.run_in_executor(
                 None,
-                lambda: execute_duckdb_task(task_config, context, jinja_env, args)
+                lambda: execute_duckdb_task(task_config, context, jinja_env, task_with)
             )
             # Check if plugin returned error status
             if isinstance(result, dict) and result.get('status') == 'error':
@@ -834,10 +869,12 @@ class V2Worker:
 
         elif tool_kind == "snowflake":
             # Use plugin's execute_snowflake_task (sync wrapper)
+            # Pass full tool config as task_with to ensure auth is available
+            task_with = {**config, **args}  # Merge config (has auth) with args
             loop = asyncio.get_running_loop()
             result = await loop.run_in_executor(
                 None,
-                lambda: execute_snowflake_task(task_config, context, jinja_env, args)
+                lambda: execute_snowflake_task(task_config, context, jinja_env, task_with)
             )
             if isinstance(result, dict) and result.get('status') == 'error':
                 return result
@@ -915,6 +952,20 @@ class V2Worker:
                 lambda: execute_playbook_task(task_config, context, jinja_env, args)
             )
             return result
+            
+        elif tool_kind == "gcs":
+            # Use plugin's execute_gcs_task (sync function - run in executor)
+            task_with = {**config, **args}  # Merge config (has source, destination, credential) with args
+            loop = asyncio.get_running_loop()
+            result = await loop.run_in_executor(
+                None,
+                lambda: execute_gcs_task(task_config, context, jinja_env, task_with)
+            )
+            # Check if plugin returned error status
+            if isinstance(result, dict) and result.get('status') == 'error':
+                # Keep error response intact (worker needs status field to detect error)
+                return result
+            return result.get('data', result) if isinstance(result, dict) else result
             
         elif tool_kind == "container":
             # Container execution - keep inline for now as it's V2-specific
@@ -1293,10 +1344,11 @@ class V2Worker:
         name: str,
         payload: dict
     ):
-        """Emit an event to the server."""
+        """Emit an event to the server using the v2 API schema with retry logic."""
         if not self._http_client:
             raise RuntimeError("HTTP client not initialized")
         
+        event_url = f"{server_url.rstrip('/')}/api/events"
         event_data = {
             "execution_id": str(execution_id),
             "step": step,
@@ -1305,19 +1357,33 @@ class V2Worker:
             "worker_id": self.worker_id
         }
         
-        try:
-            response = await self._http_client.post(
-                f"{server_url.rstrip('/')}/api/events",
-                json=event_data,
-                timeout=10.0
-            )
-            response.raise_for_status()
-            
-            logger.debug(f"Emitted event {name} for {step} (execution {execution_id})")
-            
-        except Exception as e:
-            logger.error(f"Failed to emit event {name}: {e}")
-            raise
+        max_retries = 3
+        base_delay = 0.5
+        
+        for attempt in range(max_retries):
+            try:
+                logger.info(f"[HTTP] POST {event_url} - Event: {name} for {step} (execution {execution_id}) - Attempt {attempt + 1}/{max_retries}")
+                
+                response = await self._http_client.post(
+                    event_url,
+                    json=event_data,
+                    timeout=10.0
+                )
+                response.raise_for_status()
+                
+                logger.info(f"[HTTP] Event {name} sent successfully - Status: {response.status_code}")
+                return  # Success - exit retry loop
+                
+            except Exception as e:
+                is_last_attempt = (attempt == max_retries - 1)
+                
+                if is_last_attempt:
+                    logger.error(f"[HTTP] Failed to emit event {name} after {max_retries} attempts: {e}", exc_info=True)
+                    raise RuntimeError(f"Event emission failed after {max_retries} retries: {e}") from e
+                else:
+                    delay = base_delay * (2 ** attempt)  # Exponential backoff
+                    logger.warning(f"[HTTP] Event {name} emission failed (attempt {attempt + 1}/{max_retries}): {e}. Retrying in {delay}s...")
+                    await asyncio.sleep(delay)
 
 
 async def run_v2_worker(

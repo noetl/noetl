@@ -64,6 +64,10 @@ def main(data):
         "code_b64": base64.b64encode(code.encode("utf-8")).decode("ascii"),
     }
 
+    # Pass through libs if present in storage_config
+    if isinstance(storage_config, dict) and "libs" in storage_config:
+        py_task["libs"] = storage_config["libs"]
+
     # Build with-params for python plugin
     py_with = {}
     try:
@@ -79,6 +83,16 @@ def main(data):
         py_with["data"] = rendered_params
     else:
         py_with["data"] = {}
+
+    # Pass through args from storage_config (includes execution_id, etc.)
+    # Args have already been rendered by the sink executor
+    if isinstance(storage_config, dict) and "args" in storage_config:
+        args = storage_config["args"]
+        if isinstance(args, dict):
+            # Merge args into py_with, giving preference to explicitly set values
+            for k, v in args.items():
+                if k not in py_with:
+                    py_with[k] = v
 
     # Pass through auth config
     if isinstance(auth_config, dict) and "auth" not in py_with:

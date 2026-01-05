@@ -1,0 +1,32 @@
+# Worker-specific configuration
+# Contains no database credentials - workers only need NATS and server URL
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: noetl-worker-config
+  namespace: noetl
+  labels:
+    app: noetl-worker
+data:
+  # Timezone - Must match Postgres timezone for correct timestamp handling
+  TZ: "UTC"
+  LOG_LEVEL: "DEBUG"
+  PYTHONPATH: "/opt/noetl"
+  NOETL_RUN_MODE: "worker"
+  NOETL_DATA_DIR: "/opt/noetl/data"
+  NOETL_DEBUG: "true"
+  NOETL_HTTP_MOCK_LOCAL: "false"
+  PAGINATION_API_URL: "http://paginated-api.test-server.svc.cluster.local:5555"
+  NOETL_SERVER_URL: "http://noetl.noetl.svc.cluster.local:8082"
+  NOETL_DISABLE_METRICS: "true"
+  NOETL_VICTORIALOGS_URL: "http://vmlogs-single-server.vmlogs.svc.cluster.local:9428"
+  NOETL_LOG_FORMAT: ""
+  # Skip Polars CPU check (running under ARM64 emulation on Apple Silicon)
+  POLARS_SKIP_CPU_CHECK: "1"
+  # NATS Configuration for worker command distribution
+  NATS_URL: "nats://noetl:noetl@nats.nats.svc.cluster.local:4222"
+  NATS_USER: "noetl"
+  NATS_PASSWORD: "noetl"
+  NATS_STREAM: "NOETL_COMMANDS"
+  NATS_CONSUMER: "noetl_worker_pool"
+  NATS_SUBJECT: "noetl.commands"

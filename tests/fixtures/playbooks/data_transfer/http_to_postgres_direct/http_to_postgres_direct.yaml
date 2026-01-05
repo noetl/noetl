@@ -49,7 +49,7 @@ workflow:
                 kind: postgres
                 auth: "{{ workload.pg_auth }}"
                 statement: |
-                  {% for item in response.data %}
+                  {% for item in result.data %}
                   INSERT INTO public.http_to_postgres_direct (data) VALUES ('{{ item | tojson | replace("'", "''") }}'::jsonb);
                   {% endfor %}
     next:
@@ -66,8 +66,8 @@ workflow:
       - when: "{{ event.name == 'step.exit' }}"
         then:
           - set:
-              # Postgres tool returns commands under response.data.command_*
-              direct_count: "{{ response.data.command_0.rows[0].records }}"
+              # Postgres tool returns commands under result.data.command_*
+              direct_count: "{{ result.data.command_0.rows[0].records }}"
     next:
       - step: end
 

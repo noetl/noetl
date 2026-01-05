@@ -51,6 +51,9 @@ data/.venv/
 # Ignore local build tag
 .noetl_last_build_tag.txt
 
+# Ignore local CLI binary (macOS) that shouldn't go in Linux containers
+noetl/bin/
+
 # --- Kind ---
 # Ignore folder with postgres data
 ci/kind/cache
@@ -58,3 +61,6 @@ ci/.venv
 
 .git
 __pycache__
+
+# -- submodules --
+submodules/

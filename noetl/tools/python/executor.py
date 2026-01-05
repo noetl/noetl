@@ -8,6 +8,7 @@ import datetime
 import os
 import json
 import inspect
+import importlib.util
 from typing import Dict, Any, Optional, Callable
 from jinja2 import Environment
 
@@ -15,6 +16,103 @@ from noetl.core.logger import setup_logger
 import ast
 
 logger = setup_logger(__name__, include_location=True)
+
+
+def _inject_auth_credentials(
+    task_config: Dict[str, Any],
+    args: Optional[Dict[str, Any]],
+    context: Dict[str, Any]
+) -> Dict[str, str]:
+    """
+    Inject authentication credentials as environment variables.
+    
+    Supports GCS, S3, and other cloud providers by setting appropriate
+    environment variables that standard SDKs auto-discover.
+    
+    Returns dict of original environment values for restoration.
+    """
+    from noetl.worker.auth_resolver import resolve_auth
+    from jinja2 import Environment
+    
+    # Get auth config from task_config or args
+    auth_config = task_config.get('auth') or (args or {}).get('auth')
+    if not auth_config:
+        return {}
+    
+    logger.info(f"PYTHON.AUTH: Resolving auth config: {auth_config}")
+    
+    # Create a Jinja environment for auth resolution
+    jinja_env = Environment(autoescape=False)
+    
+    # Resolve credentials using the unified auth system
+    try:
+        mode, resolved_items = resolve_auth(auth_config, jinja_env, context)
+        logger.info(f"PYTHON.AUTH: Resolved auth mode={mode}, items={len(resolved_items)}")
+    except Exception as e:
+        logger.error(f"PYTHON.AUTH: Failed to resolve auth: {e}", exc_info=True)
+        return {}
+    
+    original_env = {}
+    
+    # Inject credentials as environment variables based on auth service/type
+    for alias, auth_item in resolved_items.items():
+        service = auth_item.service or ''
+        payload = auth_item.payload or {}
+        
+        logger.debug(f"PYTHON.AUTH: Processing {alias} (service={service})")
+        
+        if service in ('gcs', 'gcs_hmac', 'gcs_service_account'):
+            # Google Cloud Storage credentials
+            if 'service_account_json' in payload:
+                # Write service account JSON to temp file
+                import tempfile
+                fd, path = tempfile.mkstemp(suffix='.json', prefix='gcs_sa_')
+                os.write(fd, json.dumps(payload['service_account_json']).encode())
+                os.close(fd)
+                
+                original_env['GOOGLE_APPLICATION_CREDENTIALS'] = os.environ.get('GOOGLE_APPLICATION_CREDENTIALS', '')
+                os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = path
+                logger.info(f"PYTHON.AUTH: Set GOOGLE_APPLICATION_CREDENTIALS to {path}")
+                
+            elif service == 'gcs_hmac' and 'access_key_id' in payload:
+                # HMAC credentials for GCS S3 compatibility
+                original_env['AWS_ACCESS_KEY_ID'] = os.environ.get('AWS_ACCESS_KEY_ID', '')
+                original_env['AWS_SECRET_ACCESS_KEY'] = os.environ.get('AWS_SECRET_ACCESS_KEY', '')
+                os.environ['AWS_ACCESS_KEY_ID'] = payload['access_key_id']
+                os.environ['AWS_SECRET_ACCESS_KEY'] = payload['secret_access_key']
+                logger.info(f"PYTHON.AUTH: Set AWS_ACCESS_KEY_ID for GCS HMAC")
+        
+        elif service in ('s3', 's3_hmac', 'aws'):
+            # AWS S3 credentials
+            if 'access_key_id' in payload:
+                original_env['AWS_ACCESS_KEY_ID'] = os.environ.get('AWS_ACCESS_KEY_ID', '')
+                original_env['AWS_SECRET_ACCESS_KEY'] = os.environ.get('AWS_SECRET_ACCESS_KEY', '')
+                os.environ['AWS_ACCESS_KEY_ID'] = payload['access_key_id']
+                os.environ['AWS_SECRET_ACCESS_KEY'] = payload['secret_access_key']
+                
+                if 'region' in payload:
+                    original_env['AWS_DEFAULT_REGION'] = os.environ.get('AWS_DEFAULT_REGION', '')
+                    os.environ['AWS_DEFAULT_REGION'] = payload['region']
+                
+                logger.info(f"PYTHON.AUTH: Set AWS credentials")
+        
+        elif service in ('azure', 'azure_storage'):
+            # Azure Storage credentials
+            if 'connection_string' in payload:
+                original_env['AZURE_STORAGE_CONNECTION_STRING'] = os.environ.get('AZURE_STORAGE_CONNECTION_STRING', '')
+                os.environ['AZURE_STORAGE_CONNECTION_STRING'] = payload['connection_string']
+                logger.info(f"PYTHON.AUTH: Set AZURE_STORAGE_CONNECTION_STRING")
+    
+    return original_env
+
+
+def _restore_environment(original_env: Dict[str, str]) -> None:
+    """Restore original environment variables."""
+    for key, value in original_env.items():
+        if value:
+            os.environ[key] = value
+        else:
+            os.environ.pop(key, None)
 
 
 def _coerce_param(value: Any) -> Any:
@@ -181,6 +279,12 @@ async def execute_python_task_async(
     task_id = str(uuid.uuid4())
     task_name = task_config.get('name', 'unnamed_python_task')
     logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Task ID={task_id}, name={task_name}")
+    
+    # Inject credentials as environment variables if auth is provided
+    original_env = {}
+    if 'auth' in task_config or 'auth' in (args or {}):
+        original_env = _inject_auth_credentials(task_config, args, context)
+        logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Injected auth credentials into environment")
 
     # Extract args from task_config if not provided as parameter
     # This allows 'args' field in YAML to be used
@@ -232,6 +336,70 @@ async def execute_python_task_async(
             else:
                 raise ValueError("No code provided. Expected 'script', 'code_b64', 'code_base64', or inline 'code' string in task configuration")
 
+        # Prepend library imports if specified via 'libs'
+        libs_config = task_config.get('libs')
+        if libs_config:
+            import_statements = []
+            modules_to_validate = []
+            
+            if isinstance(libs_config, dict):
+                # Dict format: {"pd": "pandas", "storage": "google.cloud.storage", "os": "os"}
+                # Key is the alias (what you use in code), value is the module to import
+                for alias, module_path in libs_config.items():
+                    if isinstance(module_path, str):
+                        if alias == module_path:
+                            # Same name: import os
+                            import_statements.append(f"import {module_path}")
+                            modules_to_validate.append(module_path)
+                        else:
+                            # Different alias: import pandas as pd
+                            import_statements.append(f"import {module_path} as {alias}")
+                            modules_to_validate.append(module_path)
+                    elif isinstance(module_path, dict):
+                        # Extended format for "from X import Y"
+                        # e.g., {"storage": {"from": "google.cloud", "import": "storage"}}
+                        from_module = module_path.get('from')
+                        import_name = module_path.get('import')
+                        if from_module and import_name:
+                            if alias == import_name:
+                                # from google.cloud import storage
+                                import_statements.append(f"from {from_module} import {import_name}")
+                                modules_to_validate.append(f"{from_module}.{import_name}")
+                            else:
+                                # from google.cloud import storage as gcs
+                                import_statements.append(f"from {from_module} import {import_name} as {alias}")
+                                modules_to_validate.append(f"{from_module}.{import_name}")
+                        else:
+                            logger.warning(f"PYTHON.EXECUTE_PYTHON_TASK: Invalid dict format for '{alias}': {module_path}")
+                    else:
+                        logger.warning(f"PYTHON.EXECUTE_PYTHON_TASK: Unsupported config for '{alias}': {module_path}")
+                
+                # Validate all modules exist before execution
+                missing_modules = []
+                for module_name in modules_to_validate:
+                    # Check top-level module first (e.g., 'google' for 'google.cloud.storage')
+                    top_level = module_name.split('.')[0]
+                    spec = importlib.util.find_spec(top_level)
+                    if spec is None:
+                        missing_modules.append(module_name)
+                        logger.error(f"PYTHON.LIBS_VALIDATION: Module '{module_name}' not found (top-level '{top_level}' missing)")
+                
+                if missing_modules:
+                    raise ImportError(
+                        f"Required libraries not installed in noetl container: {', '.join(missing_modules)}. "
+                        f"Add these packages to pyproject.toml dependencies or use pre-installed libraries."
+                    )
+                
+                logger.info(f"PYTHON.LIBS_VALIDATION: All {len(modules_to_validate)} libraries validated successfully")
+                
+                # Prepend imports to code
+                imports_block = '\n'.join(import_statements)
+                code = f"{imports_block}\n\n{code}"
+                logger.info(f"PYTHON.EXECUTE_PYTHON_TASK: Prepended {len(import_statements)} library imports")
+                logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Imports block:\n{imports_block}")
+            else:
+                logger.warning(f"PYTHON.EXECUTE_PYTHON_TASK: 'libs' must be a dict, got {type(libs_config)}")
+
         logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Python code length={len(code)} chars")
 
         event_id = None
@@ -267,6 +435,62 @@ async def execute_python_task_async(
             'format_iso8601': format_iso8601,
             'deep_merge': deep_merge,
         }
+        
+        # Inject args into globals (render and coerce first)
+        if args:
+            rendered_args = {}
+            for k, v in args.items():
+                # Check if value is a TaskResultProxy object (has _data attribute)
+                if hasattr(v, '_data'):
+                    logger.info(f"PYTHON.INJECT: Unwrapping TaskResultProxy for key={k}")
+                    rendered_args[k] = v._data
+                # Check if value is dict or list (already resolved data structures)
+                elif isinstance(v, (dict, list)):
+                    logger.info(f"PYTHON.INJECT: Using dict/list directly for key={k}, type={type(v).__name__}")
+                    rendered_args[k] = v
+                elif isinstance(v, str):
+                    # Check if this is a simple variable reference like "{{ result }}" or "{{ data }}"
+                    # If so, try to get the actual value from context instead of string rendering
+                    stripped = v.strip()
+                    if stripped.startswith('{{') and stripped.endswith('}}'):
+                        var_name = stripped[2:-2].strip()
+                        # Simple variable reference without dots, filters, or operators
+                        if ' ' not in var_name and '.' not in var_name and '|' not in var_name:
+                            if var_name in (context or {}):
+                                logger.info(f"PYTHON.INJECT: Using context value directly for key={k} from var={var_name}, type={type(context[var_name]).__name__}")
+                                rendered_args[k] = context[var_name]
+                                continue
+                    
+                    # Otherwise, render as template
+                    try:
+                        logger.info(f"PYTHON.INJECT: Rendering template for key={k}, value={v[:100]}")
+                        tmpl = jinja_env.from_string(v)
+                        rendered = tmpl.render(context or {})
+                        logger.info(f"PYTHON.INJECT: Rendered result for key={k}: {str(rendered)[:200]}")
+                        rendered_args[k] = rendered
+                    except Exception as render_ex:
+                        logger.exception(f"PYTHON.INJECT: Exception rendering key={k}: {render_ex}")
+                        rendered_args[k] = v
+                else:
+                    rendered_args[k] = v
+            
+            # Coerce and inject into exec_globals
+            for k, v in rendered_args.items():
+                coerced = _coerce_param(v)
+                exec_globals[k] = coerced
+                logger.info(f"PYTHON.INJECT: Injected {k}={type(coerced).__name__}, preview={str(coerced)[:100]}")
+        
+        # Auto-inject 'data' from context if not in args (for sink execution)
+        logger.critical(f"PYTHON.AUTO_INJECT: Checking context for data | context keys={list(context.keys()) if context else None} | 'data' in exec_globals={('data' in exec_globals)}")
+        if context and 'data' not in exec_globals:
+            logger.critical(f"PYTHON.AUTO_INJECT: Context has data={('data' in context)} | has result={('result' in context)}")
+            if 'data' in context:
+                exec_globals['data'] = context['data']
+                logger.critical(f"PYTHON.INJECT: Auto-injected 'data' from context, type={type(context['data']).__name__}, len={len(context['data']) if isinstance(context['data'], (list, dict)) else 'N/A'}")
+            elif 'result' in context:
+                exec_globals['data'] = context['result']
+                logger.critical(f"PYTHON.INJECT: Auto-injected 'data' from context['result'], type={type(context['result']).__name__}, len={len(context['result']) if isinstance(context['result'], (list, dict)) else 'N/A'}")
+        
         logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Execution globals keys: {list(exec_globals.keys())}")
 
         exec_locals = {}
@@ -274,7 +498,9 @@ async def execute_python_task_async(
         exec(code, exec_globals, exec_locals)
         logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Execution completed | locals_keys={list(exec_locals.keys())}")
 
+        # Check if code defines main() function (legacy support)
         if 'main' in exec_locals and callable(exec_locals['main']):
+            logger.info(f"PYTHON.EXECUTE_PYTHON_TASK: Legacy main() function detected, executing it")
             # Render Jinja templates in args against context
             rendered_args = {}
             try:
@@ -338,7 +564,40 @@ async def execute_python_task_async(
                 'data': result_data
             }
         else:
-            raise RuntimeError("Main function must be defined in Python task.")
+            # Pure code execution mode: capture 'result' variable from exec_locals
+            logger.info("PYTHON.EXECUTE_PYTHON_TASK: Pure code execution mode (no main() function)")
+            
+            # Check for explicit 'result' variable
+            if 'result' in exec_locals:
+                result_data = exec_locals['result']
+                logger.info(f"PYTHON.EXECUTE_PYTHON_TASK: Captured 'result' variable, type={type(result_data).__name__}")
+                logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Result preview: {str(result_data)[:500]}")
+            else:
+                # No explicit result - return success status with available locals
+                logger.warning("PYTHON.EXECUTE_PYTHON_TASK: No 'result' variable found, returning success status")
+                non_builtins = {k: v for k, v in exec_locals.items() if not k.startswith('__')}
+                result_data = {
+                    'status': 'success',
+                    'message': 'Code executed without explicit result variable',
+                    'locals_count': len(non_builtins),
+                    'locals_keys': list(non_builtins.keys())
+                }
+
+            end_time = datetime.datetime.now()
+            duration = (end_time - start_time).total_seconds()
+
+            if log_event_callback:
+                log_event_callback(
+                    'task_complete', task_id, task_name, 'python',
+                    'success', duration, context, result_data,
+                    {'args': args}, event_id
+                )
+
+            return {
+                'id': task_id,
+                'status': 'success',
+                'data': result_data
+            }
 
     except Exception as e:
         error_msg = str(e)
@@ -359,6 +618,12 @@ async def execute_python_task_async(
             'status': 'error',
             'error': error_msg
         }
+    
+    finally:
+        # Restore original environment variables
+        if original_env:
+            _restore_environment(original_env)
+            logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Restored original environment")
 
 
 def execute_python_task(

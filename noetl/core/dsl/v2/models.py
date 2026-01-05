@@ -175,6 +175,7 @@ class ToolSpec(BaseModel):
         "snowflake",
         "transfer",
         "snowflake_transfer",
+        "gcs",
     ] = Field(
         ..., description="Tool type"
     )
@@ -383,6 +384,7 @@ class Command(BaseModel):
     tool: ToolCall = Field(..., description="Tool invocation details")
     args: Optional[dict[str, Any]] = Field(None, description="Step input arguments")
     render_context: dict[str, Any] = Field(default_factory=dict, description="Full render context for Jinja2 templates (workload, step results, vars)")
+    case: Optional[list[dict[str, Any]]] = Field(None, description="Case blocks for immediate worker-side conditional execution (sinks, vars, etc.)")
     attempt: int = Field(default=1, description="Attempt number for retries")
     priority: int = Field(default=0, description="Command priority (higher = more urgent)")
     backoff: Optional[float] = Field(None, description="Retry backoff delay in seconds")
@@ -399,6 +401,7 @@ class Command(BaseModel):
             "tool_kind": self.tool.kind,
             "tool_config": self.tool.config,
             "args": self.args or {},
+            "case": self.case,  # Include case blocks for worker-side execution
             "attempt": self.attempt,
             "priority": self.priority,
             "backoff": self.backoff,

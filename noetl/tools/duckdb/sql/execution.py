@@ -11,7 +11,6 @@ from noetl.core.logger import setup_logger
 
 from noetl.tools.duckdb.types import TaskResult
 from noetl.tools.duckdb.errors import SQLExecutionError, ExcelExportError
-from noetl.tools.duckdb.excel import ExcelExportManager
 
 logger = setup_logger(__name__, include_location=True)
 
@@ -20,7 +19,7 @@ def execute_sql_commands(
     connection: Any, 
     commands: List[str],
     task_id: str,
-    excel_manager: Optional[ExcelExportManager] = None
+    excel_manager: Optional[Any] = None
 ) -> Dict[str, Any]:
     """
     Execute a list of SQL commands against a DuckDB connection.
@@ -60,6 +59,15 @@ def execute_sql_commands(
             # Execute the command inside DuckDB
             result = connection.execute(command)
             
+            # Diagnostic: Check settings if this was a COPY command that failed previously
+            if "COPY" in command.upper() and ("gs://" in command or "s3://" in command):
+                try:
+                    s3_settings = connection.execute("SELECT name, value FROM duckdb_settings() WHERE name LIKE 's3_%' OR name LIKE 'gcs_%'").fetchall()
+                    logger.info(f"Cloud settings after COPY attempt: {s3_settings}")
+                    logger.debug(f"[DUCKDB DEBUG] Cloud settings: {s3_settings}")
+                except Exception as e:
+                    logger.exception(f"Copy failed {e}")
+
             # Try to fetch results if available
             try:
                 if hasattr(result, 'fetchall'):
@@ -72,8 +80,7 @@ def execute_sql_commands(
                         else:
                             results[f"command_{i+1}_sample"] = rows[:5]
             except Exception:
-                # Many DuckDB commands don't return fetchable results
-                pass
+                logger.exception("Many DuckDB commands don't return fetchable results")
                 
         if excel_manager:
             excel_summary = excel_manager.finalize()
@@ -85,7 +92,7 @@ def execute_sql_commands(
         
     except Exception as e:
         error_msg = f"SQL execution failed at command: {last_sql_command}. Error: {e}"
-        logger.error(error_msg)
+        logger.exception(error_msg)
         raise SQLExecutionError(error_msg)
 
 
@@ -108,7 +115,7 @@ def serialize_results(results: Any, task_id: str) -> Dict[str, Any]:
         
     except Exception as json_error:
         # Fallback to string representation
-        logger.warning(f"Error serializing results with DateTimeEncoder: {str(json_error)}. Using string fallback.")
+        logger.exception(f"Error serializing results with DateTimeEncoder: {str(json_error)}. Using string fallback.")
         return {"serialized_results": str(results), "task_id": task_id}
 
 

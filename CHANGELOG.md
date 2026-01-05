@@ -2,6 +2,34 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.5.0](https://github.com/noetl/noetl/compare/v2.4.0...v2.5.0) (2026-01-05)
+
+### Features
+
+* Phase 1 - Rename noetlctl to noetl and add server/worker/db management commands ([9b404ef](https://github.com/noetl/noetl/commit/9b404ef339189068cc05878ea9543d4a1154535e))
+* remove Python CLI and complete Rust CLI migration (Phase 3) ([6823d3d](https://github.com/noetl/noetl/commit/6823d3d5a768c0176a15899df0956888092c8ef0))
+
+### Bug Fixes
+
+* add POLARS_SKIP_CPU_CHECK to bypass ARM64 emulation issues ([466af60](https://github.com/noetl/noetl/commit/466af60d8d34658b1155315643c71af6f2e9096f))
+* resolve Rust CLI compilation warnings and Docker deployment issues ([957a545](https://github.com/noetl/noetl/commit/957a545d097e6a1739fdde56061750f56140886d))
+* update worker __init__.py to export v2 functions only ([0e340a1](https://github.com/noetl/noetl/commit/0e340a11a22d7ae8584b2bf99f393f561de6793a))
+* update worker _emit_event to use broker API schema (event_type, node_name) ([b9dae7c](https://github.com/noetl/noetl/commit/b9dae7cc95ffe09f55c5ed75f767f3c7a2a38d0f))
+* use /api/events endpoint (not /api/v2/events) ([c618971](https://github.com/noetl/noetl/commit/c6189716c92fc7c4eb7d3c24bcbb1dae6444150d))
+* use /api/v2/events endpoint with original dot-separated event names ([bf488dd](https://github.com/noetl/noetl/commit/bf488dd8311cc23196a6ace9c825e25158719f7a))
+
+## [2.4.0](https://github.com/noetl/noetl/compare/v2.3.3...v2.4.0) (2025-12-31)
+
+### Features
+
+* add comprehensive PostgreSQL to Excel to GCS pipeline test ([09bc909](https://github.com/noetl/noetl/commit/09bc909846d99cc85511b438f8ff682b617d9210))
+
+### Bug Fixes
+
+* add GCS plugin for file upload tasks ([1842076](https://github.com/noetl/noetl/commit/1842076d6b4f91091a75b30e30eb7bcf05e18c3d))
+* document postgres excel gcs troubleshooting ([b2c0138](https://github.com/noetl/noetl/commit/b2c01389cc93fb1cc347ccd0b8e00103ce5f178b))
+* excel handling ([be435ff](https://github.com/noetl/noetl/commit/be435ff4eb6bedde18ec482734d1d670c610c3ca))
+
 ## [2.3.3](https://github.com/noetl/noetl/compare/v2.3.2...v2.3.3) (2025-12-26)
 
 ### Bug Fixes

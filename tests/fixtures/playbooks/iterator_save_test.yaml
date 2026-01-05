@@ -45,13 +45,13 @@ workflow:
         );
     
     case:
-      - when: "{{ event.name == 'call.done' and response is defined }}"
+      - when: "{{ event.name == 'step.exit' and response is defined }}"
         then:
           next:
             - step: process_items
 
   - step: process_items
-    desc: Process items with save (NEW loop format)
+    desc: Process items with sink
     loop:
       in: "{{ workload.items }}"
       iterator: item
@@ -66,22 +66,28 @@ workflow:
             }
     
     case:
-      - when: "{{ event.name == 'call.done' and response is defined }}"
+      - when: "{{ event.name == 'step.exit' and response is defined }}"
         then:
-          sink:
-            backend: postgres
-            table: public.iterator_save_test
-            auth: "{{ workload.pg_auth }}"
-            from:
-              id: "{{ execution_id }}:{{ response.item_name }}"
-              execution_id: "{{ execution_id }}"
-              item_name: "{{ response.item_name }}"
-              item_value: "{{ response.item_value }}"
+          - sink:
+              tool:
+                kind: postgres
+                auth: "{{ workload.pg_auth }}"
+                statement: |
+                  INSERT INTO public.iterator_save_test (id, execution_id, item_name, item_value)
+                  VALUES (
+                    '{{ execution_id }}:{{ response.item_name }}',
+                    '{{ execution_id }}',
+                    '{{ response.item_name }}',
+                    {{ response.item_value }}
+                  )
+                  ON CONFLICT (id) DO UPDATE SET
+                    item_value = EXCLUDED.item_value,
+                    created_at = now();
       
       - when: "{{ event.name == 'loop.done' }}"
         then:
-          next:
-            - step: end
+          - next:
+              - step: end
     
   - step: end
     desc: End test

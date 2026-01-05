@@ -433,9 +433,9 @@ The `args:` attribute is used to pass data between steps, into tools, and when r
           auth: pg_prod
           table: public.user_cache
           args:
-            id: "{{ execution_id }}:{{ response.data.user_id }}"
-            user_id: "{{ response.data.user_id }}"
-            email: "{{ response.data.email }}"
+            id: "{{ execution_id }}:{{ result.user_id }}"
+            user_id: "{{ result.user_id }}"
+            email: "{{ result.email }}"
             fetched_at: "{{ this.meta.timestamp }}"
         next:
           - step: end
@@ -444,6 +444,8 @@ The `args:` attribute is used to pass data between steps, into tools, and when r
 ---
 
 ### Template Context for Args
+
+> **Important**: Template variables differ by context. See [Template Variable Reference: `response` vs `result`](#template-variable-reference-response-vs-result) for comprehensive guidance on when to use `response`, `result`, or raw fields like `status_code`.
 
 All `args:` blocks have access to the standard template namespaces:
 
@@ -952,6 +954,147 @@ When a `sink:` block executes, the worker provides a **special context** where r
 sink:
   args:
     value: "{{ result.data.value }}"  # WRONG: result is already unwrapped
+```
+
+---
+
+## Template Variable Reference: `response` vs `result`
+
+NoETL has multiple execution contexts, each with different available variables. Understanding when to use `response` vs `result` is critical for correct playbook authoring.
+
+### Context 1: Event Conditions (`case: when:`)
+
+**Available variables:**
+- `event` - Event object with `event.name` (e.g., 'call.done', 'step.exit', 'call.error')
+- `response` - Full step response/result envelope (includes status_code, data, error, etc.)
+
+**Use case:** Checking event types and response status to decide routing
+
+**Example:**
+```yaml
+case:
+  - when: "{{ event.name == 'call.done' and response.status_code == 200 }}"
+    then:
+      next:
+        - step: success_handler
+  - when: "{{ event.name == 'call.error' }}"
+    then:
+      next:
+        - step: error_handler
+```
+
+### Context 2: Action Blocks (`case: then:` - for `sink:`, `set:`)
+
+**Available variables:**
+- `result` - **Unwrapped** step result data (direct access to fields, no `.data` nesting)
+- `this` - Full result envelope (status, data, error, meta)
+- `workload`, `vars`, `execution_id`, prior step results
+
+**Use case:** Accessing step output data in sink operations or variable assignments
+
+**Example:**
+```yaml
+case:
+  - when: "{{ event.name == 'call.done' and response.status_code == 200 }}"
+    then:
+      sink:
+        tool:
+          kind: postgres
+          statement: |
+            INSERT INTO users VALUES ('{{ result.user_id }}', '{{ result.name }}');
+            -- ✅ Use result.field (unwrapped)
+            -- ❌ NOT response.data.field
+      set:
+        user_count: "{{ result.count }}"  # ✅ Use result
+```
+
+### Context 3: Retry Evaluation (`retry_when:`, `stop_when:`)
+
+**Available variables:**
+- `attempt`, `max_attempts` - Retry iteration info
+- `error` - Error message string (null if no error)
+- `status_code` - HTTP status code (for HTTP steps)
+- `success` - Boolean success flag (for DB steps)
+- `result` / `data` - Last attempt's returned data
+
+**Use case:** Deciding whether to retry based on HTTP status codes or errors
+
+**Example:**
+```yaml
+tool:
+  kind: http
+  method: GET
+  url: "https://api.example.com/data"
+retry:
+  max_attempts: 3
+  initial_delay: 0.5
+  backoff_multiplier: 2.0
+  retry_when: "{{ status_code >= 500 }}"  # ✅ Direct access to status_code
+  stop_when: "{{ status_code == 200 }}"   # ✅ Not response.status_code
+```
+
+### Context 4: Pagination Retry (`case: then: retry:`)
+
+**Available variables:**
+- `response` - Step response (for accessing pagination metadata)
+
+**Use case:** Configuring next retry iteration with updated parameters
+
+**Example:**
+```yaml
+case:
+  - when: "{{ event.name == 'call.done' and response.data.paging.hasMore }}"
+    then:
+      retry:
+        params:
+          page: "{{ (response.data.paging.page | int) + 1 }}"  # ✅ Use response here
+          pageSize: "{{ response.data.paging.pageSize }}"
+```
+
+### Quick Reference Table
+
+| Context | Location | Use `response` | Use `result` | Use raw fields |
+|---------|----------|----------------|--------------|----------------|
+| **Event condition** | `case: when:` | ✅ Yes | ❌ No | ❌ No |
+| **Sink/Set actions** | `case: then: sink:` | ❌ No | ✅ Yes | ❌ No |
+| **Retry config** | `case: then: retry:` | ✅ Yes | ❌ No | ❌ No |
+| **Retry evaluation** | `retry_when:`, `stop_when:` | ❌ No | ✅ Limited | ✅ Yes (status_code, error) |
+| **Vars extraction** | `vars:` | ❌ No | ✅ Yes | ❌ No |
+
+### Common Mistakes
+
+❌ **Wrong - Using `response` in sink:**
+```yaml
+case:
+  - when: "{{ event.name == 'call.done' }}"
+    then:
+      sink:
+        tool:
+          kind: postgres
+          statement: "INSERT INTO users VALUES ('{{ response.data.id }}');"  # WRONG
+```
+
+✅ **Correct - Using `result` in sink:**
+```yaml
+case:
+  - when: "{{ event.name == 'call.done' }}"
+    then:
+      sink:
+        tool:
+          kind: postgres
+          statement: "INSERT INTO users VALUES ('{{ result.id }}');"  # CORRECT
+```
+
+❌ **Wrong - Using `response.status_code` in retry:**
+```yaml
+retry:
+  retry_when: "{{ response.status_code >= 500 }}"  # WRONG
+```
+
+✅ **Correct - Using `status_code` directly in retry:**
+```yaml
+retry:
+  retry_when: "{{ status_code >= 500 }}"  # CORRECT
 ```
 
 ---

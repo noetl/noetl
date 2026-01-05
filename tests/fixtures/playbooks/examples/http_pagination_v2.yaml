@@ -47,7 +47,7 @@ workflow:
               current_page: 1
       
       # Retry on 5xx errors
-      - when: "{{ event.name == 'call.done' and error is defined and error.status in [500, 502, 503] }}"
+      - when: "{{ event.name == 'step.exit' and error is defined and error.status in [500, 502, 503] }}"
         then:
           retry:
             max_attempts: 3
@@ -55,7 +55,7 @@ workflow:
             initial_delay: 0.5
       
       # Collect and continue pagination if hasMore
-      - when: "{{ event.name == 'call.done' and response is defined and response.data.paging.hasMore == true }}"
+      - when: "{{ event.name == 'step.exit' and response is defined and response.data.paging.hasMore == true }}"
         then:
           collect:
             from: response.data.items
@@ -67,7 +67,7 @@ workflow:
               pageSize: "{{ response.data.paging.pageSize }}"
       
       # Final page - collect and transition
-      - when: "{{ event.name == 'call.done' and response is defined and response.data.paging.hasMore == false }}"
+      - when: "{{ event.name == 'step.exit' and response is defined and response.data.paging.hasMore == false }}"
         then:
           collect:
             from: response.data.items
@@ -90,7 +90,7 @@ workflow:
             return {"count": len(items), "status": "processed"}
     
     case:
-      - when: "{{ event.name == 'call.done' and response is defined }}"
+      - when: "{{ event.name == 'step.exit' and response is defined }}"
         then:
           result:
             from: response

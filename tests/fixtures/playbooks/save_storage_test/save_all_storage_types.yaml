@@ -172,7 +172,7 @@ workflow:
         workload: "{{ workload }}"
     
     case:
-      - when: "{{ event.name == 'call.done' and response is defined }}"
+      - when: "{{ event.name == 'step.exit' and response is defined }}"
         then:
           sink:
             tool: event_log
@@ -199,7 +199,7 @@ workflow:
         input: "{{ start }}"
     
     case:
-      - when: "{{ event.name == 'call.done' and response is defined }}"
+      - when: "{{ event.name == 'step.exit' and response is defined }}"
         then:
           sink:
             tool: postgres
@@ -234,7 +234,7 @@ workflow:
         input: "{{ test_flat_postgres_save }}"
     
     case:
-      - when: "{{ event.name == 'call.done' and response is defined }}"
+      - when: "{{ event.name == 'step.exit' and response is defined }}"
         then:
           sink:
             tool: postgres
@@ -269,23 +269,24 @@ workflow:
         input_data: "{{ test_nested_postgres_save }}"
     
     case:
-      - when: "{{ event.name == 'call.done' and response is defined }}"
+      - when: "{{ event.name == 'step.exit' and response is defined }}"
         then:
-          sink:
-            tool: postgres
-            auth: "{{ workload.pg_auth }}"
-            statement: |
-              INSERT INTO test_summary (summary_type, total_records, avg_value, test_execution, created_at)
-              SELECT 
-                '{{ response.summary_type }}' as summary_type,
-                COUNT(*) as total_records,
-                AVG(test_value) as avg_value,
-                '{{ response.execution_id }}' as test_execution,
-                NOW() as created_at
-              FROM simple_test_flat 
-              WHERE test_execution = '{{ response.execution_id }}'
-          next:
-            - step: test_python_save
+          - sink:
+              tool:
+                kind: postgres
+                auth: "{{ workload.pg_auth }}"
+                statement: |
+                  INSERT INTO test_summary (summary_type, total_records, avg_value, test_execution, created_at)
+                  SELECT 
+                    '{{ response.data.summary_type }}' as summary_type,
+                    COUNT(*) as total_records,
+                    AVG(test_value) as avg_value,
+                    '{{ response.data.execution_id }}' as test_execution,
+                    NOW() as created_at
+                  FROM simple_test_flat 
+                  WHERE test_execution = '{{ response.data.execution_id }}'
+          - next:
+              - step: test_python_save
 
   # Test 4: Python storage (custom code execution)
   - step: test_python_save
@@ -306,7 +307,7 @@ workflow:
         input_data: "{{ test_postgres_statement_save }}"
     
     case:
-      - when: "{{ event.name == 'call.done' and response is defined }}"
+      - when: "{{ event.name == 'step.exit' and response is defined }}"
         then:
           sink:
             tool:
@@ -355,7 +356,7 @@ workflow:
         input: "{{ test_python_save }}"
     
     case:
-      - when: "{{ event.name == 'call.done' and response is defined }}"
+      - when: "{{ event.name == 'step.exit' and response is defined }}"
         then:
           sink:
             tool: duckdb
@@ -401,7 +402,7 @@ workflow:
         input: "{{ test_duckdb_save }}"
     
     case:
-      - when: "{{ event.name == 'call.done' and response is defined }}"
+      - when: "{{ event.name == 'step.exit' and response is defined }}"
         then:
           sink:
             tool: http
@@ -467,7 +468,7 @@ workflow:
         input_data: "{{ test_http_save }}"
     
     case:
-      - when: "{{ event.name == 'call.done' and response is defined }}"
+      - when: "{{ event.name == 'step.exit' and response is defined }}"
         then:
           sink:
             tool: event_log

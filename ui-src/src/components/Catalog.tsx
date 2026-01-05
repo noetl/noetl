@@ -55,6 +55,9 @@ const Catalog: React.FC = () => {
   const [selectedPlaybookVersion, setSelectedPlaybookVersion] = useState<
     string | null
   >(null);
+  const [selectedCatalogId, setSelectedCatalogId] = useState<string | null>(
+    null,
+  );
   const [payloadJson, setPayloadJson] = useState("");
   const [payloadFile, setPayloadFile] = useState<File | null>(null);
   const [mergePayload, setMergePayload] = useState(false);
@@ -181,9 +184,10 @@ const Catalog: React.FC = () => {
     }
   };
 
-  const handleViewPayload = (playbookId: string, version: string) => {
+  const handleViewPayload = (playbookId: string, version: string, catalogId: string) => {
     setSelectedPlaybookId(playbookId);
     setSelectedPlaybookVersion(version);
+    setSelectedCatalogId(catalogId);
     setPayloadModalVisible(true);
     // Reset form
     setPayloadJson("");
@@ -193,7 +197,7 @@ const Catalog: React.FC = () => {
   };
 
   const handleExecuteWithPayload = async () => {
-    if (!selectedPlaybookId || !selectedPlaybookVersion) {
+    if (!selectedCatalogId) {
       message.error("No playbook selected");
       return;
     }
@@ -213,8 +217,7 @@ const Catalog: React.FC = () => {
     }
 
     const requestBody: any = {
-      path: selectedPlaybookId,
-      version: selectedPlaybookVersion,
+      catalog_id: selectedCatalogId,
       merge: mergePayload,
     };
 
@@ -241,6 +244,7 @@ const Catalog: React.FC = () => {
     setPayloadModalVisible(false);
     setSelectedPlaybookId(null);
     setSelectedPlaybookVersion(null);
+    setSelectedCatalogId(null);
     setPayloadJson("");
     setPayloadFile(null);
     setMergePayload(false);
@@ -429,6 +433,7 @@ const Catalog: React.FC = () => {
                         handleViewPayload(
                           playbook.path,
                           playbook.version.toString(),
+                          playbook.catalog_id,
                         )
                       }
                     >

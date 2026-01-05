@@ -23,7 +23,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 #[derive(Parser)]
-#[command(name = "noetlctl")]
+#[command(name = "noetl")]
 #[command(version, about = "NoETL Command Line Tool", long_about = None)]
 struct Cli {
     #[command(subcommand)]
@@ -117,6 +117,82 @@ enum Commands {
     Get {
         #[command(subcommand)]
         resource: GetResource,
+    },
+    /// Execute SQL query via NoETL Postgres API
+    /// Examples:
+    ///     noetl query "SELECT * FROM noetl.keychain LIMIT 5"
+    ///     noetl query "SELECT * FROM noetl.keychain WHERE execution_id = 123" --schema noetl
+    ///     noetl query "SELECT * FROM my_table" --format json
+    ///     noetl query "SELECT * FROM users" --schema public --format table
+    #[command(verbatim_doc_comment)]
+    Query {
+        /// SQL query to execute
+        query: String,
+
+        /// Database schema (default: noetl)
+        #[arg(short, long, default_value = "noetl")]
+        schema: String,
+
+        /// Output format: table or json
+        #[arg(short, long, default_value = "table")]
+        format: String,
+    },
+    /// Server management
+    /// Examples:
+    ///     noetl server start
+    ///     noetl server start --init-db
+    ///     noetl server stop
+    ///     noetl server stop --force
+    #[command(verbatim_doc_comment)]
+    Server {
+        #[command(subcommand)]
+        command: ServerCommand,
+    },
+    /// Worker management
+    /// Examples:
+    ///     noetl worker start
+    ///     noetl worker start --max-workers 4
+    ///     noetl worker stop
+    ///     noetl worker stop --name my-worker --force
+    #[command(verbatim_doc_comment)]
+    Worker {
+        #[command(subcommand)]
+        command: WorkerCommand,
+    },
+    /// Database management
+    /// Examples:
+    ///     noetl db init
+    ///     noetl db validate
+    #[command(verbatim_doc_comment)]
+    Db {
+        #[command(subcommand)]
+        command: DbCommand,
+    },
+    /// Build Docker images
+    /// Examples:
+    ///     noetl build
+    ///     noetl build --no-cache
+    ///     noetl build --platform linux/arm64
+    #[command(verbatim_doc_comment)]
+    Build {
+        /// Build without cache
+        #[arg(long)]
+        no_cache: bool,
+
+        /// Target platform for the Docker image (e.g., linux/amd64, linux/arm64)
+        #[arg(long, default_value = "linux/amd64")]
+        platform: String,
+    },
+    /// Kubernetes deployment management
+    /// Examples:
+    ///     noetl k8s deploy
+    ///     noetl k8s redeploy
+    ///     noetl k8s reset
+    ///     noetl k8s remove
+    #[command(verbatim_doc_comment)]
+    K8s {
+        #[command(subcommand)]
+        command: K8sCommand,
     },
 }
 
@@ -233,6 +309,117 @@ enum RegisterResource {
         /// Path to playbook file
         #[arg(short, long)]
         file: PathBuf,
+    },
+}
+
+#[derive(Subcommand)]
+enum ServerCommand {
+    /// Start NoETL server
+    /// Examples:
+    ///     noetl server start
+    ///     noetl server start --init-db
+    #[command(verbatim_doc_comment)]
+    Start {
+        /// Initialize database schema on startup
+        #[arg(long)]
+        init_db: bool,
+    },
+    /// Stop NoETL server
+    /// Examples:
+    ///     noetl server stop
+    ///     noetl server stop --force
+    #[command(verbatim_doc_comment)]
+    Stop {
+        /// Force stop without confirmation
+        #[arg(short, long)]
+        force: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum WorkerCommand {
+    /// Start NoETL worker pool
+    /// Examples:
+    ///     noetl worker start
+    ///     noetl worker start --max-workers 4
+    #[command(verbatim_doc_comment)]
+    Start {
+        /// Maximum number of worker threads
+        #[arg(short = 'm', long)]
+        max_workers: Option<usize>,
+    },
+    /// Stop NoETL worker
+    /// Examples:
+    ///     noetl worker stop
+    ///     noetl worker stop --name my-worker
+    ///     noetl worker stop --name my-worker --force
+    #[command(verbatim_doc_comment)]
+    Stop {
+        /// Worker name to stop (if not specified, lists all workers)
+        #[arg(short = 'n', long)]
+        name: Option<String>,
+
+        /// Force stop without confirmation
+        #[arg(short, long)]
+        force: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum DbCommand {
+    /// Initialize NoETL database schema
+    /// Example:
+    ///     noetl db init
+    #[command(verbatim_doc_comment)]
+    Init,
+    /// Validate NoETL database schema
+    /// Example:
+    ///     noetl db validate
+    #[command(verbatim_doc_comment)]
+    Validate,
+}
+
+#[derive(Subcommand)]
+enum K8sCommand {
+    /// Deploy NoETL to Kubernetes (kind cluster)
+    /// Example:
+    ///     noetl k8s deploy
+    #[command(verbatim_doc_comment)]
+    Deploy,
+    /// Remove NoETL from Kubernetes
+    /// Example:
+    ///     noetl k8s remove
+    #[command(verbatim_doc_comment)]
+    Remove,
+    /// Rebuild and redeploy NoETL to Kubernetes
+    /// Example:
+    ///     noetl k8s redeploy
+    ///     noetl k8s redeploy --no-cache
+    ///     noetl k8s redeploy --platform linux/arm64
+    #[command(verbatim_doc_comment)]
+    Redeploy {
+        /// Build without cache
+        #[arg(long)]
+        no_cache: bool,
+
+        /// Target platform for the Docker image (e.g., linux/amd64, linux/arm64)
+        #[arg(long, default_value = "linux/amd64")]
+        platform: String,
+    },
+    /// Reset NoETL: rebuild, redeploy, reset schema, and setup test environment
+    /// Example:
+    ///     noetl k8s reset
+    ///     noetl k8s reset --no-cache
+    ///     noetl k8s reset --platform linux/arm64
+    #[command(verbatim_doc_comment)]
+    Reset {
+        /// Build without cache
+        #[arg(long)]
+        no_cache: bool,
+
+        /// Target platform for the Docker image (e.g., linux/amd64, linux/arm64)
+        #[arg(long, default_value = "linux/amd64")]
+        platform: String,
     },
 }
 
@@ -377,6 +564,50 @@ async fn main() -> Result<()> {
         Some(Commands::Get { resource }) => match resource {
             GetResource::Credential { name, include_data } => {
                 get_credential(&client, &base_url, &name, include_data).await?;
+            }
+        },
+        Some(Commands::Query { query, schema, format }) => {
+            execute_query(&client, &base_url, &query, &schema, &format).await?;
+        }
+        Some(Commands::Server { command }) => match command {
+            ServerCommand::Start { init_db } => {
+                start_server(init_db).await?;
+            }
+            ServerCommand::Stop { force } => {
+                stop_server(force).await?;
+            }
+        },
+        Some(Commands::Worker { command }) => match command {
+            WorkerCommand::Start { max_workers } => {
+                start_worker(max_workers).await?;
+            }
+            WorkerCommand::Stop { name, force } => {
+                stop_worker(name, force).await?;
+            }
+        },
+        Some(Commands::Db { command }) => match command {
+            DbCommand::Init => {
+                db_init(&client, &base_url).await?;
+            }
+            DbCommand::Validate => {
+                db_validate(&client, &base_url).await?;
+            }
+        },
+        Some(Commands::Build { no_cache, platform }) => {
+            build_docker_image(no_cache, &platform).await?;
+        }
+        Some(Commands::K8s { command }) => match command {
+            K8sCommand::Deploy => {
+                k8s_deploy().await?;
+            }
+            K8sCommand::Remove => {
+                k8s_remove().await?;
+            }
+            K8sCommand::Redeploy { no_cache, platform } => {
+                k8s_redeploy(no_cache, &platform).await?;
+            }
+            K8sCommand::Reset { no_cache, platform } => {
+                k8s_reset(no_cache, &platform).await?;
             }
         },
         None => {
@@ -600,6 +831,193 @@ async fn get_credential(client: &Client, base_url: &str, name: &str, include_dat
     Ok(())
 }
 
+async fn execute_query(client: &Client, base_url: &str, query: &str, schema: &str, format: &str) -> Result<()> {
+    let url = format!("{}/api/postgres/execute", base_url);
+
+    let payload = serde_json::json!({
+        "query": query,
+        "schema": schema
+    });
+
+    let response = client
+        .post(&url)
+        .header("Content-Type", "application/json")
+        .json(&payload)
+        .send()
+        .await
+        .context("Failed to send query request")?;
+
+    if response.status().is_success() {
+        let result: serde_json::Value = response.json().await?;
+
+        match format {
+            "json" => {
+                // Pretty print JSON
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            }
+            "table" => {
+                // Extract column names from query
+                let column_names = extract_column_names(query);
+                // Format as table
+                format_as_table(&result, &column_names)?;
+            }
+            _ => {
+                eprintln!("Unknown format: {}. Use 'table' or 'json'", format);
+                std::process::exit(1);
+            }
+        }
+    } else {
+        let status = response.status();
+        let text = response.text().await?;
+        eprintln!("Failed to execute query: {} - {}", status, text);
+        std::process::exit(1);
+    }
+
+    Ok(())
+}
+
+fn extract_column_names(query: &str) -> Vec<String> {
+    // Simple column name extraction from SELECT query
+    let query_upper = query.to_uppercase();
+
+    // Find SELECT and FROM positions
+    if let Some(select_pos) = query_upper.find("SELECT") {
+        let after_select = &query[select_pos + 6..].trim_start();
+
+        // Find FROM keyword
+        let from_pos = after_select.to_uppercase().find(" FROM");
+        let columns_str = if let Some(pos) = from_pos {
+            &after_select[..pos]
+        } else {
+            after_select
+        };
+
+        // Split by comma and clean up
+        let columns: Vec<String> = columns_str
+            .split(',')
+            .map(|s| {
+                let s = s.trim();
+                // Handle aliases (AS keyword)
+                if let Some(as_pos) = s.to_uppercase().rfind(" AS ") {
+                    s[as_pos + 4..].trim().to_string()
+                } else {
+                    // Get the last part after dot (for qualified names like table.column)
+                    s.split('.').last().unwrap_or(s).trim().to_string()
+                }
+            })
+            .collect();
+
+        columns
+    } else {
+        Vec::new()
+    }
+}
+
+fn format_as_table(result: &serde_json::Value, column_names: &[String]) -> Result<()> {
+    // Check if result has the expected structure
+    if let Some(result_array) = result.get("result").and_then(|r| r.as_array()) {
+        if result_array.is_empty() {
+            println!("(0 rows)");
+            return Ok(());
+        }
+
+        // The API returns result as array of arrays: [[val1, val2], [val3, val4]]
+        // We need to determine column count from first row
+        let first_row = &result_array[0];
+        if let Some(row_array) = first_row.as_array() {
+            let col_count = row_array.len();
+
+            // Use extracted column names if available and count matches, otherwise fall back to generic
+            let columns: Vec<String> = if column_names.len() == col_count {
+                column_names.to_vec()
+            } else {
+                (1..=col_count).map(|i| format!("column_{}", i)).collect()
+            };
+
+            // Calculate column widths
+            let mut col_widths: Vec<usize> = columns.iter().map(|c| c.len()).collect();
+
+            for row in result_array {
+                if let Some(row_array) = row.as_array() {
+                    for (i, val) in row_array.iter().enumerate() {
+                        if i < col_widths.len() {
+                            let val_str = format_value(val);
+                            col_widths[i] = col_widths[i].max(val_str.len());
+                        }
+                    }
+                }
+            }
+
+            // Print header
+            print!("┌");
+            for (i, width) in col_widths.iter().enumerate() {
+                print!("{}", "─".repeat(width + 2));
+                if i < col_widths.len() - 1 {
+                    print!("┬");
+                }
+            }
+            println!("┐");
+
+            print!("│");
+            for (i, col) in columns.iter().enumerate() {
+                print!(" {:width$} │", col, width = col_widths[i]);
+            }
+            println!();
+
+            print!("├");
+            for (i, width) in col_widths.iter().enumerate() {
+                print!("{}", "─".repeat(width + 2));
+                if i < col_widths.len() - 1 {
+                    print!("┼");
+                }
+            }
+            println!("┤");
+
+            // Print rows
+            for row in result_array {
+                if let Some(row_array) = row.as_array() {
+                    print!("│");
+                    for (i, val) in row_array.iter().enumerate() {
+                        if i < col_widths.len() {
+                            let val_str = format_value(val);
+                            print!(" {:width$} │", val_str, width = col_widths[i]);
+                        }
+                    }
+                    println!();
+                }
+            }
+
+            print!("└");
+            for (i, width) in col_widths.iter().enumerate() {
+                print!("{}", "─".repeat(width + 2));
+                if i < col_widths.len() - 1 {
+                    print!("┴");
+                }
+            }
+            println!("┘");
+
+            println!("({} rows)", result_array.len());
+        }
+    } else {
+        // Fallback to pretty JSON if structure doesn't match
+        println!("{}", serde_json::to_string_pretty(result)?);
+    }
+
+    Ok(())
+}
+
+fn format_value(val: &serde_json::Value) -> String {
+    match val {
+        serde_json::Value::Null => "NULL".to_string(),
+        serde_json::Value::Bool(b) => b.to_string(),
+        serde_json::Value::Number(n) => n.to_string(),
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Array(_) | serde_json::Value::Object(_) => {
+            serde_json::to_string(val).unwrap_or_else(|_| "{}".to_string())
+        }
+    }
+}
+
 async fn run_tui(base_url: &str) -> Result<()> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -734,4 +1152,722 @@ fn ui(f: &mut Frame, app: &mut App) {
     let footer = Paragraph::new("q: Quit | r: Refresh | ↑/↓: Navigate")
         .block(Block::default().borders(Borders::ALL).title("Help"));
     f.render_widget(footer, chunks[2]);
+}
+
+// ============================================================================
+// Server Management
+// ============================================================================
+
+async fn start_server(init_db: bool) -> Result<()> {
+    use std::net::TcpStream;
+    use std::process::{Command, Stdio};
+
+    let pid_dir = dirs::home_dir()
+        .context("Could not determine home directory")?
+        .join(".noetl");
+    std::fs::create_dir_all(&pid_dir)?;
+
+    let pid_file = pid_dir.join("noetl_server.pid");
+
+    // Check if server is already running
+    if pid_file.exists() {
+        let pid_str = std::fs::read_to_string(&pid_file)?;
+        if let Ok(pid) = pid_str.trim().parse::<i32>() {
+            if process_exists(pid) {
+                println!(
+                    "Server already running with PID {} (PID file: {})",
+                    pid,
+                    pid_file.display()
+                );
+                println!("Use 'noetl server stop' to stop it first.");
+                return Ok(());
+            } else {
+                println!("Found stale PID file. Removing it.");
+                std::fs::remove_file(&pid_file)?;
+            }
+        }
+    }
+
+    // Get server configuration from environment
+    let host = std::env::var("NOETL_HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
+    let port = std::env::var("NOETL_PORT").unwrap_or_else(|_| "8082".to_string());
+
+    // Check port availability
+    if let Ok(_stream) = TcpStream::connect(format!(
+        "{}:{}",
+        if host == "0.0.0.0" { "127.0.0.1" } else { &host },
+        port
+    )) {
+        eprintln!("Error: Port {}:{} is already in use", host, port);
+        return Err(anyhow::anyhow!("Port already in use"));
+    }
+
+    println!("Starting NoETL server at http://{}:{}...", host, port);
+
+    // Spawn Python server subprocess using new entry point
+    let mut cmd = Command::new("python");
+    cmd.args(&["-m", "noetl.server"])
+        .arg("--host")
+        .arg(&host)
+        .arg("--port")
+        .arg(&port);
+
+    if init_db {
+        cmd.arg("--init-db");
+    }
+
+    cmd.stdout(Stdio::null()).stderr(Stdio::null());
+
+    // Set environment variables
+    if let Ok(val) = std::env::var("NOETL_ENABLE_UI") {
+        cmd.env("NOETL_ENABLE_UI", val);
+    }
+    if let Ok(val) = std::env::var("NOETL_DEBUG") {
+        cmd.env("NOETL_DEBUG", val);
+    }
+
+    let child = cmd
+        .spawn()
+        .context("Failed to spawn server process. Is Python and noetl package installed?")?;
+
+    let pid = child.id();
+
+    // Write PID file
+    std::fs::write(&pid_file, pid.to_string())?;
+    println!("Server started with PID {}", pid);
+    println!("PID file: {}", pid_file.display());
+
+    // Optional: Initialize database
+    if init_db {
+        println!("Waiting for server to be ready...");
+        tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+
+        let client = Client::new();
+        let base_url = format!("http://localhost:{}", port);
+
+        println!("Initializing database schema...");
+        let response = client.post(&format!("{}/api/db/init", base_url)).send().await;
+
+        match response {
+            Ok(resp) if resp.status().is_success() => {
+                println!("Database initialized successfully.");
+            }
+            Ok(resp) => {
+                eprintln!("Warning: Database initialization returned status {}", resp.status());
+            }
+            Err(e) => {
+                eprintln!("Warning: Could not initialize database: {}", e);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn stop_server(force: bool) -> Result<()> {
+    let pid_dir = dirs::home_dir()
+        .context("Could not determine home directory")?
+        .join(".noetl");
+    let pid_file = pid_dir.join("noetl_server.pid");
+
+    if !pid_file.exists() {
+        println!("No running NoETL server found (no PID file at {}).", pid_file.display());
+        return Ok(());
+    }
+
+    let pid_str = std::fs::read_to_string(&pid_file)?;
+    let pid: i32 = pid_str.trim().parse().context("Invalid PID in file")?;
+
+    if !process_exists(pid) {
+        println!("Process {} not found. The server may have been stopped already.", pid);
+        std::fs::remove_file(&pid_file)?;
+        return Ok(());
+    }
+
+    if !force {
+        print!("Stop NoETL server with PID {}? [y/N]: ", pid);
+        std::io::Write::flush(&mut std::io::stdout())?;
+
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input)?;
+
+        if !input.trim().eq_ignore_ascii_case("y") {
+            println!("Operation cancelled.");
+            return Ok(());
+        }
+    }
+
+    println!("Stopping NoETL server with PID {}...", pid);
+
+    // Send SIGTERM
+    send_signal(pid, nix::sys::signal::Signal::SIGTERM)?;
+
+    // Wait for graceful shutdown (10 seconds)
+    for _ in 0..20 {
+        if !process_exists(pid) {
+            std::fs::remove_file(&pid_file)?;
+            println!("NoETL server stopped successfully.");
+            return Ok(());
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+    }
+
+    // Force kill if still running
+    if force {
+        println!("Server didn't stop gracefully. Force killing...");
+        send_signal(pid, nix::sys::signal::Signal::SIGKILL)?;
+    } else {
+        print!("Server didn't stop gracefully. Force kill? [y/N]: ");
+        std::io::Write::flush(&mut std::io::stdout())?;
+
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input)?;
+
+        if input.trim().eq_ignore_ascii_case("y") {
+            println!("Force killing NoETL server with PID {}...", pid);
+            send_signal(pid, nix::sys::signal::Signal::SIGKILL)?;
+        }
+    }
+
+    std::fs::remove_file(&pid_file)?;
+    println!("NoETL server stopped.");
+
+    Ok(())
+}
+
+// ============================================================================
+// Worker Management
+// ============================================================================
+
+async fn start_worker(_max_workers: Option<usize>) -> Result<()> {
+    use std::process::{Command, Stdio};
+
+    let pid_dir = dirs::home_dir()
+        .context("Could not determine home directory")?
+        .join(".noetl");
+    std::fs::create_dir_all(&pid_dir)?;
+
+    // Determine worker name based on pool config
+    let worker_name = std::env::var("NOETL_WORKER_POOL_NAME")
+        .unwrap_or_else(|_| "default".to_string())
+        .replace("-", "_");
+
+    let pid_file = pid_dir.join(format!("noetl_worker_{}.pid", worker_name));
+
+    // Check if worker is already running
+    if pid_file.exists() {
+        let pid_str = std::fs::read_to_string(&pid_file)?;
+        if let Ok(pid) = pid_str.trim().parse::<i32>() {
+            if process_exists(pid) {
+                println!("Worker '{}' already running with PID {}", worker_name, pid);
+                println!("Use 'noetl worker stop --name {}' to stop it first.", worker_name);
+                return Ok(());
+            } else {
+                println!("Found stale PID file. Removing it.");
+                std::fs::remove_file(&pid_file)?;
+            }
+        }
+    }
+
+    println!("Starting NoETL worker '{}' (v2 architecture)...", worker_name);
+
+    // Build Python worker command - execute worker module directly
+    // python -m noetl.worker starts V2 worker via __main__.py
+    let mut cmd = Command::new("python");
+    cmd.args(&["-m", "noetl.worker"]);
+
+    cmd.stdout(Stdio::null()).stderr(Stdio::null());
+
+    let child = cmd
+        .spawn()
+        .context("Failed to spawn worker process. Is Python and noetl package installed?")?;
+
+    let pid = child.id();
+
+    // Write PID file
+    std::fs::write(&pid_file, pid.to_string())?;
+    println!("Worker '{}' started with PID {}", worker_name, pid);
+    println!("PID file: {}", pid_file.display());
+
+    Ok(())
+}
+
+async fn stop_worker(name: Option<String>, force: bool) -> Result<()> {
+    use std::io::Write;
+
+    let pid_dir = dirs::home_dir()
+        .context("Could not determine home directory")?
+        .join(".noetl");
+
+    // If no name provided, list workers and prompt
+    let pid_file = if let Some(worker_name) = name {
+        let normalized_name = worker_name.replace("-", "_");
+        pid_dir.join(format!("noetl_worker_{}.pid", normalized_name))
+    } else {
+        // List all worker PID files
+        let entries = std::fs::read_dir(&pid_dir)?
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                e.file_name().to_string_lossy().starts_with("noetl_worker_")
+                    && e.file_name().to_string_lossy().ends_with(".pid")
+            })
+            .collect::<Vec<_>>();
+
+        if entries.is_empty() {
+            println!("No running NoETL worker services found.");
+            return Ok(());
+        }
+
+        println!("Running workers:");
+        for (i, entry) in entries.iter().enumerate() {
+            let worker_name = entry
+                .file_name()
+                .to_string_lossy()
+                .strip_prefix("noetl_worker_")
+                .and_then(|s| s.strip_suffix(".pid"))
+                .unwrap_or("unknown")
+                .to_string();
+
+            if let Ok(pid_str) = std::fs::read_to_string(entry.path()) {
+                println!("  {}. {} (PID: {})", i + 1, worker_name, pid_str.trim());
+            } else {
+                println!("  {}. {} (PID file corrupted)", i + 1, worker_name);
+            }
+        }
+
+        if entries.len() == 1 {
+            entries[0].path()
+        } else {
+            print!("Enter the number of the worker to stop: ");
+            std::io::stdout().flush()?;
+
+            let mut input = String::new();
+            std::io::stdin().read_line(&mut input)?;
+
+            let choice: usize = input.trim().parse().context("Invalid number")?;
+
+            if choice < 1 || choice > entries.len() {
+                return Err(anyhow::anyhow!("Invalid choice"));
+            }
+
+            entries[choice - 1].path()
+        }
+    };
+
+    if !pid_file.exists() {
+        println!("Worker PID file not found: {}", pid_file.display());
+        return Ok(());
+    }
+
+    let pid_str = std::fs::read_to_string(&pid_file)?;
+    let pid: i32 = pid_str.trim().parse().context("Invalid PID in file")?;
+
+    if !process_exists(pid) {
+        println!("Process {} not found. The worker may have been stopped already.", pid);
+        std::fs::remove_file(&pid_file)?;
+        return Ok(());
+    }
+
+    if !force {
+        print!("Stop NoETL worker with PID {}? [y/N]: ", pid);
+        std::io::Write::flush(&mut std::io::stdout())?;
+
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input)?;
+
+        if !input.trim().eq_ignore_ascii_case("y") {
+            println!("Operation cancelled.");
+            return Ok(());
+        }
+    }
+
+    println!("Stopping NoETL worker with PID {}...", pid);
+
+    // Send SIGTERM
+    send_signal(pid, nix::sys::signal::Signal::SIGTERM)?;
+
+    // Wait for graceful shutdown (10 seconds)
+    for _ in 0..20 {
+        if !process_exists(pid) {
+            std::fs::remove_file(&pid_file)?;
+            println!("NoETL worker stopped successfully.");
+            return Ok(());
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+    }
+
+    // Force kill if still running
+    if force {
+        println!("Worker didn't stop gracefully. Force killing...");
+        send_signal(pid, nix::sys::signal::Signal::SIGKILL)?;
+    } else {
+        print!("Worker didn't stop gracefully. Force kill? [y/N]: ");
+        std::io::Write::flush(&mut std::io::stdout())?;
+
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input)?;
+
+        if input.trim().eq_ignore_ascii_case("y") {
+            println!("Force killing NoETL worker with PID {}...", pid);
+            send_signal(pid, nix::sys::signal::Signal::SIGKILL)?;
+        }
+    }
+
+    std::fs::remove_file(&pid_file)?;
+    println!("NoETL worker stopped.");
+
+    Ok(())
+}
+
+// ============================================================================
+// Database Management
+// ============================================================================
+
+async fn db_init(client: &Client, base_url: &str) -> Result<()> {
+    println!("Initializing NoETL database schema...");
+
+    let url = format!("{}/api/db/init", base_url);
+    let response = client
+        .post(&url)
+        .send()
+        .await
+        .context("Failed to send database init request")?;
+
+    if response.status().is_success() {
+        let result: serde_json::Value = response.json().await?;
+        println!("Database initialized successfully:");
+        println!("{}", serde_json::to_string_pretty(&result)?);
+    } else {
+        let status = response.status();
+        let text = response.text().await?;
+        eprintln!("Failed to initialize database: {} - {}", status, text);
+        return Err(anyhow::anyhow!("Database initialization failed"));
+    }
+
+    Ok(())
+}
+
+async fn db_validate(client: &Client, base_url: &str) -> Result<()> {
+    println!("Validating NoETL database schema...");
+
+    let url = format!("{}/api/db/validate", base_url);
+    let response = client
+        .get(&url)
+        .send()
+        .await
+        .context("Failed to send database validate request")?;
+
+    if response.status().is_success() {
+        let result: serde_json::Value = response.json().await?;
+        println!("Database validation result:");
+        println!("{}", serde_json::to_string_pretty(&result)?);
+    } else {
+        let status = response.status();
+        let text = response.text().await?;
+        eprintln!("Failed to validate database: {} - {}", status, text);
+        return Err(anyhow::anyhow!("Database validation failed"));
+    }
+
+    Ok(())
+}
+
+// ============================================================================
+// Helper Functions for Process Management
+// ============================================================================
+
+fn process_exists(pid: i32) -> bool {
+    use sysinfo::{ProcessesToUpdate, System};
+
+    let mut system = System::new_all();
+    system.refresh_processes(ProcessesToUpdate::All);
+
+    system.process(sysinfo::Pid::from(pid as usize)).is_some()
+}
+
+fn send_signal(pid: i32, signal: nix::sys::signal::Signal) -> Result<()> {
+    use nix::sys::signal::kill;
+    use nix::unistd::Pid;
+
+    kill(Pid::from_raw(pid), signal).context("Failed to send signal to process")?;
+
+    Ok(())
+}
+
+// ============================================================================
+// Build Commands
+// ============================================================================
+
+async fn build_docker_image(no_cache: bool, platform: &str) -> Result<()> {
+    use chrono::Local;
+    use std::io::{BufRead, BufReader};
+    use std::process::Command;
+
+    let registry = "local";
+    let image_name = "noetl";
+    let image_tag = Local::now().format("%Y-%m-%d-%H-%M").to_string();
+
+    println!("Building Docker image: {}/{}:{}", registry, image_name, image_tag);
+    println!("Target platform: {}", platform);
+
+    let mut cmd = Command::new("docker");
+    cmd.arg("buildx");
+    cmd.arg("build");
+
+    if no_cache {
+        cmd.arg("--no-cache");
+    }
+    // cmd.arg("--no-cache");
+    cmd.arg("--progress=plain");
+
+    // Build for specified platform (default: linux/amd64 for Kind/K8s compatibility)
+    cmd.arg("--platform").arg(platform);
+
+    cmd.arg("-t")
+        .arg(format!("{}/{}:{}", registry, image_name, image_tag))
+        .arg("-f")
+        .arg("docker/noetl/dev/Dockerfile")
+        .arg(".")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+
+    let cr = std::env::current_dir()?;
+
+    cmd.current_dir(cr);
+
+    println!("cwd = {:?}", std::env::current_dir()?);
+
+    // cmd.env("DOCKER_BUILDKIT", "0");
+
+    println!(
+        "Running: docker buildx build{} --progress=plain --platform {} -t {}/{}:{} -f docker/noetl/dev/Dockerfile .",
+        if no_cache { " --no-cache" } else { "" },
+        platform,
+        registry,
+        image_name,
+        image_tag
+    );
+
+    let mut child = cmd.spawn().context("Failed to spawn docker build command")?;
+
+    // Clone the stdout and stderr to read in separate threads
+    let stdout = child.stdout.take().unwrap();
+    let stderr = child.stderr.take().unwrap();
+
+    let stdout_thread = std::thread::spawn(move || {
+        let reader = BufReader::new(stdout);
+        for line in reader.lines() {
+            if let Ok(line) = line {
+                println!("{}", line);
+            }
+        }
+    });
+
+    let stderr_thread = std::thread::spawn(move || {
+        let reader = BufReader::new(stderr);
+        for line in reader.lines() {
+            if let Ok(line) = line {
+                println!("{}", line);
+            }
+        }
+    });
+
+    // Wait for both threads to finish
+    stdout_thread.join().unwrap();
+    stderr_thread.join().unwrap();
+
+    let status = child.wait()?;
+
+    if !status.success() {
+        return Err(anyhow::anyhow!("Docker build failed with status: {}", status));
+    }
+
+    // Save image tag to file
+    std::fs::write(".noetl_last_build_tag.txt", &image_tag)?;
+    println!("✓ Image built successfully: {}/{}:{}", registry, image_name, image_tag);
+    println!("✓ Tag saved to .noetl_last_build_tag.txt");
+
+    Ok(())
+}
+
+// ============================================================================
+// Kubernetes Commands
+// ============================================================================
+
+async fn k8s_deploy() -> Result<()> {
+    println!("Deploying NoETL to Kubernetes...");
+
+    // Read image tag
+    let image_tag = std::fs::read_to_string(".noetl_last_build_tag.txt")
+        .context("Failed to read .noetl_last_build_tag.txt - have you built the image?")?;
+    let image_tag = image_tag.trim();
+
+    let registry = "local";
+    let image_name = "noetl";
+    let full_image = format!("{}/{}:{}", registry, image_name, image_tag);
+
+    println!("Using image: {}", full_image);
+
+    // Load image to kind cluster
+    println!("Loading image to kind cluster...");
+    run_command(&["kind", "load", "docker-image", &full_image, "--name", "noetl"])?;
+
+    // Set kubectl context
+    println!("Setting kubectl context to kind-noetl...");
+    run_command(&["kubectl", "config", "use-context", "kind-noetl"])?;
+
+    // Apply namespace
+    println!("Creating namespace...");
+    run_command(&["kubectl", "apply", "-f", "ci/manifests/noetl/namespace/namespace.yaml"])?;
+    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+
+    // Update image in deployment files using yq
+    println!("Updating deployment image references...");
+    update_deployment_image("ci/manifests/noetl/server-deployment.yaml", &full_image)?;
+    update_deployment_image("ci/manifests/noetl/worker-deployment.yaml", &full_image)?;
+
+    // Apply manifests
+    println!("Applying Kubernetes manifests...");
+    run_command(&["kubectl", "apply", "-f", "ci/manifests/noetl/"])?;
+
+    // Restore original image placeholders
+    println!("Restoring deployment templates...");
+    update_deployment_image("ci/manifests/noetl/server-deployment.yaml", "image_name:image_tag")?;
+    update_deployment_image("ci/manifests/noetl/worker-deployment.yaml", "image_name:image_tag")?;
+
+    println!("✓ NoETL deployed successfully");
+    println!("  UI:  http://localhost:8082");
+    println!("  API: http://localhost:8082/docs");
+
+    Ok(())
+}
+
+async fn k8s_remove() -> Result<()> {
+    println!("Removing NoETL from Kubernetes...");
+
+    // Set kubectl context
+    run_command(&["kubectl", "config", "use-context", "kind-noetl"])?;
+
+    // Delete manifests
+    run_command(&["kubectl", "delete", "-f", "ci/manifests/noetl/"])?;
+
+    println!("✓ NoETL removed successfully");
+
+    Ok(())
+}
+
+async fn k8s_redeploy(no_cache: bool, platform: &str) -> Result<()> {
+    println!("Rebuilding and redeploying NoETL...");
+
+    // Build image
+    build_docker_image(no_cache, platform).await?;
+
+    // Remove existing deployment
+    k8s_remove().await.ok(); // Ignore errors if not deployed
+
+    // Load image to kind
+    let image_tag = std::fs::read_to_string(".noetl_last_build_tag.txt")?.trim().to_string();
+    println!("Loading image to kind cluster...");
+    run_command(&[
+        "kind",
+        "load",
+        "docker-image",
+        &format!("local/noetl:{}", image_tag),
+        "--name",
+        "noetl",
+    ])?;
+
+    // Deploy
+    k8s_deploy().await?;
+
+    println!("✓ NoETL redeployed successfully");
+
+    Ok(())
+}
+
+async fn k8s_reset(no_cache: bool, platform: &str) -> Result<()> {
+    println!("Resetting NoETL (full rebuild + schema reset + test setup)...");
+
+    // Reset postgres schema
+    println!("Resetting Postgres schema...");
+    run_command(&["task", "postgres:k8s:schema-reset"])?;
+
+    // Redeploy
+    k8s_redeploy(no_cache, platform).await?;
+
+    // Install noetl CLI with dev extras
+    println!("Installing NoETL CLI with dev dependencies...");
+    run_command(&["uv", "pip", "install", "-e", ".[dev]"])?;
+
+    // Wait for deployment to be ready
+    println!("Waiting for deployment to be ready...");
+    tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
+
+    // Setup test environment
+    println!("Setting up test environment...");
+    run_command(&["task", "test:k8s:setup-environment"])?;
+    run_command(&["task", "test:k8s:create-tables"])?;
+    run_command(&["task", "test:k8s:register-credentials"])?;
+
+    println!("✓ NoETL reset complete");
+    println!("  UI:  http://localhost:8082");
+    println!("  API: http://localhost:8082/docs");
+
+    Ok(())
+}
+
+// Helper functions for k8s commands
+fn run_command(args: &[&str]) -> Result<()> {
+    use std::process::Command;
+
+    let output = Command::new(args[0])
+        .args(&args[1..])
+        .output()
+        .context(format!("Failed to execute: {}", args.join(" ")))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow::anyhow!("Command failed: {}\n{}", args.join(" "), stderr));
+    }
+
+    print!("{}", String::from_utf8_lossy(&output.stdout));
+
+    Ok(())
+}
+
+fn update_deployment_image(file_path: &str, image: &str) -> Result<()> {
+    use std::process::Command;
+
+    // Check which yq version is installed
+    let yq_version = Command::new("yq").arg("--version").output();
+
+    let is_mikefarah = if let Ok(output) = yq_version {
+        String::from_utf8_lossy(&output.stdout).contains("mikefarah")
+            || String::from_utf8_lossy(&output.stderr).contains("mikefarah")
+    } else {
+        false
+    };
+
+    if is_mikefarah {
+        // mikefarah/yq (v4+)
+        Command::new("yq")
+            .arg("-i")
+            .arg(format!(".spec.template.spec.containers[0].image = \"{}\"", image))
+            .arg(file_path)
+            .output()
+            .context("Failed to update deployment with yq")?;
+    } else {
+        // kislyuk/yq (python version)
+        let temp_file = format!("{}.tmp", file_path);
+        Command::new("yq")
+            .arg("-y")
+            .arg(format!(".spec.template.spec.containers[0].image = \"{}\"", image))
+            .arg(file_path)
+            .stdout(std::fs::File::create(&temp_file)?)
+            .output()
+            .context("Failed to update deployment with yq")?;
+
+        std::fs::rename(&temp_file, file_path)?;
+    }
+
+    Ok(())
 }

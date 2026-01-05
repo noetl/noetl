@@ -1,12 +1,8 @@
-"""Worker pool and queue management."""
+"""NoETL Worker - V2 NATS-based event-driven worker."""
 
-from .worker import *  # noqa: F401,F403
+from .v2_worker_nats import run_v2_worker, run_worker_v2_sync
 
 __all__ = [
-    'QueueWorker',
-    'ScalableQueueWorkerPool',
-    'register_server_from_env',
-    'deregister_server_from_env', 
-    'register_worker_pool_from_env',
-    'deregister_worker_pool_from_env',
+    'run_v2_worker',
+    'run_worker_v2_sync',
 ]

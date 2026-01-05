@@ -21,6 +21,7 @@ from noetl.tools import (
     snowflake,
     transfer,
     container,
+    gcs,
 )
 from noetl.tools.transfer import snowflake_transfer
 
@@ -33,6 +34,7 @@ from noetl.tools.snowflake import execute_snowflake_task, execute_snowflake_tran
 from noetl.tools.transfer import execute_transfer_action
 from noetl.tools.transfer.snowflake_transfer import execute_snowflake_transfer_action
 from noetl.tools.container import execute_container_task
+from noetl.tools.gcs import execute_gcs_task
 
 # Tool registry for dynamic lookup
 REGISTRY = {
@@ -44,6 +46,7 @@ REGISTRY = {
     "transfer": transfer,
     "snowflake_transfer": snowflake_transfer,
     "container": container,
+    "gcs": gcs,
 }
 
 __all__ = [
@@ -56,6 +59,7 @@ __all__ = [
     "transfer",
     "snowflake_transfer",
     "container",
+    "gcs",
     # Executors
     "execute_python_task",
     "execute_python_task_async",
@@ -67,6 +71,7 @@ __all__ = [
     "execute_transfer_action",
     "execute_snowflake_transfer_action",
     "execute_container_task",
+    "execute_gcs_task",
     # Registry
     "REGISTRY",
 ]

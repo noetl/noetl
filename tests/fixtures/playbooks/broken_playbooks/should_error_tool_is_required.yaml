@@ -13,9 +13,11 @@ workflow:
     desc: Start data transfer pipeline
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main():
-            return {"status": "initialized"}
+        result = {"status": "initialized"}
     next:
       - step: insert_report
 

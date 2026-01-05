@@ -189,7 +189,7 @@ workflow:
   - step: tests/iterator_save_test
     tool:
       kind: playbook
-      path: tests/iterator_save_test
+      path: tests/fixtures/playbooks/iterator_save_test/iterator_save_test
       retry:
         max_attempts: 2
         retry_on: ["timeout"]
@@ -200,7 +200,7 @@ workflow:
   - step: tests/fixtures/playbooks/json_serialization_save
     tool:
       kind: playbook
-      path: tests/fixtures/playbooks/json_serialization_save
+      path: tests/fixtures/playbooks/json_serialization_save/json_serialization_save
       retry:
         max_attempts: 2
         retry_on: ["timeout"]
