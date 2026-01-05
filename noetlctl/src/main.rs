@@ -1652,18 +1652,11 @@ async fn build_docker_image(no_cache: bool, platform: &str) -> Result<()> {
         }
     }
 
-    let mut cmd = Command::new("pwd");
-    cmd.stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
-
-    let mut child = cmd.spawn().context("Failed to spawn docker build command")?;
-
-    // Stream stdout
-    if let Some(stdout) = child.stdout.take() {
+    if let Some(stdout) = child.stderr.take() {
         let reader = BufReader::new(stdout);
         for line in reader.lines() {
             if let Ok(line) = line {
-                println!("{}", line);
+                println!("Err: {}", line);
             }
         }
     }
