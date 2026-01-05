@@ -12,9 +12,56 @@ Two NoETL images are supported:
 Additionally:
 - postgres-noetl:latest — PostgreSQL image with NoETL-specific configuration
 
+### Rust CLI Integration
+
+All NoETL images now include the `noetl` Rust CLI binary built via a multi-stage Docker build:
+
+**Build Stages:**
+1. **ui-builder** (node:20-alpine) - Builds the web UI
+2. **rust-builder** (rust:1.83-slim) - Compiles the `noetl` Rust CLI binary
+3. **python builder** - Installs Python dependencies with uv
+4. **Production** - Final image with Python runtime + noetl binary
+
+The Rust CLI (`/usr/local/bin/noetl`) provides unified management for:
+- Server lifecycle: `noetl server start/stop`
+- Worker lifecycle: `noetl worker start/stop`
+- Database management: `noetl db init/validate`
+- Build automation: `noetl build [--no-cache]`
+- K8s deployment: `noetl k8s deploy|remove|redeploy|reset`
+
+Kubernetes deployments use the Rust CLI:
+- Server: `command: ["noetl"], args: ["server", "start"]`
+- Worker: `command: ["noetl"], args: ["worker", "start"]`
+
 ## Building the Images
 
-Use the build script at the repo root:
+### Using Rust CLI (Recommended)
+
+The `noetl` Rust CLI provides integrated build and deployment:
+
+```bash
+# Build with automatic timestamp tagging
+./bin/noetl build
+
+# Build without cache
+./bin/noetl build --no-cache
+
+# Deploy to kind cluster (includes kind load)
+./bin/noetl k8s deploy
+
+# Rebuild and redeploy
+./bin/noetl k8s redeploy [--no-cache]
+```
+
+The Rust CLI automatically:
+- Generates timestamp-based tags (YYYY-MM-DD-HH-MM)
+- Saves tag to `.noetl_last_build_tag.txt`
+- Loads images into kind cluster
+- Updates deployment manifests with correct image references
+
+### Using Build Script (Legacy)
+
+Alternatively, use the build script at the repo root:
 
 ```bash
 ./docker/build-images.sh
@@ -39,9 +86,13 @@ Examples:
 
 In use (do not delete):
 - docker/noetl/pip/Dockerfile — pip-version image (from PyPI)
-- docker/noetl/dev/Dockerfile — local-dev image (from local path)
+- docker/noetl/dev/Dockerfile — local-dev image (from local path, includes Rust CLI build)
 - docker/postgres/Dockerfile — Postgres image
 - docker/jupyter/Dockerfile — used by docker-compose jupyter service
+
+Rust CLI source:
+- noetlctl/src/main.rs — Rust CLI implementation (compiled in rust-builder stage)
+- noetlctl/Cargo.toml — Rust dependencies and build configuration
 
 Not used by current build scripts or K8s deploys (safe to remove):
 - k8s/noetl/Dockerfile

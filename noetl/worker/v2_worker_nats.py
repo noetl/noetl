@@ -43,9 +43,10 @@ class V2Worker:
         nats_url: Optional[str] = None,
         server_url: Optional[str] = None
     ):
-        from noetl.core.config import settings
+        from noetl.core.config import get_worker_settings
+        worker_settings = get_worker_settings()
         self.worker_id = worker_id
-        self.nats_url = nats_url or settings.nats_url
+        self.nats_url = nats_url or worker_settings.nats_url
         self.server_url = server_url  # Fallback, usually comes from notification
         self._running = False
         self._http_client: Optional[httpx.AsyncClient] = None
@@ -53,13 +54,15 @@ class V2Worker:
     
     async def start(self):
         """Start the worker NATS subscription."""
-        from noetl.core.config import settings
+        from noetl.core.config import get_worker_settings
+        worker_settings = get_worker_settings()
         self._running = True
         self._http_client = httpx.AsyncClient(timeout=30.0)
         self._nats_subscriber = NATSCommandSubscriber(
             nats_url=self.nats_url,
-            subject=settings.nats_subject,
-            consumer_name=settings.nats_consumer
+            subject=worker_settings.nats_subject,
+            consumer_name=worker_settings.nats_consumer,
+            stream_name=worker_settings.nats_stream
         )
         
         logger.info(f"Worker {self.worker_id} starting (NATS: {self.nats_url})")
@@ -275,19 +278,14 @@ class V2Worker:
         # The engine uses step.exit for post-step sinks, so we provide both
         
         # Extract result from response for template access
-        # Normalize response: if it has 'data' key, unwrap it for cleaner access
-        current_result = (
-            response.get("data")
-            if isinstance(response, dict) and response.get("data") is not None
-            else response
-        )
+        # Keep response structure intact so templates can access result.data
+        # (HTTP responses are {id, status, data: [...]})
         
         eval_context = {
             **render_context,
             'response': response,
-            'result': current_result,  # Add result for {{ result }} templates
-            'data': current_result,    # Add data for {{ data }} templates
-            'this': response,          # Add this for {{ this }} (full response)
+            'result': response,  # Keep full response structure for {{ result.data }} access
+            'this': response,    # Add this for {{ this }} (full response)
             'event': {'name': 'step.exit'},  # Use step.exit to match playbook conditions
             'error': response.get('error') if isinstance(response, dict) else None
         }
@@ -300,19 +298,35 @@ class V2Worker:
             when_condition = case.get('when')
             then_block = case.get('then')
             
-            if not when_condition or not then_block or not isinstance(then_block, dict):
+            if not when_condition or not then_block:
                 continue
             
-            # Extract case components (order doesn't matter in YAML)
-            collect_config = then_block.get('collect')
-            sink_config = then_block.get('sink')
-            retry_config = then_block.get('retry')
+            # Normalize then_block to list format (supports both dict and list)
+            then_actions = then_block if isinstance(then_block, list) else [then_block]
+            
+            # Look for sink in any of the then actions
+            sink_config = None
+            collect_config = None
+            retry_config = None
+            
+            for action in then_actions:
+                if not isinstance(action, dict):
+                    continue
+                if 'sink' in action:
+                    sink_config = action['sink']
+                if 'collect' in action:
+                    collect_config = action['collect']
+                if 'retry' in action:
+                    retry_config = action['retry']
             
             # Skip if no sink to execute (we only care about sinks here)
             if not sink_config:
                 continue
             
             logger.info(f"[SINK] Case block {idx} has sink, evaluating condition: {when_condition}")
+            logger.info(f"[SINK] eval_context keys: {list(eval_context.keys())}")
+            logger.info(f"[SINK] event.name: {eval_context.get('event', {}).get('name', 'NOT_FOUND')}")
+            logger.info(f"[SINK] response defined: {'response' in eval_context}, response: {eval_context.get('response', 'NOT_FOUND')}")
             
             # Evaluate condition
             try:
@@ -451,6 +465,11 @@ class V2Worker:
             # Execute tool
             response = await self._execute_tool(tool_kind, tool_config, args, step, render_context)
             
+            # CRITICAL: Log case blocks at INFO level for debugging
+            logger.info(f"[CASE-CHECK] After tool execution for step: {step} | case_blocks present: {case_blocks is not None} | type: {type(case_blocks)}")
+            if case_blocks:
+                logger.info(f"[CASE-CHECK] case_blocks length: {len(case_blocks)} | value: {case_blocks}")
+            
             logger.debug(f"[DEBUG] After tool execution for step: {step}")
             logger.debug(f"[DEBUG] case_blocks type: {type(case_blocks)}, value: {case_blocks}")
             logger.debug(f"[DEBUG] case_blocks is None: {case_blocks is None}")
@@ -464,6 +483,7 @@ class V2Worker:
             
             # SINK EXECUTION: Check for case blocks with sinks and execute immediately
             if case_blocks:
+                logger.info(f"[CASE-CHECK] Executing case sinks for {step}")
                 await self._execute_case_sinks(
                     case_blocks,
                     response,
@@ -698,8 +718,9 @@ class V2Worker:
             server_url = context.get('server_url', 'http://noetl.noetl.svc.cluster.local:8082')
             
             # Get refresh threshold from settings
-            from noetl.core.config import settings
-            refresh_threshold = getattr(settings, 'keychain_refresh_threshold', 300)
+            from noetl.core.config import get_worker_settings
+            worker_settings = get_worker_settings()
+            refresh_threshold = worker_settings.keychain_refresh_threshold
             
             context = await populate_keychain_context(
                 task_config=task_config_combined,
@@ -1323,10 +1344,11 @@ class V2Worker:
         name: str,
         payload: dict
     ):
-        """Emit an event to the server."""
+        """Emit an event to the server using the v2 API schema with retry logic."""
         if not self._http_client:
             raise RuntimeError("HTTP client not initialized")
         
+        event_url = f"{server_url.rstrip('/')}/api/events"
         event_data = {
             "execution_id": str(execution_id),
             "step": step,
@@ -1335,19 +1357,33 @@ class V2Worker:
             "worker_id": self.worker_id
         }
         
-        try:
-            response = await self._http_client.post(
-                f"{server_url.rstrip('/')}/api/events",
-                json=event_data,
-                timeout=10.0
-            )
-            response.raise_for_status()
-            
-            logger.debug(f"Emitted event {name} for {step} (execution {execution_id})")
-            
-        except Exception as e:
-            logger.error(f"Failed to emit event {name}: {e}")
-            raise
+        max_retries = 3
+        base_delay = 0.5
+        
+        for attempt in range(max_retries):
+            try:
+                logger.info(f"[HTTP] POST {event_url} - Event: {name} for {step} (execution {execution_id}) - Attempt {attempt + 1}/{max_retries}")
+                
+                response = await self._http_client.post(
+                    event_url,
+                    json=event_data,
+                    timeout=10.0
+                )
+                response.raise_for_status()
+                
+                logger.info(f"[HTTP] Event {name} sent successfully - Status: {response.status_code}")
+                return  # Success - exit retry loop
+                
+            except Exception as e:
+                is_last_attempt = (attempt == max_retries - 1)
+                
+                if is_last_attempt:
+                    logger.error(f"[HTTP] Failed to emit event {name} after {max_retries} attempts: {e}", exc_info=True)
+                    raise RuntimeError(f"Event emission failed after {max_retries} retries: {e}") from e
+                else:
+                    delay = base_delay * (2 ** attempt)  # Exponential backoff
+                    logger.warning(f"[HTTP] Event {name} emission failed (attempt {attempt + 1}/{max_retries}): {e}. Retrying in {delay}s...")
+                    await asyncio.sleep(delay)
 
 
 async def run_v2_worker(

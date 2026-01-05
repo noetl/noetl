@@ -34,7 +34,7 @@ workflow:
           type: file
     
     case:
-      - when: "{{ event.name == 'call.done' and response is defined }}"
+      - when: "{{ event.name == 'step.exit' and response is defined }}"
         then:
           next:
             - step: verify_records
@@ -48,7 +48,7 @@ workflow:
         SELECT * FROM public.script_test ORDER BY id;
     
     case:
-      - when: "{{ event.name == 'call.done' and response is defined }}"
+      - when: "{{ event.name == 'step.exit' and response is defined }}"
         then:
           next:
             - step: cleanup
@@ -62,7 +62,7 @@ workflow:
         DROP TABLE IF EXISTS public.script_test;
     
     case:
-      - when: "{{ event.name == 'call.done' and response is defined }}"
+      - when: "{{ event.name == 'step.exit' and response is defined }}"
         then:
           next:
             - step: end

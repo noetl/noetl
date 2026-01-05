@@ -38,7 +38,7 @@ workflow:
         pg_auth: "{{ workload.pg_auth }}"
     
     case:
-      - when: "{{ event.name == 'call.done' and response is defined }}"
+      - when: "{{ event.name == 'step.exit' and response is defined }}"
         then:
           next:
             - step: truncate_tables
@@ -53,7 +53,7 @@ workflow:
         TRUNCATE TABLE simple_test_nested;
     
     case:
-      - when: "{{ event.name == 'call.done' and response is defined }}"
+      - when: "{{ event.name == 'step.exit' and response is defined }}"
         then:
           next:
             - step: event_test
@@ -75,13 +75,13 @@ workflow:
             }
     
     case:
-      - when: "{{ event.name == 'call.done' and response is defined }}"
+      - when: "{{ event.name == 'step.exit' and response is defined }}"
         then:
-          sink:
-            tool: event_log
-            args: "{{ response }}"
-          next:
-            - step: postgres_flat_test
+          - sink:
+              tool: event_log
+              args: "{{ response }}"
+          - next:
+              - step: postgres_flat_test
 
   # Test 2: Postgres flat structure
   - step: postgres_flat_test
@@ -100,26 +100,28 @@ workflow:
             }
     
     case:
-      - when: "{{ event.name == 'call.done' and response is defined }}"
+      - when: "{{ event.name == 'step.exit' and response is defined }}"
         then:
-          sink:
-            tool: postgres
-            auth: "{{ workload.pg_auth }}"
-            table: simple_test_flat
-            args:
-              test_id: "{{ response.record_id }}"
-              test_name: "{{ response.description }}"
-              test_value: 42
-              storage_type: "flat"
-              test_execution: "{{ execution_id }}"
-            args:
-              test_id: "{{ response.record_id }}"
-              test_name: "{{ response.description }}"
-              test_value: 42
-              storage_type: "flat"
-              test_execution: "{{ execution_id }}"
-          next:
-            - step: postgres_nested_test
+          - sink:
+              tool:
+                kind: postgres
+                auth: "{{ workload.pg_auth }}"
+                statement: |
+                  INSERT INTO simple_test_flat (test_id, test_name, test_value, storage_type, test_execution)
+                  VALUES (
+                    '{{ response.data.record_id }}',
+                    '{{ response.data.description }}',
+                    42,
+                    'flat',
+                    '{{ execution_id }}'
+                  )
+                  ON CONFLICT (test_id) DO UPDATE SET
+                    test_name = EXCLUDED.test_name,
+                    test_value = EXCLUDED.test_value,
+                    storage_type = EXCLUDED.storage_type,
+                    test_execution = EXCLUDED.test_execution;
+          - next:
+              - step: postgres_nested_test
 
   # Test 3: Postgres nested structure
   - step: postgres_nested_test
@@ -148,22 +150,28 @@ workflow:
             }
     
     case:
-      - when: "{{ event.name == 'call.done' and response is defined }}"
+      - when: "{{ event.name == 'step.exit' and response is defined }}"
         then:
-          sink:
-            tool: postgres
-            table: simple_test_nested
-            mode: upsert
-            key: test_id
-            auth: "{{ workload.pg_auth }}"
-            args:
-              test_id: "{{ response.nested_id }}"
-              test_name: "nested_structure_test"
-              test_data: "{{ response.test_data_json }}"
-              storage_type: "nested"
-              test_execution: "{{ execution_id }}"
-          next:
-            - step: end
+          - sink:
+              tool:
+                kind: postgres
+                auth: "{{ workload.pg_auth }}"
+                statement: |
+                  INSERT INTO simple_test_nested (test_id, test_name, test_data, storage_type, test_execution)
+                  VALUES (
+                    '{{ response.nested_id }}',
+                    'nested_structure_test',
+                    '{{ response.test_data_json }}'::jsonb,
+                    'nested',
+                    '{{ execution_id }}'
+                  )
+                  ON CONFLICT (test_id) DO UPDATE SET
+                    test_name = EXCLUDED.test_name,
+                    test_data = EXCLUDED.test_data,
+                    storage_type = EXCLUDED.storage_type,
+                    test_execution = EXCLUDED.test_execution;
+          - next:
+              - step: end
 
   - step: end
     desc: "Test completion"

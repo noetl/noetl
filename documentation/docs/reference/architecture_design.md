@@ -6,7 +6,7 @@
 
 * `server` → orchestration \+ HTTP API; **only** component that applies DSL control flow and updates the queue table.
 
-* `noetlctl` → CLI to manage workers/server lifecycle.
+* `noetl` → CLI to manage workers/server lifecycle.
 
 DSL docs & examples live in files like:
 

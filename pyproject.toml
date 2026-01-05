@@ -45,7 +45,6 @@ dependencies = [
     "PyJWT>=2.8.0",
     "urllib3>=2.3",
     "Authlib>=1.6.5",
-    "typer>=0.15.3",
     "click>=8.1.0,<8.2.1",
     "psutil>=7.0.0",
     "memray>=1.17.2",
@@ -86,7 +85,7 @@ notebook = [
 ]
 
 [project.scripts]
-noetl = "noetl.main:main"
+noetl = "noetl.cli_wrapper:main"
 
 [project.urls]
 Homepage = "https://noetl.io"
@@ -102,7 +101,7 @@ where = ["."]
 include = ["noetl*"]
 
 [tool.setuptools.package-data]
-"noetl" = ["core/ui/**/*", "database/ddl/**/*"]
+"noetl" = ["core/ui/**/*", "database/ddl/**/*", "bin/noetl"]
 
 [dependency-groups]
 dev = ["build>=1.2.2.post1", "twine>=6.1.0"]

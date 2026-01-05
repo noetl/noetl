@@ -72,9 +72,9 @@ tool:
 
 2. **Child Playbooks Registered**:
    ```bash
-   noetlctl catalog register tests/fixtures/playbooks/data_transfer/http_to_postgres_simple/http_to_postgres_simple.yaml
-   noetlctl catalog register tests/fixtures/playbooks/control_flow_workbook/control_flow_workbook.yaml
-   noetlctl catalog register tests/fixtures/playbooks/duckdb_gcs_workload_identity/workload_identity.yaml
+   noetl catalog register tests/fixtures/playbooks/data_transfer/http_to_postgres_simple/http_to_postgres_simple.yaml
+   noetl catalog register tests/fixtures/playbooks/control_flow_workbook/control_flow_workbook.yaml
+   noetl catalog register tests/fixtures/playbooks/duckdb_gcs_workload_identity/workload_identity.yaml
    ```
 
 3. **PostgreSQL Connection**:
@@ -109,20 +109,20 @@ workload:
 
 ## Execution
 
-### Using noetlctl (Recommended)
+### Using noetl (Recommended)
 
 ```bash
 # Register the playbook
-noetlctl catalog register tests/fixtures/playbooks/batch_execution/multi_playbook_batch/multi_playbook_batch.yaml
+noetl catalog register tests/fixtures/playbooks/batch_execution/multi_playbook_batch/multi_playbook_batch.yaml
 
 # Execute the playbook
-noetlctl execute playbook batch_execution/multi_playbook_batch --json
+noetl execute playbook batch_execution/multi_playbook_batch --json
 
 # Get execution status (replace <EXECUTION_ID> with returned id)
-noetlctl execute status <EXECUTION_ID> --json
+noetl execute status <EXECUTION_ID> --json
 
 # Alternative: Direct execution using path
-noetlctl exec batch_execution/multi_playbook_batch
+noetl exec batch_execution/multi_playbook_batch
 ```
 
 ### Using REST API (Alternative)
@@ -143,7 +143,7 @@ curl -s http://localhost:8082/api/executions/<EXECUTION_ID> | jq .
 
 ```bash
 # Get execution details
-noetlctl execute status <EXECUTION_ID> --json
+noetl execute status <EXECUTION_ID> --json
 
 # Check for completion
 curl -s http://localhost:8082/api/executions/<EXECUTION_ID> | jq '.status'
@@ -396,7 +396,7 @@ ORDER BY created_at DESC;
 ### Child Playbook Not Found
 Ensure all child playbooks are registered:
 ```bash
-noetlctl catalog list Playbook | grep -E "(http_to_postgres|control_flow|duckdb_gcs)"
+noetl catalog list Playbook | grep -E "(http_to_postgres|control_flow|duckdb_gcs)"
 ```
 
 ### Database Connection Failed

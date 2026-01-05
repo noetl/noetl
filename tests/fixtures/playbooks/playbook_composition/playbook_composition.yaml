@@ -61,7 +61,7 @@ workflow:
         );
     
     case:
-      - when: "{{ event.name == 'call.done' and response is defined }}"
+      - when: "{{ event.name == 'step.exit' and response is defined }}"
         then:
           next:
             - step: process_users
@@ -83,22 +83,28 @@ workflow:
         execution_context: "{{ execution_id }}"
     
     case:
-      - when: "{{ event.name == 'call.done' and response is defined }}"
+      - when: "{{ event.name == 'step.exit' and response is defined }}"
         then:
-          sink:
-            args:
-              id: "{{ execution_id }}:{{ user.name }}"
-              execution_id: "{{ execution_id }}"
-              user_name: "{{ user.name }}"
-              profile_score: "{{ response.profile_score or 0.0 }}"
-              score_category: "{{ response.score_category or 'unknown' }}"
-            tool: postgres
-            auth: "{{ workload.pg_auth }}"
-            table: public.user_profile_results
-            mode: upsert
-            key: id
-          next:
-            - step: validate_results
+          - sink:
+              tool:
+                kind: postgres
+                auth: "{{ workload.pg_auth }}"
+                statement: |
+                  INSERT INTO public.user_profile_results (id, execution_id, user_name, profile_score, score_category)
+                  VALUES (
+                    '{{ execution_id }}:{{ user.name }}',
+                    '{{ execution_id }}',
+                    '{{ user.name }}',
+                    {{ response.profile_score | default(0.0) }},
+                    '{{ response.score_category | default("unknown") }}'
+                  )
+                  ON CONFLICT (id) DO UPDATE SET
+                    user_name = EXCLUDED.user_name,
+                    profile_score = EXCLUDED.profile_score,
+                    score_category = EXCLUDED.score_category,
+                    processed_at = now();
+          - next:
+              - step: validate_results
 
   - step: validate_results
     desc: "Validate all profile scores are within expected range and categories are correct"
@@ -190,7 +196,7 @@ workflow:
           }
     
     case:
-      - when: "{{ event.name == 'call.done' and response is defined }}"
+      - when: "{{ event.name == 'step.exit' and response is defined }}"
         then:
           next:
             - step: end

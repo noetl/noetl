@@ -1,0 +1,98 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+
+metadata:
+  name: iterator_save_test
+  path: tests/fixtures/playbooks/iterator_save_test/iterator_save_test
+
+workload:
+  pg_auth: pg_local
+  items:
+    - name: "item1"
+      value: 100
+    - name: "item2"
+      value: 200
+    - name: "item3"
+      value: 300
+
+workflow:
+  - step: start
+    desc: Start test
+    tool:
+      kind: python
+      code: |
+        def main():
+            return {"status": "initialized"}
+    
+    case:
+      - when: "{{ event.name == 'step.exit' }}"
+        then:
+          next:
+            - step: create_table
+  
+  - step: create_table
+    desc: Create test table
+    tool:
+      kind: postgres
+      auth: "{{ workload.pg_auth }}"
+      command: |
+        CREATE TABLE IF NOT EXISTS public.iterator_save_test (
+          id TEXT PRIMARY KEY,
+          execution_id TEXT,
+          item_name TEXT,
+          item_value INTEGER,
+          created_at TIMESTAMPTZ DEFAULT now()
+        );
+    
+    case:
+      - when: "{{ event.name == 'step.exit' and response is defined }}"
+        then:
+          next:
+            - step: process_items
+
+  - step: process_items
+    desc: Process items with sink
+    loop:
+      in: "{{ workload.items }}"
+      iterator: item
+      mode: sequential
+    tool:
+      kind: python
+      code: |
+        def main(item):
+            return {
+                'item_name': item.get('name', 'unknown'),
+                'item_value': item.get('value', 0)
+            }
+    
+    case:
+      - when: "{{ event.name == 'step.exit' and response is defined }}"
+        then:
+          - sink:
+              tool:
+                kind: postgres
+                auth: "{{ workload.pg_auth }}"
+                statement: |
+                  INSERT INTO public.iterator_save_test (id, execution_id, item_name, item_value)
+                  VALUES (
+                    '{{ execution_id }}:{{ response.item_name }}',
+                    '{{ execution_id }}',
+                    '{{ response.item_name }}',
+                    {{ response.item_value }}
+                  )
+                  ON CONFLICT (id) DO UPDATE SET
+                    item_value = EXCLUDED.item_value,
+                    created_at = now();
+      
+      - when: "{{ event.name == 'loop.done' }}"
+        then:
+          - next:
+              - step: end
+    
+  - step: end
+    desc: End test
+    tool:
+      kind: python
+      code: |
+        def main():
+            return {"status": "complete"}

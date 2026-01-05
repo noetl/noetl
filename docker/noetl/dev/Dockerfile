@@ -6,6 +6,8 @@ COPY ui-src ./ui-src
 ENV VITE_API_BASE_URL=/api
 RUN cd ui-src && npm run build
 
+# Rust builder stage - can be skipped if using pre-compiled binary
+# To use pre-compiled binary: docker build --build-arg USE_PREBUILT_BINARY=true
 FROM python:3.12-slim AS builder
 
 # Install uv directly instead of copying from ghcr.io
@@ -48,6 +50,12 @@ RUN apt-get update && apt-get --no-install-recommends install -y \
 
 COPY --from=builder /opt/noetl/.venv /opt/noetl/.venv
 
+# Optional: Copy pre-compiled Rust binary if available
+# Binaries must be built separately using: scripts/build_rust_multiarch.sh
+# For now, Rust CLI is optional - Python CLI works fine
+# ARG TARGETARCH
+# COPY noetlctl/target/x86_64-unknown-linux-gnu/release/noetl /usr/local/bin/noetl || echo "No Rust binary"
+
 WORKDIR /opt/noetl
 
 COPY --from=builder /opt/noetl/noetl ./noetl
@@ -62,10 +70,8 @@ ENV PATH="/opt/noetl/.venv/bin:$PATH"
 
 ENV NOETL_ENABLE_UI=false
 
-# Default command runs the server, but can be overridden with environment variables:
-# - Set NOETL_RUN_MODE=server for the default server mode
-# - Set NOETL_RUN_MODE=worker and NOETL_PLAYBOOK_PATH for worker mode
-# - Set NOETL_RUN_MODE=cli for CLI mode
-CMD ["python", "-m", "noetl.main", "server", "start", "--host", "0.0.0.0", "--port", "8080"]
+# Default command: Use Python directly (more reliable across architectures)
+# Rust CLI can be used manually: noetl server start --host 0.0.0.0 --port 8082
+CMD ["python", "-m", "noetl.server", "--host", "0.0.0.0", "--port", "8082", "--init-db"]
 
 # ===

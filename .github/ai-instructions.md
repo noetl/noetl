@@ -26,7 +26,7 @@ NoETL is a workflow automation framework for data processing and MLOps orchestra
 **Core Components:**
 - **Server** (`noetl/server/`): FastAPI-based orchestration engine with REST APIs for catalog, events, queue, and execution coordination
 - **Worker** (`noetl/worker/`): Polling workers that lease jobs from PostgreSQL queue and execute tasks
-- **CLI** (`noetl/cli/ctl.py`): Typer-based command interface managing server/worker lifecycle
+- **CLI** (`noetlctl/src/main.rs`): Rust-based command interface (binary: `noetl`) managing server/worker lifecycle, build, and K8s deployment
 - **Plugins** (`noetl/tools/`): Extensible action executors (http, postgres, duckdb, python, secrets, etc.)
 - **Observability** (`ci/manifests/clickhouse/`): ClickHouse-based observability stack with OpenTelemetry schema for logs, metrics, and traces
 
@@ -49,14 +49,32 @@ task test:regression:full                           # Complete regression test s
 task test-*-full                                    # Integration tests (register credentials, playbook, execute)
 ```
 
-**Local Development:**
+**Local Development (Rust CLI Recommended):**
 ```bash
-task docker-build-noetl          # Build NoETL container image
-task kind-create-cluster         # Create kind Kubernetes cluster
-task test-cluster-health         # Check cluster health and endpoints
-task clear-all-cache             # Clear local file cache
-task observability:status-all    # Check all observability services
-task observability:health-all    # Health check all services
+# Build and deployment
+./bin/noetl build [--no-cache]       # Build Docker image with Rust CLI
+./bin/noetl k8s deploy               # Deploy to kind cluster (auto-loads image)
+./bin/noetl k8s redeploy             # Rebuild and redeploy
+./bin/noetl k8s reset                # Full reset: schema + redeploy + test setup
+./bin/noetl k8s remove               # Remove NoETL from cluster
+
+# Server/Worker management (local)
+./bin/noetl server start [--init-db] # Start FastAPI server
+./bin/noetl server stop [--force]    # Stop server
+./bin/noetl worker start             # Start worker (v2 architecture default)
+./bin/noetl worker stop              # Stop worker
+
+# Database management
+./bin/noetl db init                  # Initialize database schema
+./bin/noetl db validate              # Validate database schema
+
+# Legacy task commands (still available)
+task docker-build-noetl              # Build NoETL container image
+task kind-create-cluster             # Create kind Kubernetes cluster
+task test-cluster-health             # Check cluster health and endpoints
+task clear-all-cache                 # Clear local file cache
+task observability:status-all        # Check all observability services
+task observability:health-all        # Health check all services
 ```
 
 ## Project-Specific Patterns

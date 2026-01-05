@@ -38,7 +38,7 @@ workflow:
         X-Environment: "{{ workload.environment }}"
     
     case:
-      - when: "{{ event.name == 'call.done' and response is defined }}"
+      - when: "{{ event.name == 'step.exit' and response is defined }}"
         then:
           set:
             # Extract variables AFTER execution for reuse
@@ -72,7 +72,7 @@ workflow:
         retry_count: "{{ workload.retry_limit }}"
     
     case:
-      - when: "{{ event.name == 'call.done' and response is defined and response.is_active }}"
+      - when: "{{ event.name == 'step.exit' and response is defined and response.is_active }}"
         then:
           set:
             # Extract AFTER execution
@@ -87,7 +87,7 @@ workflow:
                 domain: "{{ response.email_domain }}"
                 score: "{{ response.score }}"
       
-      - when: "{{ event.name == 'call.done' and response is defined and not response.is_active }}"
+      - when: "{{ event.name == 'step.exit' and response is defined and not response.is_active }}"
         then:
           set:
             - name: email_domain
@@ -116,7 +116,7 @@ workflow:
         global_env: "{{ workload.environment }}"
     
     case:
-      - when: "{{ event.name == 'call.done' and response is defined }}"
+      - when: "{{ event.name == 'step.exit' and response is defined }}"
         then:
           next:
             - step: store_results
@@ -138,7 +138,7 @@ workflow:
         status: "{{ vars.user_status }}"
     
     case:
-      - when: "{{ event.name == 'call.done' and response is defined }}"
+      - when: "{{ event.name == 'step.exit' and response is defined }}"
         then:
           next:
             - step: store_results
@@ -169,7 +169,7 @@ workflow:
         inactive_result: "{{ inactive_user_flow.message if inactive_user_flow else 'N/A' }}"
     
     case:
-      - when: "{{ event.name == 'call.done' and response is defined }}"
+      - when: "{{ event.name == 'step.exit' and response is defined }}"
         then:
           next:
             - step: end
