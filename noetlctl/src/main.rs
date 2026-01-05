@@ -1609,14 +1609,15 @@ async fn build_docker_image(no_cache: bool, platform: &str) -> Result<()> {
     println!("Building Docker image: {}/{}:{}", registry, image_name, image_tag);
     println!("Target platform: {}", platform);
 
-    let cache_arg = if no_cache { "--no-cache" } else { "" };
-
     let mut cmd = Command::new("docker");
+    cmd.arg("buildx");
     cmd.arg("build");
 
-    if no_cache {
-        cmd.arg(cache_arg);
-    }
+    // if no_cache {
+    //     cmd.arg("--no-cache");
+    // }
+    cmd.arg("--no-cache");
+    cmd.arg("--progress=plain");
 
     // Build for specified platform (default: linux/amd64 for Kind/K8s compatibility)
     cmd.arg("--platform").arg(platform);
@@ -1629,12 +1630,16 @@ async fn build_docker_image(no_cache: bool, platform: &str) -> Result<()> {
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
 
+    let cr = std::env::current_dir()?;
+
+    cmd.current_dir(cr);
+
     println!("cwd = {:?}", std::env::current_dir()?);
 
-    cmd.env("DOCKER_BUILDKIT", "0");
+    // cmd.env("DOCKER_BUILDKIT", "0");
 
     println!(
-        "Running: docker build{} --platform {} -t {}/{}:{} -f docker/noetl/dev/Dockerfile .",
+        "Running: docker buildx build{} --progress=plain --platform {} -t {}/{}:{} -f docker/noetl/dev/Dockerfile .",
         if no_cache { " --no-cache" } else { "" },
         platform,
         registry,
@@ -1644,24 +1649,31 @@ async fn build_docker_image(no_cache: bool, platform: &str) -> Result<()> {
 
     let mut child = cmd.spawn().context("Failed to spawn docker build command")?;
 
-    // Stream stdout
-    if let Some(stdout) = child.stdout.take() {
+    // Clone the stdout and stderr to read in separate threads
+    let stdout = child.stdout.take().unwrap();
+    let stderr = child.stderr.take().unwrap();
+
+    let stdout_thread = std::thread::spawn(move || {
         let reader = BufReader::new(stdout);
         for line in reader.lines() {
             if let Ok(line) = line {
                 println!("{}", line);
             }
         }
-    }
+    });
 
-    if let Some(stdout) = child.stderr.take() {
-        let reader = BufReader::new(stdout);
+    let stderr_thread = std::thread::spawn(move || {
+        let reader = BufReader::new(stderr);
         for line in reader.lines() {
             if let Ok(line) = line {
-                println!("Err: {}", line);
+                println!("{}", line);
             }
         }
-    }
+    });
+
+    // Wait for both threads to finish
+    stdout_thread.join().unwrap();
+    stderr_thread.join().unwrap();
 
     let status = child.wait()?;
 
