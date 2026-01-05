@@ -1613,10 +1613,10 @@ async fn build_docker_image(no_cache: bool, platform: &str) -> Result<()> {
     cmd.arg("buildx");
     cmd.arg("build");
 
-    // if no_cache {
-    //     cmd.arg("--no-cache");
-    // }
-    cmd.arg("--no-cache");
+    if no_cache {
+        cmd.arg("--no-cache");
+    }
+    // cmd.arg("--no-cache");
     cmd.arg("--progress=plain");
 
     // Build for specified platform (default: linux/amd64 for Kind/K8s compatibility)
