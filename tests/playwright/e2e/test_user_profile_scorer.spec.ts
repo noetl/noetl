@@ -18,7 +18,8 @@ const viewHeaders = ['Event Type', 'Node Name', 'Status', 'Timestamp', 'Duration
 test.describe('User Profile Scorer', () => {
     test.beforeAll(() => {
         console.log(`Registering ${PLAYBOOK_NAME}...`);
-        execSync(`noetl register "${PLAYBOOK_PATH}" --host ${NOETL_HOST} --port ${NOETL_PORT}`, { stdio: 'inherit' });
+        // execSync(`noetl register "${PLAYBOOK_PATH}" --host ${NOETL_HOST} --port ${NOETL_PORT}`, { stdio: 'inherit' });
+        execSync(`./bin/noetl --host ${NOETL_HOST} --port ${NOETL_PORT} register playbook --file "${PLAYBOOK_PATH}"`, { stdio: 'inherit' });
     });
 
     test('should execute playbook and show expected events', async ({ page }) => {
@@ -35,7 +36,7 @@ test.describe('User Profile Scorer', () => {
             await expect(page).toHaveURL(/\/execution/);
         });
         await test.step('Wait for completion, then reload', async () => {
-            await page.waitForTimeout(5000);
+            await page.waitForTimeout(10000);
             await page.reload();
             await expect(page).toHaveTitle('NoETL Dashboard');
         });

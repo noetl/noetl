@@ -21,7 +21,7 @@ const viewHeaders = ['Event Type', 'Node Name', 'Status', 'Timestamp', 'Duration
 test.describe('Save Simple Test', () => {
     test.beforeAll(() => {
         console.log(`Registering ${PLAYBOOK_NAME}...`);
-        execSync(`noetl register "${PLAYBOOK_PATH}" --host ${NOETL_HOST} --port ${NOETL_PORT}`, { stdio: 'inherit' });
+        execSync(`./bin/noetl --host ${NOETL_HOST} --port ${NOETL_PORT} register playbook --file "${PLAYBOOK_PATH}"`, { stdio: 'inherit' });
     });
 
     test('should execute playbook and show expected events', async ({ page }) => {

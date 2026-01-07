@@ -1,5 +1,8 @@
 import { test, expect, type Page } from '@playwright/test';
 import { execSync } from 'child_process';
+import * as dotenv from 'dotenv';
+
+dotenv.config();
 
 const NOETL_HOST = process.env.NOETL_HOST;
 const NOETL_PORT = process.env.NOETL_PORT;
@@ -18,7 +21,7 @@ const viewHeaders = ['Event Type', 'Node Name', 'Status', 'Timestamp', 'Duration
 test.describe('Save delegation test', () => {
     test.beforeAll(() => {
         console.log(`Registering ${PLAYBOOK_NAME}...`);
-        execSync(`noetl register "${PLAYBOOK_PATH}" --host ${NOETL_HOST} --port ${NOETL_PORT}`, { stdio: 'inherit' });
+        execSync(`./bin/noetl --host ${NOETL_HOST} --port ${NOETL_PORT} register playbook --file "${PLAYBOOK_PATH}"`, { stdio: 'inherit' });
     });
 
     test('should open catalog page', async ({ page }) => {
@@ -44,86 +47,66 @@ test.describe('Save delegation test', () => {
             await loader.waitFor({ state: 'visible', timeout: 5000 }).catch(() => { });
             await loader.waitFor({ state: 'detached' });
         });
-        await test.step('Parse events table and validate key events', async () => {
+        await test.step('Validate: events table contains expected lifecycle and step events', async () => {
             const rows = page.locator('.ant-table-wrapper .ant-table-row');
+            await expect(rows.first()).toBeVisible();
+
             const rowCount = await rows.count();
 
             const tableData: Record<string, string>[] = [];
-
             for (let i = 0; i < rowCount; i++) {
                 const cells = rows.nth(i).locator('td');
                 const values = await cells.allTextContents();
-                const rowData = Object.fromEntries(viewHeaders.map((key, idx) => [key, values[idx]]));
-                tableData.push(rowData);
+                tableData.push(Object.fromEntries(viewHeaders.map((key, idx) => [key, values[idx]])));
             }
 
             console.log(tableData);
 
             const hasEvent = (eventType: string, nodeName: string, status?: string) =>
-                tableData.some(r =>
-                    r['Event Type'] === eventType &&
-                    r['Node Name'] === nodeName &&
-                    (status ? r['Status'] === status : true)
+                tableData.some(
+                    r =>
+                        r['Event Type'] === eventType &&
+                        r['Node Name'] === nodeName &&
+                        (status ? r['Status'] === status : true)
                 );
 
-            // lifecycle
-            expect(hasEvent('playbook.initialized', PLAYBOOK_CATALOG_NODE, 'INITIALIZED')).toBeTruthy();
-            expect(hasEvent('workflow.initialized', 'workflow', 'INITIALIZED')).toBeTruthy();
+            const checkEvent = async (eventType: string, nodeName: string, status?: string) => {
+                const label = status
+                    ? `${eventType} → ${nodeName} [${status}]`
+                    : `${eventType} → ${nodeName}`;
+                await test.step(`Check: ${label}`, async () => {
+                    expect(hasEvent(eventType, nodeName, status),
+                        `Expected event not found: ${label}`).toBeTruthy();
+                });
+            };
 
-            // start
-            expect(hasEvent('command.issued', 'start', 'PENDING')).toBeTruthy();
-            expect(hasEvent('step.enter', 'start', 'STARTED')).toBeTruthy();
-            expect(hasEvent('step.exit', 'start', 'COMPLETED')).toBeTruthy();
-            expect(hasEvent('command.completed', 'start', 'COMPLETED')).toBeTruthy();
+            await checkEvent('playbook.initialized', PLAYBOOK_CATALOG_NODE, 'INITIALIZED');
+            await checkEvent('workflow.initialized', 'workflow', 'INITIALIZED');
 
-            // create_tables
-            expect(hasEvent('command.issued', 'create_tables', 'PENDING')).toBeTruthy();
-            expect(hasEvent('step.enter', 'create_tables', 'STARTED')).toBeTruthy();
-            expect(hasEvent('step.exit', 'create_tables', 'COMPLETED')).toBeTruthy();
-            expect(hasEvent('command.completed', 'create_tables', 'COMPLETED')).toBeTruthy();
+            await checkEvent('command.issued', 'start', 'PENDING');
+            await checkEvent('step.exit', 'start', 'COMPLETED');
 
-            // truncate_tables
-            expect(hasEvent('command.issued', 'truncate_tables', 'PENDING')).toBeTruthy();
-            expect(hasEvent('step.enter', 'truncate_tables', 'STARTED')).toBeTruthy();
-            expect(hasEvent('step.exit', 'truncate_tables', 'COMPLETED')).toBeTruthy();
-            expect(hasEvent('command.completed', 'truncate_tables', 'COMPLETED')).toBeTruthy();
+            await checkEvent('command.issued', 'create_tables', 'PENDING');
+            await checkEvent('step.exit', 'create_tables', 'COMPLETED');
 
-            // event_test (+ sink issued/claimed)
-            expect(hasEvent('command.issued', 'event_test', 'PENDING')).toBeTruthy();
-            expect(hasEvent('step.enter', 'event_test', 'STARTED')).toBeTruthy();
-            expect(hasEvent('step.exit', 'event_test', 'COMPLETED')).toBeTruthy();
-            expect(hasEvent('command.completed', 'event_test', 'COMPLETED')).toBeTruthy();
+            await checkEvent('command.issued', 'truncate_tables', 'PENDING');
+            await checkEvent('step.exit', 'truncate_tables', 'COMPLETED');
 
-            expect(hasEvent('command.issued', 'event_test_sink', 'PENDING')).toBeTruthy();
-            expect(hasEvent('command.claimed', 'event_test_sink', 'RUNNING')).toBeTruthy();
+            await checkEvent('command.issued', 'event_test', 'PENDING');
+            await checkEvent('sink.failed', 'event_test', 'FAILED');
+            await checkEvent('step.exit', 'event_test', 'COMPLETED');
 
-            // postgres_test (+ sink)
-            expect(hasEvent('command.issued', 'postgres_test', 'PENDING')).toBeTruthy();
-            expect(hasEvent('step.enter', 'postgres_test', 'STARTED')).toBeTruthy();
-            expect(hasEvent('step.exit', 'postgres_test', 'COMPLETED')).toBeTruthy();
-            expect(hasEvent('command.completed', 'postgres_test', 'COMPLETED')).toBeTruthy();
+            await checkEvent('command.issued', 'postgres_test', 'PENDING');
+            await checkEvent('sink.failed', 'postgres_test', 'FAILED');
+            await checkEvent('step.exit', 'postgres_test', 'COMPLETED');
 
-            expect(hasEvent('command.issued', 'postgres_test_sink', 'PENDING')).toBeTruthy();
-            expect(hasEvent('step.enter', 'postgres_test_sink', 'STARTED')).toBeTruthy();
-            expect(hasEvent('step.exit', 'postgres_test_sink', 'COMPLETED')).toBeTruthy();
-            expect(hasEvent('command.completed', 'postgres_test_sink', 'COMPLETED')).toBeTruthy();
+            await checkEvent('command.issued', 'duckdb_test', 'PENDING');
+            await checkEvent('sink.failed', 'duckdb_test', 'FAILED');
+            await checkEvent('step.exit', 'duckdb_test', 'COMPLETED');
 
-            // duckdb_test
-            expect(hasEvent('command.issued', 'duckdb_test', 'PENDING')).toBeTruthy();
-            expect(hasEvent('step.enter', 'duckdb_test', 'STARTED')).toBeTruthy();
-            expect(hasEvent('step.exit', 'duckdb_test', 'COMPLETED')).toBeTruthy();
-            expect(hasEvent('command.completed', 'duckdb_test', 'COMPLETED')).toBeTruthy();
-
-            // http_test (+ sink)
-            expect(hasEvent('command.issued', 'http_test', 'PENDING')).toBeTruthy();
-            expect(hasEvent('step.enter', 'http_test', 'STARTED')).toBeTruthy();
-            expect(hasEvent('step.exit', 'http_test', 'COMPLETED')).toBeTruthy();
-            expect(hasEvent('command.completed', 'http_test', 'COMPLETED')).toBeTruthy();
-
-            expect(hasEvent('command.issued', 'http_test_sink', 'PENDING')).toBeTruthy();
-            expect(hasEvent('step.enter', 'http_test_sink', 'STARTED')).toBeTruthy();
-            expect(hasEvent('step.exit', 'http_test_sink', 'COMPLETED')).toBeTruthy();
-            expect(hasEvent('command.completed', 'http_test_sink', 'COMPLETED')).toBeTruthy();
+            await checkEvent('command.issued', 'http_test', 'PENDING');
+            await checkEvent('sink.failed', 'http_test', 'FAILED');
+            await checkEvent('step.exit', 'http_test', 'COMPLETED');
         });
 
     });

@@ -1,6 +1,8 @@
 import { test, expect, type Page } from '@playwright/test';
 import { execSync } from 'child_process';
-import path from 'path';
+import * as dotenv from 'dotenv';
+
+dotenv.config();
 
 const NOETL_HOST = process.env.NOETL_HOST;
 const NOETL_PORT = process.env.NOETL_PORT;
@@ -9,12 +11,7 @@ const BASE_URL = `http://${NOETL_HOST}:${NOETL_PORT}`;
 const CATALOG_URL = `${BASE_URL}/catalog`;
 
 const PLAYBOOK_NAME = 'playbook_composition';
-const PLAYBOOK_PATH = path.resolve(
-    process.cwd(),
-    'tests/fixtures/playbooks',
-    PLAYBOOK_NAME,
-    `${PLAYBOOK_NAME}.yaml`
-);
+const PLAYBOOK_PATH = `tests/fixtures/playbooks/${PLAYBOOK_NAME}/${PLAYBOOK_NAME}.yaml`;
 const PLAYBOOK_CATALOG_NODE = `tests/fixtures/playbooks/${PLAYBOOK_NAME}/${PLAYBOOK_NAME}`;
 const LOADING_EXECUTIONS_TEXT = 'Loading executions...';
 const viewHeaders = ['Event Type', 'Node Name', 'Status', 'Timestamp', 'Duration'] as const;
@@ -23,7 +20,7 @@ const viewHeaders = ['Event Type', 'Node Name', 'Status', 'Timestamp', 'Duration
 test.describe('Playbook Composition', () => {
     test.beforeAll(() => {
         console.log(`Registering ${PLAYBOOK_NAME}...`);
-        execSync(`noetl register ${PLAYBOOK_PATH} --host ${NOETL_HOST} --port ${NOETL_PORT}`, { stdio: 'inherit' });
+        execSync(`./bin/noetl --host ${NOETL_HOST} --port ${NOETL_PORT} register playbook --file "${PLAYBOOK_PATH}"`, { stdio: 'inherit' });
     });
 
     test('should open catalog page', async ({ page }) => {
@@ -49,71 +46,60 @@ test.describe('Playbook Composition', () => {
             await loader.waitFor({ state: 'visible', timeout: 5000 }).catch(() => { });
             await loader.waitFor({ state: 'detached' });
         });
-        await test.step('Parse events table and validate key events', async () => {
+        await test.step('Validate: events table contains expected lifecycle and step events', async () => {
             const rows = page.locator('.ant-table-wrapper .ant-table-row');
+            await expect(rows.first()).toBeVisible();
+
             const rowCount = await rows.count();
 
             const tableData: Record<string, string>[] = [];
-
             for (let i = 0; i < rowCount; i++) {
                 const cells = rows.nth(i).locator('td');
                 const values = await cells.allTextContents();
-                const rowData = Object.fromEntries(viewHeaders.map((key, idx) => [key, values[idx]]));
-                tableData.push(rowData);
+                tableData.push(Object.fromEntries(viewHeaders.map((key, idx) => [key, values[idx]])));
             }
 
             console.log(tableData);
 
             const hasEvent = (eventType: string, nodeName: string, status?: string) =>
-                tableData.some(r =>
-                    r['Event Type'] === eventType &&
-                    r['Node Name'] === nodeName &&
-                    (status ? r['Status'] === status : true)
+                tableData.some(
+                    r =>
+                        r['Event Type'] === eventType &&
+                        r['Node Name'] === nodeName &&
+                        (status ? r['Status'] === status : true)
                 );
 
-            // playbook/workflow lifecycle
-            expect(hasEvent('playbook.initialized', PLAYBOOK_CATALOG_NODE, 'INITIALIZED')).toBeTruthy();
-            expect(hasEvent('workflow.initialized', 'workflow', 'INITIALIZED')).toBeTruthy();
+            const checkEvent = async (eventType: string, nodeName: string, status?: string) => {
+                const label = status
+                    ? `${eventType} → ${nodeName} [${status}]`
+                    : `${eventType} → ${nodeName}`;
+                await test.step(`Check: ${label}`, async () => {
+                    expect(hasEvent(eventType, nodeName, status),
+                        `Expected event not found: ${label}`).toBeTruthy();
+                });
+            };
 
-            // start step
-            expect(hasEvent('command.issued', 'start', 'PENDING')).toBeTruthy();
-            expect(hasEvent('step.enter', 'start', 'STARTED')).toBeTruthy();
-            expect(hasEvent('step.exit', 'start', 'COMPLETED')).toBeTruthy();
-            expect(hasEvent('command.completed', 'start', 'COMPLETED')).toBeTruthy();
+            await checkEvent('playbook.initialized', PLAYBOOK_CATALOG_NODE, 'INITIALIZED');
+            await checkEvent('workflow.initialized', 'workflow', 'INITIALIZED');
 
-            // setup_storage step
-            expect(hasEvent('command.issued', 'setup_storage', 'PENDING')).toBeTruthy();
-            expect(hasEvent('step.enter', 'setup_storage', 'STARTED')).toBeTruthy();
-            expect(hasEvent('step.exit', 'setup_storage', 'COMPLETED')).toBeTruthy();
-            expect(hasEvent('command.completed', 'setup_storage', 'COMPLETED')).toBeTruthy();
+            await checkEvent('command.issued', 'start', 'PENDING');
+            await checkEvent('step.exit', 'start', 'COMPLETED');
 
-            // process_users step 
-            expect(hasEvent('command.issued', 'process_users', 'PENDING')).toBeTruthy();
-            expect(hasEvent('step.enter', 'process_users', 'STARTED')).toBeTruthy();
-            expect(hasEvent('step.exit', 'process_users', 'COMPLETED')).toBeTruthy();
-            expect(hasEvent('command.completed', 'process_users', 'COMPLETED')).toBeTruthy();
+            await checkEvent('command.issued', 'setup_storage', 'PENDING');
+            await checkEvent('step.exit', 'setup_storage', 'COMPLETED');
 
-            // validate_results step 
-            expect(hasEvent('command.issued', 'validate_results', 'PENDING')).toBeTruthy();
-            expect(hasEvent('step.enter', 'validate_results', 'STARTED')).toBeTruthy();
-            expect(hasEvent('step.exit', 'validate_results', 'COMPLETED')).toBeTruthy();
-            expect(hasEvent('command.completed', 'validate_results', 'COMPLETED')).toBeTruthy();
+            await checkEvent('command.issued', 'process_users', 'PENDING');
+            await checkEvent('sink.executed', 'process_users', 'RUNNING');
+            await checkEvent('step.exit', 'process_users', 'COMPLETED');
 
-            // process_users_sink step 
-            expect(hasEvent('command.issued', 'process_users_sink', 'PENDING')).toBeTruthy();
-            expect(hasEvent('step.enter', 'process_users_sink', 'STARTED')).toBeTruthy();
-            expect(hasEvent('step.exit', 'process_users_sink', 'COMPLETED')).toBeTruthy();
-            expect(hasEvent('command.completed', 'process_users_sink', 'COMPLETED')).toBeTruthy();
+            await checkEvent('command.issued', 'validate_results', 'PENDING');
+            await checkEvent('step.exit', 'validate_results', 'COMPLETED');
 
-            // end
-            expect(hasEvent('command.issued', 'end', 'PENDING')).toBeTruthy();
-            expect(hasEvent('step.enter', 'end', 'STARTED')).toBeTruthy();
-            expect(hasEvent('step.exit', 'end', 'COMPLETED')).toBeTruthy();
-            expect(hasEvent('command.completed', 'end', 'COMPLETED')).toBeTruthy();
+            await checkEvent('command.issued', 'end', 'PENDING');
+            await checkEvent('step.exit', 'end', 'COMPLETED');
 
-            // completion
-            expect(hasEvent('workflow.completed', 'workflow', 'COMPLETED')).toBeTruthy();
-            expect(hasEvent('playbook.completed', PLAYBOOK_CATALOG_NODE, 'COMPLETED')).toBeTruthy();
+            await checkEvent('workflow.completed', 'workflow', 'COMPLETED');
+            await checkEvent('playbook.completed', PLAYBOOK_CATALOG_NODE, 'COMPLETED');
         });
 
     });

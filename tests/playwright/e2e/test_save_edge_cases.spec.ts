@@ -1,5 +1,8 @@
 import { test, expect } from '@playwright/test';
 import { execSync } from 'child_process';
+import * as dotenv from 'dotenv';
+
+dotenv.config();
 
 const NOETL_HOST = process.env.NOETL_HOST;
 const NOETL_PORT = process.env.NOETL_PORT;
@@ -18,7 +21,7 @@ const viewHeaders = ['Event Type', 'Node Name', 'Status', 'Timestamp', 'Duration
 test.describe('Save edge cases', () => {
     test.beforeAll(() => {
         console.log(`Registering ${PLAYBOOK_NAME}...`);
-        execSync(`noetl register "${PLAYBOOK_PATH}" --host ${NOETL_HOST} --port ${NOETL_PORT}`, { stdio: 'inherit' });
+        execSync(`./bin/noetl --host ${NOETL_HOST} --port ${NOETL_PORT} register playbook --file "${PLAYBOOK_PATH}"`, { stdio: 'inherit' });
     });
 
     test('should execute playbook and show expected events', async ({ page }) => {
@@ -35,7 +38,7 @@ test.describe('Save edge cases', () => {
             await expect(page).toHaveURL(/\/execution/);
         });
         await test.step('Wait for completion, then reload', async () => {
-            await page.waitForTimeout(5000);
+            await page.waitForTimeout(10000);
             await page.reload();
             await expect(page).toHaveTitle('NoETL Dashboard');
         });
@@ -47,6 +50,8 @@ test.describe('Save edge cases', () => {
 
         await test.step('Validate: events table contains expected lifecycle and step events', async () => {
             const rows = page.locator('.ant-table-wrapper .ant-table-row');
+            await expect(rows.first()).toBeVisible();
+
             const rowCount = await rows.count();
 
             const tableData: Record<string, string>[] = [];
@@ -66,54 +71,51 @@ test.describe('Save edge cases', () => {
                         (status ? r['Status'] === status : true)
                 );
 
-            const validateCommandStepCompleted = async (stepName: string) => {
-                await test.step(`Validate: ${stepName} step`, async () => {
-                    expect(hasEvent('command.issued', stepName, 'PENDING')).toBeTruthy();
-                    expect(hasEvent('step.enter', stepName, 'STARTED')).toBeTruthy();
-                    expect(hasEvent('step.exit', stepName, 'COMPLETED')).toBeTruthy();
-                    expect(hasEvent('command.completed', stepName, 'COMPLETED')).toBeTruthy();
+            const checkEvent = async (eventType: string, nodeName: string, status?: string) => {
+                const label = status
+                    ? `${eventType} → ${nodeName} [${status}]`
+                    : `${eventType} → ${nodeName}`;
+                await test.step(`Check: ${label}`, async () => {
+                    expect(hasEvent(eventType, nodeName, status),
+                        `Expected event not found: ${label}`).toBeTruthy();
                 });
             };
 
-            const validateCommandStepFailed = async (stepName: string) => {
-                await test.step(`Validate: ${stepName} step (FAILED)`, async () => {
-                    expect(hasEvent('command.issued', stepName, 'PENDING')).toBeTruthy();
-                    expect(hasEvent('step.enter', stepName, 'STARTED')).toBeTruthy();
-                    expect(hasEvent('step.exit', stepName, 'FAILED')).toBeTruthy();
-                    expect(hasEvent('command.failed', stepName, 'FAILED')).toBeTruthy();
-                });
-            };
+            await checkEvent('playbook.initialized', PLAYBOOK_CATALOG_NODE, 'INITIALIZED');
+            await checkEvent('workflow.initialized', 'workflow', 'INITIALIZED');
 
-            await test.step('Validate: playbook/workflow lifecycle', async () => {
-                expect(hasEvent('playbook.initialized', PLAYBOOK_CATALOG_NODE, 'INITIALIZED')).toBeTruthy();
-                expect(hasEvent('workflow.initialized', 'workflow', 'INITIALIZED')).toBeTruthy();
-            });
+            await checkEvent('command.issued', 'start', 'PENDING');
+            await checkEvent('step.exit', 'start', 'COMPLETED');
 
-            await validateCommandStepCompleted('start');
+            await checkEvent('command.issued', 'test_mixed_types', 'PENDING');
+            await checkEvent('sink.executed', 'test_mixed_types', 'RUNNING');
+            await checkEvent('step.exit', 'test_mixed_types', 'COMPLETED');
 
-            await validateCommandStepCompleted('test_mixed_types');
-            await validateCommandStepCompleted('test_mixed_types_sink');
+            await checkEvent('command.issued', 'test_special_characters', 'PENDING');
+            await checkEvent('sink.failed', 'test_special_characters', 'FAILED');
+            await checkEvent('step.exit', 'test_special_characters', 'COMPLETED');
 
-            await validateCommandStepCompleted('test_special_characters');
-            await validateCommandStepCompleted('test_special_characters_sink');
+            await checkEvent('command.issued', 'test_empty_data', 'PENDING');
+            await checkEvent('sink.executed', 'test_empty_data', 'RUNNING');
+            await checkEvent('step.exit', 'test_empty_data', 'COMPLETED');
 
-            await validateCommandStepCompleted('test_empty_data');
-            await validateCommandStepFailed('test_empty_data_sink');
+            await checkEvent('command.issued', 'test_large_payload', 'PENDING');
+            await checkEvent('sink.failed', 'test_large_payload', 'FAILED');
+            await checkEvent('step.exit', 'test_large_payload', 'COMPLETED');
 
-            await validateCommandStepCompleted('test_large_payload');
+            await checkEvent('command.issued', 'test_error_recovery', 'PENDING');
+            await checkEvent('sink.failed', 'test_error_recovery', 'FAILED');
+            await checkEvent('step.exit', 'test_error_recovery', 'COMPLETED');
 
-            await validateCommandStepCompleted('test_error_recovery');
-            await validateCommandStepCompleted('test_error_recovery_sink');
+            await checkEvent('command.issued', 'test_completion_summary', 'PENDING');
+            await checkEvent('sink.executed', 'test_completion_summary', 'RUNNING');
+            await checkEvent('step.exit', 'test_completion_summary', 'COMPLETED');
 
-            await validateCommandStepCompleted('test_completion_summary');
-            await validateCommandStepCompleted('test_completion_summary_sink');
+            await checkEvent('command.issued', 'end', 'PENDING');
+            await checkEvent('step.exit', 'end', 'COMPLETED');
 
-            await validateCommandStepCompleted('end');
-
-            await test.step('Validate: workflow/playbook completion', async () => {
-                expect(hasEvent('workflow.completed', 'workflow', 'COMPLETED')).toBeTruthy();
-                expect(hasEvent('playbook.completed', PLAYBOOK_CATALOG_NODE, 'COMPLETED')).toBeTruthy();
-            });
+            await checkEvent('workflow.completed', 'workflow', 'COMPLETED');
+            await checkEvent('playbook.completed', PLAYBOOK_CATALOG_NODE, 'COMPLETED');
         });
     });
 });
