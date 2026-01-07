@@ -49,6 +49,10 @@ workflow:
 
   - step: insert_posts
     desc: Insert posts into PostgreSQL
+    loop:
+      in: "{{ fetch_http_data.data }}"
+      iterator: item
+      mode: sequential
     tool:
       kind: postgres
       auth: "{{ workload.pg_auth }}"
@@ -60,11 +64,11 @@ workflow:
           $${{ item.title }}$$,
           $${{ item.body }}$$
         );
-    loop:
-      in: "{{ fetch_http_data.data }}"
-      iterator: item
-    next:
-      - step: show_count
+    case:
+      - when: "{{ event.name == 'loop.done' }}"
+        then:
+          next:
+            - step: show_count
 
   - step: show_count
     desc: Verify record count

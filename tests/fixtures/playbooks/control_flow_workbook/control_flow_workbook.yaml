@@ -13,13 +13,14 @@ workbook:
   - name: compute_flag
     tool:
       kind: python
-      code: |
-        def main(temperature_c):
-            is_hot = float(temperature_c) >= 25.0
-            msg = "hot" if is_hot else "cold"
-            return {"is_hot": is_hot, "message": msg}
+      auth: {}
+      libs: {}
       args:
         temperature_c: null
+      code: |
+        is_hot = float(temperature_c) >= 25.0
+        msg = "hot" if is_hot else "cold"
+        result = {"is_hot": is_hot, "message": msg}
     assert:
       expects:
         - temperature_c
@@ -32,9 +33,11 @@ workflow:
     desc: "Begin"
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main():
-            return {"status": "initialized"}
+        result = {"status": "initialized"}
     
     case:
       - when: "{{ event.name == 'step.exit' }}"
@@ -65,9 +68,11 @@ workflow:
     desc: "Hot branch; fan out to two steps in PARALLEL"
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main():
-            return {"status": "routing_to_parallel"}
+        result = {"status": "routing_to_parallel"}
     
     case:
       - when: "{{ event.name == 'step.exit' }}"
@@ -79,9 +84,11 @@ workflow:
   - step: hot_task_a
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main():
-            return {"who": "A"}
+        result = {"who": "A"}
     
     case:
       - when: "{{ event.name == 'step.exit' and response is defined }}"
@@ -92,9 +99,11 @@ workflow:
   - step: hot_task_b
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main():
-            return {"who": "B"}
+        result = {"who": "B"}
     
     case:
       - when: "{{ event.name == 'step.exit' and response is defined }}"
@@ -106,9 +115,11 @@ workflow:
     desc: "Cold branch single continuation"
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main():
-            return {"status": "routing_to_cold"}
+        result = {"status": "routing_to_cold"}
     
     case:
       - when: "{{ event.name == 'step.exit' }}"
@@ -119,9 +130,11 @@ workflow:
   - step: cold_task
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main():
-            return {"who": "C"}
+        result = {"who": "C"}
     
     case:
       - when: "{{ event.name == 'step.exit' and response is defined }}"
@@ -133,6 +146,8 @@ workflow:
     desc: "Finish"
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main():
-            return {"status": "complete"}
+        result = {"status": "complete"}

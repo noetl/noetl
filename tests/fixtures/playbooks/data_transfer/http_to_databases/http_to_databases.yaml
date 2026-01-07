@@ -8,7 +8,8 @@ metadata:
 workload:
   sf_auth: sf_test
   pg_auth: pg_local
-  message: Fetch data from HTTP API and store in PostgreSQL, Snowflake, and DuckDB
+  ducklake_catalog_auth: noetl_ducklake_catalog
+  message: Fetch data from HTTP API and store in PostgreSQL, Snowflake, DuckDB, and DuckLake (distributed DuckDB)
   api_url: https://jsonplaceholder.typicode.com/users
   chunk_size: 1000
 
@@ -17,9 +18,11 @@ workflow:
     desc: Start HTTP to databases transfer pipeline
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main():
-            return {"status": "initialized"}
+        result = {"status": "initialized"}
     next:
       - step: fetch_http_data
 
@@ -102,49 +105,73 @@ workflow:
 
         DELETE FROM http_users_duckdb;
     next:
+      - step: setup_ducklake_table
+
+  - step: setup_ducklake_table
+    desc: Create DuckLake table for HTTP data (distributed DuckDB with Postgres catalog)
+    tool:
+      kind: ducklake
+      auth: "{{ workload.ducklake_catalog_auth }}"
+      catalog_name: "http_transfer"
+      data_path: "/opt/noetl/data/ducklake"
+      command: |
+        CREATE TABLE IF NOT EXISTS http_users_ducklake (
+          id INTEGER PRIMARY KEY,
+          name VARCHAR,
+          username VARCHAR,
+          email VARCHAR,
+          phone VARCHAR,
+          website VARCHAR,
+          company_name VARCHAR,
+          city VARCHAR
+        );
+
+        DELETE FROM http_users_ducklake;
+    next:
       - step: transform_http_to_pg
 
   - step: transform_http_to_pg
     desc: Transform HTTP JSON data and prepare for database insertion
     tool:
       kind: python
-      code: |
-        def main(fetch_http_data):
-            """Transform HTTP API response and prepare for database insertion."""
-
-            # fetch_http_data is the full result object with structure: {'url': ..., 'data': [...], ...}
-            # Extract the actual data array
-            if isinstance(fetch_http_data, dict):
-                users = fetch_http_data.get('data', [])
-            elif isinstance(fetch_http_data, list):
-                users = fetch_http_data
-            else:
-                users = []
-
-            # Transform data for database insertion
-            transformed_rows = []
-            for user in users:
-                if not user or not isinstance(user, dict):
-                    continue
-                row = {
-                    'id': user.get('id'),
-                    'name': (user.get('name') or '').replace("'", "''"),  # Escape single quotes
-                    'username': (user.get('username') or '').replace("'", "''"),
-                    'email': (user.get('email') or '').replace("'", "''"),
-                    'phone': (user.get('phone') or '').replace("'", "''"),
-                    'website': (user.get('website') or '').replace("'", "''"),
-                    'company_name': ((user.get('company') or {}).get('name') or '').replace("'", "''"),
-                    'city': ((user.get('address') or {}).get('city') or '').replace("'", "''")
-                }
-                transformed_rows.append(row)
-
-            return {
-                'status': 'success',
-                'rows': transformed_rows,
-                'count': len(transformed_rows)
-            }
+      auth: {}
+      libs: {}
       args:
         fetch_http_data: "{{ fetch_http_data }}"
+      code: |
+        """Transform HTTP API response and prepare for database insertion."""
+        
+        # fetch_http_data is the full result object with structure: {'url': ..., 'data': [...], ...}
+        # Extract the actual data array
+        if isinstance(fetch_http_data, dict):
+            users = fetch_http_data.get('data', [])
+        elif isinstance(fetch_http_data, list):
+            users = fetch_http_data
+        else:
+            users = []
+        
+        # Transform data for database insertion
+        transformed_rows = []
+        for user in users:
+            if not user or not isinstance(user, dict):
+                continue
+            row = {
+                'id': user.get('id'),
+                'name': (user.get('name') or '').replace("'", "''"),  # Escape single quotes
+                'username': (user.get('username') or '').replace("'", "''"),
+                'email': (user.get('email') or '').replace("'", "''"),
+                'phone': (user.get('phone') or '').replace("'", "''"),
+                'website': (user.get('website') or '').replace("'", "''"),
+                'company_name': ((user.get('company') or {}).get('name') or '').replace("'", "''"),
+                'city': ((user.get('address') or {}).get('city') or '').replace("'", "''")
+            }
+            transformed_rows.append(row)
+        
+        result = {
+            'status': 'success',
+            'rows': transformed_rows,
+            'count': len(transformed_rows)
+        }
     next:
       - step: insert_to_postgres
 
@@ -274,6 +301,40 @@ workflow:
       iterator: user
       mode: sequential
     next:
+      - step: insert_to_ducklake
+
+  - step: insert_to_ducklake
+    desc: Insert transformed data into DuckLake using distributed iterator (parallel mode)
+    tool:
+      kind: ducklake
+      auth: "{{ workload.ducklake_catalog_auth }}"
+      catalog_name: "http_transfer"
+      data_path: "/opt/noetl/data/ducklake"
+      command: |
+        INSERT INTO http_users_ducklake (id, name, username, email, phone, website, company_name, city)
+        VALUES (
+          {{ user.id }},
+          '{{ user.name }}',
+          '{{ user.username }}',
+          '{{ user.email }}',
+          '{{ user.phone }}',
+          '{{ user.website }}',
+          '{{ user.company_name }}',
+          '{{ user.city }}'
+        )
+        ON CONFLICT (id) DO UPDATE SET
+          name = EXCLUDED.name,
+          username = EXCLUDED.username,
+          email = EXCLUDED.email,
+          phone = EXCLUDED.phone,
+          website = EXCLUDED.website,
+          company_name = EXCLUDED.company_name,
+          city = EXCLUDED.city;
+    loop:
+      in: "{{ transform_http_to_pg.rows }}"
+      iterator: user
+      mode: async  # Parallel execution across multiple workers - safe with DuckLake catalog coordination
+    next:
       - step: verify_duckdb_data
 
   - step: verify_duckdb_data
@@ -287,66 +348,99 @@ workflow:
           COUNT(DISTINCT company_name) as unique_companies
         FROM http_users_duckdb;
     next:
+      - step: verify_ducklake_data
+
+  - step: verify_ducklake_data
+    desc: Verify data in DuckLake (distributed DuckDB)
+    tool:
+      kind: ducklake
+      auth: "{{ workload.ducklake_catalog_auth }}"
+      catalog_name: "http_transfer"
+      data_path: "/opt/noetl/data/ducklake"
+      command: |
+        SELECT
+          COUNT(*) as total_users,
+          COUNT(DISTINCT city) as unique_cities,
+          COUNT(DISTINCT company_name) as unique_companies
+        FROM http_users_ducklake;
+    next:
       - step: cross_verify
 
   - step: cross_verify
-    desc: Cross-verify data across all three databases
+    desc: Cross-verify data across all databases (Postgres, Snowflake, DuckDB, DuckLake)
     tool:
       kind: python
-      code: |
-        def main(verify_pg_data, verify_sf_data, verify_duckdb_data):
-            """Compare results across PostgreSQL, Snowflake, and DuckDB."""
-
-            # PostgreSQL result structure
-            pg_result = {}
-            if verify_pg_data and isinstance(verify_pg_data, dict):
-                pg_result = verify_pg_data.get('data', {}).get('command_0', {}).get('rows', [{}])[0] if verify_pg_data.get('data') else {}
-
-            # Snowflake result structure
-            sf_result = {}
-            if verify_sf_data and isinstance(verify_sf_data, dict):
-                sf_result = verify_sf_data.get('data', {}).get('statement_0', {}).get('result', [{}])[0] if verify_sf_data.get('data') else {}
-
-            # DuckDB result structure
-            duckdb_result = {}
-            if verify_duckdb_data and isinstance(verify_duckdb_data, dict):
-                duckdb_result = verify_duckdb_data.get('data', {}).get('result', [{}])[0] if verify_duckdb_data.get('data') else {}
-
-            comparison = {
-                'postgresql': {
-                    'total_users': pg_result.get('total_users', 0),
-                    'unique_cities': pg_result.get('unique_cities', 0),
-                    'unique_companies': pg_result.get('unique_companies', 0)
-                },
-                'snowflake': {
-                    'total_users': sf_result.get('TOTAL_USERS', 0),
-                    'unique_cities': sf_result.get('UNIQUE_CITIES', 0),
-                    'unique_companies': sf_result.get('UNIQUE_COMPANIES', 0)
-                },
-                'duckdb': {
-                    'total_users': duckdb_result.get('total_users', 0),
-                    'unique_cities': duckdb_result.get('unique_cities', 0),
-                    'unique_companies': duckdb_result.get('unique_companies', 0)
-                }
-            }
-
-            # Check if all databases have the same counts
-            pg_count = comparison['postgresql']['total_users']
-            sf_count = comparison['snowflake']['total_users']
-            duckdb_count = comparison['duckdb']['total_users']
-
-            all_match = (pg_count == sf_count == duckdb_count)
-
-            return {
-                'status': 'success' if all_match else 'warning',
-                'comparison': comparison,
-                'all_databases_match': all_match,
-                'message': f'All databases have {pg_count} users' if all_match else 'Database counts do not match'
-            }
+      auth: {}
+      libs: {}
       args:
         verify_pg_data: "{{ verify_pg_data }}"
         verify_sf_data: "{{ verify_sf_data }}"
         verify_duckdb_data: "{{ verify_duckdb_data }}"
+        verify_ducklake_data: "{{ verify_ducklake_data }}"
+      code: |
+        """Compare results across PostgreSQL, Snowflake, DuckDB, and DuckLake."""
+
+        # PostgreSQL result structure
+        pg_result = {}
+        if verify_pg_data and isinstance(verify_pg_data, dict):
+            pg_result = verify_pg_data.get('data', {}).get('command_0', {}).get('rows', [{}])[0] if verify_pg_data.get('data') else {}
+
+        # Snowflake result structure
+        sf_result = {}
+        if verify_sf_data and isinstance(verify_sf_data, dict):
+            sf_result = verify_sf_data.get('data', {}).get('statement_0', {}).get('result', [{}])[0] if verify_sf_data.get('data') else {}
+
+        # DuckDB result structure
+        duckdb_result = {}
+        if verify_duckdb_data and isinstance(verify_duckdb_data, dict):
+            duckdb_result = verify_duckdb_data.get('data', {}).get('result', [{}])[0] if verify_duckdb_data.get('data') else {}
+
+        # DuckLake result structure
+        ducklake_result = {}
+        if verify_ducklake_data and isinstance(verify_ducklake_data, dict):
+            # DuckLake returns result in commands array
+            commands = verify_ducklake_data.get('result', {}).get('commands', [])
+            if commands:
+                rows = commands[0].get('rows', [{}])
+                ducklake_result = rows[0] if rows else {}
+
+        comparison = {
+            'postgresql': {
+                'total_users': pg_result.get('total_users', 0),
+                'unique_cities': pg_result.get('unique_cities', 0),
+                'unique_companies': pg_result.get('unique_companies', 0)
+            },
+            'snowflake': {
+                'total_users': sf_result.get('TOTAL_USERS', 0),
+                'unique_cities': sf_result.get('UNIQUE_CITIES', 0),
+                'unique_companies': sf_result.get('UNIQUE_COMPANIES', 0)
+            },
+            'duckdb': {
+                'total_users': duckdb_result.get('total_users', 0),
+                'unique_cities': duckdb_result.get('unique_cities', 0),
+                'unique_companies': duckdb_result.get('unique_companies', 0)
+            },
+            'ducklake': {
+                'total_users': ducklake_result.get('total_users', 0),
+                'unique_cities': ducklake_result.get('unique_cities', 0),
+                'unique_companies': ducklake_result.get('unique_companies', 0)
+            }
+        }
+
+        # Check if all databases have the same counts
+        pg_count = comparison['postgresql']['total_users']
+        sf_count = comparison['snowflake']['total_users']
+        duckdb_count = comparison['duckdb']['total_users']
+        ducklake_count = comparison['ducklake']['total_users']
+
+        all_match = (pg_count == sf_count == duckdb_count == ducklake_count)
+
+        result = {
+            'status': 'success' if all_match else 'warning',
+            'comparison': comparison,
+            'all_databases_match': all_match,
+            'message': f'All databases have {pg_count} users' if all_match else 'Database counts do not match'
+        }
     next:
       - step: end
 
@@ -366,6 +460,8 @@ workflow:
     desc: End HTTP to databases transfer pipeline
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main():
-            return {"status": "completed"}
+        result = {"status": "completed"}

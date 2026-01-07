@@ -173,7 +173,7 @@ class Settings(BaseModel):
     noetl_schema: Optional[str] = Field(None, alias="NOETL_SCHEMA")
 
     # NATS Configuration
-    nats_url: str = Field(default="nats://noetl:noetl@localhost:30422", alias="NATS_URL")
+    nats_url: str = Field(default="nats://nats.nats.svc.cluster.local:4222", alias="NATS_URL")
     nats_user: str = Field(default="noetl", alias="NATS_USER")
     nats_password: str = Field(default="noetl", alias="NATS_PASSWORD")
     nats_stream: str = Field(default="NOETL_COMMANDS", alias="NATS_STREAM")
@@ -181,7 +181,7 @@ class Settings(BaseModel):
     nats_subject: str = Field(default="noetl.commands", alias="NATS_SUBJECT")
 
     # Keychain configuration
-    keychain_refresh_threshold: int = Field(default=300, alias="NOETL_KEYCHAIN_REFRESH_THRESHOLD")  # seconds (5min default)
+    keychain_refresh_threshold: int = Field(default=900, alias="NOETL_KEYCHAIN_REFRESH_THRESHOLD")  # seconds (15min default, prevents expiration during long loops)
 
     # Server identity and base URL
     server_url: str = Field(..., alias="NOETL_SERVER_URL")

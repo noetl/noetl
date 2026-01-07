@@ -84,6 +84,28 @@ data:
     ESQL
 
     echo "Demo database ${POSTGRES_DB} configured for playbooks"
+
+    # Create ducklake_catalog database for DuckLake distributed operations
+    echo "Creating ducklake_catalog database for DuckLake metastore"
+
+    $POSTGRES -d ${POSTGRES_DB} <<-ESQL
+    -- Create ducklake_catalog database if it doesn't exist
+    SELECT 'CREATE DATABASE ducklake_catalog OWNER ${NOETL_USER}'
+    WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'ducklake_catalog')\gexec
+    ESQL
+
+    $POSTGRES -d ducklake_catalog <<-ESQL
+    \connect ducklake_catalog;
+    SET SESSION AUTHORIZATION ${POSTGRES_USER};
+
+    -- Grant privileges to noetl user on database
+    GRANT ALL PRIVILEGES ON DATABASE ducklake_catalog TO ${NOETL_USER};
+
+    -- Grant schema creation privilege so DuckLake can create __ducklake_metadata_* schemas
+    GRANT CREATE ON DATABASE ducklake_catalog TO ${NOETL_USER};
+    ESQL
+
+    echo "DuckLake catalog database created and configured"
     echo "Note: noetl user has access only to ${NOETL_POSTGRES_DB} database"
 
 
@@ -131,7 +153,7 @@ data:
     # Connections and Authentication
     listen_addresses = '*'
     port = 5432
-    max_connections = 100
+    max_connections = 200
     
     # Memory
     shared_buffers = 128MB

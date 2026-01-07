@@ -24,8 +24,10 @@ workflow:
       mode: "sequential"
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main(input_data):
             num = input_data.get('num')
             loop_index = input_data.get('loop_index', 0)
             
@@ -45,8 +47,10 @@ workflow:
     desc: Analyze loop results
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main(input_data):
             print(f"[PROCESS] Loop completed, analyzing results")
             print(f"[PROCESS] Input data type: {type(input_data).__name__}")
             
@@ -76,8 +80,10 @@ workflow:
       mode: "sequential"
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main(input_data):
             user = input_data.get('user', {})
             loop_index = input_data.get('loop_index', 0)
             
@@ -105,8 +111,10 @@ workflow:
     desc: Verify loop execution
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main(input_data):
             print(f"[VERIFY] Verifying loop test results")
             
             process_result = input_data.get('process_result', {})
@@ -148,8 +156,10 @@ workflow:
     desc: Complete the test
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main(input_data):
             print(f"[END] Loop test completed successfully!")
             
             verify_result = input_data.get('verify_result', {})

@@ -71,6 +71,7 @@ tasks:
     vars:
       CACHE: '{{ if (eq .CLI_ARGS "cache")}}{{ else }}--no-cache{{ end }}'
     cmds:
+      - task: noetlctl:local:build
       - ./bin/noetl k8s reset
       - echo "UI :http://localhost:8082"
       - echo "API :http://localhost:8082/docs"

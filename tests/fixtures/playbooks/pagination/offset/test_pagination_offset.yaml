@@ -13,9 +13,11 @@ workflow:
     desc: Fetch all users with offset pagination
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main():
-            return {"status": "initialized"}
+        result = {"status": "initialized"}
 
     case:
       - when: "{{ event.name == 'step.exit' }}"
@@ -59,37 +61,37 @@ workflow:
     desc: Validate merged results
     tool:
       kind: python
-      code: |
-        def main(input_data):
-            # Check we got all items - handle server wrapping in {'value': [items]}
-            raw_data = input_data.get('fetch_all_users', [])
-
-            # Unwrap if server wrapped in {'value': ...}
-            if isinstance(raw_data, dict) and 'value' in raw_data:
-                data = raw_data['value']
-            elif isinstance(raw_data, dict) and 'data' in raw_data:
-                data = raw_data['data']
-            elif isinstance(raw_data, list):
-                data = raw_data
-            else:
-                data = []
-
-            print(f"Total users fetched: {len(data)}")
-            print(f"First user: {data[0] if data else None}")
-            print(f"Last user: {data[-1] if data else None}")
-
-            # Validate
-            assert len(data) == 35, f"Expected 35 users, got {len(data)}"
-            assert data[0]['id'] == 1, f"First user should have id=1"
-            assert data[-1]['id'] == 35, f"Last user should have id=35"
-
-            return {
-                'status': 'success',
-                'total_users': len(data)
-            }
+      auth: {}
+      libs: {}
       args:
-        input_data:
-          fetch_all_users: "{{ fetch_all_users }}"
+        input_data: "{{ fetch_all_users }}"
+      code: |
+        # Check we got all items - handle server wrapping in {'value': [items]}
+        raw_data = input_data
+
+        # Unwrap if server wrapped in {'value': ...}
+        if isinstance(raw_data, dict) and 'value' in raw_data:
+            data = raw_data['value']
+        elif isinstance(raw_data, dict) and 'data' in raw_data:
+            data = raw_data['data']
+        elif isinstance(raw_data, list):
+            data = raw_data
+        else:
+            data = []
+
+        print(f"Total users fetched: {len(data)}")
+        print(f"First user: {data[0] if data else None}")
+        print(f"Last user: {data[-1] if data else None}")
+
+        # Validate
+        assert len(data) == 35, f"Expected 35 users, got {len(data)}"
+        assert data[0]['id'] == 1, f"First user should have id=1"
+        assert data[-1]['id'] == 35, f"Last user should have id=35"
+
+        result = {
+            'status': 'success',
+            'total_users': len(data)
+        }
 
     case:
       - when: "{{ event.name == 'step.exit' and response is defined }}"
@@ -101,6 +103,9 @@ workflow:
     desc: Workflow complete
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main():
-            return {"status": "complete"}
+        # Direct execution
+            result = {"status": "complete"}

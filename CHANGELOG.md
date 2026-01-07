@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.5.1](https://github.com/noetl/noetl/compare/v2.5.0...v2.5.1) (2026-01-07)
+
+### Bug Fixes
+
+* improve worker performance and eliminate pool timeout errors ([9f7d749](https://github.com/noetl/noetl/commit/9f7d749263169f96054eedfd83a851265cede218))
+
 ## [2.5.0](https://github.com/noetl/noetl/compare/v2.4.0...v2.5.0) (2026-01-05)
 
 ### Features

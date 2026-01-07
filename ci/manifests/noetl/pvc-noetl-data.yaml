@@ -1,0 +1,32 @@
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: noetl-data-pv
+spec:
+  capacity:
+    storage: 10Gi
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: noetl-shared
+  hostPath:
+    path: /tmp/noetl-data  # Shared path on kind node
+    type: DirectoryOrCreate
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: noetl-data-shared
+  namespace: noetl
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: noetl-shared
+---
+# For cloud deployments (GKE, EKS, AKS), use cloud-specific storage class with RWX support
+# GKE: use "standard-rwx" or create a Filestore-backed storage class
+# EKS: use EFS-backed storage class
+# AKS: use Azure Files-backed storage class

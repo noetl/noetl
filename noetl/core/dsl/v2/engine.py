@@ -19,6 +19,7 @@ from psycopg.types.json import Json
 
 from noetl.core.dsl.v2.models import Event, Command, Playbook, Step, CaseEntry, ToolCall
 from noetl.core.db.pool import get_pool_connection, get_snowflake_id
+from noetl.core.cache import get_nats_cache
 
 from noetl.core.logger import setup_logger
 logger = setup_logger(__name__, include_location=True)
@@ -86,8 +87,16 @@ class ExecutionState:
         """Check if step is completed."""
         return step_name in self.completed_steps
     
-    def init_loop(self, step_name: str, collection: list[Any], iterator: str, mode: str = "sequential"):
-        """Initialize loop state for a step."""
+    def init_loop(self, step_name: str, collection: list[Any], iterator: str, mode: str = "sequential", event_id: Optional[int] = None):
+        """Initialize loop state for a step.
+        
+        Args:
+            step_name: Name of the step
+            collection: Collection to iterate over
+            iterator: Iterator variable name
+            mode: Iteration mode (sequential or parallel)
+            event_id: Event ID that initiated this loop instance (for uniqueness)
+        """
         self.loop_state[step_name] = {
             "collection": collection,
             "iterator": iterator,
@@ -95,9 +104,10 @@ class ExecutionState:
             "mode": mode,
             "completed": False,
             "results": [],  # Track iteration results for aggregation
-            "failed_count": 0  # Track failed iterations
+            "failed_count": 0,  # Track failed iterations
+            "event_id": event_id  # Track which event initiated this loop instance
         }
-        logger.debug(f"Initialized loop for step {step_name}: {len(collection)} items, mode={mode}")
+        logger.debug(f"Initialized loop for step {step_name}: {len(collection)} items, mode={mode}, event_id={event_id}")
     
     def get_next_loop_item(self, step_name: str) -> tuple[Any, int] | None:
         """Get next item from loop. Returns (item, index) or None if done."""
@@ -126,7 +136,7 @@ class ExecutionState:
         return self.loop_state[step_name]["completed"]
     
     def add_loop_result(self, step_name: str, result: Any, failed: bool = False):
-        """Add iteration result to loop aggregation."""
+        """Add iteration result to loop aggregation (local cache only)."""
         if step_name not in self.loop_state:
             return
         
@@ -134,6 +144,8 @@ class ExecutionState:
         if failed:
             self.loop_state[step_name]["failed_count"] += 1
         logger.debug(f"Added iteration result to loop {step_name}: {len(self.loop_state[step_name]['results'])} total")
+        
+        # Note: Distributed sync to NATS K/V happens in engine.handle_event()
     
     def get_loop_aggregation(self, step_name: str) -> dict[str, Any]:
         """Get aggregated loop results in standard format."""
@@ -388,18 +400,25 @@ class StateStore:
                 
                 # Initialize loop_state for loop steps with collected iteration results
                 for step_name in loop_steps:
+                    # Count iterations by counting step.exit events for this step
+                    # This gives us the current loop index when reconstructing state
+                    iteration_count = len(loop_iteration_results.get(step_name, []))
+                    
                     if step_name not in state.loop_state:
                         state.loop_state[step_name] = {
                             "collection": [],
-                            "index": 0,
+                            "index": iteration_count,  # Start from number of completed iterations
                             "completed": False,
                             "results": loop_iteration_results.get(step_name, []),
                             "failed_count": 0,
                             "aggregation_finalized": False
                         }
+                        logger.info(f"[STATE-LOAD] Initialized loop_state for {step_name}: index={iteration_count} (from {iteration_count} completed iterations)")
                     else:
-                        # Restore collected results
+                        # Restore collected results and update index
                         state.loop_state[step_name]["results"] = loop_iteration_results.get(step_name, [])
+                        state.loop_state[step_name]["index"] = iteration_count
+                        logger.info(f"[STATE-LOAD] Updated loop_state for {step_name}: index={iteration_count}")
                 
                 # Cache and return
                 self._memory_cache[execution_id] = state
@@ -592,7 +611,7 @@ class ControlFlowEngine:
                         continue
                     
                     # Create command for target step
-                    command = self._create_command_for_step(
+                    command = await self._create_command_for_step(
                         state, step_def, args
                     )
                     if command:
@@ -740,7 +759,7 @@ class ControlFlowEngine:
                     )
 
                 # Create retry command with updated args (same step)
-                command = self._create_command_for_step(state, step_def, updated_args)
+                command = await self._create_command_for_step(state, step_def, updated_args)
 
                 # If creation failed, restore index
                 if not command and rewind_applied and loop_state:
@@ -778,7 +797,7 @@ class ControlFlowEngine:
                     continue
                 
                 # Create command for target step
-                command = self._create_command_for_step(state, step_def, rendered_args)
+                command = await self._create_command_for_step(state, step_def, rendered_args)
                 if command:
                     commands.append(command)
                     logger.info(f"Call action: invoking step {target_step}")
@@ -812,7 +831,7 @@ class ControlFlowEngine:
                     continue
                 
                 # Create retry command with incremented attempt counter
-                command = self._create_command_for_step(state, step_def, {})
+                command = await self._create_command_for_step(state, step_def, {})
                 if command:
                     # Increment attempt counter
                     command.attempt = current_attempt + 1
@@ -837,7 +856,7 @@ class ControlFlowEngine:
         
         return commands
     
-    def _create_command_for_step(
+    async def _create_command_for_step(
         self,
         state: ExecutionState,
         step: Step,
@@ -848,10 +867,12 @@ class ControlFlowEngine:
         logger.warning(f"[CREATE-CMD] Step {step.step} has loop? {step.loop is not None}")
         if step.loop:
             logger.warning(f"[CREATE-CMD] Loop config: in={step.loop.in_}, iterator={step.loop.iterator}, mode={step.loop.mode}")
+        else:
+            logger.error(f"[CREATE-CMD] Step {step.step} has NO LOOP but should! step_dict_keys={list(step.model_dump().keys())}, loop_value={step.model_dump().get('loop')}")
         
         # Check if step has loop configuration
-        if step.loop and step.step not in state.loop_state:
-            # Initialize loop on first encounter
+        if step.loop:
+            # Get collection to iterate
             context = state.get_render_context(Event(
                 execution_id=state.execution_id,
                 step=step.step,
@@ -867,25 +888,60 @@ class ControlFlowEngine:
                 logger.warning(f"Loop collection is not a list: {type(collection)}, converting")
                 collection = list(collection) if hasattr(collection, '__iter__') else [collection]
             
-            state.init_loop(step.step, collection, step.loop.iterator, step.loop.mode)
-            logger.info(f"Initialized loop for {step.step} with {len(collection)} items")
-        
-        # If step has loop, check for next item
-        if step.loop:
-            next_item = state.get_next_loop_item(step.step)
-            if next_item is None:
+            # Get completed count from NATS K/V (authoritative) or local fallback
+            # Use last event_id for this step as the loop instance identifier
+            loop_event_id = state.step_event_ids.get(step.step)
+            nats_cache = await get_nats_cache()
+            nats_loop_state = await nats_cache.get_loop_state(
+                str(state.execution_id),
+                step.step,
+                event_id=str(loop_event_id) if loop_event_id else None
+            )
+            
+            # Use NATS count if available (authoritative for distributed execution)
+            if nats_loop_state:
+                completed_count = len(nats_loop_state.get("results", []))
+                logger.debug(f"[LOOP-NATS] Got completed count from NATS K/V: {completed_count}")
+            else:
+                # Initialize loop state if not present (first iteration)
+                if step.step not in state.loop_state:
+                    state.init_loop(step.step, collection, step.loop.iterator, step.loop.mode, event_id=loop_event_id)
+                    logger.info(f"Initialized loop for {step.step} with {len(collection)} items, event_id={loop_event_id}")
+                    
+                    # Store initial state in NATS K/V with event_id for instance uniqueness
+                    await nats_cache.set_loop_state(
+                        str(state.execution_id),
+                        step.step,
+                        {
+                            "collection_size": len(collection),
+                            "results": [],
+                            "iterator": step.loop.iterator,
+                            "mode": step.loop.mode,
+                            "event_id": loop_event_id
+                        },
+                        event_id=str(loop_event_id) if loop_event_id else None
+                    )
+                
+                loop_state = state.loop_state[step.step]
+                completed_count = len(loop_state.get("results", []))
+                logger.debug(f"[LOOP-LOCAL] Got completed count from local cache: {completed_count}")
+            
+            logger.info(f"[LOOP] Step {step.step}: {completed_count}/{len(collection)} iterations completed")
+            
+            # Check if we have more items to process
+            if completed_count >= len(collection):
                 # Loop completed
-                logger.info(f"[LOOP] Loop completed for step {step.step}")
+                logger.info(f"[LOOP] Loop completed for {step.step}: {completed_count}/{len(collection)} iterations")
                 return None  # No command, will generate loop.done event
             
-            item, index = next_item
-            logger.info(f"[LOOP] Creating command for loop iteration {index} of step {step.step}, item={item}")
+            # Get next item by index (stateless - just use completed_count as index)
+            item = collection[completed_count]
+            logger.info(f"[LOOP] Creating command for loop iteration {completed_count} of step {step.step}, item={item}")
             
-            # CRITICAL: Add loop variables to state.variables for Jinja2 template rendering
-            # Do NOT add to args dict - let templates {{ num }} be rendered from context
+            # Add loop variables to state for Jinja2 template rendering
             state.variables[step.loop.iterator] = item
-            state.variables["loop_index"] = index
-            logger.info(f"[LOOP] Added to state.variables: {step.loop.iterator}={item}, loop_index={index}")
+            state.variables["loop_index"] = completed_count
+            logger.info(f"[LOOP] Added to state.variables: {step.loop.iterator}={item}, loop_index={completed_count}")
         
         # Build tool config - extract all fields from ToolSpec
         tool_dict = step.tool.model_dump()
@@ -1117,6 +1173,24 @@ class ControlFlowEngine:
                     failed = event.payload.get("status", "").upper() == "FAILED"
                     state.add_loop_result(event.step, event.payload["result"], failed=failed)
                     logger.info(f"Added iteration result to loop aggregation for step {event.step}")
+                    
+                    # Sync to distributed NATS K/V cache for multi-server deployments
+                    try:
+                        nats_cache = await get_nats_cache()
+                        # Get event_id from loop state to identify this loop instance
+                        loop_event_id = loop_state.get("event_id")
+                        success = await nats_cache.append_loop_result(
+                            str(state.execution_id),
+                            event.step,
+                            event.payload["result"],
+                            event_id=str(loop_event_id) if loop_event_id else None
+                        )
+                        if success:
+                            logger.debug(f"[LOOP-NATS] Synced iteration result to NATS K/V for {event.step}, event_id={loop_event_id}")
+                        else:
+                            logger.error(f"[LOOP-NATS] Failed to sync loop result to NATS K/V for {event.step}, event_id={loop_event_id}")
+                    except Exception as e:
+                        logger.error(f"[LOOP-NATS] Error syncing to NATS K/V: {e}", exc_info=True)
                 else:
                     logger.info(f"Loop aggregation already finalized for {event.step}, skipping result storage")
             elif not pending_retry:
@@ -1142,7 +1216,7 @@ class ControlFlowEngine:
         # Only process if case didn't generate commands
         if not commands and event.name == "loop.item" and step_def.loop:
             logger.debug(f"Processing loop.item event for {event.step}")
-            command = self._create_command_for_step(state, step_def, {})
+            command = await self._create_command_for_step(state, step_def, {})
             if command:
                 commands.append(command)
                 logger.debug(f"Created command for next loop iteration")
@@ -1153,67 +1227,113 @@ class ControlFlowEngine:
         # Check if step has completed loop - emit loop.done event
         # Check on step.exit regardless of whether case generated commands
         # (case may have matched call.done and generated sink/next commands)
+        logger.info(f"[LOOP-DEBUG] Checking step.exit: step={event.step}, event.name={event.name}, has_loop={step_def.loop is not None}")
         if step_def.loop and event.name == "step.exit":
+            logger.info(f"[LOOP-DEBUG] Entering loop completion check for {event.step}")
             pagination_retry_pending = state.pagination_state.get(event.step, {}).get("pending_retry", False)
             if pagination_retry_pending:
                 logger.info(f"[LOOP_DEBUG] Pagination retry pending for {event.step}; skipping loop completion/next iteration")
             else:
-                # Check if loop is complete by examining loop state directly
-                # Don't call get_next_loop_item as it would consume an item
+                # Get loop state from NATS K/V (distributed cache) or local fallback
+                nats_cache = await get_nats_cache()
                 loop_state = state.loop_state.get(event.step)
-                if loop_state and not loop_state["completed"]:
-                    # Check if index >= collection length to determine completion
-                    if loop_state["index"] >= len(loop_state["collection"]):
-                        loop_state["completed"] = True
-                        logger.info(f"Marked loop as completed for step {event.step}")
+                loop_event_id = loop_state.get("event_id") if loop_state else None
+                nats_loop_state = await nats_cache.get_loop_state(
+                    str(state.execution_id),
+                    event.step,
+                    event_id=str(loop_event_id) if loop_event_id else None
+                )
                 
-                if not state.is_loop_done(event.step):
-                    # More items to process - create next iteration command if not already created
-                    # (case rules may have already created next iteration)
-                    if not any(cmd.step == event.step for cmd in commands):
-                        logger.debug(f"Loop has more items, creating next command")
-                        command = self._create_command_for_step(state, step_def, {})
-                        if command:
-                            commands.append(command)
+                if not loop_state and not nats_loop_state:
+                    logger.warning(f"No loop state for step {event.step}")
                 else:
-                    # Loop done - create aggregated result and store as step result
-                    logger.info(f"Loop completed for step {event.step}, creating aggregated result")
+                    # Use NATS count if available (authoritative), otherwise local cache
+                    if nats_loop_state:
+                        completed_count = len(nats_loop_state.get("results", []))
+                        logger.debug(f"[LOOP-NATS] Got count from NATS K/V: {completed_count}")
+                    elif loop_state:
+                        completed_count = len(loop_state.get("results", []))
+                        logger.debug(f"[LOOP-LOCAL] Got count from local cache: {completed_count}")
+                    else:
+                        completed_count = 0
                     
-                    # Mark aggregation as finalized to prevent adding more results
-                    state.loop_state[event.step]["aggregation_finalized"] = True
+                    # Only render collection if not already cached (expensive operation)
+                    if loop_state and not loop_state.get("collection"):
+                        context = state.get_render_context(event)
+                        collection = self._render_template(step_def.loop.in_, context)
+                        if not isinstance(collection, list):
+                            collection = list(collection) if hasattr(collection, '__iter__') else [collection]
+                        loop_state["collection"] = collection
+                        logger.info(f"[LOOP-SETUP] Rendered collection for {event.step}: {len(collection)} items")
+                        
+                        # Store initial loop state in NATS K/V with event_id
+                        loop_event_id = loop_state.get("event_id")
+                        await nats_cache.set_loop_state(
+                            str(state.execution_id),
+                            event.step,
+                            {
+                                "collection_size": len(collection),
+                                "results": [],
+                                "iterator": loop_state.get("iterator"),
+                                "mode": loop_state.get("mode"),
+                                "event_id": loop_event_id
+                            },
+                            event_id=str(loop_event_id) if loop_event_id else None
+                        )
                     
-                    # Get aggregated loop results
-                    loop_aggregation = state.get_loop_aggregation(event.step)
+                    collection_size = len(loop_state["collection"]) if loop_state else (nats_loop_state.get("collection_size", 0) if nats_loop_state else 0)
+                    logger.info(f"[LOOP-CHECK] Step {event.step}: {completed_count}/{collection_size} iterations completed")
                     
-                    # Check if step has pagination data to merge
-                    if event.step in state.pagination_state:
-                        pagination_data = state.pagination_state[event.step]
-                        if pagination_data["collected_data"]:
-                            # Merge pagination data into aggregated result
-                            loop_aggregation["pagination"] = {
-                                "collected_items": pagination_data["collected_data"],
-                                "iteration_count": pagination_data["iteration_count"]
+                    if completed_count < collection_size:
+                        # More items to process - create next iteration command if not already created
+                        if not any(cmd.step == event.step for cmd in commands):
+                            logger.info(f"[LOOP] Creating next iteration command for {event.step}")
+                            command = await self._create_command_for_step(state, step_def, {})
+                            if command:
+                                commands.append(command)
+                            else:
+                                logger.error(f"[LOOP] Failed to create command for next iteration of {event.step}")
+                    else:
+                        # Loop done - create aggregated result and store as step result
+                        logger.info(f"[LOOP] Loop completed for step {event.step}, creating aggregated result")
+                        
+                        # Mark loop as completed in local state
+                        if loop_state:
+                            loop_state["completed"] = True
+                            loop_state["aggregation_finalized"] = True
+                        
+                        # Get aggregated loop results
+                        loop_aggregation = state.get_loop_aggregation(event.step)
+                        
+                        # Check if step has pagination data to merge
+                        if event.step in state.pagination_state:
+                            pagination_data = state.pagination_state[event.step]
+                            if pagination_data["collected_data"]:
+                                # Merge pagination data into aggregated result
+                                loop_aggregation["pagination"] = {
+                                    "collected_items": pagination_data["collected_data"],
+                                    "iteration_count": pagination_data["iteration_count"]
+                                }
+                                logger.info(f"Merged pagination data into loop result: {pagination_data['iteration_count']} iterations")
+                        
+                        # Store aggregated result as the step result
+                        # This makes it available to next steps via {{ loop_step_name }}
+                        state.mark_step_completed(event.step, loop_aggregation)
+                        logger.info(f"Stored aggregated loop result for {event.step}: {loop_aggregation['stats']}")
+                        
+                        # Process loop.done event through case matching
+                        loop_done_event = Event(
+                            execution_id=event.execution_id,
+                            step=event.step,
+                            name="loop.done",
+                            payload={
+                                "status": "completed",
+                                "iterations": state.loop_state[event.step]["index"],
+                                "result": loop_aggregation  # Include aggregated result in payload
                             }
-                            logger.info(f"Merged pagination data into loop result: {pagination_data['iteration_count']} iterations")
-                    
-                    # Store aggregated result as the step result
-                    # This makes it available to next steps via {{ loop_step_name }}
-                    state.mark_step_completed(event.step, loop_aggregation)
-                    logger.info(f"Stored aggregated loop result for {event.step}: {loop_aggregation['stats']}")
-                    
-                    # Process loop.done event through case matching
-                    loop_done_event = Event(
-                        execution_id=event.execution_id,
-                        step=event.step,
-                        name="loop.done",
-                        payload={
-                            "status": "completed",
-                            "iterations": state.loop_state[event.step]["index"],
-                            "result": loop_aggregation  # Include aggregated result in payload
-                        }
-                    )
-                    loop_done_commands = await self._process_case_rules(state, step_def, loop_done_event)
-                    commands.extend(loop_done_commands)
+                        )
+                        loop_done_commands = await self._process_case_rules(state, step_def, loop_done_event)
+                        commands.extend(loop_done_commands)
         
         # Process vars block if present (extract variables from step result after completion)
         if event.name == "step.exit" and step_def:
@@ -1244,7 +1364,7 @@ class ControlFlowEngine:
                     
                     next_step_def = state.get_step(target_step)
                     if next_step_def:
-                        command = self._create_command_for_step(state, next_step_def, {})
+                        command = await self._create_command_for_step(state, next_step_def, {})
                         if command:
                             commands.append(command)
                             logger.info(f"[STRUCTURAL-NEXT] Created command for step {target_step}")
@@ -1643,7 +1763,7 @@ class ControlFlowEngine:
         await self._persist_event(workflow_init_event, state)
         
         # Create initial command for start step
-        start_command = self._create_command_for_step(state, start_step, payload)
+        start_command = await self._create_command_for_step(state, start_step, payload)
         
         commands = [start_command] if start_command else []
         

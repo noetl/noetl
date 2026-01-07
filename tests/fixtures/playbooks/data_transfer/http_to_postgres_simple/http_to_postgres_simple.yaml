@@ -15,9 +15,11 @@ workflow:
     desc: Start HTTP to PostgreSQL transfer
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main():
-            return {"status": "initialized"}
+        result = {"status": "initialized"}
     next:
       - step: fetch_posts
 
@@ -51,22 +53,23 @@ workflow:
     desc: Transform and insert posts into PostgreSQL
     tool:
       kind: python
+      auth: {}
+      libs: {}
       args:
         input_data: "{{ fetch_posts }}"
       code: |
-        def main(input_data):
-            """Transform JSON posts and insert into PostgreSQL."""
-            # Get posts - input_data should be the HTTP response dict with 'data' key
-            if isinstance(input_data, dict):
-                posts = input_data.get('data', [])
-            elif isinstance(input_data, list):
-                posts = input_data
-            else:
-                posts = []
+        """Transform JSON posts and insert into PostgreSQL."""
+        # Get posts - input_data should be the HTTP response dict with 'data' key
+        if isinstance(input_data, dict):
+            posts = input_data.get('data', [])
+        elif isinstance(input_data, list):
+            posts = input_data
+        else:
+            posts = []
 
-            if not posts:
-                return {'status': 'error', 'message': 'No posts found', 'count': 0}
-
+        if not posts:
+            result = {'status': 'error', 'message': 'No posts found', 'count': 0}
+        else:
             # Prepare SQL statements
             insert_statements = []
             for post in posts:
@@ -79,7 +82,7 @@ workflow:
                 sql = f"INSERT INTO public.http_to_postgres_simple (id, user_id, title, body) VALUES ({post['id']}, {post.get('userId', 0)}, '{title}', '{body}') ON CONFLICT (id) DO NOTHING;"
                 insert_statements.append(sql)
 
-            return {
+            result = {
                 'status': 'success',
                 'sql_statements': insert_statements,
                 'count': len(insert_statements)
@@ -128,5 +131,8 @@ workflow:
     tool:
       kind: python
       code: |
-        def main():
-            return {"status": "completed"}
+        auth: {}
+      libs: {}
+      args: {}
+      code: |
+        result = {"status": "completed"}

@@ -164,6 +164,7 @@ class ToolSpec(BaseModel):
         "http",
         "postgres",
         "duckdb",
+        "ducklake",
         "python",
         "workbook",
         "playbook",
