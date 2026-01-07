@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.5.2](https://github.com/noetl/noetl/compare/v2.5.1...v2.5.2) (2026-01-07)
+
+### Bug Fixes
+
+* Add per-action PostgreSQL pool configuration and Python tool documentation ([57b1cfa](https://github.com/noetl/noetl/commit/57b1cfa965c0988ad8fc9ad5aa38dc2487b25f9b))
+
 ## [2.5.1](https://github.com/noetl/noetl/compare/v2.5.0...v2.5.1) (2026-01-07)
 
 ### Bug Fixes
