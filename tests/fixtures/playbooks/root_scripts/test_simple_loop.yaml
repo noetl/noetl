@@ -19,9 +19,11 @@ workflow:
     desc: Start workflow
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main():
-            return {"status": "started"}
+        result = {"status": "started"}
     next: loop_test
   
   - step: loop_test
@@ -31,20 +33,25 @@ workflow:
       iterator: num
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args:
+        num: "{{ num }}"
       code: |
-        def main(num):
-            print(f"Processing: {num}")
-            return {
-                "value": num["value"],
-                "name": num["name"],
-                "doubled": num["value"] * 2
-            }
+        print(f"Processing: {num}")
+        result = {
+            "value": num["value"],
+            "name": num["name"],
+            "doubled": num["value"] * 2
+        }
     next: end
   
   - step: end
     desc: End workflow
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main():
-            return {"status": "completed"}
+        result = {"status": "completed"}

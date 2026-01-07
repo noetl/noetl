@@ -13,9 +13,11 @@ workflow:
     desc: Entry point router
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main():
-            return {"status": "initialized"}
+        result = {"status": "initialized"}
     
     case:
       - when: "{{ event.name == 'step.exit' }}"
@@ -27,15 +29,17 @@ workflow:
     desc: Process data
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main():
-            return {
-                'status': 'success',
-                'data': {
-                    'records_processed': 100,
-                    'temp_table': 'temp_session_12345'
-                }
+        result = {
+            'status': 'success',
+            'data': {
+                'records_processed': 100,
+                'temp_table': 'temp_session_12345'
             }
+        }
     
     case:
       - when: "{{ event.name == 'step.exit' and response is defined }}"
@@ -53,16 +57,21 @@ workflow:
     desc: End step with cleanup action
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args:
+        input_data:
+          temp_table: "{{ process_data.data.temp_table }}"
+          cleanup_required: "{{ workload.cleanup_required }}"
       code: |
-        def main(input_data):
-            temp_table = input_data.get('temp_table', 'unknown')
-            cleanup = input_data.get('cleanup_required', False)
-            
-            return {
-                'status': 'completed',
-                'message': f'Cleanup performed on {temp_table}' if cleanup else 'No cleanup needed',
-                'data': {
-                    'cleaned_up': cleanup,
-                    'table': temp_table
-                }
+        temp_table = input_data.get('temp_table', 'unknown')
+        cleanup = input_data.get('cleanup_required', False)
+        
+        result = {
+            'status': 'completed',
+            'message': f'Cleanup performed on {temp_table}' if cleanup else 'No cleanup needed',
+            'data': {
+                'cleaned_up': cleanup,
+                'table': temp_table
             }
+        }

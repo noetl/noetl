@@ -23,8 +23,10 @@ workflow:
     desc: Process HTTP response
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main(input_data):
             print(f"[PROCESS] Processing HTTP response")
             print(f"[PROCESS] Input data type: {type(input_data).__name__}")
             
@@ -55,8 +57,10 @@ workflow:
     desc: Verify HTTP response
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main(input_data):
             print(f"[VERIFY] Verifying HTTP test results")
             
             process_result = input_data.get('process_result', {})
@@ -89,8 +93,10 @@ workflow:
     desc: Complete the test
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main(input_data):
             print(f"[END] HTTP test completed successfully!")
             
             verify_result = input_data.get('verify_result', {})
@@ -117,8 +123,10 @@ workflow:
     desc: Process API response
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main(input_data):
             import json
             print(f"[PROCESS] Processing HTTP response")
             print(f"[PROCESS] Status: {input_data.get('status_code')}")
@@ -145,8 +153,10 @@ workflow:
     desc: Complete
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main(input_data):
             print("[END] HTTP test completed successfully!")
             print(f"[END] API health: {input_data.get('health_status', 'N/A')}")
             return {"status": "completed"}

@@ -24,9 +24,11 @@ workflow:
     desc: Start workflow
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main():
-            return {"status": "initialized"}
+        result = {"status": "initialized"}
     
     case:
       - when: "{{ event.name == 'step.exit' }}"
@@ -38,17 +40,19 @@ workflow:
     desc: Set multiple test variables via vars block
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main():
-            # Return values that will be extracted via vars block
-            return {
-                "counter": 42,
-                "message": "Template access works!",
-                "config": {
-                    "timeout": 30,
-                    "retries": 3
-                }
+        # Return values that will be extracted via vars block
+        result = {
+            "counter": 42,
+            "message": "Template access works!",
+            "config": {
+                "timeout": 30,
+                "retries": 3
             }
+        }
     vars:
       counter: "{{ result.counter }}"
       message: "{{ result.message }}"
@@ -64,21 +68,22 @@ workflow:
     desc: Use {{ vars.var_name }} in step data
     tool:
       kind: python
-      code: |
-        def main(counter, message, timeout, full_greeting):
-            # This step receives data using {{ vars.* }} templates          
-            return {
-                "status": "success",
-                "received_counter": counter,
-                "received_message": message,
-                "received_timeout": timeout,
-                "full_greeting": full_greeting
-            }
+      auth: {}
+      libs: {}
       args:
         counter: "{{ vars.counter }}"
         message: "{{ vars.message }}"
         timeout: "{{ vars.config.timeout }}"
         full_greeting: "{{ workload.greeting }}, {{ vars.message }}"
+      code: |
+        # This step receives data using {{ vars.* }} templates          
+        result = {
+            "status": "success",
+            "received_counter": counter,
+            "received_message": message,
+            "received_timeout": timeout,
+            "full_greeting": full_greeting
+        }
     
     case:
       - when: "{{ event.name == 'step.exit' and response is defined }}"
@@ -90,41 +95,43 @@ workflow:
     desc: Verify template values were rendered correctly
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main():
-            # Get previous step result
-            prev_result = context.get('use_vars_in_template', {})
-            if isinstance(prev_result, dict) and 'data' in prev_result:
-                prev_result = prev_result['data']
-            
-            # Verify values
-            counter = prev_result.get("received_counter")
-            message = prev_result.get("received_message")
-            timeout = prev_result.get("received_timeout")
-            greeting = prev_result.get("full_greeting")
-            
-            success = (
-                counter == 42 and
-                message == "Template access works!" and
-                timeout == 30 and
-                greeting == "Hello, Template access works!"
-            )
-            
-            return {
-                "status": "success" if success else "failed",
-                "verification": {
-                    "counter_correct": counter == 42,
-                    "message_correct": message == "Template access works!",
-                    "timeout_correct": timeout == 30,
-                    "greeting_correct": greeting == "Hello, Template access works!"
-                },
-                "values": {
-                    "counter": counter,
-                    "message": message,
-                    "timeout": timeout,
-                    "greeting": greeting
-                }
+        # Get previous step result
+        prev_result = context.get('use_vars_in_template', {})
+        if isinstance(prev_result, dict) and 'data' in prev_result:
+            prev_result = prev_result['data']
+        
+        # Verify values
+        counter = prev_result.get("received_counter")
+        message = prev_result.get("received_message")
+        timeout = prev_result.get("received_timeout")
+        greeting = prev_result.get("full_greeting")
+        
+        success = (
+            counter == 42 and
+            message == "Template access works!" and
+            timeout == 30 and
+            greeting == "Hello, Template access works!"
+        )
+        
+        result = {
+            "status": "success" if success else "failed",
+            "verification": {
+                "counter_correct": counter == 42,
+                "message_correct": message == "Template access works!",
+                "timeout_correct": timeout == 30,
+                "greeting_correct": greeting == "Hello, Template access works!"
+            },
+            "values": {
+                "counter": counter,
+                "message": message,
+                "timeout": timeout,
+                "greeting": greeting
             }
+        }
     
     case:
       - when: "{{ event.name == 'step.exit' and response is defined }}"
@@ -136,6 +143,8 @@ workflow:
     desc: End workflow
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main():
-            return {"status": "complete"}
+        result = {"status": "complete"}

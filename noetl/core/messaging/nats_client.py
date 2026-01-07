@@ -240,7 +240,9 @@ class NATSCommandSubscriber:
             logger.info("Starting fetch loop...")
             while True:
                 try:
-                    messages = await self._subscription.fetch(batch=1, timeout=5)
+                    # Fetch with 1-second timeout for faster command pickup
+                    # This allows workers to respond to new commands within 1s
+                    messages = await self._subscription.fetch(batch=1, timeout=1)
                 except asyncio.TimeoutError:
                     # GPT do net add any logs to this line!!!
                     continue

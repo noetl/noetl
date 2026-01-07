@@ -6,6 +6,7 @@ for postgres plugin executions. All actual pooling logic is in noetl.core.db.poo
 """
 import hashlib
 import asyncio
+import time
 from psycopg import AsyncConnection
 from psycopg_pool import AsyncConnectionPool
 from psycopg.rows import dict_row, DictRow
@@ -37,12 +38,12 @@ _plugin_global_lock = asyncio.Lock()
 async def get_or_create_plugin_pool(
         connection_string: str,
         pool_name: str = "postgres_plugin",
-        min_size: int = 1,
-        max_size: int = 5,
-        timeout: float = 30.0,
-        max_waiting: int = 20,
-        max_lifetime: float = 300.0,  # 30 minutes instead of 60
-        max_idle: float = 150.0,  # 5 minutes instead of 10
+        min_size: int = 2,
+        max_size: int = 20,
+        timeout: float = 10.0,
+        max_waiting: int = 50,
+        max_lifetime: float = 300.0,  # 5 minutes
+        max_idle: float = 120.0,  # 2 minutes
 ) -> AsyncConnectionPool[AsyncConnection[DictRow]]:
     """
     Get existing pool or create new one for the connection string.
@@ -78,7 +79,10 @@ async def get_or_create_plugin_pool(
     # Get or create pool with lock
     async with _plugin_locks[pool_key]:
         if pool_key not in _plugin_pools:
-            logger.info(f"Creating new Postgres plugin pool: {pool_name} (key: {pool_key[:12]}...)")
+            logger.info(
+                f"Creating new Postgres plugin pool: {pool_name} (key: {pool_key[:12]}...) | "
+                f"Config: min={min_size}, max={max_size}, timeout={timeout}s, max_waiting={max_waiting}"
+            )
 
             try:
                 pool = AsyncConnectionPool(
@@ -103,6 +107,8 @@ async def get_or_create_plugin_pool(
             except Exception as e:
                 logger.error(f"Failed to create Postgres plugin pool: {e}")
                 raise
+        else:
+            logger.debug(f"Reusing existing pool {pool_name}")
 
         return _plugin_pools[pool_key]
 
@@ -133,11 +139,24 @@ async def get_plugin_connection(connection_string: str, pool_name: str = "postgr
     """
     pool = await get_or_create_plugin_pool(connection_string, pool_name=pool_name)
 
+    # Log connection acquisition
+    logger.debug(f"Acquiring connection from {pool_name}")
+
+    acquire_start = time.time()
     try:
         async with pool.connection() as conn:
+            acquire_time = time.time() - acquire_start
+            logger.debug(f"Connection acquired from {pool_name} in {acquire_time*1000:.1f}ms")
+            
             yield conn
+            release_start = time.time()
+        release_time = time.time() - release_start
+        logger.debug(f"Connection returned to {pool_name} (release took {release_time*1000:.1f}ms)")
     except Exception as e:
-        logger.exception(f"Error getting connection from plugin pool: {e}")
+        acquire_time = time.time() - acquire_start
+        logger.error(
+            f"Failed to acquire/use connection from {pool_name} after {acquire_time:.2f}s: {e}"
+        )
         raise
 
 
@@ -213,15 +232,20 @@ def get_plugin_pool_stats() -> Dict[str, Dict]:
         - size: Current pool size
         - available: Available connections
         - waiting: Number of requests waiting
+        - age_seconds: How long the pool has been active
+        - last_health_check: Seconds since last health check
     """
     stats = {}
     for pool_key, pool in _plugin_pools.items():
         try:
+            # Use built-in get_stats() method from psycopg_pool
+            pool_stats = pool.get_stats()
+            
             stats[pool_key[:12]] = {
                 "name": pool.name,
-                "size": pool._pool.size if hasattr(pool, '_pool') else "unknown",
-                "available": pool._pool.available if hasattr(pool, '_pool') else "unknown",
-                "waiting": len(pool._waiting) if hasattr(pool, '_waiting') else 0,
+                "size": pool_stats.get("pool_size", 0),
+                "available": pool_stats.get("pool_available", 0),
+                "waiting": pool_stats.get("requests_waiting", 0),
             }
         except Exception as e:
             logger.debug(f"Could not get stats for plugin pool {pool_key}: {e}")

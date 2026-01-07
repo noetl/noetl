@@ -16,9 +16,11 @@ workflow:
     desc: Start workflow
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main():
-            return {"status": "initialized"}
+        result = {"status": "initialized"}
     next:
       - step: test_data
 
@@ -77,6 +79,8 @@ workflow:
     desc: Done
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main():
-            return {"status": "completed"}
+        result = {"status": "completed"}

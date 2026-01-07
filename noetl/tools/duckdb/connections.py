@@ -1,5 +1,9 @@
 """
-DuckDB connection management with connection pooling.
+DuckDB connection management for distributed environments.
+
+Connections are NOT pooled to avoid file locking conflicts when using shared storage
+(e.g., Kubernetes with ReadWriteMany PVC). Each operation opens a fresh connection
+and closes it after use to release the file lock for other workers.
 """
 
 import threading
@@ -15,15 +19,15 @@ from .errors import ConnectionError
 
 logger = setup_logger(__name__, include_location=True)
 
-# Global connection pool and lock
-_duckdb_connections: Dict[str, Any] = {}
-_connection_lock = threading.Lock()
-
 
 @contextmanager
 def get_duckdb_connection(connection_config: ConnectionConfig):
     """
-    Context manager for shared DuckDB connections to maintain attachments.
+    Context manager for DuckDB connections with automatic cleanup.
+    
+    For shared storage environments (K8s with RWX PVC), connections are NOT pooled
+    to avoid file locking conflicts between workers. Each operation opens a fresh
+    connection and closes it after use.
     
     Args:
         connection_config: Connection configuration
@@ -35,24 +39,25 @@ def get_duckdb_connection(connection_config: ConnectionConfig):
         ConnectionError: If connection cannot be established
     """
     database_path = connection_config.database_path
+    conn = None
     
-    logger.debug(f"DUCKDB.GET_CONNECTION: Entry - database_path={database_path}")
+    logger.debug(f"DUCKDB.GET_CONNECTION: Opening connection to {database_path}")
 
     try:
-        with _connection_lock:
-            if database_path not in _duckdb_connections:
-                logger.debug(f"DUCKDB.GET_CONNECTION: Creating new DuckDB connection for {database_path}")
-                _duckdb_connections[database_path] = duckdb.connect(database_path)
-            else:
-                logger.debug(f"DUCKDB.GET_CONNECTION: Reusing existing DuckDB connection for {database_path}")
-            conn = _duckdb_connections[database_path]
-
+        # Create a fresh connection for each operation to avoid lock conflicts in distributed environments
+        conn = duckdb.connect(database_path)
+        logger.debug(f"DUCKDB.GET_CONNECTION: Connection established to {database_path}")
+        
         try:
-            logger.debug("DUCKDB.GET_CONNECTION: Yielding connection")
             yield conn
         finally:
-            # Connection stays in pool for reuse
-            pass
+            # CRITICAL: Close connection after use to release file lock for other workers
+            if conn:
+                try:
+                    conn.close()
+                    logger.debug(f"DUCKDB.GET_CONNECTION: Connection closed for {database_path}")
+                except Exception as e:
+                    logger.warning(f"Error closing DuckDB connection: {e}")
             
     except Exception as e:
         raise ConnectionError(f"Failed to establish DuckDB connection to {database_path}: {e}")
@@ -80,26 +85,21 @@ def create_standalone_connection(database_path: str):
 
 def close_all_connections():
     """
-    Close all connections in the pool.
+    No-op function for backward compatibility.
     
-    Note: This should typically only be called during shutdown or testing.
+    Connections are no longer pooled, so there's nothing to close.
+    Each connection is automatically closed after use via context manager.
     """
-    with _connection_lock:
-        for path, conn in _duckdb_connections.items():
-            try:
-                conn.close()
-                logger.debug(f"Closed DuckDB connection for {path}")
-            except Exception as e:
-                logger.warning(f"Failed to close connection for {path}: {e}")
-        _duckdb_connections.clear()
+    logger.debug("close_all_connections called, but connections are not pooled (no-op)")
 
 
 def get_connection_count() -> int:
     """
-    Get the number of active connections in the pool.
+    Get the number of active connections.
+    
+    Returns 0 since connections are no longer pooled.
     
     Returns:
-        Number of active connections
+        Number of active connections (always 0)
     """
-    with _connection_lock:
-        return len(_duckdb_connections)
+    return 0

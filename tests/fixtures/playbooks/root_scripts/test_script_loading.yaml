@@ -6,8 +6,7 @@ metadata:
 
 workload:
   test_code: |
-    def main():
-        return {"message": "Script loading works!", "status": "success"}
+    result = {"message": "Script loading works!", "status": "success"}
 
 workflow:
   - step: start
@@ -31,8 +30,11 @@ workflow:
     desc: End workflow
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args:
+        result: "{{ result }}"
       code: |
-        def main(result):
-            print(f"Result: {result}")
-            assert result.get('status') == 'success', "Test failed"
-            return {"test": "passed"}
+        print(f"Result: {result}")
+        assert result.get('status') == 'success', "Test failed"
+        result = {"test": "passed"}

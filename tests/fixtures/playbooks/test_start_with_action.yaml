@@ -11,17 +11,18 @@ workload:
 workflow:
   - step: start
     desc: Start step with Python action - should execute first
-    args:
-      input_data: "{{ workload }}"
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args:
+        input_data: "{{ workload }}"
       code: |
-        async def main(input_data):
-            return {
-                'status': 'success',
-                'message': 'Start step executed with action type',
-                'data': {'executed': True, 'input': input_data}
-            }
+        result = {
+            'status': 'success',
+            'message': 'Start step executed with action type',
+            'data': {'executed': True, 'input': input_data}
+        }
     
     case:
       - when: "{{ event.name == 'step.exit' and response is defined }}"
@@ -35,20 +36,21 @@ workflow:
   
   - step: process
     desc: Process step - executed after start
-    args:
-      from_start: "{{ start.data.executed }}"
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args:
+        from_start: "{{ start.data.executed }}"
       code: |
-        async def main(from_start):
-            return {
-                'status': 'success',
-                'message': 'Process step executed',
-                'data': {
-                    'from_start': from_start,
-                    'processed': True
-                }
+        result = {
+            'status': 'success',
+            'message': 'Process step executed',
+            'data': {
+                'from_start': from_start,
+                'processed': True
             }
+        }
     
     case:
       - when: "{{ event.name == 'step.exit' and response is defined }}"
@@ -62,6 +64,8 @@ workflow:
     desc: End step - aggregator (no action type)
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main():
-            return {"status": "complete"}
+        result = {"status": "complete"}

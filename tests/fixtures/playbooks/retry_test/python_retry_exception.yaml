@@ -13,21 +13,22 @@ workflow:
     desc: Run Python code that fails initially then succeeds
     tool:
       kind: python
+      auth: {}
+      libs:
+        random: random
+      args: {}
       code: |
+        # Simulate random failures for testing retry
+        rand_val = random.randint(1, 100)
         
-        def main():
-            import random
-            # Simulate random failures for testing retry
-            rand_val = random.randint(1, 100)
-            
-            if rand_val < 70:  # 70% chance of failure
-                raise Exception(f"Random failure (value: {rand_val})")
-            
-            return {
-                'success': True,
-                'message': f'Success after retry (value: {rand_val})',
-                'data': {'value': rand_val}
-            }
+        if rand_val < 70:  # 70% chance of failure
+            raise Exception(f"Random failure (value: {rand_val})")
+        
+        result = {
+            'success': True,
+            'message': f'Success after retry (value: {rand_val})',
+            'data': {'value': rand_val}
+        }
     
     case:
       - when: "{{ event.name == 'call.error' and error is defined }}"
@@ -47,6 +48,8 @@ workflow:
     desc: End workflow
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main():
-            return {"status": "complete"}
+        result = {"status": "complete"}

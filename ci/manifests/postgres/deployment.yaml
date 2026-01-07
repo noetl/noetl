@@ -18,6 +18,18 @@ spec:
       containers:
         - name: postgres
           image: postgres:17.4
+          command:
+            - docker-entrypoint.sh
+          args:
+            - postgres
+            - "-c"
+            - "max_connections=200"
+            - "-c"
+            - "shared_buffers=256MB"
+            - "-c"
+            - "log_connections=on"
+            - "-c"
+            - "log_disconnections=on"
           ports:
             - containerPort: 5432
           envFrom:

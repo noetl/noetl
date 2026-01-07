@@ -20,8 +20,10 @@ workflow:
     desc: Process query results
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main(input_data):
             import json
             print(f"[PROCESS] Processing Postgres query results")
             print(f"[PROCESS] Input data type: {type(input_data).__name__}")
@@ -56,8 +58,10 @@ workflow:
     desc: Verify data integrity
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main(input_data):
             import json
             print(f"[VERIFY] Input data keys: {list(input_data.keys())}")
             print(f"[VERIFY] Input data types: {[(k, type(v).__name__) for k, v in input_data.items()]}")
@@ -110,8 +114,10 @@ workflow:
     desc: Complete
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main(input_data):
             print("[END] Postgres test completed successfully!")
             print(f"[END] Verification status: {input_data.get('status', 'unknown')}")
             print(f"[END] Total playbooks: {input_data.get('playbook_count', 0)}")

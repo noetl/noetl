@@ -58,6 +58,7 @@ register_credential() {
 # Register standard test credentials (these should always exist)
 echo "📦 Standard Test Credentials:"
 register_credential "$CREDS_DIR/pg_local.json"
+register_credential "$CREDS_DIR/noetl_ducklake_catalog.json"
 register_credential "$CREDS_DIR/sf_test.json"
 register_credential "$CREDS_DIR/gcs_hmac_local.json"
 

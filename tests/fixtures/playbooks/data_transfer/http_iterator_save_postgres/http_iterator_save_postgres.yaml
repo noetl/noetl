@@ -23,9 +23,11 @@ workflow:
     desc: Start HTTP iterator save test
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main():
-            return {"status": "initialized"}
+        result = {"status": "initialized"}
     next:
       - step: create_table
 
@@ -134,44 +136,43 @@ workflow:
     desc: Validate that all cities have data
     tool:
       kind: python
+      auth: {}
+      libs: {}
       args:
         verify_results: "{{ vars.verify_results }}"
       code: |
-        def main(verify_results):
-            """Validate that all expected cities have data saved."""
-            # Get verification results - verify_results is already the dict with command_0
-            verify_result = verify_results.get('command_0', {}).get('rows', [{}])[0]
-            total_records = verify_result.get('total_records', 0)
-            unique_cities = verify_result.get('unique_cities', 0)
+        """Validate that all expected cities have data saved."""
+        # Get verification results - verify_results is already the dict with command_0
+        verify_result = verify_results.get('command_0', {}).get('rows', [{}])[0]
+        total_records = verify_result.get('total_records', 0)
+        unique_cities = verify_result.get('unique_cities', 0)
 
-            # Expected counts
-            expected_cities = 3
+        # Expected counts
+        expected_cities = 3
 
-            # Validation checks
-            checks = {
-                'total_records_match': total_records == expected_cities,
-                'unique_cities_match': unique_cities == expected_cities,
-                'all_cities_saved': total_records >= expected_cities
-            }
+        # Validation checks
+        checks = {
+            'total_records_match': total_records == expected_cities,
+            'unique_cities_match': unique_cities == expected_cities,
+            'all_cities_saved': total_records >= expected_cities
+        }
 
-            all_valid = all(checks.values())
+        all_valid = all(checks.values())
 
-            result = {
-                'status': 'success' if all_valid else 'failed',
-                'validation': checks,
-                'counts': {
-                    'expected': expected_cities,
-                    'actual_total': total_records,
-                    'actual_unique': unique_cities
-                },
-                'message': f'Validation {"passed" if all_valid else "FAILED"}: {total_records} records saved for {unique_cities} cities'
-            }
-            
-            # Raise exception on validation failure so execution reports FAILED
-            if not all_valid:
-                raise ValueError(f"Validation FAILED: {total_records} records saved for {unique_cities} cities (expected {expected_cities})")
-            
-            return result
+        result = {
+            'status': 'success' if all_valid else 'failed',
+            'validation': checks,
+            'counts': {
+                'expected': expected_cities,
+                'actual_total': total_records,
+                'actual_unique': unique_cities
+            },
+            'message': f'Validation {"passed" if all_valid else "FAILED"}: {total_records} records saved for {unique_cities} cities'
+        }
+        
+        # Raise exception on validation failure so execution reports FAILED
+        if not all_valid:
+            raise ValueError(f"Validation FAILED: {total_records} records saved for {unique_cities} cities (expected {expected_cities})")
     next:
       - step: end
 
@@ -179,6 +180,8 @@ workflow:
     desc: Test completed
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main():
-            return {"status": "completed"}
+        result = {"status": "completed"}

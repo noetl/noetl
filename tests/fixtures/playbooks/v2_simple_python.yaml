@@ -12,24 +12,26 @@ workflow:
   - step: start
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args:
+        message: "{{ workload.message }}"
       code: |
-        def main(input_data):
-            message = input_data.get('message', 'default')
-            print(f"Processing: {message}")
-            return {
-                "status": "success", 
-                "message": message,
-                "timestamp": "2025-12-11"
-            }
-    args:
-      message: "{{ workload.message }}"
+        print(f"Processing: {message}")
+        result = {
+            "status": "success", 
+            "message": message,
+            "timestamp": "2025-12-11"
+        }
     next:
       - step: end
   
   - step: end
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main(input_data):
-            return {"status": "completed"}
+        result = {"status": "completed"}
     desc: Workflow complete
