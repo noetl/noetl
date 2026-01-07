@@ -154,6 +154,8 @@ workflow:
     desc: Test completed
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main():
-            return {'status': 'completed', 'message': 'CSV and Excel uploaded to GCS', 'csv_count': 3, 'excel_count': 1}
+        result = {'status': 'completed', 'message': 'CSV and Excel uploaded to GCS', 'csv_count': 3, 'excel_count': 1}

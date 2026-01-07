@@ -12,8 +12,10 @@ workflow:
     desc: Start workflow
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main():
             return {"status": "initialized"}
     
     case:
@@ -29,8 +31,10 @@ workflow:
     desc: Test that variables from data block are available
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main():
             # These should be available from the data block in next
             test_var = {{ test_var }}
             computed = {{ computed }}
@@ -51,6 +55,8 @@ workflow:
     desc: End workflow
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main():
             return {"status": "complete"}

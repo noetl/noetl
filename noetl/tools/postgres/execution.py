@@ -27,20 +27,19 @@ async def execute_sql_with_connection(
     database: str = "unknown"
 ) -> Dict[str, Dict]:
     """
-    Execute SQL statements using a direct async connection.
+    Execute SQL statements using connection pool.
     
-    Opens a fresh connection for each execution, executes commands,
-    and properly closes the connection afterward. This is appropriate
-    for worker-side execution where workers are ephemeral and connect
-    to various user databases.
+    Uses per-connection-string connection pooling for optimal performance.
+    Connections are reused across executions with the same credentials,
+    significantly reducing overhead from TCP handshakes and authentication.
     
-    Workers should NOT use connection pooling because:
-    - Workers are ephemeral (can be scaled up/down)
-    - Each playbook step may connect to different databases
-    - Steps of one playbook instance can be distributed among several workers
-    - Connection pools would leak resources across worker restarts
+    Connection pooling is safe for workers because:
+    - Pools are per connection string (isolated per database/credential)
+    - Pool lifecycle managed automatically (connections recycled after max_lifetime)
+    - Connections automatically returned to pool after use
+    - Multiple workers can safely use pools for their assigned databases
     
-    Uses ASYNC psycopg AsyncConnection for proper async execution.
+    Uses ASYNC psycopg AsyncConnection with connection pooling.
     
     Args:
         connection_string: PostgreSQL connection string
@@ -55,45 +54,27 @@ async def execute_sql_with_connection(
     Raises:
         Exception: If connection or execution fails
     """
-    from psycopg.rows import dict_row
+    from .pool import get_plugin_connection
     import time
     
     conn_id = f"{host}:{port}/{database}-{int(time.time() * 1000)}"
-    logger.error(f"[CONN-{conn_id}] START: Creating connection to {host}:{port}/{database}, executing {len(commands)} SQL commands")
+    logger.debug(f"[CONN-{conn_id}] Getting pooled connection to {host}:{port}/{database}, executing {len(commands)} SQL commands")
     
-    # Use direct async connection (no pooling) for worker-side execution
-    # Connection is properly closed by context manager
-    conn = None
+    # Use connection pool for efficient connection reuse
+    # Connection automatically returned to pool when context exits
     try:
-        logger.error(f"[CONN-{conn_id}] Calling AsyncConnection.connect()...")
-        conn = await AsyncConnection.connect(
-            connection_string,
-            autocommit=False,
-            row_factory=dict_row
-        )
-        logger.error(f"[CONN-{conn_id}] Connection created, PID: {conn.info.backend_pid if conn and conn.info else 'unknown'}")
-        
-        async with conn:
-            logger.error(f"[CONN-{conn_id}] Entered context manager, executing statements...")
-            # Execute commands within connection context
+        async with get_plugin_connection(connection_string, pool_name=f"pg_{database}") as conn:
+            conn_pid = conn.info.backend_pid if conn and conn.info else 'unknown'
+            logger.debug(f"[CONN-{conn_id}] Using pooled connection PID: {conn_pid}")
+            
+            # Execute commands using pooled connection
             results = await execute_sql_statements_async(conn, commands)
-            logger.error(f"[CONN-{conn_id}] SQL execution completed, exiting context manager")
+            logger.debug(f"[CONN-{conn_id}] SQL execution completed, returning connection to pool")
             return results
     except Exception as e:
-        # Log the error - connection cleanup happens automatically
+        # Log the error - connection automatically returned to pool
         logger.exception(f"[CONN-{conn_id}] Failed to execute SQL on {database}: {e}")
         raise
-    finally:
-        logger.error(f"[CONN-{conn_id}] FINALLY: Connection state: {conn.closed if conn else 'None'}")
-        if conn and not conn.closed:
-            logger.error(f"[CONN-{conn_id}] WARNING: Connection still open in finally block!")
-            try:
-                await conn.close()
-                logger.error(f"[CONN-{conn_id}] Manually closed connection in finally")
-            except Exception as close_err:
-                logger.error(f"[CONN-{conn_id}] Error closing: {close_err} | cleanup complete")
-        else:
-            logger.error(f"[CONN-{conn_id}] END: Cleanup complete")
 
 
 async def execute_sql_statements_async(
@@ -122,7 +103,7 @@ async def execute_sql_statements_async(
         - message: Status message
     """
     conn_pid = conn.info.backend_pid if conn and conn.info else 'unknown'
-    logger.error(f"[PID-{conn_pid}] Executing {len(commands)} statements on connection")
+    logger.debug(f"[PID-{conn_pid}] Executing {len(commands)} statements on connection")
     results = {}
     
     for i, cmd in enumerate(commands):

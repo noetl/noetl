@@ -1768,9 +1768,9 @@ async fn k8s_reset(no_cache: bool, platform: &str) -> Result<()> {
     
     // Setup test environment
     println!("Setting up test environment...");
-    run_command(&["task", "test:k8s:setup-environment"])?;
     run_command(&["task", "test:k8s:create-tables"])?;
     run_command(&["task", "test:k8s:register-credentials"])?;
+    run_command(&["task", "test:k8s:register-playbooks"])?;
     
     println!("✓ NoETL reset complete");
     println!("  UI:  http://localhost:8082");

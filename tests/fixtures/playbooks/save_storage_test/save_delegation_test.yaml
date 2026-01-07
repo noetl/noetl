@@ -15,9 +15,11 @@ workflow:
     desc: "Setup test tables"
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main():
-            return {"status": "initialized"}
+        result = {"status": "initialized"}
     
     case:
       - when: "{{ event.name == 'step.exit' }}"
@@ -58,20 +60,23 @@ workflow:
     desc: "Test event storage delegation"
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
         # Simple function that doesn't need input_data parameter
-        def main(**kwargs):
-            return {
-                "test": "event_storage",
-                "message": "Event storage delegation working"
-            }
+        result = {
+            "test": "event_storage",
+            "message": "Event storage delegation working"
+        }
     
     case:
       - when: "{{ event.name == 'step.exit' and response is defined }}"
         then:
           sink:
-            tool: event
-            args: "{{ response }}"
+            tool:
+              kind: event_log
+              data: "{{ response }}"
           next:
             - step: postgres_test
 
@@ -80,27 +85,30 @@ workflow:
     desc: "Test postgres storage delegation"
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main(**kwargs):
-            return {
-                "test": "postgres_storage", 
-                "message": "Postgres storage delegation working",
-                "value": 123
-            }
+        result = {
+            "test": "postgres_storage", 
+            "message": "Postgres storage delegation working",
+            "value": 123
+        }
     
     case:
       - when: "{{ event.name == 'step.exit' and response is defined }}"
         then:
           sink:
-            tool: postgres
-            table: simple_test_flat
-            auth: "{{ workload.pg_auth }}"
-            args:
-              test_id: "delegation_test"
-              test_name: "{{ response.test }}"
-              test_value: "{{ response.value }}"
-              storage_type: "delegation"
-              test_execution: "{{ execution_id }}"
+            tool:
+              kind: postgres
+              auth: "{{ workload.pg_auth }}"
+              table: simple_test_flat
+              args:
+                test_id: "delegation_test"
+                test_name: "{{ response.test }}"
+                test_value: "{{ response.value }}"
+                storage_type: "delegation"
+                test_execution: "{{ execution_id }}"
           next:
             - step: duckdb_test
 
@@ -109,22 +117,25 @@ workflow:
     desc: "Test duckdb storage delegation"
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main(**kwargs):
-            return {
-                "test": "duckdb_storage",
-                "message": "DuckDB storage delegation working"
-            }
+        result = {
+            "test": "duckdb_storage",
+            "message": "DuckDB storage delegation working"
+        }
     
     case:
       - when: "{{ event.name == 'step.exit' and response is defined }}"
         then:
           sink:
-            tool: duckdb
-            commands: |
-              CREATE OR REPLACE TABLE test_duckdb AS 
-              SELECT 'delegation_test' as test_type, 'duckdb_working' as status;
-              SELECT * FROM test_duckdb;
+            tool:
+              kind: duckdb
+              commands: |
+                CREATE OR REPLACE TABLE test_duckdb AS 
+                SELECT 'delegation_test' as test_type, 'duckdb_working' as status;
+                SELECT * FROM test_duckdb;
           next:
             - step: http_test
 
@@ -133,22 +144,25 @@ workflow:
     desc: "Test http storage delegation"
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main(**kwargs):
-            return {
-                "test": "http_storage",
-                "message": "HTTP storage delegation working"
-            }
+        result = {
+            "test": "http_storage",
+            "message": "HTTP storage delegation working"
+        }
     
     case:
       - when: "{{ event.name == 'step.exit' and response is defined }}"
         then:
           sink:
-            tool: http
-            endpoint: "https://httpbin.org/post"
-            method: POST
-            headers:
-              Content-Type: "application/json"
-            payload:
-              test: "{{ response.test }}"
-              message: "{{ response.message }}"
+            tool:
+              kind: http
+              endpoint: "https://httpbin.org/post"
+              method: POST
+              headers:
+                Content-Type: "application/json"
+              payload:
+                test: "{{ response.test }}"
+                message: "{{ response.message }}"

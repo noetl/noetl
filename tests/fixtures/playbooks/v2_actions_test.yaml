@@ -15,8 +15,10 @@ workflow:
     desc: Initialize data processing
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main(input_data):
             print(f"[START] Processing initial data")
             data = {"count": 0, "sum": 0, "items": []}
             return data
@@ -32,8 +34,10 @@ workflow:
       mode: "sequential"
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main(input_data):
             num = input_data.get('num')
             print(f"[LOOP] Processing {num}")
             result = num * 2
@@ -56,8 +60,10 @@ workflow:
     desc: Sum all doubled values
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main(input_data):
             results = input_data.get('loop_results', [])
             print(f"[AGGREGATE] Processing {len(results)} results")
             
@@ -93,8 +99,10 @@ workflow:
     desc: Helper step to demonstrate call action
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main(input_data):
             message = input_data.get('message', 'No message')
             data = input_data.get('data', {})
             print(f"[HELPER] {message}")
@@ -124,8 +132,10 @@ workflow:
     desc: Verify all actions completed
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main(input_data):
             print("[VERIFY] All actions completed successfully")
             
             # Check if we have the expected data
@@ -152,8 +162,10 @@ workflow:
     desc: Workflow complete
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main(input_data):
             verify_result = input_data.get('verify', {})
             print(f"[END] {verify_result.get('message', 'Complete')}")
             return {"status": "completed", "success": verify_result.get('success', False)}

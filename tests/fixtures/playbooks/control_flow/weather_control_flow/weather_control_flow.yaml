@@ -17,9 +17,11 @@ workflow:
     desc: "Start weather control flow workflow"
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main():
-            return {"status": "initialized"}
+        result = {"status": "initialized"}
     
     case:
       - when: "{{ event.name == 'step.exit' and spec.state == 'ready' }}"
@@ -36,7 +38,11 @@ workflow:
     desc: "Fetch weather data for the city"
     tool:
       kind: python
-      code: "def main():\n    import httpx\n    threshold = 20\n    city_dict = {\"name\": \"New York\", \"lat\": 40.71, \"lon\": -74.01}\n    url = f\"https://api.open-meteo.com/v1/forecast\"\n    params = {\n        \"latitude\": city_dict[\"lat\"],\n        \"longitude\": city_dict[\"lon\"],\n        \"hourly\": \"temperature_2m\",\n        \"forecast_days\": 1\n    }\n\n    response = httpx.get(url, params=params)\n    forecast_data = response.json()\n    \n    # Extract max temperature from forecast\n    temperatures = forecast_data.get('hourly', {}).get('temperature_2m', [])\n    max_temp = max(temperatures) if temperatures else 15\n    \n    return {\n        'city': city_dict,\n        'max_temp': max_temp,\n        'alert': max_temp > threshold\n    }"
+      auth: {}
+      libs:
+        httpx: httpx
+      args: {}
+      code: "threshold = 20\ncity_dict = {\"name\": \"New York\", \"lat\": 40.71, \"lon\": -74.01}\nurl = f\"https://api.open-meteo.com/v1/forecast\"\nparams = {\n    \"latitude\": city_dict[\"lat\"],\n    \"longitude\": city_dict[\"lon\"],\n    \"hourly\": \"temperature_2m\",\n    \"forecast_days\": 1\n}\n\nresponse = httpx.get(url, params=params)\nforecast_data = response.json()\n\n# Extract max temperature from forecast\ntemperatures = forecast_data.get('hourly', {}).get('temperature_2m', [])\nmax_temp = max(temperatures) if temperatures else 15\n\nresult = {\n    'city': city_dict,\n    'max_temp': max_temp,\n    'alert': max_temp > threshold\n}"
     
     case:
       - when: "{{ event.name == 'step.exit' and response is defined and response.max_temp > spec.temperature_threshold }}"
@@ -59,7 +65,12 @@ workflow:
     desc: "Report warm weather"
     tool:
       kind: python
-      code: "def main(city, temperature):\n    city_name = city[\"name\"] if isinstance(city, dict) else str(city)\n    print(f\"It's warm in {city_name} ({temperature}°C)\")\n    return {\"status\": \"warm\", \"city\": city_name, \"temperature\": temperature}"
+      auth: {}
+      libs: {}
+      args:
+        city: "{{ city }}"
+        temperature: "{{ temperature }}"
+      code: "city_name = city[\"name\"] if isinstance(city, dict) else str(city)\nprint(f\"It's warm in {city_name} ({temperature}°C)\")\nresult = {\"status\": \"warm\", \"city\": city_name, \"temperature\": temperature}"
     
     case:
       - when: "{{ event.name == 'step.exit' and response is defined }}"
@@ -71,7 +82,12 @@ workflow:
     desc: "Report cold weather"
     tool:
       kind: python
-      code: "def main(city, temperature):\n    city_name = city[\"name\"] if isinstance(city, dict) else str(city)\n    print(f\"It's cold in {city_name} ({temperature}°C)\")\n    return {\"status\": \"cold\", \"city\": city_name, \"temperature\": temperature}"
+      auth: {}
+      libs: {}
+      args:
+        city: "{{ city }}"
+        temperature: "{{ temperature }}"
+      code: "city_name = city[\"name\"] if isinstance(city, dict) else str(city)\nprint(f\"It's cold in {city_name} ({temperature}°C)\")\nresult = {\"status\": \"cold\", \"city\": city_name, \"temperature\": temperature}"
     
     case:
       - when: "{{ event.name == 'step.exit' and response is defined }}"
@@ -83,6 +99,8 @@ workflow:
     desc: "End of weather control flow workflow"
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main():
-            return {"status": "complete"}
+        result = {"status": "complete"}

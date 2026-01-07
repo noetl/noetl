@@ -14,9 +14,11 @@ workflow:
     desc: "Start schema creation"
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main():
-            return {"status": "initialized"}
+        result = {"status": "initialized"}
     next:
       - step: create_test_results_table
 
@@ -121,9 +123,11 @@ workflow:
     desc: "Schema creation completed"
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main():
-            return {
-                "status": "success",
-                "message": "Test schema created successfully"
-            }
+        result = {
+            "status": "success",
+            "message": "Test schema created successfully"
+        }

@@ -22,9 +22,11 @@ workflow:
     desc: Start GCS OAuth test
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main():
-            return {"status": "initialized", "message": "Starting GCS OAuth test"}
+        result = {"status": "initialized", "message": "Starting GCS OAuth test"}
     next:
       - step: list_buckets
 
@@ -44,30 +46,31 @@ workflow:
     desc: Parse bucket list response
     tool:
       kind: python
+      auth: {}
+      libs: {}
       args:
         api_response: "{{ list_buckets }}"
       code: |
-        def main(api_response):
-            """Parse GCS bucket list response."""
-            if not isinstance(api_response, dict):
-                return {'status': 'error', 'message': 'Invalid response format'}
-            
+        """Parse GCS bucket list response."""
+        if not isinstance(api_response, dict):
+            result = {'status': 'error', 'message': 'Invalid response format'}
+        else:
             data = api_response.get('data', {})
             status_code = api_response.get('status_code', 0)
             
             if status_code != 200:
-                return {
+                result = {
                     'status': 'error',
                     'status_code': status_code,
                     'message': f'API call failed with status {status_code}',
                     'error': data.get('error', {})
                 }
-            
-            buckets = data.get('items', [])
-            bucket_names = [b.get('name') for b in buckets if b.get('name')]
-            
-            return {
-                'status': 'success',
+            else:
+                buckets = data.get('items', [])
+                bucket_names = [b.get('name') for b in buckets if b.get('name')]
+                
+                result = {
+                    'status': 'success',
                 'bucket_count': len(bucket_names),
                 'buckets': bucket_names[:5],  # First 5 buckets
                 'message': f'Found {len(bucket_names)} buckets'
@@ -79,29 +82,30 @@ workflow:
     desc: Final OAuth verification
     tool:
       kind: python
+      auth: {}
+      libs: {}
       args:
         bucket_result: "{{ parse_bucket_list }}"
       code: |
-        def main(bucket_result):
-            """Verify OAuth flow completed successfully."""
-            
-            # Check bucket listing worked
-            bucket_ok = bucket_result.get('status') == 'success'
-            
-            if bucket_ok:
-                return {
-                    'status': 'success',
-                    'message': 'GCS OAuth authentication fully verified!',
-                    'bucket_listing': 'SUCCESS',
-                    'buckets_found': bucket_result.get('bucket_count', 0),
-                    'validation': 'Token generated, GCS API calls succeeded'
-                }
-            else:
-                return {
-                    'status': 'error',
-                    'message': 'OAuth verification failed',
-                    'bucket_status': bucket_result.get('status')
-                }
+        """Verify OAuth flow completed successfully."""
+        
+        # Check bucket listing worked
+        bucket_ok = bucket_result.get('status') == 'success'
+        
+        if bucket_ok:
+            result = {
+                'status': 'success',
+                'message': 'GCS OAuth authentication fully verified!',
+                'bucket_listing': 'SUCCESS',
+                'buckets_found': bucket_result.get('bucket_count', 0),
+                'validation': 'Token generated, GCS API calls succeeded'
+            }
+        else:
+            result = {
+                'status': 'error',
+                'message': 'OAuth verification failed',
+                'bucket_status': bucket_result.get('status')
+            }
     next:
       - step: end
 
@@ -109,6 +113,8 @@ workflow:
     desc: GCS OAuth test completed
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main():
-            return {"status": "completed"}
+        result = {"status": "completed"}

@@ -59,7 +59,7 @@ spec:
       volumes:
         - name: noetl-data
           persistentVolumeClaim:
-            claimName: noetl-data
+            claimName: noetl-data-shared # Use shared RWX PVC for DuckDB files
         - name: noetl-logs
           persistentVolumeClaim:
             claimName: noetl-logs

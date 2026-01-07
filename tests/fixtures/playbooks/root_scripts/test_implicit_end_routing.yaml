@@ -9,9 +9,11 @@ workflow:
   desc: Start workflow - router only
   tool:
     kind: python
+    auth: {}
+    libs: {}
+    args: {}
     code: |
-      def main():
-          return {"status": "started"}
+      result = {"status": "started"}
   next:
   - step: step1
 
@@ -19,9 +21,11 @@ workflow:
   desc: Execute step1 - NO next field, should implicitly route to end
   tool:
     kind: python
+    auth: {}
+    libs: {}
+    args: {}
     code: |
-      def main():
-          return {"status": "step1_complete"}
+      result = {"status": "step1_complete"}
 
 # Note: step1 has NO next: field, so it should automatically route to 'end'
 
@@ -29,6 +33,8 @@ workflow:
   desc: End step - aggregates all workflow results
   tool:
     kind: python
+    auth: {}
+    libs: {}
+    args: {}
     code: |
-      def main():
-          return {"status": "workflow_complete"}
+      result = {"status": "workflow_complete"}

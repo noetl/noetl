@@ -7,6 +7,7 @@ This package contains all action executors moved from plugin/tools/:
 - http: HTTP request execution
 - postgres: PostgreSQL task execution
 - duckdb: DuckDB query execution
+- ducklake: DuckLake distributed DuckDB with Postgres metastore
 - snowflake: Snowflake task execution
 - transfer: Data transfer operations
 - container: Container execution
@@ -18,6 +19,7 @@ from noetl.tools import (
     http,
     postgres,
     duckdb,
+    ducklake,
     snowflake,
     transfer,
     container,
@@ -30,6 +32,7 @@ from noetl.tools.python import execute_python_task, execute_python_task_async
 from noetl.tools.http import execute_http_task
 from noetl.tools.postgres import execute_postgres_task
 from noetl.tools.duckdb import execute_duckdb_task
+from noetl.tools.ducklake import execute_ducklake_task
 from noetl.tools.snowflake import execute_snowflake_task, execute_snowflake_transfer_task
 from noetl.tools.transfer import execute_transfer_action
 from noetl.tools.transfer.snowflake_transfer import execute_snowflake_transfer_action
@@ -42,6 +45,7 @@ REGISTRY = {
     "http": http,
     "postgres": postgres,
     "duckdb": duckdb,
+    "ducklake": ducklake,
     "snowflake": snowflake,
     "transfer": transfer,
     "snowflake_transfer": snowflake_transfer,
@@ -55,6 +59,7 @@ __all__ = [
     "http",
     "postgres",
     "duckdb",
+    "ducklake",
     "snowflake",
     "transfer",
     "snowflake_transfer",
@@ -66,6 +71,7 @@ __all__ = [
     "execute_http_task",
     "execute_postgres_task",
     "execute_duckdb_task",
+    "execute_ducklake_task",
     "execute_snowflake_task",
     "execute_snowflake_transfer_task",
     "execute_transfer_action",

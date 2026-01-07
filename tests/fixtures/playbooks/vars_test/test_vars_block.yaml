@@ -13,9 +13,11 @@ workflow:
     desc: Start execution
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main():
-            return {"status": "initialized"}
+        result = {"status": "initialized"}
     
     case:
       - when: "{{ event.name == 'step.exit' }}"
@@ -27,20 +29,22 @@ workflow:
     desc: Simulate fetching data and extract vars
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main():
-            # Simulate fetching data from a database
-            return {
-                "status": "success",
-                "users": [
-                    {"user_id": 123, "email": "alice@example.com", "name": "Alice"},
-                    {"user_id": 456, "email": "bob@example.com", "name": "Bob"}
-                ],
-                "metadata": {
-                    "count": 2,
-                    "source": "test_db"
-                }
+        # Simulate fetching data from a database
+        result = {
+            "status": "success",
+            "users": [
+                {"user_id": 123, "email": "alice@example.com", "name": "Alice"},
+                {"user_id": 456, "email": "bob@example.com", "name": "Bob"}
+            ],
+            "metadata": {
+                "count": 2,
+                "source": "test_db"
             }
+        }
     
     case:
       - when: "{{ event.name == 'step.exit' and response is defined }}"
@@ -61,26 +65,27 @@ workflow:
     desc: Use variables that were extracted by vars block
     tool:
       kind: python
-      code: |
-        def main(first_user_id, first_email, user_count, data_source):
-            # This step receives vars extracted from previous step
-            return {
-                "status": "success",
-                "message": f"Processing user {first_user_id} ({first_email})",
-                "total_users": user_count,
-                "source": data_source,
-                "values_received": {
-                    "first_user_id": first_user_id,
-                    "first_email": first_email,
-                    "user_count": user_count,
-                    "data_source": data_source
-                }
-            }
+      auth: {}
+      libs: {}
       args:
         first_user_id: "{{ vars.first_user_id }}"
         first_email: "{{ vars.first_email }}"
         user_count: "{{ vars.user_count }}"
         data_source: "{{ vars.data_source }}"
+      code: |
+        # This step receives vars extracted from previous step
+        result = {
+            "status": "success",
+            "message": f"Processing user {first_user_id} ({first_email})",
+            "total_users": user_count,
+            "source": data_source,
+            "values_received": {
+                "first_user_id": first_user_id,
+                "first_email": first_email,
+                "user_count": user_count,
+                "data_source": data_source
+            }
+        }
     
     case:
       - when: "{{ event.name == 'step.exit' and response is defined }}"
@@ -92,35 +97,34 @@ workflow:
     desc: Verify all vars were extracted and used correctly
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args:
+        first_user_id: "{{ vars.first_user_id }}"
+        first_email: "{{ vars.first_email }}"
+        user_count: "{{ vars.user_count }}"
+        data_source: "{{ vars.data_source }}"
       code: |
-        def main():
-            from noetl.worker.transient import TransientVars
-            import asyncio
-            
-            execution_id = int(context.get('execution_id'))
-            
-            # Get all vars
-            all_vars = asyncio.run(TransientVars.get_all_vars(execution_id))
-            
-            # Check expected vars
-            checks = {
-                "first_user_id_exists": "first_user_id" in all_vars,
-                "first_user_id_correct": all_vars.get("first_user_id") == 123,
-                "first_email_exists": "first_email" in all_vars,
-                "first_email_correct": all_vars.get("first_email") == "alice@example.com",
-                "user_count_exists": "user_count" in all_vars,
-                "user_count_correct": all_vars.get("user_count") == 2,
-                "data_source_exists": "data_source" in all_vars,
-                "data_source_correct": all_vars.get("data_source") == "test_db"
+        # Verify vars via template args (no direct API access)
+        checks = {
+            "first_user_id_correct": first_user_id == 123,
+            "first_email_correct": first_email == "alice@example.com",
+            "user_count_correct": user_count == 2,
+            "data_source_correct": data_source == "test_db"
+        }
+        
+        all_passed = all(checks.values())
+        
+        result = {
+            "status": "success" if all_passed else "failed",
+            "checks": checks,
+            "received_values": {
+                "first_user_id": first_user_id,
+                "first_email": first_email,
+                "user_count": user_count,
+                "data_source": data_source
             }
-            
-            all_passed = all(checks.values())
-            
-            return {
-                "status": "success" if all_passed else "failed",
-                "checks": checks,
-                "all_vars": all_vars
-            }
+        }
     
     case:
       - when: "{{ event.name == 'step.exit' and response is defined }}"
@@ -132,6 +136,8 @@ workflow:
     desc: End execution
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main():
-            return {"status": "complete"}
+        result = {"status": "complete"}
