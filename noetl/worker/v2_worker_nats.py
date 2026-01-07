@@ -80,11 +80,86 @@ class V2Worker:
             await self._nats_subscriber.close()
         if self._http_client:
             await self._http_client.aclose()
+        
+        # Close all connection pools
+        try:
+            from noetl.tools.postgres.pool import close_all_plugin_pools
+            await close_all_plugin_pools()
+            logger.info("Closed all Postgres connection pools")
+        except Exception as e:
+            logger.warning(f"Error closing connection pools: {e}")
+        
         logger.info(f"Worker {self.worker_id} stopped")
     
     def stop(self):
         """Stop the worker."""
         self._running = False
+    
+    async def _monitor_pool_health(self):
+        """
+        Background task to monitor connection pool health.
+        
+        Runs every 5 minutes to:
+        - Check pool statistics
+        - Log warnings for unhealthy pools
+        - Report pool metrics
+        """
+        logger.info("Started connection pool health monitor")
+        
+        while self._running:
+            try:
+                await asyncio.sleep(300)  # Check every 5 minutes
+                
+                if not self._running:
+                    break
+                
+                from noetl.tools.postgres.pool import get_plugin_pool_stats
+                stats = get_plugin_pool_stats()
+                
+                if not stats:
+                    continue
+                
+                # Log summary
+                logger.info(f"Connection pool health check: {len(stats)} active pools")
+                
+                for pool_key, pool_stats in stats.items():
+                    if "error" in pool_stats:
+                        logger.warning(f"Pool {pool_key}: {pool_stats['error']}")
+                        continue
+                    
+                    # Check for warning conditions
+                    waiting = pool_stats.get('waiting', 0)
+                    available = pool_stats.get('available', 0)
+                    age = pool_stats.get('age_seconds', 0)
+                    
+                    if waiting > 5:
+                        logger.warning(
+                            f"Pool {pool_stats['name']}: {waiting} requests waiting, "
+                            f"{available} connections available"
+                        )
+                    
+                    if age > 3600:  # 1 hour
+                        logger.info(
+                            f"Pool {pool_stats['name']}: Active for {age}s, "
+                            f"will be refreshed on next use"
+                        )
+                    
+                    # Log healthy pool stats at debug level
+                    logger.debug(
+                        f"Pool {pool_stats['name']}: "
+                        f"size={pool_stats.get('size')}, "
+                        f"available={available}, "
+                        f"waiting={waiting}, "
+                        f"age={age}s"
+                    )
+                
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Error in pool health monitor: {e}", exc_info=True)
+                await asyncio.sleep(60)  # Back off on error
+        
+        logger.info("Stopped connection pool health monitor")
     
     async def _handle_command_notification(self, notification: dict):
         """
@@ -860,6 +935,22 @@ class V2Worker:
             result = await loop.run_in_executor(
                 None,
                 lambda: execute_duckdb_task(task_config, context, jinja_env, task_with)
+            )
+            # Check if plugin returned error status
+            if isinstance(result, dict) and result.get('status') == 'error':
+                # Keep error response intact (worker needs status field to detect error)
+                return result
+            return result.get('data', result) if isinstance(result, dict) else result
+
+        elif tool_kind == "ducklake":
+            # Use plugin's execute_ducklake_task (sync function - run in executor)
+            from noetl.tools.ducklake import execute_ducklake_task
+            # Pass full tool config as task_with to ensure auth is available
+            task_with = {**config, **args}  # Merge config (has auth) with args
+            loop = asyncio.get_running_loop()
+            result = await loop.run_in_executor(
+                None,
+                lambda: execute_ducklake_task(task_config, context, jinja_env, task_with)
             )
             # Check if plugin returned error status
             if isinstance(result, dict) and result.get('status') == 'error':
