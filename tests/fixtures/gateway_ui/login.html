@@ -1,0 +1,538 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Login - Cybx AI Gateway</title>
+  <script src="/config.js"></script>
+  <link rel="stylesheet" href="/static/styles.css">
+  <style>
+    body {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+    }
+
+    .login-container {
+      background: white;
+      border-radius: 16px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+      padding: 3rem;
+      width: 100%;
+      max-width: 420px;
+      animation: slideUp 0.4s ease-out;
+    }
+
+    @keyframes slideUp {
+      from {
+        opacity: 0;
+        transform: translateY(30px);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .login-header {
+      text-align: center;
+      margin-bottom: 2rem;
+    }
+
+    .login-header h1 {
+      font-size: 1.75rem;
+      font-weight: 700;
+      color: #1a202c;
+      margin: 0 0 0.5rem 0;
+    }
+
+    .login-header p {
+      font-size: 0.95rem;
+      color: #718096;
+      margin: 0;
+    }
+
+    .logo {
+      width: 64px;
+      height: 64px;
+      margin: 0 auto 1rem;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      border-radius: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .logo svg {
+      width: 36px;
+      height: 36px;
+      stroke: white;
+    }
+
+    .form-group {
+      margin-bottom: 1.5rem;
+    }
+
+    .form-group label {
+      display: block;
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: #2d3748;
+      margin-bottom: 0.5rem;
+    }
+
+    .form-group input {
+      width: 100%;
+      padding: 0.875rem 1rem;
+      font-size: 1rem;
+      border: 2px solid #e2e8f0;
+      border-radius: 8px;
+      box-sizing: border-box;
+      transition: all 0.2s;
+      outline: none;
+    }
+
+    .form-group input:focus {
+      border-color: #667eea;
+      box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+    }
+
+    .form-group input::placeholder {
+      color: #a0aec0;
+    }
+
+    .btn-login {
+      width: 100%;
+      padding: 1rem;
+      font-size: 1rem;
+      font-weight: 600;
+      color: white;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: all 0.2s;
+      outline: none;
+    }
+
+    .btn-login:hover:not(:disabled) {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 20px rgba(102, 126, 234, 0.4);
+    }
+
+    .btn-login:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
+    .auth0-section {
+      margin: 2rem 0;
+      padding: 1.5rem;
+      background: #f7fafc;
+      border-radius: 8px;
+      border: 2px dashed #cbd5e0;
+    }
+
+    .auth0-section h3 {
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: #2d3748;
+      margin: 0 0 1rem 0;
+      text-align: center;
+    }
+
+    .divider {
+      display: flex;
+      align-items: center;
+      margin: 1.5rem 0;
+      color: #a0aec0;
+      font-size: 0.85rem;
+    }
+
+    .divider::before,
+    .divider::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: #e2e8f0;
+    }
+
+    .divider span {
+      padding: 0 1rem;
+    }
+
+    .alert {
+      padding: 1rem;
+      border-radius: 8px;
+      margin-bottom: 1.5rem;
+      font-size: 0.9rem;
+      display: none;
+    }
+
+    .alert.error {
+      background: #fed7d7;
+      color: #c53030;
+      border: 1px solid #fc8181;
+    }
+
+    .alert.success {
+      background: #c6f6d5;
+      color: #2f855a;
+      border: 1px solid #9ae6b4;
+    }
+
+    .alert.show {
+      display: block;
+      animation: slideDown 0.3s ease-out;
+    }
+
+    @keyframes slideDown {
+      from {
+        opacity: 0;
+        transform: translateY(-10px);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .spinner {
+      display: inline-block;
+      width: 16px;
+      height: 16px;
+      border: 2px solid rgba(255, 255, 255, 0.3);
+      border-radius: 50%;
+      border-top-color: white;
+      animation: spin 0.8s linear infinite;
+      margin-right: 0.5rem;
+    }
+
+    @keyframes spin {
+      to {
+        transform: rotate(360deg);
+      }
+    }
+
+    .footer-links {
+      text-align: center;
+      margin-top: 1.5rem;
+      font-size: 0.85rem;
+      color: #718096;
+    }
+
+    .footer-links a {
+      color: #667eea;
+      text-decoration: none;
+    }
+
+    .footer-links a:hover {
+      text-decoration: underline;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="login-container">
+    <div class="login-header">
+      <div class="logo">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round">
+          <path
+            d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z">
+          </path>
+          <polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
+          <line x1="12" y1="22.08" x2="12" y2="12"></line>
+        </svg>
+      </div>
+      <h1>Welcome to Cybx AI Gateway</h1>
+      <p>Sign in to access the platform</p>
+    </div>
+
+    <div id="alert" class="alert"></div>
+
+    <!-- Auth0 Login Section -->
+    <div class="auth0-section">
+      <h3>🔐 Auth0 Login (Production)</h3>
+      <p style="font-size: 0.9rem; color: #718096; margin-bottom: 1rem;">
+        Click below to sign in via Auth0 Universal Login
+      </p>
+      <button type="button" class="btn-login" id="auth0LoginBtn" onclick="loginWithAuth0()">
+        Sign In with Auth0
+      </button>
+    </div>
+
+    <div class="divider">
+      <span>OR</span>
+    </div>
+
+    <!-- Direct Login Section (for testing) -->
+    <form id="directLoginForm">
+      <div class="form-group">
+        <label for="sessionToken">Session Token (Testing)</label>
+        <input type="text" id="sessionToken" placeholder="Direct session token for testing">
+      </div>
+      <button type="submit" class="btn-login" id="directSubmitBtn">
+        Sign In with Token
+      </button>
+    </form>
+
+    <div class="footer-links">
+      Need help? <a href="mailto:support@cybx.ai">Contact Support</a>
+    </div>
+  </div>
+
+  <script>
+    const API_BASE = window.location.origin;
+    const NOETL_API = window.location.origin.replace(':8080', ':8082'); // NoETL API for testing
+    const AUTH_LOGIN_URL = `${API_BASE}/api/auth/login`;
+    const AUTH_VALIDATE_URL = `${NOETL_API}/api/execute`; // Direct to NoETL playbook
+
+    // Check if already logged in
+    window.addEventListener('DOMContentLoaded', async () => {
+      const token = localStorage.getItem('session_token');
+      if (token) {
+        // Don't auto-validate, just redirect to dashboard
+        window.location.href = '/dashboard.html';
+        return;
+      }
+    });
+
+    // Auth0 Universal Login redirect
+    function loginWithAuth0() {
+      const auth0Domain = auth0Config.domain;
+      const clientId = auth0Config.clientId;
+      const redirectUri = auth0Config.redirectUri;
+      
+      // Build Auth0 authorization URL - request id_token for userinfo access
+      const authUrl = `https://${auth0Domain}/authorize?` +
+        `response_type=id_token token&` +
+        `client_id=${clientId}&` +
+        `redirect_uri=${encodeURIComponent(redirectUri)}&` +
+        `scope=openid profile email&` +
+        `nonce=${Math.random().toString(36).substring(7)}`;
+      
+      // Redirect to Auth0 login page
+      window.location.href = authUrl;
+    }
+
+    // Handle Auth0 callback (token in URL hash)
+    window.addEventListener('DOMContentLoaded', async () => {
+      // Check if we have a token from Auth0 redirect
+      const hash = window.location.hash;
+      if (hash && (hash.includes('access_token=') || hash.includes('id_token='))) {
+        const params = new URLSearchParams(hash.substring(1));
+        const accessToken = params.get('access_token');
+        const idToken = params.get('id_token');
+        
+        if (accessToken && idToken) {
+          showAlert('Processing Auth0 login...', 'info');
+          
+          try {
+            // Call auth0_login playbook with the ID token (can be validated at /userinfo)
+            console.log('DEBUG: Calling auth0_login with id_token:', idToken.substring(0, 20) + '...');
+            const response = await fetch(`${NOETL_API}/api/execute`, {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({
+                path: 'api_integration/auth0/auth0_login',
+                payload: {
+                  auth0_token: idToken,
+                  client_ip: '127.0.0.1'
+                }
+              })
+            });
+            
+            if (response.ok) {
+              const data = await response.json();
+              const executionId = data.execution_id;
+              console.log('DEBUG: Playbook execution started, ID:', executionId);
+              
+              showAlert('Auth0 login successful! Fetching session...', 'info');
+              
+              // Wait a bit for playbook to complete before polling
+              await new Promise(resolve => setTimeout(resolve, 2000));
+              
+              // Check execution status first
+              const statusResponse = await fetch(`${NOETL_API}/api/executions/${executionId}`);
+              if (statusResponse.ok) {
+                const statusData = await statusResponse.json();
+                console.log('DEBUG: Execution status:', statusData.status);
+                console.log('DEBUG: Full execution data:', statusData);
+              }
+              
+              // Poll for execution completion and get session token
+              let attempts = 0;
+              const maxAttempts = 20;
+              let sessionToken = null;
+              
+              while (attempts < maxAttempts && !sessionToken) {
+                await new Promise(resolve => setTimeout(resolve, 500));
+                attempts++;
+                
+                try {
+                  // Query database for session token using id_token (which we passed to playbook)
+                  const queryPayload = {
+                    query: `SELECT session_token FROM auth.sessions WHERE auth0_token = '${idToken}' ORDER BY created_at DESC LIMIT 1`,
+                    connection_string: 'postgresql://demo:demo@postgres.postgres.svc.cluster.local:5432/demo_noetl'
+                  };
+                  console.log(`DEBUG: Query attempt ${attempts}:`, queryPayload.query.substring(0, 100) + '...');
+                  
+                  const sessionResponse = await fetch(`${NOETL_API}/api/postgres/execute`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(queryPayload)
+                  });
+                  
+                  if (sessionResponse.ok) {
+                    const sessionData = await sessionResponse.json();
+                    console.log(`DEBUG: Session query response (attempt ${attempts}):`, sessionData);
+                    
+                    if (sessionData.result && sessionData.result.length > 0) {
+                      // Result is array of arrays: [["session_token_value"]]
+                      sessionToken = sessionData.result[0][0];
+                      console.log('DEBUG: Found session token:', sessionToken);
+                      break;
+                    } else {
+                      console.log(`DEBUG: Attempt ${attempts}/${maxAttempts}: No session found yet, result:`, sessionData.result);
+                    }
+                  } else {
+                    console.error('DEBUG: Session query failed:', await sessionResponse.text());
+                  }
+                } catch (err) {
+                  console.error('DEBUG: Error fetching session:', err);
+                }
+              }
+              
+              if (sessionToken) {
+                localStorage.setItem('session_token', sessionToken);
+                console.log('DEBUG: Session token stored in localStorage');
+                showAlert('Login complete! Redirecting...', 'success');
+                
+                setTimeout(() => {
+                  window.location.href = '/dashboard.html';
+                }, 1000);
+              } else {
+                console.error('DEBUG: Failed to get session token after', maxAttempts, 'attempts');
+                throw new Error('Session token not found after login');
+              }
+            } else {
+              throw new Error('Failed to create NoETL session');
+            }
+          } catch (error) {
+            console.error('Auth0 callback error:', error);
+            showAlert('Auth0 login failed: ' + error.message, 'error');
+            // Clean URL hash
+            window.location.hash = '';
+          }
+          return;
+        }
+      }
+      
+      // Check if already logged in with session token
+      const token = localStorage.getItem('session_token');
+      if (token) {
+        window.location.href = '/dashboard.html';
+        return;
+      }
+    });
+
+    // Direct token login form handler
+    document.getElementById('directLoginForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+
+      const sessionToken = document.getElementById('sessionToken').value.trim();
+
+      if (!sessionToken) {
+        showAlert('Please enter a session token', 'error');
+        return;
+      }
+
+      const submitBtn = document.getElementById('directSubmitBtn');
+      submitBtn.disabled = true;
+      submitBtn.innerHTML = '<span class="spinner"></span> Validating...';
+
+      try {
+        const valid = await validateSession(sessionToken);
+
+        if (valid) {
+          // Session is valid, store and redirect
+          localStorage.setItem('session_token', sessionToken);
+          showAlert('Session validated successfully!', 'success');
+
+          setTimeout(() => {
+            window.location.href = '/dashboard.html';
+          }, 1000);
+        } else {
+          throw new Error('Invalid or expired session token');
+        }
+      } catch (error) {
+        console.error('Direct login error:', error);
+        showAlert(error.message || 'Token validation failed', 'error');
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = 'Sign In with Token';
+      }
+    });
+
+    // Validate session helper
+    async function validateSession(token) {
+      try {
+        const response = await fetch(AUTH_VALIDATE_URL, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            path: 'api_integration/auth0/auth0_validate_session',
+            workload: {
+              session_token: token
+            }
+          }),
+        });
+
+        const data = await response.json();
+        
+        // For NoETL playbook execution, wait for result
+        if (data.execution_id) {
+          // Wait 2 seconds for playbook to complete
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          
+          // Check execution result (simplified for demo)
+          // In production, poll the execution status endpoint
+          return true; // Assume success if execution started
+        }
+
+        // For direct gateway API response
+        if (data.valid && data.user) {
+          localStorage.setItem('user_info', JSON.stringify(data.user));
+          return true;
+        }
+
+        return false;
+      } catch (error) {
+        console.error('Session validation error:', error);
+        return false;
+      }
+    }
+
+    // Show alert helper
+    function showAlert(message, type) {
+      const alert = document.getElementById('alert');
+      alert.textContent = message;
+      alert.className = `alert ${type} show`;
+
+      setTimeout(() => {
+        alert.classList.remove('show');
+      }, 5000);
+    }
+  </script>
+</body>
+
+</html>

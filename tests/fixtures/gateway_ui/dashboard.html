@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NoETL Gateway - Dashboard</title>
+  <script src="/config.js"></script>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      background: #f7fafc;
+      color: #2d3748;
+    }
+
+    .header {
+      background: white;
+      border-bottom: 1px solid #e2e8f0;
+      padding: 1rem 2rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    }
+
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    .logo {
+      width: 40px;
+      height: 40px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .logo svg {
+      width: 24px;
+      height: 24px;
+      stroke: white;
+    }
+
+    .header h1 {
+      font-size: 1.5rem;
+      font-weight: 600;
+    }
+
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    .user-info {
+      text-align: right;
+    }
+
+    .user-email {
+      font-size: 0.9rem;
+      color: #718096;
+    }
+
+    .btn-logout {
+      padding: 0.5rem 1rem;
+      background: #e53e3e;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.9rem;
+      font-weight: 500;
+      transition: all 0.2s;
+    }
+
+    .btn-logout:hover {
+      background: #c53030;
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: 2rem auto;
+      padding: 0 2rem;
+    }
+
+    .welcome-section {
+      background: white;
+      padding: 2rem;
+      border-radius: 12px;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+      margin-bottom: 2rem;
+    }
+
+    .welcome-section h2 {
+      font-size: 1.75rem;
+      margin-bottom: 0.5rem;
+      color: #1a202c;
+    }
+
+    .welcome-section p {
+      color: #718096;
+      font-size: 1rem;
+    }
+
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 1.5rem;
+      margin-bottom: 2rem;
+    }
+
+    .stat-card {
+      background: white;
+      padding: 1.5rem;
+      border-radius: 12px;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+      border-left: 4px solid #667eea;
+    }
+
+    .stat-card h3 {
+      font-size: 0.875rem;
+      color: #718096;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 0.5rem;
+    }
+
+    .stat-card .value {
+      font-size: 2rem;
+      font-weight: 700;
+      color: #1a202c;
+    }
+
+    .actions-section {
+      background: white;
+      padding: 2rem;
+      border-radius: 12px;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    }
+
+    .actions-section h3 {
+      font-size: 1.25rem;
+      margin-bottom: 1.5rem;
+      color: #1a202c;
+    }
+
+    .actions-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 1rem;
+    }
+
+    .action-btn {
+      padding: 1rem;
+      background: #f7fafc;
+      border: 2px solid #e2e8f0;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: all 0.2s;
+      text-align: left;
+      font-size: 1rem;
+      color: #2d3748;
+      font-weight: 500;
+    }
+
+    .action-btn:hover {
+      border-color: #667eea;
+      background: #edf2f7;
+      transform: translateY(-2px);
+    }
+
+    .action-btn .icon {
+      font-size: 1.5rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .session-info {
+      background: #f0fff4;
+      border: 1px solid #9ae6b4;
+      padding: 1rem;
+      border-radius: 8px;
+      margin-top: 2rem;
+      font-size: 0.9rem;
+    }
+
+    .session-info strong {
+      color: #2f855a;
+    }
+
+    .loading {
+      text-align: center;
+      padding: 3rem;
+      color: #718096;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="header-left">
+      <div class="logo">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
+          <polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
+          <line x1="12" y1="22.08" x2="12" y2="12"></line>
+        </svg>
+      </div>
+      <h1>NoETL Gateway</h1>
+    </div>
+    <div class="header-right">
+      <div class="user-info">
+        <div id="userName">Loading...</div>
+        <div class="user-email" id="userEmail"></div>
+      </div>
+      <button class="btn-logout" onclick="logout()">Logout</button>
+    </div>
+  </div>
+
+  <div class="container">
+    <div id="loadingState" class="loading">
+      Loading your dashboard...
+    </div>
+
+    <div id="dashboard" style="display: none;">
+      <div class="welcome-section">
+        <h2>Welcome Back!</h2>
+        <p>Your NoETL Gateway is ready to execute playbooks and manage workflows.</p>
+      </div>
+
+      <div class="stats-grid">
+        <div class="stat-card">
+          <h3>Session Status</h3>
+          <div class="value" style="color: #48bb78;">Active</div>
+        </div>
+        <div class="stat-card" style="border-left-color: #ed8936;">
+          <h3>Available Playbooks</h3>
+          <div class="value" id="playbookCount">-</div>
+        </div>
+        <div class="stat-card" style="border-left-color: #38b2ac;">
+          <h3>Your Roles</h3>
+          <div class="value" id="roleCount">-</div>
+        </div>
+      </div>
+
+      <div class="actions-section">
+        <h3>Quick Actions</h3>
+        <div class="actions-grid">
+          <button class="action-btn" onclick="alert('View Playbooks - Coming soon!')">
+            <div class="icon">📋</div>
+            View Playbooks
+          </button>
+          <button class="action-btn" onclick="alert('Execute Playbook - Coming soon!')">
+            <div class="icon">▶️</div>
+            Execute Playbook
+          </button>
+          <button class="action-btn" onclick="alert('View History - Coming soon!')">
+            <div class="icon">📊</div>
+            Execution History
+          </button>
+          <button class="action-btn" onclick="alert('Settings - Coming soon!')">
+            <div class="icon">⚙️</div>
+            Settings
+          </button>
+        </div>
+      </div>
+
+      <div class="session-info">
+        <strong>Session Token:</strong> <span id="sessionToken"></span><br>
+        <strong>Expires:</strong> <span id="expiresAt">24 hours from login</span>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const NOETL_API = window.location.origin.replace(':8080', ':8082');
+
+    async function loadDashboard() {
+      const token = localStorage.getItem('session_token');
+      const userInfo = JSON.parse(localStorage.getItem('user_info') || '{}');
+
+      if (!token) {
+        window.location.href = '/login.html';
+        return;
+      }
+
+      // Show user info
+      document.getElementById('userName').textContent = userInfo.display_name || 'User';
+      document.getElementById('userEmail').textContent = userInfo.email || '';
+      document.getElementById('sessionToken').textContent = token.substring(0, 20) + '...';
+
+      // Show roles
+      const roles = userInfo.roles || ['admin'];
+      document.getElementById('roleCount').textContent = roles.length;
+
+      // Mock playbook count
+      document.getElementById('playbookCount').textContent = '4';
+
+      // Hide loading, show dashboard
+      document.getElementById('loadingState').style.display = 'none';
+      document.getElementById('dashboard').style.display = 'block';
+    }
+
+    function logout() {
+      if (confirm('Are you sure you want to logout?')) {
+        localStorage.removeItem('session_token');
+        localStorage.removeItem('user_info');
+        window.location.href = '/login.html';
+      }
+    }
+
+    // Load dashboard on page load
+    window.addEventListener('DOMContentLoaded', loadDashboard);
+  </script>
+</body>
+</html>

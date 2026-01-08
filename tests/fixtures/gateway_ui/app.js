@@ -1,5 +1,4 @@
 // Configuration
-const GRAPHQL_ENDPOINT = 'http://localhost:8090/graphql'; // Update this to your actual GraphQL endpoint
 const PLAYBOOK_NAME = 'api_integration/amadeus_ai_api';
 
 // DOM Elements
@@ -24,6 +23,13 @@ async function handleSubmit(e) {
   const query = chatInput.value.trim();
   if (!query || isProcessing) return;
 
+  // Check playbook access before execution
+  const hasAccess = await checkPlaybookAccess(PLAYBOOK_NAME, 'execute');
+  if (!hasAccess) {
+    addErrorMessage('You do not have permission to execute this playbook. Please contact your administrator.');
+    return;
+  }
+
   // Clear input
   chatInput.value = '';
 
@@ -43,7 +49,7 @@ async function handleSubmit(e) {
   setProcessing(true);
 
   try {
-    // Execute GraphQL mutation
+    // Execute GraphQL mutation with authentication
     const result = await executePlaybook(query);
 
     // Remove typing indicator
@@ -58,13 +64,21 @@ async function handleSubmit(e) {
   } catch (error) {
     console.error('Error executing playbook:', error);
     typingIndicator.remove();
-    addErrorMessage(error.message || 'Failed to process your request. Please try again.');
+    
+    if (error.message === 'Session expired' || error.message === 'Not authenticated') {
+      addErrorMessage('Your session has expired. Redirecting to login...');
+      setTimeout(() => {
+        redirectToLogin();
+      }, 2000);
+    } else {
+      addErrorMessage(error.message || 'Failed to process your request. Please try again.');
+    }
   } finally {
     setProcessing(false);
   }
 }
 
-// Execute GraphQL mutation
+// Execute GraphQL mutation with authentication
 async function executePlaybook(query) {
   const mutation = `
         mutation ExecuteAmadeus($name: String!, $vars: JSON) {
@@ -84,28 +98,9 @@ async function executePlaybook(query) {
     }
   };
 
-  const response = await fetch(GRAPHQL_ENDPOINT, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      query: mutation,
-      variables: variables
-    })
-  });
-
-  if (!response.ok) {
-    throw new Error(`HTTP error! status: ${response.status}`);
-  }
-
-  const data = await response.json();
-
-  if (data.errors) {
-    throw new Error(data.errors[0].message || 'GraphQL error occurred');
-  }
-
-  return data.data.executePlaybook;
+  // Use authenticated GraphQL function from auth.js
+  const data = await authenticatedGraphQL(mutation, variables);
+  return data.executePlaybook;
 }
 
 // Add message to chat

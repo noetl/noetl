@@ -30,6 +30,9 @@ includes:
     taskfile: ci/taskfile/docker.yml
     dir: .
     flatten: true
+  gateway:
+    taskfile: ci/taskfile/gateway.yml
+    flatten: true
   tools:
     taskfile: ci/taskfile/tools.yml
     flatten: true

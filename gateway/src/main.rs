@@ -6,14 +6,20 @@ use std::sync::Arc;
 use async_graphql::http::playground_source;
 use async_graphql::{EmptySubscription, Schema};
 use async_graphql_axum::GraphQL;
-use axum::{Router, extract::State, response::Html, routing::get};
+use axum::{
+    middleware,
+    Router,
+    extract::State,
+    response::Html,
+    routing::{get, post},
+    http::header::{AUTHORIZATION, CONTENT_TYPE},
+    http::{HeaderName, Method},
+};
 use dotenvy::dotenv;
-use sqlx::postgres::PgPoolOptions;
 use tower_http::cors::{Any, CorsLayer};
 use tracing_subscriber::EnvFilter;
-mod config;
-mod db;
-mod get_val;
+
+mod auth;
 mod graphql;
 mod noetl_client;
 mod result_ext;
@@ -45,31 +51,58 @@ async fn main() -> anyhow::Result<()> {
         std::env::var("NATS_UPDATES_SUBJECT_PREFIX").unwrap_or_else(|_| "playbooks.executions.".to_string());
 
     let noetl = NoetlClient::new(noetl_base.clone());
-    let pg_cfg = config::PostgresqlEnv::from_env()?;
-    tracing::info!("connecting to database");
-    let pool: sqlx::Pool<sqlx::Postgres> = PgPoolOptions::new()
-        .max_connections(5)
-        .connect_with(pg_cfg.get_pg_options())
-        .await
-        .log("PgPoolOptions")?;
-    tracing::info!("connected to database");
+    let noetl_arc = Arc::new(noetl);
 
     let schema: AppSchema = Schema::build(QueryRoot, MutationRoot, async_graphql::EmptySubscription)
-        .data(noetl)
-        .data(pool.clone())
+        .data(noetl_arc.clone())
         .finish();
 
-    let cors = CorsLayer::new().allow_origin(Any).allow_methods(Any).allow_headers(Any);
+    // CORS configuration for Auth0 + local development
+    // Cannot use wildcards with credentials=true, so specify allowed origins
+    let allowed_origins = [
+        "http://localhost:8080".parse().unwrap(),
+        "http://localhost:3000".parse().unwrap(),
+    ];
+    
+    let cors = CorsLayer::new()
+        .allow_origin(allowed_origins)
+        .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
+        .allow_headers([
+            CONTENT_TYPE,
+            AUTHORIZATION,
+            HeaderName::from_static("x-session-id"),
+            HeaderName::from_static("x-user-id"),
+        ])
+        .allow_credentials(true);
 
-    let app = Router::new()
-        .route("/", get(playground))
+    // Public routes (no auth required)
+    let public_routes = Router::new()
+        .route("/health", get(health_check))
+        .route("/api/auth/login", post(auth::login))
+        .route("/api/auth/validate", post(auth::validate_session))
+        .route("/api/auth/check-access", post(auth::check_access))
+        .with_state(noetl_arc.clone());
+
+    // Protected GraphQL routes (auth required)
+    let protected_routes = Router::new()
         .route("/graphql", get(graphiql).post_service(GraphQL::new(schema.clone())))
-        .layer(cors)
+        .route_layer(middleware::from_fn_with_state(
+            noetl_arc.clone(),
+            auth::middleware::auth_middleware,
+        ))
         .with_state(());
 
+    // Main gateway app - pure API routes only
+    let app = Router::new()
+        .merge(public_routes)
+        .merge(protected_routes)
+        .layer(cors);
+
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
-    tracing::info!(%addr, noetl_base, nats_url, "starting gateway server http://localhost:{}", port);
-    //
+    tracing::info!(%addr, noetl_base, "starting gateway server http://localhost:{}", port);
+    tracing::info!("Auth endpoints: POST /api/auth/login, POST /api/auth/validate, POST /api/auth/check-access");
+    tracing::info!("Protected GraphQL: POST /graphql (requires authentication)");
+    
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .log("Failed to bind to address")?;
@@ -77,11 +110,11 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn playground() -> Html<String> {
-    let html = playground_source(async_graphql::http::GraphQLPlaygroundConfig::new("/graphql"));
-    Html(html)
+async fn health_check() -> &'static str {
+    "ok"
 }
 
-async fn graphiql(State(()): State<()>) -> &'static str {
-    "Use POST /graphql for GraphQL and GET / for Playground"
+async fn graphiql(State(()): State<()>) -> Html<String> {
+    let html = playground_source(async_graphql::http::GraphQLPlaygroundConfig::new("/graphql"));
+    Html(html)
 }

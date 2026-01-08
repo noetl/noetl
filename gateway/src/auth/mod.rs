@@ -1,0 +1,358 @@
+pub mod middleware;
+pub mod types;
+
+use axum::{
+    extract::State,
+    http::StatusCode,
+    response::{IntoResponse, Response},
+    Json,
+};
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+
+use crate::noetl_client::NoetlClient;
+
+/// Authentication error responses
+#[derive(Debug)]
+pub enum AuthError {
+    InvalidCredentials,
+    InvalidSession,
+    Unauthorized,
+    NoetlError(String),
+    InternalError(String),
+}
+
+impl IntoResponse for AuthError {
+    fn into_response(self) -> Response {
+        let (status, message) = match self {
+            AuthError::InvalidCredentials => (StatusCode::UNAUTHORIZED, "Invalid credentials".to_string()),
+            AuthError::InvalidSession => (StatusCode::UNAUTHORIZED, "Invalid or expired session".to_string()),
+            AuthError::Unauthorized => (StatusCode::FORBIDDEN, "Unauthorized access".to_string()),
+            AuthError::NoetlError(msg) => (StatusCode::BAD_GATEWAY, msg),
+            AuthError::InternalError(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
+        };
+
+        (status, Json(serde_json::json!({"error": message}))).into_response()
+    }
+}
+
+/// Login request body
+#[derive(Debug, Deserialize)]
+pub struct LoginRequest {
+    /// Auth0 access token
+    pub auth0_token: String,
+    /// Auth0 refresh token (optional)
+    pub auth0_refresh_token: Option<String>,
+    /// Auth0 domain (e.g., "your-tenant.auth0.com")
+    pub auth0_domain: String,
+    /// Session duration in hours (default: 8)
+    #[serde(default = "default_session_duration")]
+    pub session_duration_hours: i32,
+    /// Client IP address (optional - will use request IP if not provided)
+    pub client_ip: Option<String>,
+    /// Client user agent (optional - will use request header if not provided)
+    pub client_user_agent: Option<String>,
+}
+
+fn default_session_duration() -> i32 {
+    8
+}
+
+/// Login response
+#[derive(Debug, Serialize)]
+pub struct LoginResponse {
+    pub status: String,
+    pub session_token: String,
+    pub user: UserInfo,
+    pub expires_at: String,
+    pub message: String,
+}
+
+/// User information
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct UserInfo {
+    pub user_id: i32,
+    pub email: String,
+    pub display_name: String,
+}
+
+/// Session validation request
+#[derive(Debug, Deserialize)]
+pub struct ValidateSessionRequest {
+    pub session_token: String,
+}
+
+/// Session validation response
+#[derive(Debug, Serialize)]
+pub struct ValidateSessionResponse {
+    pub valid: bool,
+    pub user: Option<UserInfo>,
+    pub expires_at: Option<String>,
+    pub message: String,
+}
+
+/// Check playbook access request
+#[derive(Debug, Deserialize)]
+pub struct CheckAccessRequest {
+    pub session_token: String,
+    pub playbook_path: String,
+    pub permission_type: String, // "execute", "view", "edit"
+}
+
+/// Check access response
+#[derive(Debug, Serialize)]
+pub struct CheckAccessResponse {
+    pub allowed: bool,
+    pub user: Option<UserInfo>,
+    pub playbook_path: String,
+    pub permission_type: String,
+    pub message: String,
+}
+
+/// Login endpoint - authenticates user via Auth0 and creates session
+pub async fn login(
+    State(noetl): State<Arc<NoetlClient>>,
+    Json(req): Json<LoginRequest>,
+) -> Result<Json<LoginResponse>, AuthError> {
+    tracing::info!("Auth login request for domain: {}", req.auth0_domain);
+
+    // Call NoETL auth0_login playbook
+    let variables = serde_json::json!({
+        "auth0_token": req.auth0_token,
+        "auth0_refresh_token": req.auth0_refresh_token.unwrap_or_default(),
+        "auth0_domain": req.auth0_domain,
+        "session_duration_hours": req.session_duration_hours,
+        "client_ip": req.client_ip.unwrap_or_else(|| "0.0.0.0".to_string()),
+        "client_user_agent": req.client_user_agent.unwrap_or_else(|| "unknown".to_string()),
+    });
+
+    let result = noetl
+        .execute_playbook("api_integration/auth0/auth0_login", variables)
+        .await
+        .map_err(|e| AuthError::NoetlError(format!("Login playbook failed: {}", e)))?;
+
+    tracing::info!("Auth login execution_id: {}", result.execution_id);
+
+    // Poll for result (simplified - in production use NATS or webhooks)
+    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+
+    // Get execution result from NoETL
+    let status_result = noetl
+        .get_playbook_status(&result.execution_id)
+        .await
+        .map_err(|e| AuthError::NoetlError(format!("Failed to get status: {}", e)))?;
+
+    // Parse login response from playbook output
+    let output = status_result
+        .get("output")
+        .ok_or_else(|| AuthError::InternalError("No output from login playbook".to_string()))?;
+
+    let status_str = output
+        .get("status")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| AuthError::InvalidCredentials)?;
+
+    if status_str != "authenticated" {
+        return Err(AuthError::InvalidCredentials);
+    }
+
+    let session_token = output
+        .get("session_token")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| AuthError::InternalError("No session token returned".to_string()))?
+        .to_string();
+
+    let user_obj = output
+        .get("user")
+        .ok_or_else(|| AuthError::InternalError("No user data returned".to_string()))?;
+
+    let user = UserInfo {
+        user_id: user_obj
+            .get("user_id")
+            .and_then(|v| v.as_i64())
+            .ok_or_else(|| AuthError::InternalError("Invalid user_id".to_string()))? as i32,
+        email: user_obj
+            .get("email")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| AuthError::InternalError("Invalid email".to_string()))?
+            .to_string(),
+        display_name: user_obj
+            .get("display_name")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| AuthError::InternalError("Invalid display_name".to_string()))?
+            .to_string(),
+    };
+
+    let expires_at = output
+        .get("expires_at")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| AuthError::InternalError("Invalid expires_at".to_string()))?
+        .to_string();
+
+    tracing::info!("Auth login successful for user: {}", user.email);
+
+    Ok(Json(LoginResponse {
+        status: "authenticated".to_string(),
+        session_token,
+        user,
+        expires_at,
+        message: "Authentication successful".to_string(),
+    }))
+}
+
+/// Validate session endpoint - checks if session token is valid
+pub async fn validate_session(
+    State(noetl): State<Arc<NoetlClient>>,
+    Json(req): Json<ValidateSessionRequest>,
+) -> Result<Json<ValidateSessionResponse>, AuthError> {
+    tracing::info!("Auth validate_session request");
+
+    // Call NoETL auth0_validate_session playbook
+    let variables = serde_json::json!({
+        "session_token": req.session_token,
+    });
+
+    let result = noetl
+        .execute_playbook("api_integration/auth0/auth0_validate_session", variables)
+        .await
+        .map_err(|e| AuthError::NoetlError(format!("Validate session playbook failed: {}", e)))?;
+
+    tracing::info!("Auth validate_session execution_id: {}", result.execution_id);
+
+    // Poll for result
+    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+
+    // Get execution result
+    let status_result = noetl
+        .get_playbook_status(&result.execution_id)
+        .await
+        .map_err(|e| AuthError::NoetlError(format!("Failed to get status: {}", e)))?;
+
+    let output = status_result
+        .get("output")
+        .ok_or_else(|| AuthError::InternalError("No output from validate session playbook".to_string()))?;
+
+    let valid = output.get("valid").and_then(|v| v.as_bool()).unwrap_or(false);
+
+    if !valid {
+        return Ok(Json(ValidateSessionResponse {
+            valid: false,
+            user: None,
+            expires_at: None,
+            message: "Session is invalid or expired".to_string(),
+        }));
+    }
+
+    let user_obj = output.get("user");
+    let user = if let Some(u) = user_obj {
+        Some(UserInfo {
+            user_id: u.get("user_id").and_then(|v| v.as_i64()).unwrap_or(0) as i32,
+            email: u
+                .get("email")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown")
+                .to_string(),
+            display_name: u
+                .get("display_name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Unknown User")
+                .to_string(),
+        })
+    } else {
+        None
+    };
+
+    let expires_at = output
+        .get("expires_at")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    tracing::info!("Auth validate_session valid: {}", valid);
+
+    Ok(Json(ValidateSessionResponse {
+        valid,
+        user,
+        expires_at,
+        message: if valid {
+            "Session is valid".to_string()
+        } else {
+            "Session is invalid".to_string()
+        },
+    }))
+}
+
+/// Check playbook access endpoint - verifies user has permission for playbook
+pub async fn check_access(
+    State(noetl): State<Arc<NoetlClient>>,
+    Json(req): Json<CheckAccessRequest>,
+) -> Result<Json<CheckAccessResponse>, AuthError> {
+    tracing::info!(
+        "Auth check_access request for playbook: {} permission: {}",
+        req.playbook_path,
+        req.permission_type
+    );
+
+    // Call NoETL check_playbook_access playbook
+    let variables = serde_json::json!({
+        "session_token": req.session_token,
+        "playbook_path": req.playbook_path,
+        "permission_type": req.permission_type,
+    });
+
+    let result = noetl
+        .execute_playbook("api_integration/auth0/check_playbook_access", variables)
+        .await
+        .map_err(|e| AuthError::NoetlError(format!("Check access playbook failed: {}", e)))?;
+
+    tracing::info!("Auth check_access execution_id: {}", result.execution_id);
+
+    // Poll for result
+    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+
+    // Get execution result
+    let status_result = noetl
+        .get_playbook_status(&result.execution_id)
+        .await
+        .map_err(|e| AuthError::NoetlError(format!("Failed to get status: {}", e)))?;
+
+    let output = status_result
+        .get("output")
+        .ok_or_else(|| AuthError::InternalError("No output from check access playbook".to_string()))?;
+
+    let allowed = output.get("allowed").and_then(|v| v.as_bool()).unwrap_or(false);
+
+    let user_obj = output.get("user");
+    let user = if let Some(u) = user_obj {
+        Some(UserInfo {
+            user_id: u.get("user_id").and_then(|v| v.as_i64()).unwrap_or(0) as i32,
+            email: u
+                .get("email")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown")
+                .to_string(),
+            display_name: u
+                .get("display_name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Unknown User")
+                .to_string(),
+        })
+    } else {
+        None
+    };
+
+    let message = output
+        .get("message")
+        .and_then(|v| v.as_str())
+        .unwrap_or("Access check completed")
+        .to_string();
+
+    tracing::info!("Auth check_access allowed: {}", allowed);
+
+    Ok(Json(CheckAccessResponse {
+        allowed,
+        user,
+        playbook_path: req.playbook_path,
+        permission_type: req.permission_type,
+        message,
+    }))
+}

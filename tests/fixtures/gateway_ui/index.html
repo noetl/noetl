@@ -5,7 +5,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Cybx AI Flight Assistant</title>
-  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="/static/styles.css">
 </head>
 
 <body>
@@ -25,6 +25,10 @@
         <div class="header-info">
           <h1>Cybx AI</h1>
           <p>Your intelligent flight search assistant</p>
+        </div>
+        <div class="user-menu">
+          <span id="userDisplay" class="user-name"></span>
+          <button id="logoutBtn" class="logout-btn">Logout</button>
         </div>
       </div>
     </div>
@@ -66,7 +70,8 @@
     </div>
   </div>
 
-  <script src="app.js"></script>
+  <script src="/static/auth.js"></script>
+  <script src="/static/app.js"></script>
 </body>
 
 </html>
