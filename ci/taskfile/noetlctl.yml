@@ -7,13 +7,13 @@ tasks:
     cmds:
       - cargo build --release
       - mkdir -p ../bin
-      - cp target/release/noetlctl ../bin/
+      - cp target/release/noetl ../bin/
     sources:
       - src/**/*.rs
       - Cargo.toml
       - Cargo.lock
     generates:
-      - ../bin/noetlctl
+      - ../bin/noetl
 
   noetlctl:local:install:
     desc: Install noetlctl binary to ~/.local/bin/

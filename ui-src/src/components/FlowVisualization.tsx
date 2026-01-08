@@ -169,7 +169,8 @@ const FlowVisualizationInner: React.FC<FlowVisualizationProps> = ({
 
   // Map legacy or unknown types to supported widget types
   const mapType = (t?: string): EditableTaskNode['type'] => {
-    switch ((t || '').toLowerCase()) {
+    const typeStr = typeof t === 'string' ? t : String(t || '');
+    switch (typeStr.toLowerCase()) {
       case 'script':
         return 'python';
       case 'sql':
@@ -277,16 +278,26 @@ const FlowVisualizationInner: React.FC<FlowVisualizationProps> = ({
               });
             }
           });
-        }
-
-        // Also handle 'case' blocks if present
+        }        // Also handle 'case' blocks if present (v2 DSL)
         if (task.config?.case) {
           const cases = Array.isArray(task.config.case) ? task.config.case : [task.config.case];
+          console.log(`🔍 Processing ${cases.length} case blocks for ${task.id}:`, cases);
           cases.forEach((caseItem: any) => {
             if (caseItem.then) {
               const thenSteps = Array.isArray(caseItem.then) ? caseItem.then : [caseItem.then];
+              console.log(`🔍 Case then steps:`, thenSteps);
               thenSteps.forEach((thenItem: any) => {
-                const targetStep = thenItem.step || thenItem;
+                // v2 DSL: then items contain {next: [{step: "target"}]}
+                let targetStep = null;
+                if (thenItem.next && Array.isArray(thenItem.next) && thenItem.next.length > 0) {
+                  // Extract from next array: {next: [{step: "target"}]}
+                  targetStep = thenItem.next[0].step || thenItem.next[0];
+                } else {
+                  // Fallback: direct step reference
+                  targetStep = thenItem.step || thenItem;
+                }
+
+                console.log(`🔍 Case target:`, targetStep, 'type:', typeof targetStep);
                 if (targetStep && typeof targetStep === 'string') {
                   flowEdges.push({
                     id: `${task.id}-${targetStep}-case`,
@@ -294,12 +305,13 @@ const FlowVisualizationInner: React.FC<FlowVisualizationProps> = ({
                     target: targetStep,
                     type: 'buttonedge',
                   });
+                  console.log(`✅ Created case edge: ${task.id} -> ${targetStep}`);
                 }
               });
             }
           });
         }
-      });
+      })
 
       return { nodes: flowNodes, edges: flowEdges };
     },
@@ -311,9 +323,7 @@ const FlowVisualizationInner: React.FC<FlowVisualizationProps> = ({
     const { nodes: flowNodes, edges: flowEdges } = createFlowFromTasks(tasks);
     setNodes(flowNodes);
     setEdges(flowEdges);
-  }, [tasks, createFlowFromTasks, setNodes, setEdges]);
-
-  // Re-enable automatic flow recreation for major changes
+  }, [tasks, createFlowFromTasks, setNodes, setEdges]);  // Re-enable automatic flow recreation for major changes
   useEffect(() => {
     if (tasks.length > 0) {
       recreateFlow();
@@ -355,7 +365,15 @@ const FlowVisualizationInner: React.FC<FlowVisualizationProps> = ({
       }
 
       const loadedTasks: EditableTaskNode[] = workflowSteps.map((step: any, index: number) => {
-        const stepType = step.tool || step.type || 'workbook';
+        // Extract type: step.tool can be {kind: "python"} or "python" string
+        let stepType = 'workbook';
+        if (step.tool) {
+          stepType = typeof step.tool === 'object' ? step.tool.kind : step.tool;
+        } else if (step.type) {
+          stepType = typeof step.type === 'object' ? step.type.kind : step.type;
+        }
+
+        console.log(`Step ${index}:`, step.step, 'type:', stepType);
         return {
           id: step.step || `step-${index}`,
           name: step.desc || step.step || `Step ${index + 1}`,
@@ -366,12 +384,14 @@ const FlowVisualizationInner: React.FC<FlowVisualizationProps> = ({
         };
       });
 
+      console.log('✅ Loaded tasks:', loadedTasks);
       setTasks(loadedTasks);
       const { nodes: flowNodes, edges: flowEdges } = createFlowFromTasks(loadedTasks);
+      console.log('✅ Created nodes:', flowNodes.length, 'edges:', flowEdges.length);
       setNodes(flowNodes);
       setEdges(flowEdges);
     } catch (error) {
-      console.error('Error loading playbook:', error);
+      console.error('❌ Error loading playbook:', error);
       messageApi.error('Failed to load playbook');
 
       // Fallback to demo tasks
@@ -386,8 +406,10 @@ const FlowVisualizationInner: React.FC<FlowVisualizationProps> = ({
         { id: "demo-9", name: "End Workflow", type: 'end', enabled: true },
       ];
 
+      console.log('📦 Using demo tasks:', demoTasks);
       setTasks(demoTasks);
       const { nodes: flowNodes, edges: flowEdges } = createFlowFromTasks(demoTasks);
+      console.log('📦 Demo nodes:', flowNodes.length, 'edges:', flowEdges.length);
       setNodes(flowNodes);
       setEdges(flowEdges);
     } finally {

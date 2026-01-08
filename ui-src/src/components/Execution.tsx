@@ -511,15 +511,21 @@ const Execution: React.FC = () => {
 
     setWorkflowLoading(true);
     try {
+      console.log("📥 Loading workflow for playbook:", selectedPlaybookId);
       const content = await apiService.getPlaybookContent(selectedPlaybookId);
+      console.log("📄 Received content:", content ? `${content.substring(0, 200)}...` : "empty");
+
       if (content && content.trim()) {
         const tasks = parsePlaybookContent(content);
+        console.log("📋 Parsed tasks:", tasks.length, tasks);
+
         if (tasks.length > 0) {
           const { nodes: flowNodes, edges: flowEdges } =
             createFlowFromTasks(tasks);
           setNodes(flowNodes);
           setEdges(flowEdges);
         } else {
+          console.warn("⚠️ No tasks parsed from content, showing demo");
           // Show demo flow if no tasks found
           const demoTasks: TaskNode[] = [
             { id: "demo-1", name: "Initialize Process", type: "log" },
@@ -531,9 +537,11 @@ const Execution: React.FC = () => {
           setNodes(flowNodes);
           setEdges(flowEdges);
         }
+      } else {
+        console.warn("⚠️ No content received from API");
       }
     } catch (error) {
-      console.error("Failed to load workflow:", error);
+      console.error("❌ Failed to load workflow:", error);
     } finally {
       setWorkflowLoading(false);
     }
