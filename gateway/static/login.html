@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Login - Cybx AI Gateway</title>
+  <link rel="stylesheet" href="/static/styles.css">
+  <style>
+    body {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+    }
+
+    .login-container {
+      background: white;
+      border-radius: 16px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+      padding: 3rem;
+      width: 100%;
+      max-width: 420px;
+      animation: slideUp 0.4s ease-out;
+    }
+
+    @keyframes slideUp {
+      from {
+        opacity: 0;
+        transform: translateY(30px);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .login-header {
+      text-align: center;
+      margin-bottom: 2rem;
+    }
+
+    .login-header h1 {
+      font-size: 1.75rem;
+      font-weight: 700;
+      color: #1a202c;
+      margin: 0 0 0.5rem 0;
+    }
+
+    .login-header p {
+      font-size: 0.95rem;
+      color: #718096;
+      margin: 0;
+    }
+
+    .logo {
+      width: 64px;
+      height: 64px;
+      margin: 0 auto 1rem;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      border-radius: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .logo svg {
+      width: 36px;
+      height: 36px;
+      stroke: white;
+    }
+
+    .form-group {
+      margin-bottom: 1.5rem;
+    }
+
+    .form-group label {
+      display: block;
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: #2d3748;
+      margin-bottom: 0.5rem;
+    }
+
+    .form-group input {
+      width: 100%;
+      padding: 0.875rem 1rem;
+      font-size: 1rem;
+      border: 2px solid #e2e8f0;
+      border-radius: 8px;
+      box-sizing: border-box;
+      transition: all 0.2s;
+      outline: none;
+    }
+
+    .form-group input:focus {
+      border-color: #667eea;
+      box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+    }
+
+    .form-group input::placeholder {
+      color: #a0aec0;
+    }
+
+    .btn-login {
+      width: 100%;
+      padding: 1rem;
+      font-size: 1rem;
+      font-weight: 600;
+      color: white;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: all 0.2s;
+      outline: none;
+    }
+
+    .btn-login:hover:not(:disabled) {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 20px rgba(102, 126, 234, 0.4);
+    }
+
+    .btn-login:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
+    .auth0-section {
+      margin: 2rem 0;
+      padding: 1.5rem;
+      background: #f7fafc;
+      border-radius: 8px;
+      border: 2px dashed #cbd5e0;
+    }
+
+    .auth0-section h3 {
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: #2d3748;
+      margin: 0 0 1rem 0;
+      text-align: center;
+    }
+
+    .divider {
+      display: flex;
+      align-items: center;
+      margin: 1.5rem 0;
+      color: #a0aec0;
+      font-size: 0.85rem;
+    }
+
+    .divider::before,
+    .divider::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: #e2e8f0;
+    }
+
+    .divider span {
+      padding: 0 1rem;
+    }
+
+    .alert {
+      padding: 1rem;
+      border-radius: 8px;
+      margin-bottom: 1.5rem;
+      font-size: 0.9rem;
+      display: none;
+    }
+
+    .alert.error {
+      background: #fed7d7;
+      color: #c53030;
+      border: 1px solid #fc8181;
+    }
+
+    .alert.success {
+      background: #c6f6d5;
+      color: #2f855a;
+      border: 1px solid #9ae6b4;
+    }
+
+    .alert.show {
+      display: block;
+      animation: slideDown 0.3s ease-out;
+    }
+
+    @keyframes slideDown {
+      from {
+        opacity: 0;
+        transform: translateY(-10px);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .spinner {
+      display: inline-block;
+      width: 16px;
+      height: 16px;
+      border: 2px solid rgba(255, 255, 255, 0.3);
+      border-radius: 50%;
+      border-top-color: white;
+      animation: spin 0.8s linear infinite;
+      margin-right: 0.5rem;
+    }
+
+    @keyframes spin {
+      to {
+        transform: rotate(360deg);
+      }
+    }
+
+    .footer-links {
+      text-align: center;
+      margin-top: 1.5rem;
+      font-size: 0.85rem;
+      color: #718096;
+    }
+
+    .footer-links a {
+      color: #667eea;
+      text-decoration: none;
+    }
+
+    .footer-links a:hover {
+      text-decoration: underline;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="login-container">
+    <div class="login-header">
+      <div class="logo">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round">
+          <path
+            d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z">
+          </path>
+          <polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
+          <line x1="12" y1="22.08" x2="12" y2="12"></line>
+        </svg>
+      </div>
+      <h1>Welcome to Cybx AI Gateway</h1>
+      <p>Sign in to access the platform</p>
+    </div>
+
+    <div id="alert" class="alert"></div>
+
+    <!-- Auth0 Login Section -->
+    <div class="auth0-section">
+      <h3>🔐 Auth0 Login (Production)</h3>
+      <form id="auth0Form">
+        <div class="form-group">
+          <label for="auth0Token">Auth0 Access Token</label>
+          <input type="text" id="auth0Token" placeholder="Enter your Auth0 token" required>
+        </div>
+        <div class="form-group">
+          <label for="auth0Domain">Auth0 Domain</label>
+          <input type="text" id="auth0Domain" placeholder="your-tenant.auth0.com" required
+            value="your-tenant.auth0.com">
+        </div>
+        <button type="submit" class="btn-login" id="auth0SubmitBtn">
+          Sign In with Auth0
+        </button>
+      </form>
+    </div>
+
+    <div class="divider">
+      <span>OR</span>
+    </div>
+
+    <!-- Direct Login Section (for testing) -->
+    <form id="directLoginForm">
+      <div class="form-group">
+        <label for="sessionToken">Session Token (Testing)</label>
+        <input type="text" id="sessionToken" placeholder="Direct session token for testing">
+      </div>
+      <button type="submit" class="btn-login" id="directSubmitBtn">
+        Sign In with Token
+      </button>
+    </form>
+
+    <div class="footer-links">
+      Need help? <a href="mailto:support@cybx.ai">Contact Support</a>
+    </div>
+  </div>
+
+  <script>
+    const API_BASE = window.location.origin;
+    const AUTH_LOGIN_URL = `${API_BASE}/api/auth/login`;
+    const AUTH_VALIDATE_URL = `${API_BASE}/api/auth/validate`;
+
+    // Check if already logged in
+    window.addEventListener('DOMContentLoaded', async () => {
+      const token = localStorage.getItem('session_token');
+      if (token) {
+        const valid = await validateSession(token);
+        if (valid) {
+          window.location.href = '/';
+          return;
+        } else {
+          localStorage.removeItem('session_token');
+          localStorage.removeItem('user_info');
+        }
+      }
+    });
+
+    // Auth0 login form handler
+    document.getElementById('auth0Form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+
+      const auth0Token = document.getElementById('auth0Token').value.trim();
+      const auth0Domain = document.getElementById('auth0Domain').value.trim();
+
+      if (!auth0Token || !auth0Domain) {
+        showAlert('Please fill in all fields', 'error');
+        return;
+      }
+
+      const submitBtn = document.getElementById('auth0SubmitBtn');
+      submitBtn.disabled = true;
+      submitBtn.innerHTML = '<span class="spinner"></span> Authenticating...';
+
+      try {
+        const response = await fetch(AUTH_LOGIN_URL, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            auth0_token: auth0Token,
+            auth0_domain: auth0Domain,
+            session_duration_hours: 8,
+          }),
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.error || 'Login failed');
+        }
+
+        // Store session token and user info
+        localStorage.setItem('session_token', data.session_token);
+        localStorage.setItem('user_info', JSON.stringify(data.user));
+
+        showAlert(`Welcome, ${data.user.display_name}!`, 'success');
+
+        // Redirect to main app after 1 second
+        setTimeout(() => {
+          window.location.href = '/';
+        }, 1000);
+      } catch (error) {
+        console.error('Auth0 login error:', error);
+        showAlert(error.message || 'Authentication failed', 'error');
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = 'Sign In with Auth0';
+      }
+    });
+
+    // Direct token login form handler
+    document.getElementById('directLoginForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+
+      const sessionToken = document.getElementById('sessionToken').value.trim();
+
+      if (!sessionToken) {
+        showAlert('Please enter a session token', 'error');
+        return;
+      }
+
+      const submitBtn = document.getElementById('directSubmitBtn');
+      submitBtn.disabled = true;
+      submitBtn.innerHTML = '<span class="spinner"></span> Validating...';
+
+      try {
+        const valid = await validateSession(sessionToken);
+
+        if (valid) {
+          // Session is valid, store and redirect
+          localStorage.setItem('session_token', sessionToken);
+          showAlert('Session validated successfully!', 'success');
+
+          setTimeout(() => {
+            window.location.href = '/';
+          }, 1000);
+        } else {
+          throw new Error('Invalid or expired session token');
+        }
+      } catch (error) {
+        console.error('Direct login error:', error);
+        showAlert(error.message || 'Token validation failed', 'error');
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = 'Sign In with Token';
+      }
+    });
+
+    // Validate session helper
+    async function validateSession(token) {
+      try {
+        const response = await fetch(AUTH_VALIDATE_URL, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            session_token: token,
+          }),
+        });
+
+        const data = await response.json();
+
+        if (data.valid && data.user) {
+          localStorage.setItem('user_info', JSON.stringify(data.user));
+          return true;
+        }
+
+        return false;
+      } catch (error) {
+        console.error('Session validation error:', error);
+        return false;
+      }
+    }
+
+    // Show alert helper
+    function showAlert(message, type) {
+      const alert = document.getElementById('alert');
+      alert.textContent = message;
+      alert.className = `alert ${type} show`;
+
+      setTimeout(() => {
+        alert.classList.remove('show');
+      }, 5000);
+    }
+  </script>
+</body>
+
+</html>

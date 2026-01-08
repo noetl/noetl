@@ -6,11 +6,22 @@ use std::sync::Arc;
 use async_graphql::http::playground_source;
 use async_graphql::{EmptySubscription, Schema};
 use async_graphql_axum::GraphQL;
-use axum::{Router, extract::State, response::Html, routing::get};
+use axum::{
+    middleware,
+    Router,
+    extract::State,
+    response::Html,
+    routing::{get, post},
+};
 use dotenvy::dotenv;
 use sqlx::postgres::PgPoolOptions;
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::{
+    cors::{Any, CorsLayer},
+    services::ServeDir,
+};
 use tracing_subscriber::EnvFilter;
+
+mod auth;
 mod config;
 mod db;
 mod get_val;
@@ -45,6 +56,8 @@ async fn main() -> anyhow::Result<()> {
         std::env::var("NATS_UPDATES_SUBJECT_PREFIX").unwrap_or_else(|_| "playbooks.executions.".to_string());
 
     let noetl = NoetlClient::new(noetl_base.clone());
+    let noetl_arc = Arc::new(noetl);
+    
     let pg_cfg = config::PostgresqlEnv::from_env()?;
     tracing::info!("connecting to database");
     let pool: sqlx::Pool<sqlx::Postgres> = PgPoolOptions::new()
@@ -55,21 +68,46 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("connected to database");
 
     let schema: AppSchema = Schema::build(QueryRoot, MutationRoot, async_graphql::EmptySubscription)
-        .data(noetl)
+        .data(noetl_arc.clone())
         .data(pool.clone())
         .finish();
 
-    let cors = CorsLayer::new().allow_origin(Any).allow_methods(Any).allow_headers(Any);
+    let cors = CorsLayer::new()
+        .allow_origin(Any)
+        .allow_methods(Any)
+        .allow_headers(Any)
+        .allow_credentials(true);
 
-    let app = Router::new()
-        .route("/", get(playground))
+    // Public routes (no auth required)
+    let public_routes = Router::new()
+        .route("/api/auth/login", post(auth::login))
+        .route("/api/auth/validate", post(auth::validate_session))
+        .route("/api/auth/check-access", post(auth::check_access))
+        .with_state(noetl_arc.clone());
+
+    // Protected GraphQL routes (auth required)
+    let protected_routes = Router::new()
         .route("/graphql", get(graphiql).post_service(GraphQL::new(schema.clone())))
-        .layer(cors)
+        .route_layer(middleware::from_fn_with_state(
+            noetl_arc.clone(),
+            auth::middleware::auth_middleware,
+        ))
         .with_state(());
 
+    // Main app with static file serving
+    let app = Router::new()
+        .route("/", get(serve_index))
+        .merge(public_routes)
+        .merge(protected_routes)
+        .nest_service("/static", ServeDir::new("gateway/static"))
+        .layer(cors);
+
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
-    tracing::info!(%addr, noetl_base, nats_url, "starting gateway server http://localhost:{}", port);
-    //
+    tracing::info!(%addr, noetl_base, "starting gateway server http://localhost:{}", port);
+    tracing::info!("Auth endpoints: POST /api/auth/login, POST /api/auth/validate, POST /api/auth/check-access");
+    tracing::info!("Protected GraphQL: POST /graphql (requires authentication)");
+    tracing::info!("Static files: /static/* and / (index.html)");
+    
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .log("Failed to bind to address")?;
@@ -77,11 +115,16 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn playground() -> Html<String> {
-    let html = playground_source(async_graphql::http::GraphQLPlaygroundConfig::new("/graphql"));
+async fn serve_index() -> Html<String> {
+    // Serve index.html from gateway/static/index.html
+    let html = tokio::fs::read_to_string("gateway/static/index.html")
+        .await
+        .unwrap_or_else(|_| "<html><body><h1>Error loading index.html</h1></body></html>".to_string());
     Html(html)
 }
 
-async fn graphiql(State(()): State<()>) -> &'static str {
-    "Use POST /graphql for GraphQL and GET / for Playground"
+
+async fn graphiql(State(()): State<()>) -> Html<String> {
+    let html = playground_source(async_graphql::http::GraphQLPlaygroundConfig::new("/graphql"));
+    Html(html)
 }
