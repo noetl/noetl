@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
+// Example table schema - commented out for now, gateway is for API only
 // CREATE TABLE public.amadeus_ai_events (
 // 	id serial4 NOT NULL,
 // 	execution_id varchar(64) NULL,
@@ -33,6 +34,9 @@ pub struct AmadeusAiEvent {
     pub details: Option<serde_json::Value>,
 }
 
+// Commented out - requires amadeus_ai_events table
+// Re-enable if needed for specific use cases
+/*
 pub async fn get_events_by_execution_id(
     pool: &PgPool,
     execution_id: &str,
@@ -61,6 +65,7 @@ pub async fn get_events_by_execution_id(
     .await?;
     Ok(records)
 }
+*/
 
 #[cfg(test)]
 mod tests {

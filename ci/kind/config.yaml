@@ -82,6 +82,18 @@ nodes:
         listenAddress: "127.0.0.1"
         protocol: TCP
 
+        # Gateway API
+      - containerPort: 30090
+        hostPort: 8090
+        listenAddress: "127.0.0.1"
+        protocol: TCP
+
+        # Gateway UI
+      - containerPort: 30080
+        hostPort: 8080
+        listenAddress: "127.0.0.1"
+        protocol: TCP
+
     # ci/kind/cache added to .gitignore
     extraMounts:
       - hostPath: ci/kind/cache/pg-data
@@ -92,3 +104,6 @@ nodes:
 
       - hostPath: ci/kind/cache/noetl-logs
         containerPath: /mnt/data/noetl-logs
+
+      - hostPath: tests/fixtures/gateway_ui
+        containerPath: /mnt/gateway-ui

@@ -1,5 +1,41 @@
-NoETL GraphQL Router
-====================
+# NoETL Gateway
+
+Pure API gateway for NoETL - provides GraphQL and REST interfaces for playbook execution with Auth0 authentication.
+
+## Architecture Principles
+
+**Pure Gateway Design:**
+- ✅ No direct database connections
+- ✅ All data access through NoETL server API
+- ✅ Authentication via NoETL playbooks
+- ✅ Stateless request handling
+- ✅ GraphQL and REST endpoints only
+
+**What Gateway Does:**
+- Exposes GraphQL API for playbook execution
+- Provides REST API for Auth0 authentication (`/api/auth/*`)
+- Session validation middleware
+- Request routing and CORS handling
+- API aggregation and orchestration
+
+**What Gateway Does NOT Do:**
+- Direct database queries
+- Business logic or data processing
+- Static file serving (UI served separately from `tests/fixtures/gateway_ui/`)
+- Session storage (delegated to NoETL server)
+
+## API Endpoints
+
+### GraphQL
+- `POST /graphql` - Execute playbooks (requires authentication)
+- `GET /graphql` - GraphiQL playground
+
+### Auth REST API
+- `POST /api/auth/login` - Authenticate with Auth0 token
+- `POST /api/auth/validate` - Validate session token
+- `POST /api/auth/check-access` - Check playbook access permission
+
+All auth endpoints delegate to NoETL server playbooks.
 
 Purpose
 -------

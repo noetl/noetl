@@ -25,11 +25,11 @@ pub enum AuthError {
 impl IntoResponse for AuthError {
     fn into_response(self) -> Response {
         let (status, message) = match self {
-            AuthError::InvalidCredentials => (StatusCode::UNAUTHORIZED, "Invalid credentials"),
-            AuthError::InvalidSession => (StatusCode::UNAUTHORIZED, "Invalid or expired session"),
-            AuthError::Unauthorized => (StatusCode::FORBIDDEN, "Unauthorized access"),
-            AuthError::NoetlError(msg) => (StatusCode::BAD_GATEWAY, msg.leak()),
-            AuthError::InternalError(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg.leak()),
+            AuthError::InvalidCredentials => (StatusCode::UNAUTHORIZED, "Invalid credentials".to_string()),
+            AuthError::InvalidSession => (StatusCode::UNAUTHORIZED, "Invalid or expired session".to_string()),
+            AuthError::Unauthorized => (StatusCode::FORBIDDEN, "Unauthorized access".to_string()),
+            AuthError::NoetlError(msg) => (StatusCode::BAD_GATEWAY, msg),
+            AuthError::InternalError(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
         };
 
         (status, Json(serde_json::json!({"error": message}))).into_response()

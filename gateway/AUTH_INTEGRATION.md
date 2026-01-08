@@ -2,6 +2,8 @@
 
 This document describes the complete Auth0 authentication integration between the NoETL Gateway (Rust) and NoETL server playbooks.
 
+**Important**: The Gateway is a pure API gateway that does not connect to any database. All authentication logic and data access goes through NoETL server playbooks via REST API calls.
+
 ## Architecture Overview
 
 ```
@@ -66,23 +68,32 @@ This document describes the complete Auth0 authentication integration between th
 ### 1. Gateway Rust Code
 
 **Files Created:**
-- `gateway/src/auth/mod.rs` - Auth endpoints (login, validate, check_access)
-- `gateway/src/auth/middleware.rs` - Session validation middleware
+- `gateway/src/auth/mod.rs` - Auth endpoints (login, validate, check_access) - all delegate to NoETL playbooks
+- `gateway/src/auth/middleware.rs` - Session validation middleware - calls NoETL validation playbook
 - `gateway/src/auth/types.rs` - User context types
-- `gateway/src/main.rs` - Updated with auth routes and middleware
+- `gateway/src/main.rs` - Updated with auth routes and middleware (no database connection)
 
 **Key Features:**
-- REST endpoints call NoETL playbooks via `NoetlClient`
-- Session middleware validates tokens before allowing GraphQL access
+- Pure API gateway - no direct database access
+- REST endpoints call NoETL playbooks via `NoetlClient` for all auth operations
+- Session middleware validates tokens by calling NoETL validation playbook
 - Extracts session token from `Authorization: Bearer <token>`, `X-Session-Token` header, or `session_token` cookie
 - Injects `UserContext` into request extensions for downstream use
+- All authentication state managed by NoETL server and PostgreSQL backend
 
-### 2. Gateway UI
+### 2. GMoved to:** `tests/fixtures/gateway_ui/`
 
-**Files Created:**
-- `gateway/static/login.html` - Login page with Auth0 and direct token options
-- `gateway/static/auth.js` - Auth utilities (checkAuth, validateSession, authenticatedGraphQL)
-- `gateway/static/index.html` - Updated with user menu and session check
+- `login.html` - Login page with Auth0 and direct token options
+- `auth.js` - Auth utilities (checkAuth, validateSession, authenticatedGraphQL)
+- `index.html` - Main page with user menu and session check
+- `app.js` - Flight search demo with authenticated GraphQL requests
+- `styles.css` - Shared UI styles
+
+**Note**: UI is served separately from gateway. Use any static file server:
+```bash
+cd tests/fixtures/gateway_ui
+python3 -m http.server 8080
+```ssion check
 - `gateway/static/app.js` - Updated to use authenticated GraphQL requests
 - `gateway/static/styles.css` - Updated with user menu styles
 
@@ -151,20 +162,17 @@ noetl register playbook --file tests/fixtures/playbooks/api_integration/auth0/ch
 ```
 
 ### Step 4: Build and Run Gateway
-
-```bash
-cd gateway
-
-# Build Rust binary
-cargo build --release
-
-# Set environment variables
+ (no database credentials needed!)
 export ROUTER_PORT=8090
 export NOETL_BASE_URL=http://localhost:8082
-export POSTGRES_HOST=localhost
-export POSTGRES_PORT=54321
-export POSTGRES_USER=demo
-export POSTGRES_PASSWORD=demo
+
+# Run gateway
+cargo run --release
+```
+
+**Gateway will start on:** `http://localhost:8090`
+
+**Note**: Gateway does NOT require database connection. All data access goes through NoETL server API.
 export POSTGRES_DB=demo_noetl
 
 # Run gateway

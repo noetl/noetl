@@ -57,6 +57,7 @@ env/
 # Ignore local credential overrides (keep only templates in git)
 /tests/fixtures/credentials/*_local.json
 /tests/fixtures/credentials/*.local.json
+/tests/fixtures/credentials/auth0_client.json
 # Uncomment below to ignore all credential files except templates
 # /tests/fixtures/credentials/*.json
 # !/tests/fixtures/credentials/*.template.json

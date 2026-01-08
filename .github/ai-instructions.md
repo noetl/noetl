@@ -448,7 +448,7 @@ async def list_variables(
 **Prohibited Words and Phrases:**
 - Never use "comprehensive" - use specific, descriptive alternatives like "complete", "full", "detailed", "thorough"
 - Never use "ensure" - use direct action words like "verify", "check", "validate", "confirm", "guarantee"
-- Never use emojis in any scripts, documentation, code comments, or task descriptions
+- **Never use emojis** in any code, scripts, documentation, code comments, task descriptions, echo statements, or log messages
 - Prefer concise, clear descriptions over verbose explanations
 
 **Examples:**
