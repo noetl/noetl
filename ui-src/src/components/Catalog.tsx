@@ -31,6 +31,7 @@ import { PlaybookData } from "../types";
 import "../styles/Catalog.css";
 import { useNavigate } from "react-router-dom";
 import { AxiosError } from "axios";
+import { CodeEditor } from "./CodeEditor";
 
 const { Content } = Layout;
 const { Title, Text } = Typography;
@@ -571,8 +572,11 @@ const Catalog: React.FC = () => {
                 style={{ width: "100%" }}
               >
                 <Text>Enter playbook definition (JSON or YAML):</Text>
-                <TextArea
-                  rows={18}
+                <CodeEditor
+                  value={createPlaybookJson}
+                  onChange={(value) => setCreatePlaybookJson(value)}
+                  language="yaml"
+                  height={400}
                   placeholder={`apiVersion: noetl.io/v1
 kind: Playbook
 metadata:
@@ -587,9 +591,6 @@ workflow:
       - step: end
   - step: end
     desc: End workflow`}
-                  value={createPlaybookJson}
-                  onChange={(e) => setCreatePlaybookJson(e.target.value)}
-                  style={{ fontFamily: "monospace" }}
                 />
               </Space>
             </TabPane>
