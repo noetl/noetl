@@ -234,6 +234,6 @@ Choose threshold based on:
 
 ## See Also
 
-- [Keychain API Reference](../reference/keychain_api.md)
-- [Credential Management](./credential_management.md)
-- [OAuth2 Integration](./oauth2_integration.md)
+- [Authentication & Keychain Reference](/docs/reference/auth_and_keychain_reference)
+- [Credential Caching](./credential_caching)
+- [OAuth Examples](/docs/examples/authentication/)
