@@ -850,8 +850,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "noetl"
-version = "2.5.0"
+name = "noetl-cli"
+version = "2.5.2"
 dependencies = [
  "anyhow",
  "base64",

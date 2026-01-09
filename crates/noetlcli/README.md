@@ -1,22 +1,44 @@
-# noetl CLI (v2.1.2)
+# noetl-cli (v2.5.2)
 
-NoETL Command Line Tool - Rust-based CLI for managing NoETL server, workers, and resources.
+Command-line interface for NoETL workflow automation framework.
+
+## About
+
+`noetl-cli` is a Rust-based CLI that provides a fast, native interface to NoETL's workflow automation capabilities. It's distributed as a separate Python package using maturin, making the `noetl` command available on PATH.
 
 ## Installation
 
-### Using Task (recommended)
+### With NoETL (Recommended)
+
+Install NoETL with CLI support:
+
+```bash
+uv pip install "noetl[cli]"
+# or with pip
+pip install "noetl[cli]"
+```
+
+### Standalone
+
+Install just the CLI:
+
+```bash
+uv pip install noetl-cli
+# or with pip
+pip install noetl-cli
+```
+
+### Development Build
 
 Build and place the binary in the project's `bin/` directory:
 ```bash
-task noetl:local:build
+task noetlctl:local:build
 ```
 
 Install to `~/.local/bin/`:
 ```bash
-task noetl:local:install
+task noetlctl:local:install
 ```
-
-### Manual Build
 
 ```bash
 cargo build --release
