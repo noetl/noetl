@@ -216,13 +216,13 @@ make test-*-full
 ##  Related Documentation
 
 ### Core NoETL Documentation
-- [Architecture Overview](../architecture_overview.md)
-- [Development Guide](../development.md)
-- [API Usage](../api_usage.md)
-- [Configuration](../configuration.md)
+- [Introduction](/docs/introduction)
+- [DSL Specification](/docs/reference/dsl_spec)
+- [API Usage](/docs/reference/api_usage)
+- [CLI Reference](/docs/reference/noetl_cli_usage)
 
 ### Advanced Topics
-- [Execution Model](../execution_model.md)
+- [Features Overview](/docs/features/variables)
 - [Playbook Specification](../playbook_specification.md)
 - [Error Logging](../error_logging.md)
 - [Performance Tuning](../performance_tuning.md)

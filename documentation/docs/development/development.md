@@ -330,6 +330,6 @@ python -m pdb -c continue noetl/agent.py -f playbooks.yaml
 ## Next Steps
 
 - [Installation Guide](installation.md) - Learn about other installation methods
-- [CLI Usage Guide](cli_usage.md) - Learn how to use the NoETL command-line interface
-- [API Usage Guide](api_usage.md) - Learn how to use the NoETL REST API
+- [CLI Usage Guide](/docs/reference/noetl_cli_usage) - Learn how to use the NoETL command-line interface
+- [API Usage Guide](/docs/reference/api_usage) - Learn how to use the NoETL REST API
 - [PyPI Publishing Guide](pypi_manual.md) - Learn how to build and publish the NoETL package to PyPI

@@ -330,6 +330,6 @@ psql -d noetl -c "SELECT * FROM noetl.credential_cache;"
 
 ## Related Documentation
 
-- [Token-Based Authentication](./token_auth_implementation.md)
-- [Credential Management API](./api_usage.md#credentials)
-- [Worker Configuration](./configuration.md#worker-settings)
+- [Authentication & Keychain](/docs/reference/auth_and_keychain_reference)
+- [Credential Management API](/docs/reference/api_usage#credentials-api)
+- [Operations Guide](/docs/operations/configuration)

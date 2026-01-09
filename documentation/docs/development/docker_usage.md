@@ -241,6 +241,6 @@ docker logs postgres
 ## Next Steps
 
 - [Installation Guide](installation.md) - Learn about other installation methods
-- [CLI Usage Guide](cli_usage.md) - Learn how to use the NoETL command-line interface
-- [API Usage Guide](api_usage.md) - Learn how to use the NoETL REST API
+- [CLI Usage Guide](/docs/reference/noetl_cli_usage) - Learn how to use the NoETL command-line interface
+- [API Usage Guide](/docs/reference/api_usage) - Learn how to use the NoETL REST API
 - [Playbook Structure](playbook_structure.md) - Learn how to structure NoETL playbooks
