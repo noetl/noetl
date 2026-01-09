@@ -677,7 +677,7 @@ Unified retry represents a fundamental architectural shift from tool-specific it
 
 ## See Also
 
-- [HTTP Action Type Reference](./http_action_type)
+- [HTTP Action Type Reference](/docs/reference/http_action_type)
 - [Variables Feature](./variables_feature_design)
 - [DSL Specification](./dsl_spec)
 - [Playbook Structure](/docs/features/playbook_structure)

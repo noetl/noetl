@@ -756,7 +756,7 @@ jobs:
 
 ## See Also
 
-- [DSL Specification](/docs/reference/dsl_spec)
+- [DSL Specification](/docs/reference/dsl/dsl_spec)
 - [Playbook Structure](/docs/features/playbook_structure)
 - [PostgreSQL Tool](/docs/reference/tools/postgres)
 - [Local Development Setup](/docs/development/local_dev_setup)

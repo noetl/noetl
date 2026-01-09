@@ -1491,5 +1491,5 @@ WHERE expires_at < NOW()
 
 - [Credential Caching](/docs/features/credential_caching)
 - [API Usage - Credentials](/docs/reference/api_usage#credentials-api)
-- [DSL Specification](/docs/reference/dsl_spec)
+- [DSL Specification](/docs/reference/dsl/dsl_spec)
 - [OAuth Examples](/docs/examples/authentication/)

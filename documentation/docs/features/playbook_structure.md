@@ -153,7 +153,7 @@ Tip (exact-match OR): to match any of several exact values (complete match), pre
         - step: handle_other_file
 ```
 
-For conditional routing patterns, see the [DSL Specification](/docs/reference/dsl_spec).
+For conditional routing patterns, see the [DSL Specification](/docs/reference/dsl/dsl_spec).
 
 
 

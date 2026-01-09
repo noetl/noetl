@@ -36,9 +36,20 @@ const sidebars: SidebarsConfig = {
       label: 'Reference',
       items: [
         {
-          type: 'doc',
-          id: 'reference/dsl_spec',
-          label: 'DSL Specification',
+          type: 'category',
+          label: 'DSL',
+          link: {
+            type: 'doc',
+            id: 'reference/dsl/index',
+          },
+          items: [
+            'reference/dsl/dsl_spec',
+            'reference/dsl/variables_feature_design',
+            'reference/dsl/vars_block_quick_reference',
+            'reference/dsl/vars_block_implementation_summary',
+            'reference/dsl/unified_retry',
+            'reference/dsl/http_pagination_quick_reference',
+          ],
         },
         {
           type: 'doc',
@@ -68,11 +79,6 @@ const sidebars: SidebarsConfig = {
           type: 'doc',
           id: 'reference/http_action_type',
           label: 'HTTP Action Details',
-        },
-        {
-          type: 'doc',
-          id: 'reference/unified_retry',
-          label: 'Retry Configuration',
         },
         {
           type: 'doc',

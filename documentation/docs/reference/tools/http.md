@@ -327,6 +327,6 @@ Use conditional routing to handle errors:
 
 ## See Also
 
-- [HTTP Pagination Quick Reference](/docs/reference/http_pagination_quick_reference)
-- [Retry Configuration](/docs/reference/unified_retry)
+- [HTTP Pagination Quick Reference](/docs/reference/dsl/http_pagination_quick_reference)
+- [Retry Configuration](/docs/reference/dsl/unified_retry)
 - [Authentication & Keychain](/docs/reference/auth_and_keychain_reference)

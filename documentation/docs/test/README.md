@@ -217,7 +217,7 @@ make test-*-full
 
 ### Core NoETL Documentation
 - [Introduction](/docs/introduction)
-- [DSL Specification](/docs/reference/dsl_spec)
+- [DSL Specification](/docs/reference/dsl/dsl_spec)
 - [API Usage](/docs/reference/api_usage)
 - [CLI Reference](/docs/reference/noetl_cli_usage)
 

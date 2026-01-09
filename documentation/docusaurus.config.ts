@@ -107,7 +107,7 @@ const config: Config = {
             },
             {
               label: 'DSL Reference',
-              to: '/docs/reference/dsl_spec',
+              to: '/docs/reference/dsl/',
             },
             {
               label: 'CLI Reference',

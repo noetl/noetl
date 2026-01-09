@@ -536,4 +536,4 @@ def main(auth_credential):
 - [Credential Caching](/docs/features/credential_caching)
 - [Keychain Token Refresh](/docs/features/keychain_token_refresh)
 - [HTTP Action Type](./http_action_type)
-- [DSL Specification](./dsl_spec)
+- [DSL Specification](/docs/reference/dsl/dsl_spec)
