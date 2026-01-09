@@ -61,6 +61,7 @@ const sidebars: SidebarsConfig = {
             'reference/tools/container',
             'reference/tools/gcs',
             'reference/tools/ducklake',
+            'reference/tools/transfer',
           ],
         },
         {
@@ -90,11 +91,13 @@ const sidebars: SidebarsConfig = {
       label: 'Features',
       items: [
         'features/variables',
+        'features/iterator',
         'features/pagination',
         'features/retry_mechanism',
         'features/credential_caching',
         'features/nats_kv_distributed_cache',
         'features/script_tool',
+        'features/script_attribute',
       ],
     },
     {
