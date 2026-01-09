@@ -8,6 +8,11 @@ description: Transfer data from HTTP APIs to PostgreSQL databases
 
 This guide demonstrates various patterns for transferring data from HTTP APIs to PostgreSQL databases.
 
+:::tip Working Examples
+Complete, tested data transfer playbooks are available in the repository:
+- [tests/fixtures/playbooks/data_transfer/](https://github.com/noetl/noetl/tree/master/tests/fixtures/playbooks/data_transfer)
+:::
+
 ## Pattern Overview
 
 | Pattern | Complexity | Best For |
@@ -467,4 +472,4 @@ Handle API and database errors gracefully:
 - [HTTP Tool Reference](/docs/reference/tools/http)
 - [PostgreSQL Tool Reference](/docs/reference/tools/postgres)
 - [Pagination Patterns](/docs/examples/pagination/pagination-patterns)
-- [Transfer Tool Documentation](/docs/reference/tools/transfer)
+- [Data Transfer Playbooks](https://github.com/noetl/noetl/tree/master/tests/fixtures/playbooks/data_transfer)

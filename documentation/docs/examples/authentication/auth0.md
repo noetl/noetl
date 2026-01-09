@@ -8,6 +8,12 @@ description: Authenticate users with Auth0 OAuth
 
 This example demonstrates integrating Auth0 authentication with NoETL for user session management.
 
+:::tip Working Examples
+Complete OAuth playbooks are available in the repository:
+- [tests/fixtures/playbooks/oauth/](https://github.com/noetl/noetl/tree/master/tests/fixtures/playbooks/oauth) - Google OAuth, GCS, Secret Manager
+- [tests/fixtures/playbooks/api_integration/](https://github.com/noetl/noetl/tree/master/tests/fixtures/playbooks/api_integration) - Auth0 integration
+:::
+
 ## Overview
 
 The Auth0 integration implements OAuth Implicit Flow for browser-based authentication:
