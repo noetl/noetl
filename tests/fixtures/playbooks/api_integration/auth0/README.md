@@ -13,24 +13,9 @@ The Auth0 integration uses **OAuth Implicit Flow** with browser-based authentica
 - PostgreSQL running in `postgres` namespace
 - Auth0 application configured (see [Auth0 Setup](#auth0-setup-one-time-configuration))
 
-### One-Time Setup
+**See [Quick Start - Step by Step](#quick-start---step-by-step) section below for detailed setup instructions.**
 
-```bash
-# 1. Register credentials (Postgres for database access)
-cd /Users/akuksin/projects/noetl/noetl
-task register-test-credentials
-
-# 2. Register auth playbooks and provision schema
-bash tests/scripts/test_auth0_integration.sh
-```
-
-**What this does:**
-- Registers `auth0_login` playbook (handles OAuth callback, creates users and sessions)
-- Registers `provision_auth_schema` playbook (creates auth database tables)
-- Registers `auth0_validate_session` playbook (validates session tokens)
-- Provisions `auth` schema with 8 tables (users, sessions, roles, permissions, etc.)
-
-### Testing the Integration
+## Testing the Integration
 
 1. **Open browser to:** http://localhost:8080/login.html
 2. **Click "Sign In with Auth0"**
@@ -104,10 +89,69 @@ kubectl exec -n postgres deployment/postgres -- \
 
 ### Troubleshooting
 
+#### Setup Issues
+
+**"Playbook not found":**
+```bash
+# Check if playbook is registered
+curl -s http://localhost:8082/api/catalog | jq '.resources[] | select(.path | contains("auth0")) | {path, version}'
+
+# Re-register if missing (see Step 3 above)
+```
+
+**"Credential not found":**
+```bash
+# List all credentials
+curl -s http://localhost:8082/api/credentials | jq '.[] | {name, type}'
+
+# Re-register if missing (see Steps 1-2 above)
+```
+
+**"relation auth.users does not exist":**
+```bash
+# Schema not provisioned - run Step 4 again
+curl -X POST http://localhost:8082/api/execute \
+  -H 'Content-Type: application/json' \
+  -d '{"path": "api_integration/auth0/provision_auth_schema", "payload": {}}'
+
+# Wait 5 seconds, then verify
+kubectl exec -n postgres deployment/postgres -- \
+  psql -U demo -d demo_noetl -c "\dt auth.*"
+```
+
+#### Runtime Issues
+
 **"Session token not found after login":**
-- Check execution completed: `curl http://localhost:8082/api/executions | jq '.[] | select(.path == "api_integration/auth0/auth0_login") | {execution_id, status}'`
-- Verify session created: `kubectl exec -n postgres deployment/postgres -- psql -U demo -d demo_noetl -c "SELECT COUNT(*) FROM auth.sessions WHERE created_at > NOW() - INTERVAL '5 minutes';"`
-- Check browser console for detailed error messages
+
+1. Check if playbook execution started:
+```bash
+# Open browser console (F12), look for:
+# "DEBUG: Calling auth0_login with id_token: ..."
+# "DEBUG: Playbook execution started, ID: ..."
+```
+
+2. Check execution status:
+```bash
+# Replace EXECUTION_ID with ID from browser console
+curl -s "http://localhost:8082/api/executions/EXECUTION_ID" | \
+  jq '{execution_id, status, start_time, end_time}'
+```
+
+3. Check if session was created:
+```bash
+kubectl exec -n postgres deployment/postgres -- \
+  psql -U demo -d demo_noetl -c \
+  "SELECT session_token, user_id, created_at 
+   FROM auth.sessions 
+   WHERE created_at > NOW() - INTERVAL '5 minutes' 
+   ORDER BY created_at DESC;"
+```
+
+4. Check execution events for errors:
+```bash
+curl -s "http://localhost:8082/api/executions/EXECUTION_ID/events" | \
+  jq '.[] | select(.name == "step.error") | {step_name, error_message}'
+```
 
 **"Execution stuck at create_session step":**
 - This was a bug in v14 and earlier - case conditions were checking `response is defined` instead of `result.command_0 is defined`

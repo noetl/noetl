@@ -29,10 +29,10 @@ workflow:
     tool:
       kind: python
       auth: {}
-      libs: {}
+      libs:
+        json: json
       args: {}
       code: |
-        import json
         # Debug: log what we received
         print(f"DEBUG: Full context keys: {list(context.keys())}")
         print(f"DEBUG: workload = {json.dumps(context.get('workload', {}), indent=2)}")
@@ -51,10 +51,10 @@ workflow:
     desc: Decode Auth0 ID token (JWT) without external libraries
     tool:
       kind: python
+      libs:
+        base64: base64
+        json: json
       code: |
-        import base64
-        import json
-        
         # Decode the ID token (JWT format: header.payload.signature)
         token = context.get('workload', {}).get('auth0_token', '')
         
@@ -146,16 +146,16 @@ workflow:
         expires_at: "{{ create_session.command_0.rows[0].expires_at }}"
         email: "{{ upsert_user[0].email }}"
       code: |
-        def main(session_token, user_id, expires_at, email):
-            return {
-                "status": "authenticated",
-                "session_token": session_token,
-                "user": {
-                    "user_id": user_id,
-                    "email": email
-                },
-                "expires_at": str(expires_at)
-            }
+        # Arguments injected: session_token, user_id, expires_at, email
+        result = {
+            "status": "authenticated",
+            "session_token": session_token,
+            "user": {
+                "user_id": user_id,
+                "email": email
+            },
+            "expires_at": str(expires_at)
+        }
     case:
       - when: "{{ event.name == 'step.exit' }}"
         then:

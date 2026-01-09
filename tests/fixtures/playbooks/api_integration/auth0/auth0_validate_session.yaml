@@ -113,17 +113,17 @@ workflow:
         display_name: "{{ lookup_session[0].display_name }}"
         roles: "{{ get_roles }}"
       code: |
-        def main(user_id, email, display_name, roles):
-            return {
-                "valid": True,
-                "user": {
-                    "user_id": user_id,
-                    "email": email,
-                    "display_name": display_name,
-                    "roles": [r["role_name"] for r in roles] if roles else []
-                },
-                "message": "Session is valid"
-            }
+        # Arguments injected: user_id, email, display_name, roles
+        result = {
+            "valid": True,
+            "user": {
+                "user_id": user_id,
+                "email": email,
+                "display_name": display_name,
+                "roles": [r["role_name"] for r in roles] if roles else []
+            },
+            "message": "Session is valid"
+        }
     case:
       - when: "{{ event.name == 'step.exit' }}"
         then:
@@ -138,11 +138,10 @@ workflow:
       libs: {}
       args: {}
       code: |
-        def main():
-            return {
-                "valid": False,
-                "message": "Session not found or expired"
-            }
+        result = {
+            "valid": False,
+            "message": "Session not found or expired"
+        }
     case:
       - when: "{{ event.name == 'step.exit' }}"
         then:
