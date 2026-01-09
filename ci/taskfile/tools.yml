@@ -50,10 +50,10 @@ tasks:
           fail=1
         fi
         if command -v task >/dev/null 2>&1; then echo "[OK] task available"; else echo "[INFO] task not installed (you are likely running this via task already)"; fi
-        if [ -f "./bin/noetl" ]; then
-          echo "[OK] noetlctl built: $(./bin/noetl --version 2>/dev/null | head -n1 || echo present)"
+        if command -v noetl >/dev/null 2>&1; then
+          echo "[OK] noetl CLI: $(noetl --version 2>/dev/null | head -n1 || echo present)"
         else
-          echo "[INFO] noetlctl not built yet - will be compiled on first use"
+          echo "[INFO] noetl CLI not installed - install with: pip install noetl[cli]"
         fi
         exit $fail
         '

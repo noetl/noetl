@@ -5,7 +5,7 @@ sidebar_label: SemVer Cheatsheet
 description: A practical guide to mapping changes to SemVer using Conventional Commits and clear branch naming.
 ---
 
-<h1 align="center" style="border-bottom: none;"> semantic-release</h1>
+# semantic-release
 
 ## How does it work?
 

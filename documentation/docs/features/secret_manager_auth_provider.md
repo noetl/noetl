@@ -578,7 +578,7 @@ FROM noetl.credential_cache;
 
 ## References
 
-- [NoETL Auth System](./auth_refactoring_summary.md)
+- [Auth Reference](/docs/reference/auth_and_keychain_reference)
 - [Google Secret Manager API](https://cloud.google.com/secret-manager/docs/reference/rest)
-- [Credential Caching](../database/credential_cache.py)
-- [Example Playbook](../tests/fixtures/playbooks/api_integration/amadeus_ai_api/)
+- [Credential Caching](/docs/features/credential_caching)
+- [API Integration Examples](https://github.com/noetl/noetl/tree/main/tests/fixtures/playbooks/api_integration)

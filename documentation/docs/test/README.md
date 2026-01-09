@@ -12,9 +12,9 @@ Welcome to the comprehensive documentation for the NoETL test suite. This docume
 
 ### Test Playbooks
 - **[Playbook Test Documentation](./playbooks/README.md)** - Overview of all test scenarios
-- **[Control Flow Workbook](../../../tests/fixtures/playbooks/control_flow_workbook/README.md)** - Conditional branching and parallel execution
-- **[HTTP DuckDB Postgres](../../../tests/fixtures/playbooks/http_duckdb_postgres/README.md)** - Data pipeline integration  
-- **[Playbook Composition](../../../tests/fixtures/playbooks/playbook_composition/README.md)** - Sub-playbook orchestration
+- **[Control Flow Workbook](https://github.com/noetl/noetl/tree/master/tests/fixtures/playbooks/control_flow_workbook)** - Conditional branching and parallel execution
+- **[HTTP DuckDB Postgres](https://github.com/noetl/noetl/tree/master/tests/fixtures/playbooks/examples)** - Data pipeline integration  
+- **[Playbook Composition](https://github.com/noetl/noetl/tree/master/tests/fixtures/playbooks/playbook_composition)** - Sub-playbook orchestration
 
 ##  Quick Start
 
@@ -216,16 +216,16 @@ make test-*-full
 ##  Related Documentation
 
 ### Core NoETL Documentation
-- [Architecture Overview](../architecture_overview.md)
-- [Development Guide](../development.md)
-- [API Usage](../api_usage.md)
-- [Configuration](../configuration.md)
+- [Introduction](/docs/intro)
+- [DSL Specification](/docs/reference/dsl/dsl_spec)
+- [API Usage](/docs/reference/api_usage)
+- [CLI Reference](/docs/reference/noetl_cli_usage)
 
 ### Advanced Topics
-- [Execution Model](../execution_model.md)
-- [Playbook Specification](../playbook_specification.md)
-- [Error Logging](../error_logging.md)
-- [Performance Tuning](../performance_tuning.md)
+- [Features Overview](/docs/features/variables)
+- [Playbook Structure](/docs/features/playbook_structure)
+- [Retry Mechanism](/docs/features/retry_mechanism)
+- [Variables Feature](/docs/features/variables)
 
 ##  Contributing
 

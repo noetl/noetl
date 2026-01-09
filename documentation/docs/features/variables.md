@@ -89,9 +89,9 @@ Each variable tracks:
 
 ## Documentation
 
-- **[Variables Feature Design](../reference/variables_feature_design.md)** - Complete design specification
-- **[Vars Block Quick Reference](../reference/vars_block_quick_reference.md)** - Syntax and patterns
-- **[Implementation Summary](../reference/vars_block_implementation_summary.md)** - Technical implementation details
+- **[Variables Feature Design](/docs/reference/dsl/variables_feature_design)** - Complete design specification
+- **[Vars Block Quick Reference](/docs/reference/dsl/vars_block_quick_reference)** - Syntax and patterns
+- **[Implementation Summary](/docs/reference/dsl/vars_block_implementation_summary)** - Technical implementation details
 
 ## Use Cases
 

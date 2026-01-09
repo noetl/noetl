@@ -385,5 +385,5 @@ print(duckdb.__version__)  # Should be >= 1.3.0
 
 - [DuckLake Official Documentation](https://ducklake.select/)
 - [DuckDB Extension Guide](https://duckdb.org/docs/stable/core_extensions/ducklake)
-- [NoETL DuckDB Tool](../duckdb/) (standard single-worker DuckDB)
-- [Test Playbook](../../tests/fixtures/playbooks/ducklake_test/)
+- [NoETL DuckDB Tool](./duckdb) (standard single-worker DuckDB)
+- [Test Playbook](https://github.com/noetl/noetl/tree/master/tests/fixtures/playbooks/ducklake_test)

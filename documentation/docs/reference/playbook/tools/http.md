@@ -181,6 +181,6 @@ temperature: "{{ result.data.data.current.temperature_2m }}"
 
 ## See Also
 
-- [Iterator Plugin](iterator.md) - Loop over collections
-- [Storage Plugin](storage.md) - Save data to databases
-- [Secret Management](../secret_management.md) - Managing credentials
+- [Iterator Feature](/docs/features/iterator) - Loop over collections
+- [HTTP Tool Reference](/docs/reference/tools/http) - Full HTTP tool documentation
+- [Authentication Reference](/docs/reference/auth_and_keychain_reference) - Managing credentials

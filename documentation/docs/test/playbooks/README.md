@@ -23,7 +23,7 @@ Each playbook serves as both a test case and a reference implementation for spec
 ## Control Flow Workbook
 
 **Location**: `tests/fixtures/playbooks/control_flow_workbook/`  
-**README**: [`./tests/fixtures/playbooks/control_flow_workbook/README.md`](../../../tests/fixtures/playbooks/control_flow_workbook/README.md)
+**README**: [GitHub](https://github.com/noetl/noetl/tree/master/tests/fixtures/playbooks/control_flow_workbook)
 
 ### Purpose
 Validates the core execution control mechanisms of NoETL:
@@ -81,8 +81,8 @@ make test-control-flow-workbook-full
 
 ## HTTP DuckDB Postgres
 
-**Location**: `tests/fixtures/playbooks/http_duckdb_postgres/`  
-**README**: [`./tests/fixtures/playbooks/http_duckdb_postgres/README.md`](../../../tests/fixtures/playbooks/http_duckdb_postgres/README.md)
+**Location**: `tests/fixtures/playbooks/examples/`  
+**README**: [GitHub](https://github.com/noetl/noetl/tree/master/tests/fixtures/playbooks/examples)
 
 ### Purpose
 Demonstrates comprehensive data pipeline integration across multiple technologies:
@@ -165,7 +165,7 @@ make test-http-duckdb-postgres-full
 ## Playbook Composition
 
 **Location**: `tests/fixtures/playbooks/playbook_composition/`  
-**README**: [`./tests/fixtures/playbooks/playbook_composition/README.md`](../../../tests/fixtures/playbooks/playbook_composition/README.md)
+**README**: [GitHub](https://github.com/noetl/noetl/tree/master/tests/fixtures/playbooks/playbook_composition)
 
 ### Purpose
 Validates advanced workflow orchestration capabilities:

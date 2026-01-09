@@ -128,7 +128,7 @@ noetl register credential --file tests/fixtures/credentials/pg_k8s.json
 
 # Register and execute provisioning playbook
 noetl register playbook --file tests/fixtures/playbooks/api_integration/auth0/provision_auth_schema.yaml
-noetl exec api_integration/auth0/provision_auth_schema
+noetl run playbook api_integration/auth0/provision_auth_schema
 ```
 
 **What this does:**

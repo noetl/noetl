@@ -316,7 +316,7 @@ tests/fixtures/credentials/
 # 1. Provision schema
 noetl register-credential -f tests/fixtures/credentials/pg_k8s.json
 noetl register-playbook -f tests/fixtures/playbooks/api_integration/auth0/provision_auth_schema.yaml
-noetl exec api_integration/auth0/provision_auth_schema
+noetl run playbook api_integration/auth0/provision_auth_schema
 
 # 2. Change password
 psql -h localhost -p 54321 -U demo -d demo_noetl -c \

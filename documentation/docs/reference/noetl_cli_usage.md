@@ -7,9 +7,27 @@ This guide provides detailed instructions for using the NoETL command-line inter
 NoETL provides a powerful command-line interface for executing playbooks, managing the catalog, and running the server. The main command is `noetl`, which has several subcommands:
 
 - `noetl server` - Start the NoETL server
-- `noetl agent` - Execute a playbook directly
-- `noetl playbook` - Manage playbooks in the catalog
-- `noetl execute` - Execute a playbook from the catalog
+- `noetl worker` - Manage worker processes
+- `noetl run playbook` - Execute a playbook (alias: `noetl execute playbook`)
+- `noetl db` - Database management commands
+- `noetl k8s` - Kubernetes deployment commands
+- `noetl build` - Build Docker images
+
+## Quick Start
+
+```bash
+# Run a playbook from file
+noetl run playbook ./playbooks/my_workflow.yaml
+
+# Run a playbook with payload
+noetl run playbook ./playbooks/my_workflow.yaml --payload '{"key": "value"}'
+
+# Start the server
+noetl server start
+
+# Start a worker
+noetl worker start
+```
 
 ## Running the NoETL Server
 
@@ -30,53 +48,56 @@ Example:
 noetl server --port 8082 --reload
 ```
 
-## Executing Playbooks Directly
+## Executing Playbooks
 
-You can execute a playbook directly using the `noetl agent` command:
+The primary way to run playbooks is with the `noetl run playbook` command (or its equivalent `noetl execute playbook`):
 
 ```bash
-noetl agent -f ./path/to/playbooks.yaml
+noetl run playbook ./path/to/playbook.yaml
 ```
 
 Options:
-- `-f, --file`: Path to playbook YAML file (required)
-- `--mock`: Run in mock mode
-- `-o, --output`: Output format (json or plain)
-- `--export`: Export execution data to Parquet file (e.g., ./data/exports/execution_data.parquet)
-- `--mlflow`: Use ML model for workflow control (future feature)
-- `--pgdb`: Postgres connection string
-- `--input`: Path to JSON file with input payload for the playbook
 - `--payload`: JSON string with input payload for the playbook
-- `--merge`: Whether to merge the input payload with the workload section. Default: False. If omitted, overrides values in the workload with the input payload.
-- `--debug`: Debug logging mode
+- `--input`: Path to JSON file with input payload
+- `--merge`: Merge payload with workload section (default: replace)
+- `--mock`: Run in mock mode
+- `--debug`: Enable debug logging
+- `-o, --output`: Output format (json or plain)
 
 Examples:
 
 ```bash
 # Basic execution
-noetl agent -f ./playbooks/weather_loop_example.yaml
+noetl run playbook ./playbooks/data_sync.yaml
 
 # With debug logging
-noetl agent -f ./playbooks/weather_loop_example.yaml --debug
+noetl run playbook ./playbooks/data_sync.yaml --debug
 
-# With payload
-noetl agent -f ./playbooks/weather_loop_example.yaml --payload '{"cities": [{"name": "New York", "lat": 40.71, "lon": -74.01}]}'
+# With inline payload
+noetl run playbook ./playbooks/data_sync.yaml --payload '{"source": "api", "limit": 100}'
 
-# With input file
-noetl agent -f ./playbooks/weather_loop_example.yaml --input ./data/input/payload.json
+# With payload from file
+noetl run playbook ./playbooks/data_sync.yaml --input ./config/payload.json
 
-# Export execution data
-noetl agent -f ./playbooks/weather_loop_example.yaml --export ./data/exports/execution_data.parquet
+# Merge payload with workload defaults
+noetl run playbook ./playbooks/data_sync.yaml --payload '{"limit": 50}' --merge
 ```
 
-## Managing Playbooks in the Catalog
+### Legacy Commands
 
-The `noetl playbook` command allows you to register and execute playbooks in the NoETL catalog:
+The following legacy commands are still supported but deprecated:
+
+```bash
+# Legacy: Execute directly (use noetl run playbook instead)
+noetl agent -f ./path/to/playbook.yaml
+```
+
+## Catalog Management
 
 ### Registering a Playbook
 
 ```bash
-noetl playbooks --register ./path/to/playbooks.yaml
+noetl playbook register ./path/to/playbook.yaml
 ```
 
 Options:
@@ -210,10 +231,10 @@ make worker-start
 make worker-stop
 ```
 
-For detailed information about running multiple workers, see [Multiple Workers Guide](multiple_workers.md).
+For detailed information about running multiple workers, see [Multiple Workers Guide](/docs/development/multiple_workers).
 
 ## Next Steps
 
-- [API Usage Guide](api_usage.md) - Learn how to use the NoETL REST API
-- [Playbook Structure](playbook_structure.md) - Learn how to structure NoETL playbooks
-- [Workflow Tasks](action_type.md) - Learn about available tasks and their parameters
+- [API Usage Guide](/docs/reference/api_usage) - Learn how to use the NoETL REST API
+- [Playbook Structure](/docs/features/playbook_structure) - Learn how to structure NoETL playbooks
+- [Workflow Tasks](/docs/reference/action_type) - Learn about available tasks and their parameters

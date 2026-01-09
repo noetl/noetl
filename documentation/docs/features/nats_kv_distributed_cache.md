@@ -319,6 +319,6 @@ This ensures gradual migration without breaking existing executions.
 
 ## See Also
 
-- [Loop DSL Documentation](../reference/dsl_v2_loop.md)
+- [Iterator Feature](/docs/features/iterator)
 - [NATS JetStream Documentation](https://docs.nats.io/nats-concepts/jetstream)
-- [Observability Services](../reference/observability_services.md)
+- [Observability Services](/docs/reference/observability_services)

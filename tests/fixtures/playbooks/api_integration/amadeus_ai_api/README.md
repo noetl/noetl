@@ -131,7 +131,7 @@ noetl execute playbook api_integration/amadeus_ai_api --json
 noetl execute status <EXECUTION_ID> --json
 
 # Alternative: Direct execution using path
-noetl exec api_integration/amadeus_ai_api
+noetl run playbook api_integration/amadeus_ai_api
 ```
 
 ### Using REST API (Alternative)

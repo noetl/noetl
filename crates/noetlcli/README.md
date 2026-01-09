@@ -251,7 +251,7 @@ noetl register playbook -f tests/fixtures/playbooks/api_integration/auth0/provis
 
 Execute a Playbook:
 ```bash
-noetl exec api_integration/auth0/provision_auth_schema
+noetl run playbook api_integration/auth0/provision_auth_schema
 ```
 
 Get Execution Status:

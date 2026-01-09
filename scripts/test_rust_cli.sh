@@ -21,7 +21,7 @@ echo
 
 # Test 2: Check server command help
 echo "✓ Test 2: Server command available"
-./bin/noetl server start --help | head -3
+noetl server start --help | head -3
 echo
 
 # Test 3: Check if port 8082 is available
@@ -38,7 +38,7 @@ echo
 
 # Test 4: Show how to start server
 echo "✓ Test 4: Server start command"
-echo "  Command: ./bin/noetl server start"
+echo "  Command: noetl server start"
 echo "  This command will:"
 echo "    1. Detect Python environment"
 echo "    2. Execute: python -m noetl.server --host 0.0.0.0 --port 8082"

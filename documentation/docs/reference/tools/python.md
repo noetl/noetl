@@ -760,7 +760,7 @@ def main(bucket_name, credentials_json):
 
 ## See Also
 
-- [Script Tool](../features/script_tool.md) - Kubernetes job execution
-- [HTTP Tool](./http.md) - REST API integration
-- [PostgreSQL Tool](./postgres.md) - Database operations
-- [External Script Loading](../features/external_scripts.md) - GCS/S3/HTTP patterns
+- [Script Tool](/docs/features/script_tool) - Kubernetes job execution
+- [HTTP Tool](./http) - REST API integration
+- [PostgreSQL Tool](./postgres) - Database operations
+- [Script Attribute](/docs/features/script_attribute) - GCS/S3/HTTP script loading

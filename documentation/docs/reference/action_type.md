@@ -175,17 +175,18 @@ Executes a SQL query and returns the results.
 
 ```yaml
 - step: query_data
-  tool: postgres
-  auth:
-    type: postgres
-    inline:
-      host: "{{ workload.db_host }}"
-      port: "{{ workload.db_port }}"
-      user: "{{ workload.db_user }}"
-      password: "{{ workload.db_password }}"
-      database: "{{ workload.db_name }}"
-  command: |
-    SELECT * FROM users WHERE id = {{ workload.user_id }}
+  tool:
+    kind: postgres
+    auth:
+      type: postgres
+      inline:
+        host: "{{ workload.db_host }}"
+        port: "{{ workload.db_port }}"
+        user: "{{ workload.db_user }}"
+        password: "{{ workload.db_password }}"
+        database: "{{ workload.db_name }}"
+    command: |
+      SELECT * FROM users WHERE id = {{ workload.user_id }}
   next:
     - step: process_data
 ```
@@ -204,17 +205,18 @@ Executes a SQL statement that doesn't return results (e.g., INSERT, UPDATE, DELE
 
 ```yaml
 - step: update_data
-  tool: postgres
-  auth:
-    type: postgres
-    inline:
-      host: "{{ workload.db_host }}"
-      port: "{{ workload.db_port }}"
-      user: "{{ workload.db_user }}"
-      password: "{{ workload.db_password }}"
-      database: "{{ workload.db_name }}"
-  command: |
-    UPDATE users SET name = '{{ workload.user_name }}' WHERE id = {{ workload.user_id }}
+  tool:
+    kind: postgres
+    auth:
+      type: postgres
+      inline:
+        host: "{{ workload.db_host }}"
+        port: "{{ workload.db_port }}"
+        user: "{{ workload.db_user }}"
+        password: "{{ workload.db_password }}"
+        database: "{{ workload.db_name }}"
+    command: |
+      UPDATE users SET name = '{{ workload.user_name }}' WHERE id = {{ workload.user_id }}
   next:
     - step: process_result
 ```
@@ -233,18 +235,19 @@ Inserts data into a table.
 
 ```yaml
 - step: insert_data
-  tool: postgres
-  auth:
-    type: postgres
-    inline:
-      host: "{{ workload.db_host }}"
-      port: "{{ workload.db_port }}"
-      user: "{{ workload.db_user }}"
-      password: "{{ workload.db_password }}"
-      database: "{{ workload.db_name }}"
-  command: |
-    INSERT INTO users (name, email, created_at)
-    VALUES ('{{ workload.user_name }}', '{{ workload.user_email }}', NOW())
+  tool:
+    kind: postgres
+    auth:
+      type: postgres
+      inline:
+        host: "{{ workload.db_host }}"
+        port: "{{ workload.db_port }}"
+        user: "{{ workload.db_user }}"
+        password: "{{ workload.db_password }}"
+        database: "{{ workload.db_name }}"
+    command: |
+      INSERT INTO users (name, email, created_at)
+      VALUES ('{{ workload.user_name }}', '{{ workload.user_email }}', NOW())
   next:
     - step: process_result
 ```
@@ -264,19 +267,20 @@ Updates data in a table.
 
 ```yaml
 - step: update_data
-  tool: postgres
-  auth:
-    type: postgres
-    inline:
-      host: "{{ workload.db_host }}"
-      port: "{{ workload.db_port }}"
-      user: "{{ workload.db_user }}"
-      password: "{{ workload.db_password }}"
-      database: "{{ workload.db_name }}"
-  command: |
-    UPDATE users 
-    SET name = '{{ workload.user_name }}', updated_at = NOW() 
-    WHERE id = {{ workload.user_id }}
+  tool:
+    kind: postgres
+    auth:
+      type: postgres
+      inline:
+        host: "{{ workload.db_host }}"
+        port: "{{ workload.db_port }}"
+        user: "{{ workload.db_user }}"
+        password: "{{ workload.db_password }}"
+        database: "{{ workload.db_name }}"
+    command: |
+      UPDATE users 
+      SET name = '{{ workload.user_name }}', updated_at = NOW() 
+      WHERE id = {{ workload.user_id }}
   next:
     - step: process_result
 ```
@@ -295,18 +299,19 @@ Deletes data from a table.
 
 ```yaml
 - step: delete_data
-  tool: postgres
-  auth:
-    type: postgres
-    inline:
-      host: "{{ workload.db_host }}"
-      port: "{{ workload.db_port }}"
-      user: "{{ workload.db_user }}"
-      password: "{{ workload.db_password }}"
-      database: "{{ workload.db_name }}"
-  command: |
-    DELETE FROM users 
-    WHERE id = {{ workload.user_id }}
+  tool:
+    kind: postgres
+    auth:
+      type: postgres
+      inline:
+        host: "{{ workload.db_host }}"
+        port: "{{ workload.db_port }}"
+        user: "{{ workload.db_user }}"
+        password: "{{ workload.db_password }}"
+        database: "{{ workload.db_name }}"
+    command: |
+      DELETE FROM users 
+      WHERE id = {{ workload.user_id }}
   next:
     - step: process_result
 ```
@@ -438,12 +443,13 @@ Applies a function to each item in a list.
 
 ```yaml
 transform_data:
-  tool: python
-  data:
-    items: "{{ fetch_data.response.json.items }}"
-  code: |
-    def main(items):
-        return [{"price": item["price"] * 1.1, **{k: v for k, v in item.items() if k != "price"}} for item in items]
+  tool:
+    kind: python
+    data:
+      items: "{{ fetch_data.response.json.items }}"
+    code: |
+      def main(items):
+          return [{"price": item["price"] * 1.1, **{k: v for k, v in item.items() if k != "price"}} for item in items]
   next: save_data
 ```
 
@@ -460,10 +466,11 @@ Filters items in a list.
 
 ```yaml
 filter_data:
-  tool: python
-  data:
-    items: "{{ fetch_data.response.json.items }}"
-    min_price: 10
+  tool:
+    kind: python
+    data:
+      items: "{{ fetch_data.response.json.items }}"
+      min_price: 10
     code: |
       def main(data, min_price):
           return [item for item in data if item["price"] > min_price]
@@ -654,7 +661,7 @@ print_message:
 
 ## Next Steps
 
-- [Playbook Structure](playbook_structure.md) - Learn how to structure NoETL playbooks
-- [CLI Usage Guide](cli_usage.md) - Learn how to use the NoETL command-line interface
-- [API Usage Guide](api_usage.md) - Learn how to use the NoETL REST API
-- [Examples](examples.md) - See more examples of NoETL playbooks
+- [Playbook Structure](/docs/features/playbook_structure) - Learn how to structure NoETL playbooks
+- [CLI Usage Guide](/docs/reference/noetl_cli_usage) - Learn how to use the NoETL command-line interface
+- [API Usage Guide](/docs/reference/api_usage) - Learn how to use the NoETL REST API
+- [Examples](/docs/examples/) - See more examples of NoETL playbooks
