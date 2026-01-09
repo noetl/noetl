@@ -805,17 +805,33 @@ fn is_valid_resource_file(file: &PathBuf, extensions: &[&str]) -> Result<bool> {
 
 async fn register_resource(client: &Client, base_url: &str, resource_type: &str, file: &PathBuf) -> Result<()> {
     let content = fs::read_to_string(file).context(format!("Failed to read file: {:?}", file))?;
-    let content_base64 = BASE64_STANDARD.encode(content);
-
-    let url = format!("{}/api/catalog/register", base_url);
-    let request = RegisterRequest {
-        content: content_base64,
-        resource_type: resource_type.to_string(),
+    
+    let (url, request_body) = if resource_type == "Credential" {
+        // For credentials, parse JSON and POST to /api/credentials
+        let credential_data: serde_json::Value = serde_json::from_str(&content)
+            .context(format!("Failed to parse credential JSON from file: {:?}", file))?;
+        
+        (
+            format!("{}/api/credentials", base_url),
+            credential_data
+        )
+    } else {
+        // For playbooks, base64 encode and POST to /api/catalog/register
+        let content_base64 = BASE64_STANDARD.encode(&content);
+        let request = RegisterRequest {
+            content: content_base64,
+            resource_type: resource_type.to_string(),
+        };
+        
+        (
+            format!("{}/api/catalog/register", base_url),
+            serde_json::to_value(request)?
+        )
     };
 
     let response = client
         .post(&url)
-        .json(&request)
+        .json(&request_body)
         .send()
         .await
         .context("Failed to send register request")?;
