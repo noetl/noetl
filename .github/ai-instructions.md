@@ -52,21 +52,21 @@ task test-*-full                                    # Integration tests (registe
 **Local Development (Rust CLI Recommended):**
 ```bash
 # Build and deployment
-./bin/noetl build [--no-cache]       # Build Docker image with Rust CLI
-./bin/noetl k8s deploy               # Deploy to kind cluster (auto-loads image)
-./bin/noetl k8s redeploy             # Rebuild and redeploy
-./bin/noetl k8s reset                # Full reset: schema + redeploy + test setup
-./bin/noetl k8s remove               # Remove NoETL from cluster
+noetl build [--no-cache]       # Build Docker image with Rust CLI
+noetl k8s deploy               # Deploy to kind cluster (auto-loads image)
+noetl k8s redeploy             # Rebuild and redeploy
+noetl k8s reset                # Full reset: schema + redeploy + test setup
+noetl k8s remove               # Remove NoETL from cluster
 
 # Server/Worker management (local)
-./bin/noetl server start [--init-db] # Start FastAPI server
-./bin/noetl server stop [--force]    # Stop server
-./bin/noetl worker start             # Start worker (v2 architecture default)
-./bin/noetl worker stop              # Stop worker
+noetl server start [--init-db] # Start FastAPI server
+noetl server stop [--force]    # Stop server
+noetl worker start             # Start worker (v2 architecture default)
+noetl worker stop              # Stop worker
 
 # Database management
-./bin/noetl db init                  # Initialize database schema
-./bin/noetl db validate              # Validate database schema
+noetl db init                  # Initialize database schema
+noetl db validate              # Validate database schema
 
 # Legacy task commands (still available)
 task docker-build-noetl              # Build NoETL container image

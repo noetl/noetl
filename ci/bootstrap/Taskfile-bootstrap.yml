@@ -62,11 +62,11 @@ tasks:
         echo "=== Verifying Python Environment ==="
         if [[ -d .venv ]]; then
           echo "✓ .venv directory exists"
-          if [[ -f .venv/bin/noetl ]]; then
+          if command -v noetl >/dev/null 2>&1; then
             echo "✓ noetl CLI installed"
-            .venv/bin/noetl --version 2>&1 || echo "  (CLI available)"
+            noetl --version 2>&1 || echo "  (CLI available)"
           else
-            echo "✗ noetl CLI not found in .venv"
+            echo "✗ noetl CLI not found - install with: pip install noetl[cli]"
           fi
         else
           echo "✗ .venv directory not found"
@@ -197,7 +197,7 @@ tasks:
           [[ "$cred" == *".template.json" ]] && continue
           
           echo "Registering $cred..."
-          .venv/bin/noetl register "$cred" \
+          noetl register "$cred" \
             --host $NOETL_HOST \
             --port $NOETL_PORT
         done
@@ -222,7 +222,7 @@ tasks:
           [[ -f "$playbook" ]] || continue
           
           echo "Registering $playbook..."
-          .venv/bin/noetl register "$playbook" \
+          noetl register "$playbook" \
             --host $NOETL_HOST \
             --port $NOETL_PORT
         done
@@ -235,7 +235,7 @@ tasks:
     aliases: [list]
     cmds:
       - |
-        .venv/bin/noetl list playbooks \
+        noetl list playbooks \
           --host $NOETL_HOST \
           --port $NOETL_PORT
 
@@ -249,7 +249,7 @@ tasks:
           exit 1
         fi
         
-        .venv/bin/noetl execute playbook "{{.CLI_ARGS}}" \
+        noetl execute playbook "{{.CLI_ARGS}}" \
           --host $NOETL_HOST \
           --port $NOETL_PORT
 

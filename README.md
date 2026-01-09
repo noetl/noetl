@@ -103,10 +103,10 @@ task test:k8s:register-credentials       # Register all credentials from tests/f
 task test:k8s:register-playbooks         # Register all playbooks from tests/fixtures/playbooks/
 
 # Manual registration using noetlctl binary
-./bin/noetl register credential --directory tests/fixtures/credentials
-./bin/noetl register playbook --directory tests/fixtures/playbooks
-./bin/noetl register playbook --file path/to/playbook.yaml
-./bin/noetl register credential --file path/to/credential.json
+noetl register credential --directory tests/fixtures/credentials
+noetl register playbook --directory tests/fixtures/playbooks
+noetl register playbook --file path/to/playbook.yaml
+noetl register credential --file path/to/credential.json
 
 # Check cluster health
 task test-cluster-health
@@ -155,9 +155,9 @@ task noetl:test:k8s:register-credentials   # Register all credentials from direc
 task noetl:test:k8s:register-playbooks     # Register all playbooks from directory
 
 # Use noetlctl directly for custom registration
-.noetl/bin/noetl register credential --directory credentials/
-.noetl/bin/noetl register playbook --directory playbooks/
-.noetl/bin/noetl register playbook --file playbooks/my-workflow.yaml
+noetl register credential --directory credentials/
+noetl register playbook --directory playbooks/
+noetl register playbook --file playbooks/my-workflow.yaml
 
 # Your project-specific tasks (defined in Taskfile.yml)
 task dev:run                           # Run your application

@@ -20,10 +20,11 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 FIXTURE_ROOT="$REPO_ROOT/tests/fixtures/playbooks"
 
 # Use Rust CLI binary
-NOETL_CLI="$REPO_ROOT/bin/noetl"
-if [ ! -x "$NOETL_CLI" ]; then
-  # Fallback to PATH if bin/noetl doesn't exist
-  NOETL_CLI="noetl"
+# Use noetl from PATH (installed via pip)
+NOETL_CLI="noetl"
+if ! command -v noetl >/dev/null 2>&1; then
+  echo "Error: noetl CLI not found. Install with: pip install noetl[cli]"
+  exit 1
 fi
 
 echo "Loading test fixture playbooks from $FIXTURE_ROOT on $HOST port $PORT"

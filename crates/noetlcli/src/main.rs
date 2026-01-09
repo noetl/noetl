@@ -53,24 +53,6 @@ enum Commands {
         #[command(subcommand)]
         command: ContextCommand,
     },
-    /// Execute a playbook (legacy command, use 'execute playbook' instead)
-    /// Examples:
-    ///     noetlctl exec my-playbook
-    ///     noetlctl exec workflows/data-pipeline --input params.json
-    ///     noetlctl --host=localhost --port=8082 exec etl-job --input /path/to/input.json --json
-    #[command(verbatim_doc_comment)]
-    Exec {
-        /// Playbook path/name as registered in catalog
-        playbook_path: String,
-
-        /// Path to JSON file with parameters
-        #[arg(short, long)]
-        input: Option<PathBuf>,
-
-        /// Emit only the JSON response
-        #[arg(short, long)]
-        json: bool,
-    },
     /// Register resources
     Register {
         #[command(subcommand)]
@@ -109,6 +91,7 @@ enum Commands {
         command: CatalogCommand,
     },
     /// Execution management
+    #[command(alias = "run")]
     Execute {
         #[command(subcommand)]
         command: ExecuteCommand,
@@ -518,13 +501,6 @@ async fn main() -> Result<()> {
     match cli.command {
         Some(Commands::Context { command }) => {
             handle_context_command(&mut config, command)?;
-        }
-        Some(Commands::Exec {
-            playbook_path,
-            input,
-            json,
-        }) => {
-            execute_playbook(&client, &base_url, &playbook_path, input, json).await?;
         }
         Some(Commands::Register { resource }) => match resource {
             RegisterResource::Credential { file, directory } => {
