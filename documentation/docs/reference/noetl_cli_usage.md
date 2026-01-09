@@ -231,10 +231,10 @@ make worker-start
 make worker-stop
 ```
 
-For detailed information about running multiple workers, see [Multiple Workers Guide](multiple_workers.md).
+For detailed information about running multiple workers, see [Multiple Workers Guide](/docs/development/multiple_workers).
 
 ## Next Steps
 
 - [API Usage Guide](/docs/reference/api_usage) - Learn how to use the NoETL REST API
 - [Playbook Structure](/docs/features/playbook_structure) - Learn how to structure NoETL playbooks
-- [Workflow Tasks](action_type.md) - Learn about available tasks and their parameters
+- [Workflow Tasks](/docs/reference/action_type) - Learn about available tasks and their parameters
