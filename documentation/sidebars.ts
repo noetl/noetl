@@ -18,7 +18,17 @@ const sidebars: SidebarsConfig = {
       type: 'category',
       label: 'Getting Started',
       items: [
-        'introduction',
+        'getting-started/quickstart',
+        'getting-started/installation',
+        'getting-started/architecture',
+        'getting-started/design-philosophy',
+        'getting-started/semantic-pipeline',
+      ],
+    },
+    {
+      type: 'category',
+      label: 'Playbook Guide',
+      items: [
         {
           type: 'doc',
           id: 'features/playbook_structure',
@@ -28,6 +38,16 @@ const sidebars: SidebarsConfig = {
           type: 'doc',
           id: 'features/core_concept',
           label: 'Core Concepts',
+        },
+        {
+          type: 'doc',
+          id: 'features/variables',
+          label: 'Variables',
+        },
+        {
+          type: 'doc',
+          id: 'features/iterator',
+          label: 'Iterator (Loops)',
         },
       ],
     },
@@ -94,10 +114,8 @@ const sidebars: SidebarsConfig = {
     },
     {
       type: 'category',
-      label: 'Features',
+      label: 'Advanced Features',
       items: [
-        'features/variables',
-        'features/iterator',
         'features/pagination',
         'features/retry_mechanism',
         'features/credential_caching',
