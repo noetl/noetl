@@ -756,7 +756,7 @@ jobs:
 
 ## See Also
 
-- [Playbook DSL Reference](./dsl_spec.md)
-- [Event-Driven Architecture](./playbook_execution_flow.md)
-- [Postgres Plugin](./database_refactoring_summary.md)
-- [Task Automation](./development.md#task-automation)
+- [DSL Specification](/docs/reference/dsl_spec)
+- [Playbook Structure](/docs/features/playbook_structure)
+- [PostgreSQL Tool](/docs/reference/tools/postgres)
+- [Local Development Setup](/docs/development/local_dev_setup)

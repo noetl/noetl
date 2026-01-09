@@ -533,7 +533,7 @@ def main(auth_credential):
 
 ## Related Documentation
 
-- [Credential Caching](./credential_caching.md)
-- [Token-Based Authentication](./token_auth_implementation.md)
-- [HTTP Action Type](./http_action_type.md)
-- [Template Rendering](./dsl_spec.md#jinja2-templates)
+- [Credential Caching](/docs/features/credential_caching)
+- [Keychain Token Refresh](/docs/features/keychain_token_refresh)
+- [HTTP Action Type](./http_action_type)
+- [DSL Specification](./dsl_spec)

@@ -223,9 +223,9 @@ make test-*-full
 
 ### Advanced Topics
 - [Features Overview](/docs/features/variables)
-- [Playbook Specification](../playbook_specification.md)
-- [Error Logging](../error_logging.md)
-- [Performance Tuning](../performance_tuning.md)
+- [Playbook Structure](/docs/features/playbook_structure)
+- [Retry Mechanism](/docs/features/retry_mechanism)
+- [Variables Feature](/docs/features/variables)
 
 ##  Contributing
 
