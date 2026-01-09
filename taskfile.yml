@@ -80,6 +80,7 @@ tasks:
     cmds:
       - task: tshoot:local:check-dependencies
       - task: tshoot:local:check-ports
+      - task: noetlctl:local:build
       - task: docker:local:noetl-image-build
       - task: kind:local:cluster-create
       - task: kind:local:image-load

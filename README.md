@@ -46,13 +46,14 @@ cd noetl
 make bootstrap
 
 # What bootstrap does:
-# 1. Installs required tools: Docker, kubectl, helm, kind, task, psql, pyenv, tfenv, uv
-# 2. Creates Kind Kubernetes cluster
-# 3. Builds NoETL Docker image
-# 4. Deploys PostgreSQL database
-# 5. Deploys observability stack (ClickHouse, Qdrant, NATS JetStream)
-# 6. Deploys monitoring stack (VictoriaMetrics, Grafana, VictoriaLogs)
-# 7. Deploys NoETL server and workers
+# 1. Installs required tools: Docker, kubectl, helm, kind, task, psql, pyenv, tfenv, uv, Rust/Cargo
+# 2. Builds noetlctl (Rust CLI for catalog management)
+# 3. Creates Kind Kubernetes cluster
+# 4. Builds NoETL Docker image
+# 5. Deploys PostgreSQL database
+# 6. Deploys observability stack (ClickHouse, Qdrant, NATS JetStream)
+# 7. Deploys monitoring stack (VictoriaMetrics, Grafana, VictoriaLogs)
+# 8. Deploys NoETL server and workers
 
 # After bootstrap, you can use task commands directly:
 task --list                  # Show all available tasks
@@ -96,8 +97,16 @@ task dev-fast
 # Deploy all components
 task deploy-all              # Executes: task postgres:k8s:deploy → task monitoring:k8s:deploy → task noetl:k8s:deploy
 
-# Register test credentials and playbooks (one-time setup after deployment)
-task test:k8s:setup-environment   # Register all credentials and playbooks for testing
+# Register credentials and playbooks using noetlctl (one-time setup after deployment)
+task test:k8s:setup-environment          # Register all credentials and playbooks
+task test:k8s:register-credentials       # Register all credentials from tests/fixtures/credentials/
+task test:k8s:register-playbooks         # Register all playbooks from tests/fixtures/playbooks/
+
+# Manual registration using noetlctl binary
+./bin/noetl register credential --directory tests/fixtures/credentials
+./bin/noetl register playbook --directory tests/fixtures/playbooks
+./bin/noetl register playbook --file path/to/playbook.yaml
+./bin/noetl register credential --file path/to/credential.json
 
 # Check cluster health
 task test-cluster-health
@@ -122,7 +131,8 @@ make -C .noetl bootstrap
 **Note:** The submodule must be named `.noetl` (hidden directory) for the bootstrap to work correctly. 
 
 The bootstrap automatically:
-- Installs all required tools (Docker, kubectl, helm, kind, **task**, psql, pyenv, tfenv, uv, Python 3.12+)
+- Installs all required tools (Docker, kubectl, helm, kind, **task**, psql, pyenv, tfenv, uv, Rust/Cargo, Python 3.12+)
+- Builds noetlctl (Rust CLI for catalog management)
 - Sets up Python virtual environment with your project + NoETL dependencies
 - Creates project Taskfile.yml that imports all NoETL tasks
 - Deploys Kind cluster with PostgreSQL, observability (ClickHouse, Qdrant, NATS), and monitoring stack
@@ -140,9 +150,14 @@ task noetl:noetl:k8s:deploy            # Deploy NoETL server and workers
 task noetl:test:k8s:cluster-health     # Check cluster health
 
 # Register test credentials and playbooks for Kind environment
-task noetl:test:k8s:setup-environment  # Complete setup (credentials + playbooks)
-task noetl:test:k8s:register-credentials   # Register credentials only
-task noetl:test:k8s:register-playbooks     # Register playbooks only
+task noetl:test:k8s:setup-environment      # Complete setup (credentials + playbooks)
+task noetl:test:k8s:register-credentials   # Register all credentials from directory
+task noetl:test:k8s:register-playbooks     # Register all playbooks from directory
+
+# Use noetlctl directly for custom registration
+.noetl/bin/noetl register credential --directory credentials/
+.noetl/bin/noetl register playbook --directory playbooks/
+.noetl/bin/noetl register playbook --file playbooks/my-workflow.yaml
 
 # Your project-specific tasks (defined in Taskfile.yml)
 task dev:run                           # Run your application

@@ -105,13 +105,13 @@ workflow:
         playbook_path: "{{ workload.playbook_path }}"
         action: "{{ workload.action }}"
       code: |
-        def main(playbook_path, action):
-            return {
-                "allowed": True,
-                "playbook_path": playbook_path,
-                "action": action,
-                "message": f"Access granted to {action} playbook"
-            }
+        # Arguments injected: playbook_path, action
+        result = {
+            "allowed": True,
+            "playbook_path": playbook_path,
+            "action": action,
+            "message": f"Access granted to {action} playbook"
+        }
     case:
       - when: "{{ event.name == 'step.exit' }}"
         then:
@@ -128,13 +128,13 @@ workflow:
         playbook_path: "{{ workload.playbook_path }}"
         action: "{{ workload.action }}"
       code: |
-        def main(playbook_path, action):
-            return {
-                "allowed": False,
-                "playbook_path": playbook_path,
-                "action": action,
-                "message": "Access denied"
-            }
+        # Arguments injected: playbook_path, action
+        result = {
+            "allowed": False,
+            "playbook_path": playbook_path,
+            "action": action,
+            "message": "Access denied"
+        }
     case:
       - when: "{{ event.name == 'step.exit' }}"
         then:

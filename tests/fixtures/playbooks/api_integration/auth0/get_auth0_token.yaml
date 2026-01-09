@@ -94,13 +94,13 @@ workflow:
         token_type: "{{ get_token.data.token_type }}"
         expires_in: "{{ get_token.data.expires_in }}"
       code: |
-        def main(access_token, token_type, expires_in):
-            return {
-                "status": "success",
-                "access_token": access_token,
-                "token_type": token_type,
-                "expires_in": expires_in
-            }
+        # Arguments injected: access_token, token_type, expires_in
+        result = {
+            "status": "success",
+            "access_token": access_token,
+            "token_type": token_type,
+            "expires_in": expires_in
+        }
     case:
       - when: "{{ event.name == 'step.exit' }}"
         then:
@@ -117,12 +117,12 @@ workflow:
         status: "{{ get_token.status }}"
         error: "{{ get_token.data }}"
       code: |
-        def main(status, error):
-            return {
-                "status": "error",
-                "http_status": status,
-                "error": error
-            }
+        # Arguments injected: status, error
+        result = {
+            "status": "error",
+            "http_status": status,
+            "error": error
+        }
     case:
       - when: "{{ event.name == 'step.exit' }}"
         then:

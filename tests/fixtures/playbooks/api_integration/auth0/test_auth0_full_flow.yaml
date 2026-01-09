@@ -96,17 +96,17 @@ workflow:
         email: "{{ login_with_token.user.email }}"
         expires_at: "{{ login_with_token.expires_at }}"
       code: |
-        def main(session_token, user_id, email, expires_at):
-            return {
-                "status": "success",
-                "test": "auth0_full_flow",
-                "session_token": session_token,
-                "user": {
-                    "user_id": user_id,
-                    "email": email
-                },
-                "expires_at": expires_at
-            }
+        # Arguments injected: session_token, user_id, email, expires_at
+        result = {
+            "status": "success",
+            "test": "auth0_full_flow",
+            "session_token": session_token,
+            "user": {
+                "user_id": user_id,
+                "email": email
+            },
+            "expires_at": expires_at
+        }
     case:
       - when: "{{ event.name == 'step.exit' }}"
         then:
@@ -122,12 +122,12 @@ workflow:
       args:
         error: "{{ get_auth0_token }}"
       code: |
-        def main(error):
-            return {
-                "status": "error",
-                "stage": "auth0_token",
-                "error": error
-            }
+        # Arguments injected: error
+        result = {
+            "status": "error",
+            "stage": "auth0_token",
+            "error": error
+        }
     case:
       - when: "{{ event.name == 'step.exit' }}"
         then:
@@ -143,12 +143,12 @@ workflow:
       args:
         error: "{{ login_with_token }}"
       code: |
-        def main(error):
-            return {
-                "status": "error",
-                "stage": "noetl_login",
-                "error": error
-            }
+        # Arguments injected: error
+        result = {
+            "status": "error",
+            "stage": "noetl_login",
+            "error": error
+        }
     case:
       - when: "{{ event.name == 'step.exit' }}"
         then:

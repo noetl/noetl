@@ -290,25 +290,35 @@ enum GetResource {
 
 #[derive(Subcommand)]
 enum RegisterResource {
-    /// Register a credential from JSON file
+    /// Register credential(s) from JSON file or directory
     /// Examples:
     ///     noetlctl register credential --file credentials/postgres.json
+    ///     noetlctl register credential --directory tests/fixtures/credentials
     ///     noetlctl --host=localhost --port=8082 register credential -f tests/fixtures/credentials/google_oauth.json
     #[command(verbatim_doc_comment)]
     Credential {
         /// Path to credential file
-        #[arg(short, long)]
-        file: PathBuf,
+        #[arg(short, long, conflicts_with = "directory")]
+        file: Option<PathBuf>,
+
+        /// Path to directory containing credential JSON files (scans recursively)
+        #[arg(short, long, conflicts_with = "file")]
+        directory: Option<PathBuf>,
     },
-    /// Register a playbook from YAML file
+    /// Register playbook(s) from YAML file or directory
     /// Examples:
     ///     noetlctl register playbook --file playbooks/my-workflow.yaml
+    ///     noetlctl register playbook --directory tests/fixtures/playbooks
     ///     noetlctl --host=localhost --port=8082 register playbook -f tests/fixtures/playbooks/hello_world/hello_world.yaml
     #[command(verbatim_doc_comment)]
     Playbook {
         /// Path to playbook file
-        #[arg(short, long)]
-        file: PathBuf,
+        #[arg(short, long, conflicts_with = "directory")]
+        file: Option<PathBuf>,
+
+        /// Path to directory containing playbook YAML files (scans recursively)
+        #[arg(short, long, conflicts_with = "file")]
+        directory: Option<PathBuf>,
     },
 }
 
@@ -517,11 +527,25 @@ async fn main() -> Result<()> {
             execute_playbook(&client, &base_url, &playbook_path, input, json).await?;
         }
         Some(Commands::Register { resource }) => match resource {
-            RegisterResource::Credential { file } => {
-                register_resource(&client, &base_url, "Credential", &file).await?;
+            RegisterResource::Credential { file, directory } => {
+                if let Some(f) = file {
+                    register_resource(&client, &base_url, "Credential", &f).await?;
+                } else if let Some(d) = directory {
+                    register_directory(&client, &base_url, "Credential", &d, &["json"]).await?;
+                } else {
+                    eprintln!("Error: Either --file or --directory must be specified");
+                    std::process::exit(1);
+                }
             }
-            RegisterResource::Playbook { file } => {
-                register_resource(&client, &base_url, "Playbook", &file).await?;
+            RegisterResource::Playbook { file, directory } => {
+                if let Some(f) = file {
+                    register_resource(&client, &base_url, "Playbook", &f).await?;
+                } else if let Some(d) = directory {
+                    register_directory(&client, &base_url, "Playbook", &d, &["yaml", "yml"]).await?;
+                } else {
+                    eprintln!("Error: Either --file or --directory must be specified");
+                    std::process::exit(1);
+                }
             }
         },
         Some(Commands::Status { execution_id, json }) => {
@@ -677,6 +701,106 @@ fn handle_context_command(config: &mut Config, command: ContextCommand) -> Resul
         }
     }
     Ok(())
+}
+
+async fn register_directory(
+    client: &Client,
+    base_url: &str,
+    resource_type: &str,
+    directory: &PathBuf,
+    extensions: &[&str],
+) -> Result<()> {
+    let files = scan_directory(directory, extensions)?;
+    
+    if files.is_empty() {
+        println!("No {} files found in directory: {:?}", extensions.join(", "), directory);
+        return Ok(());
+    }
+
+    println!("Found {} file(s) in {:?}", files.len(), directory);
+    
+    let mut success_count = 0;
+    let mut fail_count = 0;
+    
+    for file in files {
+        match register_resource(client, base_url, resource_type, &file).await {
+            Ok(_) => success_count += 1,
+            Err(e) => {
+                eprintln!("Failed to register {:?}: {}", file, e);
+                fail_count += 1;
+            }
+        }
+    }
+    
+    println!("\nRegistration complete: {} succeeded, {} failed", success_count, fail_count);
+    Ok(())
+}
+
+fn scan_directory(directory: &PathBuf, extensions: &[&str]) -> Result<Vec<PathBuf>> {
+    let mut files = Vec::new();
+    
+    if !directory.exists() {
+        return Err(anyhow::anyhow!("Directory does not exist: {:?}", directory));
+    }
+    
+    if !directory.is_dir() {
+        return Err(anyhow::anyhow!("Path is not a directory: {:?}", directory));
+    }
+    
+    scan_directory_recursive(directory, extensions, &mut files)?;
+    Ok(files)
+}
+
+fn scan_directory_recursive(dir: &PathBuf, extensions: &[&str], files: &mut Vec<PathBuf>) -> Result<()> {
+    for entry in fs::read_dir(dir).context(format!("Failed to read directory: {:?}", dir))? {
+        let entry = entry?;
+        let path = entry.path();
+        
+        if path.is_dir() {
+            scan_directory_recursive(&path, extensions, files)?;
+        } else if path.is_file() {
+            if let Some(ext) = path.extension() {
+                if let Some(ext_str) = ext.to_str() {
+                    if extensions.contains(&ext_str) {
+                        // Validate file content before adding
+                        if is_valid_resource_file(&path, extensions)? {
+                            files.push(path);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn is_valid_resource_file(file: &PathBuf, extensions: &[&str]) -> Result<bool> {
+    let content = fs::read_to_string(file)
+        .context(format!("Failed to read file: {:?}", file))?;
+    
+    // Check if it's a YAML file (playbook)
+    if extensions.contains(&"yaml") || extensions.contains(&"yml") {
+        // Look for apiVersion and kind: Playbook
+        if content.contains("apiVersion:") && content.contains("kind: Playbook") {
+            return Ok(true);
+        }
+        return Ok(false);
+    }
+    
+    // Check if it's a JSON file (credential)
+    if extensions.contains(&"json") {
+        // Try to parse as JSON and check for "type" field
+        match serde_json::from_str::<serde_json::Value>(&content) {
+            Ok(json) => {
+                if json.get("type").is_some() {
+                    return Ok(true);
+                }
+            }
+            Err(_) => return Ok(false),
+        }
+    }
+    
+    Ok(false)
 }
 
 async fn register_resource(client: &Client, base_url: &str, resource_type: &str, file: &PathBuf) -> Result<()> {

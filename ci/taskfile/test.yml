@@ -94,96 +94,25 @@ tasks:
 
 
   test:k8s:register-credentials:
-    desc: Register test credentials
+    desc: Register test credentials using noetlctl
     aliases: [rtc, register-test-credentials]
+    deps:
+      - noetlctl:local:build
     cmds:
       - task: kubectl:local:context-set-kind
-      - echo "=== Registering pg_k8s credential ==="
-      - |
-        if command -v jq >/dev/null 2>&1; then
-          curl -sS -X POST "http://localhost:8082/api/credentials" \
-            -H 'Content-Type: application/json' \
-            --data-binary @tests/fixtures/credentials/pg_k8s.json | jq -C .
-        else
-          curl -sS -X POST "http://localhost:8082/api/credentials" \
-            -H 'Content-Type: application/json' \
-            --data-binary @tests/fixtures/credentials/pg_k8s.json
-        fi
-      - echo "\n=== Registering gcs_hmac_local credential ==="
-      - |
-        if command -v jq >/dev/null 2>&1; then
-          curl -sS -X POST "http://localhost:8082/api/credentials" \
-            -H 'Content-Type: application/json' \
-            --data-binary @tests/fixtures/credentials/gcs_hmac_local.json | jq -C .
-        else
-          curl -sS -X POST "http://localhost:8082/api/credentials" \
-            -H 'Content-Type: application/json' \
-            --data-binary @tests/fixtures/credentials/gcs_hmac_local.json
-        fi
-      - echo "\n=== Registering pg_local credential ==="
-      - |
-        if command -v jq >/dev/null 2>&1; then
-          curl -sS -X POST "http://localhost:8082/api/credentials" \
-            -H 'Content-Type: application/json' \
-            --data-binary @tests/fixtures/credentials/pg_local.json | jq -C .
-        else
-          curl -sS -X POST "http://localhost:8082/api/credentials" \
-            -H 'Content-Type: application/json' \
-            --data-binary @tests/fixtures/credentials/pg_local.json
-        fi
-      - echo "\n=== Registering noetl_ducklake_catalog credential ==="
-      - |
-        if command -v jq >/dev/null 2>&1; then
-          curl -sS -X POST "http://localhost:8082/api/credentials" \
-            -H 'Content-Type: application/json' \
-            --data-binary @tests/fixtures/credentials/noetl_ducklake_catalog.json | jq -C .
-        else
-          curl -sS -X POST "http://localhost:8082/api/credentials" \
-            -H 'Content-Type: application/json' \
-            --data-binary @tests/fixtures/credentials/noetl_ducklake_catalog.json
-        fi
-      - echo "\n=== Registering sf_test credential ==="
-      - |
-        if command -v jq >/dev/null 2>&1; then
-          curl -sS -X POST "http://localhost:8082/api/credentials" \
-            -H 'Content-Type: application/json' \
-            --data-binary @tests/fixtures/credentials/sf_test.json | jq -C .
-        else
-          curl -sS -X POST "http://localhost:8082/api/credentials" \
-            -H 'Content-Type: application/json' \
-            --data-binary @tests/fixtures/credentials/sf_test.json
-        fi
-      - echo "\n=== Registering google_oauth credential ==="
-      - |
-        if command -v jq >/dev/null 2>&1; then
-          curl -sS -X POST "http://localhost:8082/api/credentials" \
-            -H 'Content-Type: application/json' \
-            --data-binary @tests/fixtures/credentials/google_oauth.json | jq -C .
-        else
-          curl -sS -X POST "http://localhost:8082/api/credentials" \
-            -H 'Content-Type: application/json' \
-            --data-binary @tests/fixtures/credentials/google_oauth.json
-        fi
-      - echo "\n=== Registering gcs_service_account credential ==="
-      - |
-        if command -v jq >/dev/null 2>&1; then
-          curl -sS -X POST "http://localhost:8082/api/credentials" \
-            -H 'Content-Type: application/json' \
-            --data-binary @tests/fixtures/credentials/gcs_service_account_noetl.json | jq -C .
-        else
-          curl -sS -X POST "http://localhost:8082/api/credentials" \
-            -H 'Content-Type: application/json' \
-            --data-binary @tests/fixtures/credentials/gcs_service_account_noetl.json
-        fi
+      - echo "=== Registering all test credentials from directory ==="
+      - ./bin/noetl register credential --directory tests/fixtures/credentials
       - echo "\n=== Test credentials registered successfully ==="
 
   test:k8s:register-playbooks:
-    desc: Register all test playbooks
+    desc: Register all test playbooks using noetlctl
     aliases: [rtp, register-test-playbooks]
+    deps:
+      - noetlctl:local:build
     cmds:
       - task: kubectl:local:context-set-kind
-      - echo "=== Registering all test playbooks ==="
-      - ./tests/fixtures/register_test_playbooks.sh {{ .NOETL_HOST }} {{ .NOETL_PORT }}
+      - echo "=== Registering all test playbooks from directory ==="
+      - ./bin/noetl register playbook --directory tests/fixtures/playbooks
       - echo "=== All test playbooks registered successfully ==="
 
   test:local:register-credentials:
