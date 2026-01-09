@@ -419,12 +419,12 @@ The server provides credential management endpoints via `/api/credentials`:
 
 * **POST /api/credentials** - Create or update encrypted credentials
 * **GET /api/credentials** - List all credentials with optional filtering
-* **GET /api/credentials/{identifier}** - Get credential by ID or name
+* **GET /api/credentials/\{identifier\}** - Get credential by ID or name
   * Query parameters:
     * `include_data=true` - Include decrypted credential data
     * `execution_id` - Optional execution context for scoped caching
     * `parent_execution_id` - Optional parent execution context
-* **DELETE /api/credentials/{identifier}** - Delete credential
+* **DELETE /api/credentials/\{identifier\}** - Delete credential
 
 Implementation:
 * Module: `noetl/server/api/credential/`
