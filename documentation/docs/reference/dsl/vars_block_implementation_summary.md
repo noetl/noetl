@@ -256,24 +256,30 @@ export NOETL_SERVER_URL="http://noetl-server:8080"
 
 ```yaml
 - step: analyze_data
-  tool: python
-  code: |
-    def main():
-      return {
-        "users": [
-          {"id": 123, "name": "Alice"},
-          {"id": 456, "name": "Bob"}
-        ],
-        "metadata": {
-          "count": 2,
-          "source": "production_db"
+  tool:
+    kind: python
+    libs: {}
+    args: {}
+    code: |
+      # Pure Python code - no imports, no def main()
+      result = {
+        "status": "success",
+        "data": {
+          "users": [
+            {"id": 123, "name": "Alice"},
+            {"id": 456, "name": "Bob"}
+          ],
+          "metadata": {
+            "count": 2,
+            "source": "production_db"
+          }
         }
       }
   vars:
-    first_user_id: "{{ result.users[0].id }}"
-    first_user_name: "{{ result.users[0].name }}"
-    total_users: "{{ result.metadata.count }}"
-    data_source: "{{ result.metadata.source }}"
+    first_user_id: "{{ result.data.users[0].id }}"
+    first_user_name: "{{ result.data.users[0].name }}"
+    total_users: "{{ result.data.metadata.count }}"
+    data_source: "{{ result.data.metadata.source }}"
 ```
 
 ## Template Namespace Reference

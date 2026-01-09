@@ -28,7 +28,7 @@ The NoETL Domain-Specific Language (DSL) defines how workflows are structured an
 ### Playbook Structure
 
 ```yaml
-apiVersion: noetl.io/v1
+apiVersion: noetl.io/v2
 kind: Playbook
 metadata:
   name: example_workflow
@@ -37,17 +37,22 @@ workload:
   variable: value
 workbook:
   - name: reusable_task
-    tool: python
-    code: |
-      def main(input_data):
-        return {"result": input_data}
+    tool:
+      kind: python
+      libs: {}
+      args:
+        input_var: "{{ workload.variable }}"
+      code: |
+        # Pure Python code - no imports, no def main()
+        result = {"status": "success", "data": {"value": input_var}}
 workflow:
   - step: start
     next:
       - step: process
   - step: process
-    tool: workbook
-    name: reusable_task
+    tool:
+      kind: workbook
+      name: reusable_task
     next:
       - step: end
   - step: end

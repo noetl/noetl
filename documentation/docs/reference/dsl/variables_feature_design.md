@@ -115,8 +115,9 @@ The `vars` block at the step level extracts values from the current step's resul
 workflow:
 - step: fetch_data
   desc: Query database and extract variables
-  tool: postgres
-  query: "SELECT user_id, email, created_at FROM users WHERE status = 'active' LIMIT 1"
+  tool:
+    kind: postgres
+    query: "SELECT user_id, email, created_at FROM users WHERE status = 'active' LIMIT 1"
   vars:
     # Use {{ result.field }} to access current step's output
     user_id: "{{ result[0].user_id }}"
@@ -127,10 +128,11 @@ workflow:
 
 - step: process_user
   desc: Use extracted variables in subsequent step
-  tool: python
-  code: |
-    def main(user_id, user_email):
-      return {"status": "processed", "user": user_id}
+  tool:
+    kind: python
+    code: |
+      def main(user_id, user_email):
+        return {"status": "processed", "user": user_id}
   args:
     # Access stored variables via {{ vars.var_name }}
     user_id: "{{ vars.user_id }}"
@@ -149,10 +151,11 @@ workflow:
 **In subsequent steps (stored variables)**:
 ```yaml
 - step: use_variables
-  tool: http
-  method: POST
-  endpoint: "{{ vars.api_url }}"
-  payload:
+  tool:
+    kind: http
+    method: POST
+    endpoint: "{{ vars.api_url }}"
+    payload:
     user_id: "{{ vars.user_id }}"
     email: "{{ vars.user_email }}"
     last_result: "{{ vars.last_result }}"
@@ -210,11 +213,13 @@ workflow:
       operation_result: "{{ result }}"  # Note: Use 'result' not 'this.data'
       attempt_number: "{{ vars.attempt_number + 1 }}"
   
-  tool: python
-  code: |
-    def main():
-      # Step execution
-      return {"status": "success"}
+  tool:
+    kind: python
+    libs: {}
+    args: {}
+    code: |
+      # Pure Python code - no imports, no def main()
+      result = {"status": "success", "data": {"operation": "complete"}}
 ```
 
 ## API Endpoints
@@ -429,9 +434,10 @@ workflow:
     timeout: 60  # Overrides workload.timeout in vars namespace
 
 - step: call_api
-  tool: http
-  endpoint: "{{ workload.base_url }}/users"  # Uses workload
-  timeout: "{{ vars.timeout }}"               # Uses vars (60)
+  tool:
+    kind: http
+    endpoint: "{{ workload.base_url }}/users"  # Uses workload
+    timeout: "{{ vars.timeout }}"               # Uses vars (60)
 ```
 
 ## Implementation Summary

@@ -59,7 +59,7 @@ make bootstrap
 Create `hello_world.yaml`:
 
 ```yaml
-apiVersion: noetl.io/v1
+apiVersion: noetl.io/v2
 kind: Playbook
 metadata:
   name: hello_world
@@ -72,10 +72,14 @@ workflow:
       - step: greet
 
   - step: greet
-    tool: python
-    code: |
-      def main(input_data):
-        return {"greeting": input_data["message"]}
+    tool:
+      kind: python
+      libs: {}
+      args:
+        message: "{{ workload.message }}"
+      code: |
+        # Pure Python code - no imports, no def main()
+        result = {"status": "success", "data": {"greeting": message}}
     next:
       - step: end
 

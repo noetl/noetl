@@ -170,13 +170,15 @@ workbook:
 - step: calculate
   tool:
     kind: python
+    libs: {}
+    args: {}
     code: |
-      def main():
-        return {"total": 100, "average": 25.5, "count": 4}
+      # Pure Python code - no imports, no def main()
+      result = {"status": "success", "data": {"total": 100, "average": 25.5, "count": 4}}
   vars:
-    total_amount: "{{ result.total }}"
-    avg_value: "{{ result.average }}"
-    record_count: "{{ result.count }}"
+    total_amount: "{{ result.data.total }}"
+    avg_value: "{{ result.data.average }}"
+    record_count: "{{ result.data.count }}"
   next: log_results
 ```
 
@@ -335,9 +337,11 @@ The `args:` attribute is used to pass data between steps, into tools, and when r
 - step: start
   tool:
     kind: python
+    libs: {}
+    args: {}
     code: |
-      def main():
-        return {"status": "initialized"}
+      # Pure Python code - no imports, no def main()
+      result = {"status": "success", "data": {"initialized": True}}
   case:
     - when: "{{ event.name == 'step.exit' }}"
       then:
@@ -345,17 +349,21 @@ The `args:` attribute is used to pass data between steps, into tools, and when r
           - step: process_data
             args:
               message: "{{ workload.message }}"
-              timestamp: "{{ result.timestamp }}"
+              timestamp: "{{ result.data.timestamp }}"
 
 - step: process_data
   args:
     message: "default message"    # Can be overridden by routing args
   tool:
     kind: python
+    libs: {}
+    args:
+      message: "{{ args.message }}"
+      timestamp: "{{ args.timestamp | default(none) }}"
     code: |
-      def main(message, timestamp=None):
-        print(f"Processing: {message} at {timestamp}")
-        return {"processed": True}
+      # Pure Python code - variables from args are available
+      print(f"Processing: {message} at {timestamp}")
+      result = {"status": "success", "data": {"processed": True}}
   next: end
 ```
 
@@ -379,24 +387,26 @@ The `args:` attribute is used to pass data between steps, into tools, and when r
 - step: evaluate_score
   tool:
     kind: python
+    libs: {}
+    args: {}
     code: |
-      def main():
-        score = calculate_score()
-        return {"score": score}
+      # Pure Python code - no imports, no def main()
+      score = 75  # Example score calculation
+      result = {"status": "success", "data": {"score": score}}
   case:
-    - when: "{{ result.score > 80 }}"
+    - when: "{{ result.data.score > 80 }}"
       then:
         next:
           - step: high_score_handler
             args:
-              score: "{{ result.score }}"
+              score: "{{ result.data.score }}"
               level: "gold"
-    - when: "{{ result.score > 50 }}"
+    - when: "{{ result.data.score > 50 }}"
       then:
         next:
           - step: medium_score_handler
             args:
-              score: "{{ result.score }}"
+              score: "{{ result.data.score }}"
               level: "silver"
   next:
     - step: low_score_handler

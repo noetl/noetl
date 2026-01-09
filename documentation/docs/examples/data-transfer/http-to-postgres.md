@@ -101,8 +101,9 @@ workflow:
       - step: transform_data
 
   - step: transform_data
-    tool: python
-    code: |
+    tool:
+      kind: python
+      code: |
       def main(posts):
           """Transform and validate posts data."""
           transformed = []
@@ -128,8 +129,9 @@ workflow:
       - step: insert_data
 
   - step: insert_data
-    tool: postgres
-    auth:
+    tool:
+      kind: postgres
+      auth:
       type: postgres
       credential: pg_demo
     query: |
@@ -179,9 +181,10 @@ workflow:
       - step: fetch_data
 
   - step: fetch_data
-    tool: http
-    method: GET
-    endpoint: "{{ workload.api_url }}"
+    tool:
+      kind: http
+      method: GET
+      endpoint: "{{ workload.api_url }}"
     vars:
       all_posts: "{{ result.data }}"
     next:
@@ -196,8 +199,9 @@ workflow:
       - step: insert_post
 
   - step: insert_post
-    tool: postgres
-    auth:
+    tool:
+      kind: postgres
+      auth:
       type: postgres
       credential: pg_demo
     query: |
@@ -242,17 +246,19 @@ workflow:
       - step: fetch_and_insert
 
   - step: fetch_and_insert
-    tool: http
-    method: GET
-    endpoint: "{{ workload.api_url }}"
+    tool:
+      kind: http
+      method: GET
+      endpoint: "{{ workload.api_url }}"
     vars:
       raw_data: "{{ result.data }}"
     next:
       - step: bulk_insert
 
   - step: bulk_insert
-    tool: postgres
-    auth:
+    tool:
+      kind: postgres
+      auth:
       type: postgres
       credential: pg_demo
     query: |
@@ -292,12 +298,13 @@ workflow:
       - step: fetch_all_pages
 
   - step: fetch_all_pages
-    tool: http
-    method: GET
-    endpoint: "{{ workload.api_base }}/items"
-    params:
-      page: 1
-      per_page: 100
+    tool:
+      kind: http
+      method: GET
+      endpoint: "{{ workload.api_base }}/items"
+      params:
+        page: 1
+        per_page: 100
     loop:
       pagination:
         type: response_based
@@ -314,8 +321,9 @@ workflow:
       - step: batch_insert
 
   - step: batch_insert
-    tool: python
-    code: |
+    tool:
+      kind: python
+      code: |
       def main(items, batch_size=1000):
           """Split items into batches for efficient insertion."""
           batches = []
@@ -342,8 +350,9 @@ workflow:
       - step: insert_batch
 
   - step: insert_batch
-    tool: postgres
-    auth:
+    tool:
+      kind: postgres
+      auth:
       type: postgres
       credential: pg_demo
     query: |
@@ -384,9 +393,10 @@ workflow:
       - step: fetch_data
 
   - step: fetch_data
-    tool: http
-    method: GET
-    endpoint: "{{ workload.api_url }}"
+    tool:
+      kind: http
+      method: GET
+      endpoint: "{{ workload.api_url }}"
     vars:
       data: "{{ result.data }}"
     next:
@@ -394,8 +404,9 @@ workflow:
       - step: analytics_insert  # Parallel execution
 
   - step: postgres_insert
-    tool: postgres
-    auth:
+    tool:
+      kind: postgres
+      auth:
       type: postgres
       credential: pg_primary
     query: |

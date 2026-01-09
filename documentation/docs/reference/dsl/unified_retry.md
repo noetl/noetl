@@ -96,11 +96,12 @@ The retry system automatically handles HTTP response envelopes:
 
 ```yaml
 - step: fetch_data
-  tool: http
-  url: "{{ api_url }}/data"
-  params:
-    page: 1
-    pageSize: 100
+  tool:
+    kind: http
+    url: "{{ api_url }}/data"
+    params:
+      page: 1
+      pageSize: 100
   
   # Unified retry with when/then pattern
   retry:
@@ -125,10 +126,11 @@ The retry system automatically handles HTTP response envelopes:
 
 ```yaml
 - step: robust_pagination
-  tool: http
-  url: "{{ api_url }}/data"
-  params:
-    page: 1
+  tool:
+    kind: http
+    url: "{{ api_url }}/data"
+    params:
+      page: 1
   
   retry:
     # Error-side: Handle transient failures
@@ -154,11 +156,12 @@ The retry system automatically handles HTTP response envelopes:
 
 ```yaml
 - step: paginate_with_sink
-  tool: http
-  url: "{{ api_url }}/events"
-  params:
-    offset: 0
-    limit: 1000
+  tool:
+    kind: http
+    url: "{{ api_url }}/events"
+    params:
+      offset: 0
+      limit: 1000
   
   retry:
     - when: "{{ response.data | length == 1000 }}"
@@ -175,9 +178,10 @@ The retry system automatically handles HTTP response envelopes:
         
         # Save each page as it's fetched
         sink:
-          tool: postgres
-          auth: pg_creds
-          table: raw_events
+          tool:
+            kind: postgres
+            auth: pg_creds
+            table: raw_events
           args:
             events: "{{ page.data }}"
             page_number: "{{ _retry.index }}"
@@ -311,13 +315,14 @@ retry:
 
 ```yaml
 - step: fetch_large_table
-  tool: postgres
-  auth: db_creds
-  query: |
-    SELECT * FROM orders 
-    WHERE id > {{ cursor_id | default(0) }} 
-    ORDER BY id 
-    LIMIT {{ page_size }}
+  tool:
+    kind: postgres
+    auth: db_creds
+    query: |
+      SELECT * FROM orders 
+      WHERE id > {{ cursor_id | default(0) }} 
+      ORDER BY id 
+      LIMIT {{ page_size }}
   args:
     cursor_id: 0
     page_size: 1000
@@ -340,18 +345,20 @@ retry:
 
 ```yaml
 - step: wait_for_job
-  tool: python
-  code: |
-    def main(input_data):
-        import requests
-        job_id = input_data['job_id']
-        resp = requests.get(f"https://api.example.com/jobs/{job_id}")
-        return resp.json()
-  args:
-    job_id: "{{ job_id }}"
+  tool:
+    kind: python
+    libs:
+      requests: requests
+    args:
+      job_id: "{{ job_id }}"
+    code: |
+      # Pure Python code - no imports, no def main()
+      # Libraries imported via libs: requests
+      resp = requests.get(f"https://api.example.com/jobs/{job_id}")
+      result = {"status": "success", "data": resp.json()}
   
   retry:
-    - when: "{{ response.status in ['pending', 'running'] }}"
+    - when: "{{ response.data.status in ['pending', 'running'] }}"
       then:
         max_attempts: 60
         
@@ -367,12 +374,13 @@ retry:
 
 ```yaml
 - step: export_analytics
-  tool: duckdb
-  database: analytics.db
-  query: |
-    SELECT * FROM events 
-    WHERE batch_id = {{ batch_id }}
-    LIMIT {{ batch_size }}
+  tool:
+    kind: duckdb
+    database: analytics.db
+    query: |
+      SELECT * FROM events 
+      WHERE batch_id = {{ batch_id }}
+      LIMIT {{ batch_size }}
   args:
     batch_id: 1
     batch_size: 10000
@@ -395,16 +403,16 @@ Unified retry works seamlessly with the `loop` parameter for multi-endpoint pagi
 
 ```yaml
 - step: fetch_all_endpoints
-  tool: http
+  tool:
+    kind: http
+    url: "{{ api_url }}{{ endpoint.path }}"
+    params:
+      page: 1
+      pageSize: "{{ endpoint.page_size }}"
   loop:
     collection: "{{ workload.endpoints }}"
     element: endpoint
     mode: sequential
-  
-  url: "{{ api_url }}{{ endpoint.path }}"
-  params:
-    page: 1
-    pageSize: "{{ endpoint.page_size }}"
   
   retry:
     - when: "{{ error.status in [429, 500, 502, 503] }}"
@@ -428,10 +436,11 @@ Unified retry works seamlessly with the `loop` parameter for multi-endpoint pagi
         
         per_iteration:
           sink:
-            tool: postgres
-            auth: pg_k8s
-            table: raw_data
-            mode: insert
+            tool:
+              kind: postgres
+              auth: pg_k8s
+              table: raw_data
+              mode: insert
             args:
               endpoint_name: "{{ endpoint.name }}"
               page_data: "{{ page.data }}"

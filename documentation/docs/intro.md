@@ -9,7 +9,7 @@ description: Automation framework for Data Mesh and MLOps orchestration
 
 **NoETL** is an automation framework for Data Mesh and MLOps orchestration.
 
-![NoETL System Diagram](https://raw.githubusercontent.com/noetl/noetl/HEAD/documentation/static/img/noetl-main.png)
+![NoETL System Diagram](/img/noetl-main.png)
 
 ## What is NoETL?
 

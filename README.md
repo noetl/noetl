@@ -8,38 +8,38 @@
 
 ## Documentation
 
-Full documentation is available at **[noetl.io/docs](https://noetl.io/docs)**
+Full documentation is available at **[noetl.dev](https://noetl.dev)**
 
 ### Getting Started
 
-- [Quick Start](https://noetl.io/docs/getting-started/quickstart) - Get running in minutes
-- [Installation](https://noetl.io/docs/getting-started/installation) - PyPI and Kubernetes setup
-- [Architecture](https://noetl.io/docs/getting-started/architecture) - System components
-- [Design Philosophy](https://noetl.io/docs/getting-started/design-philosophy) - Architectural principles
+- [Quick Start](https://noetl.dev/docs/getting-started/quickstart) - Get running in minutes
+- [Installation](https://noetl.dev/docs/getting-started/installation) - PyPI and Kubernetes setup
+- [Architecture](https://noetl.dev/docs/getting-started/architecture) - System components
+- [Design Philosophy](https://noetl.dev/docs/getting-started/design-philosophy) - Architectural principles
 
 ### Playbook Guide
 
-- [Playbook Structure](https://noetl.io/docs/features/playbook_structure) - DSL syntax and structure
-- [Variables](https://noetl.io/docs/features/variables) - Data flow and templating
-- [Iterator](https://noetl.io/docs/features/iterator) - Looping over collections
+- [Playbook Structure](https://noetl.dev/docs/features/playbook_structure) - DSL syntax and structure
+- [Variables](https://noetl.dev/docs/features/variables) - Data flow and templating
+- [Iterator](https://noetl.dev/docs/features/iterator) - Looping over collections
 
 ### Reference
 
-- [DSL Specification](https://noetl.io/docs/reference/dsl/) - Complete DSL reference
-- [CLI Reference](https://noetl.io/docs/reference/noetl_cli_usage) - Command line usage
-- [Tools Reference](https://noetl.io/docs/reference/tools/) - HTTP, PostgreSQL, Python, DuckDB, etc.
-- [Authentication](https://noetl.io/docs/reference/auth_and_keychain_reference) - Credential handling
+- [DSL Specification](https://noetl.dev/docs/reference/dsl/) - Complete DSL reference
+- [CLI Reference](https://noetl.dev/docs/reference/noetl_cli_usage) - Command line usage
+- [Tools Reference](https://noetl.dev/docs/reference/tools/) - HTTP, PostgreSQL, Python, DuckDB, etc.
+- [Authentication](https://noetl.dev/docs/reference/auth_and_keychain_reference) - Credential handling
 
 ### Examples
 
-- [Authentication Examples](https://noetl.io/docs/examples/authentication/) - OAuth, tokens, credentials
-- [Data Transfer](https://noetl.io/docs/examples/data-transfer/) - ETL patterns
-- [Pagination](https://noetl.io/docs/examples/pagination/) - API pagination patterns
+- [Authentication Examples](https://noetl.dev/docs/examples/authentication/) - OAuth, tokens, credentials
+- [Data Transfer](https://noetl.dev/docs/examples/data-transfer/) - ETL patterns
+- [Pagination](https://noetl.dev/docs/examples/pagination/) - API pagination patterns
 
 ### Operations
 
-- [Observability](https://noetl.io/docs/reference/observability_services) - ClickHouse, Qdrant, NATS
-- [CI/CD Setup](https://noetl.io/docs/operations/ci-setup) - Deployment automation
+- [Observability](https://noetl.dev/docs/reference/observability_services) - ClickHouse, Qdrant, NATS
+- [CI/CD Setup](https://noetl.dev/docs/operations/ci-setup) - Deployment automation
 
 ## Quick Start
 
@@ -76,7 +76,7 @@ noetl catalog list playbook --host localhost --port 8082
 ## Example Playbook
 
 ```yaml
-apiVersion: noetl.io/v1
+apiVersion: noetl.io/v2
 kind: Playbook
 metadata:
   name: hello_world
@@ -89,10 +89,15 @@ workflow:
       - step: greet
 
   - step: greet
-    tool: python
-    code: |
-      def main(input_data):
-        return {"greeting": input_data["message"]}
+    tool:
+      kind: python
+      libs: {}
+      args:
+        message: "{{ workload.message }}"
+      code: |
+        # Pure Python code - no imports, no def main()
+        # Variables injected via args: message
+        result = {"status": "success", "data": {"greeting": message}}
     next:
       - step: end
 

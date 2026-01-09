@@ -70,8 +70,9 @@ See `variables_feature_design.md` for complete API documentation.
 
 ```yaml
 - step: fetch_user
-  tool: postgres
-  query: "SELECT user_id, email, status FROM users WHERE id = 123"
+  tool:
+    kind: postgres
+    query: "SELECT user_id, email, status FROM users WHERE id = 123"
   vars:
     user_id: "{{ result[0].user_id }}"
     email: "{{ result[0].email }}"
@@ -82,23 +83,27 @@ See `variables_feature_design.md` for complete API documentation.
 
 ```yaml
 - step: calculate
-  tool: python
-  code: |
-    def main():
-      return {"total": 100, "average": 25.5, "count": 4}
+  tool:
+    kind: python
+    libs: {}
+    args: {}
+    code: |
+      # Pure Python code - no imports, no def main()
+      result = {"status": "success", "data": {"total": 100, "average": 25.5, "count": 4}}
   vars:
-    total_amount: "{{ result.total }}"
-    avg_value: "{{ result.average }}"
-    record_count: "{{ result.count }}"
+    total_amount: "{{ result.data.total }}"
+    avg_value: "{{ result.data.average }}"
+    record_count: "{{ result.data.count }}"
 ```
 
 ### Extract from HTTP Response
 
 ```yaml
 - step: api_call
-  tool: http
-  method: GET
-  endpoint: "https://api.example.com/data"
+  tool:
+    kind: http
+    method: GET
+    endpoint: "https://api.example.com/data"
   vars:
     response_status: "{{ result.status }}"
     first_item_id: "{{ result.data[0].id }}"
@@ -109,8 +114,9 @@ See `variables_feature_design.md` for complete API documentation.
 
 ```yaml
 - step: fetch_list
-  tool: postgres
-  query: "SELECT name, value FROM items ORDER BY priority LIMIT 5"
+  tool:
+    kind: postgres
+    query: "SELECT name, value FROM items ORDER BY priority LIMIT 5"
   vars:
     first_name: "{{ result[0].name }}"
     second_name: "{{ result[1].name }}"
@@ -122,10 +128,11 @@ See `variables_feature_design.md` for complete API documentation.
 
 ```yaml
 - step: send_notification
-  tool: http
-  method: POST
-  endpoint: "{{ vars.api_endpoint }}"
-  payload:
+  tool:
+    kind: http
+    method: POST
+    endpoint: "{{ vars.api_endpoint }}"
+    payload:
     user_id: "{{ vars.user_id }}"
     email: "{{ vars.email }}"
     total: "{{ vars.total_amount }}"
@@ -141,20 +148,22 @@ workload:
 
 workflow:
 - step: process_data
-  tool: python
-  code: |
-    def main(env):
-      return {"processed": 100, "env": env}
+  tool:
+    kind: python
+    code: |
+      def main(env):
+        return {"processed": 100, "env": env}
   args:
     env: "{{ workload.environment }}"
   vars:
     processed_count: "{{ result.processed }}"
   
 - step: notify
-  tool: http
-  method: POST
-  endpoint: "{{ workload.notification_url }}"
-  payload:
+  tool:
+    kind: http
+    method: POST
+    endpoint: "{{ workload.notification_url }}"
+    payload:
     environment: "{{ workload.environment }}"
     count: "{{ vars.processed_count }}"
 ```

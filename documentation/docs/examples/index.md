@@ -22,7 +22,7 @@ The examples documented here reference those tested implementations.
 The simplest NoETL playbook:
 
 ```yaml
-apiVersion: noetl.io/v1
+apiVersion: noetl.io/v2
 kind: Playbook
 metadata:
   name: hello_world
@@ -37,12 +37,14 @@ workflow:
       - step: greet
 
   - step: greet
-    tool: python
-    code: |
-      def main(input_data):
-          return {"greeting": f"HELLO: {input_data['message']}"}
-    args:
-      message: "{{ workload.message }}"
+    tool:
+      kind: python
+      libs: {}
+      args:
+        message: "{{ workload.message }}"
+      code: |
+        # Pure Python code - no imports, no def main()
+        result = {"status": "success", "data": {"greeting": f"HELLO: {message}"}}
     next:
       - step: end
 

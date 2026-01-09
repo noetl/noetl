@@ -10,7 +10,7 @@ NoETL uses a server-worker architecture for distributed workflow execution.
 
 ## Component Overview
 
-![NoETL Components](https://raw.githubusercontent.com/noetl/noetl/HEAD/documentation/static/img/noetl-components.png)
+![NoETL Components](/img/noetl-components.png)
 
 ## Components
 

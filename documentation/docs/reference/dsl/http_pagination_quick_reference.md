@@ -21,10 +21,11 @@ This means:
 
 ```yaml
 - step: fetch_data
-  tool: http
-  url: "{{ api_url }}/data"
-  params:
-    page: 1
+  tool:
+    kind: http
+    url: "{{ api_url }}/data"
+    params:
+      page: 1
   loop:
     pagination:
       type: response_based
