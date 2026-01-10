@@ -58,7 +58,7 @@ After bootstrap, services are available at:
 - **Grafana**: http://localhost:3000
 - **PostgreSQL**: localhost:54321
 
-See [Quick Start Guide](https://noetl.io/docs/getting-started/quickstart) for details.
+See [Quick Start Guide](https://noetl.dev/docs/getting-started/quickstart) for details.
 
 ## Basic Usage
 
@@ -136,7 +136,7 @@ task test:k8s:setup-environment
 task test:k8s:cluster-health
 ```
 
-See [Development Guide](https://noetl.io/docs/development/development) for contributing.
+See [Development Guide](https://noetl.dev/docs/contributing/overview) for contributing.
 
 ## License
 
