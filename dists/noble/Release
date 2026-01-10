@@ -1,0 +1,24 @@
+Origin: NoETL
+Label: NoETL APT Repository
+Suite: noble
+Codename: noble
+Version: 2.5.3
+Architectures: amd64 arm64
+Components: main
+Description: NoETL APT Repository for Ubuntu
+Date: Sat, 10 Jan 2026 05:50:11 +0000
+MD5Sum:
+ fda569fd15806142dd4b47c5c1734d90                0 
+ f575480b29065bd8484420af78ae0a7a                0 
+ 4446d1d30c61dc401fbd6ef092436fa1                0 
+ 65d47df5c934e70e9bdd8b4d212a6d2d                0 
+SHA1:
+ b08fa9f2c4b6abc7c5fe8d14658fa7f415b4ecb2                0 
+ a4f2708e22abc30e8348bd3a17f6dc1aa6cd4bae                0 
+ 4cf3e34867b2596cdca86fd448d7ba90616ed681                0 
+ 911ff5e705dd545f809cebf0b40dfb294c958e0f                0 
+SHA256:
+ 54433796dd841a4f8d75b52b579575e272ec026950b3fdd99c19aa50324aa684                0 
+ 5334a3dc7203fc1f3ddc9eccaf1b777ce235fc5c712fc7414067f484602af7c7                0 
+ 1d6eca89c616db9c5deccb22556339565d8ee99c408155f09007fae2a21b05d2                0 
+ 60b7cf31433ba7c61bd7f54c450b015df08a023ea0eef4a289423e999935be95                0 

@@ -1,0 +1,24 @@
+Origin: NoETL
+Label: NoETL APT Repository
+Suite: focal
+Codename: focal
+Version: 2.5.3
+Architectures: amd64 arm64
+Components: main
+Description: NoETL APT Repository for Ubuntu
+Date: Sat, 10 Jan 2026 05:50:11 +0000
+MD5Sum:
+ fadc373c26ccf9d15906467a8583f3b8                0 
+ b77ab50503d8acccd4445ee6cedcee91                0 
+ 4446d1d30c61dc401fbd6ef092436fa1                0 
+ 65d47df5c934e70e9bdd8b4d212a6d2d                0 
+SHA1:
+ 064b0d860fccde3825fb64d034e40d676e821d30                0 
+ c2a230788db9905a549205751383d3e1a8a6382c                0 
+ 4cf3e34867b2596cdca86fd448d7ba90616ed681                0 
+ 911ff5e705dd545f809cebf0b40dfb294c958e0f                0 
+SHA256:
+ 54076ce7588a8587281be9bc30509bce93a9bb59c8a628131418b138dbc8be32                0 
+ bb0c9e10147ec6e2400ce0448f1ce8a5f0dcd5096b1051d65922ba2b9cb45dac                0 
+ 1d6eca89c616db9c5deccb22556339565d8ee99c408155f09007fae2a21b05d2                0 
+ 60b7cf31433ba7c61bd7f54c450b015df08a023ea0eef4a289423e999935be95                0 
