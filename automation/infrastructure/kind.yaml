@@ -5,7 +5,7 @@ metadata:
   path: automation/infrastructure/kind
 
 workload:
-  action: help  # create, delete, list, image-load, images-list, status
+  action: help  # create, delete, list, image-load, images-list, status, context-set
 
 workflow:
   - step: start
@@ -38,6 +38,10 @@ workflow:
       - when: "{{ action }} == status"
         then:
           - step: check_status
+        args: {}
+      - when: "{{ action }} == context-set"
+        then:
+          - step: set_context
         args: {}
       - when: "{{ action }} == help"
         then:
@@ -132,6 +136,18 @@ workflow:
     next:
       - step: end
 
+  - step: set_context
+    desc: Set kubectl context to kind-noetl cluster
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Setting kubectl context to kind-noetl..."
+          task kubectl:local:context-set-kind
+    next:
+      - step: end
+
   - step: show_help
     desc: Display available actions
     tool:
@@ -150,6 +166,7 @@ workflow:
           echo "  delete      - Delete Kind cluster 'noetl'"
           echo "  list        - List all Kind clusters"
           echo "  status      - Check cluster status and nodes"
+          echo "  context-set - Set kubectl context to kind-noetl"
           echo ""
           echo "Image Management:"
           echo "  image-load  - Load NoETL image to cluster"
@@ -172,6 +189,8 @@ workflow:
           echo "  create      -> task kind:local:cluster-create"
           echo "  delete      -> task kind:local:cluster-delete"
           echo "  list        -> task kind:local:clusters-list"
+          echo "  status      -> custom status check"
+          echo "  context-set -> task kubectl:local:context-set-kind"
           echo "  image-load  -> task kind:local:image-load"
           echo "  images-list -> task kind:k8s:images-list"
           echo ""
