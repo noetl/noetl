@@ -89,8 +89,9 @@ NoETL's asynchronous, event-driven architecture requires specific testing patter
 ```yaml
 # 1. Execute test playbook (triggers child execution chain)
 - step: test_playbook
-  tool: playbook
-  path: tests/fixtures/playbooks/hello_world
+  tool:
+    kind: playbook
+    path: tests/fixtures/playbooks/hello_world
   next:
     - step: wait_for_completion
   # Parent step waits for child execution to complete
@@ -98,21 +99,25 @@ NoETL's asynchronous, event-driven architecture requires specific testing patter
 
 # 2. Wait for event persistence and processing
 - step: wait_for_completion
-  tool: python
-  code: |
-    async def main():
-        import asyncio
-        await asyncio.sleep(3)  # Ensure events persisted
-        return {"status": "success"}
+  tool:
+    kind: python
+    libs:
+      asyncio: asyncio
+    args: {}
+    code: |
+      # Pure Python code - no imports, no def main()
+      await asyncio.sleep(3)  # Ensure events persisted
+      result = {"status": "success", "data": {"waited": True}}
   next:
     - step: validate_results
   # Gives time for all child events to be written to DB
 
 # 3. Query events and validate
 - step: validate_results
-  tool: postgres
-  auth: "{{ workload.pg_auth }}"
-  command: |
+  tool:
+    kind: postgres
+    auth: "{{ workload.pg_auth }}"
+    command: |
     WITH final_event AS (
       SELECT status, event_type
       FROM noetl.event
@@ -131,8 +136,9 @@ NoETL's asynchronous, event-driven architecture requires specific testing patter
            THEN true ELSE false END as test_passed
     FROM final_event f, event_stats s
   sink:
-    tool: postgres
-    table: noetl_test.regression_results
+    tool:
+      kind: postgres
+      table: noetl_test.regression_results
     data:
       test_run_id: "{{ workload.test_run_id }}"
       test_passed: "{{ result.data.command_0.rows[0].test_passed }}"
@@ -349,8 +355,9 @@ Add a new test to `master_regression_test.yaml`. The wait step ensures all child
 # 1. Execute test playbook (creates child execution chain)
 - step: test_my_playbook
   desc: "Test my_playbook"
-  tool: playbook
-  path: tests/fixtures/playbooks/my_category/my_playbook
+  tool:
+    kind: playbook
+    path: tests/fixtures/playbooks/my_category/my_playbook
   next:
     - step: wait_for_my_playbook
   # This step:
@@ -362,12 +369,15 @@ Add a new test to `master_regression_test.yaml`. The wait step ensures all child
 # 2. Wait for event persistence (REQUIRED)
 - step: wait_for_my_playbook
   desc: "Ensure all child execution events are persisted"
-  tool: python
-  code: |
-    async def main():
-        import asyncio
-        await asyncio.sleep(3)  # Adjust based on playbook complexity
-        return {"status": "success"}
+  tool:
+    kind: python
+    libs:
+      asyncio: asyncio
+    args: {}
+    code: |
+      # Pure Python code - no imports, no def main()
+      await asyncio.sleep(3)  # Adjust based on playbook complexity
+      result = {"status": "success", "data": {"waited": True}}
   next:
     - step: validate_my_playbook
   # Child execution completed, but events may still be
@@ -376,9 +386,10 @@ Add a new test to `master_regression_test.yaml`. The wait step ensures all child
 # 3. Validate and save (all child events now in database)
 - step: validate_my_playbook
   desc: "Query child execution events for validation"
-  tool: postgres
-  auth: "{{ workload.pg_auth }}"
-  command: |
+  tool:
+    kind: postgres
+    auth: "{{ workload.pg_auth }}"
+    command: |
     WITH final_event AS (
       SELECT status, event_type
       FROM noetl.event
@@ -399,9 +410,10 @@ Add a new test to `master_regression_test.yaml`. The wait step ensures all child
            THEN true ELSE false END as test_passed
     FROM final_event f, event_stats s
   sink:
-    tool: postgres
-    auth: "{{ workload.pg_auth }}"
-    table: noetl_test.regression_results
+    tool:
+      kind: postgres
+      auth: "{{ workload.pg_auth }}"
+      table: noetl_test.regression_results
     data:
       test_run_id: "{{ workload.test_run_id }}"
       playbook_name: "{{ result.data.command_0.rows[0].test_name }}"
@@ -505,17 +517,21 @@ ORDER BY e2.created_at;
 **Solution**: Always add wait step between execute and validate:
 ```yaml
 - step: test_playbook
-  tool: playbook
-  path: catalog/path
+  tool:
+    kind: playbook
+    path: catalog/path
   next: [step: wait_step]  # Required for event persistence
 
 - step: wait_step
-  tool: python
-  code: |
-    async def main():
-        import asyncio
-        await asyncio.sleep(3)  # Buffer for event writes
-        return {"status": "success"}
+  tool:
+    kind: python
+    libs:
+      asyncio: asyncio
+    args: {}
+    code: |
+      # Pure Python code - no imports, no def main()
+      await asyncio.sleep(3)  # Buffer for event writes
+      result = {"status": "success", "data": {"waited": True}}
   next: [step: validate]
 ```
 
@@ -623,9 +639,10 @@ Always generate summary at the end:
 
 ```yaml
 - step: generate_summary
-  tool: postgres
-  auth: "{{ workload.pg_auth }}"
-  command: |
+  tool:
+    kind: postgres
+    auth: "{{ workload.pg_auth }}"
+    command: |
     INSERT INTO noetl_test.regression_summary (
       test_run_id, total_tests, passed_tests, 
       failed_tests, success_rate
@@ -672,14 +689,17 @@ Skip tests based on conditions:
 
 ```yaml
 - step: check_environment
-  tool: python
-  code: |
-    async def main():
-        import os
-        return {
-            "status": "success",
-            "data": {"skip_slow_tests": os.getenv("FAST_MODE") == "true"}
-        }
+  tool:
+    kind: python
+    libs:
+      os: os
+    args: {}
+    code: |
+      # Pure Python code - no imports, no def main()
+      result = {
+          "status": "success",
+          "data": {"skip_slow_tests": os.getenv("FAST_MODE") == "true"}
+      }
   next:
     - when: "{{ not result.data.skip_slow_tests }}"
       then:
