@@ -5,7 +5,7 @@ metadata:
   path: automation/infrastructure/monitoring
 
 workload:
-  action: help  # deploy, undeploy, status, grafana-creds, deploy-dashboards, remove-dashboards, deploy-exporter, remove-exporter, deploy-noetl-scrape, remove-noetl-scrape, deploy-vector, remove-vector, deploy-vmlogs, remove-vmlogs
+  action: help  # deploy, undeploy, status, grafana-creds, add-helm-repos, add-vector-helm-repo, add-victoriametrics-helm-repo, add-metrics-server-helm-repo, deploy-metrics-server, remove-metrics-server, deploy-vmstack-operator, remove-vmstack-operator, deploy-vmstack, remove-vmstack, deploy-stack, deploy-dashboards, remove-dashboards, deploy-exporter, remove-exporter, deploy-noetl-scrape, remove-noetl-scrape, deploy-vector, remove-vector, deploy-vmlogs, remove-vmlogs
 
 workflow:
   - step: start
@@ -30,6 +30,50 @@ workflow:
       - when: "{{ action }} == grafana-creds"
         then:
           - step: get_grafana_creds
+        args: {}
+      - when: "{{ action }} == add-helm-repos"
+        then:
+          - step: add_helm_repos
+        args: {}
+      - when: "{{ action }} == add-vector-helm-repo"
+        then:
+          - step: add_vector_helm_repo
+        args: {}
+      - when: "{{ action }} == add-victoriametrics-helm-repo"
+        then:
+          - step: add_victoriametrics_helm_repo
+        args: {}
+      - when: "{{ action }} == add-metrics-server-helm-repo"
+        then:
+          - step: add_metrics_server_helm_repo
+        args: {}
+      - when: "{{ action }} == deploy-metrics-server"
+        then:
+          - step: deploy_metrics_server
+        args: {}
+      - when: "{{ action }} == remove-metrics-server"
+        then:
+          - step: remove_metrics_server
+        args: {}
+      - when: "{{ action }} == deploy-vmstack-operator"
+        then:
+          - step: deploy_vmstack_operator
+        args: {}
+      - when: "{{ action }} == remove-vmstack-operator"
+        then:
+          - step: remove_vmstack_operator
+        args: {}
+      - when: "{{ action }} == deploy-vmstack"
+        then:
+          - step: deploy_vmstack
+        args: {}
+      - when: "{{ action }} == remove-vmstack"
+        then:
+          - step: remove_vmstack
+        args: {}
+      - when: "{{ action }} == deploy-stack"
+        then:
+          - step: deploy_stack
         args: {}
       - when: "{{ action }} == deploy-dashboards"
         then:
@@ -134,6 +178,143 @@ workflow:
           echo "Grafana Admin Credentials:"
           echo "=========================="
           task monitoring:k8s:grafana-creds
+    next:
+      - step: end
+
+  - step: add_helm_repos
+    desc: Add all monitoring helm repositories
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Adding monitoring helm repositories..."
+          echo "  - Vector"
+          echo "  - VictoriaMetrics"
+          echo "  - Metrics Server"
+          task monitoring:k8s:add-vector-helm-repo
+          task monitoring:k8s:add-victoriametrics-helm-repo
+          task monitoring:k8s:add-metrics-server-helm-repo
+    next:
+      - step: end
+
+  - step: add_vector_helm_repo
+    desc: Add Vector helm repository
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Adding Vector helm repository..."
+          task monitoring:k8s:add-vector-helm-repo
+    next:
+      - step: end
+
+  - step: add_victoriametrics_helm_repo
+    desc: Add VictoriaMetrics helm repository
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Adding VictoriaMetrics helm repository..."
+          task monitoring:k8s:add-victoriametrics-helm-repo
+    next:
+      - step: end
+
+  - step: add_metrics_server_helm_repo
+    desc: Add Metrics Server helm repository
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Adding Metrics Server helm repository..."
+          task monitoring:k8s:add-metrics-server-helm-repo
+    next:
+      - step: end
+
+  - step: deploy_metrics_server
+    desc: Deploy Metrics Server
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Deploying Metrics Server..."
+          task monitoring:k8s:deploy-metrics-server
+    next:
+      - step: end
+
+  - step: remove_metrics_server
+    desc: Remove Metrics Server
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Removing Metrics Server..."
+          task monitoring:k8s:remove-metrics-server
+    next:
+      - step: end
+
+  - step: deploy_vmstack_operator
+    desc: Deploy VictoriaMetrics operator
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Deploying VictoriaMetrics operator..."
+          task monitoring:k8s:deploy-vmstack-operator
+    next:
+      - step: end
+
+  - step: remove_vmstack_operator
+    desc: Remove VictoriaMetrics operator
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Removing VictoriaMetrics operator..."
+          task monitoring:k8s:remove-vmstack-operator
+    next:
+      - step: end
+
+  - step: deploy_vmstack
+    desc: Deploy VictoriaMetrics stack
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Deploying VictoriaMetrics stack..."
+          task monitoring:k8s:deploy-vmstack
+    next:
+      - step: end
+
+  - step: remove_vmstack
+    desc: Remove VictoriaMetrics stack
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Removing VictoriaMetrics stack..."
+          task monitoring:k8s:remove-vmstack
+    next:
+      - step: end
+
+  - step: deploy_stack
+    desc: Deploy VictoriaMetrics monitoring stack
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Deploying VictoriaMetrics monitoring stack..."
+          task monitoring:k8s:deploy-stack
     next:
       - step: end
 
@@ -275,6 +456,21 @@ workflow:
           echo "  undeploy            - Remove monitoring stack"
           echo "  status              - Check deployment status"
           echo "  grafana-creds       - Get Grafana admin credentials"
+          echo ""
+          echo "Helm Repository Actions:"
+          echo "  add-helm-repos              - Add all monitoring helm repositories"
+          echo "  add-vector-helm-repo        - Add Vector helm repository"
+          echo "  add-victoriametrics-helm-repo - Add VictoriaMetrics helm repository"
+          echo "  add-metrics-server-helm-repo  - Add Metrics Server helm repository"
+          echo ""
+          echo "Granular Deployment Actions:"
+          echo "  deploy-metrics-server       - Deploy Metrics Server"
+          echo "  remove-metrics-server       - Remove Metrics Server"
+          echo "  deploy-vmstack-operator     - Deploy VictoriaMetrics operator"
+          echo "  remove-vmstack-operator     - Remove VictoriaMetrics operator"
+          echo "  deploy-vmstack              - Deploy VictoriaMetrics stack"
+          echo "  remove-vmstack              - Remove VictoriaMetrics stack"
+          echo "  deploy-stack                - Deploy VictoriaMetrics monitoring stack"
           echo ""
           echo "Component Actions:"
           echo "  deploy-dashboards   - Deploy NoETL and Postgres dashboards"
