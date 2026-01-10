@@ -84,7 +84,7 @@ notebook = [
     "matplotlib>=3.10.3",
 ]
 # Rust CLI (optional for users who need command-line interface)
-cli = ["noetl-cli==2.5.2"]
+cli = ["noetl-cli==2.5.3"]
 
 # CLI moved to optional dependency [cli] - install with: uv pip install "noetl[cli]"
 # This avoids conflicts with the Rust noetl binary from noetl-cli package

@@ -1,6 +1,6 @@
 [project]
 name = "noetl-cli"
-version = "2.5.2"
+version = "2.5.3"
 description = "NoETL CLI (Rust) - Command-line interface for NoETL workflow automation"
 readme = "README.md"
 requires-python = ">=3.12"
