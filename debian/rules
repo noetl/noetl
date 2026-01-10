@@ -1,0 +1,20 @@
+#!/usr/bin/make -f
+
+export DH_VERBOSE = 1
+export CARGO_HOME = $(CURDIR)/debian/cargo
+
+%:
+	dh $@
+
+override_dh_auto_build:
+	cd crates/noetlcli && cargo build --release
+
+override_dh_auto_install:
+	install -D -m 0755 target/release/noetl $(CURDIR)/debian/noetl/usr/bin/noetl
+
+override_dh_auto_clean:
+	cargo clean || true
+	rm -rf $(CARGO_HOME)
+
+override_dh_auto_test:
+	# Skip tests during package build

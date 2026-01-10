@@ -1,0 +1,24 @@
+Source: noetl
+Section: utils
+Priority: optional
+Maintainer: NoETL Team <support@noetl.io>
+Build-Depends: debhelper-compat (= 13), cargo, rustc
+Standards-Version: 4.6.0
+Homepage: https://noetl.io
+Vcs-Browser: https://github.com/noetl/noetl
+Vcs-Git: https://github.com/noetl/noetl.git
+Rules-Requires-Root: no
+
+Package: noetl
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: NoETL workflow automation CLI
+ NoETL is a workflow automation framework for data processing
+ and MLOps orchestration with a distributed server-worker architecture.
+ .
+ This package provides the noetl command-line interface for:
+  - Local playbook execution without server infrastructure
+  - Server and worker process management
+  - Resource management (playbooks and credentials)
+  - Kubernetes cluster operations
+  - Database schema management
