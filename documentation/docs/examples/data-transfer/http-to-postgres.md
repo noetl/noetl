@@ -161,16 +161,16 @@ workflow:
 - Custom validation logic
 - Dynamic field generation
 
-## Iterator Pattern
+## Loop Pattern
 
 For large datasets or per-record processing:
 
 ```yaml
-apiVersion: noetl.io/v1
+apiVersion: noetl.io/v2
 kind: Playbook
 metadata:
-  name: http_to_postgres_iterator
-  path: data_transfer/http_to_postgres_iterator
+  name: http_to_postgres_loop
+  path: data_transfer/http_to_postgres_loop
 
 workload:
   api_url: "https://jsonplaceholder.typicode.com/posts"
@@ -184,37 +184,33 @@ workflow:
     tool:
       kind: http
       method: GET
-      endpoint: "{{ workload.api_url }}"
+      url: "{{ workload.api_url }}"
     vars:
       all_posts: "{{ result.data }}"
     next:
-      - step: process_posts
+      - step: insert_posts
 
-  - step: process_posts
-    tool: iterator
-    collection: "{{ vars.all_posts }}"
-    element: current_post
-    mode: sequential
-    next:
-      - step: insert_post
-
-  - step: insert_post
+  - step: insert_posts
     tool:
       kind: postgres
       auth:
-      type: postgres
-      credential: pg_demo
-    query: |
-      INSERT INTO public.posts (post_id, user_id, title, body)
-      VALUES (
-        {{ vars.current_post.id }},
-        {{ vars.current_post.userId }},
-        '{{ vars.current_post.title | replace("'", "''") }}',
-        '{{ vars.current_post.body | replace("'", "''") }}'
-      )
-      ON CONFLICT (post_id) DO UPDATE SET
-        title = EXCLUDED.title,
-        body = EXCLUDED.body;
+        type: postgres
+        credential: pg_demo
+      query: |
+        INSERT INTO public.posts (post_id, user_id, title, body)
+        VALUES (
+          {{ current_post.id }},
+          {{ current_post.userId }},
+          '{{ current_post.title | replace("'", "''") }}',
+          '{{ current_post.body | replace("'", "''") }}'
+        )
+        ON CONFLICT (post_id) DO UPDATE SET
+          title = EXCLUDED.title,
+          body = EXCLUDED.body;
+    loop:
+      in: "{{ vars.all_posts }}"
+      iterator: current_post
+      mode: sequential
     next:
       - step: end
 
@@ -301,7 +297,7 @@ workflow:
     tool:
       kind: http
       method: GET
-      endpoint: "{{ workload.api_base }}/items"
+      url: "{{ workload.api_base }}/items"
       params:
         page: 1
         per_page: 100
@@ -323,50 +319,46 @@ workflow:
   - step: batch_insert
     tool:
       kind: python
+      libs: {}
+      args:
+        items: "{{ vars.all_items }}"
+        batch_size: 1000
       code: |
-      def main(items, batch_size=1000):
-          """Split items into batches for efficient insertion."""
-          batches = []
-          for i in range(0, len(items), batch_size):
-              batches.append(items[i:i+batch_size])
-          return {
-              'batches': batches,
-              'total_items': len(items),
-              'batch_count': len(batches)
-          }
-    args:
-      items: "{{ vars.all_items }}"
+        batches = []
+        for i in range(0, len(items), batch_size):
+            batches.append(items[i:i+batch_size])
+        result = {
+            'batches': batches,
+            'total_items': len(items),
+            'batch_count': len(batches)
+        }
     vars:
-      batches: "{{ result.data.batches }}"
+      batches: "{{ result.batches }}"
     next:
       - step: insert_batches
 
   - step: insert_batches
-    tool: iterator
-    collection: "{{ vars.batches }}"
-    element: batch
-    mode: sequential
-    next:
-      - step: insert_batch
-
-  - step: insert_batch
     tool:
       kind: postgres
       auth:
-      type: postgres
-      credential: pg_demo
-    query: |
-      INSERT INTO public.items (id, name, value, updated_at)
-      SELECT 
-        (item->>'id')::int,
-        item->>'name',
-        (item->>'value')::numeric,
-        NOW()
-      FROM jsonb_array_elements('{{ vars.batch | tojson }}'::jsonb) item
-      ON CONFLICT (id) DO UPDATE SET
-        name = EXCLUDED.name,
-        value = EXCLUDED.value,
-        updated_at = EXCLUDED.updated_at;
+        type: postgres
+        credential: pg_demo
+      query: |
+        INSERT INTO public.items (id, name, value, updated_at)
+        SELECT 
+          (item->>'id')::int,
+          item->>'name',
+          (item->>'value')::numeric,
+          NOW()
+        FROM jsonb_array_elements('{{ current_batch | tojson }}'::jsonb) item
+        ON CONFLICT (id) DO UPDATE SET
+          name = EXCLUDED.name,
+          value = EXCLUDED.value,
+          updated_at = EXCLUDED.updated_at;
+    loop:
+      in: "{{ vars.batches }}"
+      iterator: current_batch
+      mode: sequential
     next:
       - step: end
 
@@ -378,7 +370,7 @@ workflow:
 Transfer to multiple databases in parallel:
 
 ```yaml
-apiVersion: noetl.io/v1
+apiVersion: noetl.io/v2
 kind: Playbook
 metadata:
   name: http_to_multi_db
@@ -396,7 +388,7 @@ workflow:
     tool:
       kind: http
       method: GET
-      endpoint: "{{ workload.api_url }}"
+      url: "{{ workload.api_url }}"
     vars:
       data: "{{ result.data }}"
     next:

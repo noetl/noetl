@@ -2,7 +2,7 @@
 sidebar_position: 1
 title: NoETL
 slug: /intro
-description: Automation framework for Data Mesh and MLOps orchestration
+description: Automation for Microservices, Data Mesh and MLOps orchestration
 ---
 
 # NoETL

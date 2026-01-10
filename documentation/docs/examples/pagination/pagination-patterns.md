@@ -235,7 +235,7 @@ Prevent infinite loops with `max_iterations`:
 
 **Use Case:** Data sampling, cost control, time-constrained jobs
 
-### Iterator with Pagination
+### Loop with Pagination
 
 Process multiple endpoints, each with pagination:
 
@@ -243,23 +243,19 @@ Process multiple endpoints, each with pagination:
 workflow:
   - step: start
     next:
-      - step: iterate_endpoints
-
-  - step: iterate_endpoints
-    tool: iterator
-    collection: "{{ workload.api_endpoints }}"
-    element: current_endpoint
-    mode: sequential
-    next:
       - step: fetch_endpoint_data
 
   - step: fetch_endpoint_data
-    tool: http
-    method: GET
-    endpoint: "{{ vars.current_endpoint.url }}"
-    params:
-      page: 1
+    tool:
+      kind: http
+      method: GET
+      url: "{{ current_endpoint.url }}"
+      params:
+        page: 1
     loop:
+      in: "{{ workload.api_endpoints }}"
+      iterator: current_endpoint
+      mode: sequential
       pagination:
         type: response_based
         continue_while: "{{ response.data.hasMore }}"
@@ -268,21 +264,24 @@ workflow:
             page: "{{ (response.data.page | int) + 1 }}"
         merge_strategy: append
         merge_path: data.items
+    vars:
+      fetched_items: "{{ result.data }}"
     next:
       - step: process_data
 
   - step: process_data
-    tool: python
-    code: |
-      def main(items, endpoint_name):
-          return {
-              "endpoint": endpoint_name,
-              "item_count": len(items),
-              "status": "complete"
-          }
-    args:
-      items: "{{ fetch_endpoint_data.data }}"
-      endpoint_name: "{{ vars.current_endpoint.name }}"
+    tool:
+      kind: python
+      libs: {}
+      args:
+        items: "{{ vars.fetched_items }}"
+        endpoint_name: "{{ current_endpoint.name }}"
+      code: |
+        result = {
+            "endpoint": endpoint_name,
+            "item_count": len(items),
+            "status": "complete"
+        }
     next:
       - step: end
 
@@ -294,7 +293,7 @@ workflow:
 Fetch all users and save to PostgreSQL:
 
 ```yaml
-apiVersion: noetl.io/v1
+apiVersion: noetl.io/v2
 kind: Playbook
 metadata:
   name: paginated_data_sync
