@@ -49,7 +49,7 @@ Token is stored in `~/.cargo/credentials.toml`.
 
 ### 1. Update Cargo.toml Metadata
 
-Ensure `crates/noetlcli/Cargo.toml` has all required fields:
+Ensure `crates/noetlctl/Cargo.toml` has all required fields:
 
 ```toml
 [package]
@@ -75,7 +75,7 @@ Required fields for crates.io:
 
 ### 2. Update README
 
-Ensure `crates/noetlcli/README.md` is user-friendly:
+Ensure `crates/noetlctl/README.md` is user-friendly:
 - Installation instructions
 - Quick start example
 - Feature highlights
@@ -95,7 +95,7 @@ version = "2.5.3"
 
 ```bash
 # Navigate to crate directory
-cd crates/noetlcli
+cd crates/noetlctl
 
 # Verify package builds
 cargo build --release
@@ -215,7 +215,7 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
-          cd crates/noetlcli
+          cd crates/noetlctl
           cargo publish
 ```
 
@@ -247,7 +247,7 @@ Add `CARGO_REGISTRY_TOKEN` to repository secrets:
 
 ### Documentation
 
-Update docs.rs documentation by creating `crates/noetlcli/.cargo-ok` or using:
+Update docs.rs documentation by creating `crates/noetlctl/.cargo-ok` or using:
 
 ```toml
 [package.metadata.docs.rs]

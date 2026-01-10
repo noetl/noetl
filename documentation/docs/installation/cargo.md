@@ -59,7 +59,7 @@ cargo install --git https://github.com/noetl/noetl noetl-cli
 If you have the repository cloned:
 
 ```bash
-cd noetl/crates/noetlcli
+cd noetl/crates/noetlctl
 cargo install --path .
 ```
 

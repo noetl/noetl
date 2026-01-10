@@ -7,7 +7,7 @@ export CARGO_HOME = $(CURDIR)/debian/cargo
 	dh $@
 
 override_dh_auto_build:
-	cd crates/noetlcli && cargo build --release
+	cd crates/noetlctl && cargo build --release
 
 override_dh_auto_install:
 	install -D -m 0755 target/release/noetl $(CURDIR)/debian/noetl/usr/bin/noetl

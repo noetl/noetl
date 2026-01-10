@@ -65,7 +65,7 @@ pip install noetl-cli
 The `noetl-cli` package uses maturin's `bin` bindings to package the Rust binary:
 
 ```toml
-# crates/noetlcli/pyproject.toml
+# crates/noetlctl/pyproject.toml
 [build-system]
 requires = ["maturin>=1.0,<2.0"]
 build-backend = "maturin"
@@ -82,7 +82,7 @@ This tells maturin to:
 ### Cargo Configuration
 
 ```toml
-# crates/noetlcli/Cargo.toml
+# crates/noetlctl/Cargo.toml
 [package]
 name = "noetl-cli"
 version = "2.5.2"
@@ -115,7 +115,7 @@ cli = ["noetl-cli==2.5.2"]
 task noetlctl:build:wheel
 
 # Or directly with maturin
-cd crates/noetlcli
+cd crates/noetlctl
 maturin build --release
 ```
 
@@ -130,7 +130,7 @@ task noetlctl:build:wheel
 # Install in fresh venv
 rm -rf .venv && uv venv
 source .venv/bin/activate
-uv pip install crates/noetlcli/target/wheels/noetl_cli-*.whl
+uv pip install crates/noetlctl/target/wheels/noetl_cli-*.whl
 uv pip install -e .
 
 # Test
@@ -146,7 +146,7 @@ noetl register credential --file tests/fixtures/credentials/pg_demo.json
 export MATURIN_PYPI_TOKEN="your-token"
 
 # Build and publish
-cd crates/noetlcli
+cd crates/noetlctl
 maturin publish
 
 # Or via taskfile
@@ -163,7 +163,7 @@ For GitHub Actions or other CI:
 - name: Build wheels
   uses: PyO3/maturin-action@v1
   with:
-    working-directory: crates/noetlcli
+    working-directory: crates/noetlctl
     target: ${{ matrix.target }}
     args: --release --out dist
 
@@ -171,7 +171,7 @@ For GitHub Actions or other CI:
   uses: actions/upload-artifact@v3
   with:
     name: wheels
-    path: crates/noetlcli/dist
+    path: crates/noetlctl/dist
 ```
 
 ### Supported Platforms
@@ -218,7 +218,7 @@ cp target/release/noetl ../bin/noetl
 task noetlctl:build:wheel
 
 # Or use maturin directly
-cd crates/noetlcli
+cd crates/noetlctl
 maturin develop  # Build and install in dev mode
 ```
 
@@ -236,7 +236,7 @@ python -m build
 ```bash
 # Build two separate packages
 python -m build  # noetl library wheel
-cd crates/noetlcli && maturin build  # noetl-cli platform wheel
+cd crates/noetlctl && maturin build  # noetl-cli platform wheel
 ```
 
 ## Troubleshooting
@@ -303,7 +303,7 @@ Benchmarks comparing Python wrapper vs Rust binary:
 - [Maturin Documentation](https://www.maturin.rs/)
 - [Maturin bin bindings](https://www.maturin.rs/bindings.html#bin)
 - [PyO3 Maturin Action](https://github.com/PyO3/maturin-action)
-- [NoETL CLI Source](https://github.com/noetl/noetl/tree/main/crates/noetlcli)
+- [NoETL CLI Source](https://github.com/noetl/noetl/tree/main/crates/noetlctl)
 
 ## Version History
 

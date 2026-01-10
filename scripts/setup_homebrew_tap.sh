@@ -52,7 +52,7 @@ git commit -m "Initial formula for noetl CLI v2.5.3
 
 - Add noetl formula with source build support
 - Include installation and usage documentation
-- Formula installs from crates/noetlcli workspace member"
+- Formula installs from crates/noetlctl workspace member"
 
 echo "Pushing to GitHub..."
 git push origin main

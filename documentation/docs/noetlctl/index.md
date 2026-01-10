@@ -105,24 +105,24 @@ noetl db validate
 ./bin/noetl
 
 # Or from release binary
-./crates/noetlcli/target/release/noetl
+./crates/noetlctl/target/release/noetl
 ```
 
 ### Build from Source
 
 ```bash
-cd crates/noetlcli
+cd crates/noetlctl
 cargo build --release
 
 # Binary available at:
-# crates/noetlcli/target/release/noetl
+# crates/noetlctl/target/release/noetl
 ```
 
 ### Add to PATH
 
 ```bash
 # Copy to local bin
-cp crates/noetlcli/target/release/noetl /usr/local/bin/noetl
+cp crates/noetlctl/target/release/noetl /usr/local/bin/noetl
 
 # Or add to PATH
 export PATH="$PATH:$(pwd)/bin"

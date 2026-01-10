@@ -242,7 +242,7 @@ Makefile for building:
 #!/usr/bin/make -f
 
 override_dh_auto_build:
-	cd crates/noetlcli && cargo build --release
+	cd crates/noetlctl && cargo build --release
 
 override_dh_auto_install:
 	install -D -m 0755 target/release/noetl debian/noetl/usr/bin/noetl
