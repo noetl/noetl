@@ -170,6 +170,25 @@ workflow:
             task kind:local:cluster-create
           fi
     next:
+      - step: load_image_to_kind
+  
+  - step: load_image_to_kind
+    desc: Load NoETL Docker image into kind cluster
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Loading NoETL image into kind cluster..."
+          # Get the most recent noetl image tag
+          IMAGE_TAG=$(docker images --format "{{.Repository}}:{{.Tag}}" | grep "^local/noetl:" | head -n 1)
+          if [ -z "$IMAGE_TAG" ]; then
+            echo "ERROR: No local/noetl image found. Build must have failed."
+            exit 1
+          fi
+          echo "Loading image: $IMAGE_TAG"
+          kind load docker-image "$IMAGE_TAG" --name noetl
+    next:
       - step: deploy_postgres
   
   - step: deploy_postgres
