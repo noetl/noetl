@@ -7,7 +7,7 @@ Kubernetes manifests for deploying the NoETL Gateway (Rust API + Static UI) to k
 ### Gateway API (Rust)
 - **Deployment**: `deployment.yaml` - Rust gateway service
 - **Service**: `service.yaml` - NodePort on 30090 (localhost:8090)
-- **Image**: `noetl-gateway:latest` (built from gateway/Dockerfile)
+- **Image**: `noetl-gateway:latest` (built from crates/gateway/Dockerfile)
 
 ### Gateway UI (Nginx)
 - **Deployment**: `deployment-ui.yaml` - Nginx serving static files
@@ -146,7 +146,7 @@ task gateway:restart
 
 **Edit Gateway code:**
 ```bash
-# Edit gateway/src/**/*.rs
+# Edit crates/gateway/src/**/*.rs
 # Rebuild and redeploy
 task gateway:redeploy
 ```

@@ -6,7 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 echo "Building Gateway Docker image..."
-cd "$PROJECT_ROOT/gateway"
+cd "$PROJECT_ROOT/crates/gateway"
 
 docker build -t noetl-gateway:latest -f Dockerfile .
 
