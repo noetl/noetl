@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NoETL APT Repository</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        h1 { color: #2c3e50; }
+        code {
+            background: #f4f4f4;
+            padding: 2px 6px;
+            border-radius: 3px;
+        }
+        pre {
+            background: #f4f4f4;
+            padding: 15px;
+            border-radius: 5px;
+            overflow-x: auto;
+        }
+    </style>
+</head>
+<body>
+    <h1>NoETL APT Repository</h1>
+    <p>Debian/Ubuntu package repository for NoETL CLI</p>
+    
+    <h2>Installation</h2>
+    <p>Add the repository and install NoETL:</p>
+    <pre><code>echo 'deb [trusted=yes] https://noetl.github.io/noetl jammy main' | sudo tee /etc/apt/sources.list.d/noetl.list
+sudo apt update
+sudo apt install noetl</code></pre>
+
+    <h2>Verify Installation</h2>
+    <pre><code>noetl --version</code></pre>
+
+    <h2>Available Distributions</h2>
+    <ul>
+        <li><a href="dists/jammy/">Ubuntu 22.04 (Jammy)</a></li>
+        <li><a href="dists/focal/">Ubuntu 20.04 (Focal)</a></li>
+        <li><a href="dists/noble/">Ubuntu 24.04 (Noble)</a></li>
+    </ul>
+
+    <h2>Alternative Installation Methods</h2>
+    <ul>
+        <li><strong>PyPI:</strong> <code>pip install noetlctl</code></li>
+        <li><strong>Cargo:</strong> <code>cargo install noetl</code></li>
+        <li><strong>Homebrew:</strong> <code>brew install noetl/tap/noetl</code></li>
+    </ul>
+
+    <p><a href="https://github.com/noetl/noetl">GitHub Repository</a> | <a href="https://noetl.io">Documentation</a></p>
+</body>
+</html>
