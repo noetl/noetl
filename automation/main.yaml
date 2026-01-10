@@ -7,25 +7,24 @@ metadata:
 workload:
   registry: "local"
   image_name: "noetl"
-  target: "help"
 workflow:
   - step: start
     desc: Entry point for automation workflows
     tool:
       kind: shell
       cmds:
-        - echo "Target is '{{ workload.target }}'"
+        - echo "Target is '{{ target }}'"
     case:
-      - when: "{{ workload.target }} == help"
+      - when: "{{ target }} == help"
         then:
           - step: show_help
-      - when: "{{ workload.target }} == bootstrap"
+      - when: "{{ target }} == bootstrap"
         then:
           - step: bootstrap
-      - when: "{{ workload.target }} == destroy"
+      - when: "{{ target }} == destroy"
         then:
           - step: destroy
-      - when: "{{ workload.target }} == dev"
+      - when: "{{ target }} == dev"
         then:
           - step: quick_dev
         else:
@@ -63,7 +62,7 @@ workflow:
     desc: Run complete bootstrap workflow
     tool:
       kind: playbook
-      path: automation/setup/bootstrap.yaml
+      path: setup/bootstrap.yaml
     next:
       - step: end
   
@@ -71,7 +70,7 @@ workflow:
     desc: Run destroy workflow
     tool:
       kind: playbook
-      path: automation/setup/destroy.yaml
+      path: setup/destroy.yaml
     next:
       - step: end
   
@@ -90,7 +89,7 @@ workflow:
       kind: shell
       cmds:
         - |
-          echo "Error: Unknown target '{{ workload.target }}'"
+          echo "Error: Unknown target '{{ target }}'"
           echo "Available targets: bootstrap, destroy, dev, test, help"
           exit 1
     next:

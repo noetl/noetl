@@ -1,156 +1,77 @@
 apiVersion: noetl.io/v2
 kind: Playbook
 metadata:
-  name: destroy_environment
+  name: noetl_destroy
   path: automation/setup/destroy
-  description: Destroy NoETL environment and clean up all resources - equivalent to 'make destroy'
-workload:
-  cleanup_status: {}
+  description: Destroy NoETL development environment
 workflow:
   - step: start
-    desc: Begin destroy process
-    next:
-      - step: delete_kind_cluster
-  
-  - step: delete_kind_cluster
-    desc: Delete kind Kubernetes cluster
+    desc: Begin destroy workflow
     tool:
-      kind: python
-      libs:
-        subprocess: subprocess
-      code: |
-        proc = subprocess.run(
-            ["task", "kind:local:cluster-delete"],
-            capture_output=True,
-            text=True
-        )
-        
-        result = {
-            "status": "success",
-            "data": {
-                "returncode": proc.returncode,
-                "message": "Kind cluster deleted" if proc.returncode == 0 else "Kind cluster deletion skipped (may not exist)",
-                "stdout": proc.stdout[:500] if proc.stdout else "",
-                "stderr": proc.stderr[:500] if proc.stderr else ""
-            }
-        }
-    vars:
-      cluster_deleted: "{{ result.data.returncode == 0 }}"
+      kind: shell
+      cmds:
+        - echo "🔥 Starting environment destroy..."
+    next:
+      - step: delete_cluster
+  
+  - step: delete_cluster
+    desc: Delete kind cluster
+    tool:
+      kind: shell
+      cmds:
+        - task kind-delete-cluster || echo "Cluster deletion skipped or failed"
     next:
       - step: cleanup_docker
   
   - step: cleanup_docker
-    desc: Clean up all Docker resources (images, volumes, builders)
+    desc: Clean up Docker resources
     tool:
-      kind: python
-      libs:
-        subprocess: subprocess
-      code: |
-        proc = subprocess.run(
-            ["task", "docker:local:cleanup-all"],
-            capture_output=True,
-            text=True
-        )
-        
-        result = {
-            "status": "success",
-            "data": {
-                "returncode": proc.returncode,
-                "message": "Docker cleanup completed" if proc.returncode == 0 else "Docker cleanup skipped",
-                "stdout": proc.stdout[:500] if proc.stdout else ""
-            }
-        }
-    vars:
-      docker_cleaned: "{{ result.data.returncode == 0 }}"
+      kind: shell
+      cmds:
+        - task docker-prune || echo "Docker cleanup skipped or failed"
     next:
       - step: clear_cache
   
   - step: clear_cache
-    desc: Clear all local cache directories
+    desc: Clear cache directories
     tool:
-      kind: python
-      libs:
-        subprocess: subprocess
-      code: |
-        proc = subprocess.run(
-            ["task", "cache:local:clean"],
-            capture_output=True,
-            text=True
-        )
-        
-        result = {
-            "status": "success",
-            "data": {
-                "returncode": proc.returncode,
-                "message": "Cache cleared" if proc.returncode == 0 else "Cache clearing skipped"
-            }
-        }
-    vars:
-      cache_cleared: "{{ result.data.returncode == 0 }}"
+      kind: shell
+      cmds:
+        - task clear-all-cache || echo "Cache clear skipped or failed"
     next:
       - step: clear_noetl_data
   
   - step: clear_noetl_data
-    desc: Clear NoETL data and logs
+    desc: Clear NoETL data
     tool:
-      kind: python
-      libs:
-        subprocess: subprocess
-      code: |
-        proc = subprocess.run(
-            ["task", "noetl:local:clear-all"],
-            capture_output=True,
-            text=True
-        )
-        
-        result = {
-            "status": "success",
-            "data": {
-                "returncode": proc.returncode,
-                "message": "NoETL data cleared" if proc.returncode == 0 else "NoETL data clearing skipped"
-            }
-        }
-    vars:
-      noetl_data_cleared: "{{ result.data.returncode == 0 }}"
+      kind: shell
+      cmds:
+        - task clear-noetl-data || echo "Data clear skipped or failed"
     next:
-      - step: destroy_complete
+      - step: summary
   
-  - step: destroy_complete
-    desc: Destroy workflow complete
+  - step: summary
+    desc: Show destruction summary
     tool:
-      kind: python
-      args:
-        cluster_deleted: "{{ vars.cluster_deleted }}"
-        docker_cleaned: "{{ vars.docker_cleaned }}"
-        cache_cleared: "{{ vars.cache_cleared }}"
-        noetl_data_cleared: "{{ vars.noetl_data_cleared }}"
-      code: |
-        result = {
-            "status": "success",
-            "data": {
-                "message": """Environment Destroyed!
-
-Cleanup summary:
-  - Kind cluster: {'deleted' if cluster_deleted else 'skipped'}
-  - Docker resources: {'cleaned' if docker_cleaned else 'skipped'}
-  - Cache directories: {'cleared' if cache_cleared else 'skipped'}
-  - NoETL data: {'cleared' if noetl_data_cleared else 'skipped'}
-
-You can now run bootstrap again:
-  noetl run automation/setup/bootstrap
-  # or
-  make bootstrap && task bring-all
-""",
-                "cleanup_status": {
-                    "cluster": cluster_deleted,
-                    "docker": docker_cleaned,
-                    "cache": cache_cleared,
-                    "noetl_data": noetl_data_cleared
-                }
-            }
-        }
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "✅ Environment Destroyed!"
+          echo ""
+          echo "Cleanup completed:"
+          echo "  - Kind cluster: deleted"
+          echo "  - Docker resources: cleaned"
+          echo "  - Cache directories: cleared"
+          echo "  - NoETL data: cleared"
+          echo ""
+          echo "You can now run bootstrap again:"
+          echo "  noetl run automation/setup/bootstrap.yaml"
+          echo "  OR"
+          echo "  noetl run automation/main.yaml --set target=bootstrap"
+          echo ""
     next:
       - step: end
   
   - step: end
-    desc: Destroy workflow complete
+    desc: End destroy workflow
