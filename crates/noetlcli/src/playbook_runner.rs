@@ -1,16 +1,16 @@
 use anyhow::{Context, Result};
-use serde::{Deserialize, Serialize};
-use serde_json;
+use serde::Deserialize;
 use serde_yaml;
 use std::collections::HashMap;
 use std::fs;
-use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::path::PathBuf;
+use std::process::Command;
 
 #[derive(Debug, Deserialize)]
 pub struct Playbook {
     #[serde(rename = "apiVersion")]
     api_version: String,
+    #[allow(dead_code)]
     kind: String,
     metadata: Metadata,
     workload: Option<HashMap<String, serde_yaml::Value>>,
@@ -20,6 +20,7 @@ pub struct Playbook {
 #[derive(Debug, Deserialize)]
 struct Metadata {
     name: String,
+    #[allow(dead_code)]
     path: Option<String>,
 }
 
@@ -32,6 +33,7 @@ struct Step {
     #[serde(rename = "case")]
     case: Option<Vec<CaseCondition>>,
     #[serde(rename = "loop")]
+    #[allow(dead_code)]
     loop_config: Option<LoopConfig>,
     vars: Option<HashMap<String, String>>,
 }
@@ -98,6 +100,7 @@ enum NextStep {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct LoopConfig {
     #[serde(rename = "in")]
     in_collection: String,
