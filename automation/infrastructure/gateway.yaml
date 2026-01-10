@@ -1,0 +1,229 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: gateway_automation
+  path: automation/infrastructure/gateway
+
+workload:
+  action: help  # build-image, deploy, deploy-all, remove, redeploy, restart, status, logs, test
+
+workflow:
+  - step: start
+    desc: Entry point for Gateway automation
+    tool:
+      kind: shell
+      cmds:
+        - echo "Gateway Automation - Action '{{ action }}'"
+    next:
+      - when: "{{ action }} == build-image"
+        then:
+          - step: build_image
+        args: {}
+      - when: "{{ action }} == deploy"
+        then:
+          - step: deploy_gateway
+        args: {}
+      - when: "{{ action }} == deploy-all"
+        then:
+          - step: deploy_all
+        args: {}
+      - when: "{{ action }} == remove"
+        then:
+          - step: remove_gateway
+        args: {}
+      - when: "{{ action }} == redeploy"
+        then:
+          - step: redeploy_gateway
+        args: {}
+      - when: "{{ action }} == restart"
+        then:
+          - step: restart_gateway
+        args: {}
+      - when: "{{ action }} == status"
+        then:
+          - step: check_status
+        args: {}
+      - when: "{{ action }} == logs"
+        then:
+          - step: view_logs
+        args: {}
+      - when: "{{ action }} == test"
+        then:
+          - step: test_gateway
+        args: {}
+      - when: "{{ action }} == help"
+        then:
+          - step: show_help
+        args: {}
+      - step: show_help
+
+  - step: build_image
+    desc: Build Gateway Docker image and load into kind
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Building Gateway Docker image..."
+          task gateway-build-image
+    next:
+      - step: end
+
+  - step: deploy_gateway
+    desc: Deploy Gateway API to Kubernetes
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Deploying Gateway API to Kubernetes..."
+          task gateway-deploy
+    next:
+      - step: end
+
+  - step: deploy_all
+    desc: Build and deploy Gateway API and UI to Kubernetes
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Building and deploying Gateway API and UI..."
+          task gateway-deploy-all
+    next:
+      - step: end
+
+  - step: remove_gateway
+    desc: Remove Gateway from Kubernetes
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Removing Gateway from Kubernetes..."
+          task gateway-remove
+    next:
+      - step: end
+
+  - step: redeploy_gateway
+    desc: Rebuild and redeploy Gateway
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Rebuilding and redeploying Gateway..."
+          task gateway-redeploy
+    next:
+      - step: end
+
+  - step: restart_gateway
+    desc: Restart Gateway pods
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Restarting Gateway pods..."
+          task gateway-restart
+    next:
+      - step: end
+
+  - step: check_status
+    desc: Check Gateway deployment status
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Gateway Deployment Status:"
+          echo "=========================="
+          task gateway-status
+    next:
+      - step: end
+
+  - step: view_logs
+    desc: Show Gateway logs
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Gateway Logs:"
+          echo "============="
+          task gateway-logs
+    next:
+      - step: end
+
+  - step: test_gateway
+    desc: Test Gateway endpoints
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Testing Gateway endpoints..."
+          task gateway-test
+    next:
+      - step: end
+
+  - step: show_help
+    desc: Display available actions
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "=================================================="
+          echo " Gateway API Automation"
+          echo "=================================================="
+          echo ""
+          echo "Usage:"
+          echo "  noetl run automation/infrastructure/gateway.yaml --set action=<action>"
+          echo ""
+          echo "Build & Deployment:"
+          echo "  build-image - Build Gateway Docker image and load into kind"
+          echo "  deploy      - Deploy Gateway API to Kubernetes"
+          echo "  deploy-all  - Build and deploy Gateway API and UI"
+          echo "  remove      - Remove Gateway from Kubernetes"
+          echo "  redeploy    - Rebuild and redeploy Gateway"
+          echo ""
+          echo "Operations:"
+          echo "  restart     - Restart Gateway pods"
+          echo "  status      - Check deployment status"
+          echo "  logs        - Show Gateway logs"
+          echo "  test        - Test Gateway endpoints"
+          echo ""
+          echo "Examples:"
+          echo "  # Build and deploy everything"
+          echo "  noetl run automation/infrastructure/gateway.yaml --set action=deploy-all"
+          echo ""
+          echo "  # Check status"
+          echo "  noetl run automation/infrastructure/gateway.yaml --set action=status"
+          echo ""
+          echo "  # Rebuild and redeploy"
+          echo "  noetl run automation/infrastructure/gateway.yaml --set action=redeploy"
+          echo ""
+          echo "  # View logs"
+          echo "  noetl run automation/infrastructure/gateway.yaml --set action=logs"
+          echo ""
+          echo "  # Test endpoints"
+          echo "  noetl run automation/infrastructure/gateway.yaml --set action=test"
+          echo ""
+          echo "Gateway Location: crates/gateway"
+          echo ""
+          echo "Task Equivalents:"
+          echo "  build-image -> task gateway-build-image"
+          echo "  deploy      -> task gateway-deploy"
+          echo "  deploy-all  -> task gateway-deploy-all"
+          echo "  remove      -> task gateway-remove"
+          echo "  redeploy    -> task gateway-redeploy"
+          echo "  restart     -> task gateway-restart"
+          echo "  status      -> task gateway-status"
+          echo "  logs        -> task gateway-logs"
+          echo "  test        -> task gateway-test"
+          echo ""
+    next:
+      - step: end
+
+  - step: end
+    desc: End workflow
