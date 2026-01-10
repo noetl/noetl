@@ -8,7 +8,9 @@ This guide documents the process for publishing NoETL CLI to crates.io, the offi
 
 ## Overview
 
-The `noetl-cli` crate is published to https://crates.io/crates/noetl-cli, allowing users to install via `cargo install noetl-cli`.
+The `noetl` crate is published to https://crates.io/crates/noetl, allowing users to install via `cargo install noetl`.
+
+**Note**: The crate name is `noetl` (directory: `crates/noetlctl`, PyPI: `noetlctl`).
 
 ## Prerequisites
 
@@ -29,7 +31,7 @@ The `noetl-cli` crate is published to https://crates.io/crates/noetl-cli, allowi
 
 1. Go to https://crates.io/settings/tokens
 2. Click "New Token"
-3. Name: `noetl-cli-publish`
+3. Name: `noetl-publish`
 4. Permissions: `publish-update`
 5. Copy the generated token
 
@@ -53,7 +55,7 @@ Ensure `crates/noetlctl/Cargo.toml` has all required fields:
 
 ```toml
 [package]
-name = "noetl-cli"
+name = "noetl"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -88,7 +90,10 @@ Ensure `crates/noetlctl/README.md` is user-friendly:
 [workspace.package]
 version = "2.5.3"
 ```
-
+**Important**: The crate name is `noetl` but the directory is `crates/noetlctl` and PyPI package is `noetlctl`. This naming scheme allows:
+- Clean cargo install: `cargo install noetl`
+- Consistent directory naming: `noetlctl` = "noetl control"
+- Separate PyPI namespace: `pip install noetlctl`
 ## Publication Process
 
 ### Manual Publication

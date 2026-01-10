@@ -37,7 +37,36 @@ Two hosting options:
 
 ### 1. Build Debian Package
 
-Run the build script on a Linux system or in Docker:
+#### Option A: Docker Build (Recommended for macOS)
+
+Build using Docker to avoid needing Linux system:
+
+```bash
+./docker/release/build-deb-docker.sh 2.5.3
+```
+
+This script:
+- Builds Ubuntu 22.04 container with Rust toolchain
+- Compiles Rust binary with cargo
+- Creates debian package structure
+- Generates `.deb` file with proper control metadata
+- Extracts package and SHA256 checksum to `build/deb/`
+
+Output:
+```
+build/deb/noetl_2.5.3-1_amd64.deb
+build/deb/noetl_2.5.3-1_amd64.deb.sha256
+```
+
+**Docker Build Details**:
+- Container: Ubuntu 22.04 with build-essential, dpkg-dev, Rust
+- Location: `docker/release/Dockerfile.deb`
+- Uses current branch code (not git clone)
+- Supports both `noetl` and `noetl-cli` package names (for version compatibility)
+
+#### Option B: Native Linux Build
+
+Run the build script on a Linux system:
 
 ```bash
 ./scripts/build_deb.sh 2.5.3
@@ -134,33 +163,29 @@ gh release create v2.5.3 \
   --notes "Release notes here"
 ```
 
-## Building in Docker
+## Docker Build Details
 
-For consistent builds, use Docker:
+The Docker-based builder is located at `docker/release/`:
 
+**Files**:
+- `Dockerfile.deb` - Ubuntu 22.04 image with Rust and dpkg-dev
+- `build-deb-docker.sh` - Build script that extracts .deb to host
+- `README.md` - Usage documentation
+
+**Process**:
+1. Builds Docker image with Ubuntu 22.04 + Rust toolchain
+2. Copies current repository code into container
+3. Runs `./scripts/build_deb.sh` inside container
+4. Extracts built .deb and SHA256 files to `build/deb/`
+5. Cleans up container
+
+**Testing Package**:
 ```bash
-# Create Dockerfile for building
-cat > Dockerfile.deb-builder <<'EOF'
-FROM ubuntu:22.04
-
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    dpkg-dev \
-    curl \
-    git
-
-# Install Rust
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-ENV PATH="/root/.cargo/bin:${PATH}"
-
-WORKDIR /build
-EOF
-
-# Build in container
-docker build -f Dockerfile.deb-builder -t noetl-deb-builder .
-
-docker run --rm -v $(pwd):/build noetl-deb-builder \
-  bash -c "cd /build && ./scripts/build_deb.sh 2.5.3"
+# Test installation in clean Ubuntu container
+docker run --rm -v $(pwd)/build/deb:/packages ubuntu:22.04 bash -c '
+  apt-get update && 
+  dpkg -i /packages/noetl_2.5.3-1_amd64.deb && 
+  noetl --version'
 ```
 
 ## GitHub Actions Automation

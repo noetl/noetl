@@ -6,7 +6,7 @@ sidebar_position: 10
 
 ## Overview
 
-NoETL CLI has been restructured as a separate Python package (`noetl-cli`) built with [maturin](https://www.maturin.rs/), enabling distribution of the Rust binary as platform-specific wheels.
+NoETL CLI has been restructured as a separate Python package (`noetlctl`) built with [maturin](https://www.maturin.rs/), enabling distribution of the Rust binary as platform-specific wheels.
 
 ## Key Changes
 
@@ -41,7 +41,7 @@ noetl/
 uv pip install "noetl[cli]"
 
 # Or separately
-pip install noetl noetl-cli
+pip install noetl noetlctl
 ```
 
 #### Library Only (Servers/APIs)
@@ -55,14 +55,14 @@ pip install noetl
 
 ```bash
 # Just the command-line tool
-pip install noetl-cli
+pip install noetlctl
 ```
 
 ## Technical Details
 
 ### Maturin Bindings
 
-The `noetl-cli` package uses maturin's `bin` bindings to package the Rust binary:
+The `noetlctl` package uses maturin's `bin` bindings to package the Rust binary:
 
 ```toml
 # crates/noetlctl/pyproject.toml
@@ -84,8 +84,8 @@ This tells maturin to:
 ```toml
 # crates/noetlctl/Cargo.toml
 [package]
-name = "noetl-cli"
-version = "2.5.2"
+name = "noetl"
+version = "2.5.3"
 
 [[bin]]
 name = "noetl"

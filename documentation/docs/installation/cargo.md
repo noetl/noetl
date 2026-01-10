@@ -9,7 +9,7 @@ Install NoETL CLI from the official Rust package registry (crates.io).
 ## Quick Install
 
 ```bash
-cargo install noetl-cli
+cargo install noetl
 ```
 
 This installs the `noetl` binary to `~/.cargo/bin/` (ensure it's in your PATH).
@@ -43,7 +43,7 @@ cargo install noetl-cli
 ### Specific Version
 
 ```bash
-cargo install noetl-cli --version 2.5.3
+cargo install noetl --version 2.5.3
 ```
 
 ### From Git (Development)
@@ -51,7 +51,7 @@ cargo install noetl-cli --version 2.5.3
 Install the latest development version:
 
 ```bash
-cargo install --git https://github.com/noetl/noetl noetl-cli
+cargo install --git https://github.com/noetl/noetl noetl
 ```
 
 ### From Local Source
@@ -75,7 +75,7 @@ noetl --help
 ## Update
 
 ```bash
-cargo install noetl-cli --force
+cargo install noetl --force
 ```
 
 The `--force` flag reinstalls even if already installed.
@@ -83,7 +83,7 @@ The `--force` flag reinstalls even if already installed.
 ## Uninstall
 
 ```bash
-cargo uninstall noetl-cli
+cargo uninstall noetl
 ```
 
 ## Build Options
@@ -93,8 +93,20 @@ cargo uninstall noetl-cli
 For maximum performance:
 
 ```bash
-cargo install noetl-cli --profile release-lto
+cargo install noetl --profile release-lto
 ```
+
+## Package Details
+
+**Crate Name**: `noetl` (on crates.io)  
+**Directory**: `crates/noetlctl` (in repository)  
+**PyPI Package**: `noetlctl` (Python distribution)  
+**Binary Name**: `noetl` (installed command)
+
+This naming allows:
+- Clean cargo install: `cargo install noetl`
+- Descriptive directory: `noetlctl` = "noetl control"
+- Separate Python package: `pip install noetlctl`
 
 ### Minimal Binary Size
 

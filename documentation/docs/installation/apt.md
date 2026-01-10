@@ -90,7 +90,8 @@ Features:
 ## Alternative Installation Methods
 
 - **Homebrew** (macOS): `brew install noetl`
-- **PyPI**: `pip install noetl-cli`
+- **Crates.io**: `cargo install noetl`
+- **PyPI**: `pip install noetlctl`
 - **Docker**: `docker pull ghcr.io/noetl/noetl:latest`
 - **Build from source**: See [Building from Source](./build-from-source.md)
 

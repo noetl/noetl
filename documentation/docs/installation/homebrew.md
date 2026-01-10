@@ -52,13 +52,15 @@ If you prefer to build from source or need the latest development version:
 ```bash
 git clone https://github.com/noetl/noetl.git
 cd noetl
-cargo build --release -p noetl-cli
+cargo build --release -p noetl
 cp target/release/noetl /usr/local/bin/
 ```
 
 ## Alternative Installation Methods
 
-- **PyPI**: `pip install noetl-cli` (Python-based distribution)
+- **PyPI**: `pip install noetlctl` (Python-based distribution)
+- **Crates.io**: `cargo install noetl` (Rust-based distribution)
+- **APT**: `sudo apt-get install noetl` (Ubuntu/Debian)
 - **Docker**: `docker pull ghcr.io/noetl/noetl:latest`
 - **Manual**: Download binaries from [GitHub Releases](https://github.com/noetl/noetl/releases)
 
@@ -91,7 +93,7 @@ which noetl
 /opt/homebrew/bin/noetl --version
 
 # Or uninstall PyPI version
-pip uninstall noetl-cli
+pip uninstall noetlctl
 ```
 
 ### Building from source fails

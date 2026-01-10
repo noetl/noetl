@@ -33,9 +33,11 @@ All workspace members should reference workspace version:
 ```toml
 # crates/noetlctl/Cargo.toml
 [package]
-name = "noetl-cli"
+name = "noetl"
 version.workspace = true
 ```
+
+**Note**: The crate is named `noetl` (not `noetl-cli`) for clean cargo install.
 
 ### 2. Create Git Tag
 
