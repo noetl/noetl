@@ -1,0 +1,23 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: deploy_child
+  path: automation/examples/composition/deploy
+
+workflow:
+  - step: start
+    next:
+      - step: deploy
+
+  - step: deploy
+    desc: "Deploy to environment"
+    tool:
+      kind: shell
+      cmds:
+        - "echo 'Deploying image: {{ workload.image_tag }}'"
+        - "echo 'Target environment: {{ workload.target_env }}'"
+        - "echo 'Deployment completed successfully'"
+    next:
+      - step: end
+
+  - step: end

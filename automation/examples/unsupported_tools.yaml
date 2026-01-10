@@ -1,0 +1,54 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: unsupported_tools_example
+  path: automation/examples/unsupported
+
+workload:
+  query: "SELECT * FROM users"
+
+workflow:
+  - step: start
+    desc: "Try to use unsupported tools"
+    next:
+      - step: try_postgres
+  
+  - step: try_postgres
+    desc: "Attempt to use postgres tool (unsupported in local mode)"
+    tool:
+      kind: postgres
+      auth:
+        type: postgres
+        credential: my_db
+      query: "{{ workload.query }}"
+    next:
+      - step: try_python
+  
+  - step: try_python
+    desc: "Attempt to use python tool (unsupported in local mode)"
+    tool:
+      kind: python
+      code: |
+        result = {"message": "Hello from Python"}
+        print(result)
+    next:
+      - step: try_duckdb
+  
+  - step: try_duckdb
+    desc: "Attempt to use duckdb tool (unsupported in local mode)"
+    tool:
+      kind: duckdb
+      query: "SELECT 1 as test"
+    next:
+      - step: use_shell
+  
+  - step: use_shell
+    desc: "Use supported shell tool"
+    tool:
+      kind: shell
+      cmds:
+        - "echo 'Shell tool works in local mode!'"
+    next:
+      - step: end
+  
+  - step: end

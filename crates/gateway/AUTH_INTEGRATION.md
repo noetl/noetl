@@ -68,10 +68,10 @@ This document describes the complete Auth0 authentication integration between th
 ### 1. Gateway Rust Code
 
 **Files Created:**
-- `gateway/src/auth/mod.rs` - Auth endpoints (login, validate, check_access) - all delegate to NoETL playbooks
-- `gateway/src/auth/middleware.rs` - Session validation middleware - calls NoETL validation playbook
-- `gateway/src/auth/types.rs` - User context types
-- `gateway/src/main.rs` - Updated with auth routes and middleware (no database connection)
+- `crates/gateway/src/auth/mod.rs` - Auth endpoints (login, validate, check_access) - all delegate to NoETL playbooks
+- `crates/gateway/src/auth/middleware.rs` - Session validation middleware - calls NoETL validation playbook
+- `crates/gateway/src/auth/types.rs` - User context types
+- `crates/gateway/src/main.rs` - Updated with auth routes and middleware (no database connection)
 
 **Key Features:**
 - Pure API gateway - no direct database access
@@ -93,9 +93,7 @@ This document describes the complete Auth0 authentication integration between th
 ```bash
 cd tests/fixtures/gateway_ui
 python3 -m http.server 8080
-```ssion check
-- `gateway/static/app.js` - Updated to use authenticated GraphQL requests
-- `gateway/static/styles.css` - Updated with user menu styles
+```
 
 **Key Features:**
 - Login page supports Auth0 token login or direct session token (testing)
