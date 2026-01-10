@@ -19,7 +19,7 @@ pip install noetl
 ### Specific Version
 
 ```bash
-pip install noetl==1.0.4
+pip install noetl==2.5.2
 ```
 
 ### Verify Installation
