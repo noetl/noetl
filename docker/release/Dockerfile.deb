@@ -18,7 +18,7 @@ WORKDIR /build
 COPY . .
 
 # Build Debian package
-RUN ./scripts/build_deb.sh ${VERSION:-2.5.3}
+RUN ./scripts/build_deb.sh ${VERSION:-2.5.4}
 
 # Packages will be in build/deb/
 CMD ["bash"]
