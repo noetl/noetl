@@ -1,0 +1,77 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: noetl_destroy
+  path: automation/setup/destroy
+  description: Destroy NoETL development environment
+workflow:
+  - step: start
+    desc: Begin destroy workflow
+    tool:
+      kind: shell
+      cmds:
+        - echo "🔥 Starting environment destroy..."
+    next:
+      - step: delete_cluster
+  
+  - step: delete_cluster
+    desc: Delete kind cluster
+    tool:
+      kind: shell
+      cmds:
+        - task kind-delete-cluster || echo "Cluster deletion skipped or failed"
+    next:
+      - step: cleanup_docker
+  
+  - step: cleanup_docker
+    desc: Clean up Docker resources
+    tool:
+      kind: shell
+      cmds:
+        - task docker-prune || echo "Docker cleanup skipped or failed"
+    next:
+      - step: clear_cache
+  
+  - step: clear_cache
+    desc: Clear cache directories
+    tool:
+      kind: shell
+      cmds:
+        - task clear-all-cache || echo "Cache clear skipped or failed"
+    next:
+      - step: clear_noetl_data
+  
+  - step: clear_noetl_data
+    desc: Clear NoETL data
+    tool:
+      kind: shell
+      cmds:
+        - task clear-noetl-data || echo "Data clear skipped or failed"
+    next:
+      - step: summary
+  
+  - step: summary
+    desc: Show destruction summary
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "✅ Environment Destroyed!"
+          echo ""
+          echo "Cleanup completed:"
+          echo "  - Kind cluster: deleted"
+          echo "  - Docker resources: cleaned"
+          echo "  - Cache directories: cleared"
+          echo "  - NoETL data: cleared"
+          echo ""
+          echo "You can now run bootstrap again:"
+          echo "  noetl run automation/setup/bootstrap.yaml"
+          echo "  OR"
+          echo "  noetl run automation/main.yaml --set target=bootstrap"
+          echo ""
+    next:
+      - step: end
+  
+  - step: end
+    desc: End destroy workflow

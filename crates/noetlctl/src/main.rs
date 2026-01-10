@@ -54,6 +54,7 @@ enum Commands {
     ///     noetl run automation/deploy.yaml
     ///     noetl run automation/build.yaml build_image
     ///     noetl run automation/deploy.yaml --set image_tag=v2.5.3
+    ///     noetl run automation/deploy.yaml --payload '{"target":"bootstrap","registry":"ghcr.io"}'
     ///     noetl run ci/test.yaml register_credentials --verbose
     #[command(verbatim_doc_comment)]
     Run {
@@ -66,6 +67,14 @@ enum Commands {
         /// Set variables (format: key=value)
         #[arg(long = "set", value_name = "KEY=VALUE")]
         variables: Vec<String>,
+
+        /// Payload/workload as JSON string (merges with playbook workload)
+        #[arg(long = "payload", value_name = "JSON", alias = "workload")]
+        payload: Option<String>,
+
+        /// Deep merge payload with playbook workload (default: shallow merge)
+        #[arg(long)]
+        merge: bool,
 
         /// Enable verbose output
         #[arg(short, long)]
@@ -522,9 +531,36 @@ async fn main() -> Result<()> {
     let client = Client::new();
 
     match cli.command {
-        Some(Commands::Run { playbook, target, variables, verbose }) => {
-            // Parse variables from key=value format
+        Some(Commands::Run { playbook, target, variables, payload, merge, verbose }) => {
+            // Parse JSON payload if provided
             let mut vars = std::collections::HashMap::new();
+            
+            if let Some(payload_str) = payload {
+                match serde_json::from_str::<serde_json::Value>(&payload_str) {
+                    Ok(serde_json::Value::Object(map)) => {
+                        for (key, value) in map {
+                            let value_str = match value {
+                                serde_json::Value::String(s) => s,
+                                serde_json::Value::Number(n) => n.to_string(),
+                                serde_json::Value::Bool(b) => b.to_string(),
+                                serde_json::Value::Null => "null".to_string(),
+                                other => serde_json::to_string(&other).unwrap_or_else(|_| "null".to_string()),
+                            };
+                            vars.insert(key, value_str);
+                        }
+                    }
+                    Ok(_) => {
+                        eprintln!("Error: Payload must be a JSON object, not array or primitive");
+                        std::process::exit(1);
+                    }
+                    Err(e) => {
+                        eprintln!("Error: Invalid JSON payload: {}", e);
+                        std::process::exit(1);
+                    }
+                }
+            }
+            
+            // Parse individual variables from key=value format (these override payload)
             for var in variables {
                 let parts: Vec<&str> = var.splitn(2, '=').collect();
                 if parts.len() == 2 {
@@ -537,6 +573,7 @@ async fn main() -> Result<()> {
             // Run playbook locally
             let runner = playbook_runner::PlaybookRunner::new(playbook)
                 .with_variables(vars)
+                .with_merge(merge)
                 .with_verbose(verbose)
                 .with_target(target);
             

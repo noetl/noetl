@@ -27,8 +27,16 @@ noetl run automation/playbook.yaml
 # Run specific target/step
 noetl run automation/playbook.yaml target_name
 
-# Pass variables
+# Pass individual variables
 noetl run automation/playbook.yaml --set env=production --set version=v2.5
+
+# Pass multiple variables as JSON payload
+noetl run automation/playbook.yaml --payload '{"env":"production","version":"v2.5"}'
+
+# Combine payload with individual overrides (--set takes precedence)
+noetl run automation/playbook.yaml \
+  --payload '{"target":"staging","registry":"gcr.io"}' \
+  --set target=production
 
 # Verbose output
 noetl run automation/playbook.yaml --verbose
@@ -234,10 +242,116 @@ workflow:
 
 ### Command-Line Variables
 
-Override or add variables at runtime:
+Override or add variables at runtime using `--set`:
 
 ```bash
 noetl run playbook.yaml --set api_url=https://staging.api.com --set timeout=60
+```
+
+**Variable Format**:
+- Key-value pairs: `--set key=value`
+- Multiple variables: `--set var1=value1 --set var2=value2`
+- Values become available as both `{{ key }}` and `{{ workload.key }}`
+
+### JSON Payload/Workload
+
+Pass multiple variables as JSON object (matches server API behavior):
+
+```bash
+# Using --payload parameter
+noetl run playbook.yaml --payload '{"target":"production","version":"v2.5.3"}'
+
+# Using --workload alias (same behavior)
+noetl run playbook.yaml --workload '{"env":"staging","debug":true}'
+
+# Combine with --set (--set values override payload)
+noetl run playbook.yaml \
+  --payload '{"target":"production","registry":"gcr.io"}' \
+  --set target=staging
+```
+
+**Payload Features**:
+- **JSON Object**: Must be valid JSON object (not array or primitive)
+- **Multiple Variables**: Pass many variables in one parameter
+- **Override Precedence**: `--set` values override `--payload` values
+- **Variable Accessibility**: Payload variables accessible as `{{ key }}` and `{{ workload.key }}`
+- **Alias Support**: `--payload` and `--workload` are interchangeable
+
+**Merge Behavior**:
+
+By default, payload does shallow merge (override) with playbook workload:
+
+```bash
+# Shallow merge (default) - payload overrides playbook values
+noetl run playbook.yaml --payload '{"target":"staging"}'
+
+# Deep merge - recursively merges nested objects (future support)
+noetl run playbook.yaml --payload '{"config":{"debug":true}}' --merge
+```
+
+**Example Playbook**:
+
+```yaml
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: deployment_automation
+
+workload:
+  target: "development"  # Default value
+  registry: "docker.io"
+  version: "latest"
+
+workflow:
+  - step: start
+    tool:
+      kind: shell
+      cmds:
+        - echo "Deploying to {{ target }}"
+        - echo "Registry: {{ registry }}"
+        - echo "Version: {{ version }}"
+```
+
+**Usage Examples**:
+
+```bash
+# Use defaults from playbook
+noetl run deploy.yaml
+# Output: target=development, registry=docker.io, version=latest
+
+# Override with payload
+noetl run deploy.yaml --payload '{"target":"production","version":"v2.5.3"}'
+# Output: target=production, registry=docker.io, version=v2.5.3
+
+# Override with --set (takes precedence over payload)
+noetl run deploy.yaml \
+  --payload '{"target":"staging","version":"v2.0"}' \
+  --set target=production
+# Output: target=production, registry=docker.io, version=v2.0
+
+# Mix payload and individual variables
+noetl run deploy.yaml \
+  --payload '{"version":"v2.5.3","debug":true}' \
+  --set target=production \
+  --set registry=gcr.io
+# Output: target=production, registry=gcr.io, version=v2.5.3, debug=true
+```
+
+**API Compatibility**:
+
+The `--payload` parameter matches the server API's execution request format:
+
+```python
+# Server API request
+POST /api/run
+{
+  "playbook": "automation/deploy",
+  "args": {"target": "production", "version": "v2.5.3"},
+  "merge": false
+}
+
+# Equivalent CLI command
+noetl run automation/deploy.yaml --payload '{"target":"production","version":"v2.5.3"}'
 ```
 
 ### Vars Extraction

@@ -1,0 +1,181 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: qdrant_automation
+  path: automation/infrastructure/qdrant
+
+workload:
+  action: help  # deploy, undeploy, status, logs, health, test, collections, restart
+
+workflow:
+  - step: start
+    desc: Entry point for Qdrant automation
+    tool:
+      kind: shell
+      cmds:
+        - echo "Qdrant Automation - Action '{{ action }}'"
+    next:
+      - when: "{{ action }} == deploy"
+        then:
+          - step: deploy_qdrant
+        args: {}
+      - when: "{{ action }} == undeploy"
+        then:
+          - step: undeploy_qdrant
+        args: {}
+      - when: "{{ action }} == status"
+        then:
+          - step: check_status
+        args: {}
+      - when: "{{ action }} == logs"
+        then:
+          - step: show_logs
+        args: {}
+      - when: "{{ action }} == health"
+        then:
+          - step: check_health
+        args: {}
+      - when: "{{ action }} == test"
+        then:
+          - step: test_qdrant
+        args: {}
+      - when: "{{ action }} == collections"
+        then:
+          - step: list_collections
+        args: {}
+      - when: "{{ action }} == restart"
+        then:
+          - step: restart_qdrant
+        args: {}
+      - step: show_help
+
+  - step: deploy_qdrant
+    desc: Deploy Qdrant vector database
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Deploying Qdrant vector database..."
+          task qdrant:deploy
+    next:
+      - step: end
+
+  - step: undeploy_qdrant
+    desc: Remove Qdrant from cluster
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Removing Qdrant from cluster..."
+          task qdrant:undeploy
+    next:
+      - step: end
+
+  - step: check_status
+    desc: Check Qdrant deployment status
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Qdrant Status:"
+          task qdrant:status
+    next:
+      - step: end
+
+  - step: show_logs
+    desc: Show Qdrant logs
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Qdrant Logs:"
+          task qdrant:logs
+    next:
+      - step: end
+
+  - step: check_health
+    desc: Check Qdrant health
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Checking Qdrant health..."
+          task qdrant:health
+    next:
+      - step: end
+
+  - step: test_qdrant
+    desc: Test Qdrant with sample collection
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Testing Qdrant with sample collection..."
+          task qdrant:test
+    next:
+      - step: end
+
+  - step: list_collections
+    desc: List Qdrant collections
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Qdrant Collections:"
+          task qdrant:collections
+    next:
+      - step: end
+
+  - step: restart_qdrant
+    desc: Restart Qdrant
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Restarting Qdrant..."
+          task qdrant:restart
+    next:
+      - step: end
+
+  - step: show_help
+    desc: Display available actions
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "====================================="
+          echo " Qdrant Vector Database Automation"
+          echo "====================================="
+          echo ""
+          echo "Usage:"
+          echo "  noetl run automation/infrastructure/qdrant.yaml --set action=<action>"
+          echo ""
+          echo "Available actions:"
+          echo "  deploy       - Deploy Qdrant vector database"
+          echo "  undeploy     - Remove Qdrant from cluster"
+          echo "  status       - Check deployment status"
+          echo "  logs         - Show Qdrant logs"
+          echo "  health       - Check Qdrant health"
+          echo "  test         - Test with sample collection"
+          echo "  collections  - List Qdrant collections"
+          echo "  restart      - Restart Qdrant"
+          echo ""
+          echo "Examples:"
+          echo "  noetl run automation/infrastructure/qdrant.yaml --set action=deploy"
+          echo "  noetl run automation/infrastructure/qdrant.yaml --set action=status"
+          echo "  noetl run automation/infrastructure/qdrant.yaml --set action=test"
+          echo "  noetl run automation/infrastructure/qdrant.yaml --set action=collections"
+          echo ""
+    next:
+      - step: end
+
+  - step: end
+    desc: End workflow

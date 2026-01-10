@@ -21,8 +21,11 @@ noetl run automation/build.yaml
 # Execute specific step/target
 noetl run automation/deploy.yaml production
 
-# Pass variables
-noetl run playbook.yaml --variable env=prod --verbose
+# Pass individual variables
+noetl run playbook.yaml --set env=prod --set version=v2.5 --verbose
+
+# Pass JSON payload (multiple variables)
+noetl run playbook.yaml --payload '{"env":"staging","debug":true}'
 ```
 
 Perfect for:
@@ -304,6 +307,57 @@ cd /path/to/noetl
 - **[Local Execution](./local_execution.md)** - Complete guide with detailed examples and file references
 - **Command Reference** (coming soon) - Full CLI command documentation
 - **Advanced Examples** (coming soon) - Complex automation patterns
+
+## Command Reference
+
+### Run Command
+
+Execute playbooks locally without infrastructure:
+
+```bash
+noetl run <PLAYBOOK> [TARGET] [OPTIONS]
+
+# Arguments
+<PLAYBOOK>           Path to playbook file (required)
+[TARGET]             Step name to start execution from (optional, default: "start")
+
+# Options
+--set <KEY=VALUE>    Set individual variables (can be used multiple times)
+--payload <JSON>     Pass multiple variables as JSON object
+--workload <JSON>    Alias for --payload
+--merge              Enable deep merge for payload (default: shallow merge)
+--verbose, -v        Show detailed execution output
+--help, -h           Display help information
+```
+
+**Examples**:
+
+```bash
+# Basic execution
+noetl run automation/deploy.yaml
+
+# With target
+noetl run automation/tasks.yaml cleanup
+
+# Individual variables
+noetl run deploy.yaml --set env=prod --set version=v2.5.3
+
+# JSON payload
+noetl run deploy.yaml --payload '{"env":"production","debug":true}'
+
+# Combined (--set overrides payload)
+noetl run deploy.yaml \
+  --payload '{"target":"staging","registry":"gcr.io"}' \
+  --set target=production
+
+# Verbose mode
+noetl run automation/test.yaml --verbose
+```
+
+**Variable Priority** (highest to lowest):
+1. `--set` parameters (individual overrides)
+2. `--payload` / `--workload` (JSON object)
+3. Playbook `workload` section (defaults)
 
 ## Get Help
 

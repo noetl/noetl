@@ -59,6 +59,31 @@ NoETL Test Infrastructure
 - **Bucket**: Test-specific bucket (`noetl-test-bucket`)
 - **Format**: Parquet file uploads
 
+#### Pagination Test Server
+- **Purpose**: HTTP pagination pattern testing
+- **Deployment**: Kubernetes (kind cluster)
+- **Endpoints**: 
+  - ClusterIP: `http://paginated-api.test-server.svc.cluster.local:5555`
+  - NodePort: `http://localhost:30555`
+- **Patterns Supported**:
+  - Page-based pagination (`/api/v1/assessments`)
+  - Offset-based pagination (`/api/v1/users`)
+  - Cursor-based pagination (`/api/v1/events`)
+  - Flaky endpoint for retry testing (`/api/v1/flaky`)
+- **Management**: Via automation playbook (see [Automation Playbooks](../../development/automation_playbooks.md))
+
+**Quick Setup:**
+```bash
+# Full deployment
+noetl run automation/test/pagination-server.yaml --set action=full
+
+# Check status
+noetl run automation/test/pagination-server.yaml --set action=status
+
+# Test endpoints
+noetl run automation/test/pagination-server.yaml --set action=test
+```
+
 ## Setup Procedures
 
 ### 1. Local Development Setup

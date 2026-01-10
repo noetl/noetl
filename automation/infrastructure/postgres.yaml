@@ -1,0 +1,149 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: postgres_automation
+  path: automation/infrastructure/postgres
+
+workload:
+  action: help  # deploy, remove, schema-reset, clear-cache, status, logs
+
+workflow:
+  - step: start
+    desc: Entry point for PostgreSQL automation
+    tool:
+      kind: shell
+      cmds:
+        - echo "PostgreSQL Automation - Action '{{ action }}'"
+    next:
+      - when: "{{ action }} == deploy"
+        then:
+          - step: deploy_postgres
+        args: {}
+      - when: "{{ action }} == remove"
+        then:
+          - step: remove_postgres
+        args: {}
+      - when: "{{ action }} == schema-reset"
+        then:
+          - step: reset_schema
+        args: {}
+      - when: "{{ action }} == clear-cache"
+        then:
+          - step: clear_cache
+        args: {}
+      - when: "{{ action }} == status"
+        then:
+          - step: check_status
+        args: {}
+      - when: "{{ action }} == logs"
+        then:
+          - step: show_logs
+        args: {}
+      - step: show_help
+
+  - step: deploy_postgres
+    desc: Deploy PostgreSQL to kind cluster
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Deploying PostgreSQL to kind cluster..."
+          task postgres:k8s:deploy
+    next:
+      - step: end
+
+  - step: remove_postgres
+    desc: Remove PostgreSQL from kind cluster
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Removing PostgreSQL from kind cluster..."
+          task postgres:k8s:remove
+    next:
+      - step: end
+
+  - step: reset_schema
+    desc: Reset NoETL system schema on Kubernetes Postgres
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Resetting NoETL system schema..."
+          task postgres:k8s:schema-reset
+    next:
+      - step: end
+
+  - step: clear_cache
+    desc: Clear postgres data cache directory
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Clearing postgres cache directory..."
+          task postgres:local:clear-cache
+    next:
+      - step: end
+
+  - step: check_status
+    desc: Check PostgreSQL deployment status
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "PostgreSQL Status:"
+          echo "=================="
+          kubectl get pods -n postgres
+          echo ""
+          kubectl get svc -n postgres
+    next:
+      - step: end
+
+  - step: show_logs
+    desc: Show PostgreSQL logs
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "PostgreSQL Logs:"
+          kubectl logs -n postgres -l app=postgres --tail=50
+    next:
+      - step: end
+
+  - step: show_help
+    desc: Display available actions
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "====================================="
+          echo " PostgreSQL Automation"
+          echo "====================================="
+          echo ""
+          echo "Usage:"
+          echo "  noetl run automation/infrastructure/postgres.yaml --set action=<action>"
+          echo ""
+          echo "Available actions:"
+          echo "  deploy        - Deploy PostgreSQL to kind cluster"
+          echo "  remove        - Remove PostgreSQL from kind cluster"
+          echo "  schema-reset  - Reset NoETL system schema"
+          echo "  clear-cache   - Clear postgres data cache directory"
+          echo "  status        - Check deployment status"
+          echo "  logs          - Show PostgreSQL logs"
+          echo ""
+          echo "Examples:"
+          echo "  noetl run automation/infrastructure/postgres.yaml --set action=deploy"
+          echo "  noetl run automation/infrastructure/postgres.yaml --set action=status"
+          echo "  noetl run automation/infrastructure/postgres.yaml --set action=schema-reset"
+          echo ""
+    next:
+      - step: end
+
+  - step: end
+    desc: End workflow

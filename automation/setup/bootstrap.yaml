@@ -1,0 +1,313 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: bootstrap_environment
+  path: automation/setup/bootstrap
+  description: Complete K8s environment setup with prerequisite validation
+workload:
+  registry: "local"
+  image_name: "noetl"
+workflow:
+  - step: start
+    desc: Begin bootstrap process
+    tool:
+      kind: shell
+      cmds:
+        - echo "Starting NoETL environment bootstrap..."
+    next:
+      - step: validate_prerequisites
+  
+  - step: validate_prerequisites
+    desc: Validate required tools are installed
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "Validating prerequisites..."
+          echo ""
+          
+          MISSING=""
+          
+          # Check noetl binary (required)
+          if ! command -v noetl &> /dev/null; then
+            echo "FAIL noetl binary not found"
+            MISSING="$MISSING noetl"
+          else
+            echo "OK noetl binary: $(which noetl)"
+          fi
+          
+          # Check Docker (required)
+          if ! command -v docker &> /dev/null; then
+            echo "FAIL docker not found"
+            MISSING="$MISSING docker"
+          else
+            echo "OK docker: $(docker --version)"
+          fi
+          
+          # Check kind (required)
+          if ! command -v kind &> /dev/null; then
+            echo "FAIL kind not found"
+            MISSING="$MISSING kind"
+          else
+            echo "OK kind: $(kind version)"
+          fi
+          
+          # Check kubectl (required)
+          if ! command -v kubectl &> /dev/null; then
+            echo "FAIL kubectl not found"
+            MISSING="$MISSING kubectl"
+          else
+            echo "OK kubectl: $(kubectl version --client --short 2>/dev/null || echo 'installed')"
+          fi
+          
+          # Check task (required)
+          if ! command -v task &> /dev/null; then
+            echo "FAIL task not found"
+            MISSING="$MISSING task"
+          else
+            echo "OK task: $(task --version)"
+          fi
+          
+          # Check Python (optional but recommended)
+          if ! command -v python3 &> /dev/null; then
+            echo "WARN python3 not found (optional)"
+          else
+            echo "OK python3: $(python3 --version)"
+          fi
+          
+          # Check uv (optional for fast Python package management)
+          if ! command -v uv &> /dev/null; then
+            echo "WARN uv not found (optional, provides faster Python package management)"
+          else
+            echo "OK uv: $(uv --version)"
+          fi
+          
+          echo ""
+          if [ -n "$MISSING" ]; then
+            echo "FAIL Missing required tools:$MISSING"
+            echo ""
+            echo "Install missing tools:"
+            echo "  macOS: brew install docker kind kubectl go-task"
+            echo "  Linux: See https://noetl.dev/docs/installation"
+            exit 1
+          else
+            echo "OK All required prerequisites installed"
+          fi
+    next:
+      - step: check_docker_running
+  
+  - step: check_docker_running
+    desc: Verify Docker daemon is running
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Checking Docker daemon..."
+          if ! docker info &> /dev/null; then
+            echo "FAIL Docker daemon is not running"
+            echo "   Start Docker Desktop or run: sudo systemctl start docker"
+            exit 1
+          else
+            echo "OK Docker daemon is running"
+          fi
+    next:
+      - step: check_existing_cluster
+  
+  - step: check_existing_cluster
+    desc: Check if kind cluster already exists
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Checking for existing kind cluster..."
+          if kind get clusters 2>/dev/null | grep -q "^noetl$"; then
+            echo "OK Kind cluster 'noetl' already exists"
+            echo "   To rebuild: noetl run automation/main.yaml --payload '{\"target\":\"destroy\"}'"
+          else
+            echo "INFO No existing cluster found, will create new one"
+          fi
+    next:
+      - step: build_rust_cli
+  
+  - step: build_rust_cli
+    desc: Build Rust CLI binary
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Building Rust CLI..."
+          task noetlctl:local:build
+    next:
+      - step: build_docker_images
+  
+  - step: build_docker_images
+    desc: Build NoETL Docker images
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Building Docker images..."
+          task docker:local:noetl-image-build
+    next:
+      - step: create_kind_cluster
+  
+  - step: create_kind_cluster
+    desc: Create kind cluster if it doesn't exist
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Setting up Kubernetes cluster..."
+          if kind get clusters 2>/dev/null | grep -q "^noetl$"; then
+            echo "OK Cluster already exists, skipping creation"
+          else
+            echo "Creating kind cluster..."
+            task kind:local:cluster-create
+          fi
+    next:
+      - step: load_image_to_kind
+  
+  - step: load_image_to_kind
+    desc: Load NoETL Docker image into kind cluster
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Loading NoETL image into kind cluster..."
+          # Get the most recent noetl image (built in previous step)
+          IMAGE_TAG=$(docker images --format "{{.Repository}}:{{.Tag}}" | grep "^local/noetl:" | sort -r | head -n 1)
+          if [ -z "$IMAGE_TAG" ]; then
+            echo "ERROR: No local/noetl image found. Build must have failed."
+            exit 1
+          fi
+          echo "Loading image: $IMAGE_TAG"
+          kind load docker-image "$IMAGE_TAG" --name noetl
+    next:
+      - step: deploy_postgres
+  
+  - step: deploy_postgres
+    desc: Deploy PostgreSQL to cluster
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Deploying PostgreSQL..."
+          task postgres:k8s:deploy
+    next:
+      - step: deploy_noetl
+  
+  - step: deploy_noetl
+    desc: Deploy NoETL server and workers
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Deploying NoETL..."
+          task noetl:k8s:deploy
+    next:
+      - step: deploy_observability
+  
+  - step: deploy_observability
+    desc: Deploy observability stack (ClickHouse, Qdrant, NATS)
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Deploying observability stack..."
+          task observability:activate-all
+    next:
+      - step: wait_for_services
+  
+  - step: wait_for_services
+    desc: Wait for services to be ready
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Waiting for services to be ready..."
+          sleep 15
+          
+          echo "Waiting for PostgreSQL..."
+          kubectl wait --for=condition=ready pod -l app=postgres -n postgres --timeout=60s || true
+          
+          echo "Waiting for NoETL server..."
+          kubectl wait --for=condition=ready pod -l app=noetl-server -n noetl --timeout=60s || true
+          
+          echo "Waiting for NATS (mandatory)..."
+          kubectl wait --for=condition=ready pod -l app=nats -n nats --timeout=120s || echo "ERROR: NATS failed to start - NoETL requires NATS"
+          
+          echo "Waiting for Qdrant..."
+          kubectl wait --for=condition=ready pod -l app=qdrant -n qdrant --timeout=60s || true
+          
+          echo "Waiting for ClickHouse (optional)..."
+          kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=chi-clickhouse-clickhouse -n clickhouse --timeout=120s || echo "Warning: ClickHouse not ready"
+    next:
+      - step: test_cluster_health
+  
+  - step: test_cluster_health
+    desc: Verify cluster health and connectivity
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Testing cluster health..."
+          task test:k8s:cluster-health || echo "Warning: Some health checks failed"
+    next:
+      - step: summary
+  
+  - step: summary
+    desc: Show bootstrap summary
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "=========================================="
+          echo "Bootstrap Complete!"
+          echo "=========================================="
+          echo ""
+          echo "Environment Status:"
+          echo "  Kind cluster: noetl"
+          echo "  PostgreSQL: deployed"
+          echo "  NoETL server: deployed"
+          echo "  NoETL workers: deployed"
+          echo "  Observability: deployed (ClickHouse, Qdrant, NATS)"
+          echo ""
+          echo "Endpoints:"
+          echo "  NoETL API: http://localhost:8082"
+          echo "  PostgreSQL: localhost:54321"
+          echo "  ClickHouse HTTP: http://localhost:30123"
+          echo "  Qdrant: http://localhost:30633"
+          echo ""
+          echo "Next Steps:"
+          echo "  1. Register credentials:"
+          echo "     task test:k8s:register-credentials"
+          echo ""
+          echo "  2. Register playbooks:"
+          echo "     task test:k8s:register-playbooks"
+          echo ""
+          echo "  3. Test execution:"
+          echo "     noetl execute playbook test-playbook"
+          echo ""
+          echo "  4. Check status:"
+          echo "     kubectl get pods"
+          echo ""
+          echo "To destroy:"
+          echo "  noetl run automation/main.yaml --payload '{\"target\":\"destroy\"}'"
+          echo ""
+    next:
+      - step: end
+  
+  - step: end
+    desc: End bootstrap workflow

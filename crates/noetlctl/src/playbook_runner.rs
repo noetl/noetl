@@ -113,6 +113,7 @@ pub struct PlaybookRunner {
     variables: HashMap<String, String>,
     verbose: bool,
     target: Option<String>,
+    merge: bool,
 }
 
 impl PlaybookRunner {
@@ -122,11 +123,17 @@ impl PlaybookRunner {
             variables: HashMap::new(),
             verbose: false,
             target: None,
+            merge: false,
         }
     }
 
     pub fn with_variables(mut self, vars: HashMap<String, String>) -> Self {
         self.variables = vars;
+        self
+    }
+
+    pub fn with_merge(mut self, merge: bool) -> Self {
+        self.merge = merge;
         self
     }
 
@@ -148,10 +155,8 @@ impl PlaybookRunner {
         let playbook: Playbook = serde_yaml::from_str(&content)
             .context("Failed to parse playbook YAML")?;
 
-        if self.verbose {
-            println!("📋 Running playbook: {}", playbook.metadata.name);
-            println!("   API Version: {}", playbook.api_version);
-        }
+        println!("📋 Running playbook: {}", playbook.metadata.name);
+        println!("   API Version: {}", playbook.api_version);
 
         // Initialize execution context with workload variables
         let mut context = ExecutionContext::new();
@@ -169,14 +174,24 @@ impl PlaybookRunner {
         }
 
         // Add user-provided variables
+        // By default (merge=false), user variables override workload variables (shallow merge)
+        // With merge=true, we would do deep merge (but for now, we only support shallow)
         for (key, value) in &self.variables {
-            context.set_variable(key.clone(), value.clone());
+            // If key doesn't have workload prefix, add it for consistency with API
+            let var_key = if key.starts_with("workload.") {
+                key.clone()
+            } else {
+                // Set both with and without workload prefix for compatibility
+                context.set_variable(key.clone(), value.clone());
+                format!("workload.{}", key)
+            };
+            context.set_variable(var_key, value.clone());
         }
 
         // Determine starting step - use target if provided, otherwise "start"
         let starting_step = self.target.as_deref().unwrap_or("start");
         
-        if self.verbose && self.target.is_some() {
+        if self.target.is_some() {
             println!("🎯 Target: {}", starting_step);
         }
 
@@ -207,11 +222,9 @@ impl PlaybookRunner {
             return Ok(());
         }
 
-        if self.verbose {
-            println!("\n🔹 Step: {}", step_name);
-            if let Some(desc) = &step.desc {
-                println!("   Description: {}", desc);
-            }
+        println!("\n🔹 Step: {}", step_name);
+        if let Some(desc) = &step.desc {
+            println!("   Description: {}", desc);
         }
 
         // Execute the tool and capture result
@@ -410,8 +423,8 @@ impl PlaybookRunner {
 
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         
-        // Print output if verbose
-        if self.verbose && !stdout.is_empty() {
+        // Always print command output
+        if !stdout.is_empty() {
             print!("{}", stdout);
         }
 

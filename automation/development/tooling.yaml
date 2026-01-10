@@ -1,0 +1,336 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: dev_tools_automation
+  path: automation/development/tooling
+
+workload:
+  action: help  # setup, validate-install, validate-devtools, validate-docker, install-base, install-devtools, install-jq, install-yq, install-kind, install-pyenv, install-uv, install-tfenv, install-psql, ensure-path, fix-docker-perms
+
+workflow:
+  - step: start
+    desc: Entry point for dev tools automation
+    tool:
+      kind: shell
+      cmds:
+        - echo "Dev Tools Automation - Action '{{ action }}'"
+    next:
+      - when: "{{ action }} == setup"
+        then:
+          - step: setup_tools
+        args: {}
+      - when: "{{ action }} == validate-install"
+        then:
+          - step: validate_install
+        args: {}
+      - when: "{{ action }} == validate-devtools"
+        then:
+          - step: validate_devtools
+        args: {}
+      - when: "{{ action }} == validate-docker"
+        then:
+          - step: validate_docker
+        args: {}
+      - when: "{{ action }} == install-base"
+        then:
+          - step: install_base
+        args: {}
+      - when: "{{ action }} == install-devtools"
+        then:
+          - step: install_devtools
+        args: {}
+      - when: "{{ action }} == install-jq"
+        then:
+          - step: install_jq
+        args: {}
+      - when: "{{ action }} == install-yq"
+        then:
+          - step: install_yq
+        args: {}
+      - when: "{{ action }} == install-kind"
+        then:
+          - step: install_kind
+        args: {}
+      - when: "{{ action }} == install-pyenv"
+        then:
+          - step: install_pyenv
+        args: {}
+      - when: "{{ action }} == install-uv"
+        then:
+          - step: install_uv
+        args: {}
+      - when: "{{ action }} == install-tfenv"
+        then:
+          - step: install_tfenv
+        args: {}
+      - when: "{{ action }} == install-psql"
+        then:
+          - step: install_psql
+        args: {}
+      - when: "{{ action }} == ensure-path"
+        then:
+          - step: ensure_path
+        args: {}
+      - when: "{{ action }} == fix-docker-perms"
+        then:
+          - step: fix_docker_perms
+        args: {}
+      - when: "{{ action }} == help"
+        then:
+          - step: show_help
+        args: {}
+      - step: show_help
+
+  - step: setup_tools
+    desc: Validate required tooling on WSL2 hosts
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Setting up and validating dev tools..."
+          task dev:tools:setup
+    next:
+      - step: end
+
+  - step: validate_install
+    desc: Validate required tools are installed
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Validating required tools installation..."
+          task dev:tools:validate-install
+    next:
+      - step: end
+
+  - step: validate_devtools
+    desc: Validate optional dev tools available
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Validating optional dev tools..."
+          task dev:tools:validate-devtools
+    next:
+      - step: end
+
+  - step: validate_docker
+    desc: Validate Docker Desktop integration from WSL2
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Validating Docker Desktop integration..."
+          task dev:tools:validate-docker
+    next:
+      - step: end
+
+  - step: install_base
+    desc: Install basic CLI tools
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Installing basic CLI tools..."
+          echo "  - git, curl, jq, make, ca-certificates"
+          echo "  - lsof, python3, pip, venv"
+          task dev:tools:install-base
+    next:
+      - step: end
+
+  - step: install_devtools
+    desc: Install yq, kind, pyenv, uv, tfenv (aggregate)
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Installing dev tools (yq, kind, pyenv, uv, tfenv)..."
+          task dev:tools:install-devtools
+    next:
+      - step: end
+
+  - step: install_jq
+    desc: Install jq via apt
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Installing jq..."
+          task dev:tools:install-jq
+    next:
+      - step: end
+
+  - step: install_yq
+    desc: Install yq via PPA
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Installing yq..."
+          task dev:tools:install-yq
+    next:
+      - step: end
+
+  - step: install_kind
+    desc: Install kind (Kubernetes in Docker)
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Installing kind..."
+          task dev:tools:install-kind
+    next:
+      - step: end
+
+  - step: install_pyenv
+    desc: Install pyenv and initialize bash shell configuration
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Installing pyenv..."
+          task dev:tools:install-pyenv
+    next:
+      - step: end
+
+  - step: install_uv
+    desc: Install uv (fast Python package manager)
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Installing uv..."
+          task dev:tools:install-uv
+    next:
+      - step: end
+
+  - step: install_tfenv
+    desc: Install tfenv and latest Terraform
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Installing tfenv and Terraform..."
+          task dev:tools:install-tfenv
+    next:
+      - step: end
+
+  - step: install_psql
+    desc: Install PostgreSQL client tools (psql) without server
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Installing PostgreSQL client tools..."
+          task dev:tools:install-psql
+    next:
+      - step: end
+
+  - step: ensure_path
+    desc: Ensure common tool paths are added to shell
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Ensuring common tool paths in ~/.bashrc..."
+          task dev:tools:ensure-path
+    next:
+      - step: end
+
+  - step: fix_docker_perms
+    desc: Add current user to docker group
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Adding current user to docker group..."
+          task dev:tools:fix-docker-perms
+    next:
+      - step: end
+
+  - step: show_help
+    desc: Display available actions
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "=================================================="
+          echo " Dev Tools Automation"
+          echo "=================================================="
+          echo ""
+          echo "Usage:"
+          echo "  noetl run automation/development/tooling.yaml --set action=<action>"
+          echo ""
+          echo "Setup & Validation:"
+          echo "  setup               - Validate required tooling on WSL2 hosts"
+          echo "  validate-install    - Validate required tools are installed"
+          echo "  validate-devtools   - Validate optional dev tools available"
+          echo "  validate-docker     - Validate Docker Desktop integration"
+          echo ""
+          echo "Installation (Base):"
+          echo "  install-base        - Install basic CLI tools (git, curl, jq, make, etc.)"
+          echo "  install-devtools    - Install all dev tools (yq, kind, pyenv, uv, tfenv)"
+          echo ""
+          echo "Installation (Individual):"
+          echo "  install-jq          - Install jq via apt"
+          echo "  install-yq          - Install yq via PPA"
+          echo "  install-kind        - Install kind (Kubernetes in Docker)"
+          echo "  install-pyenv       - Install pyenv and initialize bash"
+          echo "  install-uv          - Install uv (fast Python package manager)"
+          echo "  install-tfenv       - Install tfenv and latest Terraform"
+          echo "  install-psql        - Install PostgreSQL client tools"
+          echo ""
+          echo "Configuration:"
+          echo "  ensure-path         - Ensure tool paths in ~/.bashrc"
+          echo "  fix-docker-perms    - Add user to docker group"
+          echo ""
+          echo "Examples:"
+          echo "  # Setup and validate all tools"
+          echo "  noetl run automation/development/tooling.yaml --set action=setup"
+          echo ""
+          echo "  # Install base tools"
+          echo "  noetl run automation/development/tooling.yaml --set action=install-base"
+          echo ""
+          echo "  # Install all dev tools"
+          echo "  noetl run automation/development/tooling.yaml --set action=install-devtools"
+          echo ""
+          echo "  # Validate installation"
+          echo "  noetl run automation/development/tooling.yaml --set action=validate-install"
+          echo ""
+          echo "Task Equivalents:"
+          echo "  setup            -> task dev:tools:setup"
+          echo "  validate-install -> task dev:tools:validate-install"
+          echo "  validate-devtools -> task dev:tools:validate-devtools"
+          echo "  validate-docker  -> task dev:tools:validate-docker"
+          echo "  install-base     -> task dev:tools:install-base"
+          echo "  install-devtools -> task dev:tools:install-devtools"
+          echo "  install-jq       -> task dev:tools:install-jq"
+          echo "  install-yq       -> task dev:tools:install-yq"
+          echo "  install-kind     -> task dev:tools:install-kind"
+          echo "  install-pyenv    -> task dev:tools:install-pyenv"
+          echo "  install-uv       -> task dev:tools:install-uv"
+          echo "  install-tfenv    -> task dev:tools:install-tfenv"
+          echo "  install-psql     -> task dev:tools:install-psql"
+          echo "  ensure-path      -> task dev:tools:ensure-path"
+          echo "  fix-docker-perms -> task dev:tools:fix-docker-perms"
+          echo ""
+    next:
+      - step: end
+
+  - step: end
+    desc: End workflow

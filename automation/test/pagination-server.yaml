@@ -1,0 +1,180 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: pagination_server_automation
+  path: automation/test/pagination-server
+
+workload:
+  action: help  # build, deploy, full, status, logs, test, undeploy
+
+workflow:
+  - step: start
+    desc: Entry point for pagination server automation
+    tool:
+      kind: shell
+      cmds:
+        - echo "Pagination Server Automation - Action '{{ action }}'"
+    next:
+      - when: "{{ action }} == build"
+        then:
+          - step: build_image
+        args: {}
+      - when: "{{ action }} == load"
+        then:
+          - step: load_image
+        args: {}
+      - when: "{{ action }} == deploy"
+        then:
+          - step: deploy_server
+        args: {}
+      - when: "{{ action }} == full"
+        then:
+          - step: build_image
+        args: {}
+      - when: "{{ action }} == status"
+        then:
+          - step: check_status
+        args: {}
+      - when: "{{ action }} == logs"
+        then:
+          - step: show_logs
+        args: {}
+      - when: "{{ action }} == test"
+        then:
+          - step: test_endpoints
+        args: {}
+      - when: "{{ action }} == undeploy"
+        then:
+          - step: undeploy_server
+        args: {}
+      - step: show_help
+
+  - step: build_image
+    desc: Build pagination test server Docker image
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Building pagination test server image..."
+          task pagination-server:tpsb
+    case:
+      - when: "{{ action }} == full"
+        then:
+          - step: load_image
+    next:
+      - step: end
+
+  - step: load_image
+    desc: Load pagination server image into kind cluster
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Loading pagination server image to kind cluster..."
+          task pagination-server:tpsl
+    case:
+      - when: "{{ action }} == full"
+        then:
+          - step: deploy_server
+    next:
+      - step: end
+
+  - step: deploy_server
+    desc: Deploy pagination test server to Kubernetes
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Deploying pagination test server..."
+          task pagination-server:tpsd
+    case:
+      - when: "{{ action }} == full"
+        then:
+          - step: check_status
+    next:
+      - step: end
+
+  - step: check_status
+    desc: Check pagination server deployment status
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Checking pagination server status..."
+          task pagination-server:tpss
+    next:
+      - step: end
+
+  - step: show_logs
+    desc: Show pagination server logs
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Pagination server logs:"
+          task pagination-server:tpslog
+    next:
+      - step: end
+
+  - step: test_endpoints
+    desc: Test pagination server API endpoints
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Testing pagination server endpoints..."
+          task pagination-server:tpst
+    next:
+      - step: end
+
+  - step: undeploy_server
+    desc: Remove pagination server from Kubernetes
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Removing pagination test server..."
+          task pagination-server:tpsu
+    next:
+      - step: end
+
+  - step: show_help
+    desc: Display available actions
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "====================================="
+          echo " Pagination Server Automation"
+          echo "====================================="
+          echo ""
+          echo "Usage:"
+          echo "  noetl run automation/test/pagination-server.yaml --set action=<action>"
+          echo ""
+          echo "Available actions:"
+          echo "  build     - Build pagination test server Docker image"
+          echo "  load      - Load image into kind cluster"
+          echo "  deploy    - Deploy to Kubernetes"
+          echo "  full      - Build, load, and deploy (complete workflow)"
+          echo "  status    - Check deployment status"
+          echo "  logs      - Show server logs"
+          echo "  test      - Test API endpoints"
+          echo "  undeploy  - Remove from Kubernetes"
+          echo ""
+          echo "Examples:"
+          echo "  noetl run automation/test/pagination-server.yaml --set action=full"
+          echo "  noetl run automation/test/pagination-server.yaml --set action=status"
+          echo "  noetl run automation/test/pagination-server.yaml --set action=test"
+          echo ""
+    next:
+      - step: end
+
+  - step: end
+    desc: End workflow

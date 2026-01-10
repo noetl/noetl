@@ -1,0 +1,246 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: jupyterlab_automation
+  path: automation/infrastructure/jupyterlab
+
+workload:
+  action: help  # deploy, undeploy, full, status, logs, port-forward, restart, shell, test, update-notebook
+
+workflow:
+  - step: start
+    desc: Entry point for JupyterLab automation
+    tool:
+      kind: shell
+      cmds:
+        - echo "JupyterLab Automation - Action '{{ action }}'"
+    next:
+      - when: "{{ action }} == deploy"
+        then:
+          - step: deploy_jupyterlab
+        args: {}
+      - when: "{{ action }} == undeploy"
+        then:
+          - step: undeploy_jupyterlab
+        args: {}
+      - when: "{{ action }} == full"
+        then:
+          - step: full_deployment
+        args: {}
+      - when: "{{ action }} == status"
+        then:
+          - step: check_status
+        args: {}
+      - when: "{{ action }} == logs"
+        then:
+          - step: view_logs
+        args: {}
+      - when: "{{ action }} == port-forward"
+        then:
+          - step: port_forward
+        args: {}
+      - when: "{{ action }} == restart"
+        then:
+          - step: restart_deployment
+        args: {}
+      - when: "{{ action }} == shell"
+        then:
+          - step: open_shell
+        args: {}
+      - when: "{{ action }} == test"
+        then:
+          - step: test_deployment
+        args: {}
+      - when: "{{ action }} == update-notebook"
+        then:
+          - step: update_notebook
+        args: {}
+      - when: "{{ action }} == help"
+        then:
+          - step: show_help
+        args: {}
+      - step: show_help
+
+  - step: deploy_jupyterlab
+    desc: Deploy JupyterLab to kind cluster
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Deploying JupyterLab to kind cluster..."
+          task jupyterlab:deploy
+    next:
+      - step: end
+
+  - step: undeploy_jupyterlab
+    desc: Remove JupyterLab from kind cluster
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Removing JupyterLab from kind cluster..."
+          task jupyterlab:undeploy
+    next:
+      - step: end
+
+  - step: full_deployment
+    desc: Complete JupyterLab deployment workflow
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Running complete JupyterLab deployment workflow..."
+          task jupyterlab:full
+    next:
+      - step: end
+
+  - step: check_status
+    desc: Check JupyterLab deployment status
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "JupyterLab Deployment Status:"
+          echo "============================="
+          task jupyterlab:status
+    next:
+      - step: end
+
+  - step: view_logs
+    desc: View JupyterLab logs
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "JupyterLab Logs:"
+          echo "================"
+          task jupyterlab:logs
+    next:
+      - step: end
+
+  - step: port_forward
+    desc: Port-forward JupyterLab service to localhost
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Port-forwarding JupyterLab service to localhost:8888..."
+          echo "Press Ctrl+C to stop port-forwarding"
+          task jupyterlab:port-forward
+    next:
+      - step: end
+
+  - step: restart_deployment
+    desc: Restart JupyterLab deployment
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Restarting JupyterLab deployment..."
+          task jupyterlab:restart
+    next:
+      - step: end
+
+  - step: open_shell
+    desc: Open shell in JupyterLab pod
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Opening shell in JupyterLab pod..."
+          task jupyterlab:shell
+    next:
+      - step: end
+
+  - step: test_deployment
+    desc: Test JupyterLab deployment
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Testing JupyterLab deployment..."
+          task jupyterlab:test
+    next:
+      - step: end
+
+  - step: update_notebook
+    desc: Update notebook in ConfigMap and restart
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Updating notebook in ConfigMap and restarting..."
+          task jupyterlab:update-notebook
+    next:
+      - step: end
+
+  - step: show_help
+    desc: Display available actions
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "=================================================="
+          echo " JupyterLab Automation"
+          echo "=================================================="
+          echo ""
+          echo "Usage:"
+          echo "  noetl run automation/infrastructure/jupyterlab.yaml --set action=<action>"
+          echo ""
+          echo "Deployment Actions:"
+          echo "  deploy          - Deploy JupyterLab to kind cluster"
+          echo "  undeploy        - Remove JupyterLab from kind cluster"
+          echo "  full            - Complete deployment workflow"
+          echo "  status          - Check deployment status"
+          echo ""
+          echo "Operations:"
+          echo "  logs            - View JupyterLab logs"
+          echo "  port-forward    - Port-forward to localhost:8888"
+          echo "  restart         - Restart JupyterLab deployment"
+          echo "  shell           - Open shell in JupyterLab pod"
+          echo "  test            - Test deployment"
+          echo "  update-notebook - Update notebook ConfigMap and restart"
+          echo ""
+          echo "Examples:"
+          echo "  # Full deployment workflow"
+          echo "  noetl run automation/infrastructure/jupyterlab.yaml --set action=full"
+          echo ""
+          echo "  # Deploy JupyterLab"
+          echo "  noetl run automation/infrastructure/jupyterlab.yaml --set action=deploy"
+          echo ""
+          echo "  # Check status"
+          echo "  noetl run automation/infrastructure/jupyterlab.yaml --set action=status"
+          echo ""
+          echo "  # View logs"
+          echo "  noetl run automation/infrastructure/jupyterlab.yaml --set action=logs"
+          echo ""
+          echo "  # Port-forward to localhost"
+          echo "  noetl run automation/infrastructure/jupyterlab.yaml --set action=port-forward"
+          echo ""
+          echo "Task Equivalents:"
+          echo "  deploy          -> task jupyterlab:deploy"
+          echo "  undeploy        -> task jupyterlab:undeploy"
+          echo "  full            -> task jupyterlab:full"
+          echo "  status          -> task jupyterlab:status"
+          echo "  logs            -> task jupyterlab:logs"
+          echo "  port-forward    -> task jupyterlab:port-forward"
+          echo "  restart         -> task jupyterlab:restart"
+          echo "  shell           -> task jupyterlab:shell"
+          echo "  test            -> task jupyterlab:test"
+          echo "  update-notebook -> task jupyterlab:update-notebook"
+          echo ""
+    next:
+      - step: end
+
+  - step: end
+    desc: End workflow
