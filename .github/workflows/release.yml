@@ -1,0 +1,49 @@
+name: "Semantic Release ⚙️"
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - '**/*.py'
+      - '**/Dockerfile'
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.SEMANTIC_RELEASE_APP_ID }}
+          private-key: ${{ secrets.SEMANTIC_RELEASE_PRIVATE_KEY }}
+
+        # UV is used in the Release step to set version in the pyproject.toml
+      - name: Install UV
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.9.x"
+
+      - name: Release
+        uses: cycjimmy/semantic-release-action@v4
+        with:
+          semantic_version: 24.2.3
+          extra_plugins: |
+            @semantic-release/changelog@6.0.3
+            @semantic-release/git@10.0.1
+            @semantic-release/exec@v7.1.0
+            conventional-changelog-conventionalcommits@8.0.0
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}

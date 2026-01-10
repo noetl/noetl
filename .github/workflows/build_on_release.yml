@@ -1,0 +1,124 @@
+name: "Build image and package on Release ⚙️"
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  id-token: write
+  contents: read
+  packages: write
+
+jobs:
+  build_push_image:
+    name: build_push_image
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+
+    env:
+      IMAGE_TAG: ${{ github.event.release.tag_name }}
+
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.release.tag_name }}  
+
+      # Access must be provided on the package level
+      # https://github.com/orgs/noetl/packages/container/noetl/settings
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          file: docker/noetl/dev/Dockerfile
+          # platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64
+          push: true
+          # outputs: type=image,name=target,annotation-index.org.opencontainers.image.description=linux/amd64 linux/arm64 image
+          outputs: type=image,name=target,annotation-index.org.opencontainers.image.description=linux/amd64 image
+          tags: |
+            ghcr.io/noetl/noetl:${{ env.IMAGE_TAG }}
+            ghcr.io/noetl/noetl:latest
+
+  build_push_pip:
+    name: build_push_pip
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+
+    env:
+      PIP_PACKAGE_VERSION: ${{ github.event.release.tag_name }}
+
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.release.tag_name }}
+      
+      - name: Install Node v23
+        uses: actions/setup-node@v6
+        with:
+          node-version: "23.11.x"
+
+      - name: Install UV
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.9.x"
+
+      - name: Install UI dependencies
+        working-directory: ui-src
+        run: npm ci
+
+      - name: Build UI
+        working-directory: ui-src
+        run: npm run build
+
+      - name: Copy built UI artifacts to noetl/core/ui
+        run: cp -R ui-src/dist/* noetl/core/ui/
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.83
+
+      - name: Cache Cargo build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            noetlctl/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build Rust binary
+        run: |
+          cd noetlctl
+          cargo build --release
+          cd ..
+          mkdir -p noetl/bin
+          cp noetlctl/target/release/noetl noetl/bin/noetl
+          chmod +x noetl/bin/noetl
+
+      - name: Install NoETL dependencies
+        run: uv sync --locked --all-extras
+        # --all-extras Include all optional dependencies.
+        # --locked Assert that the uv.lock will remain unchanged. Requires that the lockfile is up-to-date
+
+      - name: Build NoETL
+        run: uv build
+
+      - name: Publish to PyPI
+        env:
+          UV_PUBLISH_TOKEN: ${{ secrets.PYPI_TOKEN }}
+        run: uv publish
