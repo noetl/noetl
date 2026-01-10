@@ -180,8 +180,8 @@ workflow:
         - |
           echo ""
           echo "Loading NoETL image into kind cluster..."
-          # Get the most recent noetl image tag
-          IMAGE_TAG=$(docker images --format "{{.Repository}}:{{.Tag}}" | grep "^local/noetl:" | head -n 1)
+          # Get the most recent noetl image (built in previous step)
+          IMAGE_TAG=$(docker images --format "{{.Repository}}:{{.Tag}}" | grep "^local/noetl:" | sort -r | head -n 1)
           if [ -z "$IMAGE_TAG" ]; then
             echo "ERROR: No local/noetl image found. Build must have failed."
             exit 1
