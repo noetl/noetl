@@ -36,6 +36,8 @@ tests/fixtures/playbooks/**/temp/
 !.dockerignore
 !.env.server
 !.env.worker
+# Distribution repositories (symlinks)
+homebrew-tap
 # Virtual environments
 publish_env/
 test_env/
