@@ -89,3 +89,9 @@ bhs-state-program-analytics.code-workspace
 .gitmodules
 submodules/
 /noetl/bin/
+
+# Distribution repositories (symlinks)
+homebrew-tap
+
+# Extracted release tarballs (from testing)
+noetl-*/
