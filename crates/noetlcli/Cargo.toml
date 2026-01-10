@@ -1,7 +1,14 @@
 [package]
 name = "noetl-cli"
 version.workspace = true
-edition = "2021"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "NoETL workflow automation CLI - Execute playbooks locally or orchestrate distributed pipelines"
+keywords = ["workflow", "automation", "etl", "mlops", "data-pipeline"]
+categories = ["command-line-utilities", "development-tools"]
+readme = "README.md"
 
 [[bin]]
 name = "noetl"
