@@ -1,32 +1,41 @@
 ---
 sidebar_position: 2
-title: Iterator
-description: Loop over collections with the iterator step type
+title: Loop Iteration
+description: Loop over collections using the loop step attribute
 ---
 
-# Iterator
+# Loop Iteration
 
-The iterator enables looping over collections with configurable execution modes.
+The `loop:` step attribute enables iterating over collections with configurable execution modes. State is managed via NATS KV snapshots.
+
+**Important**: `loop:` is a step-level attribute, NOT a tool kind. It modifies how a step executes.
 
 ## Basic Usage
 
 ```yaml
 - step: process_items
-  tool: iterator
-  collection: "{{ workload.items }}"
-  element: item
-  mode: sequential
+  tool:
+    kind: python
+    libs: {}
+    args:
+      item: "{{ current_item }}"
+    code: |
+      result = {"processed_id": item["id"]}
+  loop:
+    in: "{{ workload.items }}"
+    iterator: current_item
+    mode: sequential
   next:
-    - step: process_single_item
+    - step: end
 ```
 
 ## Configuration
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `collection` | string/array | Yes | Jinja2 expression or array to iterate over |
-| `element` | string | Yes | Variable name for current item |
-| `mode` | string | No | `sequential` (default) or `async` |
+| `in` | string/array | Yes | Jinja2 expression or array to iterate over |
+| `iterator` | string | Yes | Variable name for current item |
+| `mode` | string | No | `sequential` (default) or `parallel` |
 
 ## Execution Modes
 
@@ -35,99 +44,136 @@ The iterator enables looping over collections with configurable execution modes.
 Items processed one at a time, in order:
 
 ```yaml
-- step: sequential_loop
-  tool: iterator
-  collection: "{{ workload.cities }}"
-  element: city
-  mode: sequential
+- step: fetch_weather
+  tool:
+    kind: http
+    method: GET
+    url: "https://api.weather.com/city/{{ city.name }}"
+    params:
+      lat: "{{ city.lat }}"
+      lon: "{{ city.lon }}"
+  loop:
+    in: "{{ workload.cities }}"
+    iterator: city
+    mode: sequential
   next:
-    - step: fetch_weather
+    - step: end
 ```
 
-### Async Mode
+### Parallel Mode
 
-Items processed in parallel (limited by worker pool):
+Items processed concurrently (limited by worker pool):
 
 ```yaml
-- step: parallel_loop
-  tool: iterator
-  collection: "{{ workload.urls }}"
-  element: url
-  mode: async
+- step: fetch_data
+  tool:
+    kind: http
+    method: GET
+    url: "{{ url }}"
+  loop:
+    in: "{{ workload.urls }}"
+    iterator: url
+    mode: parallel
   next:
-    - step: fetch_data
+    - step: end
 ```
 
 ## Accessing Iterator Variables
 
-Within the loop body, access the current element:
+Within the loop body, access the current element directly by the iterator name:
 
 ```yaml
 - step: fetch_weather
-  tool: http
-  url: "https://api.weather.com/city/{{ iterator.city.name }}"
-  params:
-    lat: "{{ iterator.city.lat }}"
-    lon: "{{ iterator.city.lon }}"
+  tool:
+    kind: http
+    method: GET
+    url: "https://api.weather.com/city/{{ city.name }}"
+    params:
+      lat: "{{ city.lat }}"
+      lon: "{{ city.lon }}"
+  loop:
+    in: "{{ workload.cities }}"
+    iterator: city
+    mode: sequential
 ```
 
-## Iterator with Save
+## Loop with Sink
 
 Save results from each iteration:
 
 ```yaml
 - step: process_and_save
-  tool: iterator
-  collection: "{{ workload.records }}"
-  element: record
-  mode: async
-  next:
-    - step: transform_record
-
-- step: transform_record
-  tool: python
-  code: |
-    def main(input_data):
-        return {"processed": input_data["record"]["id"]}
-  args:
-    record: "{{ iterator.record }}"
-  save:
-    tool: postgres
-    auth: "{{ workload.pg_auth }}"
-    table: processed_records
-    mode: insert
+  tool:
+    kind: python
+    libs: {}
+    args:
+      record: "{{ current_record }}"
+    code: |
+      result = {"processed_id": record["id"], "status": "complete"}
+  loop:
+    in: "{{ workload.records }}"
+    iterator: current_record
+    mode: parallel
+  case:
+    - when: "{{ event.name == 'step.exit' and response is defined }}"
+      then:
+        sink:
+          tool:
+            kind: postgres
+            auth: "{{ workload.pg_auth }}"
+            table: processed_records
 ```
 
-## Nested Iteration
+## Nested Loops
 
-Iterators can be nested for multi-dimensional processing:
+For multi-dimensional processing, use separate steps with loops:
 
 ```yaml
-- step: outer_loop
-  tool: iterator
-  collection: "{{ workload.categories }}"
-  element: category
+- step: process_categories
+  tool:
+    kind: python
+    libs: {}
+    args:
+      category: "{{ cat }}"
+    code: |
+      result = {"category_id": category["id"], "items": category["items"]}
+  loop:
+    in: "{{ workload.categories }}"
+    iterator: cat
+    mode: sequential
+  vars:
+    current_items: "{{ result.items }}"
   next:
-    - step: inner_loop
+    - step: process_items
 
-- step: inner_loop
-  tool: iterator
-  collection: "{{ iterator.category.items }}"
-  element: item
+- step: process_items
+  tool:
+    kind: python
+    libs: {}
+    args:
+      item: "{{ current_item }}"
+    code: |
+      result = {"item_id": item["id"], "processed": True}
+  loop:
+    in: "{{ vars.current_items }}"
+    iterator: current_item
+    mode: sequential
   next:
-    - step: process_item
+    - step: end
 ```
 
-## Pagination with Iterator
+## HTTP Pagination with Loop
 
 Combine HTTP pagination with iteration for complex data fetching:
 
 ```yaml
 - step: fetch_all_pages
-  tool: http
-  url: "{{ workload.api_url }}"
-  params:
-    page: 1
+  tool:
+    kind: http
+    method: GET
+    url: "{{ workload.api_url }}"
+    params:
+      page: 1
   loop:
     pagination:
       type: response_based
@@ -137,21 +183,30 @@ Combine HTTP pagination with iteration for complex data fetching:
           page: "{{ (response.data.page | int) + 1 }}"
       merge_strategy: append
       merge_path: data.items
+  vars:
+    all_items: "{{ result.data }}"
   next:
     - step: process_items
 
 - step: process_items
-  tool: iterator
-  collection: "{{ fetch_all_pages.data }}"
-  element: item
-  mode: async
+  tool:
+    kind: python
+    libs: {}
+    args:
+      item: "{{ current_item }}"
+    code: |
+      result = {"item_id": item["id"], "transformed": True}
+  loop:
+    in: "{{ vars.all_items }}"
+    iterator: current_item
+    mode: parallel
   next:
-    - step: transform_item
+    - step: end
 ```
 
 ## Working Examples
 
-See complete iterator playbooks:
+See complete loop playbooks:
 - [iterator_save_test/](https://github.com/noetl/noetl/tree/master/tests/fixtures/playbooks/iterator_save_test)
 - [loop_with_pagination/](https://github.com/noetl/noetl/tree/master/tests/fixtures/playbooks/pagination/loop_with_pagination)
 - [http_iterator_save_postgres/](https://github.com/noetl/noetl/tree/master/tests/fixtures/playbooks/data_transfer/http_iterator_save_postgres)
