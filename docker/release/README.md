@@ -7,7 +7,7 @@ Docker-based tools for building release packages on macOS.
 Build `.deb` package using Docker (works on macOS):
 
 ```bash
-./docker/release/build-deb-docker.sh 2.5.3
+./docker/release/build-deb-docker.sh 2.5.4
 ```
 
 This will:
@@ -18,8 +18,8 @@ This will:
 Output:
 ```
 build/deb/
-├── noetl_2.5.3-1_amd64.deb
-└── noetl_2.5.3-1_amd64.deb.sha256
+├── noetl_2.5.4-1_amd64.deb
+└── noetl_2.5.4-1_amd64.deb.sha256
 ```
 
 ## Test Installation
@@ -28,7 +28,7 @@ Test the package in a clean Ubuntu container:
 
 ```bash
 docker run --rm -v $(pwd)/build/deb:/packages ubuntu:22.04 bash -c \
-  'apt-get update && dpkg -i /packages/noetl_2.5.3-1_amd64.deb && noetl --version'
+  'apt-get update && dpkg -i /packages/noetl_2.5.4-1_amd64.deb && noetl --version'
 ```
 
 ## Create APT Repository
@@ -36,7 +36,7 @@ docker run --rm -v $(pwd)/build/deb:/packages ubuntu:22.04 bash -c \
 After building the package, create APT repository structure:
 
 ```bash
-./scripts/publish_apt.sh 2.5.3
+./scripts/publish_apt.sh 2.5.4
 ```
 
 This creates `apt-repo/` directory ready for publishing to GitHub Pages.
