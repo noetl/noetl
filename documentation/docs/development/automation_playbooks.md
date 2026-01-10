@@ -328,6 +328,286 @@ noetl run automation/infrastructure/monitoring.yaml --set action=undeploy
 - **VictoriaLogs** - Log storage and querying
 - **Postgres Exporter** - PostgreSQL metrics exporter
 
+### ClickHouse Observability Stack
+
+Manage ClickHouse for logs, metrics, and traces storage:
+
+```bash
+# Deploy complete ClickHouse stack
+noetl run automation/infrastructure/clickhouse.yaml --set action=deploy
+
+# Check status
+noetl run automation/infrastructure/clickhouse.yaml --set action=status
+
+# Check cluster health
+noetl run automation/infrastructure/clickhouse.yaml --set action=health
+
+# Connect to ClickHouse CLI
+noetl run automation/infrastructure/clickhouse.yaml --set action=connect
+
+# View logs
+noetl run automation/infrastructure/clickhouse.yaml --set action=logs
+
+# Deploy individual components
+noetl run automation/infrastructure/clickhouse.yaml --set action=deploy-namespace
+noetl run automation/infrastructure/clickhouse.yaml --set action=deploy-crds
+noetl run automation/infrastructure/clickhouse.yaml --set action=deploy-operator
+noetl run automation/infrastructure/clickhouse.yaml --set action=deploy-cluster
+noetl run automation/infrastructure/clickhouse.yaml --set action=deploy-schema
+
+# Remove stack
+noetl run automation/infrastructure/clickhouse.yaml --set action=undeploy
+```
+
+**Main Actions:**
+- `deploy` - Deploy complete ClickHouse observability stack
+- `undeploy` - Remove ClickHouse stack
+- `status` - Show stack status
+- `health` - Check cluster health
+- `test` - Test connection and schema
+
+**Granular Deployment:**
+- `deploy-namespace` - Create ClickHouse namespace
+- `deploy-crds` - Deploy ClickHouse CRDs
+- `deploy-operator` - Deploy ClickHouse operator
+- `deploy-cluster` - Deploy ClickHouse cluster
+- `deploy-schema` - Deploy observability schema
+- `deploy-grafana-datasource` - Deploy Grafana datasource
+- `deploy-mcp-server` - Deploy MCP server
+
+**Operations:**
+- `connect` - Connect to ClickHouse CLI
+- `query` - Execute ClickHouse query
+- `logs` / `logs-operator` / `logs-mcp` - View logs
+- `port-forward` / `port-forward-mcp` - Port forwarding
+- `restart` / `restart-operator` / `restart-mcp` - Restart components
+- `clean-data` - Drop all observability data (WARNING!)
+- `optimize` - Optimize ClickHouse tables
+
+### Kind Cluster Management
+
+Manage local Kubernetes development cluster:
+
+```bash
+# Create Kind cluster
+noetl run automation/infrastructure/kind.yaml --set action=create
+
+# Check status
+noetl run automation/infrastructure/kind.yaml --set action=status
+
+# List all Kind clusters
+noetl run automation/infrastructure/kind.yaml --set action=list
+
+# Load NoETL image to cluster
+noetl run automation/infrastructure/kind.yaml --set action=image-load
+
+# List images in cluster
+noetl run automation/infrastructure/kind.yaml --set action=images-list
+
+# Set kubectl context to kind-noetl
+noetl run automation/infrastructure/kind.yaml --set action=context-set
+
+# Delete cluster
+noetl run automation/infrastructure/kind.yaml --set action=delete
+```
+
+**Cluster Management:**
+- `create` - Create Kind cluster 'noetl'
+- `delete` - Delete Kind cluster 'noetl'
+- `list` - List all Kind clusters
+- `status` - Check cluster status and nodes
+- `context-set` - Set kubectl context to kind-noetl
+
+**Image Management:**
+- `image-load` - Load NoETL image to cluster
+- `images-list` - List images in cluster
+
+### JupyterLab
+
+Manage JupyterLab deployment for data analysis:
+
+```bash
+# Full deployment workflow
+noetl run automation/infrastructure/jupyterlab.yaml --set action=full
+
+# Deploy JupyterLab
+noetl run automation/infrastructure/jupyterlab.yaml --set action=deploy
+
+# Check status
+noetl run automation/infrastructure/jupyterlab.yaml --set action=status
+
+# View logs
+noetl run automation/infrastructure/jupyterlab.yaml --set action=logs
+
+# Port-forward to localhost:8888
+noetl run automation/infrastructure/jupyterlab.yaml --set action=port-forward
+
+# Update notebook ConfigMap
+noetl run automation/infrastructure/jupyterlab.yaml --set action=update-notebook
+
+# Remove JupyterLab
+noetl run automation/infrastructure/jupyterlab.yaml --set action=undeploy
+```
+
+**Deployment Actions:**
+- `deploy` - Deploy JupyterLab to kind cluster
+- `undeploy` - Remove JupyterLab
+- `full` - Complete deployment workflow
+- `status` - Check deployment status
+
+**Operations:**
+- `logs` - View JupyterLab logs
+- `port-forward` - Port-forward to localhost:8888
+- `restart` - Restart deployment
+- `shell` - Open shell in JupyterLab pod
+- `test` - Test deployment
+- `update-notebook` - Update notebook ConfigMap and restart
+
+### Gateway API
+
+Manage Gateway API service (Rust-based, located in crates/gateway):
+
+```bash
+# Build and deploy everything
+noetl run automation/infrastructure/gateway.yaml --set action=deploy-all
+
+# Build Gateway image
+noetl run automation/infrastructure/gateway.yaml --set action=build-image
+
+# Deploy Gateway API
+noetl run automation/infrastructure/gateway.yaml --set action=deploy
+
+# Check status
+noetl run automation/infrastructure/gateway.yaml --set action=status
+
+# Test endpoints
+noetl run automation/infrastructure/gateway.yaml --set action=test
+
+# View logs
+noetl run automation/infrastructure/gateway.yaml --set action=logs
+
+# Rebuild and redeploy
+noetl run automation/infrastructure/gateway.yaml --set action=redeploy
+
+# Remove Gateway
+noetl run automation/infrastructure/gateway.yaml --set action=remove
+```
+
+**Build & Deployment:**
+- `build-image` - Build Gateway Docker image and load into kind
+- `deploy` - Deploy Gateway API to Kubernetes
+- `deploy-all` - Build and deploy Gateway API and UI
+- `remove` - Remove Gateway from Kubernetes
+- `redeploy` - Rebuild and redeploy Gateway
+
+**Operations:**
+- `restart` - Restart Gateway pods
+- `status` - Check deployment status
+- `logs` - Show Gateway logs
+- `test` - Test Gateway endpoints
+
+**Location:** `crates/gateway`
+
+### Gateway UI
+
+Manage Gateway UI (located in tests/fixtures/gateway_ui):
+
+```bash
+# Deploy Gateway UI
+noetl run automation/infrastructure/gateway-ui.yaml --set action=deploy
+
+# Check status
+noetl run automation/infrastructure/gateway-ui.yaml --set action=status
+
+# Update UI files
+noetl run automation/infrastructure/gateway-ui.yaml --set action=update
+
+# View logs
+noetl run automation/infrastructure/gateway-ui.yaml --set action=logs
+```
+
+**Deployment:**
+- `deploy` - Deploy Gateway UI to Kubernetes
+- `update` - Regenerate and deploy updated UI files
+
+**Operations:**
+- `status` - Check deployment status
+- `logs` - Show Gateway UI logs
+
+**Location:** `tests/fixtures/gateway_ui`
+
+### Dev Tools
+
+Manage development tooling installation and validation (WSL/Ubuntu):
+
+```bash
+# Setup and validate all tools
+noetl run automation/development/tooling.yaml --set action=setup
+
+# Install base tools
+noetl run automation/development/tooling.yaml --set action=install-base
+
+# Install all dev tools
+noetl run automation/development/tooling.yaml --set action=install-devtools
+
+# Validate installation
+noetl run automation/development/tooling.yaml --set action=validate-install
+
+# Install individual tools
+noetl run automation/development/tooling.yaml --set action=install-kind
+noetl run automation/development/tooling.yaml --set action=install-pyenv
+noetl run automation/development/tooling.yaml --set action=install-uv
+
+# Fix Docker permissions
+noetl run automation/development/tooling.yaml --set action=fix-docker-perms
+```
+
+**Setup & Validation:**
+- `setup` - Validate required tooling on WSL2 hosts
+- `validate-install` - Validate required tools are installed
+- `validate-devtools` - Validate optional dev tools
+- `validate-docker` - Validate Docker Desktop integration
+
+**Installation (Base):**
+- `install-base` - Install basic CLI tools (git, curl, jq, make, python3, etc.)
+- `install-devtools` - Install all dev tools (yq, kind, pyenv, uv, tfenv)
+
+**Installation (Individual):**
+- `install-jq`, `install-yq`, `install-kind`, `install-pyenv`, `install-uv`, `install-tfenv`, `install-psql`
+
+**Configuration:**
+- `ensure-path` - Ensure tool paths in ~/.bashrc
+- `fix-docker-perms` - Add user to docker group
+
+### Docker Operations
+
+Manage Docker image building and cleanup:
+
+```bash
+# Build NoETL image
+noetl run automation/development/docker.yaml --set action=build
+
+# Check Docker status
+noetl run automation/development/docker.yaml --set action=status
+
+# Cleanup all Docker resources
+noetl run automation/development/docker.yaml --set action=cleanup-all
+
+# Clear all images
+noetl run automation/development/docker.yaml --set action=images-clear
+```
+
+**Build Actions:**
+- `build` - Build NoETL Docker image
+- `noetl-image-build` - Build noetl container with docker
+
+**Cleanup Actions:**
+- `cleanup-all` - Clean all docker resources (builders, images, volumes)
+- `images-clear` - Clear all docker images
+
+**Status:**
+- `status` - Check Docker status with version, images, containers, disk usage
+
 ## Best Practices
 
 1. **Start with help** - Always run `--set action=help` or `--set target=help` to see available options
@@ -372,16 +652,24 @@ noetl run automation/test/pagination-server.yaml --set action=full
 ```
 automation/
 ├── main.yaml                      # Main router
-├── README.md                      # Detailed documentation
+├── README.md                      # Complete reference and task mappings
 ├── setup/
-│   ├── bootstrap.yaml            # Environment setup
-│   └── destroy.yaml              # Cleanup
+│   ├── bootstrap.yaml            # Complete K8s environment setup
+│   └── destroy.yaml              # Environment teardown
 ├── infrastructure/
-│   ├── postgres.yaml             # PostgreSQL management
-│   ├── qdrant.yaml               # Qdrant management
-│   └── monitoring.yaml           # VictoriaMetrics monitoring stack
+│   ├── clickhouse.yaml           # ClickHouse observability stack
+│   ├── gateway.yaml              # Gateway API service
+│   ├── gateway-ui.yaml           # Gateway UI
+│   ├── jupyterlab.yaml           # JupyterLab deployment
+│   ├── kind.yaml                 # Kind cluster management
+│   ├── monitoring.yaml           # VictoriaMetrics monitoring stack
+│   ├── postgres.yaml             # PostgreSQL deployment
+│   └── qdrant.yaml               # Qdrant vector database
+├── development/
+│   ├── docker.yaml               # Docker operations
+│   └── tooling.yaml              # Dev tools installation
 └── test/
-    └── pagination-server.yaml    # Test server automation
+    └── pagination-server.yaml    # Pagination test server
 ```
 
 ## Next Steps
