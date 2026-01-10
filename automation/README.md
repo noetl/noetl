@@ -146,6 +146,27 @@ Steps:
 - Register test playbooks
 - Create test tables
 
+**Pagination Test Server:**
+```bash
+# Full workflow (build + deploy + test)
+noetl run automation/test/pagination-server.yaml --set action=full
+
+# Individual actions
+noetl run automation/test/pagination-server.yaml --set action=build
+noetl run automation/test/pagination-server.yaml --set action=deploy
+noetl run automation/test/pagination-server.yaml --set action=status
+noetl run automation/test/pagination-server.yaml --set action=test
+noetl run automation/test/pagination-server.yaml --set action=logs
+noetl run automation/test/pagination-server.yaml --set action=undeploy
+```
+
+Equivalent task commands:
+- `task pagination-server:tpsb` → `--set action=build`
+- `task pagination-server:tpsd` → `--set action=deploy`
+- `task pagination-server:tpsf` → `--set action=full`
+- `task pagination-server:tpss` → `--set action=status`
+- `task pagination-server:tpst` → `--set action=test`
+
 **Run Regression Tests:**
 ```bash
 noetl run automation/test/regression
