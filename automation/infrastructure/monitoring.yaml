@@ -1,0 +1,308 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: monitoring_automation
+  path: automation/infrastructure/monitoring
+
+workload:
+  action: help  # deploy, undeploy, status, grafana-creds, deploy-dashboards, remove-dashboards, deploy-exporter, remove-exporter, deploy-noetl-scrape, remove-noetl-scrape, deploy-vector, remove-vector, deploy-vmlogs, remove-vmlogs
+
+workflow:
+  - step: start
+    desc: Entry point for VictoriaMetrics monitoring automation
+    tool:
+      kind: shell
+      cmds:
+        - echo "VictoriaMetrics Monitoring Automation - Action '{{ action }}'"
+    next:
+      - when: "{{ action }} == deploy"
+        then:
+          - step: deploy_monitoring
+        args: {}
+      - when: "{{ action }} == undeploy"
+        then:
+          - step: undeploy_monitoring
+        args: {}
+      - when: "{{ action }} == status"
+        then:
+          - step: check_status
+        args: {}
+      - when: "{{ action }} == grafana-creds"
+        then:
+          - step: get_grafana_creds
+        args: {}
+      - when: "{{ action }} == deploy-dashboards"
+        then:
+          - step: deploy_dashboards
+        args: {}
+      - when: "{{ action }} == remove-dashboards"
+        then:
+          - step: remove_dashboards
+        args: {}
+      - when: "{{ action }} == deploy-exporter"
+        then:
+          - step: deploy_exporter
+        args: {}
+      - when: "{{ action }} == remove-exporter"
+        then:
+          - step: remove_exporter
+        args: {}
+      - when: "{{ action }} == deploy-noetl-scrape"
+        then:
+          - step: deploy_noetl_scrape
+        args: {}
+      - when: "{{ action }} == remove-noetl-scrape"
+        then:
+          - step: remove_noetl_scrape
+        args: {}
+      - when: "{{ action }} == deploy-vector"
+        then:
+          - step: deploy_vector
+        args: {}
+      - when: "{{ action }} == remove-vector"
+        then:
+          - step: remove_vector
+        args: {}
+      - when: "{{ action }} == deploy-vmlogs"
+        then:
+          - step: deploy_vmlogs
+        args: {}
+      - when: "{{ action }} == remove-vmlogs"
+        then:
+          - step: remove_vmlogs
+        args: {}
+      - step: show_help
+
+  - step: deploy_monitoring
+    desc: Deploy complete VictoriaMetrics monitoring stack
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Deploying VictoriaMetrics monitoring stack..."
+          echo "  - Metrics Server"
+          echo "  - VictoriaMetrics Operator"
+          echo "  - VictoriaMetrics Stack (Grafana, VMAgent, VMAlert, etc.)"
+          task monitoring:k8s:deploy
+    next:
+      - step: end
+
+  - step: undeploy_monitoring
+    desc: Remove VictoriaMetrics monitoring stack
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Removing VictoriaMetrics monitoring stack..."
+          task monitoring:k8s:delete-stack
+    next:
+      - step: end
+
+  - step: check_status
+    desc: Check monitoring stack deployment status
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "VictoriaMetrics Monitoring Status:"
+          echo "===================================="
+          echo ""
+          echo "=== VM Namespaces ==="
+          kubectl get ns | grep -E "(vm-|victoria|monitoring)" || echo "No monitoring namespaces found"
+          echo ""
+          echo "=== VM Stack Pods ==="
+          kubectl get pods -n vm-stack 2>/dev/null || echo "VM Stack not deployed"
+          echo ""
+          echo "=== VM Operator ==="
+          kubectl get pods -n vm-operator 2>/dev/null || echo "VM Operator not deployed"
+          echo ""
+          echo "=== Services ==="
+          kubectl get svc -n vm-stack 2>/dev/null || echo "No services in vm-stack namespace"
+    next:
+      - step: end
+
+  - step: get_grafana_creds
+    desc: Get Grafana admin credentials
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Grafana Admin Credentials:"
+          echo "=========================="
+          task monitoring:k8s:grafana-creds
+    next:
+      - step: end
+
+  - step: deploy_dashboards
+    desc: Deploy NoETL and Postgres Grafana dashboards
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Deploying Grafana dashboards..."
+          task monitoring:k8s:deploy-dashboards
+    next:
+      - step: end
+
+  - step: remove_dashboards
+    desc: Remove NoETL and Postgres Grafana dashboards
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Removing Grafana dashboards..."
+          task monitoring:k8s:remove-dashboards
+    next:
+      - step: end
+
+  - step: deploy_exporter
+    desc: Deploy postgres-exporter and VMScrape
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Deploying postgres-exporter..."
+          task monitoring:k8s:deploy-exporter
+    next:
+      - step: end
+
+  - step: remove_exporter
+    desc: Remove postgres-exporter and VMScrape
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Removing postgres-exporter..."
+          task monitoring:k8s:remove-exporter
+    next:
+      - step: end
+
+  - step: deploy_noetl_scrape
+    desc: Deploy VMServiceScrape for NoETL
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Deploying VMServiceScrape for NoETL..."
+          task monitoring:k8s:deploy-noetl-scrape
+    next:
+      - step: end
+
+  - step: remove_noetl_scrape
+    desc: Remove VMServiceScrape for NoETL
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Removing VMServiceScrape for NoETL..."
+          task monitoring:k8s:remove-noetl-scrape
+    next:
+      - step: end
+
+  - step: deploy_vector
+    desc: Deploy Vector log collector
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Deploying Vector..."
+          task monitoring:k8s:deploy-vector
+    next:
+      - step: end
+
+  - step: remove_vector
+    desc: Remove Vector log collector
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Removing Vector..."
+          task monitoring:k8s:remove-vector
+    next:
+      - step: end
+
+  - step: deploy_vmlogs
+    desc: Deploy VictoriaLogs
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Deploying VictoriaLogs..."
+          task monitoring:k8s:deploy-vmlogs
+    next:
+      - step: end
+
+  - step: remove_vmlogs
+    desc: Remove VictoriaLogs
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Removing VictoriaLogs..."
+          task monitoring:k8s:remove-vmlogs
+    next:
+      - step: end
+
+  - step: show_help
+    desc: Display available actions
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "=================================================="
+          echo " VictoriaMetrics Monitoring Stack Automation"
+          echo "=================================================="
+          echo ""
+          echo "Usage:"
+          echo "  noetl run automation/infrastructure/monitoring.yaml --set action=<action>"
+          echo ""
+          echo "Main Actions:"
+          echo "  deploy              - Deploy complete monitoring stack"
+          echo "  undeploy            - Remove monitoring stack"
+          echo "  status              - Check deployment status"
+          echo "  grafana-creds       - Get Grafana admin credentials"
+          echo ""
+          echo "Component Actions:"
+          echo "  deploy-dashboards   - Deploy NoETL and Postgres dashboards"
+          echo "  remove-dashboards   - Remove Grafana dashboards"
+          echo "  deploy-exporter     - Deploy postgres-exporter"
+          echo "  remove-exporter     - Remove postgres-exporter"
+          echo "  deploy-noetl-scrape - Deploy VMServiceScrape for NoETL"
+          echo "  remove-noetl-scrape - Remove VMServiceScrape for NoETL"
+          echo "  deploy-vector       - Deploy Vector log collector"
+          echo "  remove-vector       - Remove Vector"
+          echo "  deploy-vmlogs       - Deploy VictoriaLogs"
+          echo "  remove-vmlogs       - Remove VictoriaLogs"
+          echo ""
+          echo "Examples:"
+          echo "  # Deploy full stack"
+          echo "  noetl run automation/infrastructure/monitoring.yaml --set action=deploy"
+          echo ""
+          echo "  # Get Grafana credentials"
+          echo "  noetl run automation/infrastructure/monitoring.yaml --set action=grafana-creds"
+          echo ""
+          echo "  # Deploy dashboards after stack is ready"
+          echo "  noetl run automation/infrastructure/monitoring.yaml --set action=deploy-dashboards"
+          echo ""
+          echo "  # Check status"
+          echo "  noetl run automation/infrastructure/monitoring.yaml --set action=status"
+          echo ""
+    next:
+      - step: end
+
+  - step: end
+    desc: End workflow
