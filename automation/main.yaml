@@ -5,58 +5,57 @@ metadata:
   path: automation/main
   description: Main automation entry point for NoETL development workflows
 workload:
-  # Environment configuration
   registry: "local"
   image_name: "noetl"
-  target: "{{ execution.target | default('help') }}"
+  target: "help"
 workflow:
   - step: start
     desc: Entry point for automation workflows
-    next:
-      - when: "{{ workload.target == 'help' }}"
+    tool:
+      kind: shell
+      cmds:
+        - echo "Target is '{{ workload.target }}'"
+    case:
+      - when: "{{ workload.target }} == help"
         then:
           - step: show_help
-      - when: "{{ workload.target == 'bootstrap' }}"
+      - when: "{{ workload.target }} == bootstrap"
         then:
           - step: bootstrap
-      - when: "{{ workload.target == 'destroy' }}"
+      - when: "{{ workload.target }} == destroy"
         then:
           - step: destroy
-      - when: "{{ workload.target == 'dev' }}"
+      - when: "{{ workload.target }} == dev"
         then:
           - step: quick_dev
-      - step: unknown_target
+        else:
+          - step: unknown_target
   
   - step: show_help
     desc: Display available automation targets
     tool:
-      kind: python
-      code: |
-        result = {
-          "status": "success",
-          "data": {
-            "message": """NoETL Automation Playbooks
-
-Available targets:
-  bootstrap   - Complete K8s environment setup (install tools + deploy all)
-  destroy     - Destroy environment and clean up all resources
-  dev         - Quick development cycle (build + redeploy)
-  test        - Run complete test suite
-  
-Usage:
-  noetl run automation/main bootstrap
-  noetl run automation/main destroy
-  noetl run automation/main dev
-
-Individual workflows:
-  automation/setup/bootstrap.yaml    - Complete environment setup
-  automation/setup/destroy.yaml      - Teardown and cleanup
-  automation/ci/build.yaml           - Build workflows
-  automation/ci/deploy.yaml          - Deployment workflows
-  automation/test/regression.yaml    - Test execution
-"""
-          }
-        }
+      kind: shell
+      cmds:
+        - |
+          echo "====================================="
+          echo " NoETL Automation Playbooks"
+          echo "====================================="
+          echo ""
+          echo "Usage:"
+          echo "  noetl run automation/main.yaml --set target=bootstrap"
+          echo "  noetl run automation/main.yaml --set target=destroy"
+          echo "  noetl run automation/main.yaml --set target=dev"
+          echo ""
+          echo "Or run workflows directly:"
+          echo "  noetl run automation/setup/bootstrap.yaml"
+          echo "  noetl run automation/setup/destroy.yaml"
+          echo ""
+          echo "Available targets:"
+          echo "  bootstrap   - Complete K8s environment setup"
+          echo "  destroy     - Destroy environment and clean up"
+          echo "  dev         - Quick development cycle"
+          echo "  test        - Run complete test suite"
+          echo ""
     next:
       - step: end
   
@@ -64,7 +63,7 @@ Individual workflows:
     desc: Run complete bootstrap workflow
     tool:
       kind: playbook
-      path: automation/setup/bootstrap
+      path: automation/setup/bootstrap.yaml
     next:
       - step: end
   
@@ -72,32 +71,28 @@ Individual workflows:
     desc: Run destroy workflow
     tool:
       kind: playbook
-      path: automation/setup/destroy
+      path: automation/setup/destroy.yaml
     next:
       - step: end
   
   - step: quick_dev
     desc: Quick development cycle
     tool:
-      kind: playbook
-      path: automation/ci/quick_dev
+      kind: shell
+      cmds:
+        - echo "Quick dev workflow not yet implemented"
     next:
       - step: end
   
   - step: unknown_target
     desc: Handle unknown target
     tool:
-      kind: python
-      args:
-        target: "{{ workload.target }}"
-      code: |
-        result = {
-          "status": "error",
-          "data": {
-            "message": f"Unknown target: {target}",
-            "available": ["bootstrap", "destroy", "dev", "test", "help"]
-          }
-        }
+      kind: shell
+      cmds:
+        - |
+          echo "Error: Unknown target '{{ workload.target }}'"
+          echo "Available targets: bootstrap, destroy, dev, test, help"
+          exit 1
     next:
       - step: end
   
