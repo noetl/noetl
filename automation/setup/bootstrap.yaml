@@ -213,6 +213,18 @@ workflow:
           echo "Deploying NoETL..."
           task noetl:k8s:deploy
     next:
+      - step: deploy_observability
+  
+  - step: deploy_observability
+    desc: Deploy observability stack (ClickHouse, Qdrant, NATS)
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Deploying observability stack..."
+          task observability:activate-all
+    next:
       - step: wait_for_services
   
   - step: wait_for_services
@@ -223,9 +235,22 @@ workflow:
         - |
           echo ""
           echo "Waiting for services to be ready..."
-          sleep 10
-          kubectl wait --for=condition=ready pod -l app=postgres -n default --timeout=60s || true
-          kubectl wait --for=condition=ready pod -l app=noetl-server -n default --timeout=60s || true
+          sleep 15
+          
+          echo "Waiting for PostgreSQL..."
+          kubectl wait --for=condition=ready pod -l app=postgres -n postgres --timeout=60s || true
+          
+          echo "Waiting for NoETL server..."
+          kubectl wait --for=condition=ready pod -l app=noetl-server -n noetl --timeout=60s || true
+          
+          echo "Waiting for NATS (mandatory)..."
+          kubectl wait --for=condition=ready pod -l app=nats -n nats --timeout=120s || echo "ERROR: NATS failed to start - NoETL requires NATS"
+          
+          echo "Waiting for Qdrant..."
+          kubectl wait --for=condition=ready pod -l app=qdrant -n qdrant --timeout=60s || true
+          
+          echo "Waiting for ClickHouse (optional)..."
+          kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=chi-clickhouse-clickhouse -n clickhouse --timeout=120s || echo "Warning: ClickHouse not ready"
     next:
       - step: test_cluster_health
   
@@ -257,10 +282,13 @@ workflow:
           echo "  PostgreSQL: deployed"
           echo "  NoETL server: deployed"
           echo "  NoETL workers: deployed"
+          echo "  Observability: deployed (ClickHouse, Qdrant, NATS)"
           echo ""
           echo "Endpoints:"
           echo "  NoETL API: http://localhost:8082"
           echo "  PostgreSQL: localhost:54321"
+          echo "  ClickHouse HTTP: http://localhost:30123"
+          echo "  Qdrant: http://localhost:30633"
           echo ""
           echo "Next Steps:"
           echo "  1. Register credentials:"
