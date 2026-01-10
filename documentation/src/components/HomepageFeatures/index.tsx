@@ -11,32 +11,32 @@ type FeatureItem = {
 
 const FeatureList: FeatureItem[] = [
   {
-    title: 'Easy to Use',
+    title: 'Declarative Workflows',
     Svg: require('@site/static/img/undraw_docusaurus_mountain.svg').default,
     description: (
       <>
-        Docusaurus was designed from the ground up to be easily installed and
-        used to get your website up and running quickly.
+        Define data pipelines and ML workflows in YAML with Jinja2 templating.
+        No boilerplate code - focus on your business logic.
       </>
     ),
   },
   {
-    title: 'Focus on What Matters',
+    title: 'Multi-Tool Execution',
     Svg: require('@site/static/img/undraw_docusaurus_tree.svg').default,
     description: (
       <>
-        Docusaurus lets you focus on your docs, and we&apos;ll do the chores. Go
-        ahead and move your docs into the <code>docs</code> directory.
+        Built-in tools for HTTP, Python, PostgreSQL, DuckDB, Snowflake, and more.
+        Extend with custom tools as needed.
       </>
     ),
   },
   {
-    title: 'Powered by React',
+    title: 'Event-Driven Architecture',
     Svg: require('@site/static/img/undraw_docusaurus_react.svg').default,
     description: (
       <>
-        Extend or customize your website layout by reusing React. Docusaurus can
-        be extended while reusing the same header and footer.
+        Distributed workers with horizontal scaling. All execution emits structured
+        events for observability and AI-assisted optimization.
       </>
     ),
   },
