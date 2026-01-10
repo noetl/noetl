@@ -14,36 +14,45 @@ NoETL uses a server-worker architecture for distributed workflow execution.
 
 ## Components
 
-### Gateway/API
+### Gateway
 
-External entrypoint exposing the public HTTP API:
-- Handles authentication and authorization
-- Forwards requests to the Server
-- Used by CLIs, UIs, and integrations
+Rust-based API gateway for external clients:
+- Exposes GraphQL API for playbook execution
+- Provides REST API for Auth0 authentication (`/api/auth/*`)
+- Session validation middleware
+- Pure gateway design - no direct database connections
+- All data access through Control Plane API
+- Future: WebSocket subscriptions via NATS for live updates
 
-### Orchestrator Server
+### NoETL Control Plane
 
 Central coordination service:
+- Exposes REST APIs for catalog, credentials, executions, and events
 - Schedules and supervises workflow executions
+- Publishes task notifications to NATS JetStream
+- Receives execution events from workers
 - Manages retries and backoff policies
-- Records events to the event log
-- Provides CRUD APIs for catalog, credentials, tasks, and events
+- Reconstructs workflow state from event table
+- Used by CLIs, UIs, and integrations
 
 ### Worker Pools
 
 Stateless background executors:
+- Subscribe to NATS JetStream for task notifications
+- Retrieve task details via Control Plane API
 - Run workflow steps and tools (HTTP, SQL, Python, etc.)
+- Report events back via Control Plane API
 - Scale horizontally based on load
-- No inbound HTTP endpoints (pull-based)
 - Isolated execution environments
 
-### Scheduler & Queues
+### NATS JetStream
 
-Internal task management:
-- Priority queues for task scheduling
-- Resource-aware scheduling (CPU/GPU pools, concurrency limits)
-- Handles fan-out/fan-in patterns
-- Back-pressure management across workflows
+Message broker for task distribution:
+- Control Plane publishes task notifications to NATS streams
+- Workers subscribe and acknowledge messages
+- Messages contain pointers to Control Plane API for task details
+- Durable subscriptions ensure no task loss
+- Supports multiple worker pools and load balancing
 
 ### Catalog & Credentials
 
@@ -69,42 +78,66 @@ Connectors for external systems:
 ## Data Flow
 
 ```
-┌─────────────┐     ┌─────────────┐     ┌─────────────┐
-│   Client    │────▶│   Server    │────▶│   Workers   │
-│  (CLI/API)  │     │ (Orchestr.) │     │  (Execute)  │
-└─────────────┘     └──────┬──────┘     └──────┬──────┘
-                           │                    │
-                           ▼                    ▼
-                    ┌─────────────┐     ┌─────────────┐
-                    │  PostgreSQL │     │   Events    │
-                    │  (Catalog)  │     │  (Logs/Obs) │
-                    └─────────────┘     └─────────────┘
+┌─────────────┐     ┌─────────────┐     ┌───────────────┐     ┌─────────────┐
+│   Web UI    │────▶│   Gateway   │────▶│ Control Plane │────▶│    NATS     │
+│  (GraphQL)  │     │   (Rust)    │     │   (FastAPI)   │     │ JetStream   │
+└─────────────┘     └─────────────┘     └───────┬───────┘     └──────┬──────┘
+                                                │                    │
+┌─────────────┐                                 │              ┌─────▼─────┐
+│   CLI/API   │─────────────────────────────────┘              │  Workers  │
+│  (Direct)   │                                 │◀─────────────│ (Execute) │
+└─────────────┘                                 │  (events)    └───────────┘
+                                                ▼                    
+                                        ┌─────────────┐     
+                                        │  PostgreSQL │     
+                                        │  (Events)   │     
+                                        └─────────────┘     
 ```
 
-1. **Client** submits playbook via CLI or API
-2. **Server** validates and schedules execution
-3. **Server** enqueues jobs to PostgreSQL queue
-4. **Workers** poll queue, execute steps, report results
-5. **Events** recorded for observability and AI analysis
+1. **Web UI** sends GraphQL requests to Gateway
+2. **Gateway** authenticates and forwards to Control Plane API
+3. **CLI/API** can also call Control Plane directly
+4. **Control Plane** validates, creates execution, publishes task to NATS
+5. **Workers** receive NATS message with task pointer
+6. **Workers** fetch task details from Control Plane API
+7. **Workers** execute steps and report events to Control Plane API
+8. **Control Plane** stores events in PostgreSQL `noetl.event` table
+9. **Control Plane** monitors events to determine next steps in workflow
 
-## Workflow Block Schema
+## Database Schema
 
-![NoETL Workflow Block Schema](https://raw.githubusercontent.com/noetl/noetl/HEAD/documentation/static/img/noetl-block-schema.png)
+The NoETL PostgreSQL schema is intentionally simple - no queue tables:
+
+| Table | Purpose |
+|-------|---------|
+| `catalog` | Playbook definitions (path, version, content) |
+| `event` | Execution events (status, results, errors) |
+| `credential` | Encrypted credentials |
+| `keychain` | Runtime token cache with TTL |
+| `transient` | Execution-scoped variables |
+| `runtime` | Worker pool and server registration |
+| `schedule` | Cron/interval scheduled playbooks |
+
+**Control loop**: Control Plane analyzes `event` table to reconstruct execution state and determine next steps, then publishes tasks to NATS.
 
 ## Communication Patterns
 
-### Server ↔ Worker
+### Control Plane → NATS → Worker
 
-Workers communicate with the server via:
-- **PostgreSQL Queue**: Job leasing and result reporting
-- **Events API**: Step execution events
+Task distribution via NATS JetStream:
+1. Control Plane publishes task notification to NATS stream
+2. Message contains execution_id and task pointer (not full payload)
+3. Worker subscribes, receives message, acknowledges
+4. Worker calls Control Plane API to get full task context
+5. Worker executes and reports events to Control Plane API
 
 ### Event-Driven State
 
-All execution state is persisted as events:
-- Server reconstructs state from event log
-- Enables replay and debugging
-- Supports distributed execution
+All execution state is persisted as events in PostgreSQL:
+- Server reconstructs workflow state from `noetl.event` table
+- Determines which steps completed, which are pending
+- Publishes next tasks to NATS based on workflow graph
+- Enables replay, debugging, and distributed execution
 
 ## Scaling
 
