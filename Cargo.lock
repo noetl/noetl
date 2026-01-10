@@ -1670,7 +1670,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "noetl-cli"
+name = "noetl"
 version = "2.5.3"
 dependencies = [
  "anyhow",

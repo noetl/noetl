@@ -1,0 +1,24 @@
+FROM ubuntu:22.04
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    dpkg-dev \
+    curl \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Rust
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+WORKDIR /build
+
+# Copy source
+COPY . .
+
+# Build Debian package
+RUN ./scripts/build_deb.sh ${VERSION:-2.5.3}
+
+# Packages will be in build/deb/
+CMD ["bash"]

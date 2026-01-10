@@ -9,7 +9,7 @@ class Noetl < Formula
   depends_on "rust" => :build
 
   def install
-    cd "crates/noetlcli" do
+    cd "crates/noetlctl" do
       system "cargo", "install", *std_cargo_args
     end
   end

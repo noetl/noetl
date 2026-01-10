@@ -1,6 +1,6 @@
 [workspace]
 members = [
-    "crates/noetlcli",
+    "crates/noetlctl",
     "crates/gateway",
 ]
 resolver = "2"

@@ -1,5 +1,5 @@
 [project]
-name = "noetl-cli"
+name = "noetlctl"
 version = "2.5.3"
 description = "NoETL CLI (Rust) - Command-line interface for NoETL workflow automation"
 readme = "README.md"

@@ -3,7 +3,7 @@ version: '3.45'
 tasks:
   noetlctl:local:build:
     desc: Build noetl-cli binary and place it in the project bin/ directory
-    dir: crates/noetlcli
+    dir: crates/noetlctl
     cmds:
       - cargo build --release
       - mkdir -p ../../bin
@@ -17,7 +17,7 @@ tasks:
 
   noetlctl:local:install:
     desc: Install noetl-cli binary to ~/.local/bin/
-    dir: crates/noetlcli
+    dir: crates/noetlctl
     cmds:
       - cargo install --path . --root ~/.local/
     preconditions:
@@ -26,14 +26,14 @@ tasks:
 
   noetlctl:local:clean:
     desc: Clean noetl-cli build artifacts
-    dir: crates/noetlcli
+    dir: crates/noetlctl
     cmds:
       - cargo clean
       # Binary managed by pip, no cleanup needed
 
   noetlctl:build:wheel:
     desc: Build wheel for noetl-cli using maturin
-    dir: crates/noetlcli
+    dir: crates/noetlctl
     cmds:
       - pip install maturin
       - maturin build --release
@@ -43,7 +43,7 @@ tasks:
 
   noetlctl:publish:
     desc: Publish noetl-cli to PyPI using maturin
-    dir: crates/noetlcli
+    dir: crates/noetlctl
     cmds:
       - maturin publish
     preconditions:

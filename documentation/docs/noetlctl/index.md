@@ -98,35 +98,56 @@ noetl db validate
 
 ## Installation
 
-### Binary Location
+Multiple installation options available:
+
+### Package Managers (Recommended)
 
 ```bash
-# After building
-./bin/noetl
+# macOS - Homebrew
+brew tap noetl/tap
+brew install noetl
 
-# Or from release binary
-./crates/noetlcli/target/release/noetl
+# Ubuntu/Debian - APT
+echo 'deb [trusted=yes] https://noetl.github.io/apt jammy main' | sudo tee /etc/apt/sources.list.d/noetl.list
+sudo apt-get update
+sudo apt-get install noetl
+
+# Rust - Crates.io
+cargo install noetl
+
+# Python - PyPI
+pip install noetlctl
 ```
 
 ### Build from Source
 
 ```bash
-cd crates/noetlcli
+cd crates/noetlctl
 cargo build --release
 
 # Binary available at:
-# crates/noetlcli/target/release/noetl
+# crates/noetlctl/target/release/noetl
 ```
 
-### Add to PATH
+### Binary Locations
 
 ```bash
-# Copy to local bin
-cp crates/noetlcli/target/release/noetl /usr/local/bin/noetl
+# After Homebrew install
+/opt/homebrew/bin/noetl  # macOS Apple Silicon
+/usr/local/bin/noetl     # macOS Intel
 
-# Or add to PATH
-export PATH="$PATH:$(pwd)/bin"
+# After APT install
+/usr/bin/noetl
+
+# After cargo install
+~/.cargo/bin/noetl
+
+# After pip install
+~/.local/bin/noetl  # Linux
+~/Library/Python/3.x/bin/noetl  # macOS
 ```
+
+**See**: [Installation Guide](../installation/homebrew.md) for complete details.
 
 ## Usage Modes
 
