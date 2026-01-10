@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-VERSION=${1:-2.5.3}
+VERSION=${1:-2.5.4}
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 

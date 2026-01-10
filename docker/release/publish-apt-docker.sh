@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-VERSION=${1:-2.5.3}
+VERSION=${1:-2.5.4}
 ARCH=${2:-arm64}
 DEB_FILE="build/deb/noetl_${VERSION}-1_${ARCH}.deb"
 
