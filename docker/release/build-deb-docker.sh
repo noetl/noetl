@@ -20,7 +20,7 @@ docker build \
 # Extract .deb from container
 echo "📦 Extracting .deb package..."
 CONTAINER_ID=$(docker create noetl-deb-builder:${VERSION})
-docker cp ${CONTAINER_ID}:/build/build/deb/. build/deb/
+docker cp ${CONTAINER_ID}:/build/build/deb/ build/
 docker rm ${CONTAINER_ID}
 
 echo ""

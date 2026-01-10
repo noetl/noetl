@@ -12,7 +12,7 @@ rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR"
 
 # Clone or copy source
-if [ -d ".git" ]; then
+if [ -d ".git" ] || [ -f "Cargo.toml" ]; then
     echo "📂 Using current repository..."
     REPO_DIR=$(pwd)
 else
@@ -40,7 +40,16 @@ fi
 # Build Rust binary
 echo "🔨 Building Rust binary..."
 cd "$REPO_DIR"
-cargo build --release -p noetl-cli
+
+# Try noetl first, fallback to noetl-cli for older versions
+if cargo metadata --no-deps --format-version 1 | grep -q '"name":"noetl"'; then
+    PACKAGE_NAME="noetl"
+else
+    PACKAGE_NAME="noetl-cli"
+fi
+
+echo "📦 Building package: $PACKAGE_NAME"
+cargo build --release -p "$PACKAGE_NAME"
 
 # Create debian package structure
 PKG_DIR="$BUILD_DIR/noetl_${VERSION}-1_${ARCH}"
