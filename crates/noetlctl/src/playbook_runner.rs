@@ -155,10 +155,8 @@ impl PlaybookRunner {
         let playbook: Playbook = serde_yaml::from_str(&content)
             .context("Failed to parse playbook YAML")?;
 
-        if self.verbose {
-            println!("📋 Running playbook: {}", playbook.metadata.name);
-            println!("   API Version: {}", playbook.api_version);
-        }
+        println!("📋 Running playbook: {}", playbook.metadata.name);
+        println!("   API Version: {}", playbook.api_version);
 
         // Initialize execution context with workload variables
         let mut context = ExecutionContext::new();
@@ -193,7 +191,7 @@ impl PlaybookRunner {
         // Determine starting step - use target if provided, otherwise "start"
         let starting_step = self.target.as_deref().unwrap_or("start");
         
-        if self.verbose && self.target.is_some() {
+        if self.target.is_some() {
             println!("🎯 Target: {}", starting_step);
         }
 
@@ -224,11 +222,9 @@ impl PlaybookRunner {
             return Ok(());
         }
 
-        if self.verbose {
-            println!("\n🔹 Step: {}", step_name);
-            if let Some(desc) = &step.desc {
-                println!("   Description: {}", desc);
-            }
+        println!("\n🔹 Step: {}", step_name);
+        if let Some(desc) = &step.desc {
+            println!("   Description: {}", desc);
         }
 
         // Execute the tool and capture result
@@ -427,8 +423,8 @@ impl PlaybookRunner {
 
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         
-        // Print output if verbose
-        if self.verbose && !stdout.is_empty() {
+        // Always print command output
+        if !stdout.is_empty() {
             print!("{}", stdout);
         }
 
