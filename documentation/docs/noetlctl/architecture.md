@@ -1,6 +1,6 @@
 ---
-sidebar_position: 5
-title: noetlctl Architecture
+sidebar_position: 1
+title: Architecture & Usage
 description: Understanding when to use noetlctl vs Python direct execution
 ---
 
@@ -20,9 +20,10 @@ NoETL provides two ways to run the server and worker:
 ### Primary Functions
 
 1. **Process Management** - Start/stop server and worker with PID tracking
-2. **CLI Operations** - Register resources, execute playbooks, query status
-3. **Development Tools** - Database initialization, K8s deployment automation
-4. **Interactive TUI** - Terminal UI for monitoring and management
+2. **Local Playbook Execution** - Run playbooks locally without server/worker infrastructure
+3. **CLI Operations** - Register resources, execute playbooks, query status
+4. **Development Tools** - Database initialization, K8s deployment automation
+5. **Interactive TUI** - Terminal UI for monitoring and management
 
 ### Implementation Details
 
@@ -43,6 +44,7 @@ python -m noetl.worker
 ✅ **Recommended for:**
 - Local development on Mac/Linux/Windows
 - Manual server/worker management
+- Local playbook execution without infrastructure ([see Local Execution](./local_execution.md))
 - CLI operations (register, execute, list)
 - K8s deployment automation (`noetl k8s deploy`)
 - Database management (`noetl db init`)
@@ -61,10 +63,13 @@ python -m noetl.worker
 # Start worker
 ./bin/noetl worker start
 
+# Run playbook locally (no server/worker needed)
+./bin/noetl run automation/tasks.yaml build --verbose
+
 # Register playbook
 ./bin/noetl register playbook --file playbook.yaml
 
-# Execute playbook
+# Execute playbook (distributed execution)
 ./bin/noetl execute playbook my-playbook --json
 
 # Stop server

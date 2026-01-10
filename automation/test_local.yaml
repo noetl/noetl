@@ -1,0 +1,37 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: test_local_execution
+  path: automation/test
+
+workload:
+  cluster: noetl
+  message: "Hello from local execution!"
+
+workflow:
+  - step: start
+    desc: "Start the workflow"
+    next:
+      - step: echo_message
+
+  - step: echo_message
+    desc: "Echo a message"
+    tool:
+      kind: shell
+      cmds: "echo '{{ workload.message }}'"
+    next:
+      - step: list_files
+
+  - step: list_files
+    desc: "List current directory"
+    tool:
+      kind: shell
+      cmds:
+        - "echo 'Current directory contents:'"
+        - "ls -la | head -10"
+        - "echo 'Done listing files'"
+    next:
+      - step: end
+
+  - step: end
+    desc: "End the workflow"

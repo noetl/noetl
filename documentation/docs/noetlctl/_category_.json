@@ -1,0 +1,8 @@
+{
+  "label": "noetlctl CLI",
+  "position": 3,
+  "link": {
+    "type": "generated-index",
+    "description": "NoETL command-line tool (noetlctl) for process management, local playbook execution, and development workflows."
+  }
+}

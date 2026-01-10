@@ -1,4 +1,5 @@
 mod config;
+mod playbook_runner;
 
 use anyhow::{Context as AnyhowContext, Result};
 use base64::prelude::*;
@@ -48,6 +49,28 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Run playbook locally (no server required)
+    /// Examples:
+    ///     noetl run automation/deploy.yaml
+    ///     noetl run automation/build.yaml build_image
+    ///     noetl run automation/deploy.yaml --set image_tag=v2.5.3
+    ///     noetl run ci/test.yaml register_credentials --verbose
+    #[command(verbatim_doc_comment)]
+    Run {
+        /// Path to the playbook file
+        playbook: PathBuf,
+
+        /// Target step to execute (optional, defaults to 'start')
+        target: Option<String>,
+
+        /// Set variables (format: key=value)
+        #[arg(long = "set", value_name = "KEY=VALUE")]
+        variables: Vec<String>,
+
+        /// Enable verbose output
+        #[arg(short, long)]
+        verbose: bool,
+    },
     /// Context management
     Context {
         #[command(subcommand)]
@@ -499,6 +522,26 @@ async fn main() -> Result<()> {
     let client = Client::new();
 
     match cli.command {
+        Some(Commands::Run { playbook, target, variables, verbose }) => {
+            // Parse variables from key=value format
+            let mut vars = std::collections::HashMap::new();
+            for var in variables {
+                let parts: Vec<&str> = var.splitn(2, '=').collect();
+                if parts.len() == 2 {
+                    vars.insert(parts[0].to_string(), parts[1].to_string());
+                } else {
+                    eprintln!("Warning: Invalid variable format '{}', expected key=value", var);
+                }
+            }
+
+            // Run playbook locally
+            let runner = playbook_runner::PlaybookRunner::new(playbook)
+                .with_variables(vars)
+                .with_verbose(verbose)
+                .with_target(target);
+            
+            runner.run()?;
+        }
         Some(Commands::Context { command }) => {
             handle_context_command(&mut config, command)?;
         }
