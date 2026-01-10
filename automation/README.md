@@ -12,7 +12,8 @@ automation/
 │   └── destroy.yaml           # Environment cleanup
 ├── infrastructure/            # Infrastructure component management
 │   ├── postgres.yaml          # PostgreSQL deployment and management
-│   └── qdrant.yaml            # Qdrant vector database management
+│   ├── qdrant.yaml            # Qdrant vector database management
+│   └── monitoring.yaml        # VictoriaMetrics monitoring stack
 ├── test/                      # Testing workflows
 │   ├── pagination-server.yaml # Pagination test server automation
 │   ├── setup.yaml             # Test environment setup
@@ -235,6 +236,46 @@ Equivalent task commands:
 - `task qdrant:test` → `--set action=test`
 - `task qdrant:collections` → `--set action=collections`
 - `task qdrant:restart` → `--set action=restart`
+
+**VictoriaMetrics Monitoring Stack:**
+```bash
+# Deploy complete monitoring stack
+noetl run automation/infrastructure/monitoring.yaml --set action=deploy
+
+# Check status
+noetl run automation/infrastructure/monitoring.yaml --set action=status
+
+# Get Grafana admin credentials
+noetl run automation/infrastructure/monitoring.yaml --set action=grafana-creds
+
+# Deploy dashboards
+noetl run automation/infrastructure/monitoring.yaml --set action=deploy-dashboards
+
+# Deploy postgres exporter
+noetl run automation/infrastructure/monitoring.yaml --set action=deploy-exporter
+
+# Deploy NoETL metrics scraper
+noetl run automation/infrastructure/monitoring.yaml --set action=deploy-noetl-scrape
+
+# Deploy Vector log collector
+noetl run automation/infrastructure/monitoring.yaml --set action=deploy-vector
+
+# Deploy VictoriaLogs
+noetl run automation/infrastructure/monitoring.yaml --set action=deploy-vmlogs
+
+# Remove monitoring stack
+noetl run automation/infrastructure/monitoring.yaml --set action=undeploy
+```
+
+Equivalent task commands:
+- `task monitoring:k8s:deploy` → `--set action=deploy`
+- `task monitoring:k8s:delete-stack` → `--set action=undeploy`
+- `task monitoring:k8s:grafana-creds` → `--set action=grafana-creds`
+- `task monitoring:k8s:deploy-dashboards` → `--set action=deploy-dashboards`
+- `task monitoring:k8s:deploy-exporter` → `--set action=deploy-exporter`
+- `task monitoring:k8s:deploy-noetl-scrape` → `--set action=deploy-noetl-scrape`
+- `task monitoring:k8s:deploy-vector` → `--set action=deploy-vector`
+- `task monitoring:k8s:deploy-vmlogs` → `--set action=deploy-vmlogs`
 
 **Run Regression Tests:**
 ```bash
