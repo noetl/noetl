@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.5.3](https://github.com/noetl/noetl/compare/v2.5.2...v2.5.3) (2026-01-10)
+
+### Bug Fixes
+
+* add local playbook execution to noetlctl CLI ([b46ba98](https://github.com/noetl/noetl/commit/b46ba98666f715603c43c9880d9e4506c74ec101))
+
 ## [2.5.2](https://github.com/noetl/noetl/compare/v2.5.1...v2.5.2) (2026-01-07)
 
 ### Bug Fixes
