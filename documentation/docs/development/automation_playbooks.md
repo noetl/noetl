@@ -190,6 +190,85 @@ When multiple sources provide variables:
 2. `--payload` JSON object
 3. Playbook `workload` section (default values)
 
+## Infrastructure Component Management
+
+### PostgreSQL
+
+Manage PostgreSQL deployment and operations:
+
+```bash
+# Deploy PostgreSQL to kind cluster
+noetl run automation/infrastructure/postgres.yaml --set action=deploy
+
+# Check deployment status
+noetl run automation/infrastructure/postgres.yaml --set action=status
+
+# Reset NoETL system schema
+noetl run automation/infrastructure/postgres.yaml --set action=schema-reset
+
+# View PostgreSQL logs
+noetl run automation/infrastructure/postgres.yaml --set action=logs
+
+# Remove PostgreSQL
+noetl run automation/infrastructure/postgres.yaml --set action=remove
+
+# Clear cache directory
+noetl run automation/infrastructure/postgres.yaml --set action=clear-cache
+```
+
+**Available Actions:**
+- `deploy` - Deploy PostgreSQL to kind cluster
+- `remove` - Remove PostgreSQL from kind cluster
+- `schema-reset` - Reset NoETL system schema
+- `clear-cache` - Clear postgres data cache directory
+- `status` - Check deployment status
+- `logs` - Show PostgreSQL logs
+
+### Qdrant Vector Database
+
+Manage Qdrant vector database for embeddings and semantic search:
+
+```bash
+# Deploy Qdrant
+noetl run automation/infrastructure/qdrant.yaml --set action=deploy
+
+# Check deployment status
+noetl run automation/infrastructure/qdrant.yaml --set action=status
+
+# Check health
+noetl run automation/infrastructure/qdrant.yaml --set action=health
+
+# Test with sample collection
+noetl run automation/infrastructure/qdrant.yaml --set action=test
+
+# List all collections
+noetl run automation/infrastructure/qdrant.yaml --set action=collections
+
+# View logs
+noetl run automation/infrastructure/qdrant.yaml --set action=logs
+
+# Restart Qdrant
+noetl run automation/infrastructure/qdrant.yaml --set action=restart
+
+# Remove Qdrant
+noetl run automation/infrastructure/qdrant.yaml --set action=undeploy
+```
+
+**Available Actions:**
+- `deploy` - Deploy Qdrant vector database
+- `undeploy` - Remove Qdrant from cluster
+- `status` - Check deployment status
+- `logs` - Show Qdrant logs
+- `health` - Check Qdrant health
+- `test` - Test with sample collection
+- `collections` - List Qdrant collections
+- `restart` - Restart Qdrant
+
+**Qdrant Endpoints:**
+- HTTP: `http://localhost:30633`
+- gRPC: `localhost:30634`
+- ClusterIP: `http://qdrant.qdrant.svc.cluster.local:6333`
+
 ## Best Practices
 
 1. **Start with help** - Always run `--set action=help` or `--set target=help` to see available options
@@ -238,6 +317,9 @@ automation/
 ├── setup/
 │   ├── bootstrap.yaml            # Environment setup
 │   └── destroy.yaml              # Cleanup
+├── infrastructure/
+│   ├── postgres.yaml             # PostgreSQL management
+│   └── qdrant.yaml               # Qdrant management
 └── test/
     └── pagination-server.yaml    # Test server automation
 ```

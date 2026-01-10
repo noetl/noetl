@@ -6,19 +6,23 @@ This directory contains NoETL playbooks for automating development, CI/CD, and t
 
 ```
 automation/
-├── main.yaml              # Main entry point with routing to sub-workflows
-├── setup/                 # Environment setup and teardown
-│   ├── bootstrap.yaml     # Complete environment bootstrap
-│   └── destroy.yaml       # Environment cleanup
-├── ci/                    # CI/CD workflows
-│   ├── build.yaml         # Build Docker images and binaries
-│   ├── deploy.yaml        # Deployment workflows
-│   └── quick_dev.yaml     # Fast development cycle
-├── test/                  # Testing workflows
-│   ├── setup.yaml         # Test environment setup
-│   ├── regression.yaml    # Run regression test suite
-│   └── integration.yaml   # Integration test execution
-└── examples/              # Example playbooks (existing)
+├── main.yaml                  # Main entry point with routing to sub-workflows
+├── setup/                     # Environment setup and teardown
+│   ├── bootstrap.yaml         # Complete environment bootstrap
+│   └── destroy.yaml           # Environment cleanup
+├── infrastructure/            # Infrastructure component management
+│   ├── postgres.yaml          # PostgreSQL deployment and management
+│   └── qdrant.yaml            # Qdrant vector database management
+├── test/                      # Testing workflows
+│   ├── pagination-server.yaml # Pagination test server automation
+│   ├── setup.yaml             # Test environment setup
+│   ├── regression.yaml        # Run regression test suite
+│   └── integration.yaml       # Integration test execution
+├── ci/                        # CI/CD workflows
+│   ├── build.yaml             # Build Docker images and binaries
+│   ├── deploy.yaml            # Deployment workflows
+│   └── quick_dev.yaml         # Fast development cycle
+└── examples/                  # Example playbooks (existing)
 ```
 
 ## Usage
@@ -166,6 +170,71 @@ Equivalent task commands:
 - `task pagination-server:tpsf` → `--set action=full`
 - `task pagination-server:tpss` → `--set action=status`
 - `task pagination-server:tpst` → `--set action=test`
+
+#### Infrastructure Component Management
+
+**PostgreSQL:**
+```bash
+# Deploy PostgreSQL
+noetl run automation/infrastructure/postgres.yaml --set action=deploy
+
+# Check status
+noetl run automation/infrastructure/postgres.yaml --set action=status
+
+# Reset schema
+noetl run automation/infrastructure/postgres.yaml --set action=schema-reset
+
+# View logs
+noetl run automation/infrastructure/postgres.yaml --set action=logs
+
+# Remove PostgreSQL
+noetl run automation/infrastructure/postgres.yaml --set action=remove
+
+# Clear cache
+noetl run automation/infrastructure/postgres.yaml --set action=clear-cache
+```
+
+Equivalent task commands:
+- `task postgres:k8s:deploy` → `--set action=deploy`
+- `task postgres:k8s:remove` → `--set action=remove`
+- `task postgres:k8s:schema-reset` → `--set action=schema-reset`
+- `task postgres:local:clear-cache` → `--set action=clear-cache`
+
+**Qdrant Vector Database:**
+```bash
+# Deploy Qdrant
+noetl run automation/infrastructure/qdrant.yaml --set action=deploy
+
+# Check status
+noetl run automation/infrastructure/qdrant.yaml --set action=status
+
+# Check health
+noetl run automation/infrastructure/qdrant.yaml --set action=health
+
+# Test with sample collection
+noetl run automation/infrastructure/qdrant.yaml --set action=test
+
+# List collections
+noetl run automation/infrastructure/qdrant.yaml --set action=collections
+
+# View logs
+noetl run automation/infrastructure/qdrant.yaml --set action=logs
+
+# Restart Qdrant
+noetl run automation/infrastructure/qdrant.yaml --set action=restart
+
+# Remove Qdrant
+noetl run automation/infrastructure/qdrant.yaml --set action=undeploy
+```
+
+Equivalent task commands:
+- `task qdrant:deploy` → `--set action=deploy`
+- `task qdrant:undeploy` → `--set action=undeploy`
+- `task qdrant:status` → `--set action=status`
+- `task qdrant:health` → `--set action=health`
+- `task qdrant:test` → `--set action=test`
+- `task qdrant:collections` → `--set action=collections`
+- `task qdrant:restart` → `--set action=restart`
 
 **Run Regression Tests:**
 ```bash
