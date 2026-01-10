@@ -1,0 +1,166 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: docker_automation
+  path: automation/development/docker
+
+workload:
+  action: help  # build, noetl-image-build, cleanup-all, images-clear, status
+
+workflow:
+  - step: start
+    desc: Entry point for Docker automation
+    tool:
+      kind: shell
+      cmds:
+        - echo "Docker Automation - Action '{{ action }}'"
+    next:
+      - when: "{{ action }} == build"
+        then:
+          - step: build_image
+        args: {}
+      - when: "{{ action }} == noetl-image-build"
+        then:
+          - step: build_noetl_image
+        args: {}
+      - when: "{{ action }} == cleanup-all"
+        then:
+          - step: cleanup_all
+        args: {}
+      - when: "{{ action }} == images-clear"
+        then:
+          - step: clear_images
+        args: {}
+      - when: "{{ action }} == status"
+        then:
+          - step: check_status
+        args: {}
+      - when: "{{ action }} == help"
+        then:
+          - step: show_help
+        args: {}
+      - step: show_help
+
+  - step: build_image
+    desc: Build NoETL Docker image
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Building NoETL Docker image..."
+          task docker:local:build
+    next:
+      - step: end
+
+  - step: build_noetl_image
+    desc: Build noetl container with docker
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Building noetl container..."
+          task docker:local:noetl-image-build
+    next:
+      - step: end
+
+  - step: cleanup_all
+    desc: Clean all docker resources (builders, images, volumes)
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Cleaning all Docker resources..."
+          echo "  - Builders"
+          echo "  - Images"
+          echo "  - Volumes"
+          task docker:local:cleanup-all
+    next:
+      - step: end
+
+  - step: clear_images
+    desc: Clear all docker images
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Clearing all Docker images..."
+          task docker:local:images-clear
+    next:
+      - step: end
+
+  - step: check_status
+    desc: Check Docker status and resources
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Docker Status:"
+          echo "=============="
+          echo ""
+          echo "=== Docker Version ==="
+          docker version 2>/dev/null || echo "Docker not available"
+          echo ""
+          echo "=== Docker Images ==="
+          docker images | head -20
+          echo ""
+          echo "=== Docker Containers ==="
+          docker ps -a | head -20
+          echo ""
+          echo "=== Docker Disk Usage ==="
+          docker system df
+    next:
+      - step: end
+
+  - step: show_help
+    desc: Display available actions
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "=================================================="
+          echo " Docker Automation"
+          echo "=================================================="
+          echo ""
+          echo "Usage:"
+          echo "  noetl run automation/development/docker.yaml --set action=<action>"
+          echo ""
+          echo "Build Actions:"
+          echo "  build               - Build NoETL Docker image"
+          echo "  noetl-image-build   - Build noetl container with docker"
+          echo ""
+          echo "Cleanup Actions:"
+          echo "  cleanup-all         - Clean all docker resources (builders, images, volumes)"
+          echo "  images-clear        - Clear all docker images"
+          echo ""
+          echo "Status:"
+          echo "  status              - Check Docker status and resources"
+          echo ""
+          echo "Examples:"
+          echo "  # Build NoETL image"
+          echo "  noetl run automation/development/docker.yaml --set action=build"
+          echo ""
+          echo "  # Check Docker status"
+          echo "  noetl run automation/development/docker.yaml --set action=status"
+          echo ""
+          echo "  # Cleanup all Docker resources"
+          echo "  noetl run automation/development/docker.yaml --set action=cleanup-all"
+          echo ""
+          echo "  # Clear all images"
+          echo "  noetl run automation/development/docker.yaml --set action=images-clear"
+          echo ""
+          echo "Task Equivalents:"
+          echo "  build             -> task docker:local:build"
+          echo "  noetl-image-build -> task docker:local:noetl-image-build"
+          echo "  cleanup-all       -> task docker:local:cleanup-all"
+          echo "  images-clear      -> task docker:local:images-clear"
+          echo ""
+    next:
+      - step: end
+
+  - step: end
+    desc: End workflow
