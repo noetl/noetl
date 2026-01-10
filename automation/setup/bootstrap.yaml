@@ -1,0 +1,389 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: bootstrap_environment
+  path: automation/setup/bootstrap
+  description: Complete K8s environment setup - equivalent to 'make bootstrap && task bring-all'
+workload:
+  registry: "local"
+  image_name: "noetl"
+workflow:
+  - step: start
+    desc: Begin bootstrap process
+    next:
+      - step: check_dependencies
+  
+  - step: check_dependencies
+    desc: Verify required tools are installed (Docker, kubectl, kind, task, etc.)
+    tool:
+      kind: http
+      url: "http://localhost:8082/api/health"
+      method: GET
+      retry:
+        max_attempts: 1
+        backoff: fixed
+        delay: 0
+      timeout: 2
+    next:
+      - when: "{{ result.status_code == 200 }}"
+        then:
+          - step: dependencies_ok
+      - step: run_bootstrap_script
+  
+  - step: run_bootstrap_script
+    desc: Run bootstrap script to install all required tools
+    tool:
+      kind: python
+      libs:
+        subprocess: subprocess
+        os: os
+      code: |
+        # Run the bootstrap script
+        bootstrap_script = "./ci/bootstrap/bootstrap.sh"
+        
+        if not os.path.exists(bootstrap_script):
+            result = {
+                "status": "error",
+                "data": {"message": f"Bootstrap script not found: {bootstrap_script}"}
+            }
+        else:
+            proc = subprocess.run(
+                ["/bin/bash", bootstrap_script],
+                capture_output=True,
+                text=True
+            )
+            
+            result = {
+                "status": "success" if proc.returncode == 0 else "error",
+                "data": {
+                    "returncode": proc.returncode,
+                    "stdout": proc.stdout,
+                    "stderr": proc.stderr,
+                    "message": "Bootstrap script completed" if proc.returncode == 0 else "Bootstrap script failed"
+                }
+            }
+    next:
+      - when: "{{ result.data.returncode == 0 }}"
+        then:
+          - step: dependencies_ok
+      - step: bootstrap_failed
+  
+  - step: dependencies_ok
+    desc: Dependencies verified, proceed with environment setup
+    next:
+      - step: check_ports
+  
+  - step: check_ports
+    desc: Check if required ports are free (54321, 3000, 9428, 8082)
+    tool:
+      kind: python
+      libs:
+        socket: socket
+      code: |
+        ports_to_check = [54321, 3000, 9428, 8082]
+        occupied_ports = []
+        
+        for port in ports_to_check:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(1)
+            try:
+                sock.connect(('localhost', port))
+                occupied_ports.append(port)
+                sock.close()
+            except (socket.timeout, ConnectionRefusedError):
+                pass
+        
+        result = {
+            "status": "success" if not occupied_ports else "warning",
+            "data": {
+                "ports_checked": ports_to_check,
+                "occupied_ports": occupied_ports,
+                "message": f"Ports occupied: {occupied_ports}" if occupied_ports else "All ports are free"
+            }
+        }
+    next:
+      - step: build_noetlctl
+  
+  - step: build_noetlctl
+    desc: Build noetlctl Rust CLI binary
+    tool:
+      kind: python
+      libs:
+        subprocess: subprocess
+      code: |
+        proc = subprocess.run(
+            ["task", "noetlctl:local:build"],
+            capture_output=True,
+            text=True
+        )
+        
+        result = {
+            "status": "success" if proc.returncode == 0 else "error",
+            "data": {
+                "returncode": proc.returncode,
+                "message": "noetlctl built successfully" if proc.returncode == 0 else "Failed to build noetlctl"
+            }
+        }
+    next:
+      - when: "{{ result.data.returncode == 0 }}"
+        then:
+          - step: build_docker_image
+      - step: build_failed
+  
+  - step: build_docker_image
+    desc: Build NoETL Docker image
+    tool:
+      kind: python
+      libs:
+        subprocess: subprocess
+      code: |
+        proc = subprocess.run(
+            ["task", "docker:local:noetl-image-build"],
+            capture_output=True,
+            text=True
+        )
+        
+        result = {
+            "status": "success" if proc.returncode == 0 else "error",
+            "data": {
+                "returncode": proc.returncode,
+                "message": "Docker image built" if proc.returncode == 0 else "Docker build failed"
+            }
+        }
+    next:
+      - when: "{{ result.data.returncode == 0 }}"
+        then:
+          - step: create_kind_cluster
+      - step: build_failed
+  
+  - step: create_kind_cluster
+    desc: Create kind Kubernetes cluster
+    tool:
+      kind: python
+      libs:
+        subprocess: subprocess
+      code: |
+        proc = subprocess.run(
+            ["task", "kind:local:cluster-create"],
+            capture_output=True,
+            text=True
+        )
+        
+        result = {
+            "status": "success" if proc.returncode == 0 else "error",
+            "data": {
+                "returncode": proc.returncode,
+                "message": "Kind cluster created" if proc.returncode == 0 else "Kind cluster creation failed"
+            }
+        }
+    next:
+      - when: "{{ result.data.returncode == 0 }}"
+        then:
+          - step: load_image_to_kind
+      - step: cluster_creation_failed
+  
+  - step: load_image_to_kind
+    desc: Load NoETL image into kind cluster
+    tool:
+      kind: python
+      libs:
+        subprocess: subprocess
+      code: |
+        proc = subprocess.run(
+            ["task", "kind:local:image-load"],
+            capture_output=True,
+            text=True
+        )
+        
+        result = {
+            "status": "success" if proc.returncode == 0 else "error",
+            "data": {
+                "returncode": proc.returncode,
+                "message": "Image loaded to kind" if proc.returncode == 0 else "Failed to load image"
+            }
+        }
+    next:
+      - when: "{{ result.data.returncode == 0 }}"
+        then:
+          - step: deploy_postgres
+      - step: deployment_failed
+  
+  - step: deploy_postgres
+    desc: Deploy PostgreSQL to kind cluster
+    tool:
+      kind: python
+      libs:
+        subprocess: subprocess
+      code: |
+        proc = subprocess.run(
+            ["task", "postgres:k8s:deploy"],
+            capture_output=True,
+            text=True
+        )
+        
+        result = {
+            "status": "success" if proc.returncode == 0 else "error",
+            "data": {
+                "returncode": proc.returncode,
+                "message": "PostgreSQL deployed" if proc.returncode == 0 else "PostgreSQL deployment failed"
+            }
+        }
+    next:
+      - when: "{{ result.data.returncode == 0 }}"
+        then:
+          - step: deploy_observability
+      - step: deployment_failed
+  
+  - step: deploy_observability
+    desc: Deploy observability stack (ClickHouse, Qdrant, NATS) - optional
+    tool:
+      kind: python
+      libs:
+        subprocess: subprocess
+      code: |
+        proc = subprocess.run(
+            ["task", "observability:activate-all"],
+            capture_output=True,
+            text=True
+        )
+        
+        # Observability is optional, continue even if it fails
+        result = {
+            "status": "success",
+            "data": {
+                "returncode": proc.returncode,
+                "message": "Observability deployed" if proc.returncode == 0 else "Observability deployment skipped (optional)"
+            }
+        }
+    next:
+      - step: deploy_monitoring
+  
+  - step: deploy_monitoring
+    desc: Deploy monitoring stack (VictoriaMetrics, Grafana) - optional
+    tool:
+      kind: python
+      libs:
+        subprocess: subprocess
+      code: |
+        proc = subprocess.run(
+            ["task", "monitoring:k8s:deploy"],
+            capture_output=True,
+            text=True
+        )
+        
+        # Monitoring is optional, continue even if it fails
+        result = {
+            "status": "success",
+            "data": {
+                "returncode": proc.returncode,
+                "message": "Monitoring deployed" if proc.returncode == 0 else "Monitoring deployment skipped (optional)"
+            }
+        }
+    next:
+      - step: deploy_noetl
+  
+  - step: deploy_noetl
+    desc: Deploy NoETL server and workers to kind cluster
+    tool:
+      kind: python
+      libs:
+        subprocess: subprocess
+      code: |
+        proc = subprocess.run(
+            ["task", "noetl:k8s:deploy"],
+            capture_output=True,
+            text=True
+        )
+        
+        result = {
+            "status": "success" if proc.returncode == 0 else "error",
+            "data": {
+                "returncode": proc.returncode,
+                "message": "NoETL deployed" if proc.returncode == 0 else "NoETL deployment failed"
+            }
+        }
+    next:
+      - when: "{{ result.data.returncode == 0 }}"
+        then:
+          - step: bootstrap_complete
+      - step: deployment_failed
+  
+  - step: bootstrap_complete
+    desc: Bootstrap successful, environment is ready
+    tool:
+      kind: python
+      code: |
+        result = {
+            "status": "success",
+            "data": {
+                "message": """Bootstrap Complete!
+
+Environment is ready:
+  - NoETL Server: http://localhost:8082
+  - Grafana: http://localhost:3000
+  - PostgreSQL: localhost:54321
+
+Next steps:
+  1. Register test credentials: task test:k8s:register-credentials
+  2. Register test playbooks: task test:k8s:register-playbooks
+  3. Run tests: task test:regression:full
+
+Or use automation playbooks:
+  noetl run automation/test/setup
+  noetl run automation/test/regression
+"""
+            }
+        }
+    next:
+      - step: end
+  
+  - step: bootstrap_failed
+    desc: Bootstrap script failed
+    tool:
+      kind: python
+      code: |
+        result = {
+            "status": "error",
+            "data": {"message": "Bootstrap failed. Check logs and ensure all prerequisites are met."}
+        }
+    next:
+      - step: end
+  
+  - step: build_failed
+    desc: Build process failed
+    tool:
+      kind: python
+      code: |
+        result = {
+            "status": "error",
+            "data": {"message": "Build failed. Check build logs for details."}
+        }
+    next:
+      - step: end
+  
+  - step: cluster_creation_failed
+    desc: Cluster creation failed
+    tool:
+      kind: python
+      code: |
+        result = {
+            "status": "error",
+            "data": {"message": "Kind cluster creation failed. Ensure Docker is running."}
+        }
+    next:
+      - step: end
+  
+  - step: deployment_failed
+    desc: Deployment failed
+    tool:
+      kind: python
+      code: |
+        result = {
+            "status": "error",
+            "data": {"message": "Deployment failed. Check kubectl logs for details."}
+        }
+    next:
+      - step: end
+  
+  - step: end
+    desc: Bootstrap workflow complete
