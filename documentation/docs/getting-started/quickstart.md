@@ -10,13 +10,39 @@ Get NoETL running quickly with either PyPI installation or a full local developm
 
 ## Option 1: PyPI Installation (Simplest)
 
+### Install NoETL Python Package
+
 ```bash
 # Install NoETL
 pip install noetl
 
 # Verify installation
+python -c "import noetl; print(noetl.__version__)"
+```
+
+### Install NoETL CLI (Rust Binary)
+
+The `noetl` CLI is a fast, native Rust binary for managing NoETL servers, workers, and playbooks:
+
+```bash
+# Install with CLI support (recommended)
+pip install "noetl[cli]"
+
+# Or install CLI standalone
+pip install noetl-cli
+
+# Verify CLI installation
 noetl --version
 ```
+
+**CLI Capabilities:**
+- `noetl server start/stop` - Manage NoETL server
+- `noetl worker start/stop` - Manage workers
+- `noetl db init/validate` - Database management
+- `noetl build` - Build Docker images
+- `noetl k8s deploy/redeploy/reset` - Kubernetes deployment
+- `noetl register playbook` - Register playbooks
+- `noetl run playbook` - Execute playbooks
 
 ## Option 2: Local Development Environment
 
@@ -78,7 +104,6 @@ workflow:
       args:
         message: "{{ workload.message }}"
       code: |
-        # Pure Python code - no imports, no def main()
         result = {"status": "success", "data": {"greeting": message}}
     next:
       - step: end
@@ -128,15 +153,20 @@ task --list
 
 ## Register Test Fixtures
 
-NoETL includes example playbooks in `tests/fixtures/playbooks/`:
+NoETL includes example playbooks in `tests/fixtures/playbooks/`. The CLI supports recursive directory scanning:
 
 ```bash
-# Register test credentials and playbooks
-task test:k8s:setup-environment
+# Register all playbooks from a directory (recursive)
+noetl register playbook tests/fixtures/playbooks/ --host localhost --port 8082
 
-# Or individually:
-task test:k8s:register-credentials
-task test:k8s:register-playbooks
+# Register all credentials from a directory (recursive)
+noetl register credential tests/fixtures/credentials/ --host localhost --port 8082
+
+# Register a single playbook
+noetl register playbook tests/fixtures/playbooks/hello_world/hello_world.yaml --host localhost --port 8082
+
+# Register a single credential
+noetl register credential tests/fixtures/credentials/pg_k8s.yaml --host localhost --port 8082
 ```
 
 ## Cleanup
