@@ -269,6 +269,65 @@ noetl run automation/infrastructure/qdrant.yaml --set action=undeploy
 - gRPC: `localhost:30634`
 - ClusterIP: `http://qdrant.qdrant.svc.cluster.local:6333`
 
+### VictoriaMetrics Monitoring Stack
+
+Manage VictoriaMetrics monitoring infrastructure including Grafana, metrics collection, and logging:
+
+```bash
+# Deploy complete monitoring stack
+noetl run automation/infrastructure/monitoring.yaml --set action=deploy
+
+# Check deployment status
+noetl run automation/infrastructure/monitoring.yaml --set action=status
+
+# Get Grafana admin credentials
+noetl run automation/infrastructure/monitoring.yaml --set action=grafana-creds
+
+# Deploy Grafana dashboards
+noetl run automation/infrastructure/monitoring.yaml --set action=deploy-dashboards
+
+# Deploy postgres exporter
+noetl run automation/infrastructure/monitoring.yaml --set action=deploy-exporter
+
+# Deploy NoETL metrics scraper
+noetl run automation/infrastructure/monitoring.yaml --set action=deploy-noetl-scrape
+
+# Deploy Vector log collector
+noetl run automation/infrastructure/monitoring.yaml --set action=deploy-vector
+
+# Deploy VictoriaLogs
+noetl run automation/infrastructure/monitoring.yaml --set action=deploy-vmlogs
+
+# Remove component
+noetl run automation/infrastructure/monitoring.yaml --set action=remove-dashboards
+noetl run automation/infrastructure/monitoring.yaml --set action=remove-vector
+
+# Remove complete stack
+noetl run automation/infrastructure/monitoring.yaml --set action=undeploy
+```
+
+**Main Actions:**
+- `deploy` - Deploy complete monitoring stack (Metrics Server, VM Operator, VM Stack)
+- `undeploy` - Remove monitoring stack
+- `status` - Check deployment status
+- `grafana-creds` - Get Grafana admin credentials
+
+**Component Actions:**
+- `deploy-dashboards` / `remove-dashboards` - Manage NoETL and Postgres Grafana dashboards
+- `deploy-exporter` / `remove-exporter` - Manage postgres-exporter and VMScrape
+- `deploy-noetl-scrape` / `remove-noetl-scrape` - Manage VMServiceScrape for NoETL
+- `deploy-vector` / `remove-vector` - Manage Vector log collector
+- `deploy-vmlogs` / `remove-vmlogs` - Manage VictoriaLogs
+
+**Monitoring Stack Components:**
+- **Grafana** - Metrics visualization and dashboards
+- **VictoriaMetrics** - Time-series metrics storage
+- **VMAgent** - Metrics collection agent
+- **VMAlert** - Alerting system
+- **Vector** - Log collector and processor
+- **VictoriaLogs** - Log storage and querying
+- **Postgres Exporter** - PostgreSQL metrics exporter
+
 ## Best Practices
 
 1. **Start with help** - Always run `--set action=help` or `--set target=help` to see available options
@@ -319,7 +378,8 @@ automation/
 │   └── destroy.yaml              # Cleanup
 ├── infrastructure/
 │   ├── postgres.yaml             # PostgreSQL management
-│   └── qdrant.yaml               # Qdrant management
+│   ├── qdrant.yaml               # Qdrant management
+│   └── monitoring.yaml           # VictoriaMetrics monitoring stack
 └── test/
     └── pagination-server.yaml    # Test server automation
 ```
