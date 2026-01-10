@@ -32,7 +32,7 @@ sudo apt-get install noetl
 
 ```bash
 noetl --version
-# Output: noetl 2.5.3
+# Output: noetl 2.5.4
 
 noetl --help
 ```
@@ -57,14 +57,14 @@ Download and install the .deb package directly:
 
 ```bash
 # Download from GitHub releases
-wget https://github.com/noetl/noetl/releases/download/v2.5.3/noetl_2.5.3-1_amd64.deb
+wget https://github.com/noetl/noetl/releases/download/v2.5.4/noetl_2.5.4-1_amd64.deb
 
 # Verify checksum (optional)
-wget https://github.com/noetl/noetl/releases/download/v2.5.3/noetl_2.5.3-1_amd64.deb.sha256
-sha256sum -c noetl_2.5.3-1_amd64.deb.sha256
+wget https://github.com/noetl/noetl/releases/download/v2.5.4/noetl_2.5.4-1_amd64.deb.sha256
+sha256sum -c noetl_2.5.4-1_amd64.deb.sha256
 
 # Install
-sudo dpkg -i noetl_2.5.3-1_amd64.deb
+sudo dpkg -i noetl_2.5.4-1_amd64.deb
 
 # Fix dependencies if needed
 sudo apt-get install -f
