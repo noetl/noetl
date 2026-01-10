@@ -1,56 +1,89 @@
-# noetl-cli (v2.5.2)
+# NoETL CLI
 
-Command-line interface for NoETL workflow automation framework.
+[![Crates.io](https://img.shields.io/crates/v/noetl.svg)](https://crates.io/crates/noetl)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-## About
-
-`noetl-cli` is a Rust-based CLI that provides a fast, native interface to NoETL's workflow automation capabilities. It's distributed as a separate Python package using maturin, making the `noetl` command available on PATH.
+NoETL workflow automation CLI - Execute playbooks locally or orchestrate distributed server-worker pipelines.
 
 ## Installation
 
-### With NoETL (Recommended)
-
-Install NoETL with CLI support:
+### Via Cargo
 
 ```bash
-uv pip install "noetl[cli]"
-# or with pip
-pip install "noetl[cli]"
+cargo install noetl
 ```
 
-### Standalone
-
-Install just the CLI:
+### Via Homebrew (macOS)
 
 ```bash
-uv pip install noetl-cli
-# or with pip
-pip install noetl-cli
+brew tap noetl/tap
+brew install noetl
 ```
 
-### Development Build
-
-Build and place the binary in the project's `bin/` directory:
-```bash
-task noetlctl:local:build
-```
-
-Install to `~/.local/bin/`:
-```bash
-task noetlctl:local:install
-```
+### Via APT (Ubuntu/Debian)
 
 ```bash
-cargo build --release
+echo 'deb [trusted=yes] https://noetl.github.io/apt jammy main' | sudo tee /etc/apt/sources.list.d/noetl.list
+sudo apt-get update
+sudo apt-get install noetl
 ```
 
-The binary will be available at `target/release/noetl`.
+## Quick Start
+
+Create a simple playbook:
+
+```yaml
+# hello.yaml
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: hello_world
+
+workflow:
+  - step: start
+    tool:
+      kind: shell
+      cmds:
+        - "echo 'Hello from NoETL!'"
+    next:
+      - step: end
+  - step: end
+```
+
+Run it:
+
+```bash
+noetl run hello.yaml
+```
+
+## Features
+
+- **Local Playbook Execution** - Run workflows without server infrastructure
+- **HTTP Actions** - Make REST API calls with automatic pagination
+- **Conditional Flow** - Dynamic routing with case/when/then/else
+- **Playbook Composition** - Call sub-playbooks for modularity
+- **Server/Worker Management** - Start/stop distributed services
+- **Kubernetes Operations** - Deploy to K8s clusters
+- **Database Management** - Initialize and validate schemas
 
 ## Usage
 
 Check version:
 ```bash
 noetl --version
+```
+
+### Local Execution
+
+```bash
+# Run playbook locally
+noetl run playbook.yaml
+
+# Pass variables
+noetl run playbook.yaml --set env=prod --set version=v2.5.3
+
+# Verbose output
+noetl run playbook.yaml --verbose
 ```
 
 ### Server Management
@@ -69,11 +102,10 @@ noetl server stop --force  # Force stop without confirmation
 
 ### Worker Management
 
-Start NoETL worker (v2 event-driven architecture):
+Start NoETL worker:
 ```bash
 noetl worker start
 noetl worker start --max-workers 4
-noetl worker start --max-workers 8
 ```
 
 Stop NoETL worker:
