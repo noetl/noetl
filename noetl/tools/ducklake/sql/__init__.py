@@ -63,7 +63,7 @@ def execute_sql_commands(
     
     for idx, cmd in enumerate(commands):
         try:
-            logger.info(f"Executing command {idx + 1}/{len(commands)}")
+            logger.debug(f"Executing command {idx + 1}/{len(commands)}")
             
             if log_event_callback:
                 log_event_callback("command.start", f"Executing command {idx + 1}")
@@ -97,7 +97,7 @@ def execute_sql_commands(
                     "columns": columns,
                     "rows": serialized_rows
                 })
-                logger.info(f"Command {idx + 1} returned {len(rows)} rows")
+                logger.debug(f"Command {idx + 1} returned {len(rows)} rows")
             else:
                 # DML command (INSERT, UPDATE, DELETE, etc.)
                 results.append({
@@ -105,7 +105,7 @@ def execute_sql_commands(
                     "affected_rows": result.rowcount if hasattr(result, 'rowcount') else 0,
                     "status": "executed"
                 })
-                logger.info(f"Command {idx + 1} executed successfully")
+                logger.debug(f"Command {idx + 1} executed successfully")
             
             if log_event_callback:
                 log_event_callback("command.complete", f"Command {idx + 1} completed")

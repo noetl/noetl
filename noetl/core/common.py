@@ -500,7 +500,7 @@ def initialize_db_pool():
             connection_string = get_pgdb_connection()
             db_pool = ConnectionPool(conninfo=connection_string, min_size=2, max_size=20, name="sync_legacy_noetl_server_connection", open=False)
             db_pool.open()
-            logger.info("Database connection pool initialized successfully")
+            logger.debug("Database connection pool initialized successfully")
         except Exception as e:
             logger.warning(f"Failed to initialize connection pool: {e}. Trying to use direct connections.")
             db_pool = None
@@ -515,7 +515,7 @@ async def initialize_async_db_pool():
             connection_string = get_pgdb_connection()
             async_db_pool = AsyncConnectionPool(conninfo=connection_string, min_size=2, max_size=20, name="legacy_noetl_server_connection", open=False)
             await async_db_pool.open()
-            logger.info("Async database connection pool initialized successfully")
+            logger.debug("Async database connection pool initialized successfully")
         except Exception as e:
             logger.warning(f"Failed to initialize async connection pool: {e}. Falling back to direct async connection.")
             async_db_pool = None
