@@ -140,7 +140,7 @@ class KeychainService:
                     decrypted = decrypt_json(encrypted_data)
                     renew_cfg = decrypt_json(renew_config_encrypted) if renew_config_encrypted else None
                     
-                    logger.info(f"Cache hit for {cache_type} keychain: {keychain_name}")
+                    logger.debug(f"Cache hit for {cache_type} keychain: {keychain_name}")
                     
                     return {
                         'keychain_name': kc_name,
@@ -285,7 +285,7 @@ class KeychainService:
                     )
                     await conn.commit()
                     
-            logger.info(f"Deleted keychain entry: {keychain_name}")
+            logger.debug(f"Deleted keychain entry: {keychain_name}")
             return True
                     
         except Exception as e:
@@ -305,7 +305,7 @@ class KeychainService:
                     count = cursor.rowcount
                     await conn.commit()
                     
-            logger.info(f"Cleaned up {count} keychain entries for execution {execution_id}")
+            logger.debug(f"Cleaned up {count} keychain entries for execution {execution_id}")
             return count
                     
         except Exception as e:
@@ -324,7 +324,7 @@ class KeychainService:
                     count = cursor.rowcount
                     await conn.commit()
                     
-            logger.info(f"Cleaned up {count} expired keychain entries")
+            logger.debug(f"Cleaned up {count} expired keychain entries")
             return count
                     
         except Exception as e:

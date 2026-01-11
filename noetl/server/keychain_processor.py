@@ -58,7 +58,7 @@ async def process_keychain_section(
 
     api_base_url = _normalize_api_base_url(api_base_url)
     
-    logger.info(f"KEYCHAIN_PROCESSOR: Processing {len(keychain_section)} keychain entries for execution {execution_id} (api_base_url={api_base_url})")
+    logger.debug(f"KEYCHAIN_PROCESSOR: Processing {len(keychain_section)} keychain entries for execution {execution_id} (api_base_url={api_base_url})")
     
     keychain_data = {}
     
@@ -72,7 +72,7 @@ async def process_keychain_section(
                 logger.warning(f"KEYCHAIN_PROCESSOR: Skipping invalid entry: {entry}")
                 continue
             
-            logger.info(f"KEYCHAIN_PROCESSOR: Processing entry '{entry_name}' (kind: {entry_kind})")
+            logger.debug(f"KEYCHAIN_PROCESSOR: Processing entry '{entry_name}' (kind: {entry_kind})")
             
             if entry_kind == 'secret_manager':
                 data = await _process_secret_manager(entry, workload_vars, keychain_data, client, api_base_url)
@@ -102,11 +102,11 @@ async def process_keychain_section(
                 
                 if success:
                     keychain_data[entry_name] = data
-                    logger.info(f"KEYCHAIN_PROCESSOR: Successfully stored entry '{entry_name}'")
+                    logger.debug(f"KEYCHAIN_PROCESSOR: Successfully stored entry '{entry_name}'")
                 else:
                     raise RuntimeError(f"KEYCHAIN_PROCESSOR: Failed to store entry '{entry_name}' in database")
     
-    logger.info(f"KEYCHAIN_PROCESSOR: Completed processing {len(keychain_data)}/{len(keychain_section)} entries")
+    logger.debug(f"KEYCHAIN_PROCESSOR: Completed processing {len(keychain_data)}/{len(keychain_section)} entries")
     return keychain_data
 
 
@@ -133,7 +133,7 @@ async def _process_secret_manager(
     auth_template = env.from_string(str(auth_ref))
     auth_name = auth_template.render(workload=workload_vars, keychain=keychain_data)
     
-    logger.info(f"KEYCHAIN_PROCESSOR: Fetching secrets from {provider} using auth '{auth_name}'")
+    logger.debug(f"KEYCHAIN_PROCESSOR: Fetching secrets from {provider} using auth '{auth_name}'")
     
     # Fetch credential to get auth data (should contain OAuth token or service account info)
     cred_response = await client.get(
@@ -197,7 +197,7 @@ async def _process_secret_manager(
         except:
             result_data[key] = secret_value
             
-        logger.info(f"KEYCHAIN_PROCESSOR: Successfully fetched secret '{key}'")
+        logger.debug(f"KEYCHAIN_PROCESSOR: Successfully fetched secret '{key}'")
     
     return result_data
 
@@ -237,7 +237,7 @@ async def _process_oauth2(
         template = env.from_string(str(v))
         rendered_data[k] = template.render(workload=workload_vars, keychain=keychain_data)
     
-    logger.info(f"KEYCHAIN_PROCESSOR: Making OAuth2 request to {rendered_endpoint}")
+    logger.debug(f"KEYCHAIN_PROCESSOR: Making OAuth2 request to {rendered_endpoint}")
     
     # Make OAuth2 request
     response = await client.request(
@@ -249,7 +249,7 @@ async def _process_oauth2(
     response.raise_for_status()
     
     token_data = response.json()
-    logger.info(f"KEYCHAIN_PROCESSOR: OAuth2 request successful, got token")
+    logger.debug(f"KEYCHAIN_PROCESSOR: OAuth2 request successful, got token")
     return token_data
 
 
@@ -330,12 +330,12 @@ async def _process_credential_ref(
 
     # For Google OAuth credentials, generate access token from service account JSON
     if credential_type in ['google_oauth', 'google_service_account', 'gcp']:
-        logger.info(f"KEYCHAIN_PROCESSOR: Generating OAuth access token for credential '{ref_rendered}' (type: {credential_type})")
+        logger.debug(f"KEYCHAIN_PROCESSOR: Generating OAuth access token for credential '{ref_rendered}' (type: {credential_type})")
         try:
             from noetl.core.auth.google_provider import GoogleTokenProvider
             provider = GoogleTokenProvider(credential_data)
             access_token = provider.fetch_token()  # Get access token
-            logger.info(f"KEYCHAIN_PROCESSOR: Successfully generated access token for '{ref_rendered}'")
+            logger.debug(f"KEYCHAIN_PROCESSOR: Successfully generated access token for '{ref_rendered}'")
             return {
                 'access_token': access_token,
                 'token_type': 'Bearer'

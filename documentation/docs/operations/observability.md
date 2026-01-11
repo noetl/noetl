@@ -455,9 +455,9 @@ noetl run automation/infrastructure/nats.yaml --set action=port-forward
 All services automatically deploy with:
 
 ```bash
-noetl run automation/setup/bootstrap
+noetl run automation/setup/bootstrap.yaml
 # or
-noetl run automation/main.yaml --set action=bootstrap
+noetl run automation/main.yaml bootstrap
 ```
 
 ### Verification

@@ -161,7 +161,7 @@ def _create_app(settings: Settings, enable_ui: Optional[bool] = None) -> FastAPI
 
                                 # Server heartbeat
                                 try:
-                                    logger.info(f"About to update server heartbeat for {server_name}")
+                                    logger.debug(f"About to update server heartbeat for {server_name}")
                                     await cur.execute(
                                         """
                                         UPDATE runtime 
@@ -170,7 +170,7 @@ def _create_app(settings: Settings, enable_ui: Optional[bool] = None) -> FastAPI
                                         """,
                                         (server_name,)
                                     )
-                                    logger.info(f"Server heartbeat updated for {server_name}, rows affected: {cur.rowcount}")
+                                    logger.debug(f"Server heartbeat updated for {server_name}, rows affected: {cur.rowcount}")
                                     if cur.rowcount == 0 and auto_recreate_runtime:
                                         logger.info("Server runtime row missing; auto recreating")
                                         import datetime as _dt
@@ -203,7 +203,7 @@ def _create_app(settings: Settings, enable_ui: Optional[bool] = None) -> FastAPI
                                     logger.exception(f"Server heartbeat refresh failed: {e}")
                                 try:
                                     await conn.commit()
-                                    logger.info(f"Runtime sweeper transaction committed successfully")
+                                    logger.debug(f"Runtime sweeper transaction committed successfully")
                                 except Exception as e:
                                     logger.exception(f"Runtime sweeper commit failed: {e}")
 

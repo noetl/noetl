@@ -12,21 +12,31 @@ The `noetlctl` CLI (also called `noetl`) is a Rust-based command-line tool that 
 
 ### 1. Local Playbook Execution
 
-Run NoETL playbooks locally without server/worker infrastructure:
+Run NoETL playbooks locally without server/worker infrastructure. Supports **auto-discovery** of `noetl.yaml` or `main.yaml` files:
 
 ```bash
-# Run playbook for automation tasks
+# Auto-discover playbook and run target
+noetl run bootstrap
+
+# Run with auto-discovery (finds ./noetl.yaml or ./main.yaml)
+noetl run
+
+# Explicit playbook file
 noetl run automation/build.yaml
 
 # Execute specific step/target
 noetl run automation/deploy.yaml production
 
-# Pass individual variables
-noetl run playbook.yaml --set env=prod --set version=v2.5 --verbose
+# Auto-discover with variables
+noetl run deploy --set env=prod --set version=v2.5 --verbose
 
 # Pass JSON payload (multiple variables)
-noetl run playbook.yaml --payload '{"env":"staging","debug":true}'
+noetl run bootstrap --payload '{"env":"staging","debug":true}'
 ```
+
+**Auto-Discovery Priority**:
+1. `./noetl.yaml` (priority)
+2. `./main.yaml` (fallback)
 
 Perfect for:
 - Build automation (replacing Make/Task)

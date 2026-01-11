@@ -79,7 +79,7 @@ git clone https://github.com/noetl/noetl.git
 cd noetl
 
 # Bootstrap complete environment
-noetl run automation/main.yaml --set action=bootstrap
+noetl run automation/main.yaml bootstrap
 ```
 
 This creates a Kind cluster with:
@@ -99,7 +99,7 @@ After cloning the repository, use automation playbooks for infrastructure manage
 
 ```bash
 # Deploy complete environment
-noetl run automation/main.yaml --set action=bootstrap
+noetl run automation/main.yaml bootstrap
 
 # Deploy individual components
 noetl run automation/infrastructure/postgres.yaml --set action=deploy
@@ -110,7 +110,7 @@ noetl run automation/infrastructure/qdrant.yaml --set action=deploy
 noetl run automation/infrastructure/postgres.yaml --set action=status
 
 # Remove environment
-noetl run automation/main.yaml --set action=destroy
+noetl run automation/main.yaml destroy
 ```
 
 See [Automation Playbooks](../development/automation_playbooks.md) for complete reference.

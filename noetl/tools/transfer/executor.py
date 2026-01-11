@@ -65,7 +65,7 @@ def transfer_http_to_postgres(
     Returns:
         Dict with rows_transferred, chunks_processed
     """
-    logger.info(f"Starting HTTP to PostgreSQL transfer from {url}")
+    logger.debug(f"Starting HTTP to PostgreSQL transfer from {url}")
     
     # Fetch data from HTTP endpoint
     try:
@@ -89,7 +89,7 @@ def transfer_http_to_postgres(
     if not isinstance(data, list):
         data = [data]
     
-    logger.info(f"Fetched {len(data)} records from HTTP endpoint")
+    logger.debug(f"Fetched {len(data)} records from HTTP endpoint")
     
     # Build INSERT statement
     columns = list(mapping.keys())
@@ -175,12 +175,12 @@ def transfer_postgres_to_postgres(
             source_cursor.execute(source_query)
 
             columns = [desc[0] for desc in source_cursor.description]
-            logger.info(f"Source columns: {columns}")
+            logger.debug(f"Source columns: {columns}")
 
             # Prepare insert statement
             if target_query:
                 insert_sql = target_query
-                logger.info(f"Using custom target query: {insert_sql}")
+                logger.debug(f"Using custom target query: {insert_sql}")
 
                 placeholder_count = insert_sql.count('%s')
                 if placeholder_count != len(columns):
@@ -195,7 +195,7 @@ def transfer_postgres_to_postgres(
                 placeholders = ', '.join(['%s'] * len(columns))
 
                 if mode == 'replace':
-                    logger.info(f"Truncating target table: {target_table}")
+                    logger.debug(f"Truncating target table: {target_table}")
                     with target_conn.cursor() as target_cursor:
                         target_cursor.execute(f'TRUNCATE TABLE {target_table}')
                     target_conn.commit()
@@ -499,7 +499,7 @@ def execute_transfer_action(
         
         direction_name = f"{source_type}_to_{target_type}"
         
-        logger.info(f"Transfer: {source_type}->{target_type} ({direction_name}) | chunk_size={chunk_size} | mode={mode if not target_query else 'custom'}")
+        logger.debug(f"Transfer: {source_type}->{target_type} ({direction_name}) | chunk_size={chunk_size} | mode={mode if not target_query else 'custom'}")
         query_info = []
         if source_query:
             query_info.append(f"source_query={source_query[:100]}")
@@ -515,18 +515,18 @@ def execute_transfer_action(
         target_conn = None
         
         if source_type != 'http':
-            logger.info(f"Resolving authentication for source ({source_type})...")
+            logger.debug(f"Resolving authentication for source ({source_type})...")
             source_auth_data = _resolve_auth(source_auth, jinja_env, context)
             source_conn = _create_connection(source_type, source_auth_data)
         
         if target_type != 'http':
-            logger.info(f"Resolving authentication for target ({target_type})...")
+            logger.debug(f"Resolving authentication for target ({target_type})...")
             target_auth_data = _resolve_auth(target_auth, jinja_env, context)
             target_conn = _create_connection(target_type, target_auth_data)
         
         # Progress callback for reporting
         def progress_callback(rows_so_far: int, chunk_num: int):
-            logger.info(f"Transferred {rows_so_far} rows in {chunk_num} chunks")
+            logger.debug(f"Transferred {rows_so_far} rows in {chunk_num} chunks")
             _report_event(
                 log_event_callback,
                 event_type='action_progress',

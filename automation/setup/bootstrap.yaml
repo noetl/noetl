@@ -204,6 +204,79 @@ workflow:
       args:
         action: deploy
     next:
+      - step: deploy_nats
+  
+  - step: deploy_nats
+    desc: Deploy NATS JetStream (required dependency)
+    tool:
+      kind: playbook
+      path: ../infrastructure/nats.yaml
+      args:
+        action: deploy
+    next:
+      - step: deploy_qdrant
+  
+  - step: deploy_qdrant
+    desc: Deploy Qdrant vector database
+    tool:
+      kind: playbook
+      path: ../infrastructure/qdrant.yaml
+      args:
+        action: deploy
+    next:
+      - step: deploy_clickhouse
+  
+  - step: deploy_clickhouse
+    desc: Deploy ClickHouse observability stack
+    tool:
+      kind: playbook
+      path: ../infrastructure/clickhouse.yaml
+      args:
+        action: deploy
+    next:
+      - step: deploy_monitoring
+  
+  - step: deploy_monitoring
+    desc: Deploy monitoring stack (VictoriaMetrics, Grafana)
+    tool:
+      kind: playbook
+      path: ../infrastructure/monitoring.yaml
+      args:
+        action: deploy
+    next:
+      - step: wait_for_dependencies
+  
+  - step: wait_for_dependencies
+    desc: Wait for dependencies to be ready before deploying NoETL
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Waiting for dependencies to be ready..."
+          sleep 10
+          
+          echo "Waiting for PostgreSQL..."
+          kubectl wait --for=condition=ready pod -l app=postgres -n postgres --timeout=90s
+          
+          echo "Waiting for NATS (mandatory)..."
+          kubectl wait --for=condition=ready pod -l app=nats -n nats --timeout=120s || echo "ERROR: NATS failed to start - NoETL requires NATS"
+          
+          echo "Waiting for Qdrant..."
+          kubectl wait --for=condition=ready pod -l app=qdrant -n qdrant --timeout=90s || true
+          
+          echo "✓ Dependencies ready. Proceeding with NoETL deployment..."
+    next:
+      - step: deploy_test_server
+  
+  - step: deploy_test_server
+    desc: Deploy pagination test server for integration tests
+    tool:
+      kind: playbook
+      path: ../test/pagination-server.yaml
+      args:
+        action: full
+    next:
       - step: deploy_noetl
   
   - step: deploy_noetl
@@ -233,42 +306,32 @@ workflow:
             fi
           done
     next:
-      - step: deploy_observability
-  
-  - step: deploy_observability
-    desc: Deploy observability stack (ClickHouse, Qdrant, NATS)
-    tool:
-      kind: playbook
-      path: ../infrastructure/observability.yaml
-      args:
-        action: activate-all
-    next:
       - step: wait_for_services
   
   - step: wait_for_services
-    desc: Wait for services to be ready
+    desc: Wait for NoETL and optional services
     tool:
       kind: shell
       cmds:
         - |
           echo ""
-          echo "Waiting for services to be ready..."
-          sleep 15
-          
-          echo "Waiting for PostgreSQL..."
-          kubectl wait --for=condition=ready pod -l app=postgres -n postgres --timeout=60s || true
+          echo "Waiting for NoETL services to be ready..."
+          sleep 10
           
           echo "Waiting for NoETL server..."
-          kubectl wait --for=condition=ready pod -l app=noetl-server -n noetl --timeout=60s || true
+          kubectl wait --for=condition=ready pod -l app=noetl-server -n noetl --timeout=90s || echo "Warning: NoETL server not ready"
           
-          echo "Waiting for NATS (mandatory)..."
-          kubectl wait --for=condition=ready pod -l app=nats -n nats --timeout=120s || echo "ERROR: NATS failed to start - NoETL requires NATS"
-          
-          echo "Waiting for Qdrant..."
-          kubectl wait --for=condition=ready pod -l app=qdrant -n qdrant --timeout=60s || true
+          echo "Waiting for NoETL workers..."
+          kubectl wait --for=condition=ready pod -l app=noetl-worker -n noetl --timeout=90s || echo "Warning: NoETL workers not ready"
           
           echo "Waiting for ClickHouse (optional)..."
           kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=chi-clickhouse-clickhouse -n clickhouse --timeout=120s || echo "Warning: ClickHouse not ready"
+          
+          echo "Waiting for VictoriaMetrics operator..."
+          kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=victoria-metrics-operator -n vmoperator --timeout=60s || true
+          
+          echo "Waiting for VictoriaMetrics cluster..."
+          kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=vmsingle -n vmstack --timeout=90s || echo "Warning: VictoriaMetrics not ready"
     next:
       - step: test_cluster_health
   
@@ -301,22 +364,31 @@ workflow:
           echo "  NoETL server: deployed"
           echo "  NoETL workers: deployed"
           echo "  Observability: deployed (ClickHouse, Qdrant, NATS)"
+          echo "  Monitoring: deployed (VictoriaMetrics, Grafana)"
+          echo "  Test Server: deployed (Pagination API)"
           echo ""
           echo "Endpoints:"
           echo "  NoETL API: http://localhost:8082"
           echo "  PostgreSQL: localhost:54321"
+          echo "  Grafana: http://localhost:3000"
+          echo "  VictoriaLogs: http://localhost:9428"
           echo "  ClickHouse HTTP: http://localhost:30123"
-          echo "  Qdrant: http://localhost:30633"
+          echo "  ClickHouse Native: localhost:30900"
+          echo "  Qdrant HTTP: http://localhost:30633"
+          echo "  Qdrant gRPC: localhost:30634"
+          echo "  NATS Client: localhost:30422"
+          echo "  NATS Monitoring: http://localhost:30822"
+          echo "  Test Server: http://localhost:30555"
           echo ""
           echo "Next Steps:"
           echo "  1. Register credentials:"
-          echo "     noetl run automation/setup/register_credentials.yaml"
+          echo "     noetl register credential --directory tests/fixtures/credentials"
           echo ""
           echo "  2. Register playbooks:"
-          echo "     noetl run automation/setup/register_playbooks.yaml"
+          echo "     noetl register playbook --directory tests/fixtures/playbooks"
           echo ""
           echo "  3. Test execution:"
-          echo "     noetl execute playbook test-playbook"
+          echo "     noetl execute catalog/test/hello_world"
           echo ""
           echo "  4. Check status:"
           echo "     kubectl get pods -n noetl"
