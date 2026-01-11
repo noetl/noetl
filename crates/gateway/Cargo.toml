@@ -1,7 +1,13 @@
 [package]
-name = "gateway"
-version = "0.1.0"
-edition = "2024"
+name = "noetl-gateway"
+version = "2.5.4"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/noetl/noetl"
+homepage = "https://noetl.io"
+description = "NoETL Gateway - GraphQL API gateway for NoETL workflow automation"
+keywords = ["gateway", "graphql", "noetl", "api", "workflow"]
+categories = ["web-programming", "api-bindings"]
 
 [dependencies]
 axum = { version = "0.8.7" }
