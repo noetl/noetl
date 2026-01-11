@@ -111,15 +111,15 @@ version = "2.5.3"
 
 ## Release Workflow
 
-For a new version (e.g., 2.5.4):
+For a new version (e.g., 2.5.5):
 
 1. **Update version** in `Cargo.toml` workspace
-2. **Create git tag**: `v2.5.4`
-3. **Push tag**: `git push origin v2.5.4`
+2. **Create git tag**: `v2.5.5`
+3. **Push tag**: `git push origin v2.5.5`
 4. **Publish to Crates.io**: `./scripts/publish_crate.sh`
-5. **Build Debian package**: `./docker/release/build-deb-docker.sh 2.5.4`
-6. **Publish APT repo**: `./scripts/publish_apt.sh 2.5.4`
-7. **Update Homebrew**: `./scripts/homebrew_publish.sh 2.5.4`
+5. **Build Debian package**: `./docker/release/build-deb-docker.sh 2.5.5`
+6. **Publish APT repo**: `./scripts/publish_apt.sh 2.5.5`
+7. **Update Homebrew**: `./scripts/homebrew_publish.sh 2.5.5`
 8. **Publish to PyPI**: `cd crates/noetlctl && maturin publish`
 
 ## Docker-Based Building
@@ -131,13 +131,13 @@ For developers on macOS or Windows who need to build Linux packages:
 ./docker/release/build-deb-docker.sh 2.5.4
 ```
 
-Output: `build/deb/noetl_2.5.4-1_amd64.deb`
+Output: `build/deb/noetl_2.5.5-1_amd64.deb`
 
 ### Test Installation
 ```bash
 docker run --rm -v $(pwd)/build/deb:/packages ubuntu:22.04 bash -c '
   apt-get update && 
-  dpkg -i /packages/noetl_2.5.4-1_amd64.deb && 
+  dpkg -i /packages/noetl_2.5.5-1_amd64.deb && 
   noetl --version'
 ```
 

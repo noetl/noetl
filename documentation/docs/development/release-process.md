@@ -32,28 +32,28 @@ Update version in all configuration files:
 
 ```bash
 # Root workspace Cargo.toml
-version = "2.5.4"
+version = "2.5.5"
 
 # crates/noetlctl/pyproject.toml
-version = "2.5.4"
+version = "2.5.5"
 
 # crates/gateway/Cargo.toml
-version = "2.5.4"
+version = "2.5.5"
 
 # pyproject.toml (root - for noetl Python package)
-version = "2.5.4"
+version = "2.5.5"
 
 # homebrew/noetl.rb (will be updated with SHA256 later)
-url = "https://github.com/noetl/noetl/archive/refs/tags/v2.5.4.tar.gz"
+url = "https://github.com/noetl/noetl/archive/refs/tags/v2.5.5.tar.gz"
 ```
 
 ### 2. Create Release Branch
 
 ```bash
-git checkout -b release/v2.5.4
+git checkout -b release/v2.5.5
 git add Cargo.toml crates/*/Cargo.toml crates/*/pyproject.toml pyproject.toml homebrew/noetl.rb
-git commit -m "chore: Bump version to 2.5.4"
-git push -u origin release/v2.5.4
+git commit -m "chore: Bump version to 2.5.5"
+git push -u origin release/v2.5.5
 ```
 
 Create and merge PR, then pull to master:
@@ -66,8 +66,8 @@ git pull
 ### 3. Create Git Tag
 
 ```bash
-git tag -a v2.5.4 -m "Release v2.5.4 - <Brief description>"
-git push origin v2.5.4
+git tag -a v2.5.5 -m "Release v2.5.5 - <Brief description>"
+git push origin v2.5.5
 ```
 
 ## Build Artifacts
@@ -85,21 +85,21 @@ cargo build --release
 ```bash
 cd crates/noetlctl
 maturin build --release
-# Wheel at: ../../target/wheels/noetlctl-2.5.4-py3-none-macosx_11_0_arm64.whl
+# Wheel at: ../../target/wheels/noetlctl-2.5.5-py3-none-macosx_11_0_arm64.whl
 ```
 
 ### Build Debian Package
 
 ```bash
-./docker/release/build-deb-docker.sh 2.5.4
-# Package at: build/deb/noetl_2.5.4-1_arm64.deb
+./docker/release/build-deb-docker.sh 2.5.5
+# Package at: build/deb/noetl_2.5.5-1_arm64.deb
 ```
 
 Test installation:
 
 ```bash
 docker run --rm -v $(pwd)/build/deb:/packages ubuntu:22.04 bash -c \
-  'apt-get update && dpkg -i /packages/noetl_2.5.4-1_*.deb && noetl --version'
+  'apt-get update && dpkg -i /packages/noetl_2.5.5-1_*.deb && noetl --version'
 ```
 
 ## Publishing
@@ -143,7 +143,7 @@ cargo install noetl-gateway
 
 ```bash
 # Using Docker (recommended)
-./docker/release/publish-apt-docker.sh 2.5.4 arm64
+./docker/release/publish-apt-docker.sh 2.5.5 arm64
 ```
 
 **Upload to GitHub Pages:**
@@ -156,7 +156,7 @@ cp -r apt-repo/* /path/to/apt-repo/
 
 cd /path/to/apt-repo
 git add .
-git commit -m "Add NoETL v2.5.4"
+git commit -m "Add NoETL v2.5.5"
 git push origin main
 ```
 
@@ -178,8 +178,8 @@ noetl --version
 
 ```bash
 # Create release notes file
-cat > release-notes-v2.5.4.md << 'EOF'
-# NoETL v2.5.4
+cat > release-notes-v2.5.5.md << 'EOF'
+# NoETL v2.5.5
 
 ## What's New
 - Feature highlights
@@ -190,13 +190,13 @@ cat > release-notes-v2.5.4.md << 'EOF'
 See https://noetl.dev/docs/getting-started/installation
 
 ## Full Changelog
-https://github.com/noetl/noetl/compare/v2.5.3...v2.5.4
+https://github.com/noetl/noetl/compare/v2.5.3...v2.5.5
 EOF
 
 # Create release with binary
-gh release create v2.5.4 \
-  --title "v2.5.4 - <Release Name>" \
-  --notes-file release-notes-v2.5.4.md \
+gh release create v2.5.5 \
+  --title "v2.5.5 - <Release Name>" \
+  --notes-file release-notes-v2.5.5.md \
   target/release/noetl#noetl-macos-arm64
 ```
 
@@ -205,7 +205,7 @@ gh release create v2.5.4 \
 **Calculate SHA256:**
 
 ```bash
-curl -sL https://github.com/noetl/noetl/archive/refs/tags/v2.5.4.tar.gz | shasum -a 256
+curl -sL https://github.com/noetl/noetl/archive/refs/tags/v2.5.5.tar.gz | shasum -a 256
 ```
 
 **Update formula:**
@@ -213,7 +213,7 @@ curl -sL https://github.com/noetl/noetl/archive/refs/tags/v2.5.4.tar.gz | shasum
 Edit `homebrew/noetl.rb`:
 
 ```ruby
-url "https://github.com/noetl/noetl/archive/refs/tags/v2.5.4.tar.gz"
+url "https://github.com/noetl/noetl/archive/refs/tags/v2.5.5.tar.gz"
 sha256 "<calculated_sha256>"
 ```
 
@@ -225,7 +225,7 @@ cp homebrew/noetl.rb /path/to/homebrew-tap/Formula/noetl.rb
 
 cd /path/to/homebrew-tap
 git add Formula/noetl.rb
-git commit -m "Update noetl to v2.5.4"
+git commit -m "Update noetl to v2.5.5"
 git push
 ```
 
@@ -245,7 +245,7 @@ After publishing, verify all channels:
 - [ ] **Crates.io**: `cargo install noetl && noetl --version`
 - [ ] **Homebrew**: `brew upgrade noetl && noetl --version`
 - [ ] **APT**: Visit https://noetl.github.io/apt and check Packages file
-- [ ] **GitHub Release**: Check https://github.com/noetl/noetl/releases/tag/v2.5.4
+- [ ] **GitHub Release**: Check https://github.com/noetl/noetl/releases/tag/v2.5.5
 - [ ] **Documentation**: Update version references in docs
 
 ## Common Issues
@@ -259,7 +259,7 @@ brew install dpkg  # macOS
 
 Or use Docker-based publishing:
 ```bash
-./docker/release/publish-apt-docker.sh 2.5.4 arm64
+./docker/release/publish-apt-docker.sh 2.5.5 arm64
 ```
 
 ### Homebrew Caching Old Version
@@ -303,8 +303,8 @@ password = pypi-...
 If a release has critical issues:
 
 1. **GitHub**: Delete release and tag
-2. **PyPI**: Cannot delete, publish hotfix version (e.g., 2.5.4.post1)
-3. **Crates.io**: Yank version: `cargo yank noetl@2.5.4`
+2. **PyPI**: Cannot delete, publish hotfix version (e.g., 2.5.5.post1)
+3. **Crates.io**: Yank version: `cargo yank noetl@2.5.5`
 4. **Homebrew**: Revert commit in homebrew-tap
 5. **APT**: Remove version from apt repository
 
