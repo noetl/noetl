@@ -13,49 +13,49 @@ workflow:
     tool:
       kind: shell
       cmds:
-        - echo "JupyterLab Automation - Action '{{ action }}'"
+        - echo "JupyterLab Automation - Action '{{ workload.action }}'"
     next:
-      - when: "{{ action }} == deploy"
+      - when: "{{ workload.action }} == deploy"
         then:
           - step: deploy_jupyterlab
         args: {}
-      - when: "{{ action }} == undeploy"
+      - when: "{{ workload.action }} == undeploy"
         then:
           - step: undeploy_jupyterlab
         args: {}
-      - when: "{{ action }} == full"
+      - when: "{{ workload.action }} == full"
         then:
           - step: full_deployment
         args: {}
-      - when: "{{ action }} == status"
+      - when: "{{ workload.action }} == status"
         then:
           - step: check_status
         args: {}
-      - when: "{{ action }} == logs"
+      - when: "{{ workload.action }} == logs"
         then:
           - step: view_logs
         args: {}
-      - when: "{{ action }} == port-forward"
+      - when: "{{ workload.action }} == port-forward"
         then:
           - step: port_forward
         args: {}
-      - when: "{{ action }} == restart"
+      - when: "{{ workload.action }} == restart"
         then:
           - step: restart_deployment
         args: {}
-      - when: "{{ action }} == shell"
+      - when: "{{ workload.action }} == shell"
         then:
           - step: open_shell
         args: {}
-      - when: "{{ action }} == test"
+      - when: "{{ workload.action }} == test"
         then:
           - step: test_deployment
         args: {}
-      - when: "{{ action }} == update-notebook"
+      - when: "{{ workload.action }} == update-notebook"
         then:
           - step: update_notebook
         args: {}
-      - when: "{{ action }} == help"
+      - when: "{{ workload.action }} == help"
         then:
           - step: show_help
         args: {}

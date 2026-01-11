@@ -13,29 +13,29 @@ workflow:
     tool:
       kind: shell
       cmds:
-        - echo "PostgreSQL Automation - Action '{{ action }}'"
+        - echo "PostgreSQL Automation - Action '{{ workload.action }}'"
     next:
-      - when: "{{ action }} == deploy"
+      - when: "{{ workload.action }} == deploy"
         then:
           - step: deploy_postgres
         args: {}
-      - when: "{{ action }} == remove"
+      - when: "{{ workload.action }} == remove"
         then:
           - step: remove_postgres
         args: {}
-      - when: "{{ action }} == schema-reset"
+      - when: "{{ workload.action }} == schema-reset"
         then:
           - step: reset_schema
         args: {}
-      - when: "{{ action }} == clear-cache"
+      - when: "{{ workload.action }} == clear-cache"
         then:
           - step: clear_cache
         args: {}
-      - when: "{{ action }} == status"
+      - when: "{{ workload.action }} == status"
         then:
           - step: check_status
         args: {}
-      - when: "{{ action }} == logs"
+      - when: "{{ workload.action }} == logs"
         then:
           - step: show_logs
         args: {}

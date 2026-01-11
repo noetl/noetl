@@ -13,49 +13,49 @@ workflow:
     tool:
       kind: shell
       cmds:
-        - echo "NATS Automation - Action '{{ action }}'"
+        - echo "NATS Automation - Action '{{ workload.action }}'"
     next:
-      - when: "{{ action }} == deploy"
+      - when: "{{ workload.action }} == deploy"
         then:
           - step: deploy_nats
         args: {}
-      - when: "{{ action }} == undeploy"
+      - when: "{{ workload.action }} == undeploy"
         then:
           - step: undeploy_nats
         args: {}
-      - when: "{{ action }} == status"
+      - when: "{{ workload.action }} == status"
         then:
           - step: check_status
         args: {}
-      - when: "{{ action }} == health"
+      - when: "{{ workload.action }} == health"
         then:
           - step: check_health
         args: {}
-      - when: "{{ action }} == logs"
+      - when: "{{ workload.action }} == logs"
         then:
           - step: show_logs
         args: {}
-      - when: "{{ action }} == streams"
+      - when: "{{ workload.action }} == streams"
         then:
           - step: list_streams
         args: {}
-      - when: "{{ action }} == monitoring"
+      - when: "{{ workload.action }} == monitoring"
         then:
           - step: show_monitoring
         args: {}
-      - when: "{{ action }} == connect"
+      - when: "{{ workload.action }} == connect"
         then:
           - step: test_connection
         args: {}
-      - when: "{{ action }} == test"
+      - when: "{{ workload.action }} == test"
         then:
           - step: run_tests
         args: {}
-      - when: "{{ action }} == restart"
+      - when: "{{ workload.action }} == restart"
         then:
           - step: restart_nats
         args: {}
-      - when: "{{ action }} == port-forward"
+      - when: "{{ workload.action }} == port-forward"
         then:
           - step: setup_port_forward
         args: {}
@@ -148,11 +148,11 @@ workflow:
     tool:
       kind: shell
       cmds:
-        - echo "=== NATS Monitoring Dashboard ==="
-        - echo "Access monitoring at: http://localhost:30822"
-        - echo ""
-        - echo "Metrics:"
         - |
+          echo "=== NATS Monitoring Dashboard ==="
+          echo "Access monitoring at: http://localhost:30822"
+          echo ""
+          echo "Metrics:"
           curl -s http://localhost:30822/varz 2>/dev/null | python3 -m json.tool || echo "Unable to fetch metrics"
     next:
       - step: end
@@ -204,11 +204,12 @@ workflow:
     tool:
       kind: shell
       cmds:
-        - echo "=== Restarting NATS ==="
-        - kubectl rollout restart deployment/nats -n nats || kubectl delete pod -n nats -l app=nats
-        - echo "Waiting for NATS to restart..."
-        - kubectl wait --for=condition=ready pod -l app=nats -n nats --timeout=120s || echo "Timeout - check manually"
-        - echo "✓ NATS restarted"
+        - |
+          echo "=== Restarting NATS ==="
+          kubectl rollout restart deployment/nats -n nats || kubectl delete pod -n nats -l app=nats
+          echo "Waiting for NATS to restart..."
+          kubectl wait --for=condition=ready pod -l app=nats -n nats --timeout=120s || echo "Timeout - check manually"
+          echo "✓ NATS restarted"
     next:
       - step: check_status
 
@@ -217,13 +218,14 @@ workflow:
     tool:
       kind: shell
       cmds:
-        - echo "=== Setting up NATS Port Forwarding ==="
-        - echo "Note: NodePort is already configured in kind cluster"
-        - echo "- Client: localhost:30422 (NodePort)"
-        - echo "- Monitoring: localhost:30822 (NodePort)"
-        - echo ""
-        - echo "If you need local port forwarding, run:"
-        - echo "kubectl port-forward -n nats svc/nats 4222:4222"
+        - |
+          echo "=== Setting up NATS Port Forwarding ==="
+          echo "Note: NodePort is already configured in kind cluster"
+          echo "- Client: localhost:30422 (NodePort)"
+          echo "- Monitoring: localhost:30822 (NodePort)"
+          echo ""
+          echo "If you need local port forwarding, run:"
+          echo "kubectl port-forward -n nats svc/nats 4222:4222"
     next:
       - step: end
 
@@ -232,36 +234,37 @@ workflow:
     tool:
       kind: shell
       cmds:
-        - echo ""
-        - echo "═══════════════════════════════════════════════════════════"
-        - echo " NATS JetStream Automation"
-        - echo "═══════════════════════════════════════════════════════════"
-        - echo ""
-        - echo "Usage: noetl run automation/infrastructure/nats.yaml --set action=<action>"
-        - echo ""
-        - echo "Deployment:"
-        - echo "  deploy      - Deploy NATS JetStream"
-        - echo "  undeploy    - Remove NATS JetStream"
-        - echo "  restart     - Restart NATS pod"
-        - echo ""
-        - echo "Monitoring:"
-        - echo "  status      - Check deployment status"
-        - echo "  health      - Check NATS health"
-        - echo "  logs        - View NATS logs"
-        - echo "  monitoring  - Show monitoring dashboard"
-        - echo ""
-        - echo "Operations:"
-        - echo "  streams     - List JetStream streams"
-        - echo "  connect     - Test connection"
-        - echo "  test        - Run integration tests"
-        - echo "  port-forward - Setup port forwarding"
-        - echo ""
-        - echo "Access:"
-        - echo "  - Client: nats.nats.svc.cluster.local:4222 (internal)"
-        - echo "  - Client: localhost:30422 (NodePort)"
-        - echo "  - Monitoring: http://localhost:30822"
-        - echo "  - Credentials: noetl/noetl"
-        - echo ""
+        - |
+          echo ""
+          echo "═══════════════════════════════════════════════════════════"
+          echo " NATS JetStream Automation"
+          echo "═══════════════════════════════════════════════════════════"
+          echo ""
+          echo "Usage: noetl run automation/infrastructure/nats.yaml --set action=<action>"
+          echo ""
+          echo "Deployment:"
+          echo "  deploy      - Deploy NATS JetStream"
+          echo "  undeploy    - Remove NATS JetStream"
+          echo "  restart     - Restart NATS pod"
+          echo ""
+          echo "Monitoring:"
+          echo "  status      - Check deployment status"
+          echo "  health      - Check NATS health"
+          echo "  logs        - View NATS logs"
+          echo "  monitoring  - Show monitoring dashboard"
+          echo ""
+          echo "Operations:"
+          echo "  streams     - List JetStream streams"
+          echo "  connect     - Test connection"
+          echo "  test        - Run integration tests"
+          echo "  port-forward - Setup port forwarding"
+          echo ""
+          echo "Access:"
+          echo "  - Client: nats.nats.svc.cluster.local:4222 (internal)"
+          echo "  - Client: localhost:30422 (NodePort)"
+          echo "  - Monitoring: http://localhost:30822"
+          echo "  - Credentials: noetl/noetl"
+          echo ""
     next:
       - step: end
 

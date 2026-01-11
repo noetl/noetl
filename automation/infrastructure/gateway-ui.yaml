@@ -13,25 +13,25 @@ workflow:
     tool:
       kind: shell
       cmds:
-        - echo "Gateway UI Automation - Action '{{ action }}'"
+        - echo "Gateway UI Automation - Action '{{ workload.action }}'"
     next:
-      - when: "{{ action }} == deploy"
+      - when: "{{ workload.action }} == deploy"
         then:
           - step: deploy_ui
         args: {}
-      - when: "{{ action }} == logs"
+      - when: "{{ workload.action }} == logs"
         then:
           - step: view_logs
         args: {}
-      - when: "{{ action }} == update"
+      - when: "{{ workload.action }} == update"
         then:
           - step: update_ui
         args: {}
-      - when: "{{ action }} == status"
+      - when: "{{ workload.action }} == status"
         then:
           - step: check_status
         args: {}
-      - when: "{{ action }} == help"
+      - when: "{{ workload.action }} == help"
         then:
           - step: show_help
         args: {}

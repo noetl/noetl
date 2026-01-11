@@ -13,25 +13,25 @@ workflow:
     tool:
       kind: shell
       cmds:
-        - echo "Observability Automation - Action '{{ action }}'"
+        - echo "Observability Automation - Action '{{ workload.action }}'"
     next:
-      - when: "{{ action }} == activate-all"
+      - when: "{{ workload.action }} == activate-all"
         then:
           - step: activate_all_services
         args: {}
-      - when: "{{ action }} == deactivate-all"
+      - when: "{{ workload.action }} == deactivate-all"
         then:
           - step: deactivate_all_services
         args: {}
-      - when: "{{ action }} == status-all"
+      - when: "{{ workload.action }} == status-all"
         then:
           - step: status_all_services
         args: {}
-      - when: "{{ action }} == health-all"
+      - when: "{{ workload.action }} == health-all"
         then:
           - step: health_all_services
         args: {}
-      - when: "{{ action }} == restart-all"
+      - when: "{{ workload.action }} == restart-all"
         then:
           - step: restart_all_services
         args: {}
@@ -278,36 +278,33 @@ workflow:
     tool:
       kind: shell
       cmds:
-        - echo ""
-        - echo "═══════════════════════════════════════════════════════════"
-        - echo " Observability Services Automation"
-        - echo "═══════════════════════════════════════════════════════════"
-        - echo ""
-        - echo "Usage: noetl run automation/infrastructure/observability.yaml --set action=<action>"
-        - echo ""
-        - echo "Aggregate Actions:"
-        - echo "  activate-all   - Deploy all observability services"
-        - echo "  deactivate-all - Remove all observability services"
-        - echo "  status-all     - Check status of all services"
-        - echo "  health-all     - Check health of all services"
-        - echo "  restart-all    - Restart all services"
-        - echo ""
-        - echo "Services Managed:"
-        - echo "  - ClickHouse (logs, metrics, traces)"
-        - echo "  - Qdrant (vector database)"
-        - echo "  - NATS JetStream (messaging, KV store)"
-        - echo ""
-        - echo "Individual Service Management:"
-        - echo "  noetl run automation/infrastructure/clickhouse.yaml --set action=<action>"
-        - echo "  noetl run automation/infrastructure/qdrant.yaml --set action=<action>"
-        - echo "  noetl run automation/infrastructure/nats.yaml --set action=<action>"
-        - echo ""
+        - |
+          echo ""
+          echo "═══════════════════════════════════════════════════════════"
+          echo " Observability Services Automation"
+          echo "═══════════════════════════════════════════════════════════"
+          echo ""
+          echo "Usage: noetl run automation/infrastructure/observability.yaml --set action=<action>"
+          echo ""
+          echo "Aggregate Actions:"
+          echo "  activate-all   - Deploy all observability services"
+          echo "  deactivate-all - Remove all observability services"
+          echo "  status-all     - Check status of all services"
+          echo "  health-all     - Check health of all services"
+          echo "  restart-all    - Restart all services"
+          echo ""
+          echo "Services Managed:"
+          echo "  - ClickHouse (logs, metrics, traces)"
+          echo "  - Qdrant (vector database)"
+          echo "  - NATS JetStream (messaging, KV store)"
+          echo ""
+          echo "Individual Service Management:"
+          echo "  noetl run automation/infrastructure/clickhouse.yaml --set action=<action>"
+          echo "  noetl run automation/infrastructure/qdrant.yaml --set action=<action>"
+          echo "  noetl run automation/infrastructure/nats.yaml --set action=<action>"
+          echo ""
     next:
       - step: end
 
   - step: end
     desc: End workflow
-    tool:
-      kind: shell
-      cmds:
-        - echo ""
