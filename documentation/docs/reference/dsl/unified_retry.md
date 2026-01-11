@@ -558,6 +558,11 @@ Validated test cases in `tests/fixtures/playbooks/pagination/`:
 - `test_pagination_basic.yaml` - Basic HTTP pagination
 - `test_pagination_offset.yaml` - Offset-based pagination
 - `test_pagination_cursor.yaml` - Cursor-based pagination
+
+Register test playbooks:
+```bash
+noetl run automation/test/setup.yaml --set action=register-playbooks
+```
 - `test_pagination_retry.yaml` - Combined error + success retry
 - `test_pagination_max_iterations.yaml` - Max iteration limits
 

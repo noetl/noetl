@@ -79,53 +79,55 @@ git clone https://github.com/noetl/noetl.git
 cd noetl
 
 # Bootstrap complete environment
-make bootstrap
+noetl run automation/main.yaml --set action=bootstrap
 ```
 
 This creates a Kind cluster with:
-- NoETL server and workers
+- NoETL server and workers (3 replicas)
 - PostgreSQL database
 - Observability stack (ClickHouse, Qdrant, NATS)
-- Monitoring stack (VictoriaMetrics, Grafana)
+
+**Optional**: Deploy VictoriaMetrics monitoring stack:
+
+```bash
+noetl run automation/infrastructure/monitoring.yaml --set action=deploy
+```
+
+### Available Automation Actions
+
+After cloning the repository, use automation playbooks for infrastructure management:
+
+```bash
+# Deploy complete environment
+noetl run automation/main.yaml --set action=bootstrap
+
+# Deploy individual components
+noetl run automation/infrastructure/postgres.yaml --set action=deploy
+noetl run automation/infrastructure/clickhouse.yaml --set action=deploy
+noetl run automation/infrastructure/qdrant.yaml --set action=deploy
+
+# Check status
+noetl run automation/infrastructure/postgres.yaml --set action=status
+
+# Remove environment
+noetl run automation/main.yaml --set action=destroy
+```
+
+See [Automation Playbooks](../development/automation_playbooks.md) for complete reference.
 
 ### Manual Kubernetes Deployment
+
+For custom deployments without automation:
 
 ```bash
 # Create namespace
 kubectl create namespace noetl
 
 # Deploy PostgreSQL
-helm install postgres bitnami/postgresql \
-  --namespace noetl \
-  --set auth.database=noetl \
-  --set auth.username=noetl \
-  --set auth.password=noetl
+kubectl apply -f ci/manifests/postgres/
 
-# Deploy NoETL (using Helm chart)
-helm install noetl ./ci/manifests/noetl \
-  --namespace noetl \
-  --set server.replicas=1 \
-  --set worker.replicas=3
-```
-
-## Using NoETL as a Git Submodule
-
-For integrating NoETL infrastructure into another project:
-
-```bash
-# Add NoETL as a submodule (name it .noetl)
-git submodule add https://github.com/noetl/noetl.git .noetl
-git submodule update --init --recursive
-
-# Bootstrap environment
-make -C .noetl bootstrap
-```
-
-After bootstrap, NoETL tasks are available with `noetl:` prefix:
-
-```bash
-task noetl:k8s:deploy              # Deploy NoETL
-task noetl:test:k8s:cluster-health # Check health
+# Deploy NoETL
+kubectl apply -f ci/manifests/noetl/
 ```
 
 ## Environment Variables

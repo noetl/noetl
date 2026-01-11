@@ -1,0 +1,273 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: nats_automation
+  path: automation/infrastructure/nats
+
+workload:
+  action: help  # deploy, undeploy, status, health, logs, streams, monitoring, connect, test, restart, port-forward
+
+workflow:
+  - step: start
+    desc: Entry point for NATS automation
+    tool:
+      kind: shell
+      cmds:
+        - echo "NATS Automation - Action '{{ action }}'"
+    next:
+      - when: "{{ action }} == deploy"
+        then:
+          - step: deploy_nats
+        args: {}
+      - when: "{{ action }} == undeploy"
+        then:
+          - step: undeploy_nats
+        args: {}
+      - when: "{{ action }} == status"
+        then:
+          - step: check_status
+        args: {}
+      - when: "{{ action }} == health"
+        then:
+          - step: check_health
+        args: {}
+      - when: "{{ action }} == logs"
+        then:
+          - step: show_logs
+        args: {}
+      - when: "{{ action }} == streams"
+        then:
+          - step: list_streams
+        args: {}
+      - when: "{{ action }} == monitoring"
+        then:
+          - step: show_monitoring
+        args: {}
+      - when: "{{ action }} == connect"
+        then:
+          - step: test_connection
+        args: {}
+      - when: "{{ action }} == test"
+        then:
+          - step: run_tests
+        args: {}
+      - when: "{{ action }} == restart"
+        then:
+          - step: restart_nats
+        args: {}
+      - when: "{{ action }} == port-forward"
+        then:
+          - step: setup_port_forward
+        args: {}
+      - step: show_help
+
+  - step: deploy_nats
+    desc: Deploy NATS JetStream
+    tool:
+      kind: shell
+      cmds:
+        - echo "=== Deploying NATS JetStream ==="
+        - kubectl apply -f ci/manifests/nats/namespace.yaml
+        - kubectl apply -f ci/manifests/nats/nats.yaml
+        - sleep 5
+        - echo "Waiting for NATS to be ready..."
+        - kubectl wait --for=condition=ready pod -l app=nats -n nats --timeout=120s || echo "Timeout - check manually"
+        - echo "✓ NATS JetStream deployed"
+    next:
+      - step: check_status
+
+  - step: undeploy_nats
+    desc: Remove NATS JetStream
+    tool:
+      kind: shell
+      cmds:
+        - echo "=== Removing NATS JetStream ==="
+        - kubectl delete -f ci/manifests/nats/nats.yaml --ignore-not-found=true
+        - kubectl delete -f ci/manifests/nats/namespace.yaml --ignore-not-found=true
+        - echo "✓ NATS JetStream removed"
+    next:
+      - step: end
+
+  - step: check_status
+    desc: Check NATS deployment status
+    tool:
+      kind: shell
+      cmds:
+        - echo "=== NATS Status ==="
+        - kubectl get namespace nats 2>/dev/null || echo "Namespace not found"
+        - kubectl get all -n nats 2>/dev/null || echo "No resources"
+    next:
+      - step: end
+
+  - step: check_health
+    desc: Check NATS health
+    tool:
+      kind: shell
+      cmds:
+        - echo "=== NATS Health Check ==="
+        - |
+          POD=$(kubectl get pod -n nats -l app=nats -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+          if [ -n "$POD" ]; then
+            echo "Pod: $POD"
+            kubectl exec -n nats $POD -- nats server check connection
+          else
+            echo "No NATS pod found"
+            exit 1
+          fi
+    next:
+      - step: end
+
+  - step: show_logs
+    desc: Show NATS logs
+    tool:
+      kind: shell
+      cmds:
+        - echo "=== NATS Logs (last 50 lines) ==="
+        - kubectl logs -n nats -l app=nats --tail=50 || echo "No logs available"
+    next:
+      - step: end
+
+  - step: list_streams
+    desc: List NATS JetStream streams
+    tool:
+      kind: shell
+      cmds:
+        - echo "=== NATS JetStream Streams ==="
+        - |
+          POD=$(kubectl get pod -n nats -l app=nats -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+          if [ -n "$POD" ]; then
+            kubectl exec -n nats $POD -- nats stream list --user=noetl --password=noetl
+          else
+            echo "No NATS pod found"
+          fi
+    next:
+      - step: end
+
+  - step: show_monitoring
+    desc: Show NATS monitoring dashboard
+    tool:
+      kind: shell
+      cmds:
+        - echo "=== NATS Monitoring Dashboard ==="
+        - echo "Access monitoring at: http://localhost:30822"
+        - echo ""
+        - echo "Metrics:"
+        - |
+          curl -s http://localhost:30822/varz 2>/dev/null | python3 -m json.tool || echo "Unable to fetch metrics"
+    next:
+      - step: end
+
+  - step: test_connection
+    desc: Test NATS connection
+    tool:
+      kind: shell
+      cmds:
+        - echo "=== Testing NATS Connection ==="
+        - |
+          POD=$(kubectl get pod -n nats -l app=nats -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+          if [ -n "$POD" ]; then
+            echo "Testing connection to nats.nats.svc.cluster.local:4222"
+            kubectl exec -n nats $POD -- nats server check connection --user=noetl --password=noetl
+            echo "✓ Connection successful"
+          else
+            echo "No NATS pod found"
+            exit 1
+          fi
+    next:
+      - step: end
+
+  - step: run_tests
+    desc: Run NATS integration tests
+    tool:
+      kind: shell
+      cmds:
+        - echo "=== Running NATS Tests ==="
+        - |
+          POD=$(kubectl get pod -n nats -l app=nats -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+          if [ -n "$POD" ]; then
+            echo "1. Testing pub/sub..."
+            kubectl exec -n nats $POD -- nats pub test.subject "Hello NATS" --user=noetl --password=noetl
+            echo "2. Testing KV store..."
+            kubectl exec -n nats $POD -- nats kv add test_bucket --user=noetl --password=noetl || echo "Bucket may exist"
+            kubectl exec -n nats $POD -- nats kv put test_bucket key1 value1 --user=noetl --password=noetl
+            kubectl exec -n nats $POD -- nats kv get test_bucket key1 --user=noetl --password=noetl
+            echo "✓ Tests completed"
+          else
+            echo "No NATS pod found"
+            exit 1
+          fi
+    next:
+      - step: end
+
+  - step: restart_nats
+    desc: Restart NATS pod
+    tool:
+      kind: shell
+      cmds:
+        - echo "=== Restarting NATS ==="
+        - kubectl rollout restart deployment/nats -n nats || kubectl delete pod -n nats -l app=nats
+        - echo "Waiting for NATS to restart..."
+        - kubectl wait --for=condition=ready pod -l app=nats -n nats --timeout=120s || echo "Timeout - check manually"
+        - echo "✓ NATS restarted"
+    next:
+      - step: check_status
+
+  - step: setup_port_forward
+    desc: Setup port forwarding for NATS
+    tool:
+      kind: shell
+      cmds:
+        - echo "=== Setting up NATS Port Forwarding ==="
+        - echo "Note: NodePort is already configured in kind cluster"
+        - echo "- Client: localhost:30422 (NodePort)"
+        - echo "- Monitoring: localhost:30822 (NodePort)"
+        - echo ""
+        - echo "If you need local port forwarding, run:"
+        - echo "kubectl port-forward -n nats svc/nats 4222:4222"
+    next:
+      - step: end
+
+  - step: show_help
+    desc: Show available NATS actions
+    tool:
+      kind: shell
+      cmds:
+        - echo ""
+        - echo "═══════════════════════════════════════════════════════════"
+        - echo " NATS JetStream Automation"
+        - echo "═══════════════════════════════════════════════════════════"
+        - echo ""
+        - echo "Usage: noetl run automation/infrastructure/nats.yaml --set action=<action>"
+        - echo ""
+        - echo "Deployment:"
+        - echo "  deploy      - Deploy NATS JetStream"
+        - echo "  undeploy    - Remove NATS JetStream"
+        - echo "  restart     - Restart NATS pod"
+        - echo ""
+        - echo "Monitoring:"
+        - echo "  status      - Check deployment status"
+        - echo "  health      - Check NATS health"
+        - echo "  logs        - View NATS logs"
+        - echo "  monitoring  - Show monitoring dashboard"
+        - echo ""
+        - echo "Operations:"
+        - echo "  streams     - List JetStream streams"
+        - echo "  connect     - Test connection"
+        - echo "  test        - Run integration tests"
+        - echo "  port-forward - Setup port forwarding"
+        - echo ""
+        - echo "Access:"
+        - echo "  - Client: nats.nats.svc.cluster.local:4222 (internal)"
+        - echo "  - Client: localhost:30422 (NodePort)"
+        - echo "  - Monitoring: http://localhost:30822"
+        - echo "  - Credentials: noetl/noetl"
+        - echo ""
+    next:
+      - step: end
+
+  - step: end
+    desc: End workflow
+    tool:
+      kind: shell
+      cmds:
+        - echo ""
