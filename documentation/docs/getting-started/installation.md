@@ -6,20 +6,39 @@ description: Installation options for NoETL
 
 # Installation
 
-NoETL can be installed from PyPI or deployed as a Kubernetes service.
+NoETL provides multiple installation options across different platforms and package managers.
 
-## PyPI Installation
+## Quick Install
 
-### Basic Installation
+Choose your preferred installation method:
+
+### Homebrew (macOS/Linux)
 
 ```bash
-pip install noetl
+brew tap noetl/tap
+brew install noetl
 ```
 
-### Specific Version
+### APT (Ubuntu/Debian)
 
 ```bash
-pip install noetl==2.5.2
+echo 'deb [trusted=yes] https://noetl.github.io/apt jammy main' | sudo tee /etc/apt/sources.list.d/noetl.list
+sudo apt-get update
+sudo apt-get install noetl
+```
+
+See [APT Installation Guide](../installation/apt.md) for details.
+
+### PyPI (Python Package)
+
+```bash
+pip install noetlctl
+```
+
+### Cargo (Rust)
+
+```bash
+cargo install noetl
 ```
 
 ### Verify Installation
@@ -28,6 +47,18 @@ pip install noetl==2.5.2
 noetl --version
 noetl --help
 ```
+
+## Distribution Channels
+
+NoETL is available through multiple distribution channels:
+
+| Channel | Package | Command | Platform |
+|---------|---------|---------|----------|
+| **Homebrew** | `noetl/tap/noetl` | `brew install noetl/tap/noetl` | macOS, Linux |
+| **APT** | `noetl` | `sudo apt-get install noetl` | Ubuntu, Debian |
+| **PyPI** | `noetlctl` | `pip install noetlctl` | Cross-platform |
+| **Crates.io** | `noetl` | `cargo install noetl` | Cross-platform |
+| **GitHub** | Binary | Download from [releases](https://github.com/noetl/noetl/releases) | macOS, Linux |
 
 ## Kubernetes Deployment
 
