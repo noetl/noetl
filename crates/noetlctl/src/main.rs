@@ -50,19 +50,30 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Run playbook locally (no server required)
+    /// 
+    /// Auto-discovery: If no playbook file is specified, searches for:
+    ///   1. ./noetl.yaml (priority)
+    ///   2. ./main.yaml (fallback)
+    /// 
     /// Examples:
-    ///     noetl run automation/deploy.yaml
-    ///     noetl run automation/build.yaml build_image
-    ///     noetl run automation/deploy.yaml --set image_tag=v2.5.3
-    ///     noetl run automation/deploy.yaml --payload '{"target":"bootstrap","registry":"ghcr.io"}'
-    ///     noetl run ci/test.yaml register_credentials --verbose
+    ///     noetl run                                    # Auto-discover noetl.yaml or main.yaml
+    ///     noetl run bootstrap                          # Auto-discover + target "bootstrap"
+    ///     noetl run automation/deploy.yaml             # Explicit file
+    ///     noetl run automation/build.yaml build_image  # Explicit file + target
+    ///     noetl run main.yaml bootstrap                # Explicit main.yaml + target
+    ///     noetl run --set image_tag=v2.5.3             # Auto-discover + variables
+    ///     noetl run bootstrap --verbose                # Auto-discover + target + verbose
     #[command(verbatim_doc_comment)]
     Run {
-        /// Path to the playbook file
-        playbook: PathBuf,
+        /// Optional: Path to playbook file OR target step name
+        /// - If it's a file path (contains / or ends with .yaml/.yml), used as playbook
+        /// - If file exists, used as playbook
+        /// - Otherwise, auto-discover (noetl.yaml → main.yaml) and treat as target
+        playbook_or_target: Option<String>,
 
-        /// Target step to execute (optional, defaults to 'start')
-        target: Option<String>,
+        /// Additional arguments (target step or additional variables)
+        #[arg(trailing_var_arg = true)]
+        args: Vec<String>,
 
         /// Set variables (format: key=value)
         #[arg(long = "set", value_name = "KEY=VALUE")]
@@ -508,6 +519,95 @@ struct ExecuteRequest {
     payload: serde_json::Value,
 }
 
+/// Resolve playbook file path and optional target step
+/// Implements File-First Strategy:
+/// 1. Check if first arg is explicit path (contains / or \ or ends with .yaml/.yml)
+/// 2. Check if file exists (as-is, with .yaml, with .yml)
+/// 3. Auto-discover: ./noetl.yaml (priority) → ./main.yaml (fallback)
+/// 4. Treat remaining args as target step
+fn resolve_playbook_and_target(
+    playbook_or_target: Option<String>,
+    args: Vec<String>,
+) -> Result<(PathBuf, Option<String>)> {
+    // Helper: Check if string looks like a file path
+    let is_explicit_path = |s: &str| -> bool {
+        s.contains('/') || s.contains('\\') || s.ends_with(".yaml") || s.ends_with(".yml")
+    };
+    
+    // Helper: Try to find file with extensions
+    let try_find_file = |base: &str| -> Option<PathBuf> {
+        // Try as-is
+        let path = PathBuf::from(base);
+        if path.exists() && path.is_file() {
+            return Some(path);
+        }
+        
+        // Try with .yaml extension
+        let yaml_path = PathBuf::from(format!("{}.yaml", base));
+        if yaml_path.exists() && yaml_path.is_file() {
+            return Some(yaml_path);
+        }
+        
+        // Try with .yml extension
+        let yml_path = PathBuf::from(format!("{}.yml", base));
+        if yml_path.exists() && yml_path.is_file() {
+            return Some(yml_path);
+        }
+        
+        None
+    };
+    
+    // Helper: Auto-discover playbook in current directory
+    let auto_discover = || -> Result<PathBuf> {
+        // Priority 1: noetl.yaml
+        if let Some(path) = try_find_file("./noetl") {
+            return Ok(path);
+        }
+        
+        // Priority 2: main.yaml
+        if let Some(path) = try_find_file("./main") {
+            return Ok(path);
+        }
+        
+        // No playbook found
+        anyhow::bail!(
+            "No playbook found. Expected ./noetl.yaml or ./main.yaml in current directory.\n\
+             Hint: Specify explicit path like: noetl run automation/main.yaml"
+        )
+    };
+    
+    // Case 1: No first arg provided → auto-discover, first trailing arg is target
+    if playbook_or_target.is_none() {
+        let playbook = auto_discover()?;
+        let target = args.first().map(|s| s.to_string());
+        return Ok((playbook, target));
+    }
+    
+    let first_arg = playbook_or_target.unwrap();
+    
+    // Case 2: First arg is explicit path → use it, first trailing arg is target
+    if is_explicit_path(&first_arg) {
+        let playbook = PathBuf::from(&first_arg);
+        if !playbook.exists() {
+            anyhow::bail!("Playbook file not found: {}", playbook.display());
+        }
+        let target = args.first().map(|s| s.to_string());
+        return Ok((playbook, target));
+    }
+    
+    // Case 3: First arg might be a file (without extension) → check if exists
+    if let Some(playbook) = try_find_file(&first_arg) {
+        // File found! First trailing arg is target
+        let target = args.first().map(|s| s.to_string());
+        return Ok((playbook, target));
+    }
+    
+    // Case 4: First arg is not a file → auto-discover, first arg is target
+    let playbook = auto_discover()?;
+    let target = Some(first_arg);
+    Ok((playbook, target))
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -531,7 +631,17 @@ async fn main() -> Result<()> {
     let client = Client::new();
 
     match cli.command {
-        Some(Commands::Run { playbook, target, variables, payload, merge, verbose }) => {
+        Some(Commands::Run { playbook_or_target, args, variables, payload, merge, verbose }) => {
+            // File Resolution Algorithm (File-First Strategy)
+            let (playbook_path, target) = resolve_playbook_and_target(playbook_or_target, args)?;
+            
+            if verbose {
+                println!("🔍 Resolved playbook: {}", playbook_path.display());
+                if let Some(ref t) = target {
+                    println!("🎯 Target: {}", t);
+                }
+            }
+            
             // Parse JSON payload if provided
             let mut vars = std::collections::HashMap::new();
             
@@ -571,7 +681,7 @@ async fn main() -> Result<()> {
             }
 
             // Run playbook locally
-            let runner = playbook_runner::PlaybookRunner::new(playbook)
+            let runner = playbook_runner::PlaybookRunner::new(playbook_path)
                 .with_variables(vars)
                 .with_merge(merge)
                 .with_verbose(verbose)
@@ -2066,3 +2176,4 @@ fn update_deployment_image(file_path: &str, image: &str) -> Result<()> {
 
     Ok(())
 }
+

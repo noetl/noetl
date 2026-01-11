@@ -113,3 +113,4 @@ homebrew-tap
 
 # Extracted release tarballs (from testing)
 noetl-*/
+bin/

@@ -13,33 +13,85 @@ The `noetl run` command enables local execution of NoETL playbooks without requi
 ## Key Features
 
 - **Standalone Execution**: No server/worker infrastructure needed
+- **Auto-Discovery**: Automatically finds `noetl.yaml` or `main.yaml` in current directory
 - **Target-Based**: Run specific workflow steps like taskfile targets
 - **Tool Support**: Shell commands, HTTP requests, and playbook composition
 - **Variable Templating**: Jinja2-style template rendering
 - **Result Capture**: Store and pass results between steps
 
+## Auto-Discovery
+
+When no playbook file is explicitly specified, `noetl run` automatically searches for playbooks in the current directory with the following priority:
+
+1. **`./noetl.yaml`** (priority)
+2. **`./main.yaml`** (fallback)
+
+This enables simplified workflow automation similar to taskfiles:
+
+```bash
+# Auto-discover playbook and run from 'start' step
+noetl run
+
+# Auto-discover playbook and run specific target
+noetl run bootstrap
+noetl run deploy
+noetl run test
+
+# Auto-discover with variables
+noetl run bootstrap --set env=production --verbose
+```
+
+### File Resolution Algorithm
+
+The CLI uses a **File-First Strategy** to resolve playbook paths:
+
+1. **Explicit Path Check**: If argument contains `/` or `\` → treat as file path
+2. **Extension Check**: If argument ends with `.yaml` or `.yml` → treat as file path
+3. **File Existence Check**: Try to find file (as-is, with `.yaml`, with `.yml`)
+4. **Auto-Discovery**: If no file found, search for `./noetl.yaml` → `./main.yaml`
+5. **Target Handling**: Remaining arguments treated as target step name
+
+**Examples**:
+
+```bash
+# Explicit file path (contains /)
+noetl run automation/deploy.yaml production
+
+# Explicit file by extension
+noetl run deploy.yaml production
+
+# File exists check (tries deploy, deploy.yaml, deploy.yml)
+noetl run deploy production
+
+# Auto-discover → treat first arg as target
+noetl run bootstrap        # Uses ./noetl.yaml or ./main.yaml, target "bootstrap"
+
+# Auto-discover → default to 'start'
+noetl run                  # Uses ./noetl.yaml or ./main.yaml, starts at "start" step
+```
+
 ## Basic Usage
 
 ```bash
-# Run entire playbook (starts from "start" step)
-noetl run automation/playbook.yaml
+# Auto-discover and run specific target
+noetl run bootstrap
 
-# Run specific target/step
-noetl run automation/playbook.yaml target_name
+# Explicit playbook with target
+noetl run automation/playbook.yaml deploy
 
-# Pass individual variables
-noetl run automation/playbook.yaml --set env=production --set version=v2.5
+# Auto-discover with variables
+noetl run bootstrap --set env=production --set version=v2.5
 
-# Pass multiple variables as JSON payload
+# Explicit file with JSON payload
 noetl run automation/playbook.yaml --payload '{"env":"production","version":"v2.5"}'
 
-# Combine payload with individual overrides (--set takes precedence)
-noetl run automation/playbook.yaml \
+# Combine auto-discovery with payload and overrides
+noetl run deploy \
   --payload '{"target":"staging","registry":"gcr.io"}' \
   --set target=production
 
-# Verbose output
-noetl run automation/playbook.yaml --verbose
+# Verbose output with auto-discovery
+noetl run bootstrap --verbose
 ```
 
 ## Supported Tool Types
