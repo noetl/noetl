@@ -43,7 +43,7 @@ cargo install noetl-cli
 ### Specific Version
 
 ```bash
-cargo install noetl --version 2.5.3
+cargo install noetl --version 2.5.5
 ```
 
 ### From Git (Development)
@@ -67,7 +67,7 @@ cargo install --path .
 
 ```bash
 noetl --version
-# Output: noetl 2.5.3
+# Output: noetl 2.5.5
 
 noetl --help
 ```

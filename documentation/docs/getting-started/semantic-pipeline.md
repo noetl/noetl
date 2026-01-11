@@ -1,5 +1,5 @@
 ---
-sidebar_position: 5
+sidebar_position: 6
 title: Semantic Pipeline
 description: AI-powered execution analysis with embeddings and LLM reasoning
 ---

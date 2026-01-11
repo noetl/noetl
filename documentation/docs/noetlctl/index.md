@@ -350,7 +350,7 @@ noetl run automation/deploy.yaml
 noetl run automation/tasks.yaml cleanup
 
 # Individual variables
-noetl run deploy.yaml --set env=prod --set version=v2.5.3
+noetl run deploy.yaml --set env=prod --set version=v2.5.5
 
 # JSON payload
 noetl run deploy.yaml --payload '{"env":"production","debug":true}'

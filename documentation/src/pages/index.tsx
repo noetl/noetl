@@ -19,8 +19,8 @@ function HomepageHeader() {
         <p className="hero__subtitle">{siteConfig.tagline}</p>
         <div style={{margin: '2rem 0'}}>
           <img 
-            src="/img/noetl.png" 
-            alt="NoETL Architecture" 
+            src="/img/NoETL.png" 
+            alt="NoETL - Data Mesh and MLOps Orchestration" 
             style={{maxWidth: '800px', width: '100%', height: 'auto'}}
           />
         </div>

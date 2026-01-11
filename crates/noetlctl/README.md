@@ -80,7 +80,7 @@ noetl --version
 noetl run playbook.yaml
 
 # Pass variables
-noetl run playbook.yaml --set env=prod --set version=v2.5.3
+noetl run playbook.yaml --set env=prod --set version=v2.5.5
 
 # Verbose output
 noetl run playbook.yaml --verbose
