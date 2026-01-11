@@ -195,9 +195,9 @@ workflow:
     desc: Deploy PostgreSQL to cluster
     tool:
       kind: playbook
-      path: automation/infrastructure/postgres
-    args:
-      action: deploy
+      path: ../infrastructure/postgres.yaml
+      args:
+        action: deploy
     next:
       - step: deploy_noetl
   
@@ -217,9 +217,9 @@ workflow:
     desc: Deploy observability stack (ClickHouse, Qdrant, NATS)
     tool:
       kind: playbook
-      path: automation/infrastructure/observability
-    args:
-      action: activate-all
+      path: ../infrastructure/observability.yaml
+      args:
+        action: activate-all
     next:
       - step: wait_for_services
   
