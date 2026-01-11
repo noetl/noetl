@@ -151,7 +151,11 @@ workflow:
         - |
           echo ""
           echo "Building Docker images..."
-          task docker:local:noetl-image-build
+          # Generate timestamp tag like task does
+          IMAGE_TAG=$(date +%Y-%m-%d-%H-%M)
+          echo "$IMAGE_TAG" > .noetl_last_build_tag.txt
+          echo "Building with tag: $IMAGE_TAG"
+          docker build -t {{ workload.registry }}/{{ workload.image_name }}:$IMAGE_TAG -f docker/noetl/dev/Dockerfile .
     next:
       - step: create_kind_cluster
   
@@ -180,14 +184,15 @@ workflow:
         - |
           echo ""
           echo "Loading NoETL image into kind cluster..."
-          # Get the most recent noetl image (built in previous step)
-          IMAGE_TAG=$(docker images --format "{{.Repository}}:{{.Tag}}" | grep "^local/noetl:" | sort -r | head -n 1)
-          if [ -z "$IMAGE_TAG" ]; then
-            echo "ERROR: No local/noetl image found. Build must have failed."
+          # Read the tag from the file created during build
+          if [ ! -f .noetl_last_build_tag.txt ]; then
+            echo "ERROR: .noetl_last_build_tag.txt not found. Build must have failed."
             exit 1
           fi
-          echo "Loading image: $IMAGE_TAG"
-          kind load docker-image "$IMAGE_TAG" --name noetl
+          IMAGE_TAG=$(cat .noetl_last_build_tag.txt)
+          IMAGE="{{ workload.registry }}/{{ workload.image_name }}:$IMAGE_TAG"
+          echo "Loading image: $IMAGE"
+          kind load docker-image "$IMAGE" --name noetl
     next:
       - step: deploy_postgres
   
@@ -195,9 +200,9 @@ workflow:
     desc: Deploy PostgreSQL to cluster
     tool:
       kind: playbook
-      path: automation/infrastructure/postgres
-    args:
-      action: deploy
+      path: ../infrastructure/postgres.yaml
+      args:
+        action: deploy
     next:
       - step: deploy_noetl
   
@@ -209,7 +214,24 @@ workflow:
         - |
           echo ""
           echo "Deploying NoETL..."
-          kubectl apply -f ci/manifests/noetl/
+          # Create namespace first
+          kubectl apply -f ci/manifests/noetl/namespace/
+          
+          # Read the tag from the file created during build
+          if [ ! -f .noetl_last_build_tag.txt ]; then
+            echo "ERROR: .noetl_last_build_tag.txt not found. Build must have failed."
+            exit 1
+          fi
+          IMAGE_TAG=$(cat .noetl_last_build_tag.txt)
+          IMAGE="{{ workload.registry }}/{{ workload.image_name }}:$IMAGE_TAG"
+          echo "Using image: $IMAGE"
+          
+          # Apply manifests with image substitution
+          for manifest in ci/manifests/noetl/*.yaml; do
+            if [ -f "$manifest" ]; then
+              sed "s|{{ workload.registry }}/{{ workload.image_name }}:latest|$IMAGE|g" "$manifest" | kubectl apply -f -
+            fi
+          done
     next:
       - step: deploy_observability
   
@@ -217,9 +239,9 @@ workflow:
     desc: Deploy observability stack (ClickHouse, Qdrant, NATS)
     tool:
       kind: playbook
-      path: automation/infrastructure/observability
-    args:
-      action: activate-all
+      path: ../infrastructure/observability.yaml
+      args:
+        action: activate-all
     next:
       - step: wait_for_services
   
@@ -288,19 +310,19 @@ workflow:
           echo ""
           echo "Next Steps:"
           echo "  1. Register credentials:"
-          echo "     task test:k8s:register-credentials"
+          echo "     noetl run automation/setup/register_credentials.yaml"
           echo ""
           echo "  2. Register playbooks:"
-          echo "     task test:k8s:register-playbooks"
+          echo "     noetl run automation/setup/register_playbooks.yaml"
           echo ""
           echo "  3. Test execution:"
           echo "     noetl execute playbook test-playbook"
           echo ""
           echo "  4. Check status:"
-          echo "     kubectl get pods"
+          echo "     kubectl get pods -n noetl"
           echo ""
           echo "To destroy:"
-          echo "  noetl run automation/main.yaml --payload '{\"target\":\"destroy\"}'"
+          echo "  noetl run automation/main.yaml destroy"
           echo ""
     next:
       - step: end

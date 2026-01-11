@@ -13,37 +13,37 @@ workflow:
     tool:
       kind: shell
       cmds:
-        - echo "Kind Cluster Automation - Action '{{ action }}'"
+        - echo "Kind Cluster Automation - Action '{{ workload.action }}'"
     next:
-      - when: "{{ action }} == create"
+      - when: "{{ workload.action }} == create"
         then:
           - step: create_cluster
         args: {}
-      - when: "{{ action }} == delete"
+      - when: "{{ workload.action }} == delete"
         then:
           - step: delete_cluster
         args: {}
-      - when: "{{ action }} == list"
+      - when: "{{ workload.action }} == list"
         then:
           - step: list_clusters
         args: {}
-      - when: "{{ action }} == image-load"
+      - when: "{{ workload.action }} == image-load"
         then:
           - step: load_image
         args: {}
-      - when: "{{ action }} == images-list"
+      - when: "{{ workload.action }} == images-list"
         then:
           - step: list_images
         args: {}
-      - when: "{{ action }} == status"
+      - when: "{{ workload.action }} == status"
         then:
           - step: check_status
         args: {}
-      - when: "{{ action }} == context-set"
+      - when: "{{ workload.action }} == context-set"
         then:
           - step: set_context
         args: {}
-      - when: "{{ action }} == help"
+      - when: "{{ workload.action }} == help"
         then:
           - step: show_help
         args: {}

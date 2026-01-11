@@ -13,37 +13,37 @@ workflow:
     tool:
       kind: shell
       cmds:
-        - echo "Qdrant Automation - Action '{{ action }}'"
+        - echo "Qdrant Automation - Action '{{ workload.action }}'"
     next:
-      - when: "{{ action }} == deploy"
+      - when: "{{ workload.action }} == deploy"
         then:
           - step: deploy_qdrant
         args: {}
-      - when: "{{ action }} == undeploy"
+      - when: "{{ workload.action }} == undeploy"
         then:
           - step: undeploy_qdrant
         args: {}
-      - when: "{{ action }} == status"
+      - when: "{{ workload.action }} == status"
         then:
           - step: check_status
         args: {}
-      - when: "{{ action }} == logs"
+      - when: "{{ workload.action }} == logs"
         then:
           - step: show_logs
         args: {}
-      - when: "{{ action }} == health"
+      - when: "{{ workload.action }} == health"
         then:
           - step: check_health
         args: {}
-      - when: "{{ action }} == test"
+      - when: "{{ workload.action }} == test"
         then:
           - step: test_qdrant
         args: {}
-      - when: "{{ action }} == collections"
+      - when: "{{ workload.action }} == collections"
         then:
           - step: list_collections
         args: {}
-      - when: "{{ action }} == restart"
+      - when: "{{ workload.action }} == restart"
         then:
           - step: restart_qdrant
         args: {}
@@ -57,7 +57,11 @@ workflow:
         - |
           echo ""
           echo "Deploying Qdrant vector database..."
-          task qdrant:deploy
+          kubectl apply -f ci/manifests/qdrant/namespace.yaml
+          kubectl apply -f ci/manifests/qdrant/qdrant.yaml
+          echo "✓ Qdrant deployed"
+          echo "Waiting for Qdrant to be ready..."
+          kubectl wait --for=condition=ready --timeout=120s pod -l app=qdrant -n qdrant || true
     next:
       - step: end
 
@@ -69,7 +73,9 @@ workflow:
         - |
           echo ""
           echo "Removing Qdrant from cluster..."
-          task qdrant:undeploy
+          kubectl delete -f ci/manifests/qdrant/qdrant.yaml --ignore-not-found=true
+          kubectl delete -f ci/manifests/qdrant/namespace.yaml --ignore-not-found=true
+          echo "✓ Qdrant removed"
     next:
       - step: end
 
@@ -81,7 +87,17 @@ workflow:
         - |
           echo ""
           echo "Qdrant Status:"
-          task qdrant:status
+          echo "=== Qdrant Namespace ==="
+          kubectl get namespace qdrant 2>/dev/null || echo "Namespace not found"
+          echo ""
+          echo "=== Qdrant Pods ==="
+          kubectl get pods -n qdrant 2>/dev/null || echo "No pods"
+          echo ""
+          echo "=== Qdrant Services ==="
+          kubectl get svc -n qdrant 2>/dev/null || echo "No services"
+          echo ""
+          echo "=== Qdrant PVCs ==="
+          kubectl get pvc -n qdrant 2>/dev/null || echo "No PVCs"
     next:
       - step: end
 
@@ -93,7 +109,7 @@ workflow:
         - |
           echo ""
           echo "Qdrant Logs:"
-          task qdrant:logs
+          kubectl logs -n qdrant statefulset/qdrant --tail=100 -f
     next:
       - step: end
 
@@ -105,7 +121,12 @@ workflow:
         - |
           echo ""
           echo "Checking Qdrant health..."
-          task qdrant:health
+          POD=$(kubectl get pods -n qdrant -l app=qdrant -o jsonpath='{.items[0].metadata.name}')
+          if [ -n "$POD" ]; then
+            kubectl exec -n qdrant $POD -- wget -qO- http://localhost:6333/healthz
+          else
+            echo "Qdrant pod not found"
+          fi
     next:
       - step: end
 
@@ -117,7 +138,18 @@ workflow:
         - |
           echo ""
           echo "Testing Qdrant with sample collection..."
-          task qdrant:test
+          echo "=== Testing Qdrant Connection ==="
+          POD=$(kubectl get pods -n qdrant -l app=qdrant -o jsonpath='{.items[0].metadata.name}')
+          if [ -n "$POD" ]; then
+            kubectl exec -n qdrant $POD -- wget -qO- http://localhost:6333/healthz
+          fi
+          echo ""
+          echo "=== Listing Collections ==="
+          if [ -n "$POD" ]; then
+            kubectl exec -n qdrant $POD -- wget -qO- http://localhost:6333/collections
+          fi
+          echo ""
+          echo "✓ Qdrant tests completed"
     next:
       - step: end
 
@@ -129,7 +161,12 @@ workflow:
         - |
           echo ""
           echo "Qdrant Collections:"
-          task qdrant:collections
+          POD=$(kubectl get pods -n qdrant -l app=qdrant -o jsonpath='{.items[0].metadata.name}')
+          if [ -n "$POD" ]; then
+            kubectl exec -n qdrant $POD -- wget -qO- http://localhost:6333/collections
+          else
+            echo "Qdrant pod not found"
+          fi
     next:
       - step: end
 
@@ -141,7 +178,9 @@ workflow:
         - |
           echo ""
           echo "Restarting Qdrant..."
-          task qdrant:restart
+          kubectl rollout restart statefulset/qdrant -n qdrant
+          kubectl rollout status statefulset/qdrant -n qdrant --timeout=120s
+          echo "✓ Qdrant restarted"
     next:
       - step: end
 

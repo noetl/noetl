@@ -13,45 +13,45 @@ workflow:
     tool:
       kind: shell
       cmds:
-        - echo "Gateway Automation - Action '{{ action }}'"
+        - echo "Gateway Automation - Action '{{ workload.action }}'"
     next:
-      - when: "{{ action }} == build-image"
+      - when: "{{ workload.action }} == build-image"
         then:
           - step: build_image
         args: {}
-      - when: "{{ action }} == deploy"
+      - when: "{{ workload.action }} == deploy"
         then:
           - step: deploy_gateway
         args: {}
-      - when: "{{ action }} == deploy-all"
+      - when: "{{ workload.action }} == deploy-all"
         then:
           - step: deploy_all
         args: {}
-      - when: "{{ action }} == remove"
+      - when: "{{ workload.action }} == remove"
         then:
           - step: remove_gateway
         args: {}
-      - when: "{{ action }} == redeploy"
+      - when: "{{ workload.action }} == redeploy"
         then:
           - step: redeploy_gateway
         args: {}
-      - when: "{{ action }} == restart"
+      - when: "{{ workload.action }} == restart"
         then:
           - step: restart_gateway
         args: {}
-      - when: "{{ action }} == status"
+      - when: "{{ workload.action }} == status"
         then:
           - step: check_status
         args: {}
-      - when: "{{ action }} == logs"
+      - when: "{{ workload.action }} == logs"
         then:
           - step: view_logs
         args: {}
-      - when: "{{ action }} == test"
+      - when: "{{ workload.action }} == test"
         then:
           - step: test_gateway
         args: {}
-      - when: "{{ action }} == help"
+      - when: "{{ workload.action }} == help"
         then:
           - step: show_help
         args: {}
