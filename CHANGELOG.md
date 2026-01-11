@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.5.5](https://github.com/noetl/noetl/compare/v2.5.4...v2.5.5) (2026-01-11)
+
+### Bug Fixes
+
+* add auto-discovery and file resolution for noetl run command ([02d09e3](https://github.com/noetl/noetl/commit/02d09e3e8d9ea37b5346006661454acc223d6e5e))
+* reduce logging footprint - move verbose logs to debug level ([9f612c1](https://github.com/noetl/noetl/commit/9f612c1379437e58371225e2c6a1bde4e64bf4da))
+* rename schema field in SnowflakeFieldMapping to avoid Pydantic warning ([ca2ffe6](https://github.com/noetl/noetl/commit/ca2ffe61430c617aa2000e847e0e1d1607cfec56))
+* simplify developer experience with complete bootstrap improvements ([88f49f4](https://github.com/noetl/noetl/commit/88f49f4b96dbe3721469005d941a1b554c8e55b0))
+
 ## [2.5.3](https://github.com/noetl/noetl/compare/v2.5.2...v2.5.3) (2026-01-10)
 
 ### Bug Fixes

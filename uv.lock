@@ -2084,7 +2084,7 @@ wheels = [
 
 [[package]]
 name = "noetl"
-version = "2.5.3"
+version = "2.5.5"
 source = { editable = "." }
 dependencies = [
     { name = "aiofiles" },
@@ -2189,7 +2189,7 @@ requires-dist = [
     { name = "memray", specifier = ">=1.17.2" },
     { name = "nats-py", specifier = ">=2.10.0" },
     { name = "networkx", specifier = ">=3.5" },
-    { name = "noetl-cli", marker = "extra == 'cli'", specifier = "==2.5.2" },
+    { name = "noetl-cli", marker = "extra == 'cli'", specifier = "==2.5.3" },
     { name = "ortools", specifier = ">=9.10" },
     { name = "pandas", marker = "extra == 'notebook'", specifier = ">=2.2.3" },
     { name = "polars", extras = ["pyarrow"], specifier = ">=1.30.0" },
@@ -2223,11 +2223,11 @@ dev = [
 
 [[package]]
 name = "noetl-cli"
-version = "2.5.2"
+version = "2.5.3"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/8a/83/caf2cc9757e3ed78f5b8825f4796407be311918e0fa94dae3a541039e87e/noetl_cli-2.5.2.tar.gz", hash = "sha256:47624a0bcb0ee314b31a6a3f4f3992a31b235c3e2a68d912598565e559b35e9b", size = 35445, upload-time = "2026-01-09T09:56:38.816Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/c8/53/356f655603fd860bdad49b0790b09e6ef3bb5d5565144cea93c83f623aea/noetl_cli-2.5.3.tar.gz", hash = "sha256:c76221bf00259a6317baee58c7b72ffbb1548363ca35cd1fc77bde2a9f8a9427", size = 39927, upload-time = "2026-01-10T03:53:03.992Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/57/d5/d73bac0db63e5d6298b09023828b8015e2008582ad72d8a36d2917e75dfb/noetl_cli-2.5.2-py3-none-macosx_11_0_arm64.whl", hash = "sha256:d75b0c965e516406be5cc214606360418d2b123d8a65cc66a54a3277547a6416", size = 2409128, upload-time = "2026-01-09T09:56:37.253Z" },
+    { url = "https://files.pythonhosted.org/packages/b7/0b/e04dd53c7ca8d5aa53fc84e180d37b3252eb5002ec57dcafe7634ac0869c/noetl_cli-2.5.3-py3-none-macosx_11_0_arm64.whl", hash = "sha256:ed1a4ee80ca08e0728d35343a95956667d88d0850b00947bc722e96b5cfb89b7", size = 2511543, upload-time = "2026-01-10T03:53:02.438Z" },
 ]
 
 [[package]]
