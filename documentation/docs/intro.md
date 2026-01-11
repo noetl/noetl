@@ -9,8 +9,6 @@ description: Automation for Microservices, Data Mesh and MLOps orchestration
 
 **NoETL** is an automation framework for Data Mesh and MLOps orchestration.
 
-![NoETL System Diagram](/img/noetl-main.png)
-
 ## What is NoETL?
 
 NoETL is an **AI-data-driven workflow runtime** designed for domain-centric data products and AI workloads:

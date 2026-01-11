@@ -1,0 +1,107 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: noetl_automation_main
+  path: automation/main
+  description: Main automation entry point for NoETL development workflows
+workload:
+  registry: "local"
+  image_name: "noetl"
+workflow:
+  - step: start
+    desc: Entry point for automation workflows
+    tool:
+      kind: shell
+      cmds:
+        - echo "Target is '{{ target }}'"
+    case:
+      - when: "{{ target == 'help' }}"
+        then:
+          - step: show_help
+      - when: "{{ target == 'bootstrap' or target == 'boot' }}"
+        then:
+          - step: bootstrap
+      - when: "{{ target == 'destroy' }}"
+        then:
+          - step: destroy
+      - when: "{{ target == 'dev' }}"
+        then:
+          - step: quick_dev
+        else:
+          - step: unknown_target
+  
+  - step: show_help
+    desc: Display available automation targets
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "====================================="
+          echo " NoETL Automation Playbooks"
+          echo "====================================="
+          echo ""
+          echo "Usage:"
+          echo "  noetl run boot        (or: noetl run bootstrap)"
+          echo "  noetl run destroy"
+          echo "  noetl run dev"
+          echo ""
+          echo "Or with explicit paths:"
+          echo "  noetl run automation/main.yaml --set target=bootstrap"
+          echo "  noetl run automation/setup/bootstrap.yaml"
+          echo ""
+          echo "Available targets:"
+          echo "  boot        - Complete K8s environment setup (alias: bootstrap)"
+          echo "  destroy     - Destroy environment and clean up"
+          echo "  dev         - Quick development cycle"
+          echo "  help        - Show this help message"
+          echo ""
+    next:
+      - step: end
+  
+  - step: boot
+    desc: Alias for bootstrap - Run complete bootstrap workflow
+    tool:
+      kind: playbook
+      path: automation/setup/bootstrap.yaml
+    next:
+      - step: end
+  
+  - step: bootstrap
+    desc: Run complete bootstrap workflow
+    tool:
+      kind: playbook
+      path: automation/setup/bootstrap.yaml
+    next:
+      - step: end
+  
+  - step: destroy
+    desc: Run destroy workflow
+    tool:
+      kind: playbook
+      path: automation/setup/destroy.yaml
+    next:
+      - step: end
+  
+  - step: quick_dev
+    desc: Quick development cycle
+    tool:
+      kind: shell
+      cmds:
+        - echo "Quick dev workflow not yet implemented"
+    next:
+      - step: end
+  
+  - step: unknown_target
+    desc: Handle unknown target
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "Error: Unknown target '{{ target }}'"
+          echo "Available targets: bootstrap, destroy, dev, help"
+          exit 1
+    next:
+      - step: end
+  
+  - step: end
+    desc: Workflow complete

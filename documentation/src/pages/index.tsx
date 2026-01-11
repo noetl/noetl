@@ -17,6 +17,13 @@ function HomepageHeader() {
           {siteConfig.title}
         </Heading>
         <p className="hero__subtitle">{siteConfig.tagline}</p>
+        <div style={{margin: '2rem 0'}}>
+          <img 
+            src="/img/noetl.png" 
+            alt="NoETL Architecture" 
+            style={{maxWidth: '800px', width: '100%', height: 'auto'}}
+          />
+        </div>
         <div className={styles.buttons}>
           <Link
             className="button button--secondary button--lg"

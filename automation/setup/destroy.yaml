@@ -66,9 +66,7 @@ workflow:
           echo "  - NoETL data: cleared"
           echo ""
           echo "You can now run bootstrap again:"
-          echo "  noetl run automation/setup/bootstrap.yaml"
-          echo "  OR"
-          echo "  noetl run automation/main.yaml --set target=bootstrap"
+          echo "  noetl run boot"
           echo ""
     next:
       - step: end
