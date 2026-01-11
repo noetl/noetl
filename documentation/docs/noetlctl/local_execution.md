@@ -210,7 +210,7 @@ metadata:
 
 workload:
   environment: "production"
-  version: "v2.5.3"
+  version: "v2.5.5"
 
 workflow:
   - step: start
@@ -311,7 +311,7 @@ Pass multiple variables as JSON object (matches server API behavior):
 
 ```bash
 # Using --payload parameter
-noetl run playbook.yaml --payload '{"target":"production","version":"v2.5.3"}'
+noetl run playbook.yaml --payload '{"target":"production","version":"v2.5.5"}'
 
 # Using --workload alias (same behavior)
 noetl run playbook.yaml --workload '{"env":"staging","debug":true}'
@@ -372,8 +372,8 @@ noetl run deploy.yaml
 # Output: target=development, registry=docker.io, version=latest
 
 # Override with payload
-noetl run deploy.yaml --payload '{"target":"production","version":"v2.5.3"}'
-# Output: target=production, registry=docker.io, version=v2.5.3
+noetl run deploy.yaml --payload '{"target":"production","version":"v2.5.5"}'
+# Output: target=production, registry=docker.io, version=v2.5.5
 
 # Override with --set (takes precedence over payload)
 noetl run deploy.yaml \
@@ -383,10 +383,10 @@ noetl run deploy.yaml \
 
 # Mix payload and individual variables
 noetl run deploy.yaml \
-  --payload '{"version":"v2.5.3","debug":true}' \
+  --payload '{"version":"v2.5.5","debug":true}' \
   --set target=production \
   --set registry=gcr.io
-# Output: target=production, registry=gcr.io, version=v2.5.3, debug=true
+# Output: target=production, registry=gcr.io, version=v2.5.5, debug=true
 ```
 
 **API Compatibility**:
@@ -398,12 +398,12 @@ The `--payload` parameter matches the server API's execution request format:
 POST /api/run
 {
   "playbook": "automation/deploy",
-  "args": {"target": "production", "version": "v2.5.3"},
+  "args": {"target": "production", "version": "v2.5.5"},
   "merge": false
 }
 
 # Equivalent CLI command
-noetl run automation/deploy.yaml --payload '{"target":"production","version":"v2.5.3"}'
+noetl run automation/deploy.yaml --payload '{"target":"production","version":"v2.5.5"}'
 ```
 
 ### Vars Extraction
@@ -646,7 +646,7 @@ metadata:
 
 workload:
   registry: "gcr.io/myproject"
-  version: "v2.5.3"
+  version: "v2.5.5"
 
 workflow:
   - step: start
@@ -1079,13 +1079,13 @@ noetl run automation/examples/parent_playbook.yaml --verbose
    📎 Executing sub-playbook: automation/examples/./build_child.yaml
 📋 Running playbook: build_child
 🔹 Step: build_image
-   Building image with tag: v2.5.3
+   Building image with tag: v2.5.5
    Build environment: production
 🔹 Step: call_deploy
    📎 Executing sub-playbook: automation/examples/./deploy_child.yaml
 📋 Running playbook: deploy_child
 🔹 Step: deploy
-   Deploying image: v2.5.3
+   Deploying image: v2.5.5
    Target environment: production
 ✅ Playbook execution completed successfully
 ```
