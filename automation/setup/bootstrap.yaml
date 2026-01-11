@@ -243,6 +243,16 @@ workflow:
       args:
         action: activate-all
     next:
+      - step: deploy_monitoring
+  
+  - step: deploy_monitoring
+    desc: Deploy monitoring stack (VictoriaMetrics, Grafana)
+    tool:
+      kind: playbook
+      path: ../infrastructure/monitoring.yaml
+      args:
+        action: deploy
+    next:
       - step: wait_for_services
   
   - step: wait_for_services
@@ -269,6 +279,14 @@ workflow:
           
           echo "Waiting for ClickHouse (optional)..."
           kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=chi-clickhouse-clickhouse -n clickhouse --timeout=120s || echo "Warning: ClickHouse not ready"
+          
+          echo "Waiting for VictoriaMetrics operator..."
+          kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=victoria-metrics-operator -n vmoperator --timeout=60s || true
+          
+          echo "Waiting for VictoriaMetrics cluster..."
+          kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=vmselect -n vmstack --timeout=90s || echo "Warning: VictoriaMetrics not ready"
+          kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=vminsert -n vmstack --timeout=90s || true
+          kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=vmstorage -n vmstack --timeout=90s || true
     next:
       - step: test_cluster_health
   
@@ -301,12 +319,15 @@ workflow:
           echo "  NoETL server: deployed"
           echo "  NoETL workers: deployed"
           echo "  Observability: deployed (ClickHouse, Qdrant, NATS)"
+          echo "  Monitoring: deployed (VictoriaMetrics, Grafana)"
           echo ""
           echo "Endpoints:"
           echo "  NoETL API: http://localhost:8082"
           echo "  PostgreSQL: localhost:54321"
           echo "  ClickHouse HTTP: http://localhost:30123"
           echo "  Qdrant: http://localhost:30633"
+          echo "  VictoriaMetrics: http://localhost:30428"
+          echo "  Grafana: http://localhost:30300"
           echo ""
           echo "Next Steps:"
           echo "  1. Register credentials:"
