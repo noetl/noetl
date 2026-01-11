@@ -21,16 +21,16 @@ NoETL includes three observability and data services for logs, metrics, traces, 
 
 ```bash
 # Activate all services
-task observability:activate-all
+noetl run automation/infrastructure/observability.yaml --set action=activate-all
 
 # Check status
-task observability:status-all
+noetl run automation/infrastructure/observability.yaml --set action=status-all
 
 # Health check
-task observability:health-all
+noetl run automation/infrastructure/observability.yaml --set action=health-all
 
 # Deactivate all
-task observability:deactivate-all
+noetl run automation/infrastructure/observability.yaml --set action=deactivate-all
 ```
 
 ## ClickHouse
@@ -133,24 +133,24 @@ ORDER BY Timestamp DESC
 
 ```bash
 # Deployment
-task clickhouse:deploy
-task clickhouse:undeploy
-task clickhouse:restart
+noetl run automation/infrastructure/clickhouse.yaml --set action=deploy
+noetl run automation/infrastructure/clickhouse.yaml --set action=undeploy
+noetl run automation/infrastructure/clickhouse.yaml --set action=restart
 
 # Monitoring
-task clickhouse:status
-task clickhouse:logs
-task clickhouse:health
+noetl run automation/infrastructure/clickhouse.yaml --set action=status
+noetl run automation/infrastructure/clickhouse.yaml --set action=logs
+noetl run automation/infrastructure/clickhouse.yaml --set action=health
 
 # Connection
-task clickhouse:connect                    # CLI access
-task clickhouse:query -- "SELECT 1"        # Execute query
-task clickhouse:port-forward               # Port forwarding
+noetl run automation/infrastructure/clickhouse.yaml --set action=connect
+noetl run automation/infrastructure/clickhouse.yaml --set action=query --set query="SELECT 1"
+noetl run automation/infrastructure/clickhouse.yaml --set action=port-forward
 
 # Maintenance
-task clickhouse:optimize                   # Optimize tables
-task clickhouse:clean-data                 # Clean data (keep schema)
-task clickhouse:test                       # Run tests
+noetl run automation/infrastructure/clickhouse.yaml --set action=optimize
+noetl run automation/infrastructure/clickhouse.yaml --set action=clean-data
+noetl run automation/infrastructure/clickhouse.yaml --set action=test
 ```
 
 ### Performance Features
@@ -247,20 +247,20 @@ curl -X POST "http://localhost:30633/collections/embeddings/points/search" \
 
 ```bash
 # Deployment
-task qdrant:deploy
-task qdrant:undeploy
-task qdrant:restart
+noetl run automation/infrastructure/qdrant.yaml --set action=deploy
+noetl run automation/infrastructure/qdrant.yaml --set action=undeploy
+noetl run automation/infrastructure/qdrant.yaml --set action=restart
 
 # Monitoring
-task qdrant:status
-task qdrant:logs
-task qdrant:health
+noetl run automation/infrastructure/qdrant.yaml --set action=status
+noetl run automation/infrastructure/qdrant.yaml --set action=logs
+noetl run automation/infrastructure/qdrant.yaml --set action=health
 
 # Operations
-task qdrant:collections                    # List collections
-task qdrant:connect                        # Test connection
-task qdrant:port-forward                   # Port forwarding
-task qdrant:test                           # Run tests
+noetl run automation/infrastructure/qdrant.yaml --set action=collections
+noetl run automation/infrastructure/qdrant.yaml --set action=connect
+noetl run automation/infrastructure/qdrant.yaml --set action=port-forward
+noetl run automation/infrastructure/qdrant.yaml --set action=test
 ```
 
 ### Configuration
@@ -363,21 +363,21 @@ nats -s nats://noetl:noetl@localhost:30422 kv watch config
 
 ```bash
 # Deployment
-task nats:deploy
-task nats:undeploy
-task nats:restart
+noetl run automation/infrastructure/nats.yaml --set action=deploy
+noetl run automation/infrastructure/nats.yaml --set action=undeploy
+noetl run automation/infrastructure/nats.yaml --set action=restart
 
 # Monitoring
-task nats:status
-task nats:logs
-task nats:health
+noetl run automation/infrastructure/nats.yaml --set action=status
+noetl run automation/infrastructure/nats.yaml --set action=logs
+noetl run automation/infrastructure/nats.yaml --set action=health
 
 # Operations
-task nats:streams                          # List JetStream streams
-task nats:monitoring                       # Show monitoring dashboard
-task nats:connect                          # Test connection
-task nats:port-forward                     # Port forwarding
-task nats:test                             # Run tests
+noetl run automation/infrastructure/nats.yaml --set action=streams
+noetl run automation/infrastructure/nats.yaml --set action=monitoring
+noetl run automation/infrastructure/nats.yaml --set action=connect
+noetl run automation/infrastructure/nats.yaml --set action=port-forward
+noetl run automation/infrastructure/nats.yaml --set action=test
 ```
 
 ### Configuration
@@ -401,51 +401,51 @@ Default settings (ConfigMap):
 
 ```bash
 # Activate all observability services
-task observability:activate-all
+noetl run automation/infrastructure/observability.yaml --set action=activate-all
 
 # Deactivate all observability services
-task observability:deactivate-all
+noetl run automation/infrastructure/observability.yaml --set action=deactivate-all
 ```
 
 ### Individual Service Control
 
 ```bash
 # Activate individual services
-task observability:activate-clickhouse
-task observability:activate-qdrant
-task observability:activate-nats
+noetl run automation/infrastructure/clickhouse.yaml --set action=deploy
+noetl run automation/infrastructure/qdrant.yaml --set action=deploy
+noetl run automation/infrastructure/nats.yaml --set action=deploy
 
 # Deactivate individual services
-task observability:deactivate-clickhouse
-task observability:deactivate-qdrant
-task observability:deactivate-nats
+noetl run automation/infrastructure/clickhouse.yaml --set action=undeploy
+noetl run automation/infrastructure/qdrant.yaml --set action=undeploy
+noetl run automation/infrastructure/nats.yaml --set action=undeploy
 ```
 
 ### Status and Health
 
 ```bash
 # Check all services status
-task observability:status-all
+noetl run automation/infrastructure/observability.yaml --set action=status-all
 
 # Health check all services
-task observability:health-all
+noetl run automation/infrastructure/observability.yaml --set action=health-all
 
 # Restart all services
-task observability:restart-all
+noetl run automation/infrastructure/observability.yaml --set action=restart-all
 ```
 
 ### Port Forwarding
 
 ```bash
 # ClickHouse
-task clickhouse:port-forward               # HTTP:8123, Native:9000
-task clickhouse:port-forward-mcp           # MCP:8124
+noetl run automation/infrastructure/clickhouse.yaml --set action=port-forward
+noetl run automation/infrastructure/clickhouse.yaml --set action=port-forward-mcp
 
 # Qdrant
-task qdrant:port-forward                   # HTTP:6333, gRPC:6334
+noetl run automation/infrastructure/qdrant.yaml --set action=port-forward
 
 # NATS
-task nats:port-forward                     # Client:4222, Monitoring:8222
+noetl run automation/infrastructure/nats.yaml --set action=port-forward
 ```
 
 ## Integration with NoETL
@@ -455,18 +455,16 @@ task nats:port-forward                     # Client:4222, Monitoring:8222
 All services automatically deploy with:
 
 ```bash
-task bootstrap
+noetl run automation/setup/bootstrap
 # or
-task dev:start
-# or
-task bring-all
+noetl run automation/main.yaml --set action=bootstrap
 ```
 
 ### Verification
 
 ```bash
 # Verify all components
-task bootstrap:verify
+noetl run automation/infrastructure/observability.yaml --set action=status-all
 
 # Shows:
 # - ClickHouse namespace and deployment status

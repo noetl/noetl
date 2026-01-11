@@ -237,6 +237,75 @@ Equivalent task commands:
 - `task qdrant:collections` → `--set action=collections`
 - `task qdrant:restart` → `--set action=restart`
 
+**NATS JetStream:**
+```bash
+# Deploy NATS
+noetl run automation/infrastructure/nats.yaml --set action=deploy
+
+# Check status
+noetl run automation/infrastructure/nats.yaml --set action=status
+
+# Check health
+noetl run automation/infrastructure/nats.yaml --set action=health
+
+# List JetStream streams
+noetl run automation/infrastructure/nats.yaml --set action=streams
+
+# Show monitoring dashboard
+noetl run automation/infrastructure/nats.yaml --set action=monitoring
+
+# Test connection
+noetl run automation/infrastructure/nats.yaml --set action=connect
+
+# Run integration tests
+noetl run automation/infrastructure/nats.yaml --set action=test
+
+# View logs
+noetl run automation/infrastructure/nats.yaml --set action=logs
+
+# Restart NATS
+noetl run automation/infrastructure/nats.yaml --set action=restart
+
+# Remove NATS
+noetl run automation/infrastructure/nats.yaml --set action=undeploy
+```
+
+Equivalent task commands:
+- `task nats:deploy` → `--set action=deploy`
+- `task nats:undeploy` → `--set action=undeploy`
+- `task nats:status` → `--set action=status`
+- `task nats:health` → `--set action=health`
+- `task nats:streams` → `--set action=streams`
+- `task nats:monitoring` → `--set action=monitoring`
+- `task nats:connect` → `--set action=connect`
+- `task nats:test` → `--set action=test`
+- `task nats:restart` → `--set action=restart`
+
+**Observability Aggregate Operations:**
+```bash
+# Activate all observability services (ClickHouse + Qdrant + NATS)
+noetl run automation/infrastructure/observability.yaml --set action=activate-all
+
+# Deactivate all observability services
+noetl run automation/infrastructure/observability.yaml --set action=deactivate-all
+
+# Check status of all services
+noetl run automation/infrastructure/observability.yaml --set action=status-all
+
+# Check health of all services
+noetl run automation/infrastructure/observability.yaml --set action=health-all
+
+# Restart all services
+noetl run automation/infrastructure/observability.yaml --set action=restart-all
+```
+
+Equivalent task commands:
+- `task observability:activate-all` → `--set action=activate-all`
+- `task observability:deactivate-all` → `--set action=deactivate-all`
+- `task observability:status-all` → `--set action=status-all`
+- `task observability:health-all` → `--set action=health-all`
+- `task observability:restart-all` → `--set action=restart-all`
+
 **VictoriaMetrics Monitoring Stack:**
 ```bash
 # Deploy complete monitoring stack

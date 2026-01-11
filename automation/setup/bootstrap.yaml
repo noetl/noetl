@@ -194,12 +194,10 @@ workflow:
   - step: deploy_postgres
     desc: Deploy PostgreSQL to cluster
     tool:
-      kind: shell
-      cmds:
-        - |
-          echo ""
-          echo "Deploying PostgreSQL..."
-          task postgres:k8s:deploy
+      kind: playbook
+      path: automation/infrastructure/postgres
+    args:
+      action: deploy
     next:
       - step: deploy_noetl
   
@@ -211,19 +209,17 @@ workflow:
         - |
           echo ""
           echo "Deploying NoETL..."
-          task noetl:k8s:deploy
+          kubectl apply -f ci/manifests/noetl/
     next:
       - step: deploy_observability
   
   - step: deploy_observability
     desc: Deploy observability stack (ClickHouse, Qdrant, NATS)
     tool:
-      kind: shell
-      cmds:
-        - |
-          echo ""
-          echo "Deploying observability stack..."
-          task observability:activate-all
+      kind: playbook
+      path: automation/infrastructure/observability
+    args:
+      action: activate-all
     next:
       - step: wait_for_services
   

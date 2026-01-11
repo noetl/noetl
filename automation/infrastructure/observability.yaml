@@ -1,0 +1,313 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: observability_automation
+  path: automation/infrastructure/observability
+
+workload:
+  action: help  # activate-all, deactivate-all, status-all, health-all, restart-all
+
+workflow:
+  - step: start
+    desc: Entry point for observability aggregate automation
+    tool:
+      kind: shell
+      cmds:
+        - echo "Observability Automation - Action '{{ action }}'"
+    next:
+      - when: "{{ action }} == activate-all"
+        then:
+          - step: activate_all_services
+        args: {}
+      - when: "{{ action }} == deactivate-all"
+        then:
+          - step: deactivate_all_services
+        args: {}
+      - when: "{{ action }} == status-all"
+        then:
+          - step: status_all_services
+        args: {}
+      - when: "{{ action }} == health-all"
+        then:
+          - step: health_all_services
+        args: {}
+      - when: "{{ action }} == restart-all"
+        then:
+          - step: restart_all_services
+        args: {}
+      - step: show_help
+
+  - step: activate_all_services
+    desc: Activate all observability services (ClickHouse, Qdrant, NATS)
+    tool:
+      kind: shell
+      cmds:
+        - echo "=== Activating All Observability Services ==="
+        - echo ""
+    next:
+      - step: activate_clickhouse
+
+  - step: activate_clickhouse
+    desc: Activate ClickHouse
+    tool:
+      kind: playbook
+      path: automation/infrastructure/clickhouse
+    args:
+      action: deploy
+    next:
+      - step: activate_qdrant
+
+  - step: activate_qdrant
+    desc: Activate Qdrant
+    tool:
+      kind: playbook
+      path: automation/infrastructure/qdrant
+    args:
+      action: deploy
+    next:
+      - step: activate_nats
+
+  - step: activate_nats
+    desc: Activate NATS
+    tool:
+      kind: playbook
+      path: automation/infrastructure/nats
+    args:
+      action: deploy
+    next:
+      - step: show_activation_summary
+
+  - step: show_activation_summary
+    desc: Show activation summary
+    tool:
+      kind: shell
+      cmds:
+        - echo ""
+        - echo "✓ All observability services activated"
+        - echo ""
+    next:
+      - step: status_all_services
+
+  - step: deactivate_all_services
+    desc: Deactivate all observability services
+    tool:
+      kind: shell
+      cmds:
+        - echo "=== Deactivating All Observability Services ==="
+        - echo ""
+    next:
+      - step: deactivate_nats
+
+  - step: deactivate_nats
+    desc: Deactivate NATS
+    tool:
+      kind: playbook
+      path: automation/infrastructure/nats
+    args:
+      action: undeploy
+    next:
+      - step: deactivate_qdrant
+
+  - step: deactivate_qdrant
+    desc: Deactivate Qdrant
+    tool:
+      kind: playbook
+      path: automation/infrastructure/qdrant
+    args:
+      action: undeploy
+    next:
+      - step: deactivate_clickhouse
+
+  - step: deactivate_clickhouse
+    desc: Deactivate ClickHouse
+    tool:
+      kind: playbook
+      path: automation/infrastructure/clickhouse
+    args:
+      action: undeploy
+    next:
+      - step: show_deactivation_summary
+
+  - step: show_deactivation_summary
+    desc: Show deactivation summary
+    tool:
+      kind: shell
+      cmds:
+        - echo ""
+        - echo "✓ All observability services deactivated"
+        - echo ""
+    next:
+      - step: end
+
+  - step: status_all_services
+    desc: Show status of all observability services
+    tool:
+      kind: shell
+      cmds:
+        - echo ""
+        - echo "=== Observability Services Status ==="
+        - echo ""
+    next:
+      - step: status_clickhouse
+
+  - step: status_clickhouse
+    desc: Check ClickHouse status
+    tool:
+      kind: playbook
+      path: automation/infrastructure/clickhouse
+    args:
+      action: status
+    next:
+      - step: status_qdrant
+
+  - step: status_qdrant
+    desc: Check Qdrant status
+    tool:
+      kind: playbook
+      path: automation/infrastructure/qdrant
+    args:
+      action: status
+    next:
+      - step: status_nats
+
+  - step: status_nats
+    desc: Check NATS status
+    tool:
+      kind: playbook
+      path: automation/infrastructure/nats
+    args:
+      action: status
+    next:
+      - step: end
+
+  - step: health_all_services
+    desc: Check health of all observability services
+    tool:
+      kind: shell
+      cmds:
+        - echo ""
+        - echo "=== Observability Services Health ==="
+        - echo ""
+    next:
+      - step: health_clickhouse
+
+  - step: health_clickhouse
+    desc: Check ClickHouse health
+    tool:
+      kind: playbook
+      path: automation/infrastructure/clickhouse
+    args:
+      action: health
+    next:
+      - step: health_qdrant
+
+  - step: health_qdrant
+    desc: Check Qdrant health
+    tool:
+      kind: playbook
+      path: automation/infrastructure/qdrant
+    args:
+      action: health
+    next:
+      - step: health_nats
+
+  - step: health_nats
+    desc: Check NATS health
+    tool:
+      kind: playbook
+      path: automation/infrastructure/nats
+    args:
+      action: health
+    next:
+      - step: end
+
+  - step: restart_all_services
+    desc: Restart all observability services
+    tool:
+      kind: shell
+      cmds:
+        - echo ""
+        - echo "=== Restarting All Observability Services ==="
+        - echo ""
+    next:
+      - step: restart_clickhouse
+
+  - step: restart_clickhouse
+    desc: Restart ClickHouse
+    tool:
+      kind: playbook
+      path: automation/infrastructure/clickhouse
+    args:
+      action: restart
+    next:
+      - step: restart_qdrant
+
+  - step: restart_qdrant
+    desc: Restart Qdrant
+    tool:
+      kind: playbook
+      path: automation/infrastructure/qdrant
+    args:
+      action: restart
+    next:
+      - step: restart_nats
+
+  - step: restart_nats
+    desc: Restart NATS
+    tool:
+      kind: playbook
+      path: automation/infrastructure/nats
+    args:
+      action: restart
+    next:
+      - step: show_restart_summary
+
+  - step: show_restart_summary
+    desc: Show restart summary
+    tool:
+      kind: shell
+      cmds:
+        - echo ""
+        - echo "✓ All observability services restarted"
+        - echo ""
+    next:
+      - step: end
+
+  - step: show_help
+    desc: Show available observability actions
+    tool:
+      kind: shell
+      cmds:
+        - echo ""
+        - echo "═══════════════════════════════════════════════════════════"
+        - echo " Observability Services Automation"
+        - echo "═══════════════════════════════════════════════════════════"
+        - echo ""
+        - echo "Usage: noetl run automation/infrastructure/observability.yaml --set action=<action>"
+        - echo ""
+        - echo "Aggregate Actions:"
+        - echo "  activate-all   - Deploy all observability services"
+        - echo "  deactivate-all - Remove all observability services"
+        - echo "  status-all     - Check status of all services"
+        - echo "  health-all     - Check health of all services"
+        - echo "  restart-all    - Restart all services"
+        - echo ""
+        - echo "Services Managed:"
+        - echo "  - ClickHouse (logs, metrics, traces)"
+        - echo "  - Qdrant (vector database)"
+        - echo "  - NATS JetStream (messaging, KV store)"
+        - echo ""
+        - echo "Individual Service Management:"
+        - echo "  noetl run automation/infrastructure/clickhouse.yaml --set action=<action>"
+        - echo "  noetl run automation/infrastructure/qdrant.yaml --set action=<action>"
+        - echo "  noetl run automation/infrastructure/nats.yaml --set action=<action>"
+        - echo ""
+    next:
+      - step: end
+
+  - step: end
+    desc: End workflow
+    tool:
+      kind: shell
+      cmds:
+        - echo ""
