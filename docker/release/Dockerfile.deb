@@ -17,8 +17,11 @@ WORKDIR /build
 # Copy source
 COPY . .
 
+# Declare build argument for version
+ARG VERSION=2.5.4
+
 # Build Debian package
-RUN ./scripts/build_deb.sh ${VERSION:-2.5.4}
+RUN ./scripts/build_deb.sh ${VERSION}
 
 # Packages will be in build/deb/
 CMD ["bash"]

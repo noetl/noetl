@@ -1645,7 +1645,7 @@ dependencies = [
 
 [[package]]
 name = "noetl"
-version = "2.5.4"
+version = "2.5.5"
 dependencies = [
  "anyhow",
  "base64",
@@ -1668,7 +1668,7 @@ dependencies = [
 
 [[package]]
 name = "noetl-gateway"
-version = "2.5.4"
+version = "2.5.5"
 dependencies = [
  "anyhow",
  "async-graphql",
