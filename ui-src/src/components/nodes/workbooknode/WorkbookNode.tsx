@@ -1,11 +1,14 @@
 import { memo, useState } from 'react';
 import { Handle, Position, useReactFlow, type NodeProps, type Node } from '@xyflow/react';
 import { Button, Modal, Input, Tooltip } from 'antd';
-import { EditOutlined } from '@ant-design/icons';
+import { EditOutlined, DeleteOutlined, QuestionCircleOutlined, ExclamationCircleOutlined } from '@ant-design/icons';
 import './WorkbookNode.less';
 
 interface WorkbookData {
     name?: string;
+    task?: { name?: string; description?: string };
+    onDelete?: (taskId: string) => void;
+    readOnly?: boolean;
     [key: string]: unknown;
 }
 
@@ -13,6 +16,21 @@ function WorkbookNodeInternal({ id, data = {} }: NodeProps<Node<WorkbookData>>) 
     const { updateNodeData } = useReactFlow();
     const [modalOpen, setModalOpen] = useState(false);
     const [draft, setDraft] = useState({ name: '' });
+
+    const handleDelete = () => {
+        Modal.confirm({
+            title: 'Delete Node',
+            icon: <ExclamationCircleOutlined />,
+            content: `Are you sure you want to delete the "${data.name || 'Workbook'}" node?`,
+            okText: 'Delete',
+            okType: 'danger',
+            cancelText: 'Cancel',
+            centered: true,
+            onOk() {
+                data.onDelete?.(id);
+            },
+        });
+    };
 
     const openEditor = () => {
         setDraft({
@@ -41,26 +59,51 @@ function WorkbookNodeInternal({ id, data = {} }: NodeProps<Node<WorkbookData>>) 
 
     return (
         <div className="WorkbookNode" onDoubleClick={openEditor}>
-            <Handle type="target" position={Position.Left} />
-            <Handle type="source" position={Position.Right} />
+            <Handle
+                type="target"
+                position={Position.Left}
+                className="flow-node-handle flow-node-handle-target"
+                title="Connect from another node"
+            />
+            <Handle
+                type="source"
+                position={Position.Right}
+                className="flow-node-handle flow-node-handle-source"
+                title="Connect to another node"
+            />
             <div className="WorkbookNode__header">
-                <span className="WorkbookNode__header-text">📊 {data.name || 'workbook'}</span>
-                <Tooltip title="Edit Workbook task">
-                    <Button
-                        className="workbook-edit-btn"
-                        size="small"
-                        type="text"
-                        icon={<EditOutlined />}
-                        onPointerDown={preventNodeDrag}
-                        onMouseDown={preventNodeDrag}
-                        onClick={(e) => { preventNodeDrag(e); openEditor(); }}
-                    />
-                </Tooltip>
+                <span className="WorkbookNode__header-text">📊 workbook</span>
+                <div className="WorkbookNode__header-buttons">
+                    <Tooltip title="Edit Workbook task">
+                        <Button
+                            className="workbook-edit-btn"
+                            size="small"
+                            type="text"
+                            icon={<EditOutlined />}
+                            onPointerDown={preventNodeDrag}
+                            onMouseDown={preventNodeDrag}
+                            onClick={(e) => { preventNodeDrag(e); openEditor(); }}
+                        />
+                    </Tooltip>
+                    {!data.readOnly && data.onDelete && (
+                        <Tooltip title="Delete node">
+                            <Button
+                                className="workbook-delete-btn"
+                                size="small"
+                                type="text"
+                                danger
+                                icon={<DeleteOutlined />}
+                                onPointerDown={preventNodeDrag}
+                                onMouseDown={preventNodeDrag}
+                                onClick={(e) => { preventNodeDrag(e); handleDelete(); }}
+                            />
+                        </Tooltip>
+                    )}
+                </div>
             </div>
             <div className="WorkbookNode__summary">
-                {summaryName || <span className="WorkbookNode__empty-name">(no task name)</span>}
+                {data.task?.name || summaryName || <span className="WorkbookNode__empty-task">(no description)</span>}
             </div>
-            <div className="WorkbookNode__hint">double-click or edit icon</div>
 
             <Modal
                 open={modalOpen}
@@ -68,6 +111,14 @@ function WorkbookNodeInternal({ id, data = {} }: NodeProps<Node<WorkbookData>>) 
                 title={data.name ? `Workbook Config: ${data.name}` : 'Workbook Config'}
                 width={640}
                 footer={[
+                    <Button
+                        key="docs"
+                        icon={<QuestionCircleOutlined />}
+                        style={{ float: 'left' }}
+                        disabled
+                    >
+                        Docs
+                    </Button>,
                     <Button key="cancel" onClick={() => setModalOpen(false)}>Cancel</Button>,
                     <Button key="save" type="primary" onClick={commit}>Save</Button>
                 ]}

@@ -19,7 +19,6 @@ import { PythonNode } from '../nodes/pythonnode/PythonNode';
 import { DuckDbNode } from '../nodes/duckdbnode/DuckDbNode';
 import { PostgresNode } from '../nodes/postgresnode/PostgresNode';
 import { PlaybooksNode } from '../nodes/playbooksnode/PlaybooksNode';
-import { LoopNode } from '../nodes/loopnode';
 import { WorkbookNode } from '../nodes/workbooknode/WorkbookNode';
 
 // Direct mapping (no adapter) using new NodeProps-style components
@@ -31,7 +30,6 @@ export const nodeTypes = {
     duckdb: DuckDbNode,
     postgres: PostgresNode,
     playbooks: PlaybooksNode,
-    loop: LoopNode,
     workbook: WorkbookNode,
 };
 
@@ -48,7 +46,6 @@ export const initNodes = [
     { id: 'postgres1', type: 'postgres', data: { name: 'db-query', query: 'SELECT * FROM users' }, position: { x: 500, y: 50 } },
     { id: 'playbooks1', type: 'playbooks', data: { name: 'sub-playbook', path: 'catalog/example' }, position: { x: 500, y: 150 } },
     { id: 'workbook1', type: 'workbook', data: { name: 'example_task' }, position: { x: 500, y: 250 } },
-    { id: 'loop1', type: 'loop', data: { name: 'iterator', collection: '{{ items }}' }, position: { x: 500, y: 350 } },
 
     // End node
     { id: 'end', type: 'end', data: { name: 'end' }, position: { x: 750, y: 200 } },
@@ -64,7 +61,6 @@ export const initEdges: Edge[] = [
     { id: 'e-http-postgres', source: 'http1', target: 'postgres1' },
     { id: 'e-python-playbooks', source: 'python1', target: 'playbooks1' },
     { id: 'e-duckdb-workbook', source: 'duckdb1', target: 'workbook1' },
-    { id: 'e-workbook-loop', source: 'workbook1', target: 'loop1' },
 
     // Orchestration to end
     { id: 'e-postgres-end', source: 'postgres1', target: 'end' },

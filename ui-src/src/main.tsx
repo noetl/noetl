@@ -144,13 +144,15 @@ const router = createBrowserRouter(
       element: <App />,
     },
   ],
-  // Opt-in to v7 behaviors to avoid future flag warnings. Cast to any to satisfy TS.
-  ({
+  {
     future: {
-      v7_startTransition: true,
       v7_relativeSplatPath: true,
+      v7_fetcherPersist: true,
+      v7_normalizeFormMethod: true,
+      v7_partialHydration: true,
+      v7_skipActionErrorRevalidation: true,
     },
-  } as any),
+  }
 );
 
-root.render(<RouterProvider router={router} />);
+root.render(<RouterProvider router={router} future={{ v7_startTransition: true }} />);

@@ -31,6 +31,7 @@ import { PlaybookData } from "../types";
 import "../styles/Catalog.css";
 import { useNavigate } from "react-router-dom";
 import { AxiosError } from "axios";
+import { CodeEditor } from "./CodeEditor";
 
 const { Content } = Layout;
 const { Title, Text } = Typography;
@@ -305,10 +306,10 @@ const Catalog: React.FC = () => {
     }
   };
 
-  const handleViewFlow = (playbookId: string, playbookName: string) => {
+  const handleViewFlow = (playbookPath: string, playbookName: string) => {
     // Navigate to execution page with playbook visualization (query + state)
-    navigate(`/execution?playbook=${encodeURIComponent(playbookId)}&view=workflow`, {
-      state: { playbookId, view: 'workflow' }
+    navigate(`/execution?playbook=${encodeURIComponent(playbookPath)}&view=workflow`, {
+      state: { playbookId: playbookPath, view: 'workflow' }
     });
   };
 
@@ -415,7 +416,7 @@ const Catalog: React.FC = () => {
                     <Button
                       type="text"
                       icon={<EyeOutlined />}
-                      onClick={() => handleViewFlow(playbook.catalog_id, playbook.path)}
+                      onClick={() => handleViewFlow(playbook.path, playbook.path)}
                     >
                       View
                     </Button>
@@ -571,8 +572,11 @@ const Catalog: React.FC = () => {
                 style={{ width: "100%" }}
               >
                 <Text>Enter playbook definition (JSON or YAML):</Text>
-                <TextArea
-                  rows={18}
+                <CodeEditor
+                  value={createPlaybookJson}
+                  onChange={(value) => setCreatePlaybookJson(value)}
+                  language="yaml"
+                  height={400}
                   placeholder={`apiVersion: noetl.io/v1
 kind: Playbook
 metadata:
@@ -587,9 +591,6 @@ workflow:
       - step: end
   - step: end
     desc: End workflow`}
-                  value={createPlaybookJson}
-                  onChange={(e) => setCreatePlaybookJson(e.target.value)}
-                  style={{ fontFamily: "monospace" }}
                 />
               </Space>
             </TabPane>

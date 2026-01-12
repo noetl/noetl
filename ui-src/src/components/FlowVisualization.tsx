@@ -1,4 +1,4 @@
-import React, { useCallback, useState, useEffect, useMemo } from "react";
+import React, { useCallback, useState, useEffect, useMemo, useRef } from "react";
 import {
   ReactFlow,
   MiniMap,
@@ -9,21 +9,27 @@ import {
   addEdge,
   Node,
   Edge,
-  Connection,
   BackgroundVariant,
+  useReactFlow,
+  ReactFlowProvider,
+  ConnectionMode,
+  MarkerType,
+  type OnConnect,
 } from "@xyflow/react";
 import { Modal, Button, Spin, message, Select } from "antd";
 import {
   CloseOutlined,
   FullscreenOutlined,
   PlusOutlined,
-  SaveOutlined,
 } from "@ant-design/icons";
 import "@xyflow/react/dist/style.css";
 import "../styles/FlowVisualization.css";
 import { apiService } from "../services/api";
-import { nodeTypes } from './nodeTypes'; // simplified source
+import { nodeTypes } from './nodes'; // simplified source
+import { edgeTypes } from './edges'; // custom edge components
 import { EditableTaskNode, TaskNode } from "./types";
+import { DnDProvider, useDnD } from "./DnDContext";
+import Sidebar from "./Sidebar";
 // @ts-ignore
 import yaml from 'js-yaml';
 
@@ -31,11 +37,8 @@ interface FlowVisualizationProps {
   visible: boolean;
   onClose: () => void;
   playbookId: string;
-  playbookName: string;
-  content?: string;
   readOnly?: boolean;
-  hideTitle?: boolean;
-  onUpdateContent?: (newContent: string) => void;
+  onPositionsChange?: (positions: Record<string, { x: number; y: number }>) => void;
 }
 
 // Minimal metadata retained locally only for icons/colors (no editors/complex config)
@@ -48,42 +51,126 @@ const nodeMeta: Record<string, { icon: string; color: string; label: string }> =
   postgres: { icon: '🐘', color: '#1d4ed8', label: 'postgres' },
   secrets: { icon: '🔐', color: '#6d28d9', label: 'secrets' },
   playbooks: { icon: '📘', color: '#4b5563', label: 'playbooks' },
-  loop: { icon: '🔁', color: '#a16207', label: 'loop' },
   end: { icon: '🏁', color: '#dc2626', label: 'end' },
   log: { icon: '📝', color: '#64748b', label: 'log' },
 };
 
-const FlowVisualization: React.FC<FlowVisualizationProps> = ({
+// Generate unique IDs for new nodes
+let nodeId = 0;
+const getNodeId = () => `node_${nodeId++}_${Date.now()}`;
+
+// Inner component that has access to React Flow hooks
+const FlowVisualizationInner: React.FC<FlowVisualizationProps> = ({
   visible,
   onClose,
   playbookId,
-  playbookName,
-  content,
   readOnly,
-  hideTitle,
-  onUpdateContent,
+  onPositionsChange,
 }) => {
+  const reactFlowWrapper = useRef<HTMLDivElement>(null);
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [loading, setLoading] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
-  // Minimal global edit modal state (only type change + delete)
-  const [activeTask, setActiveTask] = useState<EditableTaskNode | null>(null);
   const [messageApi, contextHolder] = message.useMessage();
   const [tasks, setTasks] = useState<EditableTaskNode[]>([]);
-  const [hasChanges, setHasChanges] = useState(false);
+  const [isDraggingOver, setIsDraggingOver] = useState(false);
+  const reactFlowInstance = useReactFlow();
+  const { screenToFlowPosition } = reactFlowInstance;
+  const [type] = useDnD();
 
-  // Provide nodeTypes directly (already a stable object export)
-  // React Flow expects a mapping of type -> React component receiving {id, data, ...}; our adapted components satisfy this
+  // Track node position changes and update tasks
+  const handleNodesChange = useCallback((changes: any[]) => {
+    onNodesChange(changes);
 
-  const onConnect = useCallback(
-    (params: Connection) => setEdges((eds) => addEdge(params, eds)),
-    [setEdges]
+    // Update task positions when nodes are moved
+    changes.forEach((change) => {
+      if (change.type === 'position' && change.position && !change.dragging) {
+        setTasks((prevTasks) => {
+          const updatedTasks = prevTasks.map((task) =>
+            task.id === change.id
+              ? { ...task, position: change.position }
+              : task
+          );
+
+          // Notify parent of position changes
+          if (onPositionsChange) {
+            const positions: Record<string, { x: number; y: number }> = {};
+            updatedTasks.forEach(task => {
+              if (task.position) {
+                positions[task.id] = task.position;
+              }
+            });
+            onPositionsChange(positions);
+          }
+
+          return updatedTasks;
+        });
+      }
+    });
+  }, [onNodesChange, onPositionsChange]);
+
+  // Force ReactFlow to recalculate viewport after sidebar renders
+  useEffect(() => {
+    if (visible && reactFlowInstance) {
+      setTimeout(() => {
+        reactFlowInstance.fitView({ padding: 0.18 });
+      }, 50);
+    }
+  }, [visible, reactFlowInstance]);
+
+  const onConnect: OnConnect = useCallback(
+    (params) => setEdges((eds) => addEdge({
+      ...params,
+      type: 'buttonedge',
+    }, eds)),
+    [setEdges],
+  );
+
+  // Drag and drop handlers with visual feedback
+  const onDragOver = useCallback((event: React.DragEvent) => {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+    setIsDraggingOver(true);
+  }, []);
+
+  const onDragLeave = useCallback((event: React.DragEvent) => {
+    event.preventDefault();
+    setIsDraggingOver(false);
+  }, []);
+
+  const onDrop = useCallback(
+    (event: React.DragEvent) => {
+      event.preventDefault();
+      setIsDraggingOver(false);
+
+      if (!type || readOnly) {
+        return;
+      }
+
+      const position = screenToFlowPosition({
+        x: event.clientX,
+        y: event.clientY,
+      });
+
+      const newTask: EditableTaskNode = {
+        id: getNodeId(),
+        name: `${type} node`,
+        type: type as any,
+        enabled: true,
+        position,
+      };
+
+      setTasks((prev) => [...prev, newTask]);
+      messageApi.success(`${type} node added`);
+    },
+    [screenToFlowPosition, type, readOnly, messageApi]
   );
 
   // Map legacy or unknown types to supported widget types
   const mapType = (t?: string): EditableTaskNode['type'] => {
-    switch ((t || '').toLowerCase()) {
+    const typeStr = typeof t === 'string' ? t : String(t || '');
+    switch (typeStr.toLowerCase()) {
       case 'script':
         return 'python';
       case 'sql':
@@ -98,7 +185,6 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
       case 'postgres':
       case 'secrets':
       case 'playbooks':
-      case 'loop':
       case 'start':
       case 'end':
       case 'log':
@@ -127,7 +213,6 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
         }
         return n;
       }));
-      setHasChanges(true);
     },
     [setNodes, readOnly]
   );
@@ -136,16 +221,10 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
   const handleDeleteTask = useCallback((taskId: string) => {
     if (readOnly) return;
     setTasks((prev) => prev.filter((t) => t.id !== taskId));
-    setHasChanges(true);
     messageApi.success("Component deleted");
   }, [messageApi, readOnly]);
 
-  // Layout constants for auto positioning (breathe like the examples)
-  const GRID_COLUMNS = 3;
-  const H_SPACING = 420; // was 380
-  const V_SPACING = 260; // was 240
-  const X_OFFSET = 96;
-  const Y_OFFSET = 96;
+
 
   // Create flow nodes/edges from tasks - must be defined before recreateFlow
   const createFlowFromTasks = useCallback(
@@ -153,7 +232,14 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
       const flowNodes: Node[] = [];
       const flowEdges: Edge[] = [];
 
-      // Create nodes
+      // Layout constants for centered grid layout
+      const GRID_COLUMNS = 3;
+      const H_SPACING = 360;
+      const V_SPACING = 200;
+      const X_OFFSET = 300; // Increased to center the grid
+      const Y_OFFSET = 96;
+
+      // Create nodes in centered grid layout
       tasks.forEach((task, index) => {
         const x =
           task.position?.x ??
@@ -167,6 +253,8 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
           type: task.type, // per-type component
           position: { x, y },
           data: {
+            ...task.config, // Spread config fields into data
+            name: task.name,
             task,
             onEdit: handleEditTask,
             onDelete: handleDeleteTask,
@@ -175,36 +263,55 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
           },
           className: "react-flow__node",
         });
-      });
 
-      // Create edges based on dependencies (with arrow markers)
-      tasks.forEach((task, index) => {
-        const edgeCommon = {
-          animated: false,
-          className: "flow-edge-solid",
-        };
-
-        if (task.dependencies && task.dependencies.length > 0) {
-          task.dependencies.forEach((dep) => {
-            const sourceTask = tasks.find((t) => t.name === dep);
-            if (sourceTask) {
+        // Create edges from workflow connections
+        if (task.config?.next) {
+          const nextSteps = Array.isArray(task.config.next) ? task.config.next : [task.config.next];
+          nextSteps.forEach((nextItem: any) => {
+            const targetStep = nextItem.step || nextItem;
+            if (targetStep && typeof targetStep === 'string') {
               flowEdges.push({
-                id: `edge-${sourceTask.id}-${task.id}`,
-                source: sourceTask.id,
-                target: task.id,
-                ...edgeCommon,
+                id: `${task.id}-${targetStep}`,
+                source: task.id,
+                target: targetStep,
+                type: 'buttonedge',
               });
             }
           });
-        } else if (index > 0) {
-          flowEdges.push({
-            id: `edge-${tasks[index - 1].id}-${task.id}`,
-            source: tasks[index - 1].id,
-            target: task.id,
-            ...edgeCommon,
+        }        // Also handle 'case' blocks if present (v2 DSL)
+        if (task.config?.case) {
+          const cases = Array.isArray(task.config.case) ? task.config.case : [task.config.case];
+          console.log(`🔍 Processing ${cases.length} case blocks for ${task.id}:`, cases);
+          cases.forEach((caseItem: any) => {
+            if (caseItem.then) {
+              const thenSteps = Array.isArray(caseItem.then) ? caseItem.then : [caseItem.then];
+              console.log(`🔍 Case then steps:`, thenSteps);
+              thenSteps.forEach((thenItem: any) => {
+                // v2 DSL: then items contain {next: [{step: "target"}]}
+                let targetStep = null;
+                if (thenItem.next && Array.isArray(thenItem.next) && thenItem.next.length > 0) {
+                  // Extract from next array: {next: [{step: "target"}]}
+                  targetStep = thenItem.next[0].step || thenItem.next[0];
+                } else {
+                  // Fallback: direct step reference
+                  targetStep = thenItem.step || thenItem;
+                }
+
+                console.log(`🔍 Case target:`, targetStep, 'type:', typeof targetStep);
+                if (targetStep && typeof targetStep === 'string') {
+                  flowEdges.push({
+                    id: `${task.id}-${targetStep}-case`,
+                    source: task.id,
+                    target: targetStep,
+                    type: 'buttonedge',
+                  });
+                  console.log(`✅ Created case edge: ${task.id} -> ${targetStep}`);
+                }
+              });
+            }
           });
         }
-      });
+      })
 
       return { nodes: flowNodes, edges: flowEdges };
     },
@@ -216,237 +323,93 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
     const { nodes: flowNodes, edges: flowEdges } = createFlowFromTasks(tasks);
     setNodes(flowNodes);
     setEdges(flowEdges);
-  }, [tasks, createFlowFromTasks, setNodes, setEdges]);
-
-  // Handle adding new task
-  const handleAddTask = useCallback(() => {
-    if (readOnly) return;
-    const newTask: EditableTaskNode = {
-      id: `task_${Date.now()}`,
-      name: 'New Component',
-      type: 'workbook',
-      description: '',
-      enabled: true,
-      position: { x: 100 + tasks.length * 50, y: 100 + tasks.length * 50 },
-    };
-
-    setTasks((prev) => [...prev, newTask]);
-    setHasChanges(true);
-    messageApi.success('New component added');
-  }, [tasks, messageApi, readOnly]);
-
-  // Re-enable automatic flow recreation for major changes
+  }, [tasks, createFlowFromTasks, setNodes, setEdges]);  // Re-enable automatic flow recreation for major changes
   useEffect(() => {
     if (tasks.length > 0) {
       recreateFlow();
     }
   }, [tasks.length, recreateFlow]); // Only recreate when task count changes
 
-  const sanitizeId = (s: string) => (s || '')
-    .trim()
-    .replace(/[^a-zA-Z0-9_-]/g, '_')
-    .replace(/_{2,}/g, '_')
-    .toLowerCase() || `task_${Date.now()}`;
-
-  const parsePlaybookContent = (raw: string): TaskNode[] => {
-    if (!raw || !raw.trim()) return [];
-    try {
-      const doc: any = yaml.load(raw) || {};
-      const list = Array.isArray(doc?.workflow) ? doc.workflow
-        : Array.isArray(doc?.tasks) ? doc.tasks
-          : [];
-      if (!Array.isArray(list)) return [];
-      const parsed: TaskNode[] = [];
-      list.forEach((entry: any, idx: number) => {
-        if (!entry || typeof entry !== 'object') return;
-        const rawName: string = entry.desc || entry.name || entry.step || `Task ${idx + 1}`;
-        const baseId = sanitizeId(entry.step || entry.name || rawName || `task_${idx + 1}`);
-        let uniqueId = baseId;
-        let c = 1;
-        while (parsed.some(t => t.id === uniqueId)) uniqueId = `${baseId}_${c++}`;
-        const t: TaskNode = {
-          id: uniqueId,
-          name: rawName,
-          type: mapType(entry.type || 'workbook'),
-          config: undefined,
-        } as any;
-        const cfg: any = {};
-        if (entry.config && typeof entry.config === 'object') Object.assign(cfg, entry.config);
-        if (typeof entry.code === 'string') cfg.code = entry.code;
-        if (typeof entry.sql === 'string') cfg.sql = entry.sql;
-        if (Object.keys(cfg).length) (t as any).config = cfg;
-        parsed.push(t);
-      });
-      return parsed;
-    } catch (e) {
-      console.warn('YAML parse failed:', e);
-      return [];
-    }
-  };
-
-  const updateWorkflowInYaml = (original: string, taskList: EditableTaskNode[]): string => {
-    let doc: any = {};
-    try { if (original && original.trim()) doc = yaml.load(original) || {}; } catch { doc = {}; }
-    if (!doc || typeof doc !== 'object') doc = {};
-    delete doc.tasks;
-    delete doc.workflow;
-
-    doc.workflow = taskList.filter(t => (t.name || '').trim()).map(t => {
-      const cfg = t.config || {};
-      const { code, sql, ...rest } = cfg;
-      const stepKey = sanitizeId(t.name || t.id);
-      const out: any = { step: stepKey };
-      if (t.name && t.name.trim() && t.name.trim() !== stepKey) out.desc = t.name.trim();
-      if (t.type && t.type !== 'workbook') out.type = t.type;
-      if (Object.keys(rest).length) out.config = rest;
-      if (code) out.code = code;
-      if (sql) out.sql = sql;
-      return out;
-    });
-
-    try {
-      return yaml.dump(doc, { noRefs: true, lineWidth: 120 });
-    } catch (e) {
-      console.error('Failed to dump YAML:', e);
-      return original;
-    }
-  };
-
-  const handleSaveWorkflow = useCallback(async () => {
-    try {
-      setLoading(true);
-      const updatedYaml = updateWorkflowInYaml(content || '', tasks);
-      if (onUpdateContent) onUpdateContent(updatedYaml);
-
-      if (playbookId && playbookId !== 'new') {
-        try {
-          await apiService.savePlaybookContent(playbookId, updatedYaml);
-          messageApi.success('Workflow saved to backend');
-        } catch (persistErr) {
-          console.error('Backend persistence failed:', persistErr);
-          messageApi.warning('YAML updated locally, backend save failed');
-        }
-      } else {
-        messageApi.info('YAML updated. Create & save playbook from main editor to persist');
-      }
-
-      setHasChanges(false);
-    } catch (error) {
-      console.error(error);
-      messageApi.error('Failed to save workflow');
-    } finally {
-      setLoading(false);
-    }
-  }, [tasks, content, onUpdateContent, messageApi, playbookId]);
-
   const loadPlaybookFlow = async () => {
     setLoading(true);
     try {
-      let contentToUse = content;
+      // Fetch playbook data from API
+      const response = await apiService.getPlaybook(playbookId);
+      console.log('API response:', response);
 
-      if (!contentToUse && playbookId) {
-        contentToUse = await apiService.getPlaybookContent(playbookId);
-      }
-
-      if (contentToUse && contentToUse.trim()) {
-        const parsedTasks = parsePlaybookContent(contentToUse);
-        if (parsedTasks.length === 0) {
-          messageApi.warning(
-            "No workflow steps found in this playbook. Showing demo flow."
-          );
-
-          let demoTasks: EditableTaskNode[] = [];
-          if (
-            playbookId.toLowerCase().includes("weather") ||
-            playbookName.toLowerCase().includes("weather")
-          ) {
-            demoTasks = [
-              { id: "demo-1", name: "Start Weather Pipeline", type: 'start', enabled: true },
-              { id: "demo-2", name: "Fetch Weather API", type: 'http', enabled: true },
-              { id: "demo-3", name: "Transform Weather Data", type: 'python', enabled: true },
-              { id: "demo-4", name: "Analyze with DuckDB", type: 'duckdb', enabled: true },
-              { id: "demo-5", name: "Store in Postgres", type: 'postgres', enabled: true },
-              { id: "demo-6", name: "Generate Report", type: 'workbook', enabled: true },
-              { id: "demo-7", name: "End Pipeline", type: 'end', enabled: true },
-            ];
-          } else if (
-            playbookId.toLowerCase().includes("database") ||
-            playbookId.toLowerCase().includes("sql")
-          ) {
-            demoTasks = [
-              { id: "demo-1", name: "Start", type: 'start', enabled: true },
-              { id: "demo-2", name: "Load Secrets", type: 'secrets', enabled: true },
-              { id: "demo-3", name: "Query DuckDB", type: 'duckdb', enabled: true },
-              { id: "demo-4", name: "Query Postgres", type: 'postgres', enabled: true },
-              { id: "demo-5", name: "Process Results", type: 'python', enabled: true },
-              { id: "demo-6", name: "Loop Through Records", type: 'loop', enabled: true },
-              { id: "demo-7", name: "Export Data", type: 'workbook', enabled: true },
-              { id: "demo-8", name: "End", type: 'end', enabled: true },
-            ];
-          } else {
-            demoTasks = [
-              { id: "demo-1", name: "Start Workflow", type: 'start', enabled: true },
-              { id: "demo-2", name: "HTTP Request", type: 'http', enabled: true },
-              { id: "demo-3", name: "Python Transform", type: 'python', enabled: true },
-              { id: "demo-4", name: "DuckDB Analytics", type: 'duckdb', enabled: true },
-              { id: "demo-5", name: "Postgres Storage", type: 'postgres', enabled: true },
-              { id: "demo-6", name: "Call Sub-Playbook", type: 'playbooks', enabled: true },
-              { id: "demo-7", name: "Workbook Task", type: 'workbook', enabled: true },
-              { id: "demo-8", name: "Iterator Loop", type: 'loop', enabled: true },
-              { id: "demo-9", name: "End Workflow", type: 'end', enabled: true },
-            ];
-          }
-
-          setTasks(demoTasks);
-          const { nodes: flowNodes, edges: flowEdges } =
-            createFlowFromTasks(demoTasks);
-          setNodes(flowNodes);
-          setEdges(flowEdges);
-        } else {
-          const editableTasks: EditableTaskNode[] = parsedTasks.map((task) => ({
-            ...task,
-            type: mapType(task.type),
-            enabled: true,
-          }));
-          setTasks(editableTasks);
-          const { nodes: flowNodes, edges: flowEdges } =
-            createFlowFromTasks(editableTasks);
-          setNodes(flowNodes);
-          setEdges(flowEdges);
-          messageApi.success(
-            `Successfully parsed ${parsedTasks.length} workflow steps from ${playbookName}!`
-          );
+      // Parse the playbook content if it's YAML/JSON string
+      let playbookData: any = response;
+      if (response.content) {
+        try {
+          // Parse YAML content
+          playbookData = yaml.load(response.content);
+          console.log('Parsed playbook from content:', playbookData);
+        } catch (parseError) {
+          console.error('Error parsing playbook content:', parseError);
+          throw new Error('Failed to parse playbook content');
         }
-      } else {
-        messageApi.warning(`No content found for playbook: ${playbookName}`);
-        const demoTasks: EditableTaskNode[] = [
-          { id: "empty-1", name: "Start", type: 'start', enabled: true },
-          { id: "empty-2", name: "HTTP Example", type: 'http', enabled: true },
-          { id: "empty-3", name: "Python Example", type: 'python', enabled: true },
-          { id: "empty-4", name: "DuckDB Example", type: 'duckdb', enabled: true },
-          { id: "empty-5", name: "Postgres Example", type: 'postgres', enabled: true },
-          { id: "empty-6", name: "Playbooks Example", type: 'playbooks', enabled: true },
-          { id: "empty-7", name: "Workbook Example", type: 'workbook', enabled: true },
-          { id: "empty-8", name: "Loop Example", type: 'loop', enabled: true },
-          { id: "empty-9", name: "End", type: 'end', enabled: true },
-        ];
-        setTasks(demoTasks);
-        const { nodes: flowNodes, edges: flowEdges } =
-          createFlowFromTasks(demoTasks);
-        setNodes(flowNodes);
-        setEdges(flowEdges);
       }
+
+      console.log('Playbook data:', playbookData);
+      console.log('Has workflow?', playbookData?.workflow);
+      console.log('Has workbook?', playbookData?.workbook);
+
+      // Parse workflow steps into tasks
+      const workflowSteps = playbookData?.workflow || playbookData?.workbook || [];
+      console.log('Workflow steps:', workflowSteps);
+
+      // If no workflow steps, throw error with helpful message
+      if (workflowSteps.length === 0) {
+        console.error('Playbook structure:', Object.keys(playbookData));
+        throw new Error(`No workflow/workbook found. Available keys: ${Object.keys(playbookData).join(', ')}`);
+      }
+
+      const loadedTasks: EditableTaskNode[] = workflowSteps.map((step: any, index: number) => {
+        // Extract type: step.tool can be {kind: "python"} or "python" string
+        let stepType = 'workbook';
+        if (step.tool) {
+          stepType = typeof step.tool === 'object' ? step.tool.kind : step.tool;
+        } else if (step.type) {
+          stepType = typeof step.type === 'object' ? step.type.kind : step.type;
+        }
+
+        console.log(`Step ${index}:`, step.step, 'type:', stepType);
+        return {
+          id: step.step || `step-${index}`,
+          name: step.desc || step.step || `Step ${index + 1}`,
+          type: mapType(stepType),
+          enabled: true,
+          config: step,
+          position: step.position, // Use saved position if available
+        };
+      });
+
+      console.log('✅ Loaded tasks:', loadedTasks);
+      setTasks(loadedTasks);
+      const { nodes: flowNodes, edges: flowEdges } = createFlowFromTasks(loadedTasks);
+      console.log('✅ Created nodes:', flowNodes.length, 'edges:', flowEdges.length);
+      setNodes(flowNodes);
+      setEdges(flowEdges);
     } catch (error) {
-      messageApi.error(
-        `Failed to load playbook flow for ${playbookName}.`
-      );
-      const errorTasks: EditableTaskNode[] = [
-        { id: "error-1", name: "Failed to Load Playbook", type: 'start', enabled: true },
-        { id: "error-2", name: "Check API Connection", type: 'python', enabled: true },
+      console.error('❌ Error loading playbook:', error);
+      messageApi.error('Failed to load playbook');
+
+      // Fallback to demo tasks
+      let demoTasks: EditableTaskNode[] = [
+        { id: "demo-1", name: "Start Workflow", type: 'start', enabled: true },
+        { id: "demo-2", name: "HTTP Request", type: 'http', enabled: true },
+        { id: "demo-3", name: "Python Transform", type: 'python', enabled: true },
+        { id: "demo-4", name: "DuckDB Analytics", type: 'duckdb', enabled: true },
+        { id: "demo-5", name: "Postgres Storage", type: 'postgres', enabled: true },
+        { id: "demo-6", name: "Call Sub-Playbook", type: 'playbooks', enabled: true },
+        { id: "demo-7", name: "Workbook Task", type: 'workbook', enabled: true },
+        { id: "demo-9", name: "End Workflow", type: 'end', enabled: true },
       ];
-      setTasks(errorTasks);
-      const { nodes: flowNodes, edges: flowEdges } =
-        createFlowFromTasks(errorTasks);
+
+      console.log('📦 Using demo tasks:', demoTasks);
+      setTasks(demoTasks);
+      const { nodes: flowNodes, edges: flowEdges } = createFlowFromTasks(demoTasks);
+      console.log('📦 Demo nodes:', flowNodes.length, 'edges:', flowEdges.length);
       setNodes(flowNodes);
       setEdges(flowEdges);
     } finally {
@@ -455,116 +418,92 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
   };
 
   useEffect(() => {
-    if (visible && (playbookId || content)) {
+    if (visible && (playbookId)) {
       loadPlaybookFlow();
     }
-  }, [visible, playbookId, content]);
+  }, [visible, playbookId]);
 
   const handleFullscreen = () => setFullscreen((f) => !f);
 
-  const defaultEdgeOptions = {
-    type: "smoothstep" as const,
-    animated: false,
-    style: { stroke: "#a0aec0", strokeWidth: 2 },
-  };
-
   const flowInner = (
-    <div className="FlowVisualization flow-layout-root">
+    <div className="FlowVisualization flow-layout-root" style={{ display: 'flex', height: fullscreen ? '100vh' : '600px' }}>
       {contextHolder}
-      {/* Content container now full-width; dock moved inside canvas wrapper */}
-      <div className="flow-content-container">
+      {/* Sidebar for drag and drop */}
+      {!readOnly && <Sidebar />}
+
+      {/* Main flow content */}
+      <div className="flow-content-container" style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
         {loading ? (
           <div className="flow-loading-container">
             <Spin size="large" />
             <div className="flow-loading-text">Loading playbook flow...</div>
           </div>
         ) : (
-          <div className="react-flow-wrapper">
-            {/* Left Vertical Dock now inside bordered wrapper */}
-            <div className="flow-dock">
-              {!readOnly && (
-                <Button
-                  type="primary"
-                  icon={<PlusOutlined />}
-                  onClick={handleAddTask}
-                  size="small"
-                  className="flow-dock-btn"
-                  title="Add Component"
-                />
-              )}
-              {!readOnly && hasChanges && (
-                <Button
-                  type="primary"
-                  icon={<SaveOutlined />}
-                  onClick={handleSaveWorkflow}
-                  loading={loading}
-                  size="small"
-                  className="flow-dock-btn"
-                  title="Save Workflow"
-                />
-              )}
-              <div className="flow-dock-separator" />
+          <div className="react-flow-wrapper" ref={reactFlowWrapper} style={{ flex: 1, position: 'relative' }}>
+            {/* Control buttons moved to top right */}
+            <div className="flow-controls" style={{ position: 'absolute', top: 10, right: 10, zIndex: 10, display: 'flex', gap: 8 }}>
               <Button
-                type="text"
+                type="default"
                 icon={<FullscreenOutlined />}
                 onClick={handleFullscreen}
                 title="Toggle Fullscreen"
-                className="flow-dock-btn"
                 size="small"
               />
               <Button
-                type="text"
+                type="default"
                 icon={<CloseOutlined />}
                 onClick={onClose}
                 title="Close"
-                className="flow-dock-btn"
                 size="small"
               />
             </div>
-            <div className="FlowVisualization__flow-canvas-container" style={{ width: '100%', height: '500px' }}>
-              <ReactFlow
-                nodes={nodes.map(n => ({ ...n, data: { ...n.data, readOnly } }))}
-                edges={edges}
-                onNodesChange={onNodesChange}
-                onEdgesChange={onEdgesChange}
-                onConnect={onConnect}
-                // onNodeClick={(e, node) => {
-                //   const target = e.target as HTMLElement;
-                //   console.log('Node click target:', target);
-                //   if (target && target.closest('.edit-node-btn')) return;
-                //   const task = (node.data as any)?.task;
-                //   if (task) setActiveTask(task);
-                // }}
-                nodeTypes={nodeTypes}
-                defaultEdgeOptions={defaultEdgeOptions}
-                connectionLineStyle={{ stroke: "#cbd5e1", strokeWidth: 2 }}
-                fitView
-                fitViewOptions={{ padding: 0.18 }}
-                attributionPosition="bottom-left"
-                key={`flow-${tasks.length}-${tasks.map((t) => `${t.id}-${t.type}`).join("-")}-${readOnly ? 'ro' : 'rw'}`}
-              >
-                <Controls />
-                <MiniMap
-                  nodeColor={(node) => {
-                    const type = (node.data as any)?.task?.type ?? 'workbook';
-                    return nodeMeta[type]?.color || '#8c8c8c';
-                  }}
-                  pannable
-                  zoomable
-                  style={{
-                    background: "white",
-                    border: "1px solid #e5e7eb",
-                    borderRadius: 8,
-                  }}
-                />
-                <Background
-                  variant={BackgroundVariant.Dots}
-                  gap={22}
-                  size={1}
-                  color="#eaeef5"
-                />
-              </ReactFlow>
-            </div>
+            <ReactFlow
+              nodes={nodes.map(n => ({ ...n, data: { ...n.data, readOnly } }))}
+              edges={edges}
+              onNodesChange={handleNodesChange}
+              onEdgesChange={onEdgesChange}
+              onConnect={onConnect}
+              onDrop={onDrop}
+              onDragOver={onDragOver}
+              onDragLeave={onDragLeave}
+              onInit={(instance) => {
+                // Force viewport update after ReactFlow initializes
+                setTimeout(() => instance.fitView({ padding: 0.18 }), 100);
+              }}
+              nodeTypes={nodeTypes}
+              edgeTypes={edgeTypes}
+              snapToGrid={false}
+              snapGrid={[15, 15]}
+              elementsSelectable={!readOnly}
+              nodesConnectable={!readOnly}
+              nodesDraggable={!readOnly}
+              connectionMode={ConnectionMode.Strict}
+              connectionRadius={20}
+              isValidConnection={(connection) => connection.source !== connection.target}
+              fitView
+              fitViewOptions={{ padding: 0.18 }}
+              attributionPosition="bottom-left"
+              className={isDraggingOver ? 'dragging-over' : ''}
+              key={`flow-${tasks.length}-${tasks.map((t) => `${t.id}-${t.type}`).join("-")}-${readOnly ? 'ro' : 'rw'}`}
+            >
+              <Controls />
+              <MiniMap
+                nodeColor="#3b82f6"
+                pannable
+                zoomable
+                style={{
+                  background: "white",
+                  border: "1px solid #e5e7eb",
+                  borderRadius: 8,
+                }}
+              />
+              <Background
+                variant={BackgroundVariant.Dots}
+                gap={22}
+                size={1}
+                color="#eaeef5"
+              />
+            </ReactFlow>
           </div>
         )}
       </div>
@@ -573,35 +512,18 @@ const FlowVisualization: React.FC<FlowVisualizationProps> = ({
   if (!visible) return null;
   return <>
     {flowInner}
-    <Modal
-      open={!!activeTask}
-      onCancel={() => setActiveTask(null)}
-      footer={null}
-      title={activeTask ? `Node: ${activeTask.name}` : ''}
-      width={420}
-    >
-      {activeTask && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <label style={{ fontSize: 12, fontWeight: 500 }}>Type</label>
-            <Select
-              disabled={!!readOnly}
-              value={activeTask.type}
-              onChange={(val) => handleEditTask({ ...activeTask, type: val })}
-              options={Object.keys(nodeMeta).map(t => ({ value: t, label: `${nodeMeta[t]?.icon || ''} ${nodeMeta[t]?.label || t}` }))}
-              style={{ width: '100%' }}
-            />
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8 }}>
-            <Button onClick={() => setActiveTask(null)}>Close</Button>
-            {!readOnly && (
-              <Button danger onClick={() => { if (activeTask) { handleDeleteTask(activeTask.id); setActiveTask(null); } }}>Delete</Button>
-            )}
-          </div>
-        </div>
-      )}
-    </Modal>
   </>;
+};
+
+// Main wrapper component with providers
+const FlowVisualization: React.FC<FlowVisualizationProps> = (props) => {
+  return (
+    <ReactFlowProvider>
+      <DnDProvider>
+        <FlowVisualizationInner {...props} />
+      </DnDProvider>
+    </ReactFlowProvider>
+  );
 };
 
 export default FlowVisualization;

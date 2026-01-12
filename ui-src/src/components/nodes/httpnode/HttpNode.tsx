@@ -2,7 +2,8 @@ import { memo, useState } from 'react';
 import { Handle, Position, useReactFlow, type NodeProps, type Node } from '@xyflow/react';
 import './HttpNode.less';
 import { Modal, Input, Select, Button, Tooltip } from 'antd';
-import { EditOutlined } from '@ant-design/icons';
+import { EditOutlined, DeleteOutlined, QuestionCircleOutlined, ExclamationCircleOutlined } from '@ant-design/icons';
+import { CodeEditor } from '../../CodeEditor';
 
 interface HttpData {
     name?: string;
@@ -11,6 +12,13 @@ interface HttpData {
     headers?: Record<string, any>;
     params?: Record<string, any>;
     payload?: Record<string, any>;
+    data?: Record<string, any>;
+    auth?: any;
+    timeout?: number;
+    verify_ssl?: boolean;
+    task?: { name?: string; description?: string };
+    onDelete?: (taskId: string) => void;
+    readOnly?: boolean;
     [key: string]: unknown;
 }
 
@@ -22,19 +30,39 @@ function HttpNodeInternal({ id, data = {} }: NodeProps<Node<HttpData>>) {
         endpoint: '',
         headers: {} as Record<string, any>,
         params: {} as Record<string, any>,
-        payload: {} as Record<string, any>
+        payload: {} as Record<string, any>,
+        auth: undefined as any,
+        timeout: 30,
+        verify_ssl: true
     });
     const [headerInput, setHeaderInput] = useState('');
     const [paramsInput, setParamsInput] = useState('');
     const [payloadInput, setPayloadInput] = useState('');
+    const [authInput, setAuthInput] = useState('');
     const [headerError, setHeaderError] = useState<string | null>(null);
     const [paramsError, setParamsError] = useState<string | null>(null);
     const [payloadError, setPayloadError] = useState<string | null>(null);
+    const [authError, setAuthError] = useState<string | null>(null);
 
     const serializeObject = (obj?: Record<string, any>) => {
         try {
             return obj && Object.keys(obj).length ? JSON.stringify(obj, null, 2) : '';
         } catch { return ''; }
+    };
+
+    const handleDelete = () => {
+        Modal.confirm({
+            title: 'Delete Node',
+            icon: <ExclamationCircleOutlined />,
+            content: `Are you sure you want to delete the "${data.name || 'HTTP'}" node?`,
+            okText: 'Delete',
+            okType: 'danger',
+            cancelText: 'Cancel',
+            centered: true,
+            onOk() {
+                data.onDelete?.(id);
+            },
+        });
     };
 
     const openEditor = () => {
@@ -43,14 +71,19 @@ function HttpNodeInternal({ id, data = {} }: NodeProps<Node<HttpData>>) {
             endpoint: data.endpoint || '',
             headers: data.headers || {},
             params: data.params || {},
-            payload: data.payload || {},
+            payload: data.payload || data.data || {},
+            auth: data.auth,
+            timeout: data.timeout ?? 30,
+            verify_ssl: data.verify_ssl ?? true
         });
         setHeaderInput(serializeObject(data.headers));
         setParamsInput(serializeObject(data.params));
-        setPayloadInput(serializeObject(data.payload));
+        setPayloadInput(serializeObject(data.payload || data.data));
+        setAuthInput(serializeObject(data.auth));
         setHeaderError(null);
         setParamsError(null);
         setPayloadError(null);
+        setAuthError(null);
         setModalOpen(true);
     };
 
@@ -58,6 +91,7 @@ function HttpNodeInternal({ id, data = {} }: NodeProps<Node<HttpData>>) {
         let headersObj = draft.headers;
         let paramsObj = draft.params;
         let payloadObj = draft.payload;
+        let authObj = draft.auth;
 
         if (headerInput && !headerError) {
             try { headersObj = JSON.parse(headerInput); } catch { }
@@ -68,18 +102,24 @@ function HttpNodeInternal({ id, data = {} }: NodeProps<Node<HttpData>>) {
         if (payloadInput && !payloadError) {
             try { payloadObj = JSON.parse(payloadInput); } catch { }
         }
+        if (authInput && !authError) {
+            try { authObj = JSON.parse(authInput); } catch { }
+        }
 
         updateNodeData(id, {
             method: draft.method || 'GET',
             endpoint: draft.endpoint,
             headers: headersObj,
             params: paramsObj,
-            payload: payloadObj
+            payload: payloadObj,
+            auth: authObj,
+            timeout: draft.timeout,
+            verify_ssl: draft.verify_ssl
         });
         setModalOpen(false);
     };
 
-    const handleJSONChange = (val: string, field: 'headers' | 'params' | 'payload') => {
+    const handleJSONChange = (val: string, field: 'headers' | 'params' | 'payload' | 'auth') => {
         const setInput = field === 'headers' ? setHeaderInput : field === 'params' ? setParamsInput : setPayloadInput;
         const setError = field === 'headers' ? setHeaderError : field === 'params' ? setParamsError : setPayloadError;
 
@@ -115,27 +155,51 @@ function HttpNodeInternal({ id, data = {} }: NodeProps<Node<HttpData>>) {
 
     return (
         <div className="HttpNode" onDoubleClick={openEditor}>
-            <Handle type="target" position={Position.Left} />
-            <Handle type="source" position={Position.Right} />
+            <Handle
+                type="target"
+                position={Position.Left}
+                className="flow-node-handle flow-node-handle-target"
+                title="Connect from another node"
+            />
+            <Handle
+                type="source"
+                position={Position.Right}
+                className="flow-node-handle flow-node-handle-source"
+                title="Connect to another node"
+            />
             <div className="HttpNode__header">
-                <span className="HttpNode__header-text">🌐 {data.name || 'http'}</span>
-                <Tooltip title="Edit HTTP config">
-                    <Button
-                        className="http-edit-btn"
-                        size="small"
-                        type="text"
-                        icon={<EditOutlined />}
-                        onPointerDown={preventNodeDrag}
-                        onMouseDown={preventNodeDrag}
-                        onClick={(e) => { preventNodeDrag(e); openEditor(); }}
-                    />
-                </Tooltip>
+                <span className="HttpNode__header-text">🌐 http</span>
+                <div className="HttpNode__header-buttons">
+                    <Tooltip title="Edit HTTP config">
+                        <Button
+                            className="http-edit-btn"
+                            size="small"
+                            type="text"
+                            icon={<EditOutlined />}
+                            onPointerDown={preventNodeDrag}
+                            onMouseDown={preventNodeDrag}
+                            onClick={(e) => { preventNodeDrag(e); openEditor(); }}
+                        />
+                    </Tooltip>
+                    {!data.readOnly && data.onDelete && (
+                        <Tooltip title="Delete node">
+                            <Button
+                                className="http-delete-btn"
+                                size="small"
+                                type="text"
+                                danger
+                                icon={<DeleteOutlined />}
+                                onPointerDown={preventNodeDrag}
+                                onMouseDown={preventNodeDrag}
+                                onClick={(e) => { preventNodeDrag(e); handleDelete(); }}
+                            />
+                        </Tooltip>
+                    )}
+                </div>
             </div>
             <div className="HttpNode__summary">
-                {summaryEndpoint || <span className="HttpNode__empty-url">(no endpoint)</span>}
+                {data.task?.name || summaryEndpoint || <span className="HttpNode__empty-endpoint">(no description)</span>}
             </div>
-            <div className="HttpNode__method">{(data.method || 'GET').toUpperCase()}</div>
-            <div className="HttpNode__hint">double-click or edit icon</div>
 
             <Modal
                 open={modalOpen}
@@ -143,8 +207,16 @@ function HttpNodeInternal({ id, data = {} }: NodeProps<Node<HttpData>>) {
                 title={data.name ? `HTTP Config: ${data.name}` : 'HTTP Config'}
                 width={640}
                 footer={[
+                    <Button
+                        key="docs"
+                        icon={<QuestionCircleOutlined />}
+                        style={{ float: 'left' }}
+                        disabled
+                    >
+                        Docs
+                    </Button>,
                     <Button key="cancel" onClick={() => setModalOpen(false)}>Cancel</Button>,
-                    <Button key="save" type="primary" onClick={commit} disabled={!!(headerError || paramsError || payloadError)}>Save</Button>
+                    <Button key="save" type="primary" onClick={commit} disabled={!!(headerError || paramsError || payloadError || authError)}>Save</Button>
                 ]}
             >
                 <div className="HttpNodeModal__container">
@@ -161,36 +233,69 @@ function HttpNodeInternal({ id, data = {} }: NodeProps<Node<HttpData>>) {
                             onChange={e => setDraft(d => ({ ...d, endpoint: e.target.value }))}
                         />
                     </div>
+                    <div className="HttpNodeModal__row">
+                        <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                            <div style={{ flex: 1 }}>
+                                <div className="HttpNodeModal__section-title">Timeout (seconds)</div>
+                                <Input
+                                    type="number"
+                                    value={draft.timeout}
+                                    placeholder="30"
+                                    onChange={e => setDraft(d => ({ ...d, timeout: parseInt(e.target.value) || 30 }))}
+                                />
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '20px' }}>
+                                <input
+                                    type="checkbox"
+                                    checked={draft.verify_ssl}
+                                    onChange={e => setDraft(d => ({ ...d, verify_ssl: e.target.checked }))}
+                                    style={{ cursor: 'pointer' }}
+                                />
+                                <label style={{ cursor: 'pointer', margin: 0 }}>Verify SSL</label>
+                            </div>
+                        </div>
+                    </div>
+                    <div>
+                        <div className="HttpNodeModal__section-title">Auth (JSON object)</div>
+                        <CodeEditor
+                            value={authInput}
+                            onChange={val => handleJSONChange(val, 'auth')}
+                            language="json"
+                            height={100}
+                            placeholder='{"type": "oauth2_client_credentials", "provider": "secret_manager"}'
+                        />
+                        {authError && <div className="HttpNodeModal__error">{authError}</div>}
+                    </div>
                     <div>
                         <div className="HttpNodeModal__section-title">Headers (JSON object)</div>
-                        <Input.TextArea
-                            className="HttpNodeModal__headers"
+                        <CodeEditor
                             value={headerInput}
-                            rows={4}
+                            onChange={val => handleJSONChange(val, 'headers')}
+                            language="json"
+                            height={120}
                             placeholder='{"Authorization": "Bearer {{ token }}"}'
-                            onChange={e => handleJSONChange(e.target.value, 'headers')}
                         />
                         {headerError && <div className="HttpNodeModal__error">{headerError}</div>}
                     </div>
                     <div>
                         <div className="HttpNodeModal__section-title">Params (JSON object)</div>
-                        <Input.TextArea
-                            className="HttpNodeModal__params"
+                        <CodeEditor
                             value={paramsInput}
-                            rows={3}
+                            onChange={val => handleJSONChange(val, 'params')}
+                            language="json"
+                            height={100}
                             placeholder='{"limit": 10}'
-                            onChange={e => handleJSONChange(e.target.value, 'params')}
                         />
                         {paramsError && <div className="HttpNodeModal__error">{paramsError}</div>}
                     </div>
                     <div>
                         <div className="HttpNodeModal__section-title">Payload (JSON object)</div>
-                        <Input.TextArea
-                            className="HttpNodeModal__payload"
+                        <CodeEditor
                             value={payloadInput}
-                            rows={4}
+                            onChange={val => handleJSONChange(val, 'payload')}
+                            language="json"
+                            height={120}
                             placeholder='{"query": "{{ search_term }}"}'
-                            onChange={e => handleJSONChange(e.target.value, 'payload')}
                         />
                         {payloadError && <div className="HttpNodeModal__error">{payloadError}</div>}
                     </div>

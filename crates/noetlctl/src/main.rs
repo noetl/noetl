@@ -790,6 +790,11 @@ async fn main() -> Result<()> {
             }
         },
         Some(Commands::Build { no_cache, platform }) => {
+            let platform = if platform == "linux/amd64" {
+                detect_platform()
+            } else {
+                platform
+            };
             build_docker_image(no_cache, &platform).await?;
         }
         Some(Commands::K8s { command }) => match command {
@@ -800,9 +805,19 @@ async fn main() -> Result<()> {
                 k8s_remove().await?;
             }
             K8sCommand::Redeploy { no_cache, platform } => {
+                let platform = if platform == "linux/amd64" {
+                    detect_platform()
+                } else {
+                    platform
+                };
                 k8s_redeploy(no_cache, &platform).await?;
             }
             K8sCommand::Reset { no_cache, platform } => {
+                let platform = if platform == "linux/amd64" {
+                    detect_platform()
+                } else {
+                    platform
+                };
                 k8s_reset(no_cache, &platform).await?;
             }
         },
@@ -2075,19 +2090,7 @@ async fn k8s_redeploy(no_cache: bool, platform: &str) -> Result<()> {
     // Remove existing deployment
     k8s_remove().await.ok(); // Ignore errors if not deployed
 
-    // Load image to kind
-    let image_tag = std::fs::read_to_string(".noetl_last_build_tag.txt")?.trim().to_string();
-    println!("Loading image to kind cluster...");
-    run_command(&[
-        "kind",
-        "load",
-        "docker-image",
-        &format!("local/noetl:{}", image_tag),
-        "--name",
-        "noetl",
-    ])?;
-
-    // Deploy
+    // Deploy (this will load the image to kind)
     k8s_deploy().await?;
 
     println!("✓ NoETL redeployed successfully");
@@ -2111,12 +2114,12 @@ async fn k8s_reset(no_cache: bool, platform: &str) -> Result<()> {
 
     // Wait for deployment to be ready
     println!("Waiting for deployment to be ready...");
-    tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
+    wait_for_deployment_ready("noetl-server", "noetl").await?;
 
     // Setup test environment
     println!("Setting up test environment...");
+    run_command(&["task", "test:k8s:setup-environment"])?;
     run_command(&["task", "test:k8s:create-tables"])?;
-    run_command(&["task", "test:k8s:register-credentials"])?;
 
     println!("✓ NoETL reset complete");
     println!("  UI:  http://localhost:8082");
@@ -2126,6 +2129,53 @@ async fn k8s_reset(no_cache: bool, platform: &str) -> Result<()> {
 }
 
 // Helper functions for k8s commands
+async fn wait_for_deployment_ready(deployment: &str, namespace: &str) -> Result<()> {
+    use std::process::Command;
+
+    let max_attempts = 60; // 60 * 5 seconds = 5 minutes max wait
+    let mut attempts = 0;
+
+    loop {
+        attempts += 1;
+
+        // Check if deployment is ready using kubectl rollout status
+        let output = Command::new("kubectl")
+            .args(&[
+                "rollout",
+                "status",
+                &format!("deployment/{}", deployment),
+                "-n",
+                namespace,
+                "--timeout=5s",
+            ])
+            .output();
+
+        if let Ok(output) = output {
+            if output.status.success() {
+                println!("✓ Deployment {} is ready", deployment);
+
+                // Give server a few more seconds to start accepting connections
+                tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+                return Ok(());
+            }
+        }
+
+        if attempts >= max_attempts {
+            return Err(anyhow::anyhow!(
+                "Timeout waiting for deployment {} to be ready after {} attempts",
+                deployment,
+                max_attempts
+            ));
+        }
+
+        if attempts % 6 == 0 {
+            println!("  Still waiting for {} ({}s elapsed)...", deployment, attempts * 5);
+        }
+
+        tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+    }
+}
+
 fn run_command(args: &[&str]) -> Result<()> {
     use std::process::Command;
 
@@ -2180,4 +2230,14 @@ fn update_deployment_image(file_path: &str, image: &str) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn detect_platform() -> String {
+    // Detect host architecture
+    let arch = std::env::consts::ARCH;
+    match arch {
+        "aarch64" => "linux/arm64".to_string(),
+        "x86_64" => "linux/amd64".to_string(),
+        _ => "linux/amd64".to_string(), // Default fallback
+    }
 }

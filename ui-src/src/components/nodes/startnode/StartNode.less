@@ -1,55 +1,25 @@
-.StartNode {
-    padding: 8px;
-    border: 1px solid #3f8600;
-    border-radius: 8px;
-    font-size: 12px;
-    background: #fff;
-    width: 240px;
-    cursor: pointer;
+@import '../NodeBase.less';
 
-    &__header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        font-weight: 600;
-        margin-bottom: 4px;
-    }
+.StartNode {
+    &:extend(.NodeBase all);
 
     &__summary {
-        font-size: 11px;
-        word-break: break-all;
-        line-height: 1.3;
-    }
-
-    &__hint {
-        font-size: 9px;
-        opacity: 0.55;
-        margin-top: 4px;
-    }
-
-    &__header-text {
-        display: inline-flex;
-        align-items: center;
-        gap: 4px;
+        padding: 8px;
+        font-size: 12px;
+        color: #6b7280;
+        line-height: 1.4;
     }
 }
 
-.start-edit-btn {
-    .anticon {
-        font-size: 14px;
-    }
+.start-edit-btn,
+.start-delete-btn {
+    &:extend(.node-edit-btn all);
 }
 
-.StartNodeModal {
-    &__container {
-        display: flex;
-        flex-direction: column;
-        gap: 12px;
-    }
+.StartNodeModal__container {
+    &:extend(.NodeModal__container all);
+}
 
-    &__section-title {
-        font-size: 11px;
-        font-weight: 500;
-        margin-bottom: 4px;
-    }
+.StartNodeModal__section-title {
+    &:extend(.NodeModal__section-title all);
 }
