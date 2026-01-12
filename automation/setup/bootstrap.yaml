@@ -139,7 +139,10 @@ workflow:
         - |
           echo ""
           echo "Building Rust CLI..."
-          task noetlctl:local:build
+          cd crates/noetlctl
+          cargo build --release
+          mkdir -p ../../bin
+          cd ../..
     next:
       - step: build_docker_images
   
@@ -171,7 +174,7 @@ workflow:
             echo "OK Cluster already exists, skipping creation"
           else
             echo "Creating kind cluster..."
-            task kind:local:cluster-create
+            kind create cluster --config=ci/kind/config.yaml
           fi
     next:
       - step: load_image_to_kind
@@ -277,6 +280,16 @@ workflow:
       args:
         action: full
     next:
+      - step: deploy_gateway
+  
+  - step: deploy_gateway
+    desc: Deploy NoETL Gateway API
+    tool:
+      kind: playbook
+      path: ../infrastructure/gateway.yaml
+      args:
+        action: deploy-all
+    next:
       - step: deploy_noetl
   
   - step: deploy_noetl
@@ -343,7 +356,13 @@ workflow:
         - |
           echo ""
           echo "Testing cluster health..."
-          task test:k8s:cluster-health || echo "Warning: Some health checks failed"
+          kubectl config use-context kind-noetl
+          echo "=== Checking NoETL server health ==="
+          curl -f http://localhost:8082/api/health || echo "NoETL server not ready"
+          echo "\n=== Checking PostgreSQL connection ==="
+          kubectl exec deployment/postgres -n postgres -- pg_isready -h localhost -p 5432 -U demo
+          echo "\n=== Checking services ==="
+          kubectl get svc -A | grep -E "noetl|postgres"
     next:
       - step: summary
   
@@ -363,12 +382,14 @@ workflow:
           echo "  PostgreSQL: deployed"
           echo "  NoETL server: deployed"
           echo "  NoETL workers: deployed"
+          echo "  Gateway: deployed (Rust API)"
           echo "  Observability: deployed (ClickHouse, Qdrant, NATS)"
           echo "  Monitoring: deployed (VictoriaMetrics, Grafana)"
           echo "  Test Server: deployed (Pagination API)"
           echo ""
           echo "Endpoints:"
           echo "  NoETL API: http://localhost:8082"
+          echo "  Gateway API: http://localhost:8080"
           echo "  PostgreSQL: localhost:54321"
           echo "  Grafana: http://localhost:3000"
           echo "  VictoriaLogs: http://localhost:9428"
