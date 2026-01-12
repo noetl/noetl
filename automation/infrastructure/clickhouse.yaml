@@ -332,8 +332,10 @@ workflow:
         - |
           echo ""
           echo "Forwarding ClickHouse ports..."
-          echo "Press Ctrl+C to stop port-forwarding"
-          task clickhouse:port-forward
+          echo "HTTP - localhost:8123"
+          echo "Native - localhost:9000"
+          echo "Press Ctrl+C to stop"
+          kubectl port-forward -n clickhouse svc/clickhouse 8123:8123 9000:9000
     next:
       - step: end
 
@@ -345,8 +347,9 @@ workflow:
         - |
           echo ""
           echo "Forwarding ClickHouse MCP server port..."
-          echo "Press Ctrl+C to stop port-forwarding"
-          task clickhouse:port-forward-mcp
+          echo "MCP - localhost:8124"
+          echo "Press Ctrl+C to stop"
+          kubectl port-forward -n clickhouse svc/clickhouse-mcp 8124:8124
     next:
       - step: end
 
@@ -399,9 +402,17 @@ workflow:
       cmds:
         - |
           echo ""
-          echo "Dropping all observability data..."
-          echo "WARNING: This will delete all data!"
-          task clickhouse:clean-data
+          echo "⚠ This will delete all observability data!"
+          echo "Press Ctrl+C to cancel, or wait 5 seconds..."
+          sleep 5
+          POD=$(kubectl get pods -n clickhouse -l clickhouse.altinity.com/chi=noetl-clickhouse -o jsonpath='{.items[0].metadata.name}')
+          if [ -n "$POD" ]; then
+            kubectl exec -n clickhouse $POD -- clickhouse-client --query="TRUNCATE TABLE IF EXISTS observability.logs"
+            kubectl exec -n clickhouse $POD -- clickhouse-client --query="TRUNCATE TABLE IF EXISTS observability.metrics"
+            kubectl exec -n clickhouse $POD -- clickhouse-client --query="TRUNCATE TABLE IF EXISTS observability.traces"
+            kubectl exec -n clickhouse $POD -- clickhouse-client --query="TRUNCATE TABLE IF EXISTS observability.noetl_events"
+            echo "✓ All observability data deleted"
+          fi
     next:
       - step: end
 
@@ -412,8 +423,15 @@ workflow:
       cmds:
         - |
           echo ""
-          echo "Optimizing ClickHouse tables..."
-          task clickhouse:optimize
+          echo "Optimizing observability tables..."
+          POD=$(kubectl get pods -n clickhouse -l clickhouse.altinity.com/chi=noetl-clickhouse -o jsonpath='{.items[0].metadata.name}')
+          if [ -n "$POD" ]; then
+            kubectl exec -n clickhouse $POD -- clickhouse-client --query="OPTIMIZE TABLE observability.logs FINAL" || true
+            kubectl exec -n clickhouse $POD -- clickhouse-client --query="OPTIMIZE TABLE observability.metrics FINAL" || true
+            kubectl exec -n clickhouse $POD -- clickhouse-client --query="OPTIMIZE TABLE observability.traces FINAL" || true
+            kubectl exec -n clickhouse $POD -- clickhouse-client --query="OPTIMIZE TABLE observability.noetl_events FINAL" || true
+            echo "✓ Tables optimized"
+          fi
     next:
       - step: end
 
@@ -425,7 +443,18 @@ workflow:
         - |
           echo ""
           echo "Deploying ClickHouse cluster..."
-          task clickhouse:deploy-cluster
+          kubectl apply -f ci/manifests/clickhouse/clickhouse-cluster.yaml
+          echo "✓ ClickHouse cluster deployed"
+          echo "Waiting for ClickHouse to be ready (this may take 2-3 minutes)..."
+          for i in {1..60}; do
+            if kubectl get pods -n clickhouse -l clickhouse.altinity.com/chi=noetl-clickhouse 2>/dev/null | grep -q "Running"; then
+              echo "✓ ClickHouse pod is running"
+              break
+            fi
+            echo "Waiting for ClickHouse pod... ($i/60)"
+            sleep 5
+          done
+          sleep 10
     next:
       - step: end
 
@@ -437,7 +466,9 @@ workflow:
         - |
           echo ""
           echo "Deploying ClickHouse CRDs..."
-          task clickhouse:deploy-crds
+          kubectl apply -f ci/manifests/clickhouse/crds.yaml
+          echo "✓ ClickHouse CRDs deployed"
+          sleep 2
     next:
       - step: end
 
@@ -449,7 +480,8 @@ workflow:
         - |
           echo ""
           echo "Creating ClickHouse namespace..."
-          task clickhouse:deploy-namespace
+          kubectl apply -f ci/manifests/clickhouse/namespace.yaml
+          echo "✓ ClickHouse namespace created"
     next:
       - step: end
 
@@ -461,7 +493,11 @@ workflow:
         - |
           echo ""
           echo "Deploying ClickHouse operator..."
-          task clickhouse:deploy-operator
+          kubectl apply -f ci/manifests/clickhouse/operator.yaml
+          echo "✓ ClickHouse operator deployed"
+          echo "Waiting for operator to be ready..."
+          kubectl wait --for=condition=available --timeout=120s deployment/clickhouse-operator -n clickhouse || true
+          sleep 5
     next:
       - step: end
 
@@ -473,7 +509,9 @@ workflow:
         - |
           echo ""
           echo "Deploying observability schema..."
-          task clickhouse:deploy-schema
+          kubectl apply -f ci/manifests/clickhouse/observability-schema.yaml
+          echo "✓ Observability schema ConfigMap created"
+          echo "Schema will be initialized on first connection"
     next:
       - step: end
 
@@ -485,7 +523,9 @@ workflow:
         - |
           echo ""
           echo "Deploying ClickHouse datasource for Grafana..."
-          task clickhouse:deploy-grafana-datasource
+          kubectl apply -f ci/manifests/clickhouse/grafana-datasource.yaml
+          echo "✓ ClickHouse datasource configured in Grafana"
+          echo "Access ClickHouse data via Grafana at http://localhost:3000"
     next:
       - step: end
 
@@ -497,7 +537,9 @@ workflow:
         - |
           echo ""
           echo "Deploying ClickHouse MCP server..."
-          task clickhouse:deploy-mcp-server
+          kubectl apply -f ci/manifests/clickhouse/mcp-server.yaml
+          echo "✓ ClickHouse MCP server deployed"
+          kubectl wait --for=condition=available --timeout=60s deployment/clickhouse-mcp-server -n clickhouse || true
     next:
       - step: end
 

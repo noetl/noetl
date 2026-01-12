@@ -65,7 +65,7 @@ workflow:
         - |
           echo ""
           echo "Building Gateway Docker image..."
-          task gateway-build-image
+          docker/build-gateway-image.sh
     next:
       - step: end
 
@@ -77,7 +77,10 @@ workflow:
         - |
           echo ""
           echo "Deploying Gateway API to Kubernetes..."
-          task gateway-deploy
+          kubectl apply -f ci/manifests/gateway/namespace.yaml
+          kubectl apply -f ci/manifests/gateway/deployment.yaml
+          kubectl apply -f ci/manifests/gateway/service.yaml
+          echo "Gateway API deployed at http://localhost:8090"
     next:
       - step: end
 
@@ -89,7 +92,16 @@ workflow:
         - |
           echo ""
           echo "Building and deploying Gateway API and UI..."
-          task gateway-deploy-all
+          docker/build-gateway-image.sh
+          kubectl apply -f ci/manifests/gateway/namespace.yaml
+          kubectl apply -f ci/manifests/gateway/deployment.yaml
+          kubectl apply -f ci/manifests/gateway/service.yaml
+          echo "Gateway API deployed at http://localhost:8090"
+          kubectl apply -f ci/manifests/gateway/configmap-ui.yaml
+          kubectl apply -f ci/manifests/gateway/configmap-ui-files.yaml
+          kubectl apply -f ci/manifests/gateway/deployment-ui.yaml
+          kubectl apply -f ci/manifests/gateway/service-ui.yaml
+          echo "Gateway UI deployed at http://localhost:8080"
     next:
       - step: end
 
@@ -101,7 +113,7 @@ workflow:
         - |
           echo ""
           echo "Removing Gateway from Kubernetes..."
-          task gateway-remove
+          kubectl delete namespace gateway --ignore-not-found=true
     next:
       - step: end
 
@@ -113,7 +125,9 @@ workflow:
         - |
           echo ""
           echo "Rebuilding and redeploying Gateway..."
-          task gateway-redeploy
+          docker/build-gateway-image.sh
+          kubectl rollout restart deployment/gateway -n gateway
+          kubectl rollout status deployment/gateway -n gateway --timeout=60s
     next:
       - step: end
 
@@ -125,7 +139,8 @@ workflow:
         - |
           echo ""
           echo "Restarting Gateway pods..."
-          task gateway-restart
+          kubectl rollout restart deployment/gateway -n gateway
+          kubectl rollout restart deployment/gateway-ui -n gateway
     next:
       - step: end
 
@@ -138,7 +153,7 @@ workflow:
           echo ""
           echo "Gateway Deployment Status:"
           echo "=========================="
-          task gateway-status
+          kubectl get all -n gateway
     next:
       - step: end
 
@@ -151,7 +166,7 @@ workflow:
           echo ""
           echo "Gateway Logs:"
           echo "============="
-          task gateway-logs
+          kubectl logs -n gateway -l app=gateway --tail=100 -f
     next:
       - step: end
 
@@ -163,7 +178,8 @@ workflow:
         - |
           echo ""
           echo "Testing Gateway endpoints..."
-          task gateway-test
+          curl -s http://localhost:8090/graphql | head -20 || echo "Gateway not responding"
+          curl -s http://localhost:8080/health || echo "Gateway UI not responding"
     next:
       - step: end
 
