@@ -13,29 +13,29 @@ workflow:
     tool:
       kind: shell
       cmds:
-        - echo "Docker Automation - Action '{{ action }}'"
+        - echo "Docker Automation - Action '{{ workload.action }}'"
     next:
-      - when: "{{ action }} == build"
+      - when: "{{ workload.action }} == build"
         then:
           - step: build_image
         args: {}
-      - when: "{{ action }} == noetl-image-build"
+      - when: "{{ workload.action }} == noetl-image-build"
         then:
           - step: build_noetl_image
         args: {}
-      - when: "{{ action }} == cleanup-all"
+      - when: "{{ workload.action }} == cleanup-all"
         then:
           - step: cleanup_all
         args: {}
-      - when: "{{ action }} == images-clear"
+      - when: "{{ workload.action }} == images-clear"
         then:
           - step: clear_images
         args: {}
-      - when: "{{ action }} == status"
+      - when: "{{ workload.action }} == status"
         then:
           - step: check_status
         args: {}
-      - when: "{{ action }} == help"
+      - when: "{{ workload.action }} == help"
         then:
           - step: show_help
         args: {}

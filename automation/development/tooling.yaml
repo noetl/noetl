@@ -13,69 +13,69 @@ workflow:
     tool:
       kind: shell
       cmds:
-        - echo "Dev Tools Automation - Action '{{ action }}'"
+        - echo "Dev Tools Automation - Action '{{ workload.action }}'"
     next:
-      - when: "{{ action }} == setup"
+      - when: "{{ workload.action }} == setup"
         then:
           - step: setup_tools
         args: {}
-      - when: "{{ action }} == validate-install"
+      - when: "{{ workload.action }} == validate-install"
         then:
           - step: validate_install
         args: {}
-      - when: "{{ action }} == validate-devtools"
+      - when: "{{ workload.action }} == validate-devtools"
         then:
           - step: validate_devtools
         args: {}
-      - when: "{{ action }} == validate-docker"
+      - when: "{{ workload.action }} == validate-docker"
         then:
           - step: validate_docker
         args: {}
-      - when: "{{ action }} == install-base"
+      - when: "{{ workload.action }} == install-base"
         then:
           - step: install_base
         args: {}
-      - when: "{{ action }} == install-devtools"
+      - when: "{{ workload.action }} == install-devtools"
         then:
           - step: install_devtools
         args: {}
-      - when: "{{ action }} == install-jq"
+      - when: "{{ workload.action }} == install-jq"
         then:
           - step: install_jq
         args: {}
-      - when: "{{ action }} == install-yq"
+      - when: "{{ workload.action }} == install-yq"
         then:
           - step: install_yq
         args: {}
-      - when: "{{ action }} == install-kind"
+      - when: "{{ workload.action }} == install-kind"
         then:
           - step: install_kind
         args: {}
-      - when: "{{ action }} == install-pyenv"
+      - when: "{{ workload.action }} == install-pyenv"
         then:
           - step: install_pyenv
         args: {}
-      - when: "{{ action }} == install-uv"
+      - when: "{{ workload.action }} == install-uv"
         then:
           - step: install_uv
         args: {}
-      - when: "{{ action }} == install-tfenv"
+      - when: "{{ workload.action }} == install-tfenv"
         then:
           - step: install_tfenv
         args: {}
-      - when: "{{ action }} == install-psql"
+      - when: "{{ workload.action }} == install-psql"
         then:
           - step: install_psql
         args: {}
-      - when: "{{ action }} == ensure-path"
+      - when: "{{ workload.action }} == ensure-path"
         then:
           - step: ensure_path
         args: {}
-      - when: "{{ action }} == fix-docker-perms"
+      - when: "{{ workload.action }} == fix-docker-perms"
         then:
           - step: fix_docker_perms
         args: {}
-      - when: "{{ action }} == help"
+      - when: "{{ workload.action }} == help"
         then:
           - step: show_help
         args: {}
