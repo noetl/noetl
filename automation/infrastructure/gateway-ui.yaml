@@ -45,7 +45,11 @@ workflow:
         - |
           echo ""
           echo "Deploying Gateway UI to Kubernetes..."
-          task gateway-ui-deploy
+          kubectl apply -f ci/manifests/gateway/configmap-ui.yaml
+          kubectl apply -f ci/manifests/gateway/configmap-ui-files.yaml
+          kubectl apply -f ci/manifests/gateway/deployment-ui.yaml
+          kubectl apply -f ci/manifests/gateway/service-ui.yaml
+          echo "Gateway UI deployed at http://localhost:8080"
     next:
       - step: end
 
@@ -58,7 +62,7 @@ workflow:
           echo ""
           echo "Gateway UI Logs:"
           echo "================"
-          task gateway-ui-logs
+          kubectl logs -n gateway -l app=gateway-ui --tail=100 -f
     next:
       - step: end
 
@@ -70,7 +74,11 @@ workflow:
         - |
           echo ""
           echo "Regenerating and deploying Gateway UI..."
-          task gateway-ui-update
+          ./ci/manifests/gateway/regenerate-ui-configmap.sh
+          kubectl apply -f ci/manifests/gateway/configmap-ui-files.yaml
+          kubectl rollout restart deployment/gateway-ui -n gateway
+          kubectl rollout status deployment/gateway-ui -n gateway --timeout=30s
+          echo "✅ Gateway UI updated at http://localhost:8080"
     next:
       - step: end
 

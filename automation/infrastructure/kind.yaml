@@ -57,7 +57,7 @@ workflow:
         - |
           echo ""
           echo "Creating Kind cluster 'noetl'..."
-          task kind:local:cluster-create
+          kind create cluster --config=ci/kind/config.yaml
     next:
       - step: end
 
@@ -69,7 +69,7 @@ workflow:
         - |
           echo ""
           echo "Deleting Kind cluster 'noetl'..."
-          task kind:local:cluster-delete
+          kind delete cluster --name=noetl
     next:
       - step: end
 
@@ -82,7 +82,7 @@ workflow:
           echo ""
           echo "Kind Clusters:"
           echo "=============="
-          task kind:local:clusters-list
+          kind get clusters
     next:
       - step: end
 
@@ -94,7 +94,8 @@ workflow:
         - |
           echo ""
           echo "Loading NoETL image to Kind cluster..."
-          task kind:local:image-load
+          IMAGE_TAG=$(cat .noetl_last_build_tag.txt)
+          kind load docker-image local/noetl:$IMAGE_TAG --name noetl
     next:
       - step: end
 
@@ -107,7 +108,7 @@ workflow:
           echo ""
           echo "Images in Kind cluster:"
           echo "======================="
-          task kind:k8s:images-list
+          docker exec -it noetl-control-plane crictl images
     next:
       - step: end
 
@@ -144,7 +145,7 @@ workflow:
         - |
           echo ""
           echo "Setting kubectl context to kind-noetl..."
-          task kubectl:local:context-set-kind
+          kubectl config use-context kind-noetl
     next:
       - step: end
 

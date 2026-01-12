@@ -57,7 +57,10 @@ workflow:
         - |
           echo ""
           echo "Building pagination test server image..."
-          task pagination-server:tpsb
+          IMAGE_TAG=$(date +%Y-%m-%d-%H-%M)
+          docker build -t local/test-server:$IMAGE_TAG -f docker/test-server/Dockerfile .
+          docker tag local/test-server:$IMAGE_TAG local/test-server:latest
+          echo "Built test-server:$IMAGE_TAG"
     case:
       - when: "{{ action }} == full"
         then:
@@ -73,7 +76,7 @@ workflow:
         - |
           echo ""
           echo "Loading pagination server image to kind cluster..."
-          task pagination-server:tpsl
+          kind load docker-image local/test-server:latest --name noetl
     case:
       - when: "{{ action }} == full"
         then:
@@ -89,7 +92,12 @@ workflow:
         - |
           echo ""
           echo "Deploying pagination test server..."
-          task pagination-server:tpsd
+          kubectl apply -f ci/manifests/test-server/namespace.yaml
+          sleep 2
+          kubectl apply -f ci/manifests/test-server/deployment.yaml
+          echo "Waiting for pagination test server to be ready..."
+          kubectl wait --for=condition=ready pod -l app=paginated-api -n test-server --timeout=60s || true
+          kubectl get pods -n test-server
     case:
       - when: "{{ action }} == full"
         then:
@@ -105,7 +113,15 @@ workflow:
         - |
           echo ""
           echo "Checking pagination server status..."
-          task pagination-server:tpss
+          echo "=== Pagination Test Server Pods ==="
+          kubectl get pods -n test-server
+          echo ""
+          echo "=== Pagination Test Server Services ==="
+          kubectl get svc -n test-server
+          echo ""
+          echo "=== Pagination Test Server Endpoints ==="
+          echo "ClusterIP: http://paginated-api.test-server.svc.cluster.local:5555"
+          echo "NodePort: http://localhost:30555"
     next:
       - step: end
 
@@ -117,7 +133,7 @@ workflow:
         - |
           echo ""
           echo "Pagination server logs:"
-          task pagination-server:tpslog
+          kubectl logs -n test-server -l app=paginated-api --tail=100
     next:
       - step: end
 
@@ -129,7 +145,18 @@ workflow:
         - |
           echo ""
           echo "Testing pagination server endpoints..."
-          task pagination-server:tpst
+          kubectl run -n test-server curl-test --image=curlimages/curl:latest --rm -i --restart=Never -- sh -c '
+          echo "=== Health Check ==="
+          curl -s http://paginated-api:5555/health
+          echo ""
+          echo ""
+          echo "=== Page 1 of assessments ==="
+          curl -s http://paginated-api:5555/api/v1/assessments?page=1 | head -20
+          echo ""
+          echo "=== Users with offset ==="
+          curl -s http://paginated-api:5555/api/v1/users?offset=0&limit=5
+          echo ""
+          '
     next:
       - step: end
 
@@ -141,7 +168,8 @@ workflow:
         - |
           echo ""
           echo "Removing pagination test server..."
-          task pagination-server:tpsu
+          kubectl delete -f ci/manifests/test-server/deployment.yaml --ignore-not-found=true
+          kubectl delete namespace test-server --ignore-not-found=true
     next:
       - step: end
 

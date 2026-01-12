@@ -49,7 +49,9 @@ workflow:
         - |
           echo ""
           echo "Building NoETL Docker image..."
-          task docker:local:build
+          IMAGE_TAG=$(date +%Y-%m-%d-%H-%M)
+          docker build -t local/noetl:$IMAGE_TAG -f docker/noetl/dev/Dockerfile .
+          echo "$IMAGE_TAG" > .noetl_last_build_tag.txt
     next:
       - step: end
 
@@ -61,7 +63,9 @@ workflow:
         - |
           echo ""
           echo "Building noetl container..."
-          task docker:local:noetl-image-build
+          IMAGE_TAG=$(date +%Y-%m-%d-%H-%M)
+          DOCKER_BUILDKIT=0 docker build -t local/noetl:$IMAGE_TAG -f docker/noetl/dev/Dockerfile .
+          echo "$IMAGE_TAG" > .noetl_last_build_tag.txt
     next:
       - step: end
 
@@ -76,7 +80,9 @@ workflow:
           echo "  - Builders"
           echo "  - Images"
           echo "  - Volumes"
-          task docker:local:cleanup-all
+          docker builder prune --all --force
+          docker image prune --all --force
+          docker volume prune --force
     next:
       - step: end
 
@@ -88,7 +94,7 @@ workflow:
         - |
           echo ""
           echo "Clearing all Docker images..."
-          task docker:local:images-clear
+          docker images "local/noetl" --format "{{.ID}}" | xargs -r docker rmi -f
     next:
       - step: end
 
