@@ -268,6 +268,6 @@ RUN cross build --release --target aarch64-unknown-linux-gnu
 
 ## Related Documentation
 
-- [Rust CLI Migration](./rust_cli_migration.md)
-- [PyPI Rust Bundling](./pypi_rust_bundling.md)
-- [Docker Build Process](../operations/docker_builds.md)
+- [Rust CLI Migration](./rust_cli_migration)
+- [PyPI Rust Bundling](./pypi_rust_bundling)
+- [Docker Usage](/docs/development/docker_usage)

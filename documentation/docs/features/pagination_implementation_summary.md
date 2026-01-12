@@ -255,9 +255,7 @@ next_page:
 ## Backward Compatibility
 
 - Fully backward compatible
-- No changes to existing iterator behavior
 - Pagination only active when `loop.pagination` block present
-- Works with NEW format (`loop:` attribute) only, not OLD format (`tool: iterator`)
 
 ## Performance Considerations
 
@@ -276,55 +274,12 @@ Potential improvements:
 5. Rate limiting support (X-RateLimit headers)
 6. Progress reporting (X out of Y pages)
 
-## Migration Guide
-
-For existing manual pagination loops:
-
-### Before (Manual)
-```yaml
-- step: fetch_page_1
-  tool: http
-  url: "{{ api_url }}/data?page=1"
-  
-- step: fetch_page_2
-  tool: http
-  url: "{{ api_url }}/data?page=2"
-  
-- step: merge_results
-  tool: python
-  code: |
-    def main(input_data):
-        all_data = []
-        all_data.extend(input_data['fetch_page_1'])
-        all_data.extend(input_data['fetch_page_2'])
-        return all_data
-```
-
-### After (Automatic)
-```yaml
-- step: fetch_all_data
-  tool: http
-  url: "{{ api_url }}/data"
-  params:
-    page: 1
-  loop:
-    pagination:
-      type: response_based
-      continue_while: "{{ response.hasMore }}"
-      next_page:
-        params:
-          page: "{{ response.page + 1 }}"
-      merge_strategy: append
-      merge_path: data
-```
-
 ## Known Limitations
 
 1. Only works with HTTP tool (not postgres, duckdb, etc.)
 2. Sequential execution only (no parallel page fetching)
 3. All results accumulated in memory
 4. Requires JSON response (no XML, CSV, etc.)
-5. NEW format only (not compatible with OLD `tool: iterator` format)
 
 ## Testing Checklist
 

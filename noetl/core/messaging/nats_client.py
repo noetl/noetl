@@ -49,7 +49,7 @@ class NATSCommandPublisher:
             # Ensure stream exists
             try:
                 await self._js.stream_info(self.stream_name)
-                logger.info(f"Using existing {self.stream_name} stream")
+                logger.debug(f"Using existing {self.stream_name} stream")
             except Exception:
                 # Create stream if it doesn't exist
                 await self._js.add_stream(
@@ -140,7 +140,7 @@ class NATSCommandSubscriber:
             self._nc = await nats.connect(self.nats_url)
             self._js = self._nc.jetstream()
             
-            logger.info(f"Connected to NATS at {self.nats_url}")
+            logger.debug(f"Connected to NATS at {self.nats_url}")
             
         except Exception as e:
             logger.error(f"Failed to connect to NATS: {e}")
@@ -159,7 +159,7 @@ class NATSCommandSubscriber:
         if not self._js:
             raise RuntimeError("Not connected to NATS")
         
-        logger.info(f"Starting subscribe for {self.subject}")
+        logger.debug(f"Starting subscribe for {self.subject}")
         
         async def message_handler(msg):
             """Handle incoming NATS message."""
@@ -194,7 +194,7 @@ class NATSCommandSubscriber:
                 await self._js.stream_info(self.stream_name)
                 logger.debug("Stream exists")
             except Exception as stream_err:
-                logger.info(f"Creating stream {self.stream_name} | reason: {stream_err}")
+                logger.debug(f"Creating stream {self.stream_name} | reason: {stream_err}")
                 # Create stream if it doesn't exist
                 from nats.js.api import StreamConfig
                 await self._js.add_stream(
@@ -205,7 +205,7 @@ class NATSCommandSubscriber:
                         max_age=3600  # 1 hour
                     )
                 )
-                logger.info(f"Stream created: {self.stream_name}")
+                logger.debug(f"Stream created: {self.stream_name}")
             
             # Create pull consumer if it doesn't exist
             try:
@@ -213,7 +213,7 @@ class NATSCommandSubscriber:
                 await self._js.consumer_info(self.stream_name, self.consumer_name)
                 logger.debug("Consumer exists")
             except Exception as consumer_err:
-                logger.info(f"Creating consumer {self.consumer_name} | reason: {consumer_err}")
+                logger.debug(f"Creating consumer {self.consumer_name} | reason: {consumer_err}")
                 await self._js.add_consumer(
                     stream=self.stream_name,
                     config=nats.js.api.ConsumerConfig(
@@ -225,19 +225,19 @@ class NATSCommandSubscriber:
                         replay_policy="instant"  # Deliver messages as fast as possible
                     )
                 )
-                logger.info(f"Consumer created: {self.consumer_name}")
+                logger.debug(f"Consumer created: {self.consumer_name}")
             
             # Subscribe with pull consumer
-            logger.info("Creating pull subscription...")
+            logger.debug("Creating pull subscription...")
             self._subscription = await self._js.pull_subscribe(
                 self.subject,
                 durable=self.consumer_name
             )
             
-            logger.info(f"Subscribed to {self.subject} with consumer {self.consumer_name}")
+            logger.debug(f"Subscribed to {self.subject} with consumer {self.consumer_name}")
             
             # Start message fetch loop
-            logger.info("Starting fetch loop...")
+            logger.debug("Starting fetch loop...")
             while True:
                 try:
                     # Fetch with 1-second timeout for faster command pickup

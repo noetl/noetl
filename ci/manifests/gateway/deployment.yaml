@@ -1,0 +1,51 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway
+  namespace: gateway
+  labels:
+    app: gateway
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gateway
+  template:
+    metadata:
+      labels:
+        app: gateway
+    spec:
+      containers:
+      - name: gateway
+        image: noetl-gateway:latest
+        imagePullPolicy: Never  # Use local image from kind load
+        ports:
+        - containerPort: 8090
+          name: http
+          protocol: TCP
+        env:
+        - name: ROUTER_PORT
+          value: "8090"
+        - name: NOETL_BASE_URL
+          value: "http://noetl-server.noetl.svc.cluster.local:8082"
+        - name: RUST_LOG
+          value: "info,gateway=debug"
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8090
+          initialDelaySeconds: 10
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8090
+          initialDelaySeconds: 5
+          periodSeconds: 10

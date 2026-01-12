@@ -1,0 +1,190 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: postgres_automation
+  path: automation/infrastructure/postgres
+
+workload:
+  action: help  # deploy, remove, schema-reset, clear-cache, status, logs
+
+workflow:
+  - step: start
+    desc: Entry point for PostgreSQL automation
+    tool:
+      kind: shell
+      cmds:
+        - echo "PostgreSQL Automation - Action '{{ workload.action }}'"
+    next:
+      - when: "{{ workload.action }} == deploy"
+        then:
+          - step: deploy_postgres
+        args: {}
+      - when: "{{ workload.action }} == remove"
+        then:
+          - step: remove_postgres
+        args: {}
+      - when: "{{ workload.action }} == schema-reset"
+        then:
+          - step: reset_schema
+        args: {}
+      - when: "{{ workload.action }} == clear-cache"
+        then:
+          - step: clear_cache
+        args: {}
+      - when: "{{ workload.action }} == status"
+        then:
+          - step: check_status
+        args: {}
+      - when: "{{ workload.action }} == logs"
+        then:
+          - step: show_logs
+        args: {}
+      - step: show_help
+
+  - step: deploy_postgres
+    desc: Deploy PostgreSQL to kind cluster
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Deploying PostgreSQL to kind cluster..."
+          kubectl config use-context kind-noetl
+          kubectl apply -f ci/manifests/postgres/namespace/namespace.yaml
+          sleep 2
+          kubectl create configmap postgres-schema-ddl --namespace postgres \
+            --from-file=schema_ddl.sql.norun=noetl/database/ddl/postgres/schema_ddl.sql \
+            --dry-run=client -o yaml | kubectl apply -f -
+          kubectl apply -f ci/manifests/postgres/
+    next:
+      - step: end
+
+  - step: remove_postgres
+    desc: Remove PostgreSQL from kind cluster
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Removing PostgreSQL from kind cluster..."
+          kubectl config use-context kind-noetl
+          kubectl delete -f ci/manifests/postgres/
+          kubectl delete configmap postgres-schema-ddl --namespace postgres
+    next:
+      - step: end
+
+  - step: reset_schema
+    desc: Reset NoETL system schema on Kubernetes Postgres
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Resetting NoETL system schema..."
+          kubectl config use-context kind-noetl
+          echo "Resetting NoETL system schema on Postgres (DROP schema and re-run schema_ddl.sql)."
+          echo "Note - This resets the noetl database (runtime, catalog, event, queue tables)."
+          echo "       Application data in demo_noetl database is NOT affected."
+          set -a; [ -f .env ] && . .env; set +a
+          export PGHOST=localhost
+          export PGPORT=54321
+          export PGUSER=${POSTGRES_USER:-demo}
+          export PGPASSWORD=${POSTGRES_PASSWORD:-demo}
+          export PGDATABASE=${NOETL_POSTGRES_DB:-noetl}
+          echo "Connecting to Postgres at $PGHOST:$PGPORT as $PGUSER to database $PGDATABASE"
+          echo "Dropping schema ${NOETL_SCHEMA:-noetl}..."
+          psql -v ON_ERROR_STOP=1 -c "DROP SCHEMA IF EXISTS ${NOETL_SCHEMA:-noetl} CASCADE;"
+          echo "Applying schema DDL via noetl CLI..."
+          cli=".venv/bin/noetl"
+          if [ ! -x "$cli" ]; then cli="noetl"; fi
+          if $cli db apply-schema --ensure-role; then
+            echo "Schema applied using packaged DDL."
+          else
+            echo "noetl CLI apply-schema failed; trying local DDL fallback..."
+            if [ -f noetl/database/ddl/postgres/schema_ddl.sql ]; then
+              psql -v ON_ERROR_STOP=1 -c "CREATE SCHEMA ${NOETL_SCHEMA};"
+              NOETL_SCHEMA=${NOETL_SCHEMA:-noetl}
+              NOETL_USER=${NOETL_USER:-noetl}
+              psql -v ON_ERROR_STOP=1 -c "GRANT ALL PRIVILEGES ON SCHEMA ${NOETL_SCHEMA} TO ${NOETL_USER};"
+              psql -v ON_ERROR_STOP=1 -c "GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA ${NOETL_SCHEMA} TO ${NOETL_USER};"
+              psql -v ON_ERROR_STOP=1 -c "GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA ${NOETL_SCHEMA} TO ${NOETL_USER};"
+              psql -v ON_ERROR_STOP=1 -c "ALTER DEFAULT PRIVILEGES IN SCHEMA ${NOETL_SCHEMA} GRANT ALL ON TABLES TO ${NOETL_USER};"
+              psql -v ON_ERROR_STOP=1 -c "ALTER DEFAULT PRIVILEGES IN SCHEMA ${NOETL_SCHEMA} GRANT ALL ON SEQUENCES TO ${NOETL_USER};"
+              psql -v ON_ERROR_STOP=1 -f noetl/database/ddl/postgres/schema_ddl.sql
+            else
+              echo "Could not apply schema (no CLI and no local DDL)."; exit 1
+            fi
+          fi
+    next:
+      - step: end
+
+  - step: clear_cache
+    desc: Clear postgres data cache directory
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Clearing postgres cache directory..."
+          rm -rf ci/kind/cache/pg-data/*
+    next:
+      - step: end
+
+  - step: check_status
+    desc: Check PostgreSQL deployment status
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "PostgreSQL Status:"
+          echo "=================="
+          kubectl get pods -n postgres
+          echo ""
+          kubectl get svc -n postgres
+    next:
+      - step: end
+
+  - step: show_logs
+    desc: Show PostgreSQL logs
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "PostgreSQL Logs:"
+          kubectl logs -n postgres -l app=postgres --tail=50
+    next:
+      - step: end
+
+  - step: show_help
+    desc: Display available actions
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "====================================="
+          echo " PostgreSQL Automation"
+          echo "====================================="
+          echo ""
+          echo "Usage:"
+          echo "  noetl run automation/infrastructure/postgres.yaml --set action=<action>"
+          echo ""
+          echo "Available actions:"
+          echo "  deploy        - Deploy PostgreSQL to kind cluster"
+          echo "  remove        - Remove PostgreSQL from kind cluster"
+          echo "  schema-reset  - Reset NoETL system schema"
+          echo "  clear-cache   - Clear postgres data cache directory"
+          echo "  status        - Check deployment status"
+          echo "  logs          - Show PostgreSQL logs"
+          echo ""
+          echo "Examples:"
+          echo "  noetl run automation/infrastructure/postgres.yaml --set action=deploy"
+          echo "  noetl run automation/infrastructure/postgres.yaml --set action=status"
+          echo "  noetl run automation/infrastructure/postgres.yaml --set action=schema-reset"
+          echo ""
+    next:
+      - step: end
+
+  - step: end
+    desc: End workflow

@@ -1,0 +1,10 @@
+noetl (2.5.3-1) unstable; urgency=medium
+
+  * Initial release of NoETL CLI v2.5.3
+  * Add Cargo workspace structure
+  * Local playbook execution support
+  * Conditional flow control (case/when/then/else)
+  * HTTP and playbook composition support
+  * Server/worker lifecycle management
+
+ -- NoETL Team <support@noetl.io>  Thu, 09 Jan 2026 20:00:00 +0000

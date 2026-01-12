@@ -42,12 +42,13 @@ CREATE TABLE noetl.execution_variable (
 
 ```yaml
 - step: get_token
-  tool: python
-  auth:
-    credential: '{{ workload.oauth_creds }}'
-    bearer: true           # Flag: store result as bearer token
-    variable: my_token     # Variable name for template access
-  code: |
+  tool:
+    kind: python
+    auth:
+      credential: '{{ workload.oauth_creds }}'
+      bearer: true           # Flag: store result as bearer token
+      variable: my_token     # Variable name for template access
+    code: |
     def main(auth_credential):
         # Fetch token from OAuth provider
         import httpx
@@ -65,10 +66,11 @@ CREATE TABLE noetl.execution_variable (
         return token_data["access_token"]
 
 - step: use_token
-  tool: http
-  endpoint: https://api.example.com/resource
-  headers:
-    Authorization: Bearer {{ my_token }}  # Use stored variable
+  tool:
+    kind: http
+    endpoint: https://api.example.com/resource
+    headers:
+      Authorization: Bearer {{ my_token }}  # Use stored variable
 ```
 
 ### How It Works
@@ -89,12 +91,13 @@ workload:
 
 workflow:
 - step: get_oauth_token
-  tool: python
-  auth:
-    credential: '{{ workload.oauth_creds }}'
-    bearer: true
-    variable: oauth_token
-  code: |
+  tool:
+    kind: python
+    auth:
+      credential: '{{ workload.oauth_creds }}'
+      bearer: true
+      variable: oauth_token
+    code: |
     def main(auth_credential):
         import httpx
         response = httpx.post(
@@ -108,21 +111,23 @@ workflow:
         return response.json()["access_token"]
 
 - step: call_api
-  tool: http
-  headers:
-    Authorization: Bearer {{ oauth_token }}
+  tool:
+    kind: http
+    headers:
+      Authorization: Bearer {{ oauth_token }}
 ```
 
 #### 2. Service Account Token
 
 ```yaml
 - step: get_sa_token
-  tool: python
-  auth:
-    credential: '{{ workload.gcp_service_account }}'
-    bearer: true
-    variable: gcp_token
-  code: |
+  tool:
+    kind: python
+    auth:
+      credential: '{{ workload.gcp_service_account }}'
+      bearer: true
+      variable: gcp_token
+    code: |
     def main(auth_credential):
         from google.auth.transport.requests import Request
         from google.oauth2 import service_account
@@ -135,21 +140,23 @@ workflow:
         return credentials.token
 
 - step: call_gcp_api
-  tool: http
-  headers:
-    Authorization: Bearer {{ gcp_token }}
+  tool:
+    kind: http
+    headers:
+      Authorization: Bearer {{ gcp_token }}
 ```
 
 #### 3. JWT Token
 
 ```yaml
 - step: generate_jwt
-  tool: python
-  auth:
-    credential: '{{ workload.jwt_secret }}'
-    bearer: true
-    variable: jwt_token
-  code: |
+  tool:
+    kind: python
+    auth:
+      credential: '{{ workload.jwt_secret }}'
+      bearer: true
+      variable: jwt_token
+    code: |
     def main(auth_credential):
         import jwt
         import datetime
@@ -161,9 +168,10 @@ workflow:
         return jwt.encode(payload, auth_credential["secret"], algorithm="HS256")
 
 - step: authenticated_request
-  tool: http
-  headers:
-    Authorization: Bearer {{ jwt_token }}
+  tool:
+    kind: http
+    headers:
+      Authorization: Bearer {{ jwt_token }}
 ```
 
 ## Execution Variables API
@@ -533,7 +541,7 @@ def main(auth_credential):
 
 ## Related Documentation
 
-- [Credential Caching](./credential_caching.md)
-- [Token-Based Authentication](./token_auth_implementation.md)
-- [HTTP Action Type](./http_action_type.md)
-- [Template Rendering](./dsl_spec.md#jinja2-templates)
+- [Credential Caching](/docs/features/credential_caching)
+- [Keychain Token Refresh](/docs/features/keychain_token_refresh)
+- [HTTP Action Type](./http_action_type)
+- [DSL Specification](/docs/reference/dsl/dsl_spec)

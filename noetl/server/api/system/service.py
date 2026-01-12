@@ -208,7 +208,7 @@ class SystemService:
         """
         try:
             path.unlink()
-            logger.info(f"Deleted file: {path}")
+            logger.debug(f"Deleted file: {path}")
         except Exception as e:
             logger.error(f"Failed to delete file {path}: {e}")
     

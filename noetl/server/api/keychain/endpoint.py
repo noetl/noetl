@@ -91,7 +91,7 @@ async def get_keychain_entry(
                 expires_at = datetime.fromisoformat(expires_at.replace('Z', '+00:00'))
             ttl_seconds = (expires_at - datetime.now(timezone.utc)).total_seconds()
         
-        logger.info(f"API: Retrieved keychain entry: {keychain_name} (catalog: {catalog_id})")
+        logger.debug(f"API: Retrieved keychain entry: {keychain_name} (catalog: {catalog_id})")
         
         return KeychainGetResponse(
             status="success",
@@ -235,7 +235,7 @@ async def delete_keychain_entry(
         )
         
         if deleted:
-            logger.info(f"API: Deleted keychain entry: {keychain_name} (catalog: {catalog_id})")
+            logger.debug(f"API: Deleted keychain entry: {keychain_name} (catalog: {catalog_id})")
             return KeychainDeleteResponse(
                 status="success",
                 message="Keychain entry deleted successfully",
@@ -272,7 +272,7 @@ async def list_catalog_keychain_entries(
     try:
         entries = await KeychainService.get_catalog_keychain_entries(catalog_id)
         
-        logger.info(f"API: Retrieved {len(entries)} keychain entries for catalog {catalog_id}")
+        logger.debug(f"API: Retrieved {len(entries)} keychain entries for catalog {catalog_id}")
         
         return KeychainListResponse(
             status="success",

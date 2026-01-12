@@ -2,22 +2,22 @@ version: '3.45'
 
 tasks:
   noetlctl:local:build:
-    desc: Build noetlctl binary and place it in the project bin/ directory
-    dir: noetlctl
+    desc: Build noetl-cli binary and place it in the project bin/ directory
+    dir: crates/noetlctl
     cmds:
       - cargo build --release
-      - mkdir -p ../bin
-      - cp target/release/noetl ../bin/
+      - mkdir -p ../../bin
+      # Binary now installed via pip install noetl[cli]
     sources:
       - src/**/*.rs
       - Cargo.toml
       - Cargo.lock
     generates:
-      - ../bin/noetl
+      # Binary installed via pip, not tracked as artifact
 
   noetlctl:local:install:
-    desc: Install noetlctl binary to ~/.local/bin/
-    dir: noetlctl
+    desc: Install noetl-cli binary to ~/.local/bin/
+    dir: crates/noetlctl
     cmds:
       - cargo install --path . --root ~/.local/
     preconditions:
@@ -25,8 +25,29 @@ tasks:
         msg: "Cargo is not installed. Please install Rust and Cargo."
 
   noetlctl:local:clean:
-    desc: Clean noetlctl build artifacts
-    dir: noetlctl
+    desc: Clean noetl-cli build artifacts
+    dir: crates/noetlctl
     cmds:
       - cargo clean
-      - rm -f ../bin/noetlctl
+      # Binary managed by pip, no cleanup needed
+
+  noetlctl:build:wheel:
+    desc: Build wheel for noetl-cli using maturin
+    dir: crates/noetlctl
+    cmds:
+      - pip install maturin
+      - maturin build --release
+    preconditions:
+      - sh: command -v cargo
+        msg: "Cargo is not installed. Please install Rust and Cargo."
+
+  noetlctl:publish:
+    desc: Publish noetl-cli to PyPI using maturin
+    dir: crates/noetlctl
+    cmds:
+      - maturin publish
+    preconditions:
+      - sh: command -v cargo
+        msg: "Cargo is not installed. Please install Rust and Cargo."
+      - sh: test -n "$MATURIN_PYPI_TOKEN"
+        msg: "MATURIN_PYPI_TOKEN environment variable not set."

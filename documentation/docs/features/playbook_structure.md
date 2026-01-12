@@ -153,11 +153,11 @@ Tip (exact-match OR): to match any of several exact values (complete match), pre
         - step: handle_other_file
 ```
 
-See also: [Query Conditions: Exact/Complete Match with OR](query_conditions.md)
+For conditional routing patterns, see the [DSL Specification](/docs/reference/dsl/dsl_spec).
 
 
 
-- [Workflow Tasks](action_type.md) - Learn about available tasks and their parameters
-- [CLI Usage Guide](cli_usage.md) - Learn how to use the NoETL command-line interface
-- [API Usage Guide](api_usage.md) - Learn how to use the NoETL REST API
-- [Examples](examples.md) - See more examples of NoETL playbooks
+- [Workflow Tasks](/docs/reference/action_type) - Learn about available tasks and their parameters
+- [CLI Usage Guide](/docs/reference/noetl_cli_usage) - Learn how to use the NoETL command-line interface
+- [API Usage Guide](/docs/reference/api_usage) - Learn how to use the NoETL REST API
+- [Examples](/docs/examples/) - See more examples of NoETL playbooks

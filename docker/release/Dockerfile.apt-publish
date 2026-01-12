@@ -1,0 +1,15 @@
+FROM ubuntu:22.04
+
+# Install APT repository tools
+RUN apt-get update && apt-get install -y \
+    dpkg-dev \
+    gzip \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /work
+
+# Copy the publish script
+COPY scripts/publish_apt.sh /work/publish_apt.sh
+
+# The deb file will be mounted from host
+CMD ["/bin/bash", "-c", "mkdir -p /work/build/deb && cp /build/deb/*.deb /work/build/deb/ && ./publish_apt.sh \"${VERSION}\" \"${ARCH}\" && cp -r apt-repo /build/"]

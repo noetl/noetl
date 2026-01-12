@@ -501,10 +501,10 @@ setup_venv() {
     log_info "Installing uv..."
     pip install uv
     
-    # Install noetl in development mode
-    log_info "Installing NoETL..."
+    # Install noetl in development mode with CLI
+    log_info "Installing NoETL with CLI..."
     cd "$NOETL_ROOT"
-    uv pip install -e .
+    uv pip install -e ".[cli]"
     
     # Install project dependencies if pyproject.toml exists
     if [[ -f "$PROJECT_ROOT/pyproject.toml" ]]; then

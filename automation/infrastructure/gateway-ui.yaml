@@ -1,0 +1,151 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: gateway_ui_automation
+  path: automation/infrastructure/gateway-ui
+
+workload:
+  action: help  # deploy, logs, update, status
+
+workflow:
+  - step: start
+    desc: Entry point for Gateway UI automation
+    tool:
+      kind: shell
+      cmds:
+        - echo "Gateway UI Automation - Action '{{ workload.action }}'"
+    next:
+      - when: "{{ workload.action }} == deploy"
+        then:
+          - step: deploy_ui
+        args: {}
+      - when: "{{ workload.action }} == logs"
+        then:
+          - step: view_logs
+        args: {}
+      - when: "{{ workload.action }} == update"
+        then:
+          - step: update_ui
+        args: {}
+      - when: "{{ workload.action }} == status"
+        then:
+          - step: check_status
+        args: {}
+      - when: "{{ workload.action }} == help"
+        then:
+          - step: show_help
+        args: {}
+      - step: show_help
+
+  - step: deploy_ui
+    desc: Deploy Gateway UI to Kubernetes
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Deploying Gateway UI to Kubernetes..."
+          kubectl apply -f ci/manifests/gateway/configmap-ui.yaml
+          kubectl apply -f ci/manifests/gateway/configmap-ui-files.yaml
+          kubectl apply -f ci/manifests/gateway/deployment-ui.yaml
+          kubectl apply -f ci/manifests/gateway/service-ui.yaml
+          echo "Gateway UI deployed at http://localhost:8080"
+    next:
+      - step: end
+
+  - step: view_logs
+    desc: Show Gateway UI logs
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Gateway UI Logs:"
+          echo "================"
+          kubectl logs -n gateway -l app=gateway-ui --tail=100 -f
+    next:
+      - step: end
+
+  - step: update_ui
+    desc: Regenerate and deploy updated Gateway UI files
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Regenerating and deploying Gateway UI..."
+          ./ci/manifests/gateway/regenerate-ui-configmap.sh
+          kubectl apply -f ci/manifests/gateway/configmap-ui-files.yaml
+          kubectl rollout restart deployment/gateway-ui -n gateway
+          kubectl rollout status deployment/gateway-ui -n gateway --timeout=30s
+          echo "✅ Gateway UI updated at http://localhost:8080"
+    next:
+      - step: end
+
+  - step: check_status
+    desc: Check Gateway UI deployment status
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Gateway UI Status:"
+          echo "=================="
+          echo ""
+          echo "=== Gateway UI Pods ==="
+          kubectl get pods -n default -l app=gateway-ui 2>/dev/null || echo "Gateway UI not deployed"
+          echo ""
+          echo "=== Gateway UI Services ==="
+          kubectl get svc -n default -l app=gateway-ui 2>/dev/null || echo "No Gateway UI services found"
+          echo ""
+          echo "=== Gateway UI ConfigMaps ==="
+          kubectl get configmap -n default | grep gateway-ui 2>/dev/null || echo "No Gateway UI ConfigMaps found"
+    next:
+      - step: end
+
+  - step: show_help
+    desc: Display available actions
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "=================================================="
+          echo " Gateway UI Automation"
+          echo "=================================================="
+          echo ""
+          echo "Usage:"
+          echo "  noetl run automation/infrastructure/gateway-ui.yaml --set action=<action>"
+          echo ""
+          echo "Deployment:"
+          echo "  deploy - Deploy Gateway UI to Kubernetes"
+          echo "  update - Regenerate and deploy updated UI files"
+          echo ""
+          echo "Operations:"
+          echo "  status - Check deployment status"
+          echo "  logs   - Show Gateway UI logs"
+          echo ""
+          echo "Examples:"
+          echo "  # Deploy Gateway UI"
+          echo "  noetl run automation/infrastructure/gateway-ui.yaml --set action=deploy"
+          echo ""
+          echo "  # Check status"
+          echo "  noetl run automation/infrastructure/gateway-ui.yaml --set action=status"
+          echo ""
+          echo "  # Update UI files"
+          echo "  noetl run automation/infrastructure/gateway-ui.yaml --set action=update"
+          echo ""
+          echo "  # View logs"
+          echo "  noetl run automation/infrastructure/gateway-ui.yaml --set action=logs"
+          echo ""
+          echo "Gateway UI Location: tests/fixtures/gateway_ui"
+          echo ""
+          echo "Task Equivalents:"
+          echo "  deploy -> task gateway-ui-deploy"
+          echo "  logs   -> task gateway-ui-logs"
+          echo "  update -> task gateway-ui-update"
+          echo ""
+    next:
+      - step: end
+
+  - step: end
+    desc: End workflow

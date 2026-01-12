@@ -489,9 +489,9 @@ real    0m0.012s
 ## References
 
 ### Internal Documentation
-- [PyPI Bundling](./pypi_rust_bundling.md)
-- [Docker Build](../../docker/README.md)
-- [Kubernetes Deployment](../../ci/README.md)
+- [PyPI Bundling](./pypi_rust_bundling)
+- [Docker Usage](/docs/development/docker_usage)
+- [Kubernetes Deployment](/docs/development/kind_kubernetes)
 
 ### External Resources
 - [Clap](https://docs.rs/clap/) - CLI parsing

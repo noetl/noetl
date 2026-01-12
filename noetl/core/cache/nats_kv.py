@@ -57,7 +57,7 @@ class NATSKVCache:
                         max_value_size=1024 * 1024,  # 1MB max value
                         history=5,  # Keep 5 versions
                     )
-                    logger.info(f"Created NATS K/V bucket: {self._bucket_name}")
+                    logger.debug(f"Created NATS K/V bucket: {self._bucket_name}")
                 except Exception as e:
                     # Bucket might already exist
                     self._kv = await self._js.key_value(self._bucket_name)
@@ -188,7 +188,7 @@ class NATSKVCache:
             for key in keys:
                 if key.startswith(prefix):
                     await self._kv.delete(key)
-            logger.info(f"Deleted execution state from NATS K/V: {execution_id}")
+            logger.debug(f"Deleted execution state from NATS K/V: {execution_id}")
         except Exception as e:
             logger.warning(f"Failed to delete execution state: {e}")
 

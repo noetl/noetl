@@ -21,6 +21,7 @@ from .auth import resolve_postgres_auth, validate_and_render_connection_params
 from .command import escape_task_with_params, decode_base64_commands, render_and_split_commands
 from .execution import execute_sql_with_connection
 from .response import process_results, format_success_response, format_error_response, format_exception_response
+from .models import validate_pool_config
 
 logger = setup_logger(__name__, include_location=True)
 
@@ -192,9 +193,35 @@ async def _execute_postgres_task_async(
             )
 
         # Step 7: Execute SQL statements using async connection
+        # Check if pool is explicitly requested (pool: {} or pool: {timeout: X, ...})
+        pool_config = task_config.get('pool')  # None = no pool (direct connection), {} or {params} = use pool
+        use_pool = pool_config is not None  # Only use pool if explicitly defined
+        pool_params = {}
+        pool_name = None
+        
+        if use_pool and isinstance(pool_config, dict):
+            # Validate pool configuration using Pydantic model
+            try:
+                validated = validate_pool_config(pool_config)
+                # Extract pool name (if specified, or default to execution_id)
+                pool_name = validated.pop('name', None)
+                if pool_name is None:
+                    execution_id = context.get('execution_id')
+                    pool_name = f"exec_{execution_id}" if execution_id else "default"
+                pool_params = validated
+                logger.debug(f"Pool name: {pool_name}, params: {pool_params}")
+            except ValueError as e:
+                logger.error(f"Invalid pool configuration: {e}")
+                raise ValueError(f"Pool configuration validation failed: {e}")
+        
         results = {}
         if commands:
-            results = await execute_sql_with_connection(pg_conn_string, commands, pg_host, pg_port, pg_db)
+            results = await execute_sql_with_connection(
+                pg_conn_string, commands, pg_host, pg_port, pg_db,
+                pool=use_pool,
+                pool_name=pool_name,
+                pool_params=pool_params
+            )
         # Connection automatically closed via context manager
 
         # Step 8: Process results

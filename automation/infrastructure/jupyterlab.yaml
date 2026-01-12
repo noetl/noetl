@@ -1,0 +1,331 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: jupyterlab_automation
+  path: automation/infrastructure/jupyterlab
+
+workload:
+  action: help  # deploy, undeploy, full, status, logs, port-forward, restart, shell, test, update-notebook
+
+workflow:
+  - step: start
+    desc: Entry point for JupyterLab automation
+    tool:
+      kind: shell
+      cmds:
+        - echo "JupyterLab Automation - Action '{{ workload.action }}'"
+    next:
+      - when: "{{ workload.action }} == deploy"
+        then:
+          - step: deploy_jupyterlab
+        args: {}
+      - when: "{{ workload.action }} == undeploy"
+        then:
+          - step: undeploy_jupyterlab
+        args: {}
+      - when: "{{ workload.action }} == full"
+        then:
+          - step: full_deployment
+        args: {}
+      - when: "{{ workload.action }} == status"
+        then:
+          - step: check_status
+        args: {}
+      - when: "{{ workload.action }} == logs"
+        then:
+          - step: view_logs
+        args: {}
+      - when: "{{ workload.action }} == port-forward"
+        then:
+          - step: port_forward
+        args: {}
+      - when: "{{ workload.action }} == restart"
+        then:
+          - step: restart_deployment
+        args: {}
+      - when: "{{ workload.action }} == shell"
+        then:
+          - step: open_shell
+        args: {}
+      - when: "{{ workload.action }} == test"
+        then:
+          - step: test_deployment
+        args: {}
+      - when: "{{ workload.action }} == update-notebook"
+        then:
+          - step: update_notebook
+        args: {}
+      - when: "{{ workload.action }} == help"
+        then:
+          - step: show_help
+        args: {}
+      - step: show_help
+
+  - step: deploy_jupyterlab
+    desc: Deploy JupyterLab to kind cluster
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Deploying JupyterLab to noetl namespace..."
+          kubectl create namespace noetl --dry-run=client -o yaml | kubectl apply -f -
+          echo "Creating ConfigMap with notebooks..."
+          kubectl create configmap jupyterlab-notebooks \
+            --from-file=regression_dashboard.ipynb=tests/fixtures/notebooks/regression_dashboard.ipynb \
+            --from-file=pagination_loop_test.ipynb=tests/fixtures/playbooks/pagination/loop_with_pagination/pagination_loop_test.ipynb \
+            -n noetl \
+            --dry-run=client -o yaml | kubectl apply -f -
+          kubectl apply -f ci/manifests/jupyterlab/pvc.yaml
+          kubectl apply -f ci/manifests/jupyterlab/deployment.yaml
+          kubectl apply -f ci/manifests/jupyterlab/service.yaml
+          echo "✓ JupyterLab deployed"
+          echo "  Access at http://localhost:30888"
+          echo "  Token noetl"
+          echo "  Notebooks:"
+          echo "    - /work/notebooks/regression_dashboard.ipynb"
+          echo "    - /work/notebooks/pagination_loop_test.ipynb"
+    next:
+      - step: end
+
+  - step: undeploy_jupyterlab
+    desc: Remove JupyterLab from kind cluster
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Removing JupyterLab..."
+          kubectl delete -f ci/manifests/jupyterlab/service.yaml --ignore-not-found=true
+          kubectl delete -f ci/manifests/jupyterlab/deployment.yaml --ignore-not-found=true
+          kubectl delete -f ci/manifests/jupyterlab/pvc.yaml --ignore-not-found=true
+          kubectl delete configmap jupyterlab-notebooks -n noetl --ignore-not-found=true
+          echo "✓ JupyterLab removed"
+    next:
+      - step: end
+
+  - step: full_deployment
+    desc: Complete JupyterLab deployment workflow
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Running complete JupyterLab deployment workflow..."
+          echo "Deploying JupyterLab to noetl namespace..."
+          kubectl create namespace noetl --dry-run=client -o yaml | kubectl apply -f -
+          echo "Creating ConfigMap with notebooks..."
+          kubectl create configmap jupyterlab-notebooks \
+            --from-file=regression_dashboard.ipynb=tests/fixtures/notebooks/regression_dashboard.ipynb \
+            --from-file=pagination_loop_test.ipynb=tests/fixtures/playbooks/pagination/loop_with_pagination/pagination_loop_test.ipynb \
+            -n noetl \
+            --dry-run=client -o yaml | kubectl apply -f -
+          kubectl apply -f ci/manifests/jupyterlab/pvc.yaml
+          kubectl apply -f ci/manifests/jupyterlab/deployment.yaml
+          kubectl apply -f ci/manifests/jupyterlab/service.yaml
+          echo "✓ JupyterLab deployed"
+          echo "  Access at http://localhost:30888"
+          echo "  Token noetl"
+          echo "  Notebooks:"
+          echo "    - /work/notebooks/regression_dashboard.ipynb"
+          echo "    - /work/notebooks/pagination_loop_test.ipynb"
+          
+          echo "Testing JupyterLab deployment..."
+          kubectl wait --for=condition=ready pod -l app=jupyterlab -n noetl --timeout=300s
+          POD_NAME=$(kubectl get pod -n noetl -l app=jupyterlab -o jsonpath='{.items[0].metadata.name}')
+          echo "Testing HTTP endpoint..."
+          kubectl exec -n noetl $POD_NAME -- curl -s http://localhost:8888 | grep -q "JupyterLab" && echo "✓ JupyterLab is responding" || echo "✗ JupyterLab not responding"
+          echo "Checking notebook file..."
+          kubectl exec -n noetl $POD_NAME -- ls -lh /home/jovyan/work/notebooks/regression_dashboard.ipynb && echo "✓ Notebook found" || echo "✗ Notebook not found"
+          echo "Checking Python packages..."
+          kubectl exec -n noetl $POD_NAME -- python -c "import psycopg, duckdb, polars, pyarrow, plotly; print('✓ All packages installed')" || echo "✗ Package installation failed"
+          echo "✓ JupyterLab deployment test completed"
+          
+          echo ""
+          echo "========================================="
+          echo "JupyterLab is ready!"
+          echo "========================================="
+          echo "  URL http://localhost:30888"
+          echo "  Token noetl"
+          echo "  Notebook /work/notebooks/regression_dashboard.ipynb"
+          echo ""
+          echo "Run regression test"
+          echo "  1. Open notebook in browser"
+          echo "  2. Run all cells (Cell -> Run All)"
+          echo "  3. Monitor test execution and view results"
+          echo "========================================="
+    next:
+      - step: end
+
+  - step: check_status
+    desc: Check JupyterLab deployment status
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "JupyterLab Deployment Status:"
+          echo "============================="
+          echo "JupyterLab Status"
+          kubectl get deployment jupyterlab -n noetl -o wide || echo "  Deployment not found"
+          kubectl get service jupyterlab -n noetl || echo "  Service not found"
+          kubectl get pvc jupyterlab-pvc -n noetl || echo "  PVC not found"
+          kubectl get configmap jupyterlab-notebooks -n noetl || echo "  ConfigMap not found"
+          echo ""
+          echo "Pods"
+          kubectl get pods -n noetl -l app=jupyterlab -o wide || echo "  No pods found"
+    next:
+      - step: end
+
+  - step: view_logs
+    desc: View JupyterLab logs
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "JupyterLab Logs:"
+          echo "================"
+          kubectl logs -n noetl -l app=jupyterlab --tail=100 -f
+    next:
+      - step: end
+
+  - step: port_forward
+    desc: Port-forward JupyterLab service to localhost
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Port-forwarding JupyterLab to localhost 8888..."
+          echo "Access at http://localhost:30888 (token noetl)"
+          kubectl port-forward -n noetl service/jupyterlab 8888:8888
+    next:
+      - step: end
+
+  - step: restart_deployment
+    desc: Restart JupyterLab deployment
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Restarting JupyterLab..."
+          kubectl rollout restart deployment/jupyterlab -n noetl
+          kubectl rollout status deployment/jupyterlab -n noetl
+          echo "✓ JupyterLab restarted"
+    next:
+      - step: end
+
+  - step: open_shell
+    desc: Open shell in JupyterLab pod
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Opening shell in JupyterLab pod..."
+          POD_NAME=$(kubectl get pod -n noetl -l app=jupyterlab -o jsonpath='{.items[0].metadata.name}')
+          kubectl exec -it -n noetl $POD_NAME -- /bin/bash
+    next:
+      - step: end
+
+  - step: test_deployment
+    desc: Test JupyterLab deployment
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Testing JupyterLab deployment..."
+          kubectl wait --for=condition=ready pod -l app=jupyterlab -n noetl --timeout=300s
+          POD_NAME=$(kubectl get pod -n noetl -l app=jupyterlab -o jsonpath='{.items[0].metadata.name}')
+          echo "Testing HTTP endpoint..."
+          kubectl exec -n noetl $POD_NAME -- curl -s http://localhost:8888 | grep -q "JupyterLab" && echo "✓ JupyterLab is responding" || echo "✗ JupyterLab not responding"
+          echo "Checking notebook file..."
+          kubectl exec -n noetl $POD_NAME -- ls -lh /home/jovyan/work/notebooks/regression_dashboard.ipynb && echo "✓ Notebook found" || echo "✗ Notebook not found"
+          echo "Checking Python packages..."
+          kubectl exec -n noetl $POD_NAME -- python -c "import psycopg, duckdb, polars, pyarrow, plotly; print('✓ All packages installed')" || echo "✗ Package installation failed"
+          echo "✓ JupyterLab deployment test completed"
+    next:
+      - step: end
+
+  - step: update_notebook
+    desc: Update notebook in ConfigMap and restart
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Updating notebook ConfigMap..."
+          kubectl create configmap jupyterlab-notebooks \
+            --from-file=regression_dashboard.ipynb=tests/fixtures/notebooks/regression_dashboard.ipynb \
+            -n noetl \
+            --dry-run=client -o yaml | kubectl apply -f -
+          echo "Restarting JupyterLab to pick up changes..."
+          kubectl rollout restart deployment/jupyterlab -n noetl
+          kubectl rollout status deployment/jupyterlab -n noetl
+          echo "✓ Notebook updated and JupyterLab restarted"
+    next:
+      - step: end
+
+  - step: show_help
+    desc: Display available actions
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "=================================================="
+          echo " JupyterLab Automation"
+          echo "=================================================="
+          echo ""
+          echo "Usage:"
+          echo "  noetl run automation/infrastructure/jupyterlab.yaml --set action=<action>"
+          echo ""
+          echo "Deployment Actions:"
+          echo "  deploy          - Deploy JupyterLab to kind cluster"
+          echo "  undeploy        - Remove JupyterLab from kind cluster"
+          echo "  full            - Complete deployment workflow"
+          echo "  status          - Check deployment status"
+          echo ""
+          echo "Operations:"
+          echo "  logs            - View JupyterLab logs"
+          echo "  port-forward    - Port-forward to localhost:8888"
+          echo "  restart         - Restart JupyterLab deployment"
+          echo "  shell           - Open shell in JupyterLab pod"
+          echo "  test            - Test deployment"
+          echo "  update-notebook - Update notebook ConfigMap and restart"
+          echo ""
+          echo "Examples:"
+          echo "  # Full deployment workflow"
+          echo "  noetl run automation/infrastructure/jupyterlab.yaml --set action=full"
+          echo ""
+          echo "  # Deploy JupyterLab"
+          echo "  noetl run automation/infrastructure/jupyterlab.yaml --set action=deploy"
+          echo ""
+          echo "  # Check status"
+          echo "  noetl run automation/infrastructure/jupyterlab.yaml --set action=status"
+          echo ""
+          echo "  # View logs"
+          echo "  noetl run automation/infrastructure/jupyterlab.yaml --set action=logs"
+          echo ""
+          echo "  # Port-forward to localhost"
+          echo "  noetl run automation/infrastructure/jupyterlab.yaml --set action=port-forward"
+          echo ""
+          echo "Task Equivalents:"
+          echo "  deploy          -> task jupyterlab:deploy"
+          echo "  undeploy        -> task jupyterlab:undeploy"
+          echo "  full            -> task jupyterlab:full"
+          echo "  status          -> task jupyterlab:status"
+          echo "  logs            -> task jupyterlab:logs"
+          echo "  port-forward    -> task jupyterlab:port-forward"
+          echo "  restart         -> task jupyterlab:restart"
+          echo "  shell           -> task jupyterlab:shell"
+          echo "  test            -> task jupyterlab:test"
+          echo "  update-notebook -> task jupyterlab:update-notebook"
+          echo ""
+    next:
+      - step: end
+
+  - step: end
+    desc: End workflow

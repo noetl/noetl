@@ -56,7 +56,7 @@ async def catch_exceptions_middleware(request: Request, call_next):
             "/api/executions"
         ]
         if not filter_paths(request.url.path, ignore):
-            logger.info(f"{request.method} {request.url} ({round(process_time_sec, 2)}):\nrequest: {request_json}\nstatus_code: {response.status_code}\nresponse: {response_json}")
+            logger.debug(f"{request.method} {request.url} ({round(process_time_sec, 2)}):\nrequest: {request_json}\nstatus_code: {response.status_code}\nresponse: {response_json}")
         # Rebuild response (since the original stream is consumed)
         new_response = Response(
             content=response_body,

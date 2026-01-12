@@ -36,6 +36,8 @@ tests/fixtures/playbooks/**/temp/
 !.dockerignore
 !.env.server
 !.env.worker
+# Distribution repositories (symlinks)
+homebrew-tap
 # Virtual environments
 publish_env/
 test_env/
@@ -57,6 +59,7 @@ env/
 # Ignore local credential overrides (keep only templates in git)
 /tests/fixtures/credentials/*_local.json
 /tests/fixtures/credentials/*.local.json
+/tests/fixtures/credentials/auth0_client.json
 # Uncomment below to ignore all credential files except templates
 # /tests/fixtures/credentials/*.json
 # !/tests/fixtures/credentials/*.template.json
@@ -88,3 +91,26 @@ bhs-state-program-analytics.code-workspace
 .gitmodules
 submodules/
 /noetl/bin/
+
+# Distribution repositories (symlinks)
+homebrew-tap
+
+# Extracted release tarballs (from testing)
+noetl-*/
+
+# Debian package build artifacts
+build/deb/
+apt-repo/
+debian/cargo/
+debian/noetl/
+debian/.debhelper/
+debian/files
+debian/*.substvars
+debian/*.log
+
+# Distribution repositories (symlinks)
+homebrew-tap
+
+# Extracted release tarballs (from testing)
+noetl-*/
+bin/
