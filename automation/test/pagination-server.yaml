@@ -49,6 +49,47 @@ workflow:
         args: {}
       - step: show_help
 
+  # Direct step aliases for positional argument support
+  - step: status
+    desc: Alias for check_status
+    next:
+      - step: check_status
+
+  - step: build
+    desc: Alias for build_image
+    next:
+      - step: build_image
+
+  - step: load
+    desc: Alias for load_image
+    next:
+      - step: load_image
+
+  - step: deploy
+    desc: Alias for deploy_server
+    next:
+      - step: deploy_server
+
+  - step: full
+    desc: Full deployment workflow
+    next:
+      - step: build_image
+
+  - step: logs
+    desc: Alias for show_logs
+    next:
+      - step: show_logs
+
+  - step: test
+    desc: Alias for test_endpoints
+    next:
+      - step: test_endpoints
+
+  - step: undeploy
+    desc: Alias for undeploy_server
+    next:
+      - step: undeploy_server
+
   - step: build_image
     desc: Build pagination test server Docker image
     tool:
