@@ -93,10 +93,7 @@ impl Default for CmdsList {
 #[serde(untagged)]
 enum NextStep {
     Simple { step: String },
-    Conditional {
-        when: Option<String>,
-        then: Vec<NextStep>,
-    },
+    Conditional { when: Option<String>, then: Vec<NextStep> },
 }
 
 #[derive(Debug, Deserialize)]
@@ -149,11 +146,9 @@ impl PlaybookRunner {
 
     pub fn run(&self) -> Result<()> {
         // Load and parse playbook
-        let content = fs::read_to_string(&self.playbook_path)
-            .context("Failed to read playbook file")?;
+        let content = fs::read_to_string(&self.playbook_path).context("Failed to read playbook file")?;
 
-        let playbook: Playbook = serde_yaml::from_str(&content)
-            .context("Failed to parse playbook YAML")?;
+        let playbook: Playbook = serde_yaml::from_str(&content).context("Failed to parse playbook YAML")?;
 
         println!("📋 Running playbook: {}", playbook.metadata.name);
         println!("   API Version: {}", playbook.api_version);
@@ -190,7 +185,7 @@ impl PlaybookRunner {
 
         // Determine starting step - use target if provided, otherwise "start"
         let starting_step = self.target.as_deref().unwrap_or("start");
-        
+
         if self.target.is_some() {
             println!("🎯 Target: {}", starting_step);
         }
@@ -205,12 +200,7 @@ impl PlaybookRunner {
         Ok(())
     }
 
-    fn execute_step(
-        &self,
-        playbook: &Playbook,
-        step_name: &str,
-        context: &mut ExecutionContext,
-    ) -> Result<()> {
+    fn execute_step(&self, playbook: &Playbook, step_name: &str, context: &mut ExecutionContext) -> Result<()> {
         // Find the step
         let step = playbook
             .workflow
@@ -230,7 +220,7 @@ impl PlaybookRunner {
         // Execute the tool and capture result
         if let Some(tool) = &step.tool {
             let result = self.execute_tool(tool, context)?;
-            
+
             // Store step result for reference in templates
             if let Some(result_json) = result {
                 context.set_step_result(step_name.to_string(), result_json);
@@ -250,13 +240,13 @@ impl PlaybookRunner {
         if let Some(cases) = &step.case {
             for case in cases {
                 let condition_result = self.evaluate_condition(&case.when, context)?;
-                
+
                 if condition_result {
                     case_matched = true;
                     if self.verbose {
                         println!("   ✓ Condition matched: {}", case.when);
                     }
-                    
+
                     // Execute then steps (potentially in parallel if multiple)
                     self.execute_next_steps(playbook, &case.then, context)?;
                     break;
@@ -315,7 +305,7 @@ impl PlaybookRunner {
         // Simple condition evaluation
         // Supports: {{ var }} == "value", {{ var }} != "value", {{ var }} (truthy check)
         let rendered = self.render_template(condition, context)?;
-        
+
         // Check for comparison operators
         if rendered.contains("==") {
             let parts: Vec<&str> = rendered.split("==").map(|s| s.trim()).collect();
@@ -323,14 +313,14 @@ impl PlaybookRunner {
                 return Ok(parts[0] == parts[1]);
             }
         }
-        
+
         if rendered.contains("!=") {
             let parts: Vec<&str> = rendered.split("!=").map(|s| s.trim()).collect();
             if parts.len() == 2 {
                 return Ok(parts[0] != parts[1]);
             }
         }
-        
+
         // Truthy check - not empty, not "false", not "0"
         Ok(!rendered.is_empty() && rendered != "false" && rendered != "0")
     }
@@ -357,13 +347,19 @@ impl PlaybookRunner {
                 }
                 Ok(Some(last_output))
             }
-            Tool::Http { method, url, headers, params, body } => {
+            Tool::Http {
+                method,
+                url,
+                headers,
+                params,
+                body,
+            } => {
                 let rendered_url = self.render_template(url, context)?;
-                
+
                 if self.verbose {
                     println!("   🌐 HTTP {} {}", method, rendered_url);
                 }
-                
+
                 let result = self.execute_http_request(
                     method,
                     &rendered_url,
@@ -372,29 +368,29 @@ impl PlaybookRunner {
                     body.as_deref(),
                     context,
                 )?;
-                
+
                 Ok(Some(result))
             }
             Tool::Playbook { path, args } => {
                 let rendered_path = self.render_template(path, context)?;
                 let playbook_path = self.resolve_playbook_path(&rendered_path)?;
-                
+
                 if self.verbose {
                     println!("   📎 Executing sub-playbook: {}", playbook_path.display());
                 }
-                
+
                 // Merge context variables with args - prefix args with workload.
                 let mut sub_vars = context.variables.clone();
                 for (key, template) in args {
                     let value = self.render_template(template, context)?;
                     sub_vars.insert(format!("workload.{}", key), value);
                 }
-                
+
                 let sub_runner = PlaybookRunner::new(playbook_path)
                     .with_variables(sub_vars)
                     .with_verbose(self.verbose);
                 sub_runner.run()?;
-                
+
                 Ok(None)
             }
             Tool::Unsupported => {
@@ -422,10 +418,17 @@ impl PlaybookRunner {
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-        
+
         // Always print command output
         if !stdout.is_empty() {
             print!("{}", stdout);
+        }
+
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+        // Always print command output
+        if !stderr.is_empty() {
+            print!("{}", stderr);
         }
 
         Ok(stdout)
@@ -442,11 +445,11 @@ impl PlaybookRunner {
     ) -> Result<String> {
         // Build curl command
         let mut curl_args = vec!["-s".to_string()]; // Silent mode
-        
+
         // Add method
         curl_args.push("-X".to_string());
         curl_args.push(method.to_string());
-        
+
         // Add headers
         if let Some(hdrs) = headers {
             for (key, value) in hdrs {
@@ -455,14 +458,14 @@ impl PlaybookRunner {
                 curl_args.push(format!("{}: {}", key, rendered_value));
             }
         }
-        
+
         // Add body
         if let Some(body_str) = body {
             let rendered_body = self.render_template(body_str, context)?;
             curl_args.push("-d".to_string());
             curl_args.push(rendered_body);
         }
-        
+
         // Build URL with params
         let mut final_url = url.to_string();
         if let Some(prms) = params {
@@ -475,39 +478,42 @@ impl PlaybookRunner {
                 final_url = format!("{}?{}", url, query_parts.join("&"));
             }
         }
-        
+
         curl_args.push(final_url);
-        
+
         if self.verbose {
             println!("   🔧 curl {}", curl_args.join(" "));
         }
-        
+
         let output = Command::new("curl")
             .args(&curl_args)
             .output()
             .context("Failed to execute HTTP request (curl not available?)")?;
-        
+
         if !output.status.success() {
             anyhow::bail!("HTTP request failed with exit code: {:?}", output.status.code());
         }
-        
+
         let response = String::from_utf8_lossy(&output.stdout).to_string();
-        
+
         if self.verbose {
-            println!("   📥 Response: {}", if response.len() > 200 {
-                format!("{}... ({} bytes)", &response[..200], response.len())
-            } else {
-                response.clone()
-            });
+            println!(
+                "   📥 Response: {}",
+                if response.len() > 200 {
+                    format!("{}... ({} bytes)", &response[..200], response.len())
+                } else {
+                    response.clone()
+                }
+            );
         }
-        
+
         Ok(response)
     }
 
     fn render_template(&self, template: &str, context: &ExecutionContext) -> Result<String> {
         // Basic template rendering - replace {{ workload.var }}, {{ vars.var }}, {{ step_name.result }}
         let mut result = template.to_string();
-        
+
         // Handle workload.* variables
         for (key, value) in &context.variables {
             if key.starts_with("workload.") {
@@ -515,7 +521,7 @@ impl PlaybookRunner {
                 result = result.replace(&placeholder, value);
             }
         }
-        
+
         // Handle vars.* variables
         for (key, value) in &context.variables {
             if key.starts_with("vars.") {
@@ -523,24 +529,25 @@ impl PlaybookRunner {
                 result = result.replace(&placeholder, value);
             }
         }
-        
+
         // Handle step_name.result variables
         for (step_name, value) in &context.step_results {
             let placeholder = format!("{{{{ {}.result }}}}", step_name);
             result = result.replace(&placeholder, value);
         }
-        
+
         // Also support direct {{ variable }} lookups
         for (key, value) in &context.variables {
             let placeholder = format!("{{{{ {} }}}}", key);
             result = result.replace(&placeholder, value);
         }
-        
+
         Ok(result.trim().to_string())
     }
 
     fn resolve_playbook_path(&self, relative_path: &str) -> Result<PathBuf> {
-        let base_dir = self.playbook_path
+        let base_dir = self
+            .playbook_path
             .parent()
             .context("Failed to get playbook directory")?;
         Ok(base_dir.join(relative_path))
@@ -579,13 +586,15 @@ mod tests {
     fn test_template_rendering() {
         let mut context = ExecutionContext::new();
         context.set_variable("workload.cluster".to_string(), "noetl".to_string());
-        
+
         let runner = PlaybookRunner::new(PathBuf::from("test.yaml"));
-        let result = runner.render_template(
-            "kind load docker-image noetl:latest --name {{ workload.cluster }}",
-            &context
-        ).unwrap();
-        
+        let result = runner
+            .render_template(
+                "kind load docker-image noetl:latest --name {{ workload.cluster }}",
+                &context,
+            )
+            .unwrap();
+
         assert_eq!(result, "kind load docker-image noetl:latest --name noetl");
     }
 }
