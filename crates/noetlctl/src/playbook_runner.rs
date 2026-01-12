@@ -3,6 +3,7 @@ use serde::Deserialize;
 use serde_yaml;
 use std::collections::HashMap;
 use std::fs;
+use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -407,32 +408,52 @@ impl PlaybookRunner {
             println!("   🔧 Executing: {}", command);
         }
 
-        let output = Command::new("sh")
+        let mut binding = Command::new("sh");
+        let cmd = binding
             .arg("-c")
             .arg(command)
-            .output()
-            .context("Failed to execute shell command")?;
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
 
-        if !output.status.success() {
-            println!("command: {}", command);
-            anyhow::bail!("Command failed with exit code: {:?}", output.status.code());
+        let cr = std::env::current_dir()?;
+
+        let cmd = cmd.current_dir(cr);
+
+        let mut child = cmd.spawn().context("Failed to spawn shell command")?;
+
+        // Clone the stdout and stderr to read in separate threads
+        let stdout = child.stdout.take().unwrap();
+        let stderr = child.stderr.take().unwrap();
+
+        let stdout_thread = std::thread::spawn(move || {
+            let reader = BufReader::new(stdout);
+            for line in reader.lines() {
+                if let Ok(line) = line {
+                    println!("{}", line);
+                }
+            }
+        });
+
+        let stderr_thread = std::thread::spawn(move || {
+            let reader = BufReader::new(stderr);
+            for line in reader.lines() {
+                if let Ok(line) = line {
+                    println!("{}", line);
+                }
+            }
+        });
+
+        // Wait for both threads to finish
+        stdout_thread.join().unwrap();
+        stderr_thread.join().unwrap();
+
+        let status = child.wait()?;
+
+        if !status.success() {
+            anyhow::bail!("Command failed with exit code: {:?}", status.code());
         }
 
-        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-
-        // Always print command output
-        if !stdout.is_empty() {
-            print!("{}", stdout);
-        }
-
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-
-        // Always print command output
-        if !stderr.is_empty() {
-            print!("{}", stderr);
-        }
-
-        Ok(stdout)
+        Ok("".to_string())
     }
 
     fn execute_http_request(
