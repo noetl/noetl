@@ -408,7 +408,7 @@ impl PlaybookRunner {
             println!("   🔧 Executing: {}", command);
         }
 
-        let mut binding = Command::new("sh");
+        let mut binding = Command::new("bash");
         let cmd = binding
             .arg("-c")
             .arg(command)
