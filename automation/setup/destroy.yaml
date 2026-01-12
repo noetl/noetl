@@ -19,7 +19,7 @@ workflow:
     tool:
       kind: shell
       cmds:
-        - task kind-delete-cluster || echo "Cluster deletion skipped or failed"
+        - kind delete cluster --name=noetl || echo "Cluster deletion skipped or failed"
     next:
       - step: cleanup_docker
   
@@ -28,7 +28,10 @@ workflow:
     tool:
       kind: shell
       cmds:
-        - task docker-prune || echo "Docker cleanup skipped or failed"
+        - |
+          docker builder prune --all --force
+          docker image prune --all --force
+          docker volume prune --force || echo "Docker cleanup skipped or failed"
     next:
       - step: clear_cache
   
@@ -37,7 +40,11 @@ workflow:
     tool:
       kind: shell
       cmds:
-        - task clear-all-cache || echo "Cache clear skipped or failed"
+        - |
+          rm -rf ci/kind/cache/pg-data/*
+          rm -rf ci/kind/cache/noetl-data/*
+          rm -rf ci/kind/cache/noetl-logs/*
+          echo "✓ All cache directories cleared" || echo "Cache clear skipped or failed"
     next:
       - step: clear_noetl_data
   
@@ -46,7 +53,7 @@ workflow:
     tool:
       kind: shell
       cmds:
-        - task clear-noetl-data || echo "Data clear skipped or failed"
+        - rm -rf ci/kind/cache/noetl-data/* || echo "Data clear skipped or failed"
     next:
       - step: summary
   
