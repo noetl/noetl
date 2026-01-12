@@ -6,7 +6,7 @@ import type * as Preset from '@docusaurus/preset-classic';
 
 const config: Config = {
   title: 'NoETL',
-  tagline: 'Workflow Automation Framework for Data Processing and MLOps',
+  tagline: 'Automation framework for orchestrating APIs, databases, and scripts using a declarative Playbook DSL',
   favicon: 'img/favicon.ico',
 
   // Future flags, see https://docusaurus.io/docs/api/docusaurus-config#future

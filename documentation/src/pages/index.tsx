@@ -11,7 +11,7 @@ import styles from './index.module.css';
 function HomepageHeader() {
   const {siteConfig} = useDocusaurusContext();
   return (
-    <header className={clsx('hero hero--primary', styles.heroBanner)}>
+    <header className={clsx('hero', styles.heroBanner)}>
       <div className="container">
         <Heading as="h1" className="hero__title">
           {siteConfig.title}
@@ -20,7 +20,7 @@ function HomepageHeader() {
         <div style={{margin: '2rem 0'}}>
           <img 
             src="/img/NoETL.png" 
-            alt="NoETL - Data Mesh and MLOps Orchestration" 
+            alt="NoETL - Automation framework for orchestrating APIs, databases, and scripts" 
             style={{maxWidth: '800px', width: '100%', height: 'auto'}}
           />
         </div>
@@ -41,7 +41,7 @@ export default function Home(): ReactNode {
   return (
     <Layout
       title="Workflow Automation Framework"
-      description="NoETL - Automation framework for Data Mesh and MLOps orchestration">
+      description="NoETL - Automation framework for orchestrating APIs, databases, and scripts using a declarative Playbook DSL">
       <HomepageHeader />
       <main>
         <HomepageFeatures />
