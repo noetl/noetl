@@ -50,11 +50,11 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Run playbook locally (no server required)
-    /// 
+    ///
     /// Auto-discovery: If no playbook file is specified, searches for:
     ///   1. ./noetl.yaml (priority)
     ///   2. ./main.yaml (fallback)
-    /// 
+    ///
     /// Examples:
     ///     noetl run                                    # Auto-discover noetl.yaml or main.yaml
     ///     noetl run bootstrap                          # Auto-discover + target "bootstrap"
@@ -134,7 +134,7 @@ enum Commands {
         command: CatalogCommand,
     },
     /// Execution management
-    #[command(alias = "run")]
+    // #[command(alias = "run")]
     Execute {
         #[command(subcommand)]
         command: ExecuteCommand,
@@ -530,10 +530,9 @@ fn resolve_playbook_and_target(
     args: Vec<String>,
 ) -> Result<(PathBuf, Option<String>)> {
     // Helper: Check if string looks like a file path
-    let is_explicit_path = |s: &str| -> bool {
-        s.contains('/') || s.contains('\\') || s.ends_with(".yaml") || s.ends_with(".yml")
-    };
-    
+    let is_explicit_path =
+        |s: &str| -> bool { s.contains('/') || s.contains('\\') || s.ends_with(".yaml") || s.ends_with(".yml") };
+
     // Helper: Try to find file with extensions
     let try_find_file = |base: &str| -> Option<PathBuf> {
         // Try as-is
@@ -541,50 +540,50 @@ fn resolve_playbook_and_target(
         if path.exists() && path.is_file() {
             return Some(path);
         }
-        
+
         // Try with .yaml extension
         let yaml_path = PathBuf::from(format!("{}.yaml", base));
         if yaml_path.exists() && yaml_path.is_file() {
             return Some(yaml_path);
         }
-        
+
         // Try with .yml extension
         let yml_path = PathBuf::from(format!("{}.yml", base));
         if yml_path.exists() && yml_path.is_file() {
             return Some(yml_path);
         }
-        
+
         None
     };
-    
+
     // Helper: Auto-discover playbook in current directory
     let auto_discover = || -> Result<PathBuf> {
         // Priority 1: noetl.yaml
         if let Some(path) = try_find_file("./noetl") {
             return Ok(path);
         }
-        
+
         // Priority 2: main.yaml
         if let Some(path) = try_find_file("./main") {
             return Ok(path);
         }
-        
+
         // No playbook found
         anyhow::bail!(
             "No playbook found. Expected ./noetl.yaml or ./main.yaml in current directory.\n\
              Hint: Specify explicit path like: noetl run automation/main.yaml"
         )
     };
-    
+
     // Case 1: No first arg provided → auto-discover, first trailing arg is target
     if playbook_or_target.is_none() {
         let playbook = auto_discover()?;
         let target = args.first().map(|s| s.to_string());
         return Ok((playbook, target));
     }
-    
+
     let first_arg = playbook_or_target.unwrap();
-    
+
     // Case 2: First arg is explicit path → use it, first trailing arg is target
     if is_explicit_path(&first_arg) {
         let playbook = PathBuf::from(&first_arg);
@@ -594,14 +593,14 @@ fn resolve_playbook_and_target(
         let target = args.first().map(|s| s.to_string());
         return Ok((playbook, target));
     }
-    
+
     // Case 3: First arg might be a file (without extension) → check if exists
     if let Some(playbook) = try_find_file(&first_arg) {
         // File found! First trailing arg is target
         let target = args.first().map(|s| s.to_string());
         return Ok((playbook, target));
     }
-    
+
     // Case 4: First arg is not a file → auto-discover, first arg is target
     let playbook = auto_discover()?;
     let target = Some(first_arg);
@@ -631,20 +630,27 @@ async fn main() -> Result<()> {
     let client = Client::new();
 
     match cli.command {
-        Some(Commands::Run { playbook_or_target, args, variables, payload, merge, verbose }) => {
+        Some(Commands::Run {
+            playbook_or_target,
+            args,
+            variables,
+            payload,
+            merge,
+            verbose,
+        }) => {
             // File Resolution Algorithm (File-First Strategy)
             let (playbook_path, target) = resolve_playbook_and_target(playbook_or_target, args)?;
-            
+
             if verbose {
                 println!("🔍 Resolved playbook: {}", playbook_path.display());
                 if let Some(ref t) = target {
                     println!("🎯 Target: {}", t);
                 }
             }
-            
+
             // Parse JSON payload if provided
             let mut vars = std::collections::HashMap::new();
-            
+
             if let Some(payload_str) = payload {
                 match serde_json::from_str::<serde_json::Value>(&payload_str) {
                     Ok(serde_json::Value::Object(map)) => {
@@ -669,7 +675,7 @@ async fn main() -> Result<()> {
                     }
                 }
             }
-            
+
             // Parse individual variables from key=value format (these override payload)
             for var in variables {
                 let parts: Vec<&str> = var.splitn(2, '=').collect();
@@ -686,7 +692,7 @@ async fn main() -> Result<()> {
                 .with_merge(merge)
                 .with_verbose(verbose)
                 .with_target(target);
-            
+
             runner.run()?;
         }
         Some(Commands::Context { command }) => {
@@ -877,17 +883,17 @@ async fn register_directory(
     extensions: &[&str],
 ) -> Result<()> {
     let files = scan_directory(directory, extensions)?;
-    
+
     if files.is_empty() {
         println!("No {} files found in directory: {:?}", extensions.join(", "), directory);
         return Ok(());
     }
 
     println!("Found {} file(s) in {:?}", files.len(), directory);
-    
+
     let mut success_count = 0;
     let mut fail_count = 0;
-    
+
     for file in files {
         match register_resource(client, base_url, resource_type, &file).await {
             Ok(_) => success_count += 1,
@@ -897,22 +903,25 @@ async fn register_directory(
             }
         }
     }
-    
-    println!("\nRegistration complete: {} succeeded, {} failed", success_count, fail_count);
+
+    println!(
+        "\nRegistration complete: {} succeeded, {} failed",
+        success_count, fail_count
+    );
     Ok(())
 }
 
 fn scan_directory(directory: &PathBuf, extensions: &[&str]) -> Result<Vec<PathBuf>> {
     let mut files = Vec::new();
-    
+
     if !directory.exists() {
         return Err(anyhow::anyhow!("Directory does not exist: {:?}", directory));
     }
-    
+
     if !directory.is_dir() {
         return Err(anyhow::anyhow!("Path is not a directory: {:?}", directory));
     }
-    
+
     scan_directory_recursive(directory, extensions, &mut files)?;
     Ok(files)
 }
@@ -921,7 +930,7 @@ fn scan_directory_recursive(dir: &PathBuf, extensions: &[&str], files: &mut Vec<
     for entry in fs::read_dir(dir).context(format!("Failed to read directory: {:?}", dir))? {
         let entry = entry?;
         let path = entry.path();
-        
+
         if path.is_dir() {
             scan_directory_recursive(&path, extensions, files)?;
         } else if path.is_file() {
@@ -941,9 +950,8 @@ fn scan_directory_recursive(dir: &PathBuf, extensions: &[&str], files: &mut Vec<
 }
 
 fn is_valid_resource_file(file: &PathBuf, extensions: &[&str]) -> Result<bool> {
-    let content = fs::read_to_string(file)
-        .context(format!("Failed to read file: {:?}", file))?;
-    
+    let content = fs::read_to_string(file).context(format!("Failed to read file: {:?}", file))?;
+
     // Check if it's a YAML file (playbook)
     if extensions.contains(&"yaml") || extensions.contains(&"yml") {
         // Look for apiVersion and kind: Playbook
@@ -952,7 +960,7 @@ fn is_valid_resource_file(file: &PathBuf, extensions: &[&str]) -> Result<bool> {
         }
         return Ok(false);
     }
-    
+
     // Check if it's a JSON file (credential)
     if extensions.contains(&"json") {
         // Try to parse as JSON and check for "type" field
@@ -965,22 +973,19 @@ fn is_valid_resource_file(file: &PathBuf, extensions: &[&str]) -> Result<bool> {
             Err(_) => return Ok(false),
         }
     }
-    
+
     Ok(false)
 }
 
 async fn register_resource(client: &Client, base_url: &str, resource_type: &str, file: &PathBuf) -> Result<()> {
     let content = fs::read_to_string(file).context(format!("Failed to read file: {:?}", file))?;
-    
+
     let (url, request_body) = if resource_type == "Credential" {
         // For credentials, parse JSON and POST to /api/credentials
-        let credential_data: serde_json::Value = serde_json::from_str(&content)
-            .context(format!("Failed to parse credential JSON from file: {:?}", file))?;
-        
-        (
-            format!("{}/api/credentials", base_url),
-            credential_data
-        )
+        let credential_data: serde_json::Value =
+            serde_json::from_str(&content).context(format!("Failed to parse credential JSON from file: {:?}", file))?;
+
+        (format!("{}/api/credentials", base_url), credential_data)
     } else {
         // For playbooks, base64 encode and POST to /api/catalog/register
         let content_base64 = BASE64_STANDARD.encode(&content);
@@ -988,10 +993,10 @@ async fn register_resource(client: &Client, base_url: &str, resource_type: &str,
             content: content_base64,
             resource_type: resource_type.to_string(),
         };
-        
+
         (
             format!("{}/api/catalog/register", base_url),
-            serde_json::to_value(request)?
+            serde_json::to_value(request)?,
         )
     };
 
@@ -2176,4 +2181,3 @@ fn update_deployment_image(file_path: &str, image: &str) -> Result<()> {
 
     Ok(())
 }
-

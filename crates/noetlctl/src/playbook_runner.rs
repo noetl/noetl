@@ -414,6 +414,7 @@ impl PlaybookRunner {
             .context("Failed to execute shell command")?;
 
         if !output.status.success() {
+            println!("command: {}", command);
             anyhow::bail!("Command failed with exit code: {:?}", output.status.code());
         }
 
