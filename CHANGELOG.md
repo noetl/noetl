@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.5.6](https://github.com/noetl/noetl/compare/v2.5.5...v2.5.6) (2026-01-15)
+
+### Bug Fixes
+
+* google id token handler ([#207](https://github.com/noetl/noetl/issues/207)) ([515ea16](https://github.com/noetl/noetl/commit/515ea163430e28ca839e435ea3d02fc31edbe28f))
+* update SHA256 for v2.5.5 after tag recreation ([5c45121](https://github.com/noetl/noetl/commit/5c45121ed7d0f224cc1da369297bb352aaca9a37))
+
 ## [2.5.5](https://github.com/noetl/noetl/compare/v2.5.4...v2.5.5) (2026-01-11)
 
 ### Bug Fixes
