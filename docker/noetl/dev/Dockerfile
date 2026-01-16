@@ -29,6 +29,7 @@ RUN uv venv && \
     uv sync --frozen --no-dev --no-install-project
 
 COPY noetl ./noetl
+COPY scripts ./scripts
 COPY --from=ui-builder /ui/ui-src/dist ./noetl/core/ui
 
 COPY LICENSE README.md ./
@@ -59,6 +60,7 @@ COPY --from=builder /opt/noetl/.venv /opt/noetl/.venv
 WORKDIR /opt/noetl
 
 COPY --from=builder /opt/noetl/noetl ./noetl
+COPY --from=builder /opt/noetl/scripts ./scripts
 COPY --from=builder /opt/noetl/pyproject.toml ./
 COPY --from=builder /opt/noetl/LICENSE ./
 COPY --from=builder /opt/noetl/README.md ./

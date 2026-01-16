@@ -352,8 +352,13 @@ class StateStore:
                 result = await cur.fetchone()
                 if not result:
                     return None
-                
-                catalog_id = result[0]  # First column
+
+                if isinstance(result, dict):
+                    catalog_id = result.get("catalog_id")
+                else:
+                    catalog_id = result[0]
+                if catalog_id is None:
+                    return None
                 
                 # Load playbook
                 playbook = await self.playbook_repo.load_playbook_by_id(catalog_id)
@@ -384,9 +389,14 @@ class StateStore:
                 loop_iteration_results = {}  # {step_name: [result1, result2, ...]}
                 
                 for row in rows:
-                    node_name = row[0]
-                    event_type = row[1]
-                    result_data = row[2]
+                    if isinstance(row, dict):
+                        node_name = row.get("node_name")
+                        event_type = row.get("event_type")
+                        result_data = row.get("result")
+                    else:
+                        node_name = row[0]
+                        event_type = row[1]
+                        result_data = row[2]
                     
                     # For loop steps, collect iteration results from step.exit events
                     if event_type == 'step.exit' and result_data and node_name in loop_steps:

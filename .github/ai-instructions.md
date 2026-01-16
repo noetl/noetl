@@ -38,6 +38,9 @@ NoETL is a workflow automation framework for data processing and MLOps orchestra
 
 ## Development Workflows
 
+**Command Restriction:**
+- Do not use `task` commands. Use direct CLI equivalents (for example, `./bin/noetl ...` or `noetl ...`) instead.
+
 **Setup & Testing:**
 ```bash
 task bring-all                                      # Complete K8s dev environment (build + deploy all components)

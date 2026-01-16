@@ -74,9 +74,9 @@ async def log_error_async(
             )
         except ImportError as import_error:
             logger.warning(f"Could not log to database due to import error: {import_error} | This is expected during initialization or in test environments")
-        except Exception as db_error:
+        except BaseException as db_error:
             logger.error(f"Failed to log template error to database: {db_error}")
-    except Exception as le:
+    except BaseException as le:
         logger.error(f"Failed to log error: {le}")
 
 # Backward-compatible sync wrapper that ensures DB I/O happens in async context
@@ -118,7 +118,7 @@ def log_error(
                 step_id=step_id,
                 step_name=step_name,
             ))
-    except Exception as e:
+    except BaseException as e:
         logger.error(f"Failed to dispatch async error logging: {e}")
 
 

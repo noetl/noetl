@@ -1,0 +1,34 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: tradedb-create-db
+  path: automation/tradedb/create-db
+  description: Create TradeDB role and database
+
+workload:
+  pg_admin_auth: pg_k8s
+  admin_db: postgres
+  create_db_script_uri: ./submodules/IQT/scripts/tradedb/create_tradedb.sql
+
+workflow:
+  - step: start
+    desc: Create TradeDB role and database
+    tool:
+      kind: postgres
+      auth: "{{ workload.pg_admin_auth }}"
+      with:
+        db_name: "{{ workload.admin_db }}"
+      script:
+        uri: "{{ workload.create_db_script_uri }}"
+        source:
+          type: file
+    next:
+      - step: end
+
+  - step: end
+    desc: Done
+    tool:
+      kind: python
+      args: {}
+      code: |
+        result = {"status": "completed"}

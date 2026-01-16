@@ -18,7 +18,7 @@ spec:
       containers:
         - name: noetl-server
           # image name and tag must be patched dynamically
-          image: local/noetl:latest
+          image: image_name:image_tag
           imagePullPolicy: Never
           ports:
             - containerPort: 8082

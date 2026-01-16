@@ -202,12 +202,12 @@ async def execute_script_task(
         deps_str = ' '.join(install_deps)
         container_command = [
             "sh", "-c",
-            f"pip3 install --quiet {deps_str} && python3 /scripts/script.py '{args_json}'"
+            f"pip3 install --quiet {deps_str} && python3 -u /scripts/script.py '{args_json}'"
         ]
     else:
         container_command = [
             "sh", "-c",
-            f"python3 /scripts/script.py '{args_json}'"
+            f"python3 -u /scripts/script.py '{args_json}'"
         ]
     
     # Build environment variables for container
@@ -285,17 +285,39 @@ async def execute_script_task(
     except ApiException as e:
         if e.status != 404:
             logger.warning(f"Failed to delete Job (non-404): {e}")
+
+    # Wait briefly for job deletion to complete to avoid 409 conflicts
+    for _ in range(10):
+        try:
+            batch_v1.read_namespaced_job_status(name=job_name, namespace=namespace)
+            time.sleep(2)
+        except ApiException as e:
+            if e.status == 404:
+                break
+            logger.warning(f"Failed to check Job deletion status: {e}")
+            time.sleep(2)
     
-    try:
-        batch_v1.create_namespaced_job(namespace=namespace, body=job)
-        logger.info(f"Created Job: {job_name}")
-    except ApiException as e:
-        logger.error(f"Failed to create Job: {e}")
+    created = False
+    for attempt in range(5):
+        try:
+            batch_v1.create_namespaced_job(namespace=namespace, body=job)
+            logger.info(f"Created Job: {job_name}")
+            created = True
+            break
+        except ApiException as e:
+            if e.status == 409:
+                logger.warning(f"Job {job_name} already exists or is being deleted, retrying ({attempt + 1}/5)...")
+                time.sleep(5)
+                continue
+            logger.error(f"Failed to create Job: {e}")
+            break
+
+    if not created:
         # Clean up ConfigMap and Secret
         core_v1.delete_namespaced_config_map(name=configmap_name, namespace=namespace)
         if secret_name:
             core_v1.delete_namespaced_secret(name=secret_name, namespace=namespace)
-        raise
+        raise RuntimeError(f"Failed to create Job {job_name} after retries")
     
     # Wait for job completion
     start_time = time.time()
