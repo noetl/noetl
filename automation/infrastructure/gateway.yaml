@@ -65,7 +65,10 @@ workflow:
         - |
           echo ""
           echo "Building Gateway Docker image..."
-          docker/build-gateway-image.sh
+          docker buildx build --load --platform linux/amd64 -t noetl-gateway:latest -f crates/gateway/Dockerfile crates/gateway
+          echo "Loading Gateway image into kind cluster..."
+          kind load docker-image noetl-gateway:latest --name noetl
+          echo "Gateway image built and loaded into kind cluster"
     next:
       - step: end
 
@@ -92,7 +95,8 @@ workflow:
         - |
           echo ""
           echo "Building and deploying Gateway API and UI..."
-          docker/build-gateway-image.sh
+          docker buildx build --load --platform linux/amd64 -t noetl-gateway:latest -f crates/gateway/Dockerfile crates/gateway
+          kind load docker-image noetl-gateway:latest --name noetl
           kubectl apply -f ci/manifests/gateway/namespace.yaml
           kubectl apply -f ci/manifests/gateway/deployment.yaml
           kubectl apply -f ci/manifests/gateway/service.yaml
@@ -122,12 +126,14 @@ workflow:
     tool:
       kind: shell
       cmds:
-        - |
-          echo ""
-          echo "Rebuilding and redeploying Gateway..."
-          docker/build-gateway-image.sh
-          kubectl rollout restart deployment/gateway -n gateway
-          kubectl rollout status deployment/gateway -n gateway --timeout=60s
+        - echo ""
+        - echo "Rebuilding Gateway image..."
+        - docker buildx build --progress=plain --load --platform linux/amd64 -t noetl-gateway:latest -f crates/gateway/Dockerfile crates/gateway
+        - echo "Loading into kind cluster..."
+        - kind load docker-image noetl-gateway:latest --name noetl
+        - echo "Restarting deployment..."
+        - kubectl rollout restart deployment/gateway -n gateway
+        - kubectl rollout status deployment/gateway -n gateway --timeout=60s
     next:
       - step: end
 

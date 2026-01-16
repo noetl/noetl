@@ -8,7 +8,7 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 echo "Building Gateway Docker image..."
 cd "$PROJECT_ROOT/crates/gateway"
 
-docker build -t noetl-gateway:latest -f Dockerfile .
+docker buildx build --load --platform linux/amd64 -t noetl-gateway:latest -f Dockerfile .
 
 echo "Loading Gateway image into kind cluster..."
 kind load docker-image noetl-gateway:latest --name noetl
