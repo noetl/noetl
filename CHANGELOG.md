@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.5.7](https://github.com/noetl/noetl/compare/v2.5.6...v2.5.7) (2026-01-16)
+
+### Bug Fixes
+
+* update NATS K/V key format to use dots instead of colons ([#208](https://github.com/noetl/noetl/issues/208)) ([36e56b0](https://github.com/noetl/noetl/commit/36e56b053dda65c08ca65a6306977bf9cd6621fb))
+
 ## [2.5.6](https://github.com/noetl/noetl/compare/v2.5.5...v2.5.6) (2026-01-15)
 
 ### Bug Fixes
