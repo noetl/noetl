@@ -78,6 +78,8 @@ async def process_keychain_section(
                 data = await _process_secret_manager(entry, workload_vars, keychain_data, client, api_base_url)
             elif entry_kind == 'oauth2':
                 data = await _process_oauth2(entry, workload_vars, keychain_data, client)
+            elif entry_kind == 'google_id_token':
+                data = await _process_google_id_token(entry, workload_vars, keychain_data, client, api_base_url)
             elif entry_kind == 'bearer':
                 data = await _process_bearer(entry, workload_vars, keychain_data)
             elif entry_kind == 'static':
@@ -253,6 +255,227 @@ async def _process_oauth2(
     return token_data
 
 
+async def _process_google_id_token(
+    entry: Dict[str, Any],
+    workload_vars: Dict[str, Any],
+    keychain_data: Dict[str, Any],
+    client: httpx.AsyncClient,
+    api_base_url: str
+) -> Optional[Dict[str, Any]]:
+    """
+    Process google_id_token keychain entry - generate Google ID token from service account.
+    
+    Fetches service account credentials from either:
+    1. Google Secret Manager (using 'service_account_secret')
+    2. NoETL credential table (using 'service_account_credential')
+    
+    Then generates an ID token with the specified audience (target service URL).
+    
+    Expected entry format (Secret Manager):
+    {
+        "name": "pcc_id_token",
+        "kind": "google_id_token",
+        "scope": "global",
+        "auto_renew": true,
+        "auth": "{{ workload.gcp_auth }}",  # Credential for Secret Manager access
+        "service_account_secret": "projects/123/secrets/my-sa/versions/latest",
+        "target_audience": "https://my-service-abc123.run.app"
+    }
+    
+    Expected entry format (Credential table):
+    {
+        "name": "pcc_id_token",
+        "kind": "google_id_token",
+        "scope": "global",
+        "auto_renew": true,
+        "service_account_credential": "my_service_account_credential",
+        "target_audience": "https://my-service-abc123.run.app"
+    }
+    
+    Args:
+        entry: Keychain entry definition
+        workload_vars: Workload variables for template rendering
+        keychain_data: Previously resolved keychain data
+        client: HTTP client for API calls
+        api_base_url: NoETL API base URL
+        
+    Returns:
+        Dict with 'id_token' and 'token_type' fields
+    """
+    import base64
+    import json
+    
+    sa_secret_path_template = entry.get('service_account_secret')
+    sa_credential_template = entry.get('service_account_credential')
+    target_audience_template = entry.get('target_audience')
+    
+    # Validate required fields based on mode
+    if not target_audience_template:
+        logger.error("KEYCHAIN_PROCESSOR: google_id_token requires 'target_audience' field")
+        return None
+    
+    if not sa_secret_path_template and not sa_credential_template:
+        logger.error("KEYCHAIN_PROCESSOR: google_id_token requires either 'service_account_secret' or 'service_account_credential' field")
+        return None
+    
+    if sa_secret_path_template and sa_credential_template:
+        logger.error("KEYCHAIN_PROCESSOR: google_id_token cannot have both 'service_account_secret' and 'service_account_credential' - use one or the other")
+        return None
+    
+    # Render templates
+    env = Environment(undefined=StrictUndefined)
+    
+    # Render target audience
+    audience_template = env.from_string(str(target_audience_template))
+    target_audience = audience_template.render(workload=workload_vars, keychain=keychain_data)
+    
+    logger.debug(f"KEYCHAIN_PROCESSOR: Generating Google ID token for audience: {target_audience}")
+    
+    # Determine service account source and fetch SA info
+    sa_info = None
+    
+    if sa_credential_template:
+        # Mode 1: Fetch service account from credential table
+        logger.debug(f"KEYCHAIN_PROCESSOR: Fetching service account from credential table")
+        
+        # Render credential name
+        sa_cred_template = env.from_string(str(sa_credential_template))
+        sa_cred_name = sa_cred_template.render(workload=workload_vars, keychain=keychain_data)
+        
+        # Fetch credential
+        cred_response = await client.get(
+            f"{api_base_url}/api/credentials/{sa_cred_name}",
+            params={"include_data": "true"}
+        )
+        if cred_response.status_code != 200:
+            raise RuntimeError(
+                f"KEYCHAIN_PROCESSOR: Failed to fetch service account credential '{sa_cred_name}': {cred_response.status_code} - {cred_response.text}"
+            )
+        
+        cred = cred_response.json()
+        cred_type = cred.get('type', '')
+        cred_data = cred.get('data', {})
+        
+        # Extract service account info based on credential structure
+        if cred_type in ['google_oauth', 'google_service_account', 'gcp']:
+            # Check if credential has nested service_account_info
+            if 'service_account_info' in cred_data:
+                sa_info = cred_data['service_account_info']
+            # Or if the data itself is the service account
+            elif cred_data.get('type') == 'service_account':
+                sa_info = cred_data
+            else:
+                raise ValueError(
+                    f"KEYCHAIN_PROCESSOR: Credential '{sa_cred_name}' does not contain valid service account info. "
+                    f"Expected 'service_account_info' field or 'type=service_account' structure."
+                )
+        else:
+            raise RuntimeError(
+                f"KEYCHAIN_PROCESSOR: Credential '{sa_cred_name}' must be of type 'google_oauth', 'google_service_account', or 'gcp' (found: {cred_type})"
+            )
+        
+        logger.debug(f"KEYCHAIN_PROCESSOR: Service account loaded from credential: {sa_info.get('client_email')}")
+    
+    elif sa_secret_path_template:
+        # Mode 2: Fetch service account from Secret Manager
+        logger.debug(f"KEYCHAIN_PROCESSOR: Fetching service account from Secret Manager")
+        
+        # Validate auth field is present for Secret Manager access
+        auth_ref = entry.get('auth')
+        if not auth_ref:
+            logger.error("KEYCHAIN_PROCESSOR: google_id_token requires 'auth' field when using 'service_account_secret'")
+            return None
+        
+        # Render auth reference
+        auth_template = env.from_string(str(auth_ref))
+        auth_name = auth_template.render(workload=workload_vars, keychain=keychain_data)
+        
+        # Render service account secret path
+        sa_path_template = env.from_string(str(sa_secret_path_template))
+        sa_secret_path = sa_path_template.render(workload=workload_vars, keychain=keychain_data)
+        
+        # Fetch credential to get auth data
+        cred_response = await client.get(
+            f"{api_base_url}/api/credentials/{auth_name}",
+            params={"include_data": "true"}
+        )
+        if cred_response.status_code != 200:
+            raise RuntimeError(
+                f"KEYCHAIN_PROCESSOR: Failed to fetch credential '{auth_name}': {cred_response.status_code} - {cred_response.text}"
+            )
+        
+        cred = cred_response.json()
+        cred_type = cred.get('type', '')
+        
+        # Get access token for Secret Manager API
+        access_token = None
+        if cred_type in ['google_oauth', 'google_service_account', 'gcp']:
+            from noetl.core.auth.google_provider import GoogleTokenProvider
+            provider = GoogleTokenProvider(cred.get('data', {}))
+            access_token = provider.fetch_token()
+        else:
+            raise RuntimeError(
+                f"KEYCHAIN_PROCESSOR: Auth credential '{auth_name}' must be google_oauth or google_service_account type"
+            )
+        
+        # Fetch service account JSON from Secret Manager
+        logger.debug(f"KEYCHAIN_PROCESSOR: Fetching service account from: {sa_secret_path}")
+        sm_url = f"https://secretmanager.googleapis.com/v1/{sa_secret_path}:access"
+        sm_headers = {"Authorization": f"Bearer {access_token}"}
+        
+        sm_response = await client.get(sm_url, headers=sm_headers, timeout=10.0)
+        sm_response.raise_for_status()
+        sm_data = sm_response.json()
+        
+        # Decode base64 payload
+        payload_data = sm_data.get('payload', {}).get('data', '')
+        if not payload_data:
+            raise ValueError(f"KEYCHAIN_PROCESSOR: Empty payload for service account secret")
+        
+        sa_json_str = base64.b64decode(payload_data).decode('UTF-8')
+        sa_info = json.loads(sa_json_str)
+        
+        logger.debug(f"KEYCHAIN_PROCESSOR: Service account loaded from Secret Manager: {sa_info.get('client_email')}")
+    
+    # Validate service account structure
+    if not sa_info or sa_info.get('type') != 'service_account':
+        raise ValueError(
+            f"KEYCHAIN_PROCESSOR: Invalid service account structure. Must have 'type=service_account'. "
+            f"Got: {sa_info.get('type') if sa_info else 'None'}"
+        )
+    
+    # Generate ID token using Google OAuth library
+    try:
+        import google.auth.transport.requests
+        from google.oauth2.service_account import IDTokenCredentials
+        
+        # Create ID token credentials with target audience
+        id_creds = IDTokenCredentials.from_service_account_info(
+            sa_info,
+            target_audience=target_audience
+        )
+        
+        # Fetch the ID token
+        auth_req = google.auth.transport.requests.Request()
+        id_creds.refresh(auth_req)
+        
+        if not id_creds.token:
+            raise Exception("Failed to obtain ID token from service account")
+        
+        logger.debug(f"KEYCHAIN_PROCESSOR: Successfully generated Google ID token for audience: {target_audience}")
+        
+        return {
+            'id_token': id_creds.token,
+            'access_token': id_creds.token,  # Alias for compatibility with Bearer auth patterns
+            'token_type': 'Bearer',
+            'audience': target_audience
+        }
+        
+    except Exception as e:
+        logger.error(f"KEYCHAIN_PROCESSOR: Failed to generate ID token: {e}", exc_info=True)
+        raise RuntimeError(f"KEYCHAIN_PROCESSOR: Failed to generate ID token: {e}")
+
+
 async def _process_bearer(
     entry: Dict[str, Any],
     workload_vars: Dict[str, Any],
@@ -328,21 +551,25 @@ async def _process_credential_ref(
     credential_type = cred.get('type', 'generic')
     credential_data = cred['data']
 
-    # For Google OAuth credentials, generate access token from service account JSON
+    # For Google OAuth credentials, generate token (ID token if target_audience specified, else access token)
     if credential_type in ['google_oauth', 'google_service_account', 'gcp']:
-        logger.debug(f"KEYCHAIN_PROCESSOR: Generating OAuth access token for credential '{ref_rendered}' (type: {credential_type})")
+        # Check if target_audience is specified in credential data
+        target_audience = credential_data.get('target_audience')
+        token_type_desc = f"ID token for audience '{target_audience}'" if target_audience else "access token"
+        logger.debug(f"KEYCHAIN_PROCESSOR: Generating {token_type_desc} for credential '{ref_rendered}' (type: {credential_type})")
         try:
             from noetl.core.auth.google_provider import GoogleTokenProvider
             provider = GoogleTokenProvider(credential_data)
-            access_token = provider.fetch_token()  # Get access token
-            logger.debug(f"KEYCHAIN_PROCESSOR: Successfully generated access token for '{ref_rendered}'")
+            # Pass audience if specified (generates ID token), otherwise None (generates access token)
+            token = provider.fetch_token(audience=target_audience)
+            logger.debug(f"KEYCHAIN_PROCESSOR: Successfully generated {token_type_desc} for '{ref_rendered}'")
             return {
-                'access_token': access_token,
+                'access_token': token,
                 'token_type': 'Bearer'
             }
         except Exception as e:
-            logger.error(f"KEYCHAIN_PROCESSOR: Failed to generate access token for '{ref_rendered}': {e}", exc_info=True)
-            raise RuntimeError(f"KEYCHAIN_PROCESSOR: Failed to generate access token for '{ref_rendered}': {e}")
+            logger.error(f"KEYCHAIN_PROCESSOR: Failed to generate {token_type_desc} for '{ref_rendered}': {e}", exc_info=True)
+            raise RuntimeError(f"KEYCHAIN_PROCESSOR: Failed to generate {token_type_desc} for '{ref_rendered}': {e}")
     
     # For other credential types, return data as-is
     return credential_data
@@ -372,26 +599,39 @@ async def _store_keychain_entry(
         default_ttl = 86400 if scope_type in ['global', 'catalog', 'shared'] else 3600
         expires_at = datetime.now(timezone.utc) + timedelta(seconds=default_ttl)
     
-    # Build renew_config for oauth2 entries
+    # Build renew_config for oauth2 and google_id_token entries
     renew_config = None
-    if auto_renew and entry_def.get('kind') == 'oauth2':
+    entry_kind = entry_def.get('kind')
+    if auto_renew and entry_kind == 'oauth2':
         renew_config = {
             'endpoint': entry_def.get('endpoint'),
             'method': entry_def.get('method', 'POST'),
             'headers': entry_def.get('headers', {}),
             'data': entry_def.get('data', {})
         }
+    elif auto_renew and entry_kind == 'google_id_token':
+        renew_config = {
+            'target_audience': entry_def.get('target_audience')
+        }
+        # Include either service_account_secret or service_account_credential
+        if entry_def.get('service_account_secret'):
+            renew_config['auth'] = entry_def.get('auth')
+            renew_config['service_account_secret'] = entry_def.get('service_account_secret')
+        elif entry_def.get('service_account_credential'):
+            renew_config['service_account_credential'] = entry_def.get('service_account_credential')
     
     # Determine credential_type
-    credential_type = entry_def.get('kind', 'unknown')
+    credential_type = entry_kind or 'unknown'
     if credential_type == 'oauth2':
         credential_type = 'oauth2_client_credentials'
+    elif credential_type == 'google_id_token':
+        credential_type = 'google_id_token'
     
     # Build request payload
     payload = {
         'token_data': token_data,
         'credential_type': credential_type,
-        'cache_type': 'token' if credential_type in ['oauth2_client_credentials', 'bearer'] else 'secret',
+        'cache_type': 'token' if credential_type in ['oauth2_client_credentials', 'google_id_token', 'bearer'] else 'secret',
         'scope_type': scope_type,
         'execution_id': execution_id if scope_type == 'local' else None,
         'expires_at': expires_at.isoformat(),

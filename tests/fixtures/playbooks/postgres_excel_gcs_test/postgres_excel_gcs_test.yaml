@@ -6,10 +6,10 @@ metadata:
   description: Test postgres tables -> CSV via DuckDB to GCS -> Excel to GCS
 
 workload:
-  pg_auth: pg_local
-  gcs_credential: gcs_hmac_local
+  pg_auth: pg_k8s
+  gcs_credential: gcs_bhs_state_program_hmac
   gcs_service_account: gcs_service_account
-  gcs_bucket: noetl-demo-output
+  gcs_bucket: bhs-state-program-reports2-dev
   output_filename: test_export_{{ execution_id }}
 keychain:
   - name: gcs_service_account_keychain
@@ -24,19 +24,19 @@ workflow:
       kind: postgres
       auth: "{{ workload.pg_auth }}"
       command: |
-        CREATE SCHEMA IF NOT EXISTS test_export;
-        DROP TABLE IF EXISTS test_export.employees CASCADE;
-        DROP TABLE IF EXISTS test_export.products CASCADE;
-        DROP TABLE IF EXISTS test_export.orders CASCADE;
+        -- CREATE SCHEMA IF NOT EXISTS test_export;
+        DROP TABLE IF EXISTS employees CASCADE;
+        DROP TABLE IF EXISTS products CASCADE;
+        DROP TABLE IF EXISTS orders CASCADE;
         
-        CREATE TABLE test_export.employees (emp_id INT, emp_name VARCHAR(100), department VARCHAR(50));
-        INSERT INTO test_export.employees VALUES (1, 'Alice Johnson', 'Engineering'), (2, 'Bob Smith', 'Sales'), (3, 'Carol Williams', 'Marketing');
+        CREATE TABLE employees (emp_id INT, emp_name VARCHAR(100), department VARCHAR(50));
+        INSERT INTO employees VALUES (1, 'Alice Johnson', 'Engineering'), (2, 'Bob Smith', 'Sales'), (3, 'Carol Williams', 'Marketing');
         
-        CREATE TABLE test_export.products (product_id INT, product_name VARCHAR(100), price DECIMAL(10,2));
-        INSERT INTO test_export.products VALUES (101, 'Laptop', 999.99), (102, 'Mouse', 29.99), (103, 'Keyboard', 79.99);
+        CREATE TABLE products (product_id INT, product_name VARCHAR(100), price DECIMAL(10,2));
+        INSERT INTO products VALUES (101, 'Laptop', 999.99), (102, 'Mouse', 29.99), (103, 'Keyboard', 79.99);
         
-        CREATE TABLE test_export.orders (order_id INT, customer_name VARCHAR(100), order_date DATE);
-        INSERT INTO test_export.orders VALUES (1001, 'John Doe', '2025-01-15'), (1002, 'Jane Smith', '2025-01-16'), (1003, 'Mike Brown', '2025-01-17');
+        CREATE TABLE orders (order_id INT, customer_name VARCHAR(100), order_date DATE);
+        INSERT INTO orders VALUES (1001, 'John Doe', '2025-01-15'), (1002, 'Jane Smith', '2025-01-16'), (1003, 'Mike Brown', '2025-01-17');
         
         SELECT 'Tables created' as status;
     next:
@@ -62,9 +62,9 @@ workflow:
         ATTACH '' AS pg_db (TYPE postgres, SECRET pg_db);
         
         -- Export CSV files to GCS
-        COPY (SELECT * FROM pg_db.test_export.employees ORDER BY emp_id) TO 'gs://{{ workload.gcs_bucket }}/exports/{{ workload.output_filename }}_employees.csv' (FORMAT CSV, HEADER TRUE);
-        COPY (SELECT * FROM pg_db.test_export.products ORDER BY product_id) TO 'gs://{{ workload.gcs_bucket }}/exports/{{ workload.output_filename }}_products.csv' (FORMAT CSV, HEADER TRUE);
-        COPY (SELECT * FROM pg_db.test_export.orders ORDER BY order_id) TO 'gs://{{ workload.gcs_bucket }}/exports/{{ workload.output_filename }}_orders.csv' (FORMAT CSV, HEADER TRUE);
+        COPY (SELECT * FROM pg_db.public.employees ORDER BY emp_id) TO 'gs://{{ workload.gcs_bucket }}/exports/{{ workload.output_filename }}_employees.csv' (FORMAT CSV, HEADER TRUE);
+        COPY (SELECT * FROM pg_db.public.products ORDER BY product_id) TO 'gs://{{ workload.gcs_bucket }}/exports/{{ workload.output_filename }}_products.csv' (FORMAT CSV, HEADER TRUE);
+        COPY (SELECT * FROM pg_db.public.orders ORDER BY order_id) TO 'gs://{{ workload.gcs_bucket }}/exports/{{ workload.output_filename }}_orders.csv' (FORMAT CSV, HEADER TRUE);
         
     case:
       - when: "{{ event.name == 'step.exit' }}"
@@ -142,10 +142,10 @@ workflow:
       kind: postgres
       auth: "{{ workload.pg_auth }}"
       command: |
-        DROP TABLE IF EXISTS test_export.employees CASCADE;
-        DROP TABLE IF EXISTS test_export.products CASCADE;
-        DROP TABLE IF EXISTS test_export.orders CASCADE;
-        DROP SCHEMA IF EXISTS test_export CASCADE;
+        DROP TABLE IF EXISTS employees CASCADE;
+        DROP TABLE IF EXISTS products CASCADE;
+        DROP TABLE IF EXISTS orders CASCADE;
+        -- DROP SCHEMA IF EXISTS test_export CASCADE;
         SELECT 'Cleanup completed' as status;
     next:
       - step: end
