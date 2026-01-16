@@ -60,6 +60,9 @@ env/
 /tests/fixtures/credentials/*_local.json
 /tests/fixtures/credentials/*.local.json
 /tests/fixtures/credentials/auth0_client.json
+# Local trading account credentials (untracked)
+/tests/fixtures/credentials/*.json
+/tests/fixtures/credentials/tradetrend_noetl/*.json
 # Uncomment below to ignore all credential files except templates
 # /tests/fixtures/credentials/*.json
 # !/tests/fixtures/credentials/*.template.json
@@ -83,11 +86,6 @@ ci/kind/cache
 /tests/fixtures/credentials/*.txt
 /tests/fixtures/credentials/*.pem
 /tests/fixtures/credentials/*.key
-
-# Ignore credential JSON by default (allow example templates)
-/tests/fixtures/credentials/**/*.json
-!/tests/fixtures/credentials/**/*.example
-!/tests/fixtures/credentials/**/*.example.json
 
 # VS Code workspace files (local developer settings)
 bhs-state-program-analytics.code-workspace
@@ -119,6 +117,3 @@ homebrew-tap
 # Extracted release tarballs (from testing)
 noetl-*/
 bin/
-
-# Local TradeDB SQL (kept under submodules/IQT)
-/scripts/tradedb/
