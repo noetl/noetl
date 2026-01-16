@@ -19,9 +19,11 @@ workflow:
     desc: "Setup test tables"
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main():
-            return {"status": "initialized"}
+        result = {"status": "initialized"}
     
     case:
       - when: "{{ event.name == 'step.exit' }}"
@@ -63,23 +65,26 @@ workflow:
     desc: "Test event log storage (simplest form)"
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main(**kwargs):
-            return {
-                "status": "success",
-                "data": {
-                    "step": "event_log_test",
-                    "message": "Testing event log storage",
-                    "test_id": "evt_001"
-                }
+        result = {
+            "status": "success",
+            "data": {
+                "step": "event_log_test",
+                "message": "Testing event log storage",
+                "test_id": "evt_001"
             }
+        }
     
     case:
       - when: "{{ event.name == 'step.exit' and response is defined }}"
         then:
           - sink:
-              tool: event_log
-              args: "{{ response }}"
+              tool:
+                kind: event_log
+                data: "{{ response }}"
           - next:
               - step: postgres_flat_test
 
@@ -88,16 +93,18 @@ workflow:
     desc: "Test postgres sink with flat structure"
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main(**kwargs):
-            return {
-                "status": "success", 
-                "data": {
-                    "record_id": 100,
-                    "description": "Postgres flat structure test",
-                    "source_step": "postgres_flat_test"
-                }
+        result = {
+            "status": "success", 
+            "data": {
+                "record_id": 100,
+                "description": "Postgres flat structure test",
+                "source_step": "postgres_flat_test"
             }
+        }
     
     case:
       - when: "{{ event.name == 'step.exit' and response is defined }}"
@@ -128,26 +135,24 @@ workflow:
     desc: "Test postgres save with nested structure"
     tool:
       kind: python
+      auth: {}
+      libs:
+        json: json
+      args:
+        test_data_value: "{{ workload.test_data.value }}"
       code: |
-        import json
+        # Receive test_data_value as an argument
+        test_data = {
+            "value": test_data_value,
+            "nested_indicator": True,
+            "test_type": "nested_structure"
+        }
         
-        def main(**kwargs):
-            # Access workload from context
-            context = kwargs.get('context', {})
-            workload = context.get('workload', {})
-            test_data_value = workload.get('test_data', {}).get('value', 42.5)
-            
-            test_data = {
-                "value": test_data_value,
-                "nested_indicator": True,
-                "test_type": "nested_structure"
-            }
-            
-            return {
-                "test_type": "nested_structure",
-                "nested_id": 200,
-                "test_data_json": json.dumps(test_data)
-            }
+        result = {
+            "test_type": "nested_structure",
+            "nested_id": 200,
+            "test_data_json": json.dumps(test_data)
+        }
     
     case:
       - when: "{{ event.name == 'step.exit' and response is defined }}"
@@ -177,11 +182,13 @@ workflow:
     desc: "Test completion"
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main(**kwargs):
-            return {
-                "status": "success",
-                "data": {
-                    "message": "All save storage tests completed successfully"
-                }
+        result = {
+            "status": "success",
+            "data": {
+                "message": "All save storage tests completed successfully"
             }
+        }

@@ -11,17 +11,24 @@ import styles from './index.module.css';
 function HomepageHeader() {
   const {siteConfig} = useDocusaurusContext();
   return (
-    <header className={clsx('hero hero--primary', styles.heroBanner)}>
+    <header className={clsx('hero', styles.heroBanner)}>
       <div className="container">
         <Heading as="h1" className="hero__title">
           {siteConfig.title}
         </Heading>
         <p className="hero__subtitle">{siteConfig.tagline}</p>
+        <div style={{margin: '2rem 0'}}>
+          <img 
+            src="/img/NoETL.png" 
+            alt="NoETL - Automation framework for orchestrating APIs, databases, and scripts" 
+            style={{maxWidth: '800px', width: '100%', height: 'auto'}}
+          />
+        </div>
         <div className={styles.buttons}>
           <Link
             className="button button--secondary button--lg"
             to="/docs/intro">
-            Docusaurus Tutorial - 5min ⏱️
+            Get Started
           </Link>
         </div>
       </div>
@@ -33,8 +40,8 @@ export default function Home(): ReactNode {
   const {siteConfig} = useDocusaurusContext();
   return (
     <Layout
-      title={`Hello from ${siteConfig.title}`}
-      description="Description will go into a meta tag in <head />">
+      title="Workflow Automation Framework"
+      description="NoETL - Automation framework for orchestrating APIs, databases, and scripts using a declarative Playbook DSL">
       <HomepageHeader />
       <main>
         <HomepageFeatures />

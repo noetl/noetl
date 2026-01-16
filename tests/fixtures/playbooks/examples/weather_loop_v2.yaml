@@ -22,27 +22,33 @@ workbook:
   - name: evaluate_weather_directly
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args:
+        city: null
+        threshold: null
       code: |
-        def main(city, threshold):
-            # Evaluate weather data
-            temp = city.get("temperature", 0)
-            alert = temp > threshold
-            
-            return {
-                "city": city["name"],
-                "temperature": temp,
-                "alert": alert,
-                "message": f"Temperature {temp}°C {'exceeds' if alert else 'below'} threshold {threshold}°C"
-            }
+        # Evaluate weather data
+        temp = city.get("temperature", 0)
+        alert = temp > threshold
+        
+        result = {
+            "city": city["name"],
+            "temperature": temp,
+            "alert": alert,
+            "message": f"Temperature {temp}°C {'exceeds' if alert else 'below'} threshold {threshold}°C"
+        }
 
 workflow:
 - step: start
   desc: Start weather monitoring workflow
   tool:
     kind: python
+    auth: {}
+    libs: {}
+    args: {}
     code: |
-      def main():
-          return {"status": "initialized", "timestamp": "2025-12-10T00:00:00Z"}
+      result = {"status": "initialized", "timestamp": "2025-12-10T00:00:00Z"}
   next: city_loop
 
 - step: city_loop
@@ -138,17 +144,18 @@ workflow:
   desc: Send alert for high temperature
   tool:
     kind: python
+    auth: {}
+    libs: {}
+    args:
+      alert_data: "{{ args.alert_data }}"
     code: |
-      def main(alert_data):
-          # In production, this would send email/SMS/notification
-          print(f"ALERT: {alert_data['message']}")
-          return {
-              "alert_sent": True,
-              "city": alert_data["city"],
-              "temperature": alert_data["temperature"]
-          }
-  args:
-    alert_data: "{{ args.alert_data }}"
+      # In production, this would send email/SMS/notification
+      print(f"ALERT: {alert_data['message']}")
+      result = {
+          "alert_sent": True,
+          "city": alert_data["city"],
+          "temperature": alert_data["temperature"]
+      }
   case:
     # After sending alert, check if there are more cities to process
     - when: "{{ event.name == 'step.exit' }}"
@@ -162,23 +169,24 @@ workflow:
   desc: Generate summary of weather monitoring
   tool:
     kind: python
+    auth: {}
+    libs: {}
+    args:
+      weather_results: "{{ ctx.weather_results }}"
+      alerts: "{{ ctx.alerts }}"
     code: |
-      def main(weather_results, alerts):
-          total_cities = len(weather_results) + len(alerts)
-          alert_count = len(alerts)
-          
-          summary = {
-              "total_cities_monitored": total_cities,
-              "alerts_triggered": alert_count,
-              "alert_percentage": (alert_count / total_cities * 100) if total_cities > 0 else 0,
-              "weather_data": weather_results,
-              "alerts": alerts
-          }
-          
-          return summary
-  args:
-    weather_results: "{{ ctx.weather_results }}"
-    alerts: "{{ ctx.alerts }}"
+      total_cities = len(weather_results) + len(alerts)
+      alert_count = len(alerts)
+      
+      summary = {
+          "total_cities_monitored": total_cities,
+          "alerts_triggered": alert_count,
+          "alert_percentage": (alert_count / total_cities * 100) if total_cities > 0 else 0,
+          "weather_data": weather_results,
+          "alerts": alerts
+      }
+      
+      result = summary
   case:
     # Save summary to sink
     - when: "{{ event.name == 'step.exit' }}"
@@ -208,6 +216,8 @@ workflow:
   desc: End of weather monitoring workflow
   tool:
     kind: python
+    auth: {}
+    libs: {}
+    args: {}
     code: |
-      def main():
-          return {"status": "completed", "workflow": "weather_monitoring"}
+      result = {"status": "completed", "workflow": "weather_monitoring"}

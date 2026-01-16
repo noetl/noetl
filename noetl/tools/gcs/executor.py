@@ -51,7 +51,7 @@ def execute_gcs_task(
     task_id = task_config.get('task_id', 'gcs_upload')
     task_name = task_config.get('name', 'gcs_upload')
     
-    logger.info(f"GCS TASK: Starting upload task {task_id}")
+    logger.debug(f"GCS TASK: Starting upload task {task_id}")
     
     # Extract task parameters
     source_path = task_config.get('source') or task_with.get('source')
@@ -81,7 +81,7 @@ def execute_gcs_task(
         # If no blob name, use source filename
         blob_name = Path(source_path).name
     
-    logger.info(f"GCS UPLOAD: {source_path} -> gs://{bucket_name}/{blob_name}")
+    logger.debug(f"GCS UPLOAD: {source_path} -> gs://{bucket_name}/{blob_name}")
     
     # Fetch credential from NoETL server
     try:
@@ -118,7 +118,7 @@ def execute_gcs_task(
         file_size = os.path.getsize(source_path)
         
         # Upload file
-        logger.info(f"Uploading {file_size} bytes to gs://{bucket_name}/{blob_name}")
+        logger.debug(f"Uploading {file_size} bytes to gs://{bucket_name}/{blob_name}")
         
         upload_kwargs = {}
         if content_type:

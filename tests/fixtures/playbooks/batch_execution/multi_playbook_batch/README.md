@@ -122,7 +122,7 @@ noetl execute playbook batch_execution/multi_playbook_batch --json
 noetl execute status <EXECUTION_ID> --json
 
 # Alternative: Direct execution using path
-noetl exec batch_execution/multi_playbook_batch
+noetl run playbook batch_execution/multi_playbook_batch
 ```
 
 ### Using REST API (Alternative)

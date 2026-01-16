@@ -1,0 +1,220 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: qdrant_automation
+  path: automation/infrastructure/qdrant
+
+workload:
+  action: help  # deploy, undeploy, status, logs, health, test, collections, restart
+
+workflow:
+  - step: start
+    desc: Entry point for Qdrant automation
+    tool:
+      kind: shell
+      cmds:
+        - echo "Qdrant Automation - Action '{{ workload.action }}'"
+    next:
+      - when: "{{ workload.action }} == deploy"
+        then:
+          - step: deploy_qdrant
+        args: {}
+      - when: "{{ workload.action }} == undeploy"
+        then:
+          - step: undeploy_qdrant
+        args: {}
+      - when: "{{ workload.action }} == status"
+        then:
+          - step: check_status
+        args: {}
+      - when: "{{ workload.action }} == logs"
+        then:
+          - step: show_logs
+        args: {}
+      - when: "{{ workload.action }} == health"
+        then:
+          - step: check_health
+        args: {}
+      - when: "{{ workload.action }} == test"
+        then:
+          - step: test_qdrant
+        args: {}
+      - when: "{{ workload.action }} == collections"
+        then:
+          - step: list_collections
+        args: {}
+      - when: "{{ workload.action }} == restart"
+        then:
+          - step: restart_qdrant
+        args: {}
+      - step: show_help
+
+  - step: deploy_qdrant
+    desc: Deploy Qdrant vector database
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Deploying Qdrant vector database..."
+          kubectl apply -f ci/manifests/qdrant/namespace.yaml
+          kubectl apply -f ci/manifests/qdrant/qdrant.yaml
+          echo "✓ Qdrant deployed"
+          echo "Waiting for Qdrant to be ready..."
+          kubectl wait --for=condition=ready --timeout=120s pod -l app=qdrant -n qdrant || true
+    next:
+      - step: end
+
+  - step: undeploy_qdrant
+    desc: Remove Qdrant from cluster
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Removing Qdrant from cluster..."
+          kubectl delete -f ci/manifests/qdrant/qdrant.yaml --ignore-not-found=true
+          kubectl delete -f ci/manifests/qdrant/namespace.yaml --ignore-not-found=true
+          echo "✓ Qdrant removed"
+    next:
+      - step: end
+
+  - step: check_status
+    desc: Check Qdrant deployment status
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Qdrant Status:"
+          echo "=== Qdrant Namespace ==="
+          kubectl get namespace qdrant 2>/dev/null || echo "Namespace not found"
+          echo ""
+          echo "=== Qdrant Pods ==="
+          kubectl get pods -n qdrant 2>/dev/null || echo "No pods"
+          echo ""
+          echo "=== Qdrant Services ==="
+          kubectl get svc -n qdrant 2>/dev/null || echo "No services"
+          echo ""
+          echo "=== Qdrant PVCs ==="
+          kubectl get pvc -n qdrant 2>/dev/null || echo "No PVCs"
+    next:
+      - step: end
+
+  - step: show_logs
+    desc: Show Qdrant logs
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Qdrant Logs:"
+          kubectl logs -n qdrant statefulset/qdrant --tail=100 -f
+    next:
+      - step: end
+
+  - step: check_health
+    desc: Check Qdrant health
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Checking Qdrant health..."
+          POD=$(kubectl get pods -n qdrant -l app=qdrant -o jsonpath='{.items[0].metadata.name}')
+          if [ -n "$POD" ]; then
+            kubectl exec -n qdrant $POD -- wget -qO- http://localhost:6333/healthz
+          else
+            echo "Qdrant pod not found"
+          fi
+    next:
+      - step: end
+
+  - step: test_qdrant
+    desc: Test Qdrant with sample collection
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Testing Qdrant with sample collection..."
+          echo "=== Testing Qdrant Connection ==="
+          POD=$(kubectl get pods -n qdrant -l app=qdrant -o jsonpath='{.items[0].metadata.name}')
+          if [ -n "$POD" ]; then
+            kubectl exec -n qdrant $POD -- wget -qO- http://localhost:6333/healthz
+          fi
+          echo ""
+          echo "=== Listing Collections ==="
+          if [ -n "$POD" ]; then
+            kubectl exec -n qdrant $POD -- wget -qO- http://localhost:6333/collections
+          fi
+          echo ""
+          echo "✓ Qdrant tests completed"
+    next:
+      - step: end
+
+  - step: list_collections
+    desc: List Qdrant collections
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Qdrant Collections:"
+          POD=$(kubectl get pods -n qdrant -l app=qdrant -o jsonpath='{.items[0].metadata.name}')
+          if [ -n "$POD" ]; then
+            kubectl exec -n qdrant $POD -- wget -qO- http://localhost:6333/collections
+          else
+            echo "Qdrant pod not found"
+          fi
+    next:
+      - step: end
+
+  - step: restart_qdrant
+    desc: Restart Qdrant
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Restarting Qdrant..."
+          kubectl rollout restart statefulset/qdrant -n qdrant
+          kubectl rollout status statefulset/qdrant -n qdrant --timeout=120s
+          echo "✓ Qdrant restarted"
+    next:
+      - step: end
+
+  - step: show_help
+    desc: Display available actions
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "====================================="
+          echo " Qdrant Vector Database Automation"
+          echo "====================================="
+          echo ""
+          echo "Usage:"
+          echo "  noetl run automation/infrastructure/qdrant.yaml --set action=<action>"
+          echo ""
+          echo "Available actions:"
+          echo "  deploy       - Deploy Qdrant vector database"
+          echo "  undeploy     - Remove Qdrant from cluster"
+          echo "  status       - Check deployment status"
+          echo "  logs         - Show Qdrant logs"
+          echo "  health       - Check Qdrant health"
+          echo "  test         - Test with sample collection"
+          echo "  collections  - List Qdrant collections"
+          echo "  restart      - Restart Qdrant"
+          echo ""
+          echo "Examples:"
+          echo "  noetl run automation/infrastructure/qdrant.yaml --set action=deploy"
+          echo "  noetl run automation/infrastructure/qdrant.yaml --set action=status"
+          echo "  noetl run automation/infrastructure/qdrant.yaml --set action=test"
+          echo "  noetl run automation/infrastructure/qdrant.yaml --set action=collections"
+          echo ""
+    next:
+      - step: end
+
+  - step: end
+    desc: End workflow

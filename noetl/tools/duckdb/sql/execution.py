@@ -81,6 +81,14 @@ def execute_sql_commands(
                             results[f"command_{i+1}_sample"] = rows[:5]
             except Exception:
                 logger.exception("Many DuckDB commands don't return fetchable results")
+        
+        # Force checkpoint to ensure all changes are persisted to disk
+        # This is critical for distributed workers accessing the same database file
+        try:
+            connection.execute("CHECKPOINT;")
+            logger.debug("Executed CHECKPOINT to flush changes to disk")
+        except Exception as e:
+            logger.warning(f"Failed to execute CHECKPOINT: {e}")
                 
         if excel_manager:
             excel_summary = excel_manager.finalize()

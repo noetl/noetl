@@ -43,9 +43,11 @@ workflow:
     desc: Start PostgreSQL JSONB test workflow
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main():
-            return {"status": "initialized"}
+        result = {"status": "initialized"}
     next:
       - step: create_table
 
@@ -84,41 +86,41 @@ workflow:
     desc: Insert rows with JSONB data
     tool:
       kind: python
+      auth: {}
+      libs:
+        json: json
       args:
         test_table: "{{ workload.test_table }}"
         sample_json_data: "{{ workload.sample_json_data }}"
       code: |
-        import json
-        
-        async def main(test_table, sample_json_data):
-            """Insert JSONB data into PostgreSQL."""
-            sample_data = sample_json_data or []
-            test_table = test_table or 'postgres_jsonb_test'
+        """Insert JSONB data into PostgreSQL."""
+        sample_data = sample_json_data or []
+        test_table = test_table or 'postgres_jsonb_test'
 
-            # Build SQL insert statements
-            insert_statements = []
-            for item in sample_data:
-                user_id = item['user_id']
-                profile_json = json.dumps(item['profile'])
-                metadata_json = json.dumps({
-                    'source': 'test',
-                    'version': '1.0',
-                    'timestamp': '2025-11-12T00:00:00Z'
-                })
-                
-                # Escape single quotes in JSON strings
-                profile_json_escaped = profile_json.replace("'", "''")
-                metadata_json_escaped = metadata_json.replace("'", "''")
-                
-                sql = f"""INSERT INTO public.{test_table} (user_id, profile, metadata)
-                VALUES ({user_id}, '{profile_json_escaped}'::jsonb, '{metadata_json_escaped}'::jsonb);"""
-                
-                insert_statements.append(sql)
+        # Build SQL insert statements
+        insert_statements = []
+        for item in sample_data:
+            user_id = item['user_id']
+            profile_json = json.dumps(item['profile'])
+            metadata_json = json.dumps({
+                'source': 'test',
+                'version': '1.0',
+                'timestamp': '2025-11-12T00:00:00Z'
+            })
             
-            return {
-                'commands': '\n'.join(insert_statements),
-                'count': len(insert_statements)
-            }
+            # Escape single quotes in JSON strings
+            profile_json_escaped = profile_json.replace("'", "''")
+            metadata_json_escaped = metadata_json.replace("'", "''")
+            
+            sql = f"""INSERT INTO public.{test_table} (user_id, profile, metadata)
+            VALUES ({user_id}, '{profile_json_escaped}'::jsonb, '{metadata_json_escaped}'::jsonb);"""
+            
+            insert_statements.append(sql)
+        
+        result = {
+            'commands': '\n'.join(insert_statements),
+            'count': len(insert_statements)
+        }
     next:
       - step: execute_inserts
 
@@ -255,37 +257,38 @@ workflow:
     desc: Validate JSONB operations and cleanup test table
     tool:
       kind: python
+      auth: {}
+      libs: {}
       args:
         query_jsonb_data: "{{ query_jsonb_data }}"
         test_truncate: "{{ test_truncate }}"
       code: |
-        async def main(query_jsonb_data, test_truncate):
-            """Validate JSONB test results."""
-            query_result = query_jsonb_data or {}
-            truncate_result = test_truncate or {}
-            
-            # Validate query results
-            validations = {
-                'query_commands_executed': len(query_result) > 0,
-                'truncate_commands_executed': len(truncate_result) > 0
-            }
-            
-            # Check truncate results
-            if truncate_result:
-                for cmd_key, cmd_result in truncate_result.items():
-                    if 'count_before_truncate' in str(cmd_key):
-                        count_before = cmd_result.get('rows', [{}])[0].get('count_before_truncate', 0)
-                        validations['count_before_truncate'] = count_before
-                    if 'count_after_truncate' in str(cmd_key):
-                        count_after = cmd_result.get('rows', [{}])[0].get('count_after_truncate', 0)
-                        validations['count_after_truncate'] = count_after
-                        validations['truncate_successful'] = count_after == 0
-            
-            return {
-                'status': 'completed',
-                'validations': validations,
-                'message': 'JSONB test completed successfully'
-            }
+        """Validate JSONB test results."""
+        query_result = query_jsonb_data or {}
+        truncate_result = test_truncate or {}
+        
+        # Validate query results
+        validations = {
+            'query_commands_executed': len(query_result) > 0,
+            'truncate_commands_executed': len(truncate_result) > 0
+        }
+        
+        # Check truncate results
+        if truncate_result:
+            for cmd_key, cmd_result in truncate_result.items():
+                if 'count_before_truncate' in str(cmd_key):
+                    count_before = cmd_result.get('rows', [{}])[0].get('count_before_truncate', 0)
+                    validations['count_before_truncate'] = count_before
+                if 'count_after_truncate' in str(cmd_key):
+                    count_after = cmd_result.get('rows', [{}])[0].get('count_after_truncate', 0)
+                    validations['count_after_truncate'] = count_after
+                    validations['truncate_successful'] = count_after == 0
+        
+        result = {
+            'status': 'completed',
+            'validations': validations,
+            'message': 'JSONB test completed successfully'
+        }
     next:
       - step: end
 
@@ -304,6 +307,8 @@ workflow:
     desc: End of PostgreSQL JSONB test
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main():
-            return {"status": "completed"}
+        result = {"status": "completed"}

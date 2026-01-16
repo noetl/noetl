@@ -124,7 +124,7 @@ class ExecutionService:
         # Step 5.5: Process keychain section before workflow starts
         keychain_section = playbook.get('keychain')
         if keychain_section and catalog_entry.catalog_id:
-            logger.info(f"EXECUTION: Processing keychain section with {len(keychain_section)} entries")
+            logger.debug(f"EXECUTION: Processing keychain section with {len(keychain_section)} entries")
             from noetl.server.keychain_processor import process_keychain_section
             try:
                 keychain_data = await process_keychain_section(
@@ -133,7 +133,7 @@ class ExecutionService:
                     execution_id=int(execution_id),
                     workload_vars=merged_workload
                 )
-                logger.info(f"EXECUTION: Keychain processing complete, created {len(keychain_data)} entries")
+                logger.debug(f"EXECUTION: Keychain processing complete, created {len(keychain_data)} entries")
             except Exception as e:
                 logger.error(f"EXECUTION: Failed to process keychain section: {e}", exc_info=True)
                 # Don't fail execution, keychain errors will surface when workers try to resolve

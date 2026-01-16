@@ -1489,7 +1489,7 @@ WHERE expires_at < NOW()
 
 ## See Also
 
-- [Credential Management](credentials_management.md)
-- [Token Auth Implementation](token_auth_implementation.md)
-- [DSL V2 Specification](dsl_v2_specification.md)
-- [Plugin Architecture](plugin_architecture_refactoring.md)
+- [Credential Caching](/docs/features/credential_caching)
+- [API Usage - Credentials](/docs/reference/api_usage#credentials-api)
+- [DSL Specification](/docs/reference/dsl/dsl_spec)
+- [OAuth Examples](/docs/examples/authentication/)

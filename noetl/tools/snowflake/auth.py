@@ -42,7 +42,7 @@ class SnowflakeFieldMapping(BaseModel):
     # Session parameters
     warehouse: str = Field(default="warehouse", description="Snowflake warehouse")
     database: str = Field(default="database", description="Database name")
-    schema: str = Field(default="schema", description="Schema name")
+    schema_name: str = Field(default="schema", description="Schema name")
     role: str = Field(default="role", description="User role")
     authenticator: str = Field(default="authenticator", description="Authentication method")
     

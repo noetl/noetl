@@ -1,4 +1,4 @@
-apiVersion: noetl.io/v1
+apiVersion: noetl.io/v2
 kind: Playbook
 metadata:
   name: auth0_login
@@ -6,310 +6,168 @@ metadata:
   description: |
     Authenticate user with Auth0 and create NoETL session.
     
-    This playbook:
-    1. Validates Auth0 token with Auth0 Management API
-    2. Extracts user profile (sub, email, name) from token claims
-    3. Upserts user record in auth.users table
-    4. Updates last_login_at timestamp
-    5. Creates session record with session token and Auth0 tokens
-    6. Returns session token to client
-    
-    Input (workload):
-      - auth0_token: Auth0 access token from client login
-      - auth0_refresh_token: Optional refresh token
-      - client_ip: Client IP address
-      - client_user_agent: Client User-Agent header
+    Input:
+      - auth0_token: Auth0 ID token (JWT)
+      - client_ip: Client IP (optional, defaults to 0.0.0.0)
     
     Output:
-      - session_token: NoETL session token for subsequent API calls
+      - session_token: NoETL session token
       - user_id: Internal user ID
-      - expires_at: Session expiration timestamp
   tags:
     - auth0
     - authentication
-    - login
-    - session
 
 workload:
-  # Required: Auth0 token from client OAuth flow
-  auth0_token: "{{ auth0_token }}"
-  
-  # Optional: Refresh token for token renewal
-  auth0_refresh_token: "{{ auth0_refresh_token | default('') }}"
-  
-  # Client metadata for audit logging
-  client_ip: "{{ client_ip | default('0.0.0.0') }}"
-  client_user_agent: "{{ client_user_agent | default('unknown') }}"
-  
-  # Session configuration
-  session_duration_hours: 24
-  
-  # Auth0 configuration (from environment or keychain)
-  auth0_domain: "{{ auth0_domain | default('your-tenant.auth0.com') }}"
-  auth0_audience: "{{ auth0_audience | default('https://api.noetl.io') }}"
+  auth0_token: ""
+  client_ip: "0.0.0.0"
+  auth0_domain: "mestumre-development.us.auth0.com"
+  db_credential: pg_k8s
 
 workflow:
   - step: start
-    desc: Begin Auth0 login workflow
-    next:
-      - step: validate_token
-        args:
-          auth0_token: "{{ workload.auth0_token }}"
-          auth0_domain: "{{ workload.auth0_domain }}"
+    desc: Begin Auth0 login
+    tool:
+      kind: python
+      auth: {}
+      libs:
+        json: json
+      args: {}
+      code: |
+        # Debug: log what we received
+        print(f"DEBUG: Full context keys: {list(context.keys())}")
+        print(f"DEBUG: workload = {json.dumps(context.get('workload', {}), indent=2)}")
+        result = {
+            "status": "initialized",
+            "auth0_token_present": bool(context.get('workload', {}).get('auth0_token')),
+            "client_ip_present": bool(context.get('workload', {}).get('client_ip'))
+        }
+    case:
+      - when: "{{ event.name == 'step.exit' }}"
+        then:
+          next:
+            - step: validate_token
 
   - step: validate_token
-    desc: Validate Auth0 token and extract user profile
-    tool: http
-    url: "https://{{ args.auth0_domain }}/userinfo"
-    method: GET
-    headers:
-      Authorization: "Bearer {{ args.auth0_token }}"
-    
-    vars:
-      # Extract user profile from Auth0 response
-      auth0_id: "{{ result.data.sub }}"
-      email: "{{ result.data.email }}"
-      display_name: "{{ result.data.name | default(result.data.email) }}"
-      profile_data: "{{ result.data }}"
-    
-    next:
-      - when: "{{ result.status == 200 }}"
+    desc: Decode Auth0 ID token (JWT) without external libraries
+    tool:
+      kind: python
+      libs:
+        base64: base64
+        json: json
+      code: |
+        # Decode the ID token (JWT format: header.payload.signature)
+        token = context.get('workload', {}).get('auth0_token', '')
+        
+        try:
+            # Split JWT and get payload (middle part)
+            parts = token.split('.')
+            if len(parts) != 3:
+                raise ValueError("Invalid JWT format")
+            
+            # Decode base64 payload (add padding if needed)
+            payload = parts[1]
+            padding = 4 - (len(payload) % 4)
+            if padding != 4:
+                payload += '=' * padding
+            
+            decoded_bytes = base64.urlsafe_b64decode(payload)
+            decoded = json.loads(decoded_bytes)
+            
+            result = {
+                "sub": decoded.get("sub"),
+                "email": decoded.get("email"),
+                "name": decoded.get("name", decoded.get("email")),
+                "email_verified": decoded.get("email_verified", False)
+            }
+        except Exception as e:
+            result = {"error": str(e)}
+    case:
+      - when: "{{ event.name == 'step.exit' and result.sub is defined }}"
         then:
-          - step: upsert_user
-            args:
-              auth0_id: "{{ vars.auth0_id }}"
-              email: "{{ vars.email }}"
-              display_name: "{{ vars.display_name }}"
-              profile_data: "{{ vars.profile_data }}"
-      - when: "{{ result.status == 401 }}"
-        then:
-          - step: auth_failure
-            args:
-              error: "Invalid or expired Auth0 token"
-              status_code: "{{ result.status }}"
-      - step: auth_failure
-        args:
-          error: "Auth0 token validation failed"
-          status_code: "{{ result.status }}"
+          next:
+            - step: upsert_user
 
   - step: upsert_user
-    desc: Create or update user record in auth.users
-    tool: postgres
-    auth:
-      type: postgres
-      credential: pg_auth_user
-    query: |
-      -- Upsert user record
-      INSERT INTO auth.users (auth0_id, email, display_name, profile_data, last_login_at)
-      VALUES ($1, $2, $3, $4, NOW())
-      ON CONFLICT (auth0_id) 
-      DO UPDATE SET
-        email = EXCLUDED.email,
-        display_name = EXCLUDED.display_name,
-        profile_data = EXCLUDED.profile_data,
-        last_login_at = NOW(),
-        updated_at = NOW()
-      RETURNING user_id, auth0_id, email, display_name, is_active;
-    parameters:
-      - "{{ args.auth0_id }}"
-      - "{{ args.email }}"
-      - "{{ args.display_name }}"
-      - "{{ args.profile_data | tojson }}"
-    
-    vars:
-      user_id: "{{ result[0].user_id }}"
-      is_active: "{{ result[0].is_active }}"
-    
-    next:
-      - when: "{{ vars.is_active == true }}"
+    desc: Create or update user
+    tool:
+      kind: postgres
+      auth: "{{ workload.db_credential }}"
+      command: |
+        INSERT INTO auth.users (auth0_id, email, display_name, last_login_at)
+        VALUES ('{{ validate_token.sub }}', '{{ validate_token.email }}', '{{ validate_token.name }}', NOW())
+        ON CONFLICT (auth0_id) 
+        DO UPDATE SET
+          email = EXCLUDED.email,
+          display_name = EXCLUDED.display_name,
+          last_login_at = NOW()
+        RETURNING user_id, email, display_name, is_active;
+    case:
+      - when: "{{ event.name == 'step.exit' and result.command_0 is defined }}"
         then:
-          - step: create_session
-            args:
-              user_id: "{{ vars.user_id }}"
-      - when: "{{ vars.is_active == false }}"
-        then:
-          - step: auth_failure
-            args:
-              error: "User account is inactive"
-              user_id: "{{ vars.user_id }}"
-      - step: auth_failure
-        args:
-          error: "Failed to upsert user"
+          next:
+            - step: create_session
 
   - step: create_session
-    desc: Create session record with session token
-    tool: postgres
-    auth:
-      type: postgres
-      credential: pg_auth_user
-    query: |
-      -- Generate session token and create session
-      WITH new_session AS (
+    desc: Create session
+    tool:
+      kind: postgres
+      auth: "{{ workload.db_credential }}"
+      command: |
         INSERT INTO auth.sessions (
           user_id,
           session_token,
           auth0_token,
-          auth0_refresh_token,
           expires_at,
-          ip_address,
-          user_agent
+          ip_address
         )
         VALUES (
-          $1,
-          encode(gen_random_bytes(32), 'hex'),  -- Generate random session token
-          $2,
-          $3,
-          NOW() + INTERVAL '1 hour' * $4,
-          $5::inet,
-          $6
+          {{ upsert_user.command_0.rows[0].user_id }},
+          md5(random()::text || clock_timestamp()::text),
+          '{{ workload.auth0_token }}',
+          NOW() + INTERVAL '24 hours',
+          '{{ workload.client_ip }}'::inet
         )
-        RETURNING session_id, session_token, user_id, expires_at
-      )
-      SELECT 
-        ns.session_id,
-        ns.session_token,
-        ns.user_id,
-        ns.expires_at,
-        u.email,
-        u.display_name
-      FROM new_session ns
-      JOIN auth.users u ON ns.user_id = u.user_id;
-    parameters:
-      - "{{ args.user_id }}"
-      - "{{ workload.auth0_token }}"
-      - "{{ workload.auth0_refresh_token }}"
-      - "{{ workload.session_duration_hours }}"
-      - "{{ workload.client_ip }}"
-      - "{{ workload.client_user_agent }}"
-    
-    vars:
-      session_token: "{{ result[0].session_token }}"
-      session_id: "{{ result[0].session_id }}"
-      expires_at: "{{ result[0].expires_at }}"
-      email: "{{ result[0].email }}"
-      display_name: "{{ result[0].display_name }}"
-    
-    next:
-      - step: log_login_success
-        args:
-          user_id: "{{ args.user_id }}"
-          session_id: "{{ vars.session_id }}"
+        RETURNING session_token, user_id, expires_at;
+    case:
+      - when: "{{ event.name == 'step.exit' and result.command_0 is defined }}"
+        then:
+          next:
+            - step: success
 
-  - step: log_login_success
-    desc: Record successful login in audit log
-    tool: postgres
-    auth:
-      type: postgres
-      credential: pg_auth_user
-    query: |
-      INSERT INTO auth.audit_log (
-        user_id,
-        session_id,
-        event_type,
-        event_status,
-        event_details,
-        ip_address,
-        user_agent
-      )
-      VALUES (
-        $1,
-        $2,
-        'login',
-        'success',
-        jsonb_build_object(
-          'auth_method', 'auth0',
-          'session_duration_hours', $3
-        ),
-        $4::inet,
-        $5
-      );
-    parameters:
-      - "{{ args.user_id }}"
-      - "{{ args.session_id }}"
-      - "{{ workload.session_duration_hours }}"
-      - "{{ workload.client_ip }}"
-      - "{{ workload.client_user_agent }}"
-    
-    next:
-      - step: login_success
-
-  - step: login_success
-    desc: Return session token to client
-    tool: python
-    code: |
-      def main(session_token, user_id, email, display_name, expires_at):
-          """Return login success response."""
-          return {
-              "status": "authenticated",
-              "session_token": session_token,
-              "user": {
-                  "user_id": user_id,
-                  "email": email,
-                  "display_name": display_name
-              },
-              "expires_at": expires_at,
-              "message": "Authentication successful"
-          }
-    args:
-      session_token: "{{ vars.session_token }}"
-      user_id: "{{ args.user_id }}"
-      email: "{{ vars.email }}"
-      display_name: "{{ vars.display_name }}"
-      expires_at: "{{ vars.expires_at }}"
-    
-    next:
-      - step: end
-
-  - step: auth_failure
-    desc: Handle authentication failure
-    tool: python
-    code: |
-      def main(error, **context):
-          """Log authentication failure and raise error."""
-          import json
-          
-          # Log to audit table would happen here via separate postgres step
-          error_details = {
-              "error": error,
-              "context": context
-          }
-          
-          raise RuntimeError(f"Authentication failed: {error} | Context: {json.dumps(context)}")
-    args:
-      error: "{{ args.error }}"
-      context: "{{ args }}"
-    
-    next:
-      - step: log_login_failure
-
-  - step: log_login_failure
-    desc: Record failed login in audit log
-    tool: postgres
-    auth:
-      type: postgres
-      credential: pg_auth_user
-    query: |
-      INSERT INTO auth.audit_log (
-        event_type,
-        event_status,
-        event_details,
-        ip_address,
-        user_agent
-      )
-      VALUES (
-        'login',
-        'failure',
-        $1::jsonb,
-        $2::inet,
-        $3
-      );
-    parameters:
-      - "{{ args | tojson }}"
-      - "{{ workload.client_ip }}"
-      - "{{ workload.client_user_agent }}"
-    
-    next:
-      - step: end
+  - step: success
+    desc: Return session token
+    tool:
+      kind: python
+      auth: {}
+      libs: {}
+      args:
+        session_token: "{{ create_session.command_0.rows[0].session_token }}"
+        user_id: "{{ create_session.command_0.rows[0].user_id }}"
+        expires_at: "{{ create_session.command_0.rows[0].expires_at }}"
+        email: "{{ upsert_user[0].email }}"
+      code: |
+        # Arguments injected: session_token, user_id, expires_at, email
+        result = {
+            "status": "authenticated",
+            "session_token": session_token,
+            "user": {
+                "user_id": user_id,
+                "email": email
+            },
+            "expires_at": str(expires_at)
+        }
+    case:
+      - when: "{{ event.name == 'step.exit' }}"
+        then:
+          next:
+            - step: end
 
   - step: end
-    desc: Complete authentication workflow
+    desc: Complete
+    tool:
+      kind: python
+      auth: {}
+      libs: {}
+      args: {}
+      code: |
+        result = {"status": "complete"}

@@ -569,7 +569,7 @@ kubectl logs script-process-data-522095307073519743-abcd1 -n noetl
 
 ## See Also
 
-- [Keychain Token Refresh](./keychain_token_refresh.md) - Automatic credential renewal
-- [Credential Management](./credential_management.md) - Managing credentials
-- [Resource Limits](../reference/resource_limits.md) - Kubernetes resource configuration
-- [Job Scheduling](./job_scheduling.md) - Scheduling recurring script execution
+- [Keychain Token Refresh](./keychain_token_refresh) - Automatic credential renewal
+- [Authentication & Keychain](/docs/reference/auth_and_keychain_reference) - Managing credentials
+- [Container Tool](/docs/reference/tools/container) - Kubernetes container execution
+- [Script Attribute](./script_attribute) - Loading scripts from external sources

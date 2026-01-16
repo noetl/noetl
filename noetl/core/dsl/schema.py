@@ -55,7 +55,7 @@ class DatabaseSchema:
         self.noetl_password = noetl_password or self.settings.noetl_password
         self.noetl_schema = noetl_schema or self.settings.noetl_schema
 
-        logger.info(f"Using NoETL credentials for setup, user: {self.noetl_user}, schema: {self.noetl_schema}")
+        logger.debug(f"Using NoETL credentials for setup, user: {self.noetl_user}, schema: {self.noetl_schema}")
 
 
     async def initialize_connection(self):
@@ -66,7 +66,7 @@ class DatabaseSchema:
 
             if self.pgdb is None:
                 self.pgdb = self.settings.noetl_conn_string
-                logger.info(f"NoETL async connection: dbname={self.settings.postgres_db} user={self.noetl_user} host={self.settings.postgres_host} port={self.settings.postgres_port}")
+                logger.debug(f"NoETL async connection: dbname={self.settings.postgres_db} user={self.noetl_user} host={self.settings.postgres_host} port={self.settings.postgres_port}")
 
             if self.auto_setup:
                 if getattr(self, "settings", None) and getattr(self.settings, "noetl_drop_schema", False):
@@ -77,7 +77,7 @@ class DatabaseSchema:
                 self.conn = await psycopg.AsyncConnection.connect(self.pgdb)
                 await self.conn.set_autocommit(True)
                 self.is_postgres = True
-                logger.info("Connected to Postgres database as noetl user (async).")
+                logger.debug("Connected to Postgres database as noetl user (async).")
             except psycopg.OperationalError as e:
                 logger.error(f"NoETL user async connection failed, attempting to create user/schema: {e}")
                 await self.create_noetl_schema()
@@ -103,7 +103,7 @@ class DatabaseSchema:
 
             if self.pgdb is None:
                 self.pgdb = self.settings.noetl_conn_string
-                logger.info(f"NoETL sync connection: dbname={self.settings.postgres_db} user={self.noetl_user} host={self.settings.postgres_host} port={self.settings.postgres_port}")
+                logger.debug(f"NoETL sync connection: dbname={self.settings.postgres_db} user={self.noetl_user} host={self.settings.postgres_host} port={self.settings.postgres_port}")
 
             if self.auto_setup and (self.conn is None):
                 try:

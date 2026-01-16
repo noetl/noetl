@@ -13,9 +13,11 @@ workflow:
     desc: Fetch data with retry on failures
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main():
-            return {"status": "initialized"}
+        result = {"status": "initialized"}
 
     case:
       - when: "{{ event.name == 'step.exit' }}"
@@ -65,35 +67,35 @@ workflow:
     desc: Validate retry succeeded
     tool:
       kind: python
-      code: |
-        def main(input_data):
-            # Check we got all items despite failures - handle server wrapping
-            raw_data = input_data.get('fetch_with_retry', [])
-
-            # Unwrap if server wrapped in {'value': ...}
-            if isinstance(raw_data, dict) and 'value' in raw_data:
-                data = raw_data['value']
-            elif isinstance(raw_data, dict) and 'data' in raw_data:
-                data = raw_data['data']
-            elif isinstance(raw_data, list):
-                data = raw_data
-            else:
-                data = []
-
-            print(f"Total items fetched (with retry): {len(data)}")
-
-            # Note: This will fail on page 2 unless retry is working
-            # With retry, should get all 35 items
-            assert len(data) >= 10, f"Expected at least 10 items, got {len(data)}"
-
-            return {
-                'status': 'success',
-                'total_items': len(data),
-                'retry_worked': len(data) == 35
-            }
+      auth: {}
+      libs: {}
       args:
-        input_data:
-          fetch_with_retry: "{{ fetch_with_retry }}"
+        input_data: "{{ fetch_with_retry }}"
+      code: |
+        # Check we got all items despite failures - handle server wrapping
+        raw_data = input_data
+
+        # Unwrap if server wrapped in {'value': ...}
+        if isinstance(raw_data, dict) and 'value' in raw_data:
+            data = raw_data['value']
+        elif isinstance(raw_data, dict) and 'data' in raw_data:
+            data = raw_data['data']
+        elif isinstance(raw_data, list):
+            data = raw_data
+        else:
+            data = []
+
+        print(f"Total items fetched (with retry): {len(data)}")
+
+        # Note: This will fail on page 2 unless retry is working
+        # With retry, should get all 35 items
+        assert len(data) >= 10, f"Expected at least 10 items, got {len(data)}"
+
+        result = {
+            'status': 'success',
+            'total_items': len(data),
+            'retry_worked': len(data) == 35
+        }
 
     case:
       - when: "{{ event.name == 'step.exit' and response is defined }}"
@@ -105,6 +107,8 @@ workflow:
     desc: Workflow complete
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main():
-            return {"status": "complete"}
+        result = {"status": "complete"}

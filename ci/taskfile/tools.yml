@@ -5,6 +5,7 @@ tasks:
     desc: Validate required tooling on WSL2 hosts
     cmds:
       - task: dev:tools:validate-install
+      - task: noetlctl:local:build
 
   dev:tools:validate-install:
     desc: Validate required tools are installed and accessible in WSL2
@@ -31,6 +32,13 @@ tasks:
           echo "[OK] jq: $(jq --version 2>/dev/null | head -n1 || echo installed)"
         fi
         check python3
+        if ! command -v cargo >/dev/null 2>&1; then
+          echo "[MISSING] cargo (Rust toolchain) not found in PATH"
+          echo "       -> Install with: curl --proto '"'"'=https'"'"' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
+          fail=1
+        else
+          echo "[OK] cargo: $(cargo --version 2>/dev/null | head -n1 || echo installed)"
+        fi
         if command -v docker >/dev/null 2>&1; then
           echo "[OK] docker available"; if ! docker info >/dev/null 2>&1; then
             echo "[WARN] docker present but daemon not reachable"
@@ -42,6 +50,11 @@ tasks:
           fail=1
         fi
         if command -v task >/dev/null 2>&1; then echo "[OK] task available"; else echo "[INFO] task not installed (you are likely running this via task already)"; fi
+        if command -v noetl >/dev/null 2>&1; then
+          echo "[OK] noetl CLI: $(noetl --version 2>/dev/null | head -n1 || echo present)"
+        else
+          echo "[INFO] noetl CLI not installed - install with: pip install noetl[cli]"
+        fi
         exit $fail
         '
 

@@ -1,0 +1,39 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: playbook_composition_parent
+  path: automation/examples/composition
+
+workload:
+  environment: "production"
+  version: "v2.5.3"
+
+workflow:
+  - step: start
+    desc: "Parent playbook that calls child playbooks"
+    next:
+      - step: call_build
+
+  - step: call_build
+    desc: "Call build playbook"
+    tool:
+      kind: playbook
+      path: ./build_child.yaml
+      args:
+        image_tag: "{{ workload.version }}"
+        build_env: "{{ workload.environment }}"
+    next:
+      - step: call_deploy
+
+  - step: call_deploy
+    desc: "Call deploy playbook"
+    tool:
+      kind: playbook
+      path: ./deploy_child.yaml
+      args:
+        image_tag: "{{ workload.version }}"
+        target_env: "{{ workload.environment }}"
+    next:
+      - step: end
+
+  - step: end

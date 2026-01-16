@@ -23,9 +23,11 @@ workflow:
     desc: "Start container-based PostgreSQL initialization"
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main():
-            return {"status": "initialized"}
+        result = {"status": "initialized"}
     next:
       - step: verify_postgres_connection
 
@@ -165,10 +167,12 @@ workflow:
     desc: "Container-based PostgreSQL initialization complete"
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main():
-            return {
-                "status": "success",
-                "message": "Container-based PostgreSQL initialization complete",
-                "schema_created": "container_test"
-            }
+        result = {
+            "status": "success",
+            "message": "Container-based PostgreSQL initialization complete",
+            "schema_created": "container_test"
+        }

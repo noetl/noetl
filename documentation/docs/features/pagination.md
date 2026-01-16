@@ -544,6 +544,6 @@ This ensures each worker thread has its own event loop, preventing conflicts in 
 
 ## See Also
 
-- [Variables Feature](./variables.md) - Using pagination results in downstream steps
-- [HTTP Action Reference](../reference/http_action_type.md) - HTTP action configuration
-- [Iterator Feature](./iterator.md) - Loop over collections vs pagination
+- [Variables Feature](./variables) - Using pagination results in downstream steps
+- [HTTP Tool Reference](/docs/reference/tools/http) - HTTP action configuration
+- [Iterator Feature](./iterator) - Loop over collections vs pagination

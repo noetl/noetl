@@ -24,8 +24,10 @@ workflow:
     desc: Process query results
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main(input_data):
             print(f"[PROCESS] Processing DuckDB query results")
             print(f"[PROCESS] Input data type: {type(input_data).__name__}")
             
@@ -60,8 +62,10 @@ workflow:
     desc: Verify results
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main(input_data):
             print(f"[VERIFY] Verifying DuckDB test results")
             
             process_result = input_data.get('process_result', {})
@@ -96,8 +100,10 @@ workflow:
     desc: Complete the test
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main(input_data):
             print(f"[END] DuckDB test completed successfully!")
             
             verify_result = input_data.get('verify_result', {})

@@ -106,44 +106,61 @@ Use `{{ secret.* }}` references in headers, params, or payloads to resolve value
 ### API Key in Parameters
 ```yaml
 - step: api_with_key
-  tool: http
-  method: GET
-  endpoint: "https://api.weather.com/v1/forecast"
-  params:
-    api_key: "{{ secret.weather_api_key }}"
-    location: "{{ city.name }}"
+  tool:
+    kind: http
+    method: GET
+    url: "https://api.weather.com/v1/forecast"
+    params:
+      api_key: "{{ secret.weather_api_key }}"
+      location: "{{ city.name }}"
 ```
 
 ## Common Patterns
 
-### Pattern: Iterator with HTTP and Save
+### Pattern: Loop with HTTP and Sink
+
+The `loop:` attribute is a step-level modifier (not a tool kind) that controls repeated execution. State is managed via NATS KV snapshots.
 
 ```yaml
 - step: fetch_weather_data
-  tool: iterator
-  collection: "{{ workload.cities }}"
-  element: city
-  task:
-    tool: http
+  desc: Fetch weather data for multiple cities
+  tool:
+    kind: http
     method: GET
-    endpoint: "https://api.open-meteo.com/v1/forecast"
+    url: "https://api.open-meteo.com/v1/forecast"
+    headers:
+      Accept: application/json
     params:
       latitude: "{{ city.lat }}"
       longitude: "{{ city.lon }}"
       current: temperature_2m
-    sink:
-      tool: postgres
-      table: weather_data
-      args:
-        city_name: "{{ city.name }}"
-        temperature: "{{ result.data.data.current.temperature_2m }}"
-        http_status: "{{ result.data.status }}"
+  loop:
+    in: "{{ workload.cities }}"
+    iterator: city
+    mode: sequential
+  case:
+    - when: "{{ event.name == 'step.exit' and response is defined }}"
+      then:
+        sink:
+          tool:
+            kind: postgres
+            auth: "{{ workload.pg_auth }}"
+            table: weather_data
+          args:
+            city_name: "{{ city.name }}"
+            temperature: "{{ response.data.current.temperature_2m }}"
+            http_status: "{{ response.status_code }}"
 ```
 
-**Important**: HTTP response structure is nested:
-- `result.data.status` - HTTP status code
-- `result.data.data` - Response body
-- `result.data.headers` - Response headers
+**Loop attributes:**
+- `in:` - Collection to iterate over (Jinja2 expression)
+- `iterator:` - Variable name for current item
+- `mode:` - Execution mode: `sequential` or `parallel`
+
+**Important**: HTTP response structure:
+- `response.status_code` - HTTP status code
+- `response.data` - Response body (parsed JSON)
+- `response.headers` - Response headers
 
 ## Error Handling
 
@@ -181,6 +198,6 @@ temperature: "{{ result.data.data.current.temperature_2m }}"
 
 ## See Also
 
-- [Iterator Plugin](iterator.md) - Loop over collections
-- [Storage Plugin](storage.md) - Save data to databases
-- [Secret Management](../secret_management.md) - Managing credentials
+- [Iterator Feature](/docs/features/iterator) - Loop over collections
+- [HTTP Tool Reference](/docs/reference/tools/http) - Full HTTP tool documentation
+- [Authentication Reference](/docs/reference/auth_and_keychain_reference) - Managing credentials

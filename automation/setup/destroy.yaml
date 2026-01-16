@@ -1,0 +1,82 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: noetl_destroy
+  path: automation/setup/destroy
+  description: Destroy NoETL development environment
+workflow:
+  - step: start
+    desc: Begin destroy workflow
+    tool:
+      kind: shell
+      cmds:
+        - echo "🔥 Starting environment destroy..."
+    next:
+      - step: delete_cluster
+  
+  - step: delete_cluster
+    desc: Delete kind cluster
+    tool:
+      kind: shell
+      cmds:
+        - kind delete cluster --name=noetl || echo "Cluster deletion skipped or failed"
+    next:
+      - step: cleanup_docker
+  
+  - step: cleanup_docker
+    desc: Clean up Docker resources
+    tool:
+      kind: shell
+      cmds:
+        - |
+          docker builder prune --all --force
+          docker image prune --all --force
+          docker volume prune --force || echo "Docker cleanup skipped or failed"
+    next:
+      - step: clear_cache
+  
+  - step: clear_cache
+    desc: Clear cache directories
+    tool:
+      kind: shell
+      cmds:
+        - |
+          rm -rf ci/kind/cache/pg-data/*
+          rm -rf ci/kind/cache/noetl-data/*
+          rm -rf ci/kind/cache/noetl-logs/*
+          echo "✓ All cache directories cleared" || echo "Cache clear skipped or failed"
+    next:
+      - step: clear_noetl_data
+  
+  - step: clear_noetl_data
+    desc: Clear NoETL data
+    tool:
+      kind: shell
+      cmds:
+        - rm -rf ci/kind/cache/noetl-data/* || echo "Data clear skipped or failed"
+    next:
+      - step: summary
+  
+  - step: summary
+    desc: Show destruction summary
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "✅ Environment Destroyed!"
+          echo ""
+          echo "Cleanup completed:"
+          echo "  - Kind cluster: deleted"
+          echo "  - Docker resources: cleaned"
+          echo "  - Cache directories: cleared"
+          echo "  - NoETL data: cleared"
+          echo ""
+          echo "You can now run bootstrap again:"
+          echo "  noetl run boot"
+          echo ""
+    next:
+      - step: end
+  
+  - step: end
+    desc: End destroy workflow

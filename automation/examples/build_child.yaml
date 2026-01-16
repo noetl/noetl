@@ -1,0 +1,23 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: build_child
+  path: automation/examples/composition/build
+
+workflow:
+  - step: start
+    next:
+      - step: build_image
+
+  - step: build_image
+    desc: "Build Docker image"
+    tool:
+      kind: shell
+      cmds:
+        - "echo 'Building image with tag: {{ workload.image_tag }}'"
+        - "echo 'Build environment: {{ workload.build_env }}'"
+        - "echo 'Build completed successfully'"
+    next:
+      - step: end
+
+  - step: end

@@ -1,0 +1,202 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: kind_automation
+  path: automation/infrastructure/kind
+
+workload:
+  action: help  # create, delete, list, image-load, images-list, status, context-set
+
+workflow:
+  - step: start
+    desc: Entry point for Kind cluster automation
+    tool:
+      kind: shell
+      cmds:
+        - echo "Kind Cluster Automation - Action '{{ workload.action }}'"
+    next:
+      - when: "{{ workload.action }} == create"
+        then:
+          - step: create_cluster
+        args: {}
+      - when: "{{ workload.action }} == delete"
+        then:
+          - step: delete_cluster
+        args: {}
+      - when: "{{ workload.action }} == list"
+        then:
+          - step: list_clusters
+        args: {}
+      - when: "{{ workload.action }} == image-load"
+        then:
+          - step: load_image
+        args: {}
+      - when: "{{ workload.action }} == images-list"
+        then:
+          - step: list_images
+        args: {}
+      - when: "{{ workload.action }} == status"
+        then:
+          - step: check_status
+        args: {}
+      - when: "{{ workload.action }} == context-set"
+        then:
+          - step: set_context
+        args: {}
+      - when: "{{ workload.action }} == help"
+        then:
+          - step: show_help
+        args: {}
+      - step: show_help
+
+  - step: create_cluster
+    desc: Create Kind Kubernetes cluster
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Creating Kind cluster 'noetl'..."
+          kind create cluster --config=ci/kind/config.yaml
+    next:
+      - step: end
+
+  - step: delete_cluster
+    desc: Delete Kind Kubernetes cluster
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Deleting Kind cluster 'noetl'..."
+          kind delete cluster --name=noetl
+    next:
+      - step: end
+
+  - step: list_clusters
+    desc: List all Kind clusters
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Kind Clusters:"
+          echo "=============="
+          kind get clusters
+    next:
+      - step: end
+
+  - step: load_image
+    desc: Load NoETL image to Kind cluster
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Loading NoETL image to Kind cluster..."
+          IMAGE_TAG=$(cat .noetl_last_build_tag.txt)
+          kind load docker-image local/noetl:$IMAGE_TAG --name noetl
+    next:
+      - step: end
+
+  - step: list_images
+    desc: List images in Kind cluster
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Images in Kind cluster:"
+          echo "======================="
+          docker exec -it noetl-control-plane crictl images
+    next:
+      - step: end
+
+  - step: check_status
+    desc: Check Kind cluster status
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Kind Cluster Status:"
+          echo "===================="
+          echo ""
+          echo "=== Kind Clusters ==="
+          kind get clusters 2>/dev/null || echo "No Kind clusters found"
+          echo ""
+          echo "=== Cluster Info (noetl) ==="
+          if kind get clusters 2>/dev/null | grep -q "^noetl$"; then
+            kubectl cluster-info --context kind-noetl 2>/dev/null || echo "Cannot connect to noetl cluster"
+          else
+            echo "Cluster 'noetl' does not exist"
+          fi
+          echo ""
+          echo "=== Cluster Nodes ==="
+          kubectl get nodes --context kind-noetl 2>/dev/null || echo "No nodes (cluster not running)"
+    next:
+      - step: end
+
+  - step: set_context
+    desc: Set kubectl context to kind-noetl cluster
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Setting kubectl context to kind-noetl..."
+          kubectl config use-context kind-noetl
+    next:
+      - step: end
+
+  - step: show_help
+    desc: Display available actions
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "=================================================="
+          echo " Kind Cluster Automation"
+          echo "=================================================="
+          echo ""
+          echo "Usage:"
+          echo "  noetl run automation/infrastructure/kind.yaml --set action=<action>"
+          echo ""
+          echo "Cluster Management:"
+          echo "  create      - Create Kind cluster 'noetl'"
+          echo "  delete      - Delete Kind cluster 'noetl'"
+          echo "  list        - List all Kind clusters"
+          echo "  status      - Check cluster status and nodes"
+          echo "  context-set - Set kubectl context to kind-noetl"
+          echo ""
+          echo "Image Management:"
+          echo "  image-load  - Load NoETL image to cluster"
+          echo "  images-list - List images in cluster"
+          echo ""
+          echo "Examples:"
+          echo "  # Create Kind cluster"
+          echo "  noetl run automation/infrastructure/kind.yaml --set action=create"
+          echo ""
+          echo "  # Check status"
+          echo "  noetl run automation/infrastructure/kind.yaml --set action=status"
+          echo ""
+          echo "  # Load NoETL image"
+          echo "  noetl run automation/infrastructure/kind.yaml --set action=image-load"
+          echo ""
+          echo "  # List clusters"
+          echo "  noetl run automation/infrastructure/kind.yaml --set action=list"
+          echo ""
+          echo "Task Equivalents:"
+          echo "  create      -> task kind:local:cluster-create"
+          echo "  delete      -> task kind:local:cluster-delete"
+          echo "  list        -> task kind:local:clusters-list"
+          echo "  status      -> custom status check"
+          echo "  context-set -> task kubectl:local:context-set-kind"
+          echo "  image-load  -> task kind:local:image-load"
+          echo "  images-list -> task kind:k8s:images-list"
+          echo ""
+    next:
+      - step: end
+
+  - step: end
+    desc: End workflow

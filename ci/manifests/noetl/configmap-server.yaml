@@ -28,6 +28,8 @@ data:
   NATS_STREAM: "NOETL_COMMANDS"
   NATS_CONSUMER: "noetl_worker_pool"
   NATS_SUBJECT: "noetl.commands"
+  # Keychain cache refresh threshold (15 minutes - prevents expiration during long loops)
+  NOETL_KEYCHAIN_REFRESH_THRESHOLD: "900"
   # Server Runtime Configuration
   NOETL_ENABLE_UI: "true"
   NOETL_HOST: "0.0.0.0"

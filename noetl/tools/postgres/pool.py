@@ -6,6 +6,7 @@ for postgres plugin executions. All actual pooling logic is in noetl.core.db.poo
 """
 import hashlib
 import asyncio
+import time
 from psycopg import AsyncConnection
 from psycopg_pool import AsyncConnectionPool
 from psycopg.rows import dict_row, DictRow
@@ -22,6 +23,7 @@ __all__ = [
     'close_pool',
     'close_all_pools',
     'get_pool_stats',
+    'close_execution_pools',
 ]
 
 # Per-credential pool registry for plugins
@@ -37,12 +39,12 @@ _plugin_global_lock = asyncio.Lock()
 async def get_or_create_plugin_pool(
         connection_string: str,
         pool_name: str = "postgres_plugin",
-        min_size: int = 1,
-        max_size: int = 5,
-        timeout: float = 30.0,
-        max_waiting: int = 20,
-        max_lifetime: float = 300.0,  # 30 minutes instead of 60
-        max_idle: float = 150.0,  # 5 minutes instead of 10
+        min_size: int = 2,
+        max_size: int = 20,
+        timeout: float = None,  # None = default 10s, -1 = disable timeout (infinite wait)
+        max_waiting: int = 50,
+        max_lifetime: float = 3600.0,  # 1 hour (for long analytical workloads)
+        max_idle: float = 300.0,  # 5 minutes
 ) -> AsyncConnectionPool[AsyncConnection[DictRow]]:
     """
     Get existing pool or create new one for the connection string.
@@ -67,8 +69,9 @@ async def get_or_create_plugin_pool(
     Raises:
         Exception: If pool creation fails
     """
-    # Create a hash key from connection string (without exposing password)
-    pool_key = _create_pool_key(connection_string)
+    # Create a hash key from connection string + pool name
+    # This allows different pools for same credentials with different names
+    pool_key = _create_pool_key(connection_string + "||" + pool_name)
 
     # Get or create lock for this pool
     async with _plugin_global_lock:
@@ -78,7 +81,10 @@ async def get_or_create_plugin_pool(
     # Get or create pool with lock
     async with _plugin_locks[pool_key]:
         if pool_key not in _plugin_pools:
-            logger.info(f"Creating new Postgres plugin pool: {pool_name} (key: {pool_key[:12]}...)")
+            logger.info(
+                f"Creating new Postgres plugin pool: {pool_name} (key: {pool_key[:12]}...) | "
+                f"Config: min={min_size}, max={max_size}, timeout={timeout}s, max_waiting={max_waiting}"
+            )
 
             try:
                 pool = AsyncConnectionPool(
@@ -103,41 +109,68 @@ async def get_or_create_plugin_pool(
             except Exception as e:
                 logger.error(f"Failed to create Postgres plugin pool: {e}")
                 raise
+        else:
+            logger.debug(f"Reusing existing pool {pool_name}")
 
         return _plugin_pools[pool_key]
 
 
 @asynccontextmanager
-async def get_plugin_connection(connection_string: str, pool_name: str = "postgres_plugin"):
+async def get_plugin_connection(connection_string: str, pool_name: str = "postgres_plugin", **pool_kwargs):
     """
     Get a connection from the plugin pool as an async context manager.
-
+    
     This is the primary interface for plugin code to get database connections.
     Connections are automatically returned to the pool when the context exits.
-
+    
+    Args:
+        connection_string: PostgreSQL connection string
+        pool_name: Name prefix for the pool (for logging/monitoring)
+        **pool_kwargs: Pool configuration parameters:
+            - timeout: Timeout for acquiring connection (None=default 10s, -1=infinite wait)
+            - min_size: Minimum connections (default 2)
+            - max_size: Maximum connections (default 20)
+            - max_waiting: Max requests waiting (default 50)
+            - max_lifetime: Connection max lifetime in seconds (default 3600)
+            - max_idle: Connection max idle time in seconds (default 300)
+    
+    Yields:
+        AsyncConnection with dict_row factory
+    
     Usage:
-        async with get_plugin_connection(conn_string) as conn:
+        async with get_plugin_connection(conn_string, timeout=300, max_size=50) as conn:
             async with conn.cursor() as cur:
                 await cur.execute("SELECT 1")
                 result = await cur.fetchone()
-
-    Args:
-        connection_string: PostgreSQL connection string
-        pool_name: Name prefix for logging
-
-    Yields:
-        AsyncConnection instance
-
+    
     Raises:
-        Exception: If connection cannot be acquired
+        Exception: If pool creation or connection acquisition fails
     """
-    pool = await get_or_create_plugin_pool(connection_string, pool_name=pool_name)
+    # Handle timeout parameter: None = default (10s), -1 = infinite, else = specified value
+    if 'timeout' in pool_kwargs:
+        timeout = pool_kwargs['timeout']
+        pool_kwargs['timeout'] = 10.0 if timeout is None else (None if timeout == -1 else timeout)
+    
+    pool = await get_or_create_plugin_pool(connection_string, pool_name, **pool_kwargs)
 
+    # Log connection acquisition
+    logger.debug(f"Acquiring connection from {pool_name}")
+
+    acquire_start = time.time()
     try:
         async with pool.connection() as conn:
+            acquire_time = time.time() - acquire_start
+            logger.debug(f"Connection acquired from {pool_name} in {acquire_time*1000:.1f}ms")
+            
             yield conn
+            release_start = time.time()
+        release_time = time.time() - release_start
+        logger.debug(f"Connection returned to {pool_name} (release took {release_time*1000:.1f}ms)")
     except Exception as e:
-        logger.exception(f"Error getting connection from plugin pool: {e}")
+        acquire_time = time.time() - acquire_start
+        logger.error(
+            f"Failed to acquire/use connection from {pool_name} after {acquire_time:.2f}s: {e}"
+        )
         raise
 
 
@@ -213,21 +246,75 @@ def get_plugin_pool_stats() -> Dict[str, Dict]:
         - size: Current pool size
         - available: Available connections
         - waiting: Number of requests waiting
+        - age_seconds: How long the pool has been active
+        - last_health_check: Seconds since last health check
     """
     stats = {}
     for pool_key, pool in _plugin_pools.items():
         try:
+            # Use built-in get_stats() method from psycopg_pool
+            pool_stats = pool.get_stats()
+            
             stats[pool_key[:12]] = {
                 "name": pool.name,
-                "size": pool._pool.size if hasattr(pool, '_pool') else "unknown",
-                "available": pool._pool.available if hasattr(pool, '_pool') else "unknown",
-                "waiting": len(pool._waiting) if hasattr(pool, '_waiting') else 0,
+                "size": pool_stats.get("pool_size", 0),
+                "available": pool_stats.get("pool_available", 0),
+                "waiting": pool_stats.get("requests_waiting", 0),
             }
         except Exception as e:
             logger.debug(f"Could not get stats for plugin pool {pool_key}: {e}")
             stats[pool_key[:12]] = {"error": str(e)}
 
     return stats
+
+
+async def close_execution_pools(execution_id: str) -> int:
+    """
+    Close all pools associated with a specific execution_id.
+    
+    This is called when a playbook execution completes to clean up
+    execution-scoped pools (pools with name like exec_<execution_id>).
+    
+    Args:
+        execution_id: The execution identifier
+        
+    Returns:
+        Number of pools closed
+        
+    Example:
+        >>> await close_execution_pools("534308556917440716")
+        2  # Closed 2 pools for this execution
+    """
+    closed_count = 0
+    pool_prefix = f"exec_{execution_id}"
+    pools_to_close = []
+    
+    # Identify pools to close
+    async with _plugin_global_lock:
+        for pool_key, pool in list(_plugin_pools.items()):
+            if pool.name and pool.name.startswith(pool_prefix):
+                pools_to_close.append((pool_key, pool))
+    
+    # Close identified pools
+    for pool_key, pool in pools_to_close:
+        try:
+            logger.info(f"Closing execution pool: {pool.name} (execution_id={execution_id})")
+            await pool.close()
+            
+            async with _plugin_global_lock:
+                if pool_key in _plugin_pools:
+                    del _plugin_pools[pool_key]
+                if pool_key in _plugin_locks:
+                    del _plugin_locks[pool_key]
+            
+            closed_count += 1
+        except Exception as e:
+            logger.error(f"Failed to close execution pool {pool.name}: {e}")
+    
+    if closed_count > 0:
+        logger.info(f"Closed {closed_count} execution pools for execution_id={execution_id}")
+    
+    return closed_count
 
 
 async def get_or_create_pool(

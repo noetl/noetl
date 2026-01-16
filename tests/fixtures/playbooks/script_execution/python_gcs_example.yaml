@@ -14,9 +14,11 @@ workflow:
     desc: Start workflow
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main():
-            return {"status": "initialized"}
+        result = {"status": "initialized"}
     
     case:
       - when: "{{ event.name == 'step.exit' }}"
@@ -47,20 +49,21 @@ workflow:
     desc: Verify GCS-loaded script executed correctly
     tool:
       kind: python
-      code: |
-        def main(result):
-            assert result['status'] == 'success', f"Expected success, got {result['status']}"
-            assert result['total_greetings'] == 2, f"Expected 2 greetings, got {result['total_greetings']}"
-            assert len(result['messages']) == 2, f"Expected 2 messages, got {len(result['messages'])}"
-            
-            return {
-                "status": "verified",
-                "source_type": "gcs",
-                "checks_passed": 3,
-                "result": result
-            }
+      auth: {}
+      libs: {}
       args:
         result: "{{ run_python_from_gcs }}"
+      code: |
+        assert result['status'] == 'success', f"Expected success, got {result['status']}"
+        assert result['total_greetings'] == 2, f"Expected 2 greetings, got {result['total_greetings']}"
+        assert len(result['messages']) == 2, f"Expected 2 messages, got {len(result['messages'])}"
+        
+        result = {
+            "status": "verified",
+            "source_type": "gcs",
+            "checks_passed": 3,
+            "result": result
+        }
     
     case:
       - when: "{{ event.name == 'step.exit' and response is defined }}"
@@ -72,6 +75,8 @@ workflow:
     desc: End workflow
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main():
-            return {"status": "complete"}
+        result = {"status": "complete"}

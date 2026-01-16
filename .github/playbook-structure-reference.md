@@ -98,17 +98,21 @@ workflow:
 
 ### 13. Type: python
 - Executes Python code defined in `code` attribute
-- Code **must** be a main function: `def main(input_data):`
-- Arguments passed to function via `data` attribute of the step
+- **No `def main()` wrapper** - code executes directly
+- Libraries imported via `libs:` section (aliased)
+- Variables injected via `args:` section
+- Result assigned to `result` variable (not returned)
 
 ```yaml
 - step: process
-  tool: python
-  data:
-    value: "{{ workload.input }}"
-  code: |
-    def main(value):
-        return {"result": value * 2}
+  tool:
+    kind: python
+    libs: {}
+    args:
+      value: "{{ workload.input }}"
+    code: |
+      # Pure Python code - no imports, no def main()
+      result = {"status": "success", "data": {"result": value * 2}}
 ```
 
 ### 14. Type: playbook
@@ -236,18 +240,23 @@ Auth types: `postgres`, `duckdb`, `hmac`, `bearer`
 **Example - Accessing step results:**
 ```yaml
 - step: compute_score
-  tool: python
-  code: |
-    def main():
-        return {"score": 85, "grade": "A"}
+  tool:
+    kind: python
+    libs: {}
+    args: {}
+    code: |
+      # Pure Python code - no imports, no def main()
+      result = {"status": "success", "data": {"score": 85, "grade": "A"}}
 
 - step: use_result
-  tool: python
-  data:
-    previous_score: "{{ compute_score.data.score }}"  # Access: 85
-  code: |
-    def main(previous_score):
-        return {"doubled": previous_score * 2}
+  tool:
+    kind: python
+    libs: {}
+    args:
+      previous_score: "{{ compute_score.data.score }}"  # Access: 85
+    code: |
+      # Pure Python code - variables from args are available
+      result = {"status": "success", "data": {"doubled": previous_score * 2}}
 ```
 
 ### 20. End Step
@@ -307,16 +316,20 @@ workflow:
           - step: end
 
   - step: success_path
-    tool: python
-    code: |
-      def main():
-          return {"message": "Threshold passed"}
+    tool:
+      kind: python
+      libs: {}
+      args: {}
+      code: |
+        # Pure Python code - no imports, no def main()
+        result = {"status": "success", "data": {"message": "Threshold passed"}}
     sink:
-      tool: postgres
-      auth: pg_local
-      table: results
-      mode: append
-      data:
+      tool:
+        kind: postgres
+        auth: pg_local
+        table: results
+        mode: append
+      args:
         message: "{{ this.data.message }}"
     next:
       - step: end
@@ -333,14 +346,14 @@ workflow:
 4. ✅ `workbook` contains named reusable tasks referenced by name
 5. ✅ `workflow` is required and must have `start` step
 6. ✅ Each step has unique `step` name
-7. ✅ Steps use `type` to specify action type
-8. ✅ `type: workbook` references workbook tasks via `name`
-9. ✅ `type: python` requires `def main(input_data):` function
-10. ✅ `type: playbook` for sub-playbook composition
-11. ✅ `type: iterator` loops with `collection`, `element`, `mode`, `task`
-12. ✅ `save` attribute persists results to storage backends
+7. ✅ Steps use `tool:` with `kind:` to specify action type
+8. ✅ `tool: {kind: workbook, name: ...}` references workbook tasks
+9. ✅ `tool: {kind: python, libs: {}, args: {}, code: ...}` for Python - no def main()
+10. ✅ `tool: {kind: playbook, path: ...}` for sub-playbook composition
+11. ✅ `tool: {kind: iterator, ...}` loops with `collection`, `element`, `mode`
+12. ✅ `sink` attribute persists results to storage backends
 13. ✅ `next` attribute controls flow with `when`/`then`/`else`
-14. ✅ `auth` provides credential configuration
+14. ✅ `auth` provides credential configuration under `tool:`
 15. ✅ Access results via `{{ step_name.data }}`
 16. ✅ Define `end` step for proper completion
 

@@ -1,0 +1,79 @@
+version: '3.45'
+
+tasks:
+  gateway-build-image:
+    desc: "Build Gateway Docker image and load into kind"
+    cmds:
+      - docker/build-gateway-image.sh
+
+  gateway-deploy:
+    desc: "Deploy Gateway API to Kubernetes"
+    cmds:
+      - kubectl apply -f ci/manifests/gateway/namespace.yaml
+      - kubectl apply -f ci/manifests/gateway/deployment.yaml
+      - kubectl apply -f ci/manifests/gateway/service.yaml
+      - echo "Gateway API deployed at http://localhost:8090"
+
+  gateway-ui-deploy:
+    desc: "Deploy Gateway UI to Kubernetes"
+    cmds:
+      - kubectl apply -f ci/manifests/gateway/configmap-ui.yaml
+      - kubectl apply -f ci/manifests/gateway/configmap-ui-files.yaml
+      - kubectl apply -f ci/manifests/gateway/deployment-ui.yaml
+      - kubectl apply -f ci/manifests/gateway/service-ui.yaml
+      - echo "Gateway UI deployed at http://localhost:8080"
+
+  gateway-ui-update:
+    desc: "Regenerate and deploy updated Gateway UI files"
+    cmds:
+      - ./ci/manifests/gateway/regenerate-ui-configmap.sh
+      - kubectl apply -f ci/manifests/gateway/configmap-ui-files.yaml
+      - kubectl rollout restart deployment/gateway-ui -n gateway
+      - kubectl rollout status deployment/gateway-ui -n gateway --timeout=30s
+      - echo "✅ Gateway UI updated at http://localhost:8080"
+
+  gateway-deploy-all:
+    desc: "Build and deploy Gateway API and UI to Kubernetes"
+    cmds:
+      - task: gateway-build-image
+      - task: gateway-deploy
+      - task: gateway-ui-deploy
+
+  gateway-redeploy:
+    desc: "Rebuild and redeploy Gateway"
+    cmds:
+      - task: gateway-build-image
+      - kubectl rollout restart deployment/gateway -n gateway
+      - kubectl rollout status deployment/gateway -n gateway --timeout=60s
+
+  gateway-logs:
+    desc: "Show Gateway logs"
+    cmds:
+      - kubectl logs -n gateway -l app=gateway --tail=100 -f
+
+  gateway-ui-logs:
+    desc: "Show Gateway UI logs"
+    cmds:
+      - kubectl logs -n gateway -l app=gateway-ui --tail=100 -f
+
+  gateway-status:
+    desc: "Check Gateway deployment status"
+    cmds:
+      - kubectl get all -n gateway
+
+  gateway-remove:
+    desc: "Remove Gateway from Kubernetes"
+    cmds:
+      - kubectl delete namespace gateway --ignore-not-found=true
+
+  gateway-restart:
+    desc: "Restart Gateway pods"
+    cmds:
+      - kubectl rollout restart deployment/gateway -n gateway
+      - kubectl rollout restart deployment/gateway-ui -n gateway
+
+  gateway-test:
+    desc: "Test Gateway endpoints"
+    cmds:
+      - curl -s http://localhost:8090/graphql | head -20 || echo "Gateway not responding"
+      - curl -s http://localhost:8080/health || echo "Gateway UI not responding"

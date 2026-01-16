@@ -1,10 +1,10 @@
 # Querying NoETL logs (server and worker pools)
 
 This guide shows how to explore and query NoETL logs using VictoriaLogs (built‑in UI and Grafana).
-It assumes you deployed the local stack via `make observability-deploy`, which also starts port‑forwards:
+It assumes you deployed the local stack via `noetl run automation/infrastructure/monitoring.yaml --set action=deploy`, which also starts port‑forwards:
 
 - VictoriaLogs UI: http://localhost:9428
-- Grafana: http://localhost:3000 (get credentials via `make observability-grafana-credentials`)
+- Grafana: http://localhost:3000 (get credentials via `noetl run automation/infrastructure/monitoring.yaml --set action=grafana-creds`)
 
 Vector ships Kubernetes container logs to VictoriaLogs in Loki wire‑format with these labels:
 - app (from the pod label)

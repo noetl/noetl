@@ -18,9 +18,11 @@ workflow:
     desc: "Start Wikipedia Data Processing Workflow"
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main():
-            return {"status": "initialized"}
+        result = {"status": "initialized"}
     next:
       - step: fetch_wikipedia_data
 
@@ -99,7 +101,9 @@ workflow:
     desc: End workflow
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main():
-            return {"status": "completed"}
+        result = {"status": "completed"}
     desc: "End of Wikipedia processing workflow"

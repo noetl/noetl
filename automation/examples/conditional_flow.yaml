@@ -1,0 +1,96 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: conditional_flow_example
+  path: automation/examples/conditional
+
+workload:
+  environment: "production"
+  deploy: "true"
+
+workflow:
+  - step: start
+    desc: "Start with condition check"
+    case:
+      - when: "{{ workload.environment }} == production"
+        then:
+          - step: prod_setup
+      - when: "{{ workload.environment }} == staging"
+        then:
+          - step: staging_setup
+        else:
+          - step: dev_setup
+  
+  - step: prod_setup
+    desc: "Production environment setup"
+    tool:
+      kind: shell
+      cmds:
+        - "echo 'Setting up PRODUCTION environment'"
+        - "echo 'High availability: enabled'"
+        - "echo 'Replicas: 5'"
+    next:
+      - step: check_deploy
+  
+  - step: staging_setup
+    desc: "Staging environment setup"
+    tool:
+      kind: shell
+      cmds:
+        - "echo 'Setting up STAGING environment'"
+        - "echo 'Replicas: 2'"
+    next:
+      - step: check_deploy
+  
+  - step: dev_setup
+    desc: "Development environment setup"
+    tool:
+      kind: shell
+      cmds:
+        - "echo 'Setting up DEVELOPMENT environment'"
+        - "echo 'Debug mode: enabled'"
+    next:
+      - step: check_deploy
+  
+  - step: check_deploy
+    desc: "Check if deployment should proceed"
+    case:
+      - when: "{{ workload.deploy }} == true"
+        then:
+          - step: deploy_app
+          - step: verify_deployment
+      - when: "{{ workload.deploy }} != true"
+        then:
+          - step: skip_deploy
+  
+  - step: deploy_app
+    desc: "Deploy application"
+    tool:
+      kind: shell
+      cmds:
+        - "echo 'Deploying application to {{ workload.environment }}...'"
+        - "echo 'Deployment complete'"
+    next:
+      - step: end
+  
+  - step: verify_deployment
+    desc: "Verify deployment"
+    tool:
+      kind: shell
+      cmds:
+        - "echo 'Verifying deployment...'"
+        - "echo 'Health check: OK'"
+    next:
+      - step: end
+  
+  - step: skip_deploy
+    desc: "Skip deployment"
+    tool:
+      kind: shell
+      cmds:
+        - "echo 'Deployment skipped (deploy flag is false)'"
+    next:
+      - step: end
+  
+  - step: end
+    desc: "End of workflow"

@@ -14,8 +14,10 @@ workflow:
     desc: Initialize workflow with data preparation
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main(input_data):
             message = input_data.get('initial_message', 'default')
             import random
             value = random.randint(1, 20)
@@ -46,8 +48,10 @@ workflow:
     desc: Process high values
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main(input_data):
             value = int(input_data.get('value', 0))
             print(f"[PROCESS_HIGH] Handling high value: {value}")
             result = value * 2
@@ -67,8 +71,10 @@ workflow:
     desc: Process low values
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main(input_data):
             value = int(input_data.get('value', 0))
             print(f"[PROCESS_LOW] Handling low value: {value}")
             result = value + 100
@@ -88,8 +94,10 @@ workflow:
     desc: Generate final summary
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main(input_data):
             import json
             print(f"[SUMMARIZE] Generating final summary")
             print(f"[SUMMARIZE] Received input_data type: {type(input_data)}")
@@ -122,7 +130,9 @@ workflow:
     desc: Workflow complete
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main(input_data):
             print("[END] Workflow execution completed successfully!")
             return {"status": "completed"}

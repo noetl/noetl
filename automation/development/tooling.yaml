@@ -1,0 +1,676 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: dev_tools_automation
+  path: automation/development/tooling
+
+workload:
+  action: help  # setup, validate-install, validate-devtools, validate-docker, install-base, install-devtools, install-jq, install-yq, install-kind, install-pyenv, install-uv, install-tfenv, install-psql, ensure-path, fix-docker-perms
+
+workflow:
+  - step: start
+    desc: Entry point for dev tools automation
+    tool:
+      kind: shell
+      cmds:
+        - echo "Dev Tools Automation - Action '{{ workload.action }}'"
+    next:
+      - when: "{{ workload.action }} == setup"
+        then:
+          - step: setup_tools
+        args: {}
+      - when: "{{ workload.action }} == validate-install"
+        then:
+          - step: validate_install
+        args: {}
+      - when: "{{ workload.action }} == validate-devtools"
+        then:
+          - step: validate_devtools
+        args: {}
+      - when: "{{ workload.action }} == validate-docker"
+        then:
+          - step: validate_docker
+        args: {}
+      - when: "{{ workload.action }} == install-base"
+        then:
+          - step: install_base
+        args: {}
+      - when: "{{ workload.action }} == install-devtools"
+        then:
+          - step: install_devtools
+        args: {}
+      - when: "{{ workload.action }} == install-jq"
+        then:
+          - step: install_jq
+        args: {}
+      - when: "{{ workload.action }} == install-yq"
+        then:
+          - step: install_yq
+        args: {}
+      - when: "{{ workload.action }} == install-kind"
+        then:
+          - step: install_kind
+        args: {}
+      - when: "{{ workload.action }} == install-pyenv"
+        then:
+          - step: install_pyenv
+        args: {}
+      - when: "{{ workload.action }} == install-uv"
+        then:
+          - step: install_uv
+        args: {}
+      - when: "{{ workload.action }} == install-tfenv"
+        then:
+          - step: install_tfenv
+        args: {}
+      - when: "{{ workload.action }} == install-psql"
+        then:
+          - step: install_psql
+        args: {}
+      - when: "{{ workload.action }} == ensure-path"
+        then:
+          - step: ensure_path
+        args: {}
+      - when: "{{ workload.action }} == fix-docker-perms"
+        then:
+          - step: fix_docker_perms
+        args: {}
+      - when: "{{ workload.action }} == help"
+        then:
+          - step: show_help
+        args: {}
+      - step: show_help
+
+  - step: setup_tools
+    desc: Validate required tooling on WSL2 hosts
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Setting up and validating dev tools..."
+          bash -ceu '
+          fail=0
+          check() {
+            if command -v "$1" >/dev/null 2>&1; then
+              echo "[OK] $1: $($1 --version 2>/dev/null | head -n1 || echo installed)"
+            else
+              echo "[MISSING] $1 not found in PATH"; fail=1
+            fi
+          }
+          echo "Validating required tools..."
+          check git
+          check curl
+          if ! command -v jq >/dev/null 2>&1; then
+            echo "[MISSING] jq not found in PATH"
+            echo "       -> Install with: noetl run automation/development/tooling.yaml --set action=install-jq"
+            fail=1
+          else
+            echo "[OK] jq: $(jq --version 2>/dev/null | head -n1 || echo installed)"
+          fi
+          check python3
+          if ! command -v cargo >/dev/null 2>&1; then
+            echo "[MISSING] cargo (Rust toolchain) not found in PATH"
+            echo "       -> Install with: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
+            fail=1
+          else
+            echo "[OK] cargo: $(cargo --version 2>/dev/null | head -n1 || echo installed)"
+          fi
+          if command -v docker >/dev/null 2>&1; then
+            echo "[OK] docker available"; if ! docker info >/dev/null 2>&1; then
+              echo "[WARN] docker present but daemon not reachable"
+              echo "       -> Ensure Docker Desktop is running and WSL integration is enabled"
+              echo "       -> You may need to add your user to the docker group: noetl run automation/development/tooling.yaml --set action=fix-docker-perms"
+            fi
+          else
+            echo "[MISSING] docker not found in PATH"
+            fail=1
+          fi
+          if command -v task >/dev/null 2>&1; then echo "[OK] task available"; else echo "[INFO] task not installed (you are likely running this via task already)"; fi
+          if command -v noetl >/dev/null 2>&1; then
+            echo "[OK] noetl CLI: $(noetl --version 2>/dev/null | head -n1 || echo present)"
+          else
+            echo "[INFO] noetl CLI not installed - install with: pip install noetl[cli]"
+          fi
+          exit $fail
+          '
+          echo "Building noetlctl locally..."
+          cargo build --release --manifest-path crates/noetlctl/Cargo.toml
+    next:
+      - step: end
+
+  - step: validate_install
+    desc: Validate required tools are installed
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Validating required tools installation..."
+          bash -ceu '
+          fail=0
+          check() {
+            if command -v "$1" >/dev/null 2>&1; then
+              echo "[OK] $1: $($1 --version 2>/dev/null | head -n1 || echo installed)"
+            else
+              echo "[MISSING] $1 not found in PATH"; fail=1
+            fi
+          }
+          echo "Validating required tools..."
+          check git
+          check curl
+          if ! command -v jq >/dev/null 2>&1; then
+            echo "[MISSING] jq not found in PATH"
+            echo "       -> Install with: noetl run automation/development/tooling.yaml --set action=install-jq"
+            fail=1
+          else
+            echo "[OK] jq: $(jq --version 2>/dev/null | head -n1 || echo installed)"
+          fi
+          check python3
+          if ! command -v cargo >/dev/null 2>&1; then
+            echo "[MISSING] cargo (Rust toolchain) not found in PATH"
+            echo "       -> Install with: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
+            fail=1
+          else
+            echo "[OK] cargo: $(cargo --version 2>/dev/null | head -n1 || echo installed)"
+          fi
+          if command -v docker >/dev/null 2>&1; then
+            echo "[OK] docker available"; if ! docker info >/dev/null 2>&1; then
+              echo "[WARN] docker present but daemon not reachable"
+              echo "       -> Ensure Docker Desktop is running and WSL integration is enabled"
+              echo "       -> You may need to add your user to the docker group: noetl run automation/development/tooling.yaml --set action=fix-docker-perms"
+            fi
+          else
+            echo "[MISSING] docker not found in PATH"
+            fail=1
+          fi
+          if command -v task >/dev/null 2>&1; then echo "[OK] task available"; else echo "[INFO] task not installed (you are likely running this via task already)"; fi
+          if command -v noetl >/dev/null 2>&1; then
+            echo "[OK] noetl CLI: $(noetl --version 2>/dev/null | head -n1 || echo present)"
+          else
+            echo "[INFO] noetl CLI not installed - install with: pip install noetl[cli]"
+          fi
+          exit $fail
+          '
+    next:
+      - step: end
+
+  - step: validate_devtools
+    desc: Validate optional dev tools available
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Validating optional dev tools..."
+          bash -ceu '
+          tools=(kind yq pyenv uv tfenv terraform)
+          for t in "${tools[@]}"; do
+            if command -v "$t" >/dev/null 2>&1; then
+              case "$t" in
+                kind) echo "[OK] kind: $(kind --version || true)";;
+                yq) echo "[OK] yq: $(yq --version || true)";;
+                pyenv) echo "[OK] pyenv: $(pyenv --version || true)";;
+                uv) echo "[OK] uv: $(uv --version || true)";;
+                tfenv) echo "[OK] tfenv: $(tfenv --version || true)";;
+                terraform) echo "[OK] terraform: $(terraform version | head -n1 || true)";;
+              esac
+            else
+              echo "[MISSING] $t not found in PATH"
+            fi
+          done
+          '
+    next:
+      - step: end
+
+  - step: validate_docker
+    desc: Validate Docker Desktop integration from WSL2
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Validating Docker Desktop integration..."
+          docker info
+          docker run --rm hello-world
+    next:
+      - step: end
+
+  - step: install_base
+    desc: Install basic CLI tools
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Installing basic CLI tools..."
+          echo "  - git, curl, jq, make, ca-certificates"
+          echo "  - lsof, python3, pip, venv"
+          bash -ceu '
+          sudo apt-get update
+          sudo apt-get install -y \
+            git make curl jq ca-certificates lsof \
+            build-essential unzip \
+            python3 python3-venv python3-pip
+          echo "[OK] Base tools installed. If versions are not updated in current shell, open a new terminal."
+          '
+    next:
+      - step: end
+
+  - step: install_devtools
+    desc: Install yq, kind, pyenv, uv, tfenv (aggregate)
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Installing dev tools (yq, kind, pyenv, uv, tfenv)..."
+          
+          # Install yq
+          bash -ceu '
+          if command -v yq >/dev/null 2>&1; then
+            echo "[SKIP] yq already installed: $(yq --version || true)"
+          else
+            sudo apt-get update
+            sudo apt-get install -y software-properties-common
+            sudo add-apt-repository -y ppa:rmescandon/yq
+            sudo apt-get update
+            sudo apt-get install -y yq
+            yq --version
+          fi
+          '
+          
+          # Install kind
+          bash -ceu '
+          if command -v kind >/dev/null 2>&1; then
+            echo "[SKIP] kind already installed: $(kind --version || true)"
+          else
+            KIND_VER="${KIND_VER:-v0.23.0}"
+            curl -fsSL -o ./kind "https://kind.sigs.k8s.io/dl/${KIND_VER}/kind-linux-amd64"
+            chmod +x ./kind
+            sudo mv ./kind /usr/local/bin/kind
+            kind --version
+          fi
+          '
+          
+          # Install pyenv
+          bash -ceu '
+          sudo apt-get update
+          sudo apt-get install -y build-essential libssl-dev zlib1g-dev \
+            libbz2-dev libreadline-dev libsqlite3-dev curl git \
+            libncursesw5-dev xz-utils tk-dev libxml2-dev libxmlsec1-dev \
+            libffi-dev liblzma-dev
+          if [ ! -d "$HOME/.pyenv" ]; then
+            curl https://pyenv.run | bash
+          else
+            echo "[SKIP] pyenv directory already exists at ~/.pyenv"
+          fi
+          BASHRC="$HOME/.bashrc"
+          if ! grep -q "pyenv setup (added by NoETL tooling)" "$BASHRC"; then
+            printf "\n# pyenv setup (added by NoETL tooling)\n" >> "$BASHRC"
+            printf "export PYENV_ROOT=\"$HOME/.pyenv\"\n" >> "$BASHRC"
+            printf "command -v pyenv >/dev/null || export PATH=\"$PYENV_ROOT/bin:\$PATH\"\n" >> "$BASHRC"
+            printf "eval \"$(pyenv init -)\"\n" >> "$BASHRC"
+          fi
+          export PYENV_ROOT="$HOME/.pyenv"
+          export PATH="$PYENV_ROOT/bin:$PATH"
+          command -v pyenv >/dev/null 2>&1 || eval "$(pyenv init -)" >/dev/null 2>&1 || true
+          pyenv --version || true
+          '
+          
+          # Install uv
+          bash -ceu '
+          if command -v uv >/dev/null 2>&1; then
+            echo "[SKIP] uv already installed: $(uv --version || true)"
+          else
+            curl -LsSf https://astral.sh/uv/install.sh | sh
+            echo "[INFO] If uv is not in PATH, restart your shell or source the profile suggested by the installer."
+            uv --version || true
+          fi
+          '
+          
+          # Install tfenv
+          bash -ceu '
+          if [ ! -d "$HOME/.tfenv" ]; then
+            git clone https://github.com/tfutils/tfenv.git "$HOME/.tfenv"
+          else
+            echo "[SKIP] ~/.tfenv already exists"
+          fi
+          BASHRC="$HOME/.bashrc"
+          if ! grep -q "tfenv (added by NoETL tooling)" "$BASHRC"; then
+            printf "\n# tfenv (added by NoETL tooling)\n" >> "$BASHRC"
+            printf "export PATH=\"$HOME/.tfenv/bin:\$PATH\"\n" >> "$BASHRC"
+          fi
+          export PATH="$HOME/.tfenv/bin:$PATH"
+          if command -v tfenv >/dev/null 2>&1; then
+            echo "[OK] tfenv: $(tfenv --version || true)"
+            tfenv install latest
+            tfenv use latest
+            terraform version
+          else
+            echo "[ERROR] tfenv not on PATH yet; open a new shell or source ~/.bashrc then rerun" >&2
+          fi
+          '
+          
+          # Install jq
+          bash -ceu '
+          if command -v jq >/dev/null 2>&1; then
+            echo "[SKIP] jq already installed: $(jq --version || true)"
+          else
+            sudo apt-get update
+            sudo apt-get install -y jq
+            jq --version
+          fi
+          '
+          
+          # Install psql
+          bash -ceu '
+          if command -v psql >/dev/null 2>&1; then
+            echo "[SKIP] psql already installed: $(psql --version || true)"
+          else
+            sudo apt-get update
+            sudo apt-get install -y postgresql-client
+            if command -v psql >/dev/null 2>&1; then
+              echo "[OK] psql: $(psql --version || true)"
+            else
+              echo "[ERROR] psql not found in PATH after installation. You may need to restart your shell." >&2
+              exit 1
+            fi
+          fi
+          '
+    next:
+      - step: end
+
+  - step: install_jq
+    desc: Install jq via apt
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Installing jq..."
+          bash -ceu '
+          if command -v jq >/dev/null 2>&1; then
+            echo "[SKIP] jq already installed: $(jq --version || true)"
+            exit 0
+          fi
+          sudo apt-get update
+          sudo apt-get install -y jq
+          jq --version
+          '
+    next:
+      - step: end
+
+  - step: install_yq
+    desc: Install yq via PPA
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Installing yq..."
+          bash -ceu '
+          if command -v yq >/dev/null 2>&1; then
+            echo "[SKIP] yq already installed: $(yq --version || true)"
+            exit 0
+          fi
+          sudo apt-get update
+          sudo apt-get install -y software-properties-common
+          sudo add-apt-repository -y ppa:rmescandon/yq
+          sudo apt-get update
+          sudo apt-get install -y yq
+          yq --version
+          '
+    next:
+      - step: end
+
+  - step: install_kind
+    desc: Install kind (Kubernetes in Docker)
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Installing kind..."
+          bash -ceu '
+          if command -v kind >/dev/null 2>&1; then
+            echo "[SKIP] kind already installed: $(kind --version || true)"
+            exit 0
+          fi
+          KIND_VER="${KIND_VER:-v0.23.0}"
+          curl -fsSL -o ./kind "https://kind.sigs.k8s.io/dl/${KIND_VER}/kind-linux-amd64"
+          chmod +x ./kind
+          sudo mv ./kind /usr/local/bin/kind
+          kind --version
+          '
+    next:
+      - step: end
+
+  - step: install_pyenv
+    desc: Install pyenv and initialize bash shell configuration
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Installing pyenv..."
+          bash -ceu '
+          sudo apt-get update
+          sudo apt-get install -y build-essential libssl-dev zlib1g-dev \
+            libbz2-dev libreadline-dev libsqlite3-dev curl git \
+            libncursesw5-dev xz-utils tk-dev libxml2-dev libxmlsec1-dev \
+            libffi-dev liblzma-dev
+          if [ ! -d "$HOME/.pyenv" ]; then
+            curl https://pyenv.run | bash
+          else
+            echo "[SKIP] pyenv directory already exists at ~/.pyenv"
+          fi
+          BASHRC="$HOME/.bashrc"
+          if ! grep -q "pyenv setup (added by NoETL tooling)" "$BASHRC"; then
+            printf "\n# pyenv setup (added by NoETL tooling)\n" >> "$BASHRC"
+            printf "export PYENV_ROOT=\"$HOME/.pyenv\"\n" >> "$BASHRC"
+            printf "command -v pyenv >/dev/null || export PATH=\"$PYENV_ROOT/bin:\$PATH\"\n" >> "$BASHRC"
+            printf "eval \"$(pyenv init -)\"\n" >> "$BASHRC"
+          fi
+          export PYENV_ROOT="$HOME/.pyenv"
+          export PATH="$PYENV_ROOT/bin:$PATH"
+          command -v pyenv >/dev/null 2>&1 || eval "$(pyenv init -)" >/dev/null 2>&1 || true
+          pyenv --version || true
+          '
+    next:
+      - step: end
+
+  - step: install_uv
+    desc: Install uv (fast Python package manager)
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Installing uv..."
+          bash -ceu '
+          if command -v uv >/dev/null 2>&1; then
+            echo "[SKIP] uv already installed: $(uv --version || true)"
+            exit 0
+          fi
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "[INFO] If uv is not in PATH, restart your shell or source the profile suggested by the installer."
+          uv --version || true
+          '
+    next:
+      - step: end
+
+  - step: install_tfenv
+    desc: Install tfenv and latest Terraform
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Installing tfenv and Terraform..."
+          bash -ceu '
+          if [ ! -d "$HOME/.tfenv" ]; then
+            git clone https://github.com/tfutils/tfenv.git "$HOME/.tfenv"
+          else
+            echo "[SKIP] ~/.tfenv already exists"
+          fi
+          BASHRC="$HOME/.bashrc"
+          if ! grep -q "tfenv (added by NoETL tooling)" "$BASHRC"; then
+            printf "\n# tfenv (added by NoETL tooling)\n" >> "$BASHRC"
+            printf "export PATH=\"$HOME/.tfenv/bin:\$PATH\"\n" >> "$BASHRC"
+          fi
+          export PATH="$HOME/.tfenv/bin:$PATH"
+          if command -v tfenv >/dev/null 2>&1; then
+            echo "[OK] tfenv: $(tfenv --version || true)"
+            tfenv install latest
+            tfenv use latest
+            terraform version
+          else
+            echo "[ERROR] tfenv not on PATH yet; open a new shell or source ~/.bashrc then rerun: noetl run automation/development/tooling.yaml --set action=install-tfenv" >&2
+          fi
+          '
+    next:
+      - step: end
+
+  - step: install_psql
+    desc: Install PostgreSQL client tools (psql) without server
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Installing PostgreSQL client tools..."
+          bash -ceu '
+          if command -v psql >/dev/null 2>&1; then
+            echo "[SKIP] psql already installed: $(psql --version || true)"
+            exit 0
+          fi
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+          if command -v psql >/dev/null 2>&1; then
+            echo "[OK] psql: $(psql --version || true)"
+          else
+            echo "[ERROR] psql not found in PATH after installation. You may need to restart your shell." >&2
+            exit 1
+          fi
+          '
+    next:
+      - step: end
+
+  - step: ensure_path
+    desc: Ensure common tool paths are added to shell
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Ensuring common tool paths in ~/.bashrc..."
+          bash -ceu '
+          BASHRC="$HOME/.bashrc"
+          ensure_line() { grep -qxF "$1" "$BASHRC" || echo "$1" >> "$BASHRC"; }
+          ensure_line "export PATH=\"$HOME/.local/bin:\$PATH\""
+          ensure_line "export PATH=\"/usr/local/bin:\$PATH\""
+          export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
+          echo "[OK] Ensured PATH contains: $HOME/.local/bin and /usr/local/bin"
+          echo "Current PATH: $PATH"
+          echo "[INFO] If this is your first time adding these, open a new shell or: source ~/.bashrc"
+          '
+    next:
+      - step: end
+
+  - step: fix_docker_perms
+    desc: Add current user to docker group
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Adding current user to docker group..."
+          bash -ceu '
+          sudo groupadd -f docker
+          if id -nG "$USER" | grep -qw docker; then
+            echo "[SKIP] $USER already in docker group"
+          else
+            sudo usermod -aG docker "$USER"
+            echo "[OK] Added $USER to docker group"
+          fi
+          echo
+          echo "Next steps:"
+          echo "  1) Close and reopen your WSL terminal (or run: newgrp docker)"
+          echo "  2) Ensure Docker Desktop is running and WSL integration is enabled"
+          echo "  3) Re-run: noetl run automation/development/tooling.yaml --set action=validate-docker"
+          '
+    next:
+      - step: end
+
+  - step: show_help
+    desc: Display available actions
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "=================================================="
+          echo " Dev Tools Automation"
+          echo "=================================================="
+          echo ""
+          echo "Usage:"
+          echo "  noetl run automation/development/tooling.yaml --set action=<action>"
+          echo ""
+          echo "Setup & Validation:"
+          echo "  setup               - Validate required tooling on WSL2 hosts"
+          echo "  validate-install    - Validate required tools are installed"
+          echo "  validate-devtools   - Validate optional dev tools available"
+          echo "  validate-docker     - Validate Docker Desktop integration"
+          echo ""
+          echo "Installation (Base):"
+          echo "  install-base        - Install basic CLI tools (git, curl, jq, make, etc.)"
+          echo "  install-devtools    - Install all dev tools (yq, kind, pyenv, uv, tfenv)"
+          echo ""
+          echo "Installation (Individual):"
+          echo "  install-jq          - Install jq via apt"
+          echo "  install-yq          - Install yq via PPA"
+          echo "  install-kind        - Install kind (Kubernetes in Docker)"
+          echo "  install-pyenv       - Install pyenv and initialize bash"
+          echo "  install-uv          - Install uv (fast Python package manager)"
+          echo "  install-tfenv       - Install tfenv and latest Terraform"
+          echo "  install-psql        - Install PostgreSQL client tools"
+          echo ""
+          echo "Configuration:"
+          echo "  ensure-path         - Ensure tool paths in ~/.bashrc"
+          echo "  fix-docker-perms    - Add user to docker group"
+          echo ""
+          echo "Examples:"
+          echo "  # Setup and validate all tools"
+          echo "  noetl run automation/development/tooling.yaml --set action=setup"
+          echo ""
+          echo "  # Install base tools"
+          echo "  noetl run automation/development/tooling.yaml --set action=install-base"
+          echo ""
+          echo "  # Install all dev tools"
+          echo "  noetl run automation/development/tooling.yaml --set action=install-devtools"
+          echo ""
+          echo "  # Validate installation"
+          echo "  noetl run automation/development/tooling.yaml --set action=validate-install"
+          echo ""
+          echo "Task Equivalents:"
+          echo "  setup            -> task dev:tools:setup"
+          echo "  validate-install -> task dev:tools:validate-install"
+          echo "  validate-devtools -> task dev:tools:validate-devtools"
+          echo "  validate-docker  -> task dev:tools:validate-docker"
+          echo "  install-base     -> task dev:tools:install-base"
+          echo "  install-devtools -> task dev:tools:install-devtools"
+          echo "  install-jq       -> task dev:tools:install-jq"
+          echo "  install-yq       -> task dev:tools:install-yq"
+          echo "  install-kind     -> task dev:tools:install-kind"
+          echo "  install-pyenv    -> task dev:tools:install-pyenv"
+          echo "  install-uv       -> task dev:tools:install-uv"
+          echo "  install-tfenv    -> task dev:tools:install-tfenv"
+          echo "  install-psql     -> task dev:tools:install-psql"
+          echo "  ensure-path      -> task dev:tools:ensure-path"
+          echo "  fix-docker-perms -> task dev:tools:fix-docker-perms"
+          echo ""
+    next:
+      - step: end
+
+  - step: end
+    desc: End workflow

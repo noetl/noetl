@@ -1,0 +1,53 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: http_example
+  path: automation/examples/http
+
+workload:
+  api_base: "https://jsonplaceholder.typicode.com"
+
+workflow:
+  - step: start
+    desc: "Fetch data from REST API"
+    next:
+      - step: fetch_user
+
+  - step: fetch_user
+    desc: "Get user data"
+    tool:
+      kind: http
+      method: GET
+      url: "{{ workload.api_base }}/users/1"
+    vars:
+      user_data: "{{ fetch_user.result }}"
+    next:
+      - step: fetch_posts
+
+  - step: fetch_posts
+    desc: "Get user posts"
+    tool:
+      kind: http
+      method: GET
+      url: "{{ workload.api_base }}/posts"
+      params:
+        userId: "1"
+    vars:
+      posts_data: "{{ fetch_posts.result }}"
+    next:
+      - step: display_results
+
+  - step: display_results
+    desc: "Display fetched data"
+    tool:
+      kind: shell
+      cmds:
+        - "echo 'User data fetched successfully'"
+        - "echo '{{ vars.user_data }}' | head -c 200"
+        - "echo ''"
+        - "echo 'Posts data fetched successfully'"
+        - "echo '{{ vars.posts_data }}' | head -c 200"
+    next:
+      - step: end
+
+  - step: end

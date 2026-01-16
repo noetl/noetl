@@ -24,23 +24,13 @@ async def execute_sql_with_connection(
     commands: List[str],
     host: str = "unknown",
     port: str = "unknown",
-    database: str = "unknown"
+    database: str = "unknown",
+    pool: bool = False,
+    pool_name: str = None,
+    pool_params: dict = None
 ) -> Dict[str, Dict]:
     """
-    Execute SQL statements using a direct async connection.
-    
-    Opens a fresh connection for each execution, executes commands,
-    and properly closes the connection afterward. This is appropriate
-    for worker-side execution where workers are ephemeral and connect
-    to various user databases.
-    
-    Workers should NOT use connection pooling because:
-    - Workers are ephemeral (can be scaled up/down)
-    - Each playbook step may connect to different databases
-    - Steps of one playbook instance can be distributed among several workers
-    - Connection pools would leak resources across worker restarts
-    
-    Uses ASYNC psycopg AsyncConnection for proper async execution.
+    Execute SQL statements using connection pool OR direct connection.
     
     Args:
         connection_string: PostgreSQL connection string
@@ -48,6 +38,9 @@ async def execute_sql_with_connection(
         host: Database host (for logging)
         port: Database port (for logging)
         database: Database name (for logging)
+        pool: If true, use connection pooling; if false, use direct connection (default: false - direct connection)
+        pool_name: Name for the pool (for sharing or scoping). If None, derived from database name
+        pool_params: Dict of pool configuration parameters (timeout, min_size, max_size, max_waiting, max_lifetime, max_idle)
         
     Returns:
         Dictionary mapping command indices to result dictionaries
@@ -55,45 +48,50 @@ async def execute_sql_with_connection(
     Raises:
         Exception: If connection or execution fails
     """
-    from psycopg.rows import dict_row
+    from .pool import get_plugin_connection
+    from psycopg import AsyncConnection
     import time
     
     conn_id = f"{host}:{port}/{database}-{int(time.time() * 1000)}"
-    logger.error(f"[CONN-{conn_id}] START: Creating connection to {host}:{port}/{database}, executing {len(commands)} SQL commands")
+    pool_params = pool_params or {}
     
-    # Use direct async connection (no pooling) for worker-side execution
-    # Connection is properly closed by context manager
-    conn = None
-    try:
-        logger.error(f"[CONN-{conn_id}] Calling AsyncConnection.connect()...")
-        conn = await AsyncConnection.connect(
-            connection_string,
-            autocommit=False,
-            row_factory=dict_row
-        )
-        logger.error(f"[CONN-{conn_id}] Connection created, PID: {conn.info.backend_pid if conn and conn.info else 'unknown'}")
+    if pool:
+        # Use connection pool (explicitly requested)
+        pool_timeout = pool_params.get('timeout')
+        effective_pool_name = pool_name or f"pg_{database}"
+        logger.debug(f"[CONN-{conn_id}] Getting pooled connection '{effective_pool_name}' (timeout={pool_timeout}s) to {host}:{port}/{database}, executing {len(commands)} SQL commands")
         
-        async with conn:
-            logger.error(f"[CONN-{conn_id}] Entered context manager, executing statements...")
-            # Execute commands within connection context
-            results = await execute_sql_statements_async(conn, commands)
-            logger.error(f"[CONN-{conn_id}] SQL execution completed, exiting context manager")
-            return results
-    except Exception as e:
-        # Log the error - connection cleanup happens automatically
-        logger.exception(f"[CONN-{conn_id}] Failed to execute SQL on {database}: {e}")
-        raise
-    finally:
-        logger.error(f"[CONN-{conn_id}] FINALLY: Connection state: {conn.closed if conn else 'None'}")
-        if conn and not conn.closed:
-            logger.error(f"[CONN-{conn_id}] WARNING: Connection still open in finally block!")
+        try:
+            async with get_plugin_connection(connection_string, pool_name=effective_pool_name, **pool_params) as conn:
+                conn_pid = conn.info.backend_pid if conn and conn.info else 'unknown'
+                logger.debug(f"[CONN-{conn_id}] Using pooled connection PID: {conn_pid}")
+                
+                results = await execute_sql_statements_async(conn, commands)
+                logger.debug(f"[CONN-{conn_id}] SQL execution completed, returning connection to pool")
+                return results
+        except Exception as e:
+            logger.exception(f"[CONN-{conn_id}] Failed to execute SQL on {database}: {e}")
+            raise
+    else:
+        # Use direct connection (for very long-running queries)
+        logger.info(f"[CONN-{conn_id}] Opening direct connection (no pool) to {host}:{port}/{database}, executing {len(commands)} SQL commands")
+        
+        try:
+            from psycopg.rows import dict_row
+            conn = await AsyncConnection.connect(connection_string, row_factory=dict_row)
+            conn_pid = conn.info.backend_pid if conn and conn.info else 'unknown'
+            logger.debug(f"[CONN-{conn_id}] Using direct connection PID: {conn_pid}")
+            
             try:
+                results = await execute_sql_statements_async(conn, commands)
+                logger.info(f"[CONN-{conn_id}] SQL execution completed, closing direct connection")
+                return results
+            finally:
                 await conn.close()
-                logger.error(f"[CONN-{conn_id}] Manually closed connection in finally")
-            except Exception as close_err:
-                logger.error(f"[CONN-{conn_id}] Error closing: {close_err} | cleanup complete")
-        else:
-            logger.error(f"[CONN-{conn_id}] END: Cleanup complete")
+                logger.debug(f"[CONN-{conn_id}] Direct connection closed")
+        except Exception as e:
+            logger.exception(f"[CONN-{conn_id}] Failed to execute SQL on {database}: {e}")
+            raise
 
 
 async def execute_sql_statements_async(
@@ -122,7 +120,7 @@ async def execute_sql_statements_async(
         - message: Status message
     """
     conn_pid = conn.info.backend_pid if conn and conn.info else 'unknown'
-    logger.error(f"[PID-{conn_pid}] Executing {len(commands)} statements on connection")
+    logger.debug(f"[PID-{conn_pid}] Executing {len(commands)} statements on connection")
     results = {}
     
     for i, cmd in enumerate(commands):

@@ -1,0 +1,112 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: test_loop_instance_isolation
+  path: test/loop_instance_isolation
+  description: Test event_id-based loop instance isolation - same step name used twice
+
+workload:
+  users:
+    - id: 1
+      name: "Alice"
+    - id: 2
+      name: "Bob"
+  products:
+    - id: 101
+      name: "Laptop"
+    - id: 102
+      name: "Mouse"
+
+workflow:
+  - step: start
+    desc: Start workflow
+    tool:
+      kind: python
+      code: |
+        result = {"message": "Starting workflow"}
+    next:
+      - step: process_items_users
+
+  # First loop - process users
+  - step: process_items_users
+    desc: Process users collection
+    loop:
+      in: "{{ workload.users }}"
+      iterator: user
+      mode: sequential
+    tool:
+      kind: python
+      code: |
+        result = {
+          "type": "user",
+          "id": user["id"],
+          "name": user["name"],
+          "message": f"Processed user {user['name']}"
+        }
+    args:
+      user: "{{ user }}"
+    next:
+      - step: middle
+    
+  # Middle step
+  - step: middle
+    desc: Middle step between two loops
+    tool:
+      kind: python
+      code: |
+        result = {"message": "Middle step executed"}
+    next:
+      - step: process_items_products
+
+  # Second loop - process products (SAME step name pattern, different collection)
+  - step: process_items_products
+    desc: Process products collection
+    loop:
+      in: "{{ workload.products }}"
+      iterator: product
+      mode: sequential
+    tool:
+      kind: python
+      code: |
+        result = {
+          "type": "product",
+          "id": product["id"],
+          "name": product["name"],
+          "message": f"Processed product {product['name']}"
+        }
+    args:
+      product: "{{ product }}"
+    next:
+      - step: verify_results
+
+  # Verify both loops completed independently
+  - step: verify_results
+    desc: Verify both loops completed with correct results
+    tool:
+      kind: python
+      code: |
+        users_result = input_data.get("users_result", {})
+        products_result = input_data.get("products_result", {})
+        
+        result = {
+          "users_count": len(users_result.get("results", [])),
+          "products_count": len(products_result.get("results", [])),
+          "verification": "Both loops completed independently" if (
+            len(users_result.get("results", [])) == 2 and 
+            len(products_result.get("results", [])) == 2
+          ) else "FAILED: Loop state collision detected",
+          "users_results": users_result,
+          "products_results": products_result
+        }
+    args:
+      users_result: "{{ process_items_users }}"
+      products_result: "{{ process_items_products }}"
+    next:
+      - step: end
+
+  - step: end
+    desc: End workflow
+    tool:
+      kind: python
+      code: |
+        result = {"message": "Workflow completed"}

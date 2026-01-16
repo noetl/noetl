@@ -17,9 +17,11 @@ workflow:
     desc: "Entry point"
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main():
-            return {"status": "initialized"}
+        result = {"status": "initialized"}
     
     case:
       - when: "{{ event.name == 'step.exit' }}"
@@ -56,20 +58,21 @@ workflow:
     desc: "Calculate metrics using args from previous step"
     tool:
       kind: python
-      code: |
-        def main(email, status, retry_count):
-            metrics = {
-                "email_domain": email.split('@')[1] if '@' in email else 'unknown',
-                "is_active": status == 'active',
-                "max_retries": retry_count,
-                "score": 100 if status == 'active' else 0
-            }
-            return metrics
+      auth: {}
+      libs: {}
       args:
         # BEFORE execution: passed to main()
         email: "{{ vars.user_email }}"
         status: "{{ vars.user_status }}"
         retry_count: "{{ workload.retry_limit }}"
+      code: |
+        metrics = {
+            "email_domain": email.split('@')[1] if '@' in email else 'unknown',
+            "is_active": status == 'active',
+            "max_retries": retry_count,
+            "score": 100 if status == 'active' else 0
+        }
+        result = metrics
     
     case:
       - when: "{{ event.name == 'step.exit' and response is defined and response.is_active }}"
@@ -102,18 +105,19 @@ workflow:
     desc: "Process active users with received args"
     tool:
       kind: python
-      code: |
-        def main(domain, score, global_env):
-            return {
-                "message": f"Active user in {global_env}",
-                "domain": domain,
-                "bonus_score": score + 10
-            }
+      auth: {}
+      libs: {}
       args:
         # BEFORE execution: received from previous step's next block
         domain: null  # Will be provided by caller
         score: null
         global_env: "{{ workload.environment }}"
+      code: |
+        result = {
+            "message": f"Active user in {global_env}",
+            "domain": domain,
+            "bonus_score": score + 10
+        }
     
     case:
       - when: "{{ event.name == 'step.exit' and response is defined }}"
@@ -125,17 +129,18 @@ workflow:
     desc: "Process inactive users"
     tool:
       kind: python
-      code: |
-        def main(email, status):
-            return {
-                "message": f"Inactive user: {email}",
-                "status": status,
-                "action": "send_reactivation_email"
-            }
+      auth: {}
+      libs: {}
       args:
         # Can still access extracted vars
         email: "{{ vars.user_email }}"
         status: "{{ vars.user_status }}"
+      code: |
+        result = {
+            "message": f"Inactive user: {email}",
+            "status": status,
+            "action": "send_reactivation_email"
+        }
     
     case:
       - when: "{{ event.name == 'step.exit' and response is defined }}"
@@ -148,17 +153,8 @@ workflow:
     desc: "Store results using direct step access"
     tool:
       kind: python
-      code: |
-        def main(user_email, user_score, environment, active_result, inactive_result):
-            result = {
-                "stored_at": "2025-12-02T17:30:00Z",
-                "email": user_email,
-                "score": user_score,
-                "environment": environment,
-                "flow_result": active_result if active_result != 'N/A' else inactive_result
-            }
-            print(f"Stored results for {user_email} in {environment}")
-            return result
+      auth: {}
+      libs: {}
       args:
         # Direct access to previous steps without vars extraction
         user_email: "{{ fetch_user_data.data.email }}"
@@ -167,6 +163,15 @@ workflow:
         # Access from conditional flow (one will be undefined, handled by code)
         active_result: "{{ active_user_flow.message if active_user_flow else 'N/A' }}"
         inactive_result: "{{ inactive_user_flow.message if inactive_user_flow else 'N/A' }}"
+      code: |
+        result = {
+            "stored_at": "2025-12-02T17:30:00Z",
+            "email": user_email,
+            "score": user_score,
+            "environment": environment,
+            "flow_result": active_result if active_result != 'N/A' else inactive_result
+        }
+        print(f"Stored results for {user_email} in {environment}")
     
     case:
       - when: "{{ event.name == 'step.exit' and response is defined }}"
@@ -178,9 +183,11 @@ workflow:
     desc: "Workflow complete"
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main():
-            return {"status": "complete"}
+        result = {"status": "complete"}
 
 # Variable Lifecycle Summary (V2):
 #

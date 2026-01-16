@@ -441,5 +441,5 @@ task kind:local:cluster-delete
 - [Kind Documentation](https://kind.sigs.k8s.io/)
 - [Kubernetes Documentation](https://kubernetes.io/docs/)
 - [PostgreSQL Documentation](https://www.postgresql.org/docs/)
-- [NoETL Architecture](../architecture/overview)
-- [Observability Services](./observability)
+- [Architecture Design](/docs/reference/architecture_design)
+- [Observability Services](/docs/reference/observability_services)

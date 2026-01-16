@@ -20,8 +20,10 @@ workflow:
     desc: Start test
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main():
             return {"status": "initialized"}
     
     case:
@@ -58,8 +60,10 @@ workflow:
       mode: sequential
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main(item):
             return {
                 'item_name': item.get('name', 'unknown'),
                 'item_value': item.get('value', 0)
@@ -93,6 +97,8 @@ workflow:
     desc: End test
     tool:
       kind: python
+      auth: {}
+      libs: {}
+      args: {}
       code: |
-        def main():
             return {"status": "complete"}

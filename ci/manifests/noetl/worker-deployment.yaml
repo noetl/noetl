@@ -9,7 +9,7 @@ metadata:
     runtime: cpu
     worker-pool: worker-cpu-01
 spec:
-  replicas: 1
+  replicas: 3
   selector:
     matchLabels:
       app: noetl-worker
@@ -33,8 +33,8 @@ spec:
             - "until curl -sf http://noetl.noetl.svc.cluster.local:8082/api/health; do echo 'Waiting for NoETL API...'; sleep 3; done"
       containers:
         - name: worker
-          image: image_name:image_tag
-          imagePullPolicy: IfNotPresent
+          image: local/noetl:latest
+          imagePullPolicy: Never
           command:
             - python
           args:
@@ -55,4 +55,5 @@ spec:
               memory: "512Mi"
       volumes:
         - name: noetl-data
-          emptyDir: {}
+          persistentVolumeClaim:
+            claimName: noetl-data-shared # Use shared RWX PVC for DuckDB files

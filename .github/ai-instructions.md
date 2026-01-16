@@ -52,21 +52,21 @@ task test-*-full                                    # Integration tests (registe
 **Local Development (Rust CLI Recommended):**
 ```bash
 # Build and deployment
-./bin/noetl build [--no-cache]       # Build Docker image with Rust CLI
-./bin/noetl k8s deploy               # Deploy to kind cluster (auto-loads image)
-./bin/noetl k8s redeploy             # Rebuild and redeploy
-./bin/noetl k8s reset                # Full reset: schema + redeploy + test setup
-./bin/noetl k8s remove               # Remove NoETL from cluster
+noetl build [--no-cache]       # Build Docker image with Rust CLI
+noetl k8s deploy               # Deploy to kind cluster (auto-loads image)
+noetl k8s redeploy             # Rebuild and redeploy
+noetl k8s reset                # Full reset: schema + redeploy + test setup
+noetl k8s remove               # Remove NoETL from cluster
 
 # Server/Worker management (local)
-./bin/noetl server start [--init-db] # Start FastAPI server
-./bin/noetl server stop [--force]    # Stop server
-./bin/noetl worker start             # Start worker (v2 architecture default)
-./bin/noetl worker stop              # Stop worker
+noetl server start [--init-db] # Start FastAPI server
+noetl server stop [--force]    # Stop server
+noetl worker start             # Start worker (v2 architecture default)
+noetl worker stop              # Stop worker
 
 # Database management
-./bin/noetl db init                  # Initialize database schema
-./bin/noetl db validate              # Validate database schema
+noetl db init                  # Initialize database schema
+noetl db validate              # Validate database schema
 
 # Legacy task commands (still available)
 task docker-build-noetl              # Build NoETL container image
@@ -81,7 +81,7 @@ task observability:health-all        # Health check all services
 
 **Playbook Structure** (core abstraction):
 ```yaml
-apiVersion: noetl.io/v1
+apiVersion: noetl.io/v2
 kind: Playbook
 metadata:                 # Required metadata section
   name: playbook_name     # Unique identifier
@@ -90,13 +90,18 @@ workload:                 # Global variables merged with payload; Jinja2 templat
   variable: value
 workbook:                 # Named reusable tasks (optional)
   - name: task_name       # Reference name
-    tool: python          # Action type: python, http, postgres, duckdb, playbook, iterator
-    code: |               # Type-specific configuration
-      def main(input_data):
-        return result
+    tool:                 # Action specification
+      kind: python        # Action type: python, http, postgres, duckdb, playbook, iterator
+      libs: {}            # Library imports (aliased)
+      args:               # Variables injected into code
+        input_var: "{{ workload.variable }}"
+      code: |             # Pure Python code - no def main(), no imports
+        # Variables from args are directly available
+        result = {"status": "success", "data": {"value": input_var}}
     sink:                 # Optional: save task result to storage
-      tool: postgres
-      table: table_name
+      tool:
+        kind: postgres
+        table: table_name
 workflow:                 # Execution flow (required, must have 'start' step)
   - step: start           # Required entry point
     desc: description
@@ -107,8 +112,9 @@ workflow:                 # Execution flow (required, must have 'start' step)
         args:             # Args to pass to next steps
           key: "{{ value }}"
   - step: task_step
-    tool: workbook        # Reference workbook task by name
-    name: task_name       # OR inline action tool: python, http, postgres, etc.
+    tool:
+      kind: workbook      # Reference workbook task by name
+      name: task_name     # OR inline action kind: python, http, postgres, etc.
     args:                 # Args passed to action via Jinja2 templating
       input: "{{ workload.variable }}"
     next:
@@ -127,8 +133,9 @@ workflow:                 # Execution flow (required, must have 'start' step)
 - **Variable Extraction**: Use `vars:` block at step level to declaratively extract values from step results:
   ```yaml
   - step: fetch_data
-    tool: postgres
-    query: "SELECT user_id, email FROM users LIMIT 1"
+    tool:
+      kind: postgres
+      query: "SELECT user_id, email FROM users LIMIT 1"
     vars:
       user_id: "{{ result[0].user_id }}"  # Extract from current step result
       email: "{{ result[0].email }}"
@@ -136,7 +143,8 @@ workflow:                 # Execution flow (required, must have 'start' step)
     - step: process
   
   - step: process
-    tool: python
+    tool:
+      kind: python
     args:
       user_id: "{{ vars.user_id }}"  # Access extracted variable
       email: "{{ vars.email }}"
@@ -153,10 +161,11 @@ workflow:                 # Execution flow (required, must have 'start' step)
 - **HTTP Pagination**: `loop.pagination` enables automatic page continuation with `continue_while`, `next_page`, and `merge_strategy` attributes
   ```yaml
   - step: fetch_all_data
-    tool: http
-    url: "{{ api_url }}/data"
-    params:
-      page: 1
+    tool:
+      kind: http
+      url: "{{ api_url }}/data"
+      params:
+        page: 1
     loop:
       pagination:
         type: response_based
@@ -207,42 +216,46 @@ script:
 ```yaml
 # Python with GCS
 - step: transform
-  tool: python
-  script:
-    uri: gs://data-pipelines/scripts/transform.py
-    source:
-      type: gcs
-      auth: gcp_service_account
+  tool:
+    kind: python
+    script:
+      uri: gs://data-pipelines/scripts/transform.py
+      source:
+        type: gcs
+        auth: gcp_service_account
 
 # Postgres with S3
 - step: migration
-  tool: postgres
-  auth: pg_prod
-  script:
-    uri: s3://sql-scripts/migrations/v2.5/upgrade.sql
-    source:
-      type: s3
-      region: us-west-2
-      auth: aws_credentials
+  tool:
+    kind: postgres
+    auth: pg_prod
+    script:
+      uri: s3://sql-scripts/migrations/v2.5/upgrade.sql
+      source:
+        type: s3
+        region: us-west-2
+        auth: aws_credentials
 
 # Python with file source
 - step: local_script
-  tool: python
-  script:
-    uri: ./scripts/transform.py
-    source:
-      type: file
+  tool:
+    kind: python
+    script:
+      uri: ./scripts/transform.py
+      source:
+        type: file
 
 # Python with HTTP source
 - step: fetch_script
-  tool: python
-  script:
-    uri: transform.py
-    source:
-      type: http
-      endpoint: https://api.example.com/scripts
-      headers:
-        Authorization: "Bearer {{ secret.api_token }}"
+  tool:
+    kind: python
+    script:
+      uri: transform.py
+      source:
+        type: http
+        endpoint: https://api.example.com/scripts
+        headers:
+          Authorization: "Bearer {{ secret.api_token }}"
 ```
 
 See `tests/fixtures/playbooks/script_execution/` and `docs/script_attribute_design.md` for complete details.
@@ -448,7 +461,7 @@ async def list_variables(
 **Prohibited Words and Phrases:**
 - Never use "comprehensive" - use specific, descriptive alternatives like "complete", "full", "detailed", "thorough"
 - Never use "ensure" - use direct action words like "verify", "check", "validate", "confirm", "guarantee"
-- Never use emojis in any scripts, documentation, code comments, or task descriptions
+- **Never use emojis** in any code, scripts, documentation, code comments, task descriptions, echo statements, or log messages
 - Prefer concise, clear descriptions over verbose explanations
 
 **Examples:**

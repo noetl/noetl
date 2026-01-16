@@ -9,9 +9,11 @@ workflow:
   desc: Simple transient test
   tool:
     kind: python
+    auth: {}
+    libs: {}
+    args: {}
     code: |
-      def main():
-          return {"status": "initialized"}
+      result = {"status": "initialized"}
   
   next:
   - step: set_var
@@ -20,30 +22,27 @@ workflow:
   desc: Set a test variable
   tool:
     kind: python
+    auth: {}
+    libs:
+      os: os
+      logging: logging
+    args: {}
     code: |
-      async def main():
-          from noetl.worker.transient import TransientVars
-          import os
-          import logging
-          
-          logger = logging.getLogger(__name__)
-          logger.info(f"DEBUG: NOETL_WORKER_MODE = {os.getenv('NOETL_WORKER_MODE')}")
-          logger.info(f"DEBUG: SERVER_API_URL = {os.getenv('SERVER_API_URL')}")
-          logger.info(f"DEBUG: context keys = {list(context.keys())}")
-          
-          execution_id = int(context.get('execution_id'))
-          
-          # Set variable
-          await TransientVars.set_cached(
-              var_name="test_counter",
-              var_value=42,
-              execution_id=execution_id,
-              var_type="user_defined",
-              source_step="set_var"
-          )
-          
-          logger.info(f"Set test_counter=42 for execution {execution_id}")
-          return {"status": "success", "var_set": "test_counter"}
+      logger = logging.getLogger(__name__)
+      logger.info(f"DEBUG: NOETL_WORKER_MODE = {os.getenv('NOETL_WORKER_MODE')}")
+      logger.info(f"DEBUG: SERVER_API_URL = {os.getenv('SERVER_API_URL')}")
+      logger.info(f"DEBUG: context keys = {list(context.keys())}")
+      
+      # Return value that will be stored via vars block
+      result = {
+        "status": "success",
+        "test_counter": 42,
+        "message": "Variable set successfully"
+      }
+  
+  vars:
+    test_counter: "{{ result.test_counter }}"
+    set_message: "{{ result.message }}"
   
   next:
   - step: get_var
@@ -52,28 +51,25 @@ workflow:
   desc: Get the variable back
   tool:
     kind: python
+    auth: {}
+    libs: {}
+    args:
+      counter_value: "{{ vars.test_counter }}"
+      previous_message: "{{ vars.set_message }}"
     code: |
-      async def main():
-          from noetl.worker.transient import TransientVars
-          
-          execution_id = int(context.get('execution_id'))
-          
-          # Get variable
-          result = await TransientVars.get_cached(
-              var_name="test_counter",
-              execution_id=execution_id
-          )
-          
-          if result:
-              print(f"Retrieved test_counter: {result}")
-              print(f"Value: {result['value']}")
-              print(f"Access count: {result['access_count']}")
-              print(f"Created: {result['created_at']}")
-              print(f"Accessed: {result['accessed_at']}")
-              return {"status": "success", "value": result["value"], "access_count": result["access_count"]}
-          else:
-              print("Variable not found!")
-              return {"status": "error", "message": "variable not found"}
+      # Access variable via args (passed from vars context)
+      counter = counter_value
+      message = previous_message
+      
+      print(f"Retrieved test_counter: {counter}")
+      print(f"Message: {message}")
+      
+      result = {
+        "status": "success",
+        "value": counter,
+        "message": message,
+        "verification": counter == 42
+      }
   
   next:
   - step: end
@@ -82,6 +78,8 @@ workflow:
   desc: Test complete
   tool:
     kind: python
+    auth: {}
+    libs: {}
+    args: {}
     code: |
-      def main():
-          return {"status": "complete"}
+      result = {"status": "complete"}
