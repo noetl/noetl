@@ -159,7 +159,7 @@ workflow:
           IMAGE_TAG=$(date +%Y-%m-%d-%H-%M)
           echo "$IMAGE_TAG" > .noetl_last_build_tag.txt
           echo "Building with tag: $IMAGE_TAG"
-          docker build -t {{ workload.registry }}/{{ workload.image_name }}:$IMAGE_TAG -f docker/noetl/dev/Dockerfile .
+          docker buildx build --load --platform linux/amd64 -t {{ workload.registry }}/{{ workload.image_name }}:$IMAGE_TAG -f docker/noetl/dev/Dockerfile .
     next:
       - step: create_kind_cluster
   
