@@ -60,6 +60,12 @@ env/
 /tests/fixtures/credentials/*_local.json
 /tests/fixtures/credentials/*.local.json
 /tests/fixtures/credentials/auth0_client.json
+# Local trading account credentials (untracked)
+/tests/fixtures/credentials/ib_gateway.json
+/tests/fixtures/credentials/ib_paper.json
+/tests/fixtures/credentials/pg_trade.json
+/tests/fixtures/credentials/tradetrend_noetl.json
+/tests/fixtures/credentials/tradetrend_noetl/
 # Uncomment below to ignore all credential files except templates
 # /tests/fixtures/credentials/*.json
 # !/tests/fixtures/credentials/*.template.json
