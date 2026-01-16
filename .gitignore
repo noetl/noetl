@@ -84,6 +84,11 @@ ci/kind/cache
 /tests/fixtures/credentials/*.pem
 /tests/fixtures/credentials/*.key
 
+# Ignore credential JSON by default (allow example templates)
+/tests/fixtures/credentials/**/*.json
+!/tests/fixtures/credentials/**/*.example
+!/tests/fixtures/credentials/**/*.example.json
+
 # VS Code workspace files (local developer settings)
 bhs-state-program-analytics.code-workspace
 
@@ -114,3 +119,6 @@ homebrew-tap
 # Extracted release tarballs (from testing)
 noetl-*/
 bin/
+
+# Local TradeDB SQL (kept under submodules/IQT)
+/scripts/tradedb/

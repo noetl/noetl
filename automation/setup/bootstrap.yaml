@@ -124,7 +124,8 @@ workflow:
           echo "Checking for existing kind cluster..."
           if kind get clusters 2>/dev/null | grep -q "^noetl$"; then
             echo "OK Kind cluster 'noetl' already exists"
-            echo "   To rebuild: noetl run automation/main.yaml --payload '{\"target\":\"destroy\"}'"
+            echo "   To rebuild: noetl run automation/destroy.yaml"
+            echo "   # or: noetl run automation/main.yaml --set target=destroy"
           else
             echo "INFO No existing cluster found, will create new one"
           fi

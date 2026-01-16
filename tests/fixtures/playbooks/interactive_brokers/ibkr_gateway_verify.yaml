@@ -1,0 +1,152 @@
+# IBKR Client Portal Gateway - Verify (server/worker)
+#
+# Use this when you want the *registered playbook path* executed by server/worker.
+# This is different from `noetl run automation/ibkr/verify.yaml` which runs a local file.
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: ibkr-gateway-verify
+  path: automation/ibkr/verify
+  description: Verify IBKR Gateway is reachable and authenticated (distributed)
+
+workload:
+  credential_name: ib_gateway
+  # Optional override; useful for checking NodePort from inside cluster only if routable.
+  gateway_url: ""
+  # Optional override for API base URL (e.g., https://localhost:15000/v1/api)
+  base_url: ""
+
+workflow:
+  - step: start
+    desc: Resolve gateway URL
+    tool:
+      kind: python
+      args:
+        credential_name: "{{ workload.credential_name }}"
+        override_gateway_url: "{{ workload.gateway_url }}"
+        override_base_url: "{{ workload.base_url }}"
+      code: |
+        from noetl.worker.secrets import fetch_credential_by_key
+
+        credential_name = (credential_name or '').strip()
+        credential_data = {}
+        if credential_name:
+            credential = fetch_credential_by_key(credential_name)
+            if isinstance(credential, dict):
+                data = credential.get('data', {})
+                if isinstance(data, dict) and 'data' in data:
+                    data = data.get('data')
+                if isinstance(data, dict):
+                    credential_data = data
+
+        gateway_url = (override_gateway_url or '').strip() or (credential_data.get('gateway_url') or '').strip()
+        base_url = (override_base_url or '').strip() or (credential_data.get('base_url') or '').strip()
+        if not base_url and gateway_url:
+          base_url = f"{gateway_url.rstrip('/')}/v1/api"
+
+        if not gateway_url and not base_url:
+            result = {
+                'status': 'error',
+            'message': 'No gateway_url/base_url available. Set credential.data.base_url, credential.data.gateway_url, or workload overrides.',
+            }
+        else:
+          result = {'status': 'ok', 'gateway_url': gateway_url, 'base_url': base_url}
+    next:
+      - step: call_api
+
+  - step: call_api
+    desc: Validate session and check tickle/auth status
+    tool:
+      kind: python
+      args:
+        base_url: "{{ start.base_url }}"
+      code: |
+        import httpx
+
+        def parse_response(resp):
+            data = None
+            try:
+                data = resp.json()
+            except Exception:
+                data = resp.text
+            return {
+                "status_code": resp.status_code,
+                "data": data,
+                "url": str(resp.url),
+            }
+
+        with httpx.Client(verify=False, follow_redirects=True, timeout=15) as client:
+            validate_resp = client.get(f"{base_url}/sso/validate")
+            tickle_resp = client.get(f"{base_url}/tickle")
+            status_resp = client.get(f"{base_url}/iserver/auth/status")
+
+        result = {
+            "validate": parse_response(validate_resp),
+            "tickle": parse_response(tickle_resp),
+            "status": parse_response(status_resp),
+        }
+    next:
+      - step: summarize
+
+  - step: summarize
+    desc: Summarize verification
+    tool:
+      kind: python
+      args:
+        gateway_url: "{{ start.gateway_url }}"
+        base_url: "{{ start.base_url }}"
+        validate_resp: "{{ call_api.validate }}"
+        tickle_resp: "{{ call_api.tickle }}"
+        status_resp: "{{ call_api.status }}"
+      code: |
+        validate_code = validate_resp.get('status_code', 0)
+        tickle_code = tickle_resp.get('status_code', 0)
+        tickle_data = tickle_resp.get('data', {})
+        status_code = status_resp.get('status_code', 0)
+        status_data = status_resp.get('data', {})
+
+        authenticated = False
+        connected = False
+        competing = False
+
+        if isinstance(status_data, dict):
+            authenticated = bool(status_data.get('authenticated', False))
+            connected = bool(status_data.get('connected', False))
+            competing = bool(status_data.get('competing', False))
+
+        ok = (
+          validate_code == 200
+          and tickle_code == 200
+          and status_code == 200
+          and authenticated
+          and connected
+          and not competing
+        )
+
+        result = {
+            'gateway_url': gateway_url,
+          'base_url': base_url,
+            'validate_status_code': validate_code,
+            'tickle_status_code': tickle_code,
+            'auth_status_code': status_code,
+            'authenticated': authenticated,
+            'connected': connected,
+            'competing': competing,
+            'session': tickle_data.get('session') if isinstance(tickle_data, dict) else None,
+            'sso_expires': tickle_data.get('ssoExpires') if isinstance(tickle_data, dict) else None,
+            'ok': ok,
+        }
+    next:
+      - step: end
+
+  - step: end
+    desc: Done
+    tool:
+      kind: python
+      args:
+        summary: "{{ summarize }}"
+      code: |
+        result = {
+            "status": "done",
+            "summary": summary,
+        }

@@ -1,0 +1,141 @@
+# IBKR Client Portal Gateway - Maintenance (server/worker)
+#
+# Implements the same *control loop idea* as IBeam (without IBeam):
+# - probe session/auth via tickle
+# - if competing/disconnected -> logout + reauthenticate
+# - if session exists but unauthenticated -> reauthenticate
+# - otherwise return status + next action
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: ibkr-gateway-maintain
+  path: automation/ibkr/maintain
+  description: Keep IBKR Client Portal Gateway session authenticated
+
+workload:
+  credential_name: ib_gateway
+  gateway_url: ""
+  base_url: ""
+
+workflow:
+  - step: start
+    desc: Resolve gateway URL
+    tool:
+      kind: python
+      args:
+        credential_name: "{{ workload.credential_name }}"
+        override_gateway_url: "{{ workload.gateway_url }}"
+        override_base_url: "{{ workload.base_url }}"
+      code: |
+        from noetl.worker.secrets import fetch_credential_by_key
+
+        credential_name = (credential_name or '').strip()
+        credential_data = {}
+        if credential_name:
+            credential = fetch_credential_by_key(credential_name)
+            if isinstance(credential, dict):
+                data = credential.get('data', {})
+                if isinstance(data, dict) and 'data' in data:
+                    data = data.get('data')
+                if isinstance(data, dict):
+                    credential_data = data
+
+        gateway_url = (override_gateway_url or '').strip() or (credential_data.get('gateway_url') or '').strip()
+        base_url = (override_base_url or '').strip() or (credential_data.get('base_url') or '').strip()
+        if not base_url and gateway_url:
+          base_url = f"{gateway_url.rstrip('/')}/v1/api"
+
+        if not gateway_url and not base_url:
+          result = {
+            'status': 'error',
+            'message': 'No gateway_url/base_url available. Set credential.data.base_url, credential.data.gateway_url, or workload overrides.',
+          }
+        else:
+          result = {'status': 'ok', 'gateway_url': gateway_url, 'base_url': base_url}
+    next:
+      - step: maintain
+
+  - step: maintain
+    desc: Tickle, decide, and reauthenticate if needed
+    tool:
+      kind: python
+      args:
+        base_url: "{{ start.base_url }}"
+        gateway_url: "{{ start.gateway_url }}"
+      code: |
+        import httpx
+
+        def request(client, method, url):
+            resp = client.request(method, url)
+            data = None
+            try:
+                data = resp.json()
+            except Exception:
+                data = resp.text
+            return {"status_code": resp.status_code, "data": data}
+
+        def extract(tickle):
+            status_code = tickle.get('status_code', 0)
+            data = tickle.get('data', {})
+            if status_code != 200 or not isinstance(data, dict):
+                return {"ok": False, "status_code": status_code, "data": data}
+
+            iserver = data.get('iserver', {}) if isinstance(data.get('iserver', {}), dict) else {}
+            auth = iserver.get('authStatus', {}) if isinstance(iserver.get('authStatus', {}), dict) else {}
+            return {
+                "ok": True,
+                "authenticated": bool(auth.get('authenticated', False)),
+                "connected": bool(auth.get('connected', False)),
+                "competing": bool(auth.get('competing', False)),
+                "session": data.get('session'),
+                "sso_expires": data.get('ssoExpires'),
+            }
+
+        base_url = (base_url or '').rstrip('/')
+        gateway_url = (gateway_url or base_url).rstrip('/')
+
+        with httpx.Client(verify=False, follow_redirects=True, timeout=20) as client:
+            before = request(client, 'GET', f"{base_url}/tickle")
+            before_info = extract(before)
+
+            action = "noop"
+            if not before_info.get('ok'):
+                action = "error"
+            elif before_info.get('authenticated') and before_info.get('connected') and not before_info.get('competing'):
+                action = "noop"
+            elif not before_info.get('session'):
+                action = "login_required"
+            elif before_info.get('competing') or not before_info.get('connected'):
+                action = "logout_then_reauth"
+            else:
+                action = "reauth"
+
+            logout = None
+            reauth = None
+            after = None
+
+            if action == "logout_then_reauth":
+                logout = request(client, 'POST', f"{base_url}/logout")
+                reauth = request(client, 'POST', f"{gateway_url}/v1/portal/iserver/reauthenticate?force=true")
+                after = request(client, 'GET', f"{base_url}/tickle")
+            elif action == "reauth":
+                reauth = request(client, 'POST', f"{gateway_url}/v1/portal/iserver/reauthenticate?force=true")
+                after = request(client, 'GET', f"{base_url}/tickle")
+
+        result = {
+            "action": action,
+            "before": before_info,
+            "after": extract(after) if after else None,
+            "logout": logout,
+            "reauth": reauth,
+        }
+    next:
+      - step: end
+
+  - step: end
+    desc: Done
+    tool:
+      kind: python
+      args: {}
+      code: |
+        result = {"status": "completed"}

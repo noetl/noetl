@@ -140,7 +140,13 @@ async def execute_http_task(
         logger.info(f"HTTP.EXECUTE_HTTP_TASK: headers_keys={list(headers.keys())} | auth_applied={len(auth_headers) if auth_headers else 0} | auth_preview={auth_preview} | redacted={redacted_headers}")
 
         timeout = task_config.get('timeout', 30)
-        logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Timeout={timeout}")
+        verify_ssl = task_config.get('verify_ssl')
+        if verify_ssl is None:
+            verify_ssl = task_config.get('verify', True)
+        follow_redirects = bool(task_config.get('follow_redirects', False))
+        logger.debug(
+            f"HTTP.EXECUTE_HTTP_TASK: Timeout={timeout} | verify_ssl={verify_ssl} | follow_redirects={follow_redirects}"
+        )
 
         try:
             # Check for local domain mocking
@@ -153,7 +159,7 @@ async def execute_http_task(
                 )
 
             # Execute the actual HTTP request
-            with httpx.Client(timeout=timeout) as client:
+            with httpx.Client(timeout=timeout, verify=verify_ssl, follow_redirects=follow_redirects) as client:
                 request_args = build_request_args(
                     endpoint, method, headers, data_map, params, payload
                 )

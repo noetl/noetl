@@ -86,6 +86,10 @@ notebook = [
 # Rust CLI (optional for users who need command-line interface)
 cli = ["noetl-cli==2.5.3"]
 
+# Optional helper dependencies for automating IBKR Gateway browser login.
+# Note: Playwright also requires: `playwright install chromium`
+ibkr = ["playwright>=1.43.0"]
+
 # CLI moved to optional dependency [cli] - install with: uv pip install "noetl[cli]"
 # This avoids conflicts with the Rust noetl binary from noetl-cli package
 

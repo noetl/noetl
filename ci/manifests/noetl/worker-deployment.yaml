@@ -33,7 +33,7 @@ spec:
             - "until curl -sf http://noetl.noetl.svc.cluster.local:8082/api/health; do echo 'Waiting for NoETL API...'; sleep 3; done"
       containers:
         - name: worker
-          image: local/noetl:latest
+          image: image_name:image_tag
           imagePullPolicy: Never
           command:
             - python
