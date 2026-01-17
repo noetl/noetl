@@ -819,12 +819,8 @@ class ControlFlowEngine:
                 max_attempts = retry_spec.get("max_attempts", 3)
                 backoff = retry_spec.get("backoff", "linear")  # linear, exponential
                 
-                # Get current attempt from event.meta or event.attempt (fallback)
-                current_attempt = 1
-                if event.meta and "attempt" in event.meta:
-                    current_attempt = event.meta["attempt"]
-                elif event.attempt:
-                    current_attempt = event.attempt
+                # Get current attempt from event.attempt (Event model field)
+                current_attempt = event.attempt if event.attempt else 1
                 
                 # Check if max attempts exceeded
                 if current_attempt >= max_attempts:
@@ -873,15 +869,9 @@ class ControlFlowEngine:
         args: dict[str, Any]
     ) -> Optional[Command]:
         """Create a command to execute a step."""
-        # Debug: Check if step has loop
-        logger.warning(f"[CREATE-CMD] Step {step.step} has loop? {step.loop is not None}")
-        if step.loop:
-            logger.warning(f"[CREATE-CMD] Loop config: in={step.loop.in_}, iterator={step.loop.iterator}, mode={step.loop.mode}")
-        else:
-            logger.error(f"[CREATE-CMD] Step {step.step} has NO LOOP but should! step_dict_keys={list(step.model_dump().keys())}, loop_value={step.model_dump().get('loop')}")
-        
         # Check if step has loop configuration
         if step.loop:
+            logger.debug(f"[CREATE-CMD] Step {step.step} has loop: in={step.loop.in_}, iterator={step.loop.iterator}, mode={step.loop.mode}")
             # Get collection to iterate
             context = state.get_render_context(Event(
                 execution_id=state.execution_id,
@@ -900,12 +890,18 @@ class ControlFlowEngine:
             
             # Get completed count from NATS K/V (authoritative) or local fallback
             # Use last event_id for this step as the loop instance identifier
+            # If no event_id yet (first time), use execution_id as fallback
             loop_event_id = state.step_event_ids.get(step.step)
+            if loop_event_id is None:
+                # For new loops, use execution_id as identifier until first event is created
+                loop_event_id = f"exec_{state.execution_id}"
+                logger.debug(f"[LOOP-INIT] No event_id yet for {step.step}, using execution fallback: {loop_event_id}")
+            
             nats_cache = await get_nats_cache()
             nats_loop_state = await nats_cache.get_loop_state(
                 str(state.execution_id),
                 step.step,
-                event_id=str(loop_event_id) if loop_event_id else None
+                event_id=str(loop_event_id)
             )
             
             # Use NATS count if available (authoritative for distributed execution)
@@ -929,7 +925,7 @@ class ControlFlowEngine:
                             "mode": step.loop.mode,
                             "event_id": loop_event_id
                         },
-                        event_id=str(loop_event_id) if loop_event_id else None
+                        event_id=str(loop_event_id)
                     )
                 
                 loop_state = state.loop_state[step.step]
