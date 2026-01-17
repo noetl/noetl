@@ -16,16 +16,30 @@ NoETL integration with Interactive Brokers Client Portal Gateway for automated t
                               ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                 IBKR Client Portal Gateway (Kubernetes)                     │
-│                 https://localhost:15000 (NodePort 30500)                    │
+│                 https://localhost:30500 (NodePort)                          │
 │                 https://ibkr-client-portal.ibkr.svc:5000 (internal)         │
 │                                                                             │
 │       Official IBKR Java gateway for REST API access                        │
 │       Built via: noetl run automation/ibkr/build.yaml                       │
 │       Deployed via: noetl run automation/ibkr/deploy.yaml                   │
+│       All-in-one: noetl run automation/ibkr/setup_full.yaml                 │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ## Quick Start
+
+### Option 1: All-in-One Setup
+
+```bash
+# Build and deploy IBKR gateway in one command
+noetl run automation/ibkr/setup_full.yaml
+
+# Gateway will be available at:
+# - External: https://localhost:30500
+# - Internal: https://ibkr-client-portal.ibkr.svc.cluster.local:5000
+```
+
+### Option 2: Step-by-Step
 
 ```bash
 # 1. Build Docker image (downloads official IBKR Client Portal Gateway)
@@ -34,29 +48,28 @@ noetl run automation/ibkr/build.yaml
 # 2. Deploy to Kubernetes
 noetl run automation/ibkr/deploy.yaml
 
-# 3. Open browser to login (accept self-signed cert warning)
-# NodePort mapped: localhost:15000 -> NodePort 30500
-open https://localhost:15000
+# 3. Verify deployment
+kubectl -n ibkr get pods
+kubectl -n ibkr get svc
+```
 
-# 4. Login with IBKR credentials in browser
+### Login to IBKR Gateway
 
-# 5. After login, API calls work via server/worker playbooks
+```bash
+# Open browser to login (accept self-signed cert warning)
+open https://localhost:30500
+
+# Login with IBKR credentials in browser
+# After login, API calls work via server/worker playbooks
 ```
 
 ## Playbooks
 
-### Local vs Distributed execution
+### Build and Deploy (Local Shell)
 
-- `noetl run <path/to/file.yaml>` runs a local YAML file using the local playbook runner.
-- `noetl execute <catalog/path>` runs a registered playbook by its `metadata.path` on the NoETL server/worker.
+**`automation/ibkr/build.yaml`** - Build IBKR gateway Docker image
 
-For IBKR we use both:
-- Local playbooks under `automation/ibkr/*.yaml` for build/deploy/setup/login on your workstation.
-- Distributed playbooks under `tests/fixtures/playbooks/interactive_brokers/*.yaml` for server/worker HTTP calls.
-
-### Build Image (Local Shell)
-
-Downloads official IBKR Client Portal Gateway and builds Docker image:
+Downloads official IBKR Client Portal Gateway and builds/loads image:
 
 ```bash
 noetl run automation/ibkr/build.yaml
@@ -68,7 +81,7 @@ Steps:
 3. Builds Docker image `ibkr-client-portal:latest`
 4. Loads image to kind cluster
 
-### Deploy Gateway (Local Shell)
+**`automation/ibkr/deploy.yaml`** - Deploy gateway to Kubernetes
 
 ```bash
 noetl run automation/ibkr/deploy.yaml
@@ -79,6 +92,14 @@ Steps:
 2. Applies manifests from `ci/manifests/ibkr-gateway/`
 3. Waits for deployment rollout
 4. Shows status
+
+**`automation/ibkr/setup_full.yaml`** - Build and deploy in one command
+
+```bash
+noetl run automation/ibkr/setup_full.yaml
+```
+
+Combines build.yaml and deploy.yaml for complete setup.
 
 ### API Operations (Server/Worker)
 

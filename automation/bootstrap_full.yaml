@@ -1,0 +1,78 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: bootstrap-full
+  path: automation/bootstrap-full
+  description: Complete NoETL environment setup including TradeDB and IBKR gateway
+
+workload:
+  repo_root: /Users/akuksin/projects/noetl/noetl
+
+workflow:
+  - step: start
+    desc: Start complete environment setup
+    tool:
+      kind: shell
+      cmds:
+        - echo "Starting complete NoETL environment setup..."
+    next:
+      - step: boot_cluster
+
+  - step: boot_cluster
+    desc: Boot NoETL Kubernetes cluster
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "Booting NoETL cluster..."
+          cd {{ workload.repo_root }}
+          noetl run boot
+    next:
+      - step: setup_tradedb
+
+  - step: setup_tradedb
+    desc: Setup TradeDB database and schema
+    tool:
+      kind: playbook
+      path: submodules/IQT/automation/tradedb_setup.yaml
+    next:
+      - step: setup_ibkr
+
+  - step: setup_ibkr
+    desc: Build and deploy IBKR Client Portal Gateway
+    tool:
+      kind: playbook
+      path: automation/ibkr/setup_full.yaml
+    next:
+      - step: summary
+
+  - step: summary
+    desc: Show environment summary
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "=========================================="
+          echo "NoETL Environment Setup Complete"
+          echo "=========================================="
+          echo ""
+          echo "Services:"
+          echo "  NoETL API:        http://localhost:8082"
+          echo "  Gateway API:      http://localhost:8090"
+          echo "  Gateway UI:       http://localhost:8080"
+          echo "  IBKR Gateway:     https://localhost:30500"
+          echo "  PostgreSQL:       localhost:54321"
+          echo ""
+          echo "Databases:"
+          echo "  NoETL:   demo_noetl (user: demo)"
+          echo "  TradeDB: tradedb (user: trade)"
+          echo ""
+          echo "Pod Status:"
+          kubectl get pods -A | grep -E "noetl|gateway|ibkr" | grep -v "kube-system"
+          echo ""
+    next:
+      - step: end
+
+  - step: end
+    desc: Done
