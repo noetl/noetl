@@ -316,7 +316,7 @@ workflow:
           # Apply manifests with image substitution
           for manifest in ci/manifests/noetl/*.yaml; do
             if [ -f "$manifest" ]; then
-              sed "s|{{ workload.registry }}/{{ workload.image_name }}:latest|$IMAGE|g" "$manifest" | kubectl apply -f -
+              sed "s|image_name:image_tag|$IMAGE|g" "$manifest" | kubectl apply -f -
             fi
           done
     next:
