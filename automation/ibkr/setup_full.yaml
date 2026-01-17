@@ -20,8 +20,11 @@ workflow:
   - step: build_image
     desc: Build IBKR gateway Docker image
     tool:
-      kind: playbook
-      path: automation/ibkr/build.yaml
+      kind: shell
+      cmds:
+        - |
+          echo "Building IBKR Client Portal Gateway Docker image..."
+          noetl run automation/ibkr/build.yaml
     next:
       - step: deploy_gateway
 

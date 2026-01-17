@@ -26,8 +26,11 @@ metadata:
 
 workload:
   # Credential name (registered in NoETL keychain)
-  credential_name: ib_gateway
+  credential_name: ib_paper
   # Optional override for gateway URL
+  gateway_url: ""
+  # Target operation (required input parameter)
+  target: "status"
   gateway_url: ""
   # Optional override for API base URL
   base_url: ""
@@ -78,29 +81,37 @@ workflow:
           "base_url": base_url,
             "totp_secret": totp_secret,
         }
+    case:
+      - when: "{{ event.name == 'step.exit' and workload.target == 'accounts' }}"
+        then:
+          next:
+            - step: get_accounts
+      - when: "{{ event.name == 'step.exit' and workload.target == 'positions' }}"
+        then:
+          next:
+            - step: get_positions
+      - when: "{{ event.name == 'step.exit' and workload.target == 'orders' }}"
+        then:
+          next:
+            - step: get_orders
+      - when: "{{ event.name == 'step.exit' and workload.target == 'tickle' }}"
+        then:
+          next:
+            - step: tickle_session
+      - when: "{{ event.name == 'step.exit' and workload.target == 'totp' }}"
+        then:
+          next:
+            - step: generate_totp
+      - when: "{{ event.name == 'step.exit' and workload.target == 'history' }}"
+        then:
+          next:
+            - step: get_futures
+      - when: "{{ event.name == 'step.exit' and workload.target == 'status' }}"
+        then:
+          next:
+            - step: check_auth_status
     next:
-      - when: "{{ start.target == 'status' }}"
-        then:
-          - step: check_auth_status
-      - when: "{{ start.target == 'totp' }}"
-        then:
-          - step: generate_totp
-      - when: "{{ start.target == 'tickle' }}"
-        then:
-          - step: tickle_session
-      - when: "{{ start.target == 'accounts' }}"
-        then:
-          - step: get_accounts
-      - when: "{{ start.target == 'positions' }}"
-        then:
-          - step: get_positions
-      - when: "{{ start.target == 'orders' }}"
-        then:
-          - step: get_orders
-      - when: "{{ start.target == 'history' }}"
-        then:
-          - step: get_futures
-      - step: check_auth_status
+      - step: end
 
   # ============================================
   # Authentication Status
