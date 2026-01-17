@@ -5,7 +5,7 @@ metadata:
   path: automation/infrastructure/gateway
 
 workload:
-  action: help  # build-image, deploy, deploy-all, remove, redeploy, restart, status, logs, test
+  action: help  # build-image, load-image, deploy, deploy-all, remove, redeploy, restart, status, logs, test
 
 workflow:
   - step: start
@@ -18,6 +18,10 @@ workflow:
       - when: "{{ workload.action }} == build-image"
         then:
           - step: build_image
+        args: {}
+      - when: "{{ workload.action }} == load-image"
+        then:
+          - step: load_image
         args: {}
       - when: "{{ workload.action }} == deploy"
         then:
@@ -69,6 +73,25 @@ workflow:
           echo "Loading Gateway image into kind cluster..."
           kind load docker-image noetl-gateway:latest --name noetl
           echo "Gateway image built and loaded into kind cluster"
+    next:
+      - step: end
+
+  - step: load_image
+    desc: Load Gateway image into kind cluster
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Loading Gateway image into kind cluster..."
+          if docker image inspect noetl-gateway:latest >/dev/null 2>&1; then
+            kind load docker-image noetl-gateway:latest --name noetl
+            echo "Gateway image loaded successfully"
+          else
+            echo "ERROR: noetl-gateway:latest image not found in Docker"
+            echo "Build the image first with: noetl run automation/infrastructure/gateway.yaml --set action=build-image"
+            exit 1
+          fi
     next:
       - step: end
 
@@ -204,6 +227,8 @@ workflow:
           echo ""
           echo "Build & Deployment:"
           echo "  build-image - Build Gateway Docker image and load into kind"
+          echo "  build-image - Build Gateway Docker image and load into kind"
+          echo "  load-image  - Load existing Gateway image into kind cluster"
           echo "  deploy      - Deploy Gateway API to Kubernetes"
           echo "  deploy-all  - Build and deploy Gateway API and UI"
           echo "  remove      - Remove Gateway from Kubernetes"
