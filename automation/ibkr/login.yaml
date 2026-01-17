@@ -7,7 +7,7 @@ metadata:
 
 workload:
   gateway_url: https://localhost:15000
-  credential_name: ib_gateway
+  credential_name: ib_paper
   paper: true
   headless: true
   # manual: true opens a browser and lets you login yourself.
@@ -16,13 +16,13 @@ workload:
   timeout_seconds: 240
   script_uri: "gs://tradetrend/scripts/ibkr/ibkr_login_job.py"
   script_source_type: gcs
-  script_auth: "tradetrend_noetl"
+  script_auth: "tradetrend_noetl_sdavwe"
   script_region: ""
   script_endpoint: ""
   script_timeout_seconds: 60
 
 keychain:
-  - name: ib_gateway
+  - name: ib_paper
     kind: credential
     scope: local
     credential: "{{ workload.credential_name }}"
@@ -66,10 +66,10 @@ workflow:
         install_dependencies:
           - playwright==1.57.0
         env:
-          IBKR_USERNAME: "{{ ib_gateway.username }}"
-          IBKR_PASSWORD: "{{ ib_gateway.password }}"
-          IBKR_TOTP_SECRET: "{{ ib_gateway.totp_secret }}"
-          IBKR_2FA_CODE: "{{ ib_gateway.two_fa_code }}"
+          IBKR_USERNAME: "{{ ib_paper.username }}"
+          IBKR_PASSWORD: "{{ ib_paper.password }}"
+          IBKR_TOTP_SECRET: "{{ ib_paper.totp_secret }}"
+          IBKR_2FA_CODE: "{{ ib_paper.two_fa_code }}"
           PLAYWRIGHT_BROWSERS_PATH: "/ms-playwright"
     next:
       - step: end

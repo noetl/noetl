@@ -101,41 +101,60 @@ noetl run automation/ibkr/setup_full.yaml
 
 Combines build.yaml and deploy.yaml for complete setup.
 
-### API Operations (Server/Worker)
+### API Operations (Server/Worker Mode)
+
+**Prerequisites**: Playbooks must be registered in the catalog before distributed execution.
 
 Located at `tests/fixtures/playbooks/interactive_brokers/ibkr_api.yaml`:
 
 ```bash
+# Step 1: Register the playbook in catalog (one time)
+noetl register playbook --file tests/fixtures/playbooks/interactive_brokers/ibkr_api.yaml
+# Returns: {"path":"automation/ibkr/api", ...}
+
+# Step 2: Execute on server/worker using the catalog path (automation/ibkr/api)
 # Check auth status
-noetl trigger playbooks/interactive_brokers/ibkr_api status
+echo '{"action":"status"}' > /tmp/ibkr_params.json
+noetl execute playbook automation/ibkr/api --input /tmp/ibkr_params.json
 
 # Keep session alive (call every ~55 seconds)
-noetl trigger playbooks/interactive_brokers/ibkr_api tickle
+echo '{"action":"tickle"}' > /tmp/ibkr_params.json
+noetl execute playbook automation/ibkr/api --input /tmp/ibkr_params.json
 
 # Get accounts
-noetl trigger playbooks/interactive_brokers/ibkr_api accounts
+echo '{"action":"accounts"}' > /tmp/ibkr_params.json
+noetl execute playbook automation/ibkr/api --input /tmp/ibkr_params.json
 
-# Get positions
-noetl trigger playbooks/interactive_brokers/ibkr_api positions
-
-# Get orders
-noetl trigger playbooks/interactive_brokers/ibkr_api orders
+# Get positions/orders (similar pattern)
 ```
+
+**Alternative - Local Execution** (no registration needed):
+```bash
+# Execute locally using file path - supports direct --set parameters
+noetl run tests/fixtures/playbooks/interactive_brokers/ibkr_api.yaml --set action=status
+noetl run tests/fixtures/playbooks/interactive_brokers/ibkr_api.yaml --set action=accounts
+```
+
+**Note**: 
+- Registration uses the playbook's `metadata.path` (automation/ibkr/api), NOT the file path
+- **Distributed execution**: `noetl execute playbook <catalog_path> --input <json_file>`
+- **Local execution**: `noetl run <file_path> --set key=value` or `--payload '{"key":"value"}'`
+- `noetl run` only works with file paths (containing `/` or `.yaml` extension)
 
 ### Verify Gateway (Server/Worker)
 
 Distributed verify playbook: `automation/ibkr/verify` (file: `tests/fixtures/playbooks/interactive_brokers/ibkr_gateway_verify.yaml`).
 
 ```bash
-noetl execute automation/ibkr/verify --payload '{"credential":"ib_gateway"}'
+noetl run playbook automation/ibkr/verify --payload '{"credential":"ib_gateway"}'
 ```
 
-### Verify Gateway (Local runner)
+### Verify Gateway (Local Execution)
 
 Local verify playbook file: `automation/ibkr/verify.yaml` (metadata path `automation/ibkr/verify-local`).
 
 ```bash
-noetl run automation/ibkr/verify.yaml --payload '{"gateway_url":"https://localhost:15000"}'
+noetl run automation/ibkr/verify.yaml --set gateway_url=https://localhost:30500
 ```
 
 ## Network Access
