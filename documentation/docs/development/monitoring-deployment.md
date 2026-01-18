@@ -392,4 +392,4 @@ grafana:
 
 - [Automation Playbooks](./automation_playbooks.md)
 - [Observability Services](../reference/observability_services.md)
-- [Kind Cluster Setup](../development/kind-cluster.md)
+- [Kind Cluster Setup](./kind_kubernetes.md)

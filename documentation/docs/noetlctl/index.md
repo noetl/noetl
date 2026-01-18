@@ -205,7 +205,7 @@ noetl execute playbook my-playbook
 
 ### Build Automation
 
-**File**: [`automation/examples/test_local.yaml`](../../../automation/examples/test_local.yaml)
+**Example**: `automation/examples/test_local.yaml`
 
 ```yaml
 # automation/build.yaml
@@ -293,13 +293,13 @@ Complete working examples in `automation/examples/`:
 
 | Example File | Description | Key Features |
 |--------------|-------------|--------------|
-| [`http_example.yaml`](../../../automation/examples/http_example.yaml) | HTTP GET/POST requests | Query params, result capture, vars extraction |
-| [`parent_playbook.yaml`](../../../automation/examples/parent_playbook.yaml) | Playbook composition | Sub-playbook calls, args passing |
-| [`build_child.yaml`](../../../automation/examples/build_child.yaml) | Child playbook | Receives args as workload vars |
-| [`deploy_child.yaml`](../../../automation/examples/deploy_child.yaml) | Child playbook | Template rendering |
-| [`test_local.yaml`](../../../automation/examples/test_local.yaml) | Shell commands | Array/string cmds, target execution |
-| [`conditional_flow.yaml`](../../../automation/examples/conditional_flow.yaml) | Conditional routing | case/when/then/else, comparison operators |
-| [`unsupported_tools.yaml`](../../../automation/examples/unsupported_tools.yaml) | Tool compatibility | Shows unsupported tool warnings |
+| `http_example.yaml` | HTTP GET/POST requests | Query params, result capture, vars extraction |
+| `parent_playbook.yaml` | Playbook composition | Sub-playbook calls, args passing |
+| `build_child.yaml` | Child playbook | Receives args as workload vars |
+| `deploy_child.yaml` | Child playbook | Template rendering |
+| `test_local.yaml` | Shell commands | Array/string cmds, target execution |
+| `conditional_flow.yaml` | Conditional routing | case/when/then/else, comparison operators |
+| `unsupported_tools.yaml` | Tool compatibility | Shows unsupported tool warnings |
 
 **Try them**:
 ```bash

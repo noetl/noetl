@@ -25,15 +25,15 @@ python -c "import noetl; print(noetl.__version__)"
 The `noetl` CLI is a fast, native Rust binary for managing NoETL servers, workers, and playbooks:
 
 ```bash
-# Install with CLI support (recommended)
-pip install "noetl[cli]"
-
-# Or install CLI standalone
-pip install noetl-cli
+# Install via Cargo (Rust package manager)
+cargo install noetl
 
 # Verify CLI installation
 noetl --version
 ```
+
+**Prerequisites:**
+- Rust toolchain (install from https://rustup.rs/)
 
 **CLI Capabilities:**
 - `noetl server start/stop` - Manage NoETL server
@@ -46,33 +46,34 @@ noetl --version
 
 ## Option 2: Local Development Environment
 
-For a complete environment with server, workers, PostgreSQL, and monitoring:
+For a complete environment with server, workers, PostgreSQL, and observability stack:
 
 ```bash
 # Clone repository
 git clone https://github.com/noetl/noetl.git
 cd noetl
 
-# Bootstrap: Install tools and provision complete environment
-make bootstrap
+# Install NoETL CLI
+cargo install --path crates/noetlctl
+
+# Bootstrap entire environment (one command)
+noetl run boot
 ```
 
-**What bootstrap does:**
-1. Installs required tools: Docker, kubectl, helm, kind, task, psql, pyenv, uv, Rust/Cargo
-2. Creates Kind Kubernetes cluster
-3. Builds NoETL Docker image
-4. Deploys PostgreSQL database
-5. Deploys observability stack (ClickHouse, Qdrant, NATS JetStream)
-6. Deploys monitoring stack (VictoriaMetrics, Grafana, VictoriaLogs)
-7. Deploys NoETL server and workers
+**What `noetl run boot` does:**
+1. Creates Kind Kubernetes cluster with pre-configured NodePort mappings
+2. Builds NoETL Docker images
+3. Deploys PostgreSQL database
+4. Deploys NoETL server (control plane) and workers (data plane)
+5. Initializes database schema
+6. Deploys observability stack (ClickHouse, Qdrant, NATS JetStream)
+7. Sets up monitoring (if configured)
 
-**Services available after bootstrap:**
+**Services available after boot:**
 
 | Service | URL | Credentials |
 |---------|-----|-------------|
 | NoETL Server | http://localhost:8082 | - |
-| Grafana | http://localhost:3000 | See `task grafana` |
-| VictoriaMetrics | http://localhost:9428 | - |
 | PostgreSQL | localhost:54321 | demo/demo |
 | ClickHouse HTTP | http://localhost:30123 | - |
 | Qdrant HTTP | http://localhost:30633 | - |
@@ -135,20 +136,26 @@ curl http://localhost:8082/api/executions/1 | jq
 
 ## Development Workflow
 
-After bootstrap, use these common commands:
+Common development commands:
 
 ```bash
-# Quick development cycle (rebuild + reload)
-task dev
+# Rebuild and redeploy after code changes
+noetl k8s redeploy
 
-# Deploy all components
-task deploy-all
+# Reset database and redeploy (full reset)
+noetl k8s reset
 
-# Check cluster health
-task test-cluster-health
+# Re-bootstrap entire environment
+noetl run destroy && noetl run boot
 
-# View available tasks
-task --list
+# Check deployment status
+kubectl get pods -n noetl
+
+# View server logs
+kubectl logs -n noetl -l app=noetl-server --tail=100
+
+# View worker logs
+kubectl logs -n noetl -l app=noetl-worker --tail=100
 ```
 
 ## Register Test Fixtures
@@ -172,8 +179,8 @@ noetl register credential tests/fixtures/credentials/pg_k8s.yaml --host localhos
 ## Cleanup
 
 ```bash
-# Destroy environment and clean all resources
-make destroy
+# Destroy entire environment (cluster, deployments, resources)
+noetl run destroy
 ```
 
 ## Next Steps
