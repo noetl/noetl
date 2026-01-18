@@ -68,8 +68,14 @@ class ExecutionRequest(BaseModel):
     # Execution type and configuration
     args: Optional[Dict[str, Any]] = Field(
         default=None,
-        description="Input args for execution",
-        alias="args"
+        description="Input args for execution (also accepts 'parameters' for backward compatibility)",
+        validation_alias="args"
+    )
+    parameters: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Legacy field name for args (backward compatibility)",
+        exclude=True,
+        validation_alias="parameters"
     )
     
     # Execution options
@@ -114,7 +120,12 @@ class ExecutionRequest(BaseModel):
     def validate_and_normalize(self):
         """
         Validate that at least one identifier is provided and normalize the request.
+        Also handles backward compatibility for 'parameters' field.
         """
+        # Backward compatibility: if parameters is provided but args is not, use parameters as args
+        if self.parameters is not None and self.args is None:
+            self.args = self.parameters
+        
         # Validate at least one identifier is present
         if not self.catalog_id and not self.path:
             raise ValueError(

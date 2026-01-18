@@ -187,7 +187,7 @@ def execute_playbook_task(
                 "path": playbook_path or f"nested/{task_name}",
                 "version": playbook_version,
                 "type": "playbook",
-                "parameters": nested_context,
+                "args": nested_context,  # Fixed: was "parameters", should be "args" to match ExecutionRequest schema
                 "merge": True,
                 "sync_to_postgres": True,
                 "context": {
