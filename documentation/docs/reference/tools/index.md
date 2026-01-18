@@ -147,6 +147,6 @@ All tools support Jinja2 templating in string values:
 
 ## See Also
 
-- [DSL Specification](/docs/reference/dsl/dsl_spec) - Complete playbook syntax
+- [DSL Specification](/docs/reference/dsl/spec) - Complete playbook syntax
 - [Authentication](/docs/reference/auth_and_keychain_reference) - Credential management
 - [Retry Configuration](/docs/reference/dsl/unified_retry) - Error handling

@@ -1,0 +1,66 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: ibkr-setup-full
+  path: automation/ibkr/setup-full
+  description: Build and deploy IBKR Client Portal Gateway
+
+workload:
+  image_name: ibkr-client-portal
+  image_tag: latest
+  kind_cluster: noetl
+  namespace: ibkr
+
+workflow:
+  - step: start
+    desc: Build and deploy IBKR Client Portal Gateway
+    next:
+      - step: build_image
+
+  - step: build_image
+    desc: Build IBKR gateway Docker image
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "Building IBKR Client Portal Gateway Docker image..."
+          noetl run automation/ibkr/build.yaml
+    next:
+      - step: deploy_gateway
+
+  - step: deploy_gateway
+    desc: Deploy IBKR gateway to Kubernetes
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "Creating namespace..."
+          kubectl create namespace {{ workload.namespace }} --dry-run=client -o yaml | kubectl apply -f -
+          
+          echo "Deploying IBKR Client Portal Gateway..."
+          kubectl apply -f ci/manifests/ibkr-gateway/
+          
+          echo "Waiting for deployment..."
+          kubectl -n {{ workload.namespace }} wait --for=condition=available --timeout=90s deployment/ibkr-client-portal || true
+    next:
+      - step: verify_status
+
+  - step: verify_status
+    desc: Verify deployment status
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "Deployment status:"
+          kubectl -n {{ workload.namespace }} get pods
+          echo ""
+          kubectl -n {{ workload.namespace }} get svc
+          echo ""
+          echo "Gateway endpoints:"
+          echo "  External: https://localhost:30500"
+          echo "  Internal: https://ibkr-client-portal.ibkr.svc.cluster.local:5000"
+    next:
+      - step: end
+
+  - step: end
+    desc: Done

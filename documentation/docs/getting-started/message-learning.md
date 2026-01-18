@@ -45,7 +45,7 @@ WHERE playbook_path = 'data/ingestion/daily_load'
 ORDER BY created_at DESC;
 ```
 
-Events exported to ClickHouse for analytics and AI agent access via MCP server.
+Events exported to ClickHouse for analytics and AI agent access via MCP server. See [Observability Services](../reference/observability_services.md) for more details.
 
 ### 2. Human Decision Points
 
@@ -166,11 +166,10 @@ Message learning leverages NoETL's observability stack:
 - **VictoriaMetrics**: Time-series metrics for performance analysis
 - **Grafana**: Dashboard visualization of execution patterns
 
-See [Observability Services](/docs/observability/overview) for complete integration details.
+See [Observability Services](../reference/observability_services.md) for complete integration details.
 
 ## Next Steps
 
 - [Playbook Structure](/docs/features/playbook_structure) - Learn the DSL syntax
-- [Event API](/docs/reference/api/event) - Programmatic event access
-- [Observability](/docs/observability/overview) - Analytics stack setup
+- [Observability](../reference/observability_services.md) - Analytics stack setup
 - [AI-Native Features](/docs/getting-started/semantic-pipeline) - Semantic search capabilities

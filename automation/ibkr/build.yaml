@@ -1,0 +1,64 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: ibkr-build
+  path: automation/ibkr/build
+  description: Build IBKR Client Portal Gateway Docker image
+
+workload:
+  build_dir: /Users/akuksin/projects/noetl/noetl/docker/ibkr-gateway
+  download_url: https://download2.interactivebrokers.com/portal/clientportal.gw.zip
+  image_name: ibkr-client-portal
+  image_tag: latest
+  kind_cluster: noetl
+
+workflow:
+  - step: start
+    desc: Build IBKR Client Portal Gateway image
+    next:
+      - step: setup_dir
+
+  - step: setup_dir
+    desc: Create build directory
+    tool:
+      kind: shell
+      cmds: "mkdir -p /Users/akuksin/projects/noetl/noetl/docker/ibkr-gateway"
+    next:
+      - step: download
+
+  - step: download
+    desc: Download IBKR Client Portal Gateway
+    tool:
+      kind: shell
+      cmds: "cd /Users/akuksin/projects/noetl/noetl/docker/ibkr-gateway && if [ -d root ]; then echo Already_downloaded; else curl -L -o gw.zip https://download2.interactivebrokers.com/portal/clientportal.gw.zip && unzip -o gw.zip && rm gw.zip; fi"
+    next:
+      - step: dockerfile
+
+  - step: dockerfile
+    desc: Create Dockerfile
+    tool:
+      kind: shell
+      cmds: "cp /Users/akuksin/projects/noetl/noetl/docker/ibkr-gateway/Dockerfile.template /Users/akuksin/projects/noetl/noetl/docker/ibkr-gateway/Dockerfile 2>/dev/null || echo 'Using existing Dockerfile'"
+    next:
+      - step: build
+
+  - step: build
+    desc: Build Docker image
+    tool:
+      kind: shell
+      cmds: "cd /Users/akuksin/projects/noetl/noetl/docker/ibkr-gateway && docker build -t ibkr-client-portal:latest ."
+    next:
+      - step: load
+
+  - step: load
+    desc: Load image to kind cluster
+    tool:
+      kind: shell
+      cmds:
+        - "kind load docker-image ibkr-client-portal:latest --name noetl || echo kind_not_available"
+        - "echo Build_complete_Image_ibkr-client-portal:latest"
+    next:
+      - step: end
+
+  - step: end
+    desc: Done

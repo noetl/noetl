@@ -82,6 +82,12 @@ nodes:
         listenAddress: "127.0.0.1"
         protocol: TCP
 
+        # IBKR Client Portal Gateway
+      - containerPort: 30500
+        hostPort: 15000
+        listenAddress: "127.0.0.1"
+        protocol: TCP
+
         # Gateway API
       - containerPort: 30090
         hostPort: 8090

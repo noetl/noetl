@@ -125,14 +125,20 @@ async def execute_sql_statements_async(
     
     for i, cmd in enumerate(commands):
         logger.info(f"[PID-{conn_pid}] Executing Postgres command {i+1}/{len(commands)}: {cmd[:100]}{'...' if len(cmd) > 100 else ''}")
-        is_select = cmd.strip().upper().startswith("SELECT")
-        is_call = cmd.strip().upper().startswith("CALL")
+        normalized = cmd.strip().upper()
+        is_select = normalized.startswith("SELECT")
+        is_call = normalized.startswith("CALL")
+        is_autocommit_ddl = (
+            normalized.startswith("CREATE DATABASE")
+            or normalized.startswith("DROP DATABASE")
+            or normalized.startswith("ALTER DATABASE")
+        )
         returns_data = is_select or "RETURNING" in cmd.upper()
         original_autocommit = conn.autocommit
         
         try:
-            if is_call:
-                # CALL statements require autocommit mode
+            if is_call or is_autocommit_ddl:
+                # CALL and database-level DDL require autocommit mode
                 await conn.set_autocommit(True)
                 async with conn.cursor() as cursor:
                     await cursor.execute(cmd)

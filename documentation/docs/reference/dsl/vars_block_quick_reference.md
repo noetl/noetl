@@ -276,5 +276,5 @@ ERROR Failed to render var 'user_id': 'result' is undefined
 
 - **Implementation Summary**: `docs/vars_block_implementation_summary.md`
 - **Feature Design**: `docs/variables_feature_design.md`
-- **DSL Specification**: `docs/dsl_spec.md`
+- **DSL Specification**: `doc./spec.md`
 - **Test Examples**: `tests/fixtures/playbooks/vars_test/test_vars_block.yaml`

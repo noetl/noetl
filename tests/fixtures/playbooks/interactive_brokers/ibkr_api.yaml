@@ -1,0 +1,479 @@
+# IBKR Client Portal Gateway - Server/Worker Playbook
+# This playbook runs on NoETL server/worker for IBKR API operations
+#
+# Features:
+# - TOTP generation from stored credential
+# - Session management (tickle)
+# - Portfolio/account operations
+# - Market data queries
+#
+# Usage (via server):
+#   noetl execute automation/ibkr/api --payload '{"target": "status"}'
+#   noetl execute automation/ibkr/api --payload '{"target": "accounts"}'
+#   noetl execute automation/ibkr/api --payload '{"target": "positions"}'
+#   noetl execute automation/ibkr/api --payload '{"target": "totp"}'
+#
+# Prerequisites:
+#   1. Register credential: noetl register credential ib_gateway -f tests/fixtures/credentials/ib_gateway.json
+#   2. Deploy Client Portal Gateway: noetl run automation/ibkr/deploy.yaml
+#
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: ibkr-api
+  path: automation/ibkr/api
+  description: IBKR Client Portal API operations (server/worker execution)
+
+workload:
+  # Credential name (registered in NoETL keychain)
+  credential_name: ib_paper
+  # Optional override for gateway URL
+  gateway_url: ""
+  # Target operation (required input parameter)
+  target: "status"
+  gateway_url: ""
+  # Optional override for API base URL
+  base_url: ""
+  # Default target if not specified in payload
+  target: status
+  # History lookup defaults (Natural Gas futures)
+  symbol: NG
+  exchange: NYMEX
+  period: 2d
+  bar: 5mins
+  start_time: ""
+  contract_index: 0
+
+workflow:
+  - step: start
+    desc: Route to requested target
+    tool:
+      kind: python
+      args:
+        target: "{{ workload.target }}"
+        credential_name: "{{ workload.credential_name }}"
+        override_gateway_url: "{{ workload.gateway_url }}"
+        override_base_url: "{{ workload.base_url }}"
+      code: |
+        from noetl.worker.secrets import fetch_credential_by_key
+
+        credential_name = (credential_name or '').strip()
+        credential_data = {}
+        if credential_name:
+            credential = fetch_credential_by_key(credential_name)
+            if isinstance(credential, dict):
+                data = credential.get('data', {})
+                if isinstance(data, dict) and 'data' in data:
+                    data = data.get('data')
+                if isinstance(data, dict):
+                    credential_data = data
+
+        gateway_url = (override_gateway_url or '').strip() or (credential_data.get('gateway_url') or '').strip()
+        base_url = (override_base_url or '').strip() or (credential_data.get('base_url') or '').strip()
+        if not base_url and gateway_url:
+          base_url = f"{gateway_url.rstrip('/')}/v1/api"
+        totp_secret = credential_data.get('totp_secret')
+
+        result = {
+            "target": target,
+            "status": "routing",
+            "gateway_url": gateway_url,
+          "base_url": base_url,
+            "totp_secret": totp_secret,
+        }
+    case:
+      - when: "{{ event.name == 'step.exit' and workload.target == 'accounts' }}"
+        then:
+          next:
+            - step: get_accounts
+      - when: "{{ event.name == 'step.exit' and workload.target == 'positions' }}"
+        then:
+          next:
+            - step: get_positions
+      - when: "{{ event.name == 'step.exit' and workload.target == 'orders' }}"
+        then:
+          next:
+            - step: get_orders
+      - when: "{{ event.name == 'step.exit' and workload.target == 'tickle' }}"
+        then:
+          next:
+            - step: tickle_session
+      - when: "{{ event.name == 'step.exit' and workload.target == 'totp' }}"
+        then:
+          next:
+            - step: generate_totp
+      - when: "{{ event.name == 'step.exit' and workload.target == 'history' }}"
+        then:
+          next:
+            - step: get_futures
+      - when: "{{ event.name == 'step.exit' and workload.target == 'status' }}"
+        then:
+          next:
+            - step: check_auth_status
+    next:
+      - step: end
+
+  # ============================================
+  # Authentication Status
+  # ============================================
+  - step: check_auth_status
+    desc: Check gateway authentication status
+    tool:
+      kind: http
+      method: GET
+      url: "{{ start.base_url }}/iserver/auth/status"
+      follow_redirects: true
+      headers:
+        Content-Type: application/json
+        User-Agent: NoETL/2.0
+      verify_ssl: false
+    next:
+      - step: parse_auth_status
+
+  - step: parse_auth_status
+    desc: Parse and return auth status
+    tool:
+      kind: python
+      args:
+        response: "{{ check_auth_status }}"
+      code: |
+        data = response.get('data', {})
+        status_code = response.get('status_code', 0)
+        
+        if status_code != 200:
+            result = {
+                'status': 'error',
+                'message': 'Gateway not accessible',
+                'status_code': status_code
+            }
+        else:
+            authenticated = data.get('authenticated', False)
+            connected = data.get('connected', False)
+            
+            result = {
+                'status': 'ready' if (authenticated and connected) else 'not_authenticated',
+                'authenticated': authenticated,
+                'connected': connected,
+                'competing': data.get('competing', False),
+                'server_info': data.get('serverInfo', {})
+            }
+    next:
+      - step: end
+
+  # ============================================
+  # TOTP Generation
+  # ============================================
+  - step: generate_totp
+    desc: Generate TOTP code from stored credential
+    tool:
+      kind: python
+      libs:
+        pyotp: pyotp
+        time: time
+      args:
+        totp_secret: "{{ start.totp_secret }}"
+      code: |
+        if not totp_secret:
+            result = {
+                'status': 'error',
+                'message': 'TOTP secret not configured in credential'
+            }
+        else:
+            totp = pyotp.TOTP(totp_secret)
+            code = totp.now()
+            remaining = 30 - (int(time.time()) % 30)
+            
+            result = {
+                'status': 'success',
+                'totp_code': code,
+                'valid_for_seconds': remaining
+            }
+    next:
+      - step: end
+
+  # ============================================
+  # Session Tickle (Keep Alive)
+  # ============================================
+  - step: tickle_session
+    desc: Tickle session to keep alive
+    tool:
+      kind: http
+      method: GET
+      url: "{{ start.base_url }}/tickle"
+      follow_redirects: true
+      headers:
+        Content-Type: application/json
+      verify_ssl: false
+    next:
+      - step: parse_tickle
+
+  - step: parse_tickle
+    desc: Parse tickle response
+    tool:
+      kind: python
+      args:
+        response: "{{ tickle_session }}"
+      code: |
+        data = response.get('data', {})
+        result = {
+            'status': 'success',
+            'session': data.get('session'),
+            'sso_expires': data.get('ssoExpires')
+        }
+    next:
+      - step: end
+
+  # ============================================
+  # Historical Data (Futures)
+  # ============================================
+  - step: get_futures
+    desc: Resolve futures contracts for symbol
+    tool:
+      kind: http
+      method: GET
+      url: "{{ start.base_url }}/trsrv/futures?symbols={{ workload.symbol }}&exchange={{ workload.exchange }}"
+      follow_redirects: true
+      headers:
+        Content-Type: application/json
+        User-Agent: NoETL/2.0
+      verify_ssl: false
+    next:
+      - step: pick_contract
+
+  - step: pick_contract
+    desc: Pick futures contract
+    tool:
+      kind: python
+      args:
+        response: "{{ get_futures }}"
+        symbol: "{{ workload.symbol }}"
+        index: "{{ workload.contract_index }}"
+      code: |
+        data = response.get('data', {})
+        if not isinstance(data, dict):
+            result = {"status": "error", "message": "Invalid futures response", "data": data}
+        else:
+            contracts = data.get(symbol, [])
+            if not contracts:
+                result = {"status": "error", "message": f"No contracts found for {symbol}", "data": data}
+            else:
+                try:
+                    contract = contracts[int(index)]
+                except Exception:
+                    contract = contracts[0]
+                result = {
+                    "status": "ok",
+                    "contract": contract,
+                    "conid": contract.get("conid"),
+                }
+    next:
+      - step: get_history
+
+  - step: get_history
+    desc: Fetch historical data
+    tool:
+      kind: http
+      method: GET
+      url: "{{ start.base_url }}/iserver/marketdata/history?conid={{ pick_contract.conid }}&period={{ workload.period }}&bar={{ workload.bar }}{% if workload.start_time %}&startTime={{ workload.start_time }}{% endif %}"
+      follow_redirects: true
+      headers:
+        Content-Type: application/json
+        User-Agent: NoETL/2.0
+      verify_ssl: false
+    next:
+      - step: summarize_history
+
+  - step: summarize_history
+    desc: Summarize historical data
+    tool:
+      kind: python
+      args:
+        contract: "{{ pick_contract.contract }}"
+        history: "{{ get_history }}"
+      code: |
+        data = history.get('data', {})
+        bars = []
+        if isinstance(data, dict):
+            bars = data.get('data', [])
+
+        result = {
+            "status": "ok" if history.get('status_code') == 200 else "error",
+            "contract": contract,
+            "bar_count": len(bars),
+            "sample": bars[:5],
+            "raw": data,
+        }
+    next:
+      - step: end
+
+  # ============================================
+  # Get Accounts
+  # ============================================
+  - step: get_accounts
+    desc: Get portfolio accounts
+    tool:
+      kind: http
+      method: GET
+      url: "{{ start.base_url }}/portfolio/accounts"
+      follow_redirects: true
+      headers:
+        Content-Type: application/json
+      verify_ssl: false
+    next:
+      - step: parse_accounts
+
+  - step: parse_accounts
+    desc: Parse accounts response
+    tool:
+      kind: python
+      args:
+        response: "{{ get_accounts }}"
+      code: |
+        data = response.get('data', [])
+        status_code = response.get('status_code', 0)
+        
+        if status_code != 200:
+            result = {
+                'status': 'error',
+                'message': 'Failed to get accounts',
+                'status_code': status_code
+            }
+        elif isinstance(data, list):
+            accounts = []
+            for acc in data:
+                accounts.append({
+                    'account_id': acc.get('accountId'),
+                    'title': acc.get('accountTitle', ''),
+                    'type': acc.get('type', '')
+                })
+            result = {
+                'status': 'success',
+                'count': len(accounts),
+                'accounts': accounts
+            }
+        else:
+            result = {
+                'status': 'error',
+                'message': 'Unexpected response format'
+            }
+    next:
+      - step: end
+
+  # ============================================
+  # Get Positions
+  # ============================================
+  - step: get_positions
+    desc: Get positions - first fetch accounts
+    tool:
+      kind: http
+      method: GET
+      url: "{{ start.base_url }}/portfolio/accounts"
+      follow_redirects: true
+      headers:
+        Content-Type: application/json
+      verify_ssl: false
+    vars:
+      account_id: "{{ result.data[0].accountId if result.data else '' }}"
+    next:
+      - step: fetch_positions
+
+  - step: fetch_positions
+    desc: Fetch positions for account
+    tool:
+      kind: http
+      method: GET
+      url: "{{ start.base_url }}/portfolio/{{ vars.account_id }}/positions/0"
+      follow_redirects: true
+      headers:
+        Content-Type: application/json
+      verify_ssl: false
+    next:
+      - step: parse_positions
+
+  - step: parse_positions
+    desc: Parse positions response
+    tool:
+      kind: python
+      args:
+        response: "{{ fetch_positions }}"
+        account_id: "{{ vars.account_id }}"
+      code: |
+        data = response.get('data', [])
+        status_code = response.get('status_code', 0)
+        
+        if status_code != 200:
+            result = {
+                'status': 'error',
+                'message': 'Failed to get positions',
+                'status_code': status_code
+            }
+        elif isinstance(data, list):
+            positions = []
+            for pos in data:
+                positions.append({
+                    'symbol': pos.get('contractDesc', ''),
+                    'conid': pos.get('conid'),
+                    'position': pos.get('position', 0),
+                    'market_value': pos.get('mktValue', 0),
+                    'avg_cost': pos.get('avgCost', 0),
+                    'unrealized_pnl': pos.get('unrealizedPnl', 0),
+                    'realized_pnl': pos.get('realizedPnl', 0)
+                })
+            result = {
+                'status': 'success',
+                'account_id': account_id,
+                'count': len(positions),
+                'positions': positions
+            }
+        else:
+            result = {
+                'status': 'success',
+                'account_id': account_id,
+                'count': 0,
+                'positions': []
+            }
+    next:
+      - step: end
+
+  # ============================================
+  # Get Orders
+  # ============================================
+  - step: get_orders
+    desc: Get open orders
+    tool:
+      kind: http
+      method: GET
+      url: "{{ start.base_url }}/iserver/account/orders"
+      follow_redirects: true
+      headers:
+        Content-Type: application/json
+      verify_ssl: false
+    next:
+      - step: parse_orders
+
+  - step: parse_orders
+    desc: Parse orders response
+    tool:
+      kind: python
+      args:
+        response: "{{ get_orders }}"
+      code: |
+        data = response.get('data', {})
+        orders = data.get('orders', []) if isinstance(data, dict) else []
+        
+        result = {
+            'status': 'success',
+            'count': len(orders),
+            'orders': orders
+        }
+    next:
+      - step: end
+
+  - step: end
+    desc: Workflow complete
+    tool:
+      kind: python
+      args:
+        status: "{{ result.status if result is defined else 'completed' }}"
+      code: |
+        result = {"status": status}
