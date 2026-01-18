@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.5.8](https://github.com/noetl/noetl/compare/v2.5.7...v2.5.8) (2026-01-18)
+
+### Bug Fixes
+
+* implement hybrid case evaluation with server variable fetching ([76dbe64](https://github.com/noetl/noetl/commit/76dbe6445bd14d486709587da101fe7804bebef4))
+* update execution request schema to use 'args' instead of 'parameters' for consistency ([44c0d3c](https://github.com/noetl/noetl/commit/44c0d3c0d52c1c1993b11b076dda390df20c8d84))
+
 ## [2.5.7](https://github.com/noetl/noetl/compare/v2.5.6...v2.5.7) (2026-01-16)
 
 ### Bug Fixes
