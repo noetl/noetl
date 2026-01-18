@@ -216,5 +216,4 @@ cargo build --release
 ## Related Documentation
 
 - [Homebrew Installation Guide](../installation/homebrew.md)
-- [Release Process Overview](./releases.md)
-- [Cargo Workspace Setup](./workspace.md)
+- [APT Release Process](./apt-releases.md)

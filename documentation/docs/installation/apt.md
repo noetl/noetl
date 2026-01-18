@@ -93,7 +93,6 @@ Features:
 - **Crates.io**: `cargo install noetl`
 - **PyPI**: `pip install noetlctl`
 - **Docker**: `docker pull ghcr.io/noetl/noetl:latest`
-- **Build from source**: See [Building from Source](./build-from-source.md)
 
 ## Troubleshooting
 
@@ -147,5 +146,5 @@ sudo chmod +x /usr/bin/noetl
 ## Next Steps
 
 - [Quick Start Guide](../getting-started/quickstart.md)
-- [Local Playbook Execution](../noetlctl/local-execution.md)
-- [Configuration](../configuration/overview.md)
+- [Local Playbook Execution](../noetlctl/local_execution.md)
+- [NoETL CLI](../noetlctl/index.md)

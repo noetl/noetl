@@ -356,4 +356,3 @@ gzip -k -f dists/jammy/main/binary-amd64/Packages
 
 - [APT Installation Guide](../installation/apt.md)
 - [Homebrew Release Process](./homebrew-releases.md)
-- [Release Process Overview](./releases.md)

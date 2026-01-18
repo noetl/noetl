@@ -1092,7 +1092,7 @@ noetl run automation/examples/parent_playbook.yaml --verbose
 
 ### 3. Shell Commands Example
 
-**File**: [`automation/examples/test_local.yaml`](../../../automation/examples/test_local.yaml)
+**Example**: `automation/examples/test_local.yaml`
 
 Demonstrates shell command execution with both string and array formats:
 
