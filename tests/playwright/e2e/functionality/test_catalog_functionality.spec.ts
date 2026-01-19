@@ -157,77 +157,132 @@ test.describe('Catalog Functionality', () => {
             await expect(page.url()).toContain('/editor?id=tests/fixtures/playbooks/hello_world');
         });
 
-        await test.step('Wait for editor to load', async () => {
-            await page.waitForTimeout(5000);
-        });
-
         await test.step('Validate editor content matches file content', async () => {
             const yamlPath = path.join(__dirname, '../../../fixtures/playbooks/hello_world/hello_world.yaml');
-            const yamlContent = fs.readFileSync(yamlPath, 'utf-8');
+            fs.readFileSync(yamlPath, 'utf-8');
 
-            // Use textarea value or Monaco editor's text model
-            const editorTextbox = page.locator('textarea').first();
-            const editorContent = await editorTextbox.inputValue();
-            console.log('Editor content:', editorContent);
-            expect(editorContent).toContain('apiVersion: noetl.io/v2');
-            expect(editorContent).toContain('kind: Playbook');
-            expect(editorContent).toContain('name: hello_world');
+            // Monaco-based editors often keep a hidden textarea empty.
+            // Assert against the rendered YAML text that appears in the editor UI.
+            await expect(page.getByText('apiVersion: noetl.io/v2', { exact: true })).toBeVisible();
+            await expect(page.getByText('kind: Playbook', { exact: true })).toBeVisible();
+            await expect(page.getByText('name: hello_world', { exact: true })).toBeVisible();
         });
     });
 
 
-    // test('/catalog: Execute', async ({ page }) => {
-    //     await test.step('Open Catalog', async () => {
-    //         await page.goto(CATALOG_URL);
-    //         await expect(page).toHaveTitle('NoETL Dashboard');
-    //     });
+    test('/catalog: Execute', async ({ page }) => {
+        await test.step('Open Catalog', async () => {
+            await page.goto(CATALOG_URL);
+            await expect(page).toHaveTitle('NoETL Dashboard');
+        });
 
-    //     await test.step('Click Execute for hello_world', async () => {
-    //         const executeBtn = page.locator(
-    //             "(//*[text()='hello_world']/following::button[normalize-space()='Execute'])[1]"
-    //         );
-    //         await executeBtn.click();
-    //     });
+        await test.step('Click Execute for hello_world', async () => {
+            const executeBtn = page.locator(
+                "(//*[text()='hello_world']/following::button[normalize-space()='Execute'])[1]"
+            );
+            await executeBtn.click();
+        });
 
-    //     await test.step('Validate navigation to Execution page', async () => {
-    //         await expect(page).toHaveURL(/\/execution/);
-    //     });
+        await test.step('Validate navigation to Execution page', async () => {
+            await expect(page).toHaveURL(/\/execution/);
+        });
 
-    //     await test.step('Wait for executions loader to finish (if present)', async () => {
-    //         const loader = page.locator("//*[text()='Loading executions...']");
-    //         await loader.waitFor({ state: 'visible', timeout: 5000 }).catch(() => { });
-    //         await loader.waitFor({ state: 'detached' });
-    //     });
-    // });
+        await test.step('Wait for executions loader to finish (if present)', async () => {
+            const loader = page.locator("//*[text()='Loading executions...']");
+            await loader.waitFor({ state: 'visible', timeout: 5000 }).catch(() => { });
+            await loader.waitFor({ state: 'detached' });
+        });
+    });
 
-    // test('/catalog: Payload', async ({ page }) => {
-    //     await test.step('Open Catalog', async () => {
-    //         await page.goto(CATALOG_URL);
-    //         await expect(page).toHaveTitle('NoETL Dashboard');
-    //     });
+    test('/catalog: Payload JSON', async ({ page }) => {
+        await test.step('Open Catalog', async () => {
+            await page.goto(CATALOG_URL);
+            await expect(page).toHaveTitle('NoETL Dashboard');
+        });
 
-    //     await test.step('Open Payload modal for hello_world', async () => {
-    //         const payloadBtn = page.locator(
-    //             "(//*[text()='hello_world']/following::button[normalize-space()='Payload'])[1]"
-    //         );
-    //         await payloadBtn.click();
-    //     });
+        await test.step('Open Payload modal for hello_world', async () => {
+            const payloadBtn = page.locator(
+                "(//*[text()='hello_world']/following::button[normalize-space()='Payload'])[1]"
+            );
+            await payloadBtn.click();
+        });
 
-    //     await test.step('Validate Payload modal UI', async () => {
-    //         const payloadModal = page.locator(
-    //             '//*[@class="ant-modal-title"][text()="Execute Playbook with Payload: tests/fixtures/playbooks/hello_world"]'
-    //         );
-    //         await expect(payloadModal).toBeVisible();
+        await test.step('Validate Payload modal UI', async () => {
+            const payloadModal = page.locator(
+                '//*[@class="ant-modal-title"][text()="Execute Playbook with Payload: tests/fixtures/playbooks/hello_world"]'
+            );
+            await expect(payloadModal).toBeVisible();
 
-    //         const closeButton = page.locator('//button[span[text()="Cancel"]]');
-    //         await expect(closeButton).toBeVisible();
+            const payloadJson = JSON.stringify({ key: 'value', param: 'example' }, null, 2);
+            const payloadInput = page.getByPlaceholder('{"key": "value", "param": "example"}');
+            await payloadInput.fill(payloadJson);
+            await expect(payloadInput).toHaveValue(payloadJson);
 
-    //         const executeButton = page.locator('//button[span[text()="Execute with Payload"]]');
-    //         await expect(executeButton).toBeVisible();
-    //         //TODO: add file upload test
-    //         //TODO: add payload execution test, assert Executing playbook "tests/fixtures/playbooks/hello_world/hello_world"...
-    //     });
-    // });
+            const closeButton = page.locator('//button[span[text()="Cancel"]]');
+            await expect(closeButton).toBeVisible();
+
+            const executeButton = page.locator('//button[span[text()="Execute with Payload"]]');
+            await expect(executeButton).toBeVisible();
+
+            await executeButton.click();
+            // Validate modal is closed
+            await expect(payloadModal).toHaveCount(0);
+
+            await test.step('Validate navigation to Execution page', async () => {
+                await expect(page).toHaveURL(/\/execution/);
+            });
+
+            await test.step('Wait for executions loader to finish (if present)', async () => {
+                const loader = page.locator("//*[text()='Loading executions...']");
+                await loader.waitFor({ state: 'visible', timeout: 5000 }).catch(() => { });
+                await loader.waitFor({ state: 'detached' });
+            });
+        });
+    });
+
+    test('/catalog: Payload File Upload', async ({ page }) => {
+        await test.step('Open Catalog', async () => {
+            await page.goto(CATALOG_URL);
+            await expect(page).toHaveTitle('NoETL Dashboard');
+        });
+
+        await test.step('Open Payload modal for hello_world', async () => {
+            const payloadBtn = page.locator(
+                "(//*[text()='hello_world']/following::button[normalize-space()='Payload'])[1]"
+            );
+            await payloadBtn.click();
+        });
+
+        const payloadModalTitle = page.locator(
+            '//*[@class="ant-modal-title"][text()="Execute Playbook with Payload: tests/fixtures/playbooks/hello_world"]'
+        );
+
+        await test.step('Switch to File Upload tab and upload JSON', async () => {
+            await expect(payloadModalTitle).toBeVisible();
+
+            const dialog = page.getByRole('dialog');
+            await dialog.getByRole('tab', { name: 'File Upload' }).click();
+
+            const jsonPath = path.join(__dirname, '../../hello_world_payload.json');
+            await dialog.locator('input[type="file"]').setInputFiles(jsonPath);
+
+            // Ant Upload typically shows the filename after selection.
+            await expect(dialog.getByText('hello_world_payload.json', { exact: true })).toBeVisible();
+        });
+
+        await test.step('Execute with payload and validate navigation', async () => {
+            const executeButton = page.locator('//button[span[text()="Execute with Payload"]]');
+            await expect(executeButton).toBeVisible();
+            await executeButton.click();
+
+            await expect(payloadModalTitle).toHaveCount(0);
+            await expect(page).toHaveURL(/\/execution/);
+
+            const loader = page.locator("//*[text()='Loading executions...']");
+            await loader.waitFor({ state: 'visible', timeout: 5000 }).catch(() => { });
+            await loader.waitFor({ state: 'detached' });
+        });
+    });
 
 
 });
