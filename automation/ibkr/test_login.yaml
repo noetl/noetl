@@ -5,6 +5,9 @@ metadata:
   path: automation/ibkr/test-login
   description: "End-to-end local test: setup deps, open login UI, wait until tickle reports authenticated, then verify endpoints."
 
+executor:
+  profile: local
+  version: noetl-runtime/1
 workload:
   gateway_url: https://localhost:15000
   credential_name: ib_gateway

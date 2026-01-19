@@ -4,6 +4,9 @@ metadata:
   name: noetl_automation_main
   path: automation/main
   description: Main automation entry point for NoETL development workflows
+executor:
+  profile: local
+  version: noetl-runtime/1
 workload:
   registry: "local"
   image_name: "noetl"

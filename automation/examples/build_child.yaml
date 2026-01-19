@@ -4,6 +4,9 @@ metadata:
   name: build_child
   path: automation/examples/composition/build
 
+executor:
+  profile: local
+  version: noetl-runtime/1
 workflow:
   - step: start
     next:

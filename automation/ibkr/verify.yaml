@@ -5,6 +5,9 @@ metadata:
   path: automation/ibkr/verify-local
   description: "Verify Gateway is reachable and authenticated (local runner via curl -k)."
 
+executor:
+  profile: local
+  version: noetl-runtime/1
 workload:
   gateway_url: https://localhost:15000
   base_url: ""

@@ -4,6 +4,9 @@ metadata:
   name: conditional_flow_example
   path: automation/examples/conditional
 
+executor:
+  profile: local
+  version: noetl-runtime/1
 workload:
   environment: "production"
   deploy: "true"

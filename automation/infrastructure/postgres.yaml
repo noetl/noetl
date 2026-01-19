@@ -4,6 +4,9 @@ metadata:
   name: postgres_automation
   path: automation/infrastructure/postgres
 
+executor:
+  profile: local
+  version: noetl-runtime/1
 workload:
   action: help  # deploy, remove, schema-reset, clear-cache, status, logs
 

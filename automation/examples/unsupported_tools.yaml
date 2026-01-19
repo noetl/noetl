@@ -4,6 +4,9 @@ metadata:
   name: unsupported_tools_example
   path: automation/examples/unsupported
 
+executor:
+  profile: local
+  version: noetl-runtime/1
 workload:
   query: "SELECT * FROM users"
 

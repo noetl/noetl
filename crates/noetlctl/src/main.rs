@@ -18,6 +18,7 @@ use ratatui::{
 };
 use reqwest::Client;
 use serde::Serialize;
+use std::collections::HashMap;
 use std::fs;
 use std::io;
 use std::path::PathBuf;
@@ -49,33 +50,41 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Run playbook locally (no server required)
+    /// Execute a playbook (unified command for local and distributed execution)
     ///
-    /// Auto-discovery: If no playbook file is specified, searches for:
-    ///   1. ./noetl.yaml (priority)
-    ///   2. ./main.yaml (fallback)
+    /// The <ref> can be:
+    ///   - A file path: ./playbooks/foo.yaml, automation/deploy.yaml
+    ///   - A catalog reference: catalog://amadeus_ai_api@2.0
+    ///   - A database ID: pbk_01J... (playbook ID from catalog)
+    ///   - A catalog path: workflows/etl-pipeline (requires --runtime distributed)
+    ///
+    /// Runtime modes:
+    ///   - local: Execute directly using Rust interpreter (no server required)
+    ///   - distributed: Execute via NoETL server-worker architecture
+    ///   - auto (default): Choose based on ref type and playbook executor.profile
     ///
     /// Examples:
-    ///     noetl run                                    # Auto-discover noetl.yaml or main.yaml
-    ///     noetl run bootstrap                          # Auto-discover + target "bootstrap"
-    ///     noetl run automation/deploy.yaml             # Explicit file
-    ///     noetl run automation/build.yaml build_image  # Explicit file + target
-    ///     noetl run main.yaml bootstrap                # Explicit main.yaml + target
-    ///     noetl run --set image_tag=v2.5.3             # Auto-discover + variables
-    ///     noetl run bootstrap --verbose                # Auto-discover + target + verbose
+    ///     noetl exec ./playbooks/http_test.yaml                    # auto runtime
+    ///     noetl exec ./playbooks/http_test.yaml -r local           # force local
+    ///     noetl exec catalog://amadeus_ai_api@2.0 -r distributed   # catalog + distributed
+    ///     noetl exec my-playbook --runtime distributed             # catalog path
+    ///     noetl exec ./foo.yaml --set key=value --verbose          # with variables
+    ///     noetl exec pbk_01J... -r distributed                     # by db ID
     #[command(verbatim_doc_comment)]
-    Run {
-        /// Optional: Path to playbook file OR target step name
-        /// - If it's a file path (contains / or ends with .yaml/.yml), used as playbook
-        /// - If file exists, used as playbook
-        /// - Otherwise, auto-discover (noetl.yaml → main.yaml) and treat as target
-        playbook_or_target: Option<String>,
+    Exec {
+        /// Playbook reference: file path, catalog://name@version, db ID, or catalog path
+        #[arg(value_name = "REF")]
+        reference: String,
 
-        /// Additional arguments (target step or additional variables)
-        #[arg(trailing_var_arg = true)]
-        args: Vec<String>,
+        /// Runtime mode: local (Rust interpreter), distributed (server-worker), auto
+        #[arg(short = 'r', long, default_value = "auto")]
+        runtime: String,
 
-        /// Set variables (format: key=value)
+        /// Target step to start execution from (local runtime only)
+        #[arg(short = 't', long)]
+        target: Option<String>,
+
+        /// Set variables (format: key=value), can be repeated
         #[arg(long = "set", value_name = "KEY=VALUE")]
         variables: Vec<String>,
 
@@ -83,7 +92,54 @@ enum Commands {
         #[arg(long = "payload", value_name = "JSON", alias = "workload")]
         payload: Option<String>,
 
-        /// Deep merge payload with playbook workload (default: shallow merge)
+        /// Path to JSON file with input parameters
+        #[arg(short, long)]
+        input: Option<PathBuf>,
+
+        /// Catalog version (for catalog:// refs without @version)
+        #[arg(short = 'V', long)]
+        version: Option<String>,
+
+        /// Server endpoint for distributed runtime (default: from config)
+        #[arg(long)]
+        endpoint: Option<String>,
+
+        /// Enable verbose output
+        #[arg(short, long)]
+        verbose: bool,
+
+        /// Dry-run mode: validate and show plan without executing
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Emit only JSON response (distributed runtime)
+        #[arg(short, long)]
+        json: bool,
+    },
+    /// Alias for 'exec' - execute a playbook
+    #[command(alias = "run", hide = true)]
+    Run {
+        /// Playbook reference: file path, catalog://name@version, db ID, or catalog path
+        #[arg(value_name = "REF")]
+        reference: Option<String>,
+
+        /// Runtime mode: local (Rust interpreter), distributed (server-worker), auto
+        #[arg(short = 'r', long, default_value = "auto")]
+        runtime: String,
+
+        /// Additional arguments (target step or variables)
+        #[arg(trailing_var_arg = true)]
+        args: Vec<String>,
+
+        /// Set variables (format: key=value)
+        #[arg(long = "set", value_name = "KEY=VALUE")]
+        variables: Vec<String>,
+
+        /// Payload/workload as JSON string
+        #[arg(long = "payload", value_name = "JSON", alias = "workload")]
+        payload: Option<String>,
+
+        /// Deep merge payload with playbook workload
         #[arg(long)]
         merge: bool,
 
@@ -103,8 +159,8 @@ enum Commands {
     },
     /// Fetch execution status (legacy command, use 'execute status' instead)
     /// Examples:
-    ///     noetlctl status 12345
-    ///     noetlctl --host=localhost --port=8082 status 12345 --json
+    ///     noetl status 12345
+    ///     noetl --host=localhost --port=8082 status 12345 --json
     #[command(verbatim_doc_comment)]
     Status {
         /// Execution ID
@@ -116,9 +172,9 @@ enum Commands {
     },
     /// List resources in catalog (legacy command, use 'catalog list' instead)
     /// Examples:
-    ///     noetlctl list Playbook
-    ///     noetlctl list Credential --json
-    ///     noetlctl --host=localhost --port=8082 list Playbook
+    ///     noetl list Playbook
+    ///     noetl list Credential --json
+    ///     noetl --host=localhost --port=8082 list Playbook
     #[command(verbatim_doc_comment)]
     List {
         /// Resource type (e.g., Playbook, Credential)
@@ -133,8 +189,8 @@ enum Commands {
         #[command(subcommand)]
         command: CatalogCommand,
     },
-    /// Execution management
-    // #[command(alias = "run")]
+    /// Legacy execution management (use 'exec' instead)
+    #[command(hide = true)]
     Execute {
         #[command(subcommand)]
         command: ExecuteCommand,
@@ -220,16 +276,33 @@ enum Commands {
         #[command(subcommand)]
         command: K8sCommand,
     },
+    /// Infrastructure as Playbook (IaP) - manage cloud infrastructure using playbooks
+    /// 
+    /// IaP provides Terraform-like infrastructure management using NoETL playbooks.
+    /// State is stored locally in DuckDB and can be synced to GCS for team collaboration.
+    /// 
+    /// Examples:
+    ///     noetl iap init --project my-gcp-project --bucket my-state-bucket
+    ///     noetl iap plan infrastructure.yaml
+    ///     noetl iap apply infrastructure.yaml
+    ///     noetl iap state list
+    ///     noetl iap sync push
+    ///     noetl iap drift detect
+    #[command(verbatim_doc_comment)]
+    Iap {
+        #[command(subcommand)]
+        command: IapCommand,
+    },
 }
 
 #[derive(Subcommand)]
 enum CatalogCommand {
     /// Register a resource (auto-detects type)
     /// Example for playbooks:
-    ///     noetlctl catalog register tests/fixtures/playbooks/hello_world/hello_world.yaml
-    ///     noetlctl --host=localhost --port=8082 catalog register tests/fixtures/playbooks/hello_world/hello_world.yaml
+    ///     noetl catalog register tests/fixtures/playbooks/hello_world/hello_world.yaml
+    ///     noetl --host=localhost --port=8082 catalog register tests/fixtures/playbooks/hello_world/hello_world.yaml
     /// Example for credential:
-    ///     noetlctl --host=localhost --port=8082 catalog register tests/fixtures/credentials/google_oauth.json
+    ///     noetl --host=localhost --port=8082 catalog register tests/fixtures/credentials/google_oauth.json
     #[command(verbatim_doc_comment)]
     Register {
         /// Path to the resource file
@@ -237,9 +310,9 @@ enum CatalogCommand {
     },
     /// Get resource details from catalog
     /// Examples:
-    ///     noetlctl catalog get my-playbook
-    ///     noetlctl --host=localhost --port=8082 catalog get workflows/data-pipeline
-    ///     noetlctl catalog get my-credential
+    ///     noetl catalog get my-playbook
+    ///     noetl --host=localhost --port=8082 catalog get workflows/data-pipeline
+    ///     noetl catalog get my-credential
     #[command(verbatim_doc_comment)]
     Get {
         /// Resource path/name
@@ -247,9 +320,9 @@ enum CatalogCommand {
     },
     /// List resources in catalog by type
     /// Examples:
-    ///     noetlctl catalog list Playbook
-    ///     noetlctl catalog list Credential
-    ///     noetlctl --host=localhost --port=8082 catalog list Playbook --json
+    ///     noetl catalog list Playbook
+    ///     noetl catalog list Credential
+    ///     noetl --host=localhost --port=8082 catalog list Playbook --json
     #[command(verbatim_doc_comment)]
     List {
         /// Resource type (e.g., Playbook, Credential)
@@ -265,9 +338,9 @@ enum CatalogCommand {
 enum ExecuteCommand {
     /// Execute a playbook with optional input parameters
     /// Examples:
-    ///     noetlctl execute playbook my-playbook
-    ///     noetlctl execute playbook workflows/etl-pipeline --input params.json
-    ///     noetlctl --host=localhost --port=8082 execute playbook data-sync --input /path/to/input.json --json
+    ///     noetl execute playbook my-playbook
+    ///     noetl execute playbook workflows/etl-pipeline --input params.json
+    ///     noetl --host=localhost --port=8082 execute playbook data-sync --input /path/to/input.json --json
     #[command(verbatim_doc_comment)]
     Playbook {
         /// Playbook path/name as registered in catalog
@@ -283,8 +356,8 @@ enum ExecuteCommand {
     },
     /// Get execution status for a playbook run
     /// Examples:
-    ///     noetlctl execute status 12345
-    ///     noetlctl --host=localhost --port=8082 execute status 12345 --json
+    ///     noetl execute status 12345
+    ///     noetl --host=localhost --port=8082 execute status 12345 --json
     #[command(verbatim_doc_comment)]
     Status {
         /// Execution ID
@@ -300,9 +373,9 @@ enum ExecuteCommand {
 enum GetResource {
     /// Get credential details with optional data inclusion
     /// Examples:
-    ///     noetlctl get credential my-db-creds
-    ///     noetlctl get credential google_oauth --include_data=false
-    ///     noetlctl --host=localhost --port=8082 get credential aws-credentials
+    ///     noetl get credential my-db-creds
+    ///     noetl get credential google_oauth --include_data=false
+    ///     noetl --host=localhost --port=8082 get credential aws-credentials
     #[command(verbatim_doc_comment)]
     Credential {
         /// Name of the credential
@@ -318,9 +391,9 @@ enum GetResource {
 enum RegisterResource {
     /// Register credential(s) from JSON file or directory
     /// Examples:
-    ///     noetlctl register credential --file credentials/postgres.json
-    ///     noetlctl register credential --directory tests/fixtures/credentials
-    ///     noetlctl --host=localhost --port=8082 register credential -f tests/fixtures/credentials/google_oauth.json
+    ///     noetl register credential --file credentials/postgres.json
+    ///     noetl register credential --directory tests/fixtures/credentials
+    ///     noetl --host=localhost --port=8082 register credential -f tests/fixtures/credentials/google_oauth.json
     #[command(verbatim_doc_comment)]
     Credential {
         /// Path to credential file
@@ -333,9 +406,9 @@ enum RegisterResource {
     },
     /// Register playbook(s) from YAML file or directory
     /// Examples:
-    ///     noetlctl register playbook --file playbooks/my-workflow.yaml
-    ///     noetlctl register playbook --directory tests/fixtures/playbooks
-    ///     noetlctl --host=localhost --port=8082 register playbook -f tests/fixtures/playbooks/hello_world/hello_world.yaml
+    ///     noetl register playbook --file playbooks/my-workflow.yaml
+    ///     noetl register playbook --directory tests/fixtures/playbooks
+    ///     noetl --host=localhost --port=8082 register playbook -f tests/fixtures/playbooks/hello_world/hello_world.yaml
     #[command(verbatim_doc_comment)]
     Playbook {
         /// Path to playbook file
@@ -460,12 +533,303 @@ enum K8sCommand {
 }
 
 #[derive(Subcommand)]
+enum IapCommand {
+    /// Initialize IaP state for a project
+    /// 
+    /// Creates local DuckDB state database and optionally configures GCS sync.
+    /// 
+    /// Examples:
+    ///     noetl iap init --project my-gcp-project
+    ///     noetl iap init --project my-gcp-project --bucket my-state-bucket
+    ///     noetl iap init --project my-gcp-project --region us-central1
+    #[command(verbatim_doc_comment)]
+    Init {
+        /// GCP project ID
+        #[arg(long)]
+        project: String,
+
+        /// GCS bucket for remote state (optional)
+        #[arg(long)]
+        bucket: Option<String>,
+
+        /// GCP region (default: us-central1)
+        #[arg(long, default_value = "us-central1")]
+        region: String,
+
+        /// Local state database path (default: .noetl/state.duckdb)
+        #[arg(long, default_value = ".noetl/state.duckdb")]
+        state_db: String,
+
+        /// Workspace name for state isolation (default: default)
+        #[arg(long, default_value = "default")]
+        workspace: String,
+
+        /// Remote state path template (use {workspace} placeholder)
+        /// Example: workspaces/{workspace}/state.duckdb
+        #[arg(long, default_value = "workspaces/{workspace}/state.duckdb")]
+        state_path: String,
+    },
+    /// Plan infrastructure changes (dry-run)
+    /// 
+    /// Executes the playbook in plan mode, showing what changes would be made.
+    /// 
+    /// Examples:
+    ///     noetl iap plan infrastructure.yaml
+    ///     noetl iap plan gke_autopilot.yaml --var cluster_name=my-cluster
+    #[command(verbatim_doc_comment)]
+    Plan {
+        /// Path to infrastructure playbook
+        playbook: PathBuf,
+
+        /// Set variables (format: key=value)
+        #[arg(long = "var", value_name = "KEY=VALUE")]
+        variables: Vec<String>,
+
+        /// Enable verbose output
+        #[arg(short, long)]
+        verbose: bool,
+    },
+    /// Apply infrastructure changes
+    /// 
+    /// Executes the playbook and records state changes.
+    /// 
+    /// Examples:
+    ///     noetl iap apply infrastructure.yaml
+    ///     noetl iap apply gke_autopilot.yaml --var cluster_name=my-cluster
+    ///     noetl iap apply infrastructure.yaml --auto-approve
+    #[command(verbatim_doc_comment)]
+    Apply {
+        /// Path to infrastructure playbook
+        playbook: PathBuf,
+
+        /// Set variables (format: key=value)
+        #[arg(long = "var", value_name = "KEY=VALUE")]
+        variables: Vec<String>,
+
+        /// Skip confirmation prompt
+        #[arg(long)]
+        auto_approve: bool,
+
+        /// Enable verbose output
+        #[arg(short, long)]
+        verbose: bool,
+    },
+    /// Manage infrastructure state
+    /// 
+    /// View, inspect, or modify the local state database.
+    #[command(verbatim_doc_comment)]
+    State {
+        #[command(subcommand)]
+        command: IapStateCommand,
+    },
+    /// Sync state with remote storage (GCS)
+    /// 
+    /// Push or pull state to/from GCS for team collaboration.
+    #[command(verbatim_doc_comment)]
+    Sync {
+        #[command(subcommand)]
+        command: IapSyncCommand,
+    },
+    /// Detect configuration drift
+    /// 
+    /// Compare current infrastructure state with actual cloud resources.
+    /// 
+    /// Examples:
+    ///     noetl iap drift detect
+    ///     noetl iap drift detect --resource gke-cluster/my-cluster
+    #[command(verbatim_doc_comment)]
+    Drift {
+        #[command(subcommand)]
+        command: IapDriftCommand,
+    },
+    /// Manage workspaces for multi-developer collaboration
+    /// 
+    /// Workspaces isolate state for different environments or developers.
+    /// 
+    /// Examples:
+    ///     noetl iap workspace list
+    ///     noetl iap workspace switch staging
+    ///     noetl iap workspace create dev-alice
+    #[command(verbatim_doc_comment)]
+    Workspace {
+        #[command(subcommand)]
+        command: IapWorkspaceCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum IapStateCommand {
+    /// List all resources in state
+    /// Example:
+    ///     noetl iap state list
+    #[command(verbatim_doc_comment)]
+    List {
+        /// Filter by resource type (e.g., gke-cluster, gcs-bucket)
+        #[arg(long)]
+        resource_type: Option<String>,
+
+        /// Output format: table or json
+        #[arg(short, long, default_value = "table")]
+        format: String,
+    },
+    /// Show details for a specific resource
+    /// Example:
+    ///     noetl iap state show gke-cluster/my-cluster
+    #[command(verbatim_doc_comment)]
+    Show {
+        /// Resource identifier (type/name)
+        resource: String,
+    },
+    /// Remove a resource from state (does not destroy the actual resource)
+    /// Example:
+    ///     noetl iap state rm gke-cluster/my-cluster
+    #[command(verbatim_doc_comment)]
+    Rm {
+        /// Resource identifier (type/name)
+        resource: String,
+
+        /// Skip confirmation prompt
+        #[arg(long)]
+        force: bool,
+    },
+    /// Execute raw SQL query against state database
+    /// Example:
+    ///     noetl iap state query "SELECT * FROM resources WHERE status = 'active'"
+    #[command(verbatim_doc_comment)]
+    Query {
+        /// SQL query to execute
+        sql: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum IapSyncCommand {
+    /// Push local state to GCS
+    /// Example:
+    ///     noetl iap sync push
+    #[command(verbatim_doc_comment)]
+    Push {
+        /// Skip confirmation prompt
+        #[arg(long)]
+        force: bool,
+    },
+    /// Pull state from GCS to local
+    /// Example:
+    ///     noetl iap sync pull
+    #[command(verbatim_doc_comment)]
+    Pull {
+        /// Skip confirmation prompt
+        #[arg(long)]
+        force: bool,
+    },
+    /// Show sync status (local vs remote)
+    /// Example:
+    ///     noetl iap sync status
+    #[command(verbatim_doc_comment)]
+    Status,
+}
+
+#[derive(Subcommand)]
+enum IapDriftCommand {
+    /// Detect drift between state and actual resources
+    /// Example:
+    ///     noetl iap drift detect
+    #[command(verbatim_doc_comment)]
+    Detect {
+        /// Filter by resource type
+        #[arg(long)]
+        resource_type: Option<String>,
+
+        /// Specific resource to check
+        #[arg(long)]
+        resource: Option<String>,
+    },
+    /// Show drift report
+    /// Example:
+    ///     noetl iap drift report
+    #[command(verbatim_doc_comment)]
+    Report {
+        /// Output format: table or json
+        #[arg(short, long, default_value = "table")]
+        format: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum IapWorkspaceCommand {
+    /// List all registered workspaces
+    /// Shows both local registry and remote workspaces from GCS
+    /// Example:
+    ///     noetl iap workspace list
+    ///     noetl iap workspace list --remote
+    #[command(verbatim_doc_comment)]
+    List {
+        /// Include remote workspaces from GCS
+        #[arg(long)]
+        remote: bool,
+    },
+    /// Switch to a different workspace
+    /// Updates local state to use the specified workspace
+    /// Example:
+    ///     noetl iap workspace switch staging
+    ///     noetl iap workspace switch dev-alice --pull
+    #[command(verbatim_doc_comment)]
+    Switch {
+        /// Workspace name to switch to
+        name: String,
+
+        /// Pull state from remote after switching
+        #[arg(long)]
+        pull: bool,
+    },
+    /// Show current workspace info
+    /// Example:
+    ///     noetl iap workspace current
+    #[command(verbatim_doc_comment)]
+    Current,
+    /// Create a new workspace
+    /// Example:
+    ///     noetl iap workspace create dev-bob
+    ///     noetl iap workspace create dev-charlie --from staging
+    #[command(verbatim_doc_comment)]
+    Create {
+        /// New workspace name
+        name: String,
+
+        /// Clone state from existing workspace
+        #[arg(long)]
+        from: Option<String>,
+
+        /// Switch to new workspace after creation
+        #[arg(long)]
+        switch: bool,
+    },
+    /// Delete a workspace from registry (does not delete remote state)
+    /// Example:
+    ///     noetl iap workspace delete dev-old
+    #[command(verbatim_doc_comment)]
+    Delete {
+        /// Workspace name to delete
+        name: String,
+
+        /// Also delete remote state from GCS
+        #[arg(long)]
+        remote: bool,
+
+        /// Skip confirmation prompt
+        #[arg(long)]
+        force: bool,
+    },
+}
+
+#[derive(Subcommand)]
 enum ContextCommand {
     /// Add a new context for connecting to NoETL servers
     /// Examples:
-    ///     noetlctl context add local --server-url=http://localhost:8082
-    ///     noetlctl context add prod --server-url=https://noetl.example.com --set-current
-    ///     noetlctl context add staging --server-url=http://staging:8082
+    ///     noetl context add local --server-url=http://localhost:8082
+    ///     noetl context add local-dev --server-url=http://localhost:8082 --runtime=local
+    ///     noetl context add prod --server-url=https://noetl.example.com --runtime=distributed
+    ///     noetl context add staging --server-url=http://staging:8082 --set-current
     #[command(verbatim_doc_comment)]
     Add {
         /// Context name
@@ -473,28 +837,41 @@ enum ContextCommand {
         /// Server URL (e.g., http://localhost:8082)
         #[arg(long)]
         server_url: String,
+        /// Default runtime mode for this context: local, distributed, or auto
+        #[arg(long, default_value = "auto")]
+        runtime: String,
         /// Set as current context
         #[arg(long)]
         set_current: bool,
     },
     /// List all configured contexts
     /// Example:
-    ///     noetlctl context list
+    ///     noetl context list
     #[command(verbatim_doc_comment)]
     List,
     /// Switch to a different context
     /// Examples:
-    ///     noetlctl context use local
-    ///     noetlctl context use prod
+    ///     noetl context use local
+    ///     noetl context use prod
     #[command(verbatim_doc_comment)]
     Use {
         /// Context name to switch to
         name: String,
     },
+    /// Set runtime mode for current context
+    /// Examples:
+    ///     noetl context set-runtime local
+    ///     noetl context set-runtime distributed
+    ///     noetl context set-runtime auto
+    #[command(verbatim_doc_comment)]
+    SetRuntime {
+        /// Runtime mode: local, distributed, or auto
+        runtime: String,
+    },
     /// Delete a context
     /// Examples:
-    ///     noetlctl context delete old-env
-    ///     noetlctl context delete staging
+    ///     noetl context delete old-env
+    ///     noetl context delete staging
     #[command(verbatim_doc_comment)]
     Delete {
         /// Context name to delete
@@ -502,7 +879,7 @@ enum ContextCommand {
     },
     /// Show current active context
     /// Example:
-    ///     noetlctl context current
+    ///     noetl context current
     #[command(verbatim_doc_comment)]
     Current,
 }
@@ -513,10 +890,183 @@ struct RegisterRequest {
     resource_type: String,
 }
 
-#[derive(Serialize)]
-struct ExecuteRequest {
-    path: String,
-    payload: serde_json::Value,
+/// Reference type for playbook execution
+#[derive(Debug)]
+enum RefType {
+    /// Local file path: ./playbooks/foo.yaml
+    File(PathBuf),
+    /// Catalog reference: catalog://name@version
+    Catalog { name: String, version: Option<String> },
+    /// Database ID: pbk_01J...
+    DatabaseId(String),
+    /// Catalog path (requires distributed): workflows/etl-pipeline
+    CatalogPath(String),
+}
+
+/// Execution context parsed from reference
+#[derive(Debug)]
+struct ExecContext {
+    ref_type: RefType,
+    version: Option<String>,
+}
+
+/// Parse execution reference into type and metadata
+fn parse_exec_reference(reference: &str, version_override: Option<&str>) -> Result<ExecContext> {
+    // Pattern 1: catalog://name@version
+    if reference.starts_with("catalog://") {
+        let rest = reference.strip_prefix("catalog://").unwrap();
+        let (name, version) = if let Some(at_pos) = rest.find('@') {
+            (rest[..at_pos].to_string(), Some(rest[at_pos + 1..].to_string()))
+        } else {
+            (rest.to_string(), version_override.map(|s| s.to_string()))
+        };
+        return Ok(ExecContext {
+            ref_type: RefType::Catalog { name, version: version.clone() },
+            version,
+        });
+    }
+    
+    // Pattern 2: Database ID (pbk_xxx or similar UUID-like)
+    if reference.starts_with("pbk_") || 
+       (reference.len() > 20 && reference.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-')) {
+        return Ok(ExecContext {
+            ref_type: RefType::DatabaseId(reference.to_string()),
+            version: version_override.map(|s| s.to_string()),
+        });
+    }
+    
+    // Pattern 3: File path (contains / or \ or ends with .yaml/.yml or file exists)
+    let is_file_like = reference.contains('/') || 
+                       reference.contains('\\') || 
+                       reference.ends_with(".yaml") || 
+                       reference.ends_with(".yml");
+    
+    if is_file_like {
+        let path = PathBuf::from(reference);
+        if path.exists() || reference.ends_with(".yaml") || reference.ends_with(".yml") {
+            return Ok(ExecContext {
+                ref_type: RefType::File(path),
+                version: None,
+            });
+        }
+    }
+    
+    // Try to find as file with extension
+    let try_find_file = |base: &str| -> Option<PathBuf> {
+        let path = PathBuf::from(base);
+        if path.exists() && path.is_file() {
+            return Some(path);
+        }
+        let yaml_path = PathBuf::from(format!("{}.yaml", base));
+        if yaml_path.exists() && yaml_path.is_file() {
+            return Some(yaml_path);
+        }
+        let yml_path = PathBuf::from(format!("{}.yml", base));
+        if yml_path.exists() && yml_path.is_file() {
+            return Some(yml_path);
+        }
+        None
+    };
+    
+    if let Some(file_path) = try_find_file(reference) {
+        return Ok(ExecContext {
+            ref_type: RefType::File(file_path),
+            version: None,
+        });
+    }
+    
+    // Pattern 4: Catalog path (no file found, assume it's a catalog reference)
+    Ok(ExecContext {
+        ref_type: RefType::CatalogPath(reference.to_string()),
+        version: version_override.map(|s| s.to_string()),
+    })
+}
+
+/// Resolve runtime mode based on:
+/// 1. CLI flag (--runtime local|distributed) - highest priority if explicitly set
+/// 2. If --runtime auto (default): use context config runtime preference
+/// 3. If context runtime is also auto: auto-detect from reference type
+fn resolve_runtime(
+    runtime_flag: &str, 
+    context_runtime: Option<&str>,
+    ctx: &ExecContext, 
+    verbose: bool
+) -> Result<String> {
+    // CLI flag takes precedence if explicitly set (not "auto")
+    if runtime_flag != "auto" {
+        if verbose {
+            println!("Runtime: {} (from --runtime flag)", runtime_flag);
+        }
+        return Ok(runtime_flag.to_string());
+    }
+    
+    // --runtime auto (default): check context config preference
+    if let Some(ctx_runtime) = context_runtime {
+        if ctx_runtime != "auto" {
+            if verbose {
+                println!("Runtime: {} (from context config)", ctx_runtime);
+            }
+            return Ok(ctx_runtime.to_string());
+        }
+    }
+    
+    // Context runtime is also "auto": auto-resolve based on reference type
+    let resolved = match &ctx.ref_type {
+        RefType::File(_) => "local",
+        RefType::Catalog { .. } => "distributed",
+        RefType::DatabaseId(_) => "distributed",
+        RefType::CatalogPath(_) => "distributed",
+    };
+    if verbose {
+        println!("Runtime: {} (auto-detected from reference type)", resolved);
+    }
+    Ok(resolved.to_string())
+}
+
+/// Build variables map from payload JSON and --set flags
+fn build_variables(
+    payload: Option<&str>, 
+    variables: &[String]
+) -> Result<HashMap<String, String>> {
+    let mut vars = HashMap::new();
+    
+    // Parse payload JSON if provided
+    if let Some(payload_str) = payload {
+        match serde_json::from_str::<serde_json::Value>(payload_str) {
+            Ok(serde_json::Value::Object(map)) => {
+                for (key, value) in map {
+                    let value_str = match value {
+                        serde_json::Value::String(s) => s,
+                        serde_json::Value::Number(n) => n.to_string(),
+                        serde_json::Value::Bool(b) => b.to_string(),
+                        serde_json::Value::Null => "null".to_string(),
+                        other => serde_json::to_string(&other).unwrap_or_else(|_| "null".to_string()),
+                    };
+                    vars.insert(key, value_str);
+                }
+            }
+            Ok(_) => {
+                eprintln!("Error: Payload must be a JSON object, not array or primitive");
+                std::process::exit(1);
+            }
+            Err(e) => {
+                eprintln!("Error: Invalid JSON payload: {}", e);
+                std::process::exit(1);
+            }
+        }
+    }
+    
+    // Parse --set variables (override payload)
+    for var in variables {
+        let parts: Vec<&str> = var.splitn(2, '=').collect();
+        if parts.len() == 2 {
+            vars.insert(parts[0].to_string(), parts[1].to_string());
+        } else {
+            eprintln!("Warning: Invalid variable format '{}', expected key=value", var);
+        }
+    }
+    
+    Ok(vars)
 }
 
 /// Resolve playbook file path and optional target step
@@ -630,70 +1180,205 @@ async fn main() -> Result<()> {
     let client = Client::new();
 
     match cli.command {
+        Some(Commands::Exec {
+            reference,
+            runtime,
+            target,
+            variables,
+            payload,
+            input,
+            version,
+            endpoint,
+            verbose,
+            dry_run,
+            json,
+        }) => {
+            // Get context runtime preference
+            let context_runtime = config.get_current_context()
+                .map(|(_, ctx)| ctx.runtime.as_str());
+            
+            // Parse the reference to determine type and resolve runtime
+            let exec_ctx = parse_exec_reference(&reference, version.as_deref())?;
+            let effective_runtime = resolve_runtime(&runtime, context_runtime, &exec_ctx, verbose)?;
+            let effective_endpoint = endpoint.unwrap_or_else(|| base_url.clone());
+            
+            // Build variables from payload and --set flags
+            let vars = build_variables(payload.as_deref(), &variables)?;
+            
+            // Load variables from input file if provided (used in distributed mode)
+            let _input_payload = if let Some(input_file) = &input {
+                let content = fs::read_to_string(input_file)
+                    .context(format!("Failed to read input file: {:?}", input_file))?;
+                Some(serde_json::from_str::<serde_json::Value>(&content)
+                    .context("Failed to parse input JSON")?)
+            } else {
+                None
+            };
+            
+            if verbose {
+                println!("Execution Context:");
+                println!("  Reference: {}", reference);
+                println!("  Type: {:?}", exec_ctx.ref_type);
+                println!("  Runtime: {}", effective_runtime);
+                if let Some(v) = &exec_ctx.version {
+                    println!("  Version: {}", v);
+                }
+                if let Some(t) = &target {
+                    println!("  Target: {}", t);
+                }
+            }
+            
+            if dry_run {
+                println!("\n[DRY RUN] Would execute with:");
+                println!("  Runtime: {}", effective_runtime);
+                match &exec_ctx.ref_type {
+                    RefType::File(path) => println!("  File: {}", path.display()),
+                    RefType::Catalog { name, version } => {
+                        println!("  Catalog: {}", name);
+                        if let Some(v) = version {
+                            println!("  Version: {}", v);
+                        }
+                    }
+                    RefType::DatabaseId(id) => println!("  DB ID: {}", id),
+                    RefType::CatalogPath(path) => println!("  Path: {}", path),
+                }
+                return Ok(());
+            }
+            
+            match effective_runtime.as_str() {
+                "local" => {
+                    // Local execution using Rust interpreter
+                    let playbook_path = match &exec_ctx.ref_type {
+                        RefType::File(path) => path.clone(),
+                        RefType::Catalog { .. } | RefType::DatabaseId(_) | RefType::CatalogPath(_) => {
+                            eprintln!("Error: Local runtime requires a file path reference");
+                            eprintln!("  Use: noetl exec ./path/to/playbook.yaml -r local");
+                            eprintln!("  Or use: -r distributed for catalog/db references");
+                            std::process::exit(1);
+                        }
+                    };
+                    
+                    let runner = playbook_runner::PlaybookRunner::new(playbook_path)
+                        .with_variables(vars)
+                        .with_verbose(verbose)
+                        .with_target(target);
+                    
+                    runner.run()?;
+                }
+                "distributed" => {
+                    // Distributed execution via server
+                    let (path, version) = match &exec_ctx.ref_type {
+                        RefType::File(file_path) => {
+                            // For file refs, we need to register first or use a different approach
+                            eprintln!("Warning: Executing local file via distributed runtime");
+                            eprintln!("  Consider registering with: noetl catalog register {}", file_path.display());
+                            // Use filename as path for now
+                            let name = file_path.file_stem()
+                                .map(|s| s.to_string_lossy().to_string())
+                                .unwrap_or_else(|| "playbook".to_string());
+                            (name, None)
+                        }
+                        RefType::Catalog { name, version } => {
+                            (name.clone(), version.clone())
+                        }
+                        RefType::DatabaseId(id) => {
+                            (id.clone(), None) // Server handles ID lookup
+                        }
+                        RefType::CatalogPath(path) => {
+                            (path.clone(), exec_ctx.version.clone())
+                        }
+                    };
+                    
+                    execute_playbook_distributed(
+                        &client, 
+                        &effective_endpoint, 
+                        &path, 
+                        version.and_then(|v| v.parse().ok()), 
+                        input, 
+                        json
+                    ).await?;
+                }
+                _ => {
+                    eprintln!("Error: Unknown runtime '{}'. Use: local, distributed, or auto", effective_runtime);
+                    std::process::exit(1);
+                }
+            }
+        }
         Some(Commands::Run {
-            playbook_or_target,
+            reference,
+            runtime,
             args,
             variables,
             payload,
             merge,
             verbose,
         }) => {
-            // File Resolution Algorithm (File-First Strategy)
-            let (playbook_path, target) = resolve_playbook_and_target(playbook_or_target, args)?;
-
-            if verbose {
-                println!("🔍 Resolved playbook: {}", playbook_path.display());
-                if let Some(ref t) = target {
-                    println!("🎯 Target: {}", t);
-                }
-            }
-
-            // Parse JSON payload if provided
-            let mut vars = std::collections::HashMap::new();
-
-            if let Some(payload_str) = payload {
-                match serde_json::from_str::<serde_json::Value>(&payload_str) {
-                    Ok(serde_json::Value::Object(map)) => {
-                        for (key, value) in map {
-                            let value_str = match value {
-                                serde_json::Value::String(s) => s,
-                                serde_json::Value::Number(n) => n.to_string(),
-                                serde_json::Value::Bool(b) => b.to_string(),
-                                serde_json::Value::Null => "null".to_string(),
-                                other => serde_json::to_string(&other).unwrap_or_else(|_| "null".to_string()),
-                            };
-                            vars.insert(key, value_str);
-                        }
-                    }
-                    Ok(_) => {
-                        eprintln!("Error: Payload must be a JSON object, not array or primitive");
-                        std::process::exit(1);
-                    }
-                    Err(e) => {
-                        eprintln!("Error: Invalid JSON payload: {}", e);
-                        std::process::exit(1);
-                    }
-                }
-            }
-
-            // Parse individual variables from key=value format (these override payload)
-            for var in variables {
-                let parts: Vec<&str> = var.splitn(2, '=').collect();
-                if parts.len() == 2 {
-                    vars.insert(parts[0].to_string(), parts[1].to_string());
+            // Get context runtime preference
+            let context_runtime = config.get_current_context()
+                .map(|(_, ctx)| ctx.runtime.as_str());
+            
+            // Determine effective runtime (context takes precedence for "auto")
+            let effective_runtime = if runtime == "auto" {
+                context_runtime.unwrap_or("local")
+            } else {
+                &runtime
+            };
+            
+            // Build variables
+            let vars = build_variables(payload.as_deref(), &variables)?;
+            
+            if effective_runtime == "distributed" {
+                // Distributed execution via server
+                let catalog_path = if let Some(ref_str) = &reference {
+                    // Use the reference as catalog path
+                    // Strip .yaml/.yml extension if present for catalog lookup
+                    ref_str
+                        .trim_end_matches(".yaml")
+                        .trim_end_matches(".yml")
+                        .to_string()
                 } else {
-                    eprintln!("Warning: Invalid variable format '{}', expected key=value", var);
+                    eprintln!("Error: Playbook reference required for distributed execution");
+                    std::process::exit(1);
+                };
+                
+                if verbose {
+                    println!("Catalog path: {}", catalog_path);
+                    println!("Runtime: {}", effective_runtime);
+                    println!("Server: {}", base_url);
                 }
+                
+                execute_playbook_distributed(
+                    &client, 
+                    &base_url, 
+                    &catalog_path, 
+                    None, // version
+                    None, // input file
+                    false // json output
+                ).await?;
+            } else {
+                // Local execution - resolve playbook file
+                let (playbook_path, target) = if let Some(ref_str) = reference {
+                    resolve_playbook_and_target(Some(ref_str), args)?
+                } else {
+                    resolve_playbook_and_target(None, args)?
+                };
+                
+                if verbose {
+                    println!("Resolved playbook: {}", playbook_path.display());
+                    if let Some(ref t) = target {
+                        println!("Target: {}", t);
+                    }
+                    println!("Runtime: {}", effective_runtime);
+                }
+                
+                let runner = playbook_runner::PlaybookRunner::new(playbook_path)
+                    .with_variables(vars)
+                    .with_merge(merge)
+                    .with_verbose(verbose)
+                    .with_target(target);
+                
+                runner.run()?;
             }
-
-            // Run playbook locally
-            let runner = playbook_runner::PlaybookRunner::new(playbook_path)
-                .with_variables(vars)
-                .with_merge(merge)
-                .with_verbose(verbose)
-                .with_target(target);
-
-            runner.run()?;
         }
         Some(Commands::Context { command }) => {
             handle_context_command(&mut config, command)?;
@@ -806,6 +1491,9 @@ async fn main() -> Result<()> {
                 k8s_reset(no_cache, &platform).await?;
             }
         },
+        Some(Commands::Iap { command }) => {
+            handle_iap_command(command).await?;
+        }
         None => {
             println!("Use --help for usage information or --interactive for TUI mode");
         }
@@ -819,9 +1507,19 @@ fn handle_context_command(config: &mut Config, command: ContextCommand) -> Resul
         ContextCommand::Add {
             name,
             server_url,
+            runtime,
             set_current,
         } => {
-            config.contexts.insert(name.clone(), Context { server_url });
+            // Validate runtime value
+            if !["local", "distributed", "auto"].contains(&runtime.as_str()) {
+                eprintln!("Invalid runtime '{}'. Use: local, distributed, or auto", runtime);
+                std::process::exit(1);
+            }
+            
+            config.contexts.insert(
+                name.clone(), 
+                Context::new(server_url).with_runtime(runtime)
+            );
             if set_current || config.current_context.is_none() {
                 config.current_context = Some(name.clone());
             }
@@ -832,23 +1530,45 @@ fn handle_context_command(config: &mut Config, command: ContextCommand) -> Resul
             }
         }
         ContextCommand::List => {
-            println!("  {:<20} {:<30}", "NAME", "SERVER URL");
+            println!("  {:<15} {:<30} {:<12}", "NAME", "SERVER URL", "RUNTIME");
             for (name, ctx) in &config.contexts {
                 let current_mark = if config.current_context.as_ref() == Some(name) {
                     "*"
                 } else {
                     " "
                 };
-                println!("{} {:<20} {:<30}", current_mark, name, ctx.server_url);
+                println!("{} {:<15} {:<30} {:<12}", current_mark, name, ctx.server_url, ctx.runtime);
             }
         }
         ContextCommand::Use { name } => {
             if config.contexts.contains_key(&name) {
                 config.current_context = Some(name.clone());
                 config.save()?;
-                println!("Switched to context '{}'.", name);
+                let ctx = config.contexts.get(&name).unwrap();
+                println!("Switched to context '{}' (runtime: {}).", name, ctx.runtime);
             } else {
                 eprintln!("Context '{}' not found.", name);
+                std::process::exit(1);
+            }
+        }
+        ContextCommand::SetRuntime { runtime } => {
+            // Validate runtime value
+            if !["local", "distributed", "auto"].contains(&runtime.as_str()) {
+                eprintln!("Invalid runtime '{}'. Use: local, distributed, or auto", runtime);
+                std::process::exit(1);
+            }
+            
+            if let Some(name) = &config.current_context {
+                if let Some(ctx) = config.contexts.get_mut(name) {
+                    ctx.runtime = runtime.clone();
+                    config.save()?;
+                    println!("Runtime for context '{}' set to '{}'.", name, runtime);
+                } else {
+                    eprintln!("Current context '{}' not found in contexts.", name);
+                    std::process::exit(1);
+                }
+            } else {
+                eprintln!("No current context set. Use 'noetl context use <name>' first.");
                 std::process::exit(1);
             }
         }
@@ -866,7 +1586,9 @@ fn handle_context_command(config: &mut Config, command: ContextCommand) -> Resul
         }
         ContextCommand::Current => {
             if let Some((name, ctx)) = config.get_current_context() {
-                println!("Current context: {} ({})", name, ctx.server_url);
+                println!("Current context: {}", name);
+                println!("  Server URL: {}", ctx.server_url);
+                println!("  Runtime:    {}", ctx.runtime);
             } else {
                 println!("No current context set.");
             }
@@ -1020,10 +1742,12 @@ async fn register_resource(client: &Client, base_url: &str, resource_type: &str,
     Ok(())
 }
 
-async fn execute_playbook(
+/// Execute playbook on distributed server-worker environment
+async fn execute_playbook_distributed(
     client: &Client,
     base_url: &str,
     path: &str,
+    version: Option<i64>,
     input: Option<PathBuf>,
     json_only: bool,
 ) -> Result<()> {
@@ -1035,15 +1759,29 @@ async fn execute_playbook(
         serde_json::Value::Object(serde_json::Map::new())
     };
 
+    // Build request with optional version
     let url = format!("{}/api/execute", base_url);
-    let request = ExecuteRequest {
-        path: path.to_string(),
-        payload,
-    };
+    let mut request_body = serde_json::json!({
+        "path": path,
+        "payload": payload
+    });
+    
+    if let Some(v) = version {
+        request_body["version"] = serde_json::json!(v);
+    }
+
+    if !json_only {
+        println!("Executing playbook on distributed server...");
+        println!("  Path: {}", path);
+        if let Some(v) = version {
+            println!("  Version: {}", v);
+        }
+        println!("  Server: {}", base_url);
+    }
 
     let response = client
         .post(&url)
-        .json(&request)
+        .json(&request_body)
         .send()
         .await
         .context("Failed to send execute request")?;
@@ -1053,7 +1791,14 @@ async fn execute_playbook(
         if json_only {
             println!("{}", serde_json::to_string(&result)?);
         } else {
-            println!("Execution started: {}", serde_json::to_string_pretty(&result)?);
+            println!("\nExecution started:");
+            println!("{}", serde_json::to_string_pretty(&result)?);
+            
+            // Extract execution_id if available and show status command hint
+            if let Some(exec_id) = result.get("execution_id") {
+                println!("\nTo check status:");
+                println!("  noetl execute status {}", exec_id);
+            }
         }
     } else {
         let status = response.status();
@@ -1065,8 +1810,19 @@ async fn execute_playbook(
     Ok(())
 }
 
+async fn execute_playbook(
+    client: &Client,
+    base_url: &str,
+    path: &str,
+    input: Option<PathBuf>,
+    json_only: bool,
+) -> Result<()> {
+    // Legacy function - delegate to new one without version
+    execute_playbook_distributed(client, base_url, path, None, input, json_only).await
+}
+
 async fn get_status(client: &Client, base_url: &str, execution_id: &str, json_only: bool) -> Result<()> {
-    let url = format!("{}/api/execute/status/{}", base_url, execution_id);
+    let url = format!("{}/api/executions/{}/status", base_url, execution_id);
     let response = client.get(&url).send().await.context("Failed to send status request")?;
 
     if response.status().is_success() {
@@ -1074,7 +1830,53 @@ async fn get_status(client: &Client, base_url: &str, execution_id: &str, json_on
         if json_only {
             println!("{}", serde_json::to_string(&result)?);
         } else {
-            println!("Status: {}", serde_json::to_string_pretty(&result)?);
+            // Show a concise summary by default
+            let completed = result.get("completed").and_then(|v| v.as_bool()).unwrap_or(false);
+            let failed = result.get("failed").and_then(|v| v.as_bool()).unwrap_or(false);
+            let current_step = result.get("current_step").and_then(|v| v.as_str()).unwrap_or("unknown");
+            let completed_steps = result.get("completed_steps").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
+            
+            let status_str = if completed {
+                if failed { "FAILED" } else { "COMPLETED" }
+            } else {
+                "RUNNING"
+            };
+            
+            let status_color = if completed {
+                if failed { "\x1b[31m" } else { "\x1b[32m" }  // red or green
+            } else {
+                "\x1b[33m"  // yellow
+            };
+            
+            println!("\n{}{}\x1b[0m", status_color, "=".repeat(60));
+            println!("Execution: {}", execution_id);
+            println!("Status:    {}{}\x1b[0m", status_color, status_str);
+            println!("Steps:     {} completed", completed_steps);
+            if !completed {
+                println!("Current:   {}", current_step);
+            }
+            
+            // Show error if failed
+            if failed {
+                if let Some(error) = result.get("error").and_then(|v| v.as_str()) {
+                    println!("\x1b[31mError:\x1b[0m     {}", error);
+                }
+            }
+            
+            // Show completed steps list
+            if let Some(steps) = result.get("completed_steps").and_then(|v| v.as_array()) {
+                if !steps.is_empty() {
+                    println!("\nCompleted steps:");
+                    for step in steps {
+                        if let Some(step_name) = step.as_str() {
+                            println!("  - {}", step_name);
+                        }
+                    }
+                }
+            }
+            
+            println!("{}{}\x1b[0m\n", status_color, "=".repeat(60));
+            println!("Use --json for full execution details");
         }
     } else {
         let status = response.status();
@@ -1271,7 +2073,8 @@ fn format_as_table(result: &serde_json::Value, column_names: &[String]) -> Resul
 
             print!("│");
             for (i, col) in columns.iter().enumerate() {
-                print!(" {:width$} │", col, width = col_widths[i]);
+                let width = col_widths.get(i).copied().unwrap_or(col.len());
+                print!(" {:<width$} │", col, width = width);
             }
             println!();
 
@@ -1291,7 +2094,8 @@ fn format_as_table(result: &serde_json::Value, column_names: &[String]) -> Resul
                     for (i, val) in row_array.iter().enumerate() {
                         if i < col_widths.len() {
                             let val_str = format_value(val);
-                            print!(" {:width$} │", val_str, width = col_widths[i]);
+                            let width = col_widths[i];
+                            print!(" {:<width$} │", val_str, width = width);
                         }
                     }
                     println!();
@@ -1448,7 +2252,7 @@ fn ui(f: &mut Frame, app: &mut App) {
         .constraints([Constraint::Length(3), Constraint::Min(0), Constraint::Length(3)].as_ref())
         .split(f.size());
 
-    let header = Paragraph::new("NoETL Control (noetlctl) - Playbooks")
+    let header = Paragraph::new("NoETL Control (noetl) - Playbooks")
         .block(Block::default().borders(Borders::ALL).title("Info"));
     f.render_widget(header, chunks[0]);
 
@@ -2180,4 +2984,1327 @@ fn update_deployment_image(file_path: &str, image: &str) -> Result<()> {
     }
 
     Ok(())
+}
+
+// =============================================================================
+// Infrastructure as Playbook (IaP) Command Handlers
+// =============================================================================
+
+async fn handle_iap_command(command: IapCommand) -> Result<()> {
+    match command {
+        IapCommand::Init {
+            project,
+            bucket,
+            region,
+            state_db,
+            workspace,
+            state_path,
+        } => {
+            iap_init(&project, bucket.as_deref(), &region, &state_db, &workspace, &state_path).await
+        }
+        IapCommand::Plan {
+            playbook,
+            variables,
+            verbose,
+        } => {
+            iap_plan(&playbook, &variables, verbose).await
+        }
+        IapCommand::Apply {
+            playbook,
+            variables,
+            auto_approve,
+            verbose,
+        } => {
+            iap_apply(&playbook, &variables, auto_approve, verbose).await
+        }
+        IapCommand::State { command } => handle_iap_state_command(command).await,
+        IapCommand::Sync { command } => handle_iap_sync_command(command).await,
+        IapCommand::Drift { command } => handle_iap_drift_command(command).await,
+        IapCommand::Workspace { command } => handle_iap_workspace_command(command).await,
+    }
+}
+
+async fn handle_iap_state_command(command: IapStateCommand) -> Result<()> {
+    match command {
+        IapStateCommand::List { resource_type, format } => {
+            iap_state_list(resource_type.as_deref(), &format).await
+        }
+        IapStateCommand::Show { resource } => iap_state_show(&resource).await,
+        IapStateCommand::Rm { resource, force } => iap_state_rm(&resource, force).await,
+        IapStateCommand::Query { sql } => iap_state_query(&sql).await,
+    }
+}
+
+async fn handle_iap_sync_command(command: IapSyncCommand) -> Result<()> {
+    match command {
+        IapSyncCommand::Push { force } => iap_sync_push(force).await,
+        IapSyncCommand::Pull { force } => iap_sync_pull(force).await,
+        IapSyncCommand::Status => iap_sync_status().await,
+    }
+}
+
+async fn handle_iap_drift_command(command: IapDriftCommand) -> Result<()> {
+    match command {
+        IapDriftCommand::Detect {
+            resource_type,
+            resource,
+        } => {
+            iap_drift_detect(resource_type.as_deref(), resource.as_deref()).await
+        }
+        IapDriftCommand::Report { format } => iap_drift_report(&format).await,
+    }
+}
+
+async fn handle_iap_workspace_command(command: IapWorkspaceCommand) -> Result<()> {
+    match command {
+        IapWorkspaceCommand::List { remote } => iap_workspace_list(remote).await,
+        IapWorkspaceCommand::Switch { name, pull } => iap_workspace_switch(&name, pull).await,
+        IapWorkspaceCommand::Current => iap_workspace_current().await,
+        IapWorkspaceCommand::Create { name, from, switch } => {
+            iap_workspace_create(&name, from.as_deref(), switch).await
+        }
+        IapWorkspaceCommand::Delete { name, remote, force } => {
+            iap_workspace_delete(&name, remote, force).await
+        }
+    }
+}
+
+/// Initialize IaP state database and configuration
+async fn iap_init(project: &str, bucket: Option<&str>, region: &str, state_db: &str, workspace: &str, state_path_template: &str) -> Result<()> {
+    use duckdb::{params, Connection};
+
+    println!("Initializing IaP for project: {}", project);
+    println!("  Region: {}", region);
+    println!("  Workspace: {}", workspace);
+    println!("  State DB: {}", state_db);
+
+    // Create state directory
+    let state_path = PathBuf::from(state_db);
+    if let Some(parent) = state_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    // Open/create DuckDB database
+    let conn = Connection::open(&state_path).context("Failed to create state database")?;
+
+    // Create schema tables
+    conn.execute_batch(
+        r#"
+        -- IaP Configuration
+        CREATE TABLE IF NOT EXISTS iap_config (
+            key VARCHAR PRIMARY KEY,
+            value VARCHAR NOT NULL,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
+        -- Resources table - tracks all managed infrastructure
+        CREATE TABLE IF NOT EXISTS resources (
+            resource_id VARCHAR PRIMARY KEY,
+            resource_type VARCHAR NOT NULL,
+            resource_name VARCHAR NOT NULL,
+            provider VARCHAR NOT NULL DEFAULT 'gcp',
+            project VARCHAR,
+            region VARCHAR,
+            zone VARCHAR,
+            status VARCHAR NOT NULL DEFAULT 'pending',
+            config JSON,
+            state JSON,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            last_sync_at TIMESTAMP,
+            drift_detected BOOLEAN DEFAULT FALSE
+        );
+
+        -- Execution history
+        CREATE TABLE IF NOT EXISTS executions (
+            execution_id INTEGER PRIMARY KEY,
+            playbook_path VARCHAR NOT NULL,
+            action VARCHAR NOT NULL,
+            status VARCHAR NOT NULL,
+            started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            completed_at TIMESTAMP,
+            error_message VARCHAR,
+            changes JSON
+        );
+
+        -- Create sequence for execution_id
+        CREATE SEQUENCE IF NOT EXISTS exec_seq START 1;
+
+        -- Dependencies between resources
+        CREATE TABLE IF NOT EXISTS dependencies (
+            source_id VARCHAR NOT NULL,
+            target_id VARCHAR NOT NULL,
+            dependency_type VARCHAR DEFAULT 'requires',
+            PRIMARY KEY (source_id, target_id)
+        );
+
+        -- Drift detection results
+        CREATE TABLE IF NOT EXISTS drift_log (
+            id INTEGER PRIMARY KEY,
+            resource_id VARCHAR NOT NULL,
+            detected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            drift_type VARCHAR NOT NULL,
+            expected_value JSON,
+            actual_value JSON,
+            resolved_at TIMESTAMP,
+            resolved_by VARCHAR
+        );
+        "#,
+    )
+    .context("Failed to create schema tables")?;
+
+    // Store configuration
+    conn.execute(
+        "INSERT OR REPLACE INTO iap_config (key, value) VALUES ('project', ?)",
+        params![project],
+    )?;
+    conn.execute(
+        "INSERT OR REPLACE INTO iap_config (key, value) VALUES ('region', ?)",
+        params![region],
+    )?;
+    conn.execute(
+        "INSERT OR REPLACE INTO iap_config (key, value) VALUES ('workspace', ?)",
+        params![workspace],
+    )?;
+    conn.execute(
+        "INSERT OR REPLACE INTO iap_config (key, value) VALUES ('state_path_template', ?)",
+        params![state_path_template],
+    )?;
+
+    if let Some(b) = bucket {
+        conn.execute(
+            "INSERT OR REPLACE INTO iap_config (key, value) VALUES ('bucket', ?)",
+            params![b],
+        )?;
+        println!("  GCS Bucket: {}", b);
+        
+        // Show the actual remote path that will be used
+        let remote_path = state_path_template.replace("{workspace}", workspace);
+        println!("  Remote Path: gs://{}/{}", b, remote_path);
+    }
+
+    // Register workspace in registry for switching
+    let mut registry = load_workspace_registry()?;
+    let remote_path = bucket.map(|b| {
+        let path = state_path_template.replace("{workspace}", workspace);
+        format!("gs://{}/{}", b, path)
+    });
+    let entry = WorkspaceEntry {
+        name: workspace.to_string(),
+        project: project.to_string(),
+        region: region.to_string(),
+        bucket: bucket.map(|b| b.to_string()),
+        state_path_template: state_path_template.to_string(),
+        remote_path,
+        created_at: chrono::Utc::now().to_rfc3339(),
+        last_used: Some(chrono::Utc::now().to_rfc3339()),
+    };
+    registry.insert(workspace.to_string(), entry);
+    save_workspace_registry(&registry)?;
+
+    println!("\nIaP initialized successfully.");
+    println!("State database created at: {}", state_db);
+
+    if bucket.is_some() {
+        println!("\nTo sync state with GCS, run:");
+        println!("  noetl iap sync push");
+    }
+
+    Ok(())
+}
+
+/// Plan infrastructure changes (dry-run)
+async fn iap_plan(playbook: &PathBuf, variables: &[String], verbose: bool) -> Result<()> {
+    println!("Planning infrastructure changes...");
+    println!("  Playbook: {}", playbook.display());
+
+    // Parse variables
+    let vars = parse_variables(variables)?;
+    if !vars.is_empty() {
+        println!("  Variables:");
+        for (k, v) in &vars {
+            println!("    {} = {}", k, v);
+        }
+    }
+
+    // Create playbook runner with plan mode
+    let runner = playbook_runner::PlaybookRunner::new(playbook.clone())
+        .with_variables(vars.clone())
+        .with_verbose(verbose);
+
+    // In plan mode, we execute but don't persist state changes
+    // For now, we just show what would be executed
+    println!("\nPlan output:");
+    println!("{}", "-".repeat(60));
+
+    runner.run()?;
+
+    println!("{}", "-".repeat(60));
+    println!("\nPlan complete. No changes were made.");
+    println!("Run 'noetl iap apply {}' to apply these changes.", playbook.display());
+
+    Ok(())
+}
+
+/// Apply infrastructure changes
+async fn iap_apply(playbook: &PathBuf, variables: &[String], auto_approve: bool, verbose: bool) -> Result<()> {
+    if !auto_approve {
+        println!("This will apply infrastructure changes.");
+        print!("Do you want to continue? [y/N] ");
+        use std::io::{self, Write};
+        io::stdout().flush()?;
+
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+
+        if !input.trim().eq_ignore_ascii_case("y") {
+            println!("Apply cancelled.");
+            return Ok(());
+        }
+    }
+
+    println!("Applying infrastructure changes...");
+    println!("  Playbook: {}", playbook.display());
+
+    let vars = parse_variables(variables)?;
+
+    let runner = playbook_runner::PlaybookRunner::new(playbook.clone())
+        .with_variables(vars)
+        .with_verbose(verbose);
+
+    runner.run()?;
+
+    println!("\nApply complete.");
+    Ok(())
+}
+
+// =============================================================================
+// IaP Workspace Management Functions
+// =============================================================================
+
+/// Get workspace registry path
+fn get_workspace_registry_path() -> PathBuf {
+    PathBuf::from(".noetl/workspaces.json")
+}
+
+/// Workspace registry entry
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct WorkspaceEntry {
+    name: String,
+    project: String,
+    region: String,
+    bucket: Option<String>,
+    state_path_template: String,
+    /// Fully evaluated remote path (computed from template)
+    remote_path: Option<String>,
+    created_at: String,
+    last_used: Option<String>,
+}
+
+/// Load workspace registry
+fn load_workspace_registry() -> Result<HashMap<String, WorkspaceEntry>> {
+    let registry_path = get_workspace_registry_path();
+    if registry_path.exists() {
+        let content = fs::read_to_string(&registry_path)?;
+        Ok(serde_json::from_str(&content).unwrap_or_default())
+    } else {
+        Ok(HashMap::new())
+    }
+}
+
+/// Save workspace registry
+fn save_workspace_registry(registry: &HashMap<String, WorkspaceEntry>) -> Result<()> {
+    let registry_path = get_workspace_registry_path();
+    if let Some(parent) = registry_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let content = serde_json::to_string_pretty(registry)?;
+    fs::write(&registry_path, content)?;
+    Ok(())
+}
+
+/// List workspaces
+async fn iap_workspace_list(include_remote: bool) -> Result<()> {
+    use duckdb::Connection;
+
+    let registry = load_workspace_registry()?;
+    
+    // Get current workspace from state
+    let state_path = get_state_db_path()?;
+    let current_workspace = if state_path.exists() {
+        let conn = Connection::open(&state_path)?;
+        conn.query_row(
+            "SELECT value FROM iap_config WHERE key = 'workspace'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .ok()
+    } else {
+        None
+    };
+
+    println!("Registered Workspaces:");
+    println!("{:<20} {:<20} {:<15} {:<8}", "NAME", "PROJECT", "REGION", "CURRENT");
+    println!("{}", "-".repeat(65));
+
+    if registry.is_empty() && current_workspace.is_none() {
+        println!("No workspaces registered. Use 'noetl iap init' to create one.");
+    } else {
+        for (name, entry) in &registry {
+            let is_current = current_workspace.as_ref().map(|c| c == name).unwrap_or(false);
+            println!(
+                "{:<20} {:<20} {:<15} {}",
+                name,
+                &entry.project,
+                &entry.region,
+                if is_current { "*" } else { "" }
+            );
+        }
+
+        // If current workspace isn't in registry, show it anyway
+        if let Some(ref current) = current_workspace {
+            if !registry.contains_key(current) {
+                println!(
+                    "{:<20} {:<20} {:<15} *  (not in registry)",
+                    current, "-", "-"
+                );
+            }
+        }
+    }
+
+    if include_remote {
+        println!("\nChecking remote workspaces in GCS...");
+        
+        // Get bucket from current state or registry
+        let bucket = if state_path.exists() {
+            let conn = Connection::open(&state_path)?;
+            conn.query_row(
+                "SELECT value FROM iap_config WHERE key = 'bucket'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .ok()
+        } else {
+            None
+        };
+
+        if let Some(bucket) = bucket {
+            // List workspaces folder in GCS
+            let output = std::process::Command::new("gsutil")
+                .args(["ls", &format!("gs://{}/workspaces/", bucket)])
+                .output();
+
+            match output {
+                Ok(out) if out.status.success() => {
+                    let stdout = String::from_utf8_lossy(&out.stdout);
+                    let remote_workspaces: Vec<&str> = stdout
+                        .lines()
+                        .filter_map(|line| {
+                            line.strip_prefix(&format!("gs://{}/workspaces/", bucket))
+                                .and_then(|s| s.strip_suffix("/"))
+                        })
+                        .collect();
+
+                    if remote_workspaces.is_empty() {
+                        println!("No remote workspaces found in gs://{}/workspaces/", bucket);
+                    } else {
+                        println!("\nRemote Workspaces (gs://{}/workspaces/):", bucket);
+                        for ws in remote_workspaces {
+                            let is_local = registry.contains_key(ws) 
+                                || current_workspace.as_ref().map(|c| c == ws).unwrap_or(false);
+                            println!("  {} {}", ws, if is_local { "(synced)" } else { "(remote only)" });
+                        }
+                    }
+                }
+                Ok(out) => {
+                    let stderr = String::from_utf8_lossy(&out.stderr);
+                    if !stderr.contains("BucketNotFoundException") {
+                        println!("Could not list remote workspaces: {}", stderr);
+                    }
+                }
+                Err(e) => {
+                    println!("gsutil not available: {}", e);
+                }
+            }
+        } else {
+            println!("No GCS bucket configured. Use 'noetl iap init --bucket <bucket>' first.");
+        }
+    }
+
+    Ok(())
+}
+
+/// Switch to a different workspace
+async fn iap_workspace_switch(name: &str, pull_after: bool) -> Result<()> {
+    use duckdb::{params, Connection};
+
+    let mut registry = load_workspace_registry()?;
+
+    // Check if workspace exists in registry
+    let entry = registry.get(name).cloned();
+
+    if entry.is_none() {
+        // Check if workspace exists remotely
+        let state_path = get_state_db_path()?;
+        if state_path.exists() {
+            let conn = Connection::open(&state_path)?;
+            let bucket: Option<String> = conn
+                .query_row(
+                    "SELECT value FROM iap_config WHERE key = 'bucket'",
+                    [],
+                    |row| row.get(0),
+                )
+                .ok();
+
+            if let Some(bucket) = bucket {
+                let remote_path = format!("gs://{}/workspaces/{}/state.duckdb", bucket, name);
+                let check = std::process::Command::new("gsutil")
+                    .args(["stat", &remote_path])
+                    .output();
+
+                if let Ok(out) = check {
+                    if out.status.success() {
+                        println!("Workspace '{}' found in remote storage.", name);
+                        println!("Creating local entry and pulling state...");
+                        
+                        // Get project and region from current config
+                        let project: String = conn
+                            .query_row(
+                                "SELECT value FROM iap_config WHERE key = 'project'",
+                                [],
+                                |row| row.get(0),
+                            )
+                            .unwrap_or_else(|_| "unknown".to_string());
+                        let region: String = conn
+                            .query_row(
+                                "SELECT value FROM iap_config WHERE key = 'region'",
+                                [],
+                                |row| row.get(0),
+                            )
+                            .unwrap_or_else(|_| "us-central1".to_string());
+
+                        // Create registry entry
+                        let remote_path = format!("gs://{}/workspaces/{}/state.duckdb", bucket, name);
+                        let new_entry = WorkspaceEntry {
+                            name: name.to_string(),
+                            project: project.clone(),
+                            region: region.clone(),
+                            bucket: Some(bucket.clone()),
+                            state_path_template: "workspaces/{workspace}/state.duckdb".to_string(),
+                            remote_path: Some(remote_path),
+                            created_at: chrono::Utc::now().to_rfc3339(),
+                            last_used: None,
+                        };
+                        registry.insert(name.to_string(), new_entry);
+                        save_workspace_registry(&registry)?;
+
+                        // Update current workspace in state
+                        conn.execute(
+                            "INSERT OR REPLACE INTO iap_config (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
+                            params!["workspace", name],
+                        )?;
+
+                        // Pull state
+                        iap_sync_pull(true).await?;
+                        
+                        println!("\nSwitched to workspace '{}'.", name);
+                        return Ok(());
+                    }
+                }
+            }
+        }
+
+        return Err(anyhow::anyhow!(
+            "Workspace '{}' not found in registry or remote storage.\n\
+             Use 'noetl iap workspace create {}' to create a new workspace, or\n\
+             Use 'noetl iap workspace list --remote' to see available remote workspaces.",
+            name, name
+        ));
+    }
+
+    // Workspace exists in registry
+    let entry = entry.unwrap();
+    let state_path = get_state_db_path()?;
+
+    // Update workspace in state database
+    let conn = Connection::open(&state_path)?;
+    conn.execute(
+        "INSERT OR REPLACE INTO iap_config (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
+        params!["workspace", name],
+    )?;
+    conn.execute(
+        "INSERT OR REPLACE INTO iap_config (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
+        params!["project", &entry.project],
+    )?;
+    conn.execute(
+        "INSERT OR REPLACE INTO iap_config (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
+        params!["region", &entry.region],
+    )?;
+    if let Some(ref bucket) = entry.bucket {
+        conn.execute(
+            "INSERT OR REPLACE INTO iap_config (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
+            params!["bucket", bucket],
+        )?;
+    }
+    conn.execute(
+        "INSERT OR REPLACE INTO iap_config (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
+        params!["state_path_template", &entry.state_path_template],
+    )?;
+
+    // Update last_used in registry
+    if let Some(entry) = registry.get_mut(name) {
+        entry.last_used = Some(chrono::Utc::now().to_rfc3339());
+    }
+    save_workspace_registry(&registry)?;
+
+    println!("Switched to workspace '{}'.", name);
+    println!("  Project: {}", entry.project);
+    println!("  Region: {}", entry.region);
+    if let Some(bucket) = &entry.bucket {
+        println!("  Bucket: {}", bucket);
+    }
+
+    if pull_after {
+        println!("\nPulling state from remote...");
+        iap_sync_pull(true).await?;
+    }
+
+    Ok(())
+}
+
+/// Show current workspace info
+async fn iap_workspace_current() -> Result<()> {
+    use duckdb::Connection;
+
+    let state_path = get_state_db_path()?;
+    if !state_path.exists() {
+        return Err(anyhow::anyhow!(
+            "No state database found. Run 'noetl iap init' first."
+        ));
+    }
+
+    let conn = Connection::open(&state_path)?;
+
+    let workspace: String = conn
+        .query_row(
+            "SELECT value FROM iap_config WHERE key = 'workspace'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or_else(|_| "default".to_string());
+
+    let project: String = conn
+        .query_row(
+            "SELECT value FROM iap_config WHERE key = 'project'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or_else(|_| "-".to_string());
+
+    let region: String = conn
+        .query_row(
+            "SELECT value FROM iap_config WHERE key = 'region'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or_else(|_| "-".to_string());
+
+    let bucket: String = conn
+        .query_row(
+            "SELECT value FROM iap_config WHERE key = 'bucket'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or_else(|_| "(not configured)".to_string());
+
+    let state_path_template: String = conn
+        .query_row(
+            "SELECT value FROM iap_config WHERE key = 'state_path_template'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or_else(|_| "workspaces/{workspace}/state.duckdb".to_string());
+
+    // Get resource count
+    let resource_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM resources", [], |row| row.get(0))
+        .unwrap_or(0);
+
+    println!("Current Workspace: {}", workspace);
+    println!();
+    println!("Configuration:");
+    println!("  Project:     {}", project);
+    println!("  Region:      {}", region);
+    println!("  GCS Bucket:  {}", bucket);
+    println!("  State Path:  {}", state_path_template.replace("{workspace}", &workspace));
+    println!();
+    println!("State:");
+    println!("  Local DB:    {}", state_path.display());
+    println!("  Resources:   {}", resource_count);
+
+    Ok(())
+}
+
+/// Create a new workspace
+async fn iap_workspace_create(name: &str, from: Option<&str>, switch_to: bool) -> Result<()> {
+    use duckdb::Connection;
+
+    let mut registry = load_workspace_registry()?;
+
+    // Check if workspace already exists
+    if registry.contains_key(name) {
+        return Err(anyhow::anyhow!(
+            "Workspace '{}' already exists. Use 'noetl iap workspace switch {}' to switch to it.",
+            name, name
+        ));
+    }
+
+    // Get configuration from current state or source workspace
+    let (project, region, bucket, state_path_template) = if let Some(source) = from {
+        // Clone from existing workspace
+        if let Some(entry) = registry.get(source) {
+            (
+                entry.project.clone(),
+                entry.region.clone(),
+                entry.bucket.clone(),
+                entry.state_path_template.clone(),
+            )
+        } else {
+            return Err(anyhow::anyhow!(
+                "Source workspace '{}' not found in registry.",
+                source
+            ));
+        }
+    } else {
+        // Get from current state
+        let state_path = get_state_db_path()?;
+        if !state_path.exists() {
+            return Err(anyhow::anyhow!(
+                "No state database found. Run 'noetl iap init' first, or use --from to clone from existing workspace."
+            ));
+        }
+
+        let conn = Connection::open(&state_path)?;
+        let project: String = conn
+            .query_row(
+                "SELECT value FROM iap_config WHERE key = 'project'",
+                [],
+                |row| row.get(0),
+            )
+            .context("Project not configured. Run 'noetl iap init' first.")?;
+        let region: String = conn
+            .query_row(
+                "SELECT value FROM iap_config WHERE key = 'region'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or_else(|_| "us-central1".to_string());
+        let bucket: Option<String> = conn
+            .query_row(
+                "SELECT value FROM iap_config WHERE key = 'bucket'",
+                [],
+                |row| row.get(0),
+            )
+            .ok();
+        let state_path_template: String = conn
+            .query_row(
+                "SELECT value FROM iap_config WHERE key = 'state_path_template'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or_else(|_| "workspaces/{workspace}/state.duckdb".to_string());
+
+        (project, region, bucket, state_path_template)
+    };
+
+    // Create registry entry
+    let remote_path = bucket.as_ref().map(|b| {
+        let path = state_path_template.replace("{workspace}", name);
+        format!("gs://{}/{}", b, path)
+    });
+    let entry = WorkspaceEntry {
+        name: name.to_string(),
+        project: project.clone(),
+        region: region.clone(),
+        bucket: bucket.clone(),
+        state_path_template: state_path_template.clone(),
+        remote_path,
+        created_at: chrono::Utc::now().to_rfc3339(),
+        last_used: None,
+    };
+
+    registry.insert(name.to_string(), entry);
+    save_workspace_registry(&registry)?;
+
+    println!("Created workspace '{}'.", name);
+    println!("  Project: {}", project);
+    println!("  Region: {}", region);
+    if let Some(ref bucket) = bucket {
+        let remote_path = state_path_template.replace("{workspace}", name);
+        println!("  Remote: gs://{}/{}", bucket, remote_path);
+    }
+
+    if switch_to {
+        println!();
+        iap_workspace_switch(name, false).await?;
+    } else {
+        println!("\nTo switch to this workspace, run:");
+        println!("  noetl iap workspace switch {}", name);
+    }
+
+    Ok(())
+}
+
+/// Delete a workspace from registry
+async fn iap_workspace_delete(name: &str, delete_remote: bool, force: bool) -> Result<()> {
+    use duckdb::Connection;
+    use std::io::{self, Write};
+
+    let mut registry = load_workspace_registry()?;
+
+    // Check if it's the current workspace
+    let state_path = get_state_db_path()?;
+    let current_workspace = if state_path.exists() {
+        let conn = Connection::open(&state_path)?;
+        conn.query_row(
+            "SELECT value FROM iap_config WHERE key = 'workspace'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .ok()
+    } else {
+        None
+    };
+
+    if current_workspace.as_ref().map(|c| c == name).unwrap_or(false) {
+        return Err(anyhow::anyhow!(
+            "Cannot delete current workspace '{}'. Switch to a different workspace first.",
+            name
+        ));
+    }
+
+    if !registry.contains_key(name) {
+        return Err(anyhow::anyhow!(
+            "Workspace '{}' not found in registry.",
+            name
+        ));
+    }
+
+    if !force {
+        print!("Delete workspace '{}'? ", name);
+        if delete_remote {
+            print!("(including remote state) ");
+        }
+        print!("[y/N] ");
+        io::stdout().flush()?;
+
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+        if !input.trim().eq_ignore_ascii_case("y") {
+            println!("Aborted.");
+            return Ok(());
+        }
+    }
+
+    // Delete remote state if requested
+    if delete_remote {
+        if let Some(entry) = registry.get(name) {
+            if let Some(ref bucket) = entry.bucket {
+                let remote_path = entry.state_path_template.replace("{workspace}", name);
+                let gcs_path = format!("gs://{}/{}", bucket, remote_path);
+                
+                println!("Deleting remote state: {}", gcs_path);
+                let output = std::process::Command::new("gsutil")
+                    .args(["rm", &gcs_path])
+                    .output();
+
+                match output {
+                    Ok(out) if out.status.success() => {
+                        println!("Remote state deleted.");
+                    }
+                    Ok(out) => {
+                        let stderr = String::from_utf8_lossy(&out.stderr);
+                        if !stderr.contains("No URLs matched") {
+                            println!("Warning: Could not delete remote state: {}", stderr);
+                        }
+                    }
+                    Err(e) => {
+                        println!("Warning: Could not delete remote state: {}", e);
+                    }
+                }
+            }
+        }
+    }
+
+    // Remove from registry
+    registry.remove(name);
+    save_workspace_registry(&registry)?;
+
+    println!("Workspace '{}' removed from registry.", name);
+
+    Ok(())
+}
+
+/// List resources in state
+async fn iap_state_list(resource_type: Option<&str>, format: &str) -> Result<()> {
+    use duckdb::Connection;
+
+    let state_path = get_state_db_path()?;
+    let conn = Connection::open(&state_path).context("Failed to open state database")?;
+
+    let query = if let Some(rt) = resource_type {
+        format!(
+            "SELECT resource_id, resource_type, resource_name, status, updated_at 
+             FROM resources WHERE resource_type = '{}' ORDER BY resource_type, resource_name",
+            rt
+        )
+    } else {
+        "SELECT resource_id, resource_type, resource_name, status, updated_at 
+         FROM resources ORDER BY resource_type, resource_name"
+            .to_string()
+    };
+
+    let mut stmt = conn.prepare(&query)?;
+    let rows = stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+            row.get::<_, String>(3)?,
+            row.get::<_, String>(4)?,
+        ))
+    })?;
+
+    let results: Vec<_> = rows.filter_map(|r| r.ok()).collect();
+
+    if results.is_empty() {
+        println!("No resources found in state.");
+        return Ok(());
+    }
+
+    match format {
+        "json" => {
+            let json_results: Vec<serde_json::Value> = results
+                .iter()
+                .map(|(id, rtype, name, status, updated)| {
+                    serde_json::json!({
+                        "resource_id": id,
+                        "resource_type": rtype,
+                        "resource_name": name,
+                        "status": status,
+                        "updated_at": updated
+                    })
+                })
+                .collect();
+            println!("{}", serde_json::to_string_pretty(&json_results)?);
+        }
+        _ => {
+            println!(
+                "{:<40} {:<15} {:<25} {:<10} {}",
+                "RESOURCE ID", "TYPE", "NAME", "STATUS", "UPDATED"
+            );
+            println!("{}", "-".repeat(100));
+            for (id, rtype, name, status, updated) in results {
+                println!("{:<40} {:<15} {:<25} {:<10} {}", id, rtype, name, status, updated);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Show details for a specific resource
+async fn iap_state_show(resource: &str) -> Result<()> {
+    use duckdb::Connection;
+
+    let state_path = get_state_db_path()?;
+    let conn = Connection::open(&state_path)?;
+
+    let mut stmt = conn.prepare(
+        "SELECT resource_id, resource_type, resource_name, provider, project, region, zone,
+                status, config, state, created_at, updated_at, last_sync_at, drift_detected
+         FROM resources WHERE resource_id = ? OR resource_name = ?",
+    )?;
+
+    let result = stmt.query_row([resource, resource], |row| {
+        Ok(serde_json::json!({
+            "resource_id": row.get::<_, String>(0)?,
+            "resource_type": row.get::<_, String>(1)?,
+            "resource_name": row.get::<_, String>(2)?,
+            "provider": row.get::<_, String>(3)?,
+            "project": row.get::<_, Option<String>>(4)?,
+            "region": row.get::<_, Option<String>>(5)?,
+            "zone": row.get::<_, Option<String>>(6)?,
+            "status": row.get::<_, String>(7)?,
+            "config": row.get::<_, Option<String>>(8)?,
+            "state": row.get::<_, Option<String>>(9)?,
+            "created_at": row.get::<_, String>(10)?,
+            "updated_at": row.get::<_, String>(11)?,
+            "last_sync_at": row.get::<_, Option<String>>(12)?,
+            "drift_detected": row.get::<_, bool>(13)?
+        }))
+    });
+
+    match result {
+        Ok(json) => {
+            println!("{}", serde_json::to_string_pretty(&json)?);
+        }
+        Err(_) => {
+            println!("Resource not found: {}", resource);
+        }
+    }
+
+    Ok(())
+}
+
+/// Remove a resource from state
+async fn iap_state_rm(resource: &str, force: bool) -> Result<()> {
+    use duckdb::Connection;
+
+    if !force {
+        print!("Remove '{}' from state? This does not destroy the actual resource. [y/N] ", resource);
+        use std::io::{self, Write};
+        io::stdout().flush()?;
+
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+
+        if !input.trim().eq_ignore_ascii_case("y") {
+            println!("Cancelled.");
+            return Ok(());
+        }
+    }
+
+    let state_path = get_state_db_path()?;
+    let conn = Connection::open(&state_path)?;
+
+    let deleted = conn.execute(
+        "DELETE FROM resources WHERE resource_id = ? OR resource_name = ?",
+        [resource, resource],
+    )?;
+
+    if deleted > 0 {
+        println!("Resource '{}' removed from state.", resource);
+    } else {
+        println!("Resource '{}' not found in state.", resource);
+    }
+
+    Ok(())
+}
+
+/// Execute raw SQL query against state database
+async fn iap_state_query(sql: &str) -> Result<()> {
+    use std::process::Command;
+
+    let state_path = get_state_db_path()?;
+    
+    // Use duckdb CLI for arbitrary queries (the Rust crate has bugs with query_arrow)
+    let output = Command::new("duckdb")
+        .arg(&state_path)
+        .arg("-c")
+        .arg(sql)
+        .output();
+    
+    match output {
+        Ok(out) => {
+            if out.status.success() {
+                print!("{}", String::from_utf8_lossy(&out.stdout));
+                if !out.stderr.is_empty() {
+                    eprint!("{}", String::from_utf8_lossy(&out.stderr));
+                }
+                Ok(())
+            } else {
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                Err(anyhow::anyhow!("DuckDB query failed: {}", stderr))
+            }
+        }
+        Err(e) => {
+            Err(anyhow::anyhow!(
+                "DuckDB CLI not found. Install with: brew install duckdb\nError: {}",
+                e
+            ))
+        }
+    }
+}
+
+/// Push local state to GCS
+async fn iap_sync_push(force: bool) -> Result<()> {
+    use duckdb::Connection;
+
+    let state_path = get_state_db_path()?;
+    let conn = Connection::open(&state_path)?;
+
+    // Get configuration from state database
+    let bucket: String = conn
+        .query_row("SELECT value FROM iap_config WHERE key = 'bucket'", [], |row| row.get(0))
+        .context("GCS bucket not configured. Run 'noetl iap init --bucket <bucket>' first.")?;
+
+    let workspace: String = conn
+        .query_row("SELECT value FROM iap_config WHERE key = 'workspace'", [], |row| row.get(0))
+        .unwrap_or_else(|_| "default".to_string());
+
+    let state_path_template: String = conn
+        .query_row("SELECT value FROM iap_config WHERE key = 'state_path_template'", [], |row| row.get(0))
+        .unwrap_or_else(|_| "workspaces/{workspace}/state.duckdb".to_string());
+
+    // Build remote path from template
+    let remote_path = state_path_template.replace("{workspace}", &workspace);
+    let gcs_path = format!("gs://{}/{}", bucket, remote_path);
+
+    if !force {
+        print!("Push state to {}? [y/N] ", gcs_path);
+        use std::io::{self, Write};
+        io::stdout().flush()?;
+
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+
+        if !input.trim().eq_ignore_ascii_case("y") {
+            println!("Cancelled.");
+            return Ok(());
+        }
+    }
+
+    println!("Pushing state to {}...", gcs_path);
+
+    // Close connection before copying
+    drop(conn);
+
+    // Use gsutil to copy
+    let output = std::process::Command::new("gsutil")
+        .args(["cp", state_path.to_str().unwrap(), &gcs_path])
+        .output()
+        .context("Failed to push state to GCS (gsutil not available?)")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("Failed to push state: {}", stderr);
+    }
+
+    println!("State pushed successfully.");
+    Ok(())
+}
+
+/// Pull state from GCS to local
+async fn iap_sync_pull(force: bool) -> Result<()> {
+    use duckdb::Connection;
+
+    let state_path = get_state_db_path()?;
+
+    // Try to get config from existing state, or require it
+    if !state_path.exists() {
+        return Err(anyhow::anyhow!(
+            "No local state found. Run 'noetl iap init' first to configure project and bucket."
+        ));
+    }
+
+    let conn = Connection::open(&state_path)?;
+    
+    let bucket: String = conn
+        .query_row("SELECT value FROM iap_config WHERE key = 'bucket'", [], |row| row.get(0))
+        .context("GCS bucket not configured")?;
+
+    let workspace: String = conn
+        .query_row("SELECT value FROM iap_config WHERE key = 'workspace'", [], |row| row.get(0))
+        .unwrap_or_else(|_| "default".to_string());
+
+    let state_path_template: String = conn
+        .query_row("SELECT value FROM iap_config WHERE key = 'state_path_template'", [], |row| row.get(0))
+        .unwrap_or_else(|_| "workspaces/{workspace}/state.duckdb".to_string());
+
+    // Build remote path from template
+    let remote_path = state_path_template.replace("{workspace}", &workspace);
+    let gcs_path = format!("gs://{}/{}", bucket, remote_path);
+
+    // Close connection before pulling
+    drop(conn);
+
+    if !force {
+        print!(
+            "Pull state from {}? This will overwrite local state. [y/N] ",
+            gcs_path
+        );
+        use std::io::{self, Write};
+        io::stdout().flush()?;
+
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+
+        if !input.trim().eq_ignore_ascii_case("y") {
+            println!("Cancelled.");
+            return Ok(());
+        }
+    }
+
+    println!("Pulling state from {}...", gcs_path);
+
+    let output = std::process::Command::new("gsutil")
+        .args(["cp", &gcs_path, state_path.to_str().unwrap()])
+        .output()
+        .context("Failed to pull state from GCS (gsutil not available?)")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("Failed to pull state: {}", stderr);
+    }
+
+    println!("State pulled successfully.");
+    Ok(())
+}
+
+/// Show sync status
+async fn iap_sync_status() -> Result<()> {
+    use duckdb::Connection;
+
+    let state_path = get_state_db_path()?;
+
+    if !state_path.exists() {
+        println!("No local state found.");
+        return Ok(());
+    }
+
+    let conn = Connection::open(&state_path)?;
+
+    let bucket: Result<String, _> =
+        conn.query_row("SELECT value FROM iap_config WHERE key = 'bucket'", [], |row| row.get(0));
+
+    let project: String = conn
+        .query_row("SELECT value FROM iap_config WHERE key = 'project'", [], |row| row.get(0))
+        .unwrap_or_else(|_| "unknown".to_string());
+
+    let workspace: String = conn
+        .query_row("SELECT value FROM iap_config WHERE key = 'workspace'", [], |row| row.get(0))
+        .unwrap_or_else(|_| "default".to_string());
+
+    let state_path_template: String = conn
+        .query_row("SELECT value FROM iap_config WHERE key = 'state_path_template'", [], |row| row.get(0))
+        .unwrap_or_else(|_| "workspaces/{workspace}/state.duckdb".to_string());
+
+    println!("Local state: {}", state_path.display());
+    println!("Project: {}", project);
+    println!("Workspace: {}", workspace);
+
+    match bucket {
+        Ok(b) => {
+            let remote_path = state_path_template.replace("{workspace}", &workspace);
+            let gcs_path = format!("gs://{}/{}", b, remote_path);
+            println!("Remote: {}", gcs_path);
+
+            // Check if remote exists
+            let output = std::process::Command::new("gsutil")
+                .args(["ls", &gcs_path])
+                .output();
+
+            match output {
+                Ok(o) if o.status.success() => {
+                    println!("Remote state: exists");
+                }
+                _ => {
+                    println!("Remote state: not found");
+                }
+            }
+        }
+        Err(_) => {
+            println!("Remote: not configured");
+        }
+    }
+
+    // Count local resources
+    let count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM resources", [], |row| row.get(0))
+        .unwrap_or(0);
+
+    println!("Local resources: {}", count);
+
+    Ok(())
+}
+
+/// Detect drift between state and actual resources
+async fn iap_drift_detect(_resource_type: Option<&str>, _resource: Option<&str>) -> Result<()> {
+    println!("Drift detection requires cloud API access.");
+    println!("This feature is not yet implemented.");
+    println!("\nTo detect drift, the system would:");
+    println!("1. Read resources from local state");
+    println!("2. Query GCP APIs for current resource state");
+    println!("3. Compare and report differences");
+    Ok(())
+}
+
+/// Show drift report
+async fn iap_drift_report(format: &str) -> Result<()> {
+    use duckdb::Connection;
+
+    let state_path = get_state_db_path()?;
+    let conn = Connection::open(&state_path)?;
+
+    let mut stmt = conn.prepare(
+        "SELECT resource_id, detected_at, drift_type, expected_value, actual_value
+         FROM drift_log WHERE resolved_at IS NULL ORDER BY detected_at DESC",
+    )?;
+
+    let rows = stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+            row.get::<_, Option<String>>(3)?,
+            row.get::<_, Option<String>>(4)?,
+        ))
+    })?;
+
+    let results: Vec<_> = rows.filter_map(|r| r.ok()).collect();
+
+    if results.is_empty() {
+        println!("No drift detected.");
+        return Ok(());
+    }
+
+    match format {
+        "json" => {
+            let json_results: Vec<serde_json::Value> = results
+                .iter()
+                .map(|(id, detected, dtype, expected, actual)| {
+                    serde_json::json!({
+                        "resource_id": id,
+                        "detected_at": detected,
+                        "drift_type": dtype,
+                        "expected": expected,
+                        "actual": actual
+                    })
+                })
+                .collect();
+            println!("{}", serde_json::to_string_pretty(&json_results)?);
+        }
+        _ => {
+            println!(
+                "{:<40} {:<20} {:<15}",
+                "RESOURCE", "DETECTED", "DRIFT TYPE"
+            );
+            println!("{}", "-".repeat(80));
+            for (id, detected, dtype, _, _) in results {
+                println!("{:<40} {:<20} {:<15}", id, detected, dtype);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Parse key=value variables
+fn parse_variables(variables: &[String]) -> Result<std::collections::HashMap<String, String>> {
+    let mut vars = std::collections::HashMap::new();
+    for var in variables {
+        let parts: Vec<&str> = var.splitn(2, '=').collect();
+        if parts.len() != 2 {
+            return Err(anyhow::anyhow!("Invalid variable format: {}. Expected key=value", var));
+        }
+        vars.insert(parts[0].to_string(), parts[1].to_string());
+    }
+    Ok(vars)
+}
+
+/// Get the default state database path
+fn get_state_db_path() -> Result<PathBuf> {
+    let path = PathBuf::from(".noetl/state.duckdb");
+    Ok(path)
 }

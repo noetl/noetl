@@ -5,6 +5,9 @@ metadata:
   path: automation/bootstrap-full
   description: Complete NoETL environment setup including TradeDB and IBKR gateway
 
+executor:
+  profile: local
+  version: noetl-runtime/1
 workload:
   repo_root: /Users/akuksin/projects/noetl/noetl
 

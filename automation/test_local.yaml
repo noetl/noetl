@@ -4,6 +4,9 @@ metadata:
   name: test_local_execution
   path: automation/test
 
+executor:
+  profile: local
+  version: noetl-runtime/1
 workload:
   cluster: noetl
   message: "Hello from local execution!"

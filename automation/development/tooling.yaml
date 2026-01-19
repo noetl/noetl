@@ -4,6 +4,9 @@ metadata:
   name: dev_tools_automation
   path: automation/development/tooling
 
+executor:
+  profile: local
+  version: noetl-runtime/1
 workload:
   action: help  # setup, validate-install, validate-devtools, validate-docker, install-base, install-devtools, install-jq, install-yq, install-kind, install-pyenv, install-uv, install-tfenv, install-psql, ensure-path, fix-docker-perms
 

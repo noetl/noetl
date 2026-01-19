@@ -161,8 +161,11 @@ noetl catalog list playbook --host localhost --port 8082
 ### Run Hello World
 
 ```bash
-noetl run playbook "tests/fixtures/playbooks/hello_world" \
-  --host localhost --port 8082
+# Local execution
+noetl run tests/fixtures/playbooks/hello_world/hello_world.yaml -v
+
+# Distributed execution (after registering playbook)
+noetl run tests/fixtures/playbooks/hello_world -r distributed
 ```
 
 ## Next Steps

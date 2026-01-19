@@ -340,11 +340,11 @@ class StateStore:
         # Reconstruct state from events in database using event sourcing
         async with get_pool_connection() as conn:
             async with conn.cursor() as cur:
-                # Get playbook info from first event
+                # Get playbook info and workload from playbook.initialized event
                 await cur.execute("""
-                    SELECT catalog_id, node_id
+                    SELECT catalog_id, result
                     FROM noetl.event
-                    WHERE execution_id = %s
+                    WHERE execution_id = %s AND event_type = 'playbook.initialized'
                     ORDER BY event_id
                     LIMIT 1
                 """, (int(execution_id),))
@@ -355,18 +355,31 @@ class StateStore:
 
                 if isinstance(result, dict):
                     catalog_id = result.get("catalog_id")
+                    event_result = result.get("result")
                 else:
                     catalog_id = result[0]
+                    event_result = result[1]
                 if catalog_id is None:
                     return None
+                
+                # Extract workload from playbook.initialized event result
+                # This contains the merged workload (playbook defaults + parent args)
+                workload = {}
+                if event_result and isinstance(event_result, dict):
+                    workload = event_result.get("workload", {})
+                    logger.debug(f"Restored workload from playbook.initialized event: {list(workload.keys()) if workload else 'empty'}")
                 
                 # Load playbook
                 playbook = await self.playbook_repo.load_playbook_by_id(catalog_id)
                 if not playbook:
                     return None
                 
-                # Create new state
-                state = ExecutionState(execution_id, playbook, {}, catalog_id)
+                # Create new state with restored workload
+                # Note: We pass workload as the payload param so it merges properly
+                # The ExecutionState.__init__ first loads playbook.workload, then merges payload
+                # To avoid double-loading playbook defaults, we pass the full workload directly
+                # and let the playbook.workload be overwritten
+                state = ExecutionState(execution_id, playbook, workload, catalog_id)
                 
                 # Identify loop steps from playbook for initialization
                 loop_steps = set()
