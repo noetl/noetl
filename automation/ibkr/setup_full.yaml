@@ -5,6 +5,9 @@ metadata:
   path: automation/ibkr/setup-full
   description: Build and deploy IBKR Client Portal Gateway
 
+executor:
+  profile: local
+  version: noetl-runtime/1
 workload:
   image_name: ibkr-client-portal
   image_tag: latest

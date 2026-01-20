@@ -91,7 +91,7 @@ def render_template(env: Environment, template: Any, context: Dict, rules: Dict 
     logger.debug(f"render_template called with template: {template}, type: {type(template)}")
 
     env = add_b64encode_filter(env)
-    if isinstance(template, str) and '{{' in template and '}}' in template:
+    if isinstance(template, str) and (('{{' in template and '}}' in template) or ('{%' in template and '%}' in template)):
         logger.debug(f"Render template: {template} | context_keys={list(context.keys())}")
         if rules:
             logger.debug(f"Render template rules: {rules}")
@@ -101,7 +101,8 @@ def render_template(env: Environment, template: Any, context: Dict, rules: Dict 
         render_ctx.update(rules)
 
     if isinstance(template, str):
-        if '{{' not in template or '}}' not in template:
+        if (('{{' not in template or '}}' not in template) and 
+            ('{%' not in template or '%}' not in template)):
             logger.debug(f"render_template: Plain string (no template vars), returning as-is: {template}")
             return template
 
@@ -132,7 +133,8 @@ def render_template(env: Environment, template: Any, context: Dict, rules: Dict 
             if strict_keys:
                 template_obj = env.from_string(template)
             else:
-                temp_env = Environment(loader=env.loader)
+                # Inherit undefined class from parent environment
+                temp_env = Environment(loader=env.loader, undefined=env.undefined)
                 for name, filter_func in env.filters.items():
                     temp_env.filters[name] = filter_func
                 for name, global_var in env.globals.items():

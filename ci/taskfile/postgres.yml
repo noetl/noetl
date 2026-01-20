@@ -29,7 +29,7 @@ tasks:
     cmds:
       - task: kubectl:local:context-set-kind
       - echo "Resetting NoETL system schema on Postgres (DROP schema and re-run schema_ddl.sql)."
-      - echo "Note - This resets the noetl database (runtime, catalog, event, queue tables)."
+      - echo "Note - This resets the noetl database (catalog, credential, event, keychain, runtime tables)."
       - echo "       Application data in demo_noetl database is NOT affected."
       - |
         set -a; [ -f .env ] && . .env; set +a

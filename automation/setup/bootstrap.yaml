@@ -4,6 +4,9 @@ metadata:
   name: bootstrap_environment
   path: automation/setup/bootstrap
   description: Complete K8s environment setup with prerequisite validation
+executor:
+  profile: local
+  version: noetl-runtime/1
 workload:
   registry: "local"
   image_name: "noetl"

@@ -1,0 +1,404 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: test_gke_autopilot_lifecycle
+  path: tests/fixtures/playbooks/test_gke_lifecycle
+  description: Integration test for GKE Autopilot provisioning lifecycle
+  labels:
+    iap.noetl.io/provider: gcp
+    iap.noetl.io/category: test
+
+workload:
+  # Test configuration
+  project_id: mestumre-dev
+  region: us-central1
+  cluster_name_prefix: iap-test
+  
+  # State management
+  state_database: /tmp/noetl-iap-test-state.duckdb
+  
+  # Cleanup
+  cleanup_on_success: true
+  cleanup_on_failure: true
+
+workflow:
+  - step: start
+    desc: Initialize lifecycle test
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "=========================================="
+          echo " GKE Autopilot Lifecycle Test"
+          echo "=========================================="
+          echo ""
+          echo "Project:  {{ workload.project_id }}"
+          echo "Region:   {{ workload.region }}"
+          echo "State DB: {{ workload.state_database }}"
+          echo ""
+    vars:
+      test_cluster_name: "{{ workload.cluster_name_prefix }}-$(date +%Y%m%d%H%M%S)"
+      test_start_time: "$(date +%s)"
+    next:
+      - step: init_state
+
+  - step: init_state
+    desc: Initialize test state database
+    tool:
+      kind: duckdb
+      database: "{{ workload.state_database }}"
+      commands: |
+        -- Create minimal schema for testing
+        CREATE TABLE IF NOT EXISTS resources (
+            resource_id VARCHAR PRIMARY KEY,
+            type_id VARCHAR NOT NULL,
+            name VARCHAR NOT NULL,
+            project VARCHAR,
+            region VARCHAR,
+            desired_state JSON NOT NULL,
+            current_state JSON,
+            status VARCHAR DEFAULT 'pending',
+            labels JSON DEFAULT '{}',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            last_synced_at TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS operations (
+            operation_id VARCHAR PRIMARY KEY,
+            resource_id VARCHAR NOT NULL,
+            operation_type VARCHAR NOT NULL,
+            status VARCHAR NOT NULL,
+            started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            completed_at TIMESTAMP,
+            error_message VARCHAR,
+            playbook_name VARCHAR
+        );
+
+        SELECT 'Test state initialized' as message;
+    next:
+      - step: verify_auth
+
+  - step: verify_auth
+    desc: Verify GCP authentication
+    tool:
+      kind: http
+      method: GET
+      url: https://cloudresourcemanager.googleapis.com/v1/projects/{{ workload.project_id }}
+      auth:
+        source: adc
+    vars:
+      auth_success: "{{ result.status == 200 }}"
+      project_name: "{{ result.body.name | default('unknown') }}"
+    case:
+      - when: "{{ vars.auth_success }}"
+        then:
+          - step: auth_success
+      - else:
+          - step: auth_failed
+
+  - step: auth_failed
+    desc: Authentication failed
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "ERROR: GCP authentication failed"
+          echo "Please run: gcloud auth application-default login"
+          echo ""
+          exit 1
+    next:
+      - step: cleanup
+
+  - step: auth_success
+    desc: Authentication verified
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "Authentication verified"
+          echo "Project: {{ vars.project_name }}"
+    next:
+      - step: test_create
+
+  - step: test_create
+    desc: Test cluster creation
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "TEST: Create GKE Autopilot cluster"
+          echo "Cluster: {{ vars.test_cluster_name }}"
+          echo ""
+          # Note: In real test, this would call the gke_autopilot.yaml playbook
+          # For now, we simulate the API call
+    next:
+      - step: simulate_create
+
+  - step: simulate_create
+    desc: Simulate cluster creation (dry run)
+    tool:
+      kind: http
+      method: GET
+      url: https://container.googleapis.com/v1/projects/{{ workload.project_id }}/locations/{{ workload.region }}/clusters
+      auth:
+        source: adc
+    vars:
+      list_status: "{{ result.status }}"
+      existing_clusters: "{{ result.body.clusters | default([]) | length }}"
+    next:
+      - step: record_create
+
+  - step: record_create
+    desc: Record simulated creation
+    tool:
+      kind: duckdb
+      database: "{{ workload.state_database }}"
+      commands: |
+        INSERT INTO resources (resource_id, type_id, name, project, region, desired_state, status)
+        VALUES (
+          '{{ workload.project_id }}/{{ workload.region }}/{{ vars.test_cluster_name }}',
+          'container.googleapis.com/Cluster',
+          '{{ vars.test_cluster_name }}',
+          '{{ workload.project_id }}',
+          '{{ workload.region }}',
+          '{"autopilot": {"enabled": true}}',
+          'simulated'
+        );
+
+        INSERT INTO operations (operation_id, resource_id, operation_type, status, playbook_name)
+        VALUES (
+          'test-create-' || strftime(CURRENT_TIMESTAMP, '%Y%m%d%H%M%S'),
+          '{{ workload.project_id }}/{{ workload.region }}/{{ vars.test_cluster_name }}',
+          'create',
+          'simulated',
+          'test_gke_lifecycle'
+        );
+
+        SELECT 'Create operation recorded' as message;
+    next:
+      - step: test_read
+
+  - step: test_read
+    desc: Test state read
+    tool:
+      kind: duckdb
+      database: "{{ workload.state_database }}"
+      commands: |
+        SELECT 
+          resource_id,
+          name,
+          type_id,
+          status,
+          created_at
+        FROM resources
+        WHERE project = '{{ workload.project_id }}';
+    vars:
+      resource_count: "{{ result | length }}"
+    next:
+      - step: verify_read
+
+  - step: verify_read
+    desc: Verify state read
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "TEST: Read state"
+          echo "Resources found: {{ vars.resource_count }}"
+          
+          if [ "{{ vars.resource_count }}" -gt 0 ]; then
+            echo "PASS: State read successful"
+          else
+            echo "FAIL: No resources found in state"
+            exit 1
+          fi
+    next:
+      - step: test_update
+
+  - step: test_update
+    desc: Test state update
+    tool:
+      kind: duckdb
+      database: "{{ workload.state_database }}"
+      commands: |
+        UPDATE resources
+        SET 
+          status = 'updated',
+          current_state = '{"status": "RUNNING"}',
+          updated_at = CURRENT_TIMESTAMP,
+          last_synced_at = CURRENT_TIMESTAMP
+        WHERE resource_id = '{{ workload.project_id }}/{{ workload.region }}/{{ vars.test_cluster_name }}';
+
+        INSERT INTO operations (operation_id, resource_id, operation_type, status, playbook_name)
+        VALUES (
+          'test-update-' || strftime(CURRENT_TIMESTAMP, '%Y%m%d%H%M%S'),
+          '{{ workload.project_id }}/{{ workload.region }}/{{ vars.test_cluster_name }}',
+          'update',
+          'completed',
+          'test_gke_lifecycle'
+        );
+
+        SELECT 'Update operation completed' as message;
+    next:
+      - step: verify_update
+
+  - step: verify_update
+    desc: Verify state update
+    tool:
+      kind: duckdb
+      database: "{{ workload.state_database }}"
+      commands: |
+        SELECT status, current_state, last_synced_at
+        FROM resources
+        WHERE resource_id = '{{ workload.project_id }}/{{ workload.region }}/{{ vars.test_cluster_name }}';
+    vars:
+      updated_status: "{{ result[0].status if result else 'not_found' }}"
+    next:
+      - step: check_update
+
+  - step: check_update
+    desc: Check update result
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "TEST: Update state"
+          echo "Status after update: {{ vars.updated_status }}"
+          
+          if [ "{{ vars.updated_status }}" = "updated" ]; then
+            echo "PASS: State update successful"
+          else
+            echo "FAIL: State update failed"
+            exit 1
+          fi
+    next:
+      - step: test_delete
+
+  - step: test_delete
+    desc: Test state deletion
+    tool:
+      kind: duckdb
+      database: "{{ workload.state_database }}"
+      commands: |
+        INSERT INTO operations (operation_id, resource_id, operation_type, status, playbook_name)
+        VALUES (
+          'test-delete-' || strftime(CURRENT_TIMESTAMP, '%Y%m%d%H%M%S'),
+          '{{ workload.project_id }}/{{ workload.region }}/{{ vars.test_cluster_name }}',
+          'delete',
+          'completed',
+          'test_gke_lifecycle'
+        );
+
+        DELETE FROM resources
+        WHERE resource_id = '{{ workload.project_id }}/{{ workload.region }}/{{ vars.test_cluster_name }}';
+
+        SELECT 'Delete operation completed' as message;
+    next:
+      - step: verify_delete
+
+  - step: verify_delete
+    desc: Verify state deletion
+    tool:
+      kind: duckdb
+      database: "{{ workload.state_database }}"
+      commands: |
+        SELECT COUNT(*) as remaining
+        FROM resources
+        WHERE resource_id = '{{ workload.project_id }}/{{ workload.region }}/{{ vars.test_cluster_name }}';
+    vars:
+      remaining_count: "{{ result[0].remaining if result else -1 }}"
+    next:
+      - step: check_delete
+
+  - step: check_delete
+    desc: Check delete result
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "TEST: Delete state"
+          echo "Remaining resources: {{ vars.remaining_count }}"
+          
+          if [ "{{ vars.remaining_count }}" = "0" ]; then
+            echo "PASS: State deletion successful"
+          else
+            echo "FAIL: State deletion failed"
+            exit 1
+          fi
+    next:
+      - step: print_summary
+
+  - step: print_summary
+    desc: Print test summary
+    tool:
+      kind: duckdb
+      database: "{{ workload.state_database }}"
+      commands: |
+        SELECT 
+          operation_type,
+          status,
+          COUNT(*) as count
+        FROM operations
+        WHERE playbook_name = 'test_gke_lifecycle'
+        GROUP BY operation_type, status
+        ORDER BY operation_type;
+    next:
+      - step: final_report
+
+  - step: final_report
+    desc: Final test report
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "=========================================="
+          echo " Test Results"
+          echo "=========================================="
+          echo ""
+          echo "All CRUD operations passed!"
+          echo ""
+          echo "Operations tested:"
+          echo "  - CREATE: Simulated cluster creation"
+          echo "  - READ:   State query"
+          echo "  - UPDATE: State modification"
+          echo "  - DELETE: State removal"
+          echo ""
+          echo "Test state database: {{ workload.state_database }}"
+          echo ""
+    next:
+      - step: cleanup
+
+  - step: cleanup
+    desc: Cleanup test resources
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "Cleaning up test state database..."
+          
+          if [ "{{ workload.cleanup_on_success }}" = "true" ]; then
+            rm -f "{{ workload.state_database }}"
+            echo "Test database removed"
+          else
+            echo "Test database preserved at: {{ workload.state_database }}"
+          fi
+    next:
+      - step: end
+
+  - step: end
+    desc: Test complete
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "=========================================="
+          echo " GKE Autopilot Lifecycle Test Complete"
+          echo "=========================================="

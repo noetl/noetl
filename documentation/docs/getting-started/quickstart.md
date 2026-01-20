@@ -42,7 +42,8 @@ noetl --version
 - `noetl build` - Build Docker images
 - `noetl k8s deploy/redeploy/reset` - Kubernetes deployment
 - `noetl register playbook` - Register playbooks
-- `noetl run playbook` - Execute playbooks
+- `noetl run <reference>` - Execute playbooks (local or distributed)
+- `noetl context` - Manage execution contexts
 
 ## Option 2: Local Development Environment
 
@@ -121,7 +122,11 @@ noetl register playbook hello_world.yaml --host localhost --port 8082
 ### 3. Execute the playbook
 
 ```bash
-noetl run playbook "examples/hello_world" --host localhost --port 8082
+# Local execution (file path)
+noetl run hello_world.yaml -v
+
+# Distributed execution (catalog path - after registration)
+noetl run examples/hello_world -r distributed
 ```
 
 ### 4. Check the result
@@ -160,7 +165,16 @@ kubectl logs -n noetl -l app=noetl-worker --tail=100
 
 ## Register Test Fixtures
 
-NoETL includes example playbooks in `tests/fixtures/playbooks/`. The CLI supports recursive directory scanning:
+NoETL includes example playbooks in `tests/fixtures/playbooks/`. First, set up the context for distributed mode:
+
+```bash
+# Setup context for Kind cluster with distributed runtime
+noetl context add kind-cluster --server-url http://localhost:8082
+noetl context use kind-cluster
+noetl context set-runtime distributed
+```
+
+The CLI supports recursive directory scanning:
 
 ```bash
 # Register all playbooks from a directory (recursive)

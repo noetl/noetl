@@ -385,23 +385,13 @@ async def populate_keychain_context(
 ) -> Dict[str, Any]:
     """
     Scan task config for keychain references and populate context.keychain.
-    
-    This function:
-    1. Scans the task_config for {{ keychain.* }} references
-    2. Resolves those keychain entries via API (with proactive token refresh)
-    3. Adds them to context['keychain']
-    
-    Args:
-        task_config: Task configuration dictionary
-        context: Execution context dictionary (will be modified)
-        catalog_id: Catalog ID of the playbook
-        execution_id: Optional execution ID
-        api_base_url: Base URL of NoETL API
-        refresh_threshold_seconds: Refresh token if TTL is below this threshold (default: 300s = 5min)
-        
-    Returns:
-        Updated context with 'keychain' attribute
     """
+    # Quick check for keychain references in string values to avoid deep scan if possible
+    # This is a optimization for cases with NO keychain references
+    task_str = str(task_config)
+    if 'keychain.' not in task_str:
+        return context
+
     # Extract all keychain references from task config
     keychain_refs = extract_keychain_references_from_dict(task_config)
     

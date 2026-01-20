@@ -2,12 +2,112 @@
 NoETL Event API Schemas - Request/Response models for event emission endpoints.
 
 Simple event emission without business logic - direct database operations only.
+
+Supports ResultRef pattern for efficient result storage:
+- output_inline: Small results stored directly in event payload
+- output_ref: Large results stored externally with pointer in event
+- output_select: Selected fields for templating when output_ref is used
+- preview: Truncated sample for UI/debugging
 """
 
 from typing import Optional, Dict, Any, List, Union, Literal
 from datetime import datetime
 from pydantic import BaseModel, Field, field_validator
 
+
+# ============================================================================
+# Result Storage Types (ResultRef pattern)
+# ============================================================================
+
+class ArtifactInfo(BaseModel):
+    """
+    Artifact storage details for externalized results.
+    
+    Contains all information needed to retrieve the artifact from external storage.
+    """
+    id: str = Field(..., description="Unique artifact identifier")
+    uri: str = Field(..., description="Storage URI (s3://, gs://, file://)")
+    content_type: str = Field(default="application/json", description="MIME type")
+    compression: str = Field(default="none", description="Compression type (none, gzip)")
+    bytes: int = Field(default=0, description="Size in bytes")
+    sha256: Optional[str] = Field(default=None, description="Content hash for integrity")
+    created_at: Optional[str] = Field(default=None, description="Creation timestamp")
+
+
+class ResultRef(BaseModel):
+    """
+    Lightweight pointer to a result.
+    
+    The event log stores the pointer (and optionally a small preview).
+    The artifact store holds the large body.
+    """
+    kind: str = Field(default="result_ref", description="Type discriminator")
+    ref: str = Field(..., description="Logical URI: noetl://execution/<eid>/step/<step>/call/<tool_run_id>")
+    store: str = Field(default="inline", description="Storage tier: inline, eventlog, artifact")
+    artifact: Optional[ArtifactInfo] = Field(default=None, description="Artifact details when store=artifact")
+    preview: Optional[Dict[str, Any]] = Field(default=None, description="Truncated preview for UI")
+
+
+class Manifest(BaseModel):
+    """
+    Manifest for aggregated results.
+    
+    Instead of merging many pages into one giant JSON array,
+    a manifest references the parts for streaming-like access.
+    """
+    kind: str = Field(default="manifest", description="Type discriminator")
+    strategy: str = Field(default="append", description="Merge strategy: append, replace, merge")
+    merge_path: Optional[str] = Field(default=None, description="Path for nested array merge (e.g., data.items)")
+    parts: List[Dict[str, Any]] = Field(default_factory=list, description="List of part references")
+    metadata: Optional[Dict[str, Any]] = Field(default=None, description="Manifest metadata")
+
+
+class CorrelationKeys(BaseModel):
+    """
+    Correlation keys for loop/pagination/retry tracking.
+    
+    These enable deterministic retrieval of specific pieces.
+    """
+    step_run_id: Optional[str] = Field(default=None, description="Step run identifier")
+    tool_run_id: Optional[str] = Field(default=None, description="Tool run identifier")
+    iteration: Optional[int] = Field(default=None, description="Loop iteration index")
+    iteration_id: Optional[str] = Field(default=None, description="Loop iteration identifier")
+    page: Optional[int] = Field(default=None, description="Pagination page number")
+    attempt: Optional[int] = Field(default=None, description="Retry attempt number")
+
+
+class EventPayloadData(BaseModel):
+    """
+    Structured event payload following the ResultRef specification.
+    
+    Contains inputs, outputs (inline or ref), and metadata.
+    """
+    # Input snapshot
+    inputs: Optional[Dict[str, Any]] = Field(default=None, description="Rendered input snapshot")
+    
+    # Output fields (mutually exclusive: output_inline XOR output_ref)
+    output_inline: Optional[Any] = Field(default=None, description="Small result body (< inline_max_bytes)")
+    output_ref: Optional[ResultRef] = Field(default=None, description="Pointer to externalized result")
+    output_select: Optional[Dict[str, Any]] = Field(default=None, description="Selected fields when output_ref used")
+    preview: Optional[Dict[str, Any]] = Field(default=None, description="Truncated sample for UI/debugging")
+    
+    # Error handling
+    error: Optional[Dict[str, Any]] = Field(default=None, description="Structured error object")
+    
+    # Free-form metadata
+    meta: Optional[Dict[str, Any]] = Field(default=None, description="HTTP status, row counts, job_id, etc.")
+    
+    # Correlation keys
+    correlation: Optional[CorrelationKeys] = Field(default=None, description="Loop/pagination/retry tracking")
+    
+    # Event classification for control flow
+    actionable: bool = Field(default=False, description="Server should take action (routing, retry)")
+    informative: bool = Field(default=True, description="Event is for logging/observability")
+
+
+# ============================================================================
+# Event Types and Status
+# ============================================================================
 
 # Event types - past tense to describe what happened
 EventType = Literal[
@@ -126,6 +226,57 @@ class EventEmitRequest(BaseModel):
     meta: Optional[Dict[str, Any]] = Field(
         default=None,
         description="Event metadata (arbitrary JSON)"
+    )
+    
+    # =========================================================================
+    # ResultRef pattern fields for efficient result storage
+    # 
+    # The result column stores either:
+    # 1. Inline data: {"data": [...], "status": "success"}
+    # 2. ResultRef: {"kind": "ref", "store_tier": "artifact", "logical_uri": "gs://...", "preview": {...}}
+    #
+    # Use output_inline for small results, output_ref for large externalized results.
+    # The service will build the appropriate structure in the result column.
+    # =========================================================================
+    
+    # Structured payload (alternative to flat result field)
+    payload_data: Optional[EventPayloadData] = Field(
+        default=None,
+        description="Structured payload with inputs, outputs, and correlation keys"
+    )
+    
+    # Direct result storage fields
+    output_inline: Optional[Any] = Field(
+        default=None,
+        description="Small result body - stored directly in result column"
+    )
+    output_ref: Optional[str] = Field(
+        default=None,
+        description="URI for externalized result (gs://, s3://, artifact://) - builds ResultRef in result column"
+    )
+    output_select: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Selected fields for templating when output_ref used"
+    )
+    preview: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Truncated result preview for UI/debugging"
+    )
+    
+    # Correlation keys for loop/pagination/retry
+    correlation: Optional[CorrelationKeys] = Field(
+        default=None,
+        description="Tracking keys: iteration, page, attempt"
+    )
+    
+    # Event classification
+    actionable: bool = Field(
+        default=False,
+        description="If True, server should take action (evaluate case, route, retry)"
+    )
+    informative: bool = Field(
+        default=True,
+        description="If True, event is for logging/observability"
     )
     
     # Timestamps

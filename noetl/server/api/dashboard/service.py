@@ -9,6 +9,7 @@ Handles:
 """
 
 from typing import List
+from psycopg.rows import dict_row
 from noetl.core.logger import setup_logger
 from .schema import (
     DashboardStatsResponse,
@@ -37,7 +38,7 @@ class DashboardService:
             from noetl.core.db.pool import get_pool_connection
             
             async with get_pool_connection() as conn:
-                async with conn.cursor() as cur:
+                async with conn.cursor(row_factory=dict_row) as cur:
                     # Count total unique executions
                     await cur.execute("""
                         SELECT COUNT(DISTINCT execution_id) as total

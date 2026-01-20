@@ -14,6 +14,7 @@ from typing import Dict, Optional, Any
 from datetime import datetime, timedelta, timezone
 
 from noetl.core.common import get_async_db_connection
+from psycopg.rows import dict_row
 from noetl.core.secret import encrypt_json, decrypt_json
 
 from noetl.core.logger import setup_logger
@@ -87,7 +88,7 @@ class KeychainService:
         
         try:
             async with get_async_db_connection() as conn:
-                async with conn.cursor() as cursor:
+                async with conn.cursor(row_factory=dict_row) as cursor:
                     # Fetch and update access tracking
                     await cursor.execute(
                         """
@@ -222,7 +223,7 @@ class KeychainService:
             encrypted_renew_config = encrypt_json(renew_config) if renew_config else None
             
             async with get_async_db_connection() as conn:
-                async with conn.cursor() as cursor:
+                async with conn.cursor(row_factory=dict_row) as cursor:
                     await cursor.execute(
                         """
                         INSERT INTO noetl.keychain (
@@ -278,7 +279,7 @@ class KeychainService:
         
         try:
             async with get_async_db_connection() as conn:
-                async with conn.cursor() as cursor:
+                async with conn.cursor(row_factory=dict_row) as cursor:
                     await cursor.execute(
                         "DELETE FROM noetl.keychain WHERE cache_key = %s",
                         (cache_key,)
@@ -297,7 +298,7 @@ class KeychainService:
         """Clean up all execution-scoped keychain entries."""
         try:
             async with get_async_db_connection() as conn:
-                async with conn.cursor() as cursor:
+                async with conn.cursor(row_factory=dict_row) as cursor:
                     await cursor.execute(
                         "DELETE FROM noetl.keychain WHERE execution_id = %s OR parent_execution_id = %s",
                         (execution_id, execution_id)
@@ -317,7 +318,7 @@ class KeychainService:
         """Clean up expired keychain entries (excluding auto_renew entries)."""
         try:
             async with get_async_db_connection() as conn:
-                async with conn.cursor() as cursor:
+                async with conn.cursor(row_factory=dict_row) as cursor:
                     await cursor.execute(
                         "DELETE FROM noetl.keychain WHERE expires_at <= now() AND auto_renew = false"
                     )
@@ -336,7 +337,7 @@ class KeychainService:
         """Get all keychain entries for a specific catalog."""
         try:
             async with get_async_db_connection() as conn:
-                async with conn.cursor() as cursor:
+                async with conn.cursor(row_factory=dict_row) as cursor:
                     await cursor.execute(
                         """
                         SELECT keychain_name, cache_key, credential_type, cache_type,

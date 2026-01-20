@@ -4,6 +4,9 @@ metadata:
   name: gateway_automation
   path: automation/infrastructure/gateway
 
+executor:
+  profile: local
+  version: noetl-runtime/1
 workload:
   action: help  # build-image, load-image, deploy, deploy-all, remove, redeploy, restart, status, logs, test
 

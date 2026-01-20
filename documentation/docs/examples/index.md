@@ -53,7 +53,12 @@ workflow:
 
 **Run it:**
 ```bash
-noetl run playbook tests/fixtures/playbooks/hello_world --host localhost --port 8082
+# Local execution
+noetl run tests/fixtures/playbooks/hello_world/hello_world.yaml -v
+
+# Distributed execution (requires registration)
+noetl register playbook tests/fixtures/playbooks/hello_world/hello_world.yaml
+noetl run tests/fixtures/playbooks/hello_world -r distributed
 ```
 
 ## Example Categories
@@ -114,11 +119,12 @@ task test-http-to-postgres-transfer-full
 ### Using CLI
 
 ```bash
-# Register playbook
-noetl catalog register playbook <playbook_path> --host localhost --port 8082
+# Local execution (file path)
+noetl run tests/fixtures/playbooks/my_playbook.yaml --set key=value -v
 
-# Execute playbook
-noetl run playbook <catalog_path> --host localhost --port 8082 --payload '{"key": "value"}'
+# Distributed execution (catalog path - requires registration first)
+noetl register playbook tests/fixtures/playbooks/my_playbook.yaml
+noetl run catalog/path/to/playbook -r distributed --set key=value
 ```
 
 ## Contributing Examples

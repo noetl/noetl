@@ -5,6 +5,9 @@ metadata:
   path: automation/ibkr/deploy
   description: Deploy IBKR Client Portal Gateway to Kubernetes
 
+executor:
+  profile: local
+  version: noetl-runtime/1
 workload:
   namespace: ibkr
   image: ibkr-client-portal:latest

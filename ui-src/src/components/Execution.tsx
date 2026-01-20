@@ -162,8 +162,12 @@ const Execution: React.FC = () => {
       setError(null);
 
       const response = await apiService.getExecutions();
-      setExecutions(response);
-      setFilteredExecutions(response); // Initialize filtered executions
+      // Deduplicate by execution_id
+      const deduped = Array.from(
+        new Map(response.map(exec => [exec.execution_id, exec])).values()
+      );
+      setExecutions(deduped);
+      setFilteredExecutions(deduped); // Initialize filtered executions
     } catch (err) {
       console.error("Failed to fetch executions:", err);
       setError("Failed to load execution data.");

@@ -4,6 +4,9 @@ metadata:
   name: docker_automation
   path: automation/development/docker
 
+executor:
+  profile: local
+  version: noetl-runtime/1
 workload:
   action: help  # build, noetl-image-build, cleanup-all, images-clear, status
 

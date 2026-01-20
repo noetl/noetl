@@ -8,16 +8,84 @@ description: Run NoETL playbooks locally without distributed execution
 
 ## Overview
 
-The `noetl run` command enables local execution of NoETL playbooks without requiring a running server, worker, or database. This provides a lightweight way to use playbooks for automation tasks similar to taskfiles or Makefiles.
+The `noetl run` command with local runtime executes NoETL playbooks directly using the Rust interpreter, without requiring a running server, worker, or database. This provides a lightweight way to use playbooks for automation tasks similar to taskfiles or Makefiles.
+
+## Runtime Selection
+
+Local execution is one of two runtime modes available:
+
+| Runtime | Description | Requirements |
+|---------|-------------|--------------|
+| **local** | Rust interpreter, no server | Just the `noetl` binary |
+| **distributed** | Server-worker architecture | PostgreSQL, NoETL server/worker |
+
+### Selecting Local Runtime
+
+```bash
+# Explicit local runtime flag
+noetl run automation/deploy.yaml -r local
+
+# Set context default to local
+noetl context set-runtime local
+noetl run automation/deploy.yaml  # Uses local
+
+# Auto-detect: file paths default to local
+noetl run ./playbook.yaml  # Auto-selects local (file path)
+```
+
+### Runtime Resolution Priority
+
+1. `--runtime` / `-r` flag (explicit: `local` or `distributed`)
+2. Context configuration (`noetl context set-runtime`)
+3. Auto-detect from reference type (file path → local)
 
 ## Key Features
 
 - **Standalone Execution**: No server/worker infrastructure needed
 - **Auto-Discovery**: Automatically finds `noetl.yaml` or `main.yaml` in current directory
 - **Target-Based**: Run specific workflow steps like taskfile targets
-- **Tool Support**: Shell commands, HTTP requests, and playbook composition
+- **Tool Support**: Shell commands, HTTP requests, playbook composition, and Rhai scripting
 - **Variable Templating**: Jinja2-style template rendering
 - **Result Capture**: Store and pass results between steps
+- **Executor Validation**: Validates playbook requirements against local runtime capabilities
+
+## Playbook Executor Section
+
+Playbooks can declare their execution requirements using the `executor` section:
+
+```yaml
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: my_automation
+  path: automation/my-task
+
+# Executor section (recommended for automation playbooks)
+executor:
+  profile: local           # Preferred runtime: local or distributed
+  version: noetl-runtime/1 # Runtime version compatibility
+  requires:                # Optional: required tools/features
+    tools:
+      - shell
+      - http
+    features:
+      - templating
+
+workflow:
+  - step: start
+    tool:
+      kind: shell
+      cmds:
+        - echo "Hello World"
+```
+
+**Executor Fields**:
+- `profile`: Preferred execution profile (`local` or `distributed`)
+- `version`: Runtime version string for compatibility checking
+- `requires.tools`: List of required tool kinds (shell, http, playbook, rhai)
+- `requires.features`: List of required features (templating, etc.)
+
+When executing with local runtime, the CLI validates that all required tools and features are available.
 
 ## Auto-Discovery
 
@@ -55,13 +123,13 @@ The CLI uses a **File-First Strategy** to resolve playbook paths:
 
 ```bash
 # Explicit file path (contains /)
-noetl run automation/deploy.yaml production
+noetl run automation/deploy.yaml -t production
 
 # Explicit file by extension
-noetl run deploy.yaml production
+noetl run deploy.yaml -t production
 
 # File exists check (tries deploy, deploy.yaml, deploy.yml)
-noetl run deploy production
+noetl run deploy -t production
 
 # Auto-discover → treat first arg as target
 noetl run bootstrap        # Uses ./noetl.yaml or ./main.yaml, target "bootstrap"
@@ -77,7 +145,7 @@ noetl run                  # Uses ./noetl.yaml or ./main.yaml, starts at "start"
 noetl run bootstrap
 
 # Explicit playbook with target
-noetl run automation/playbook.yaml deploy
+noetl run automation/playbook.yaml -t deploy
 
 # Auto-discover with variables
 noetl run bootstrap --set env=production --set version=v2.5
@@ -96,6 +164,15 @@ noetl run bootstrap --verbose
 
 ## Supported Tool Types
 
+The local runtime supports the following tool kinds:
+
+| Tool Kind | Description | Use Case |
+|-----------|-------------|----------|
+| `shell` | Execute shell commands | Build scripts, file operations |
+| `http` | Make HTTP requests | API calls, webhooks |
+| `playbook` | Call sub-playbooks | Workflow composition |
+| `rhai` | Embedded scripting | Complex logic, polling loops |
+
 ### Shell Commands
 
 Execute operating system commands:
@@ -105,6 +182,10 @@ apiVersion: noetl.io/v2
 kind: Playbook
 metadata:
   name: shell_example
+
+executor:
+  profile: local
+  version: noetl-runtime/1
   
 workflow:
   - step: start
@@ -140,13 +221,17 @@ tool:
 
 ### HTTP Requests
 
-Make REST API calls:
+Make REST API calls with automatic GCP authentication support:
 
 ```yaml
 apiVersion: noetl.io/v2
 kind: Playbook
 metadata:
   name: http_example
+
+executor:
+  profile: local
+  version: noetl-runtime/1
 
 workload:
   api_base: "https://api.example.com"
@@ -272,6 +357,100 @@ workflow:
 - Parent passes `args` map to child playbook
 - Child receives args as `workload.*` variables
 - Example: `args: {image_tag: "v2.5"}` → `{{ workload.image_tag }}`
+
+### Rhai Embedded Scripting
+
+Execute complex logic with Rhai scripting language. Rhai provides a safe, sandboxed scripting environment with built-in HTTP and authentication support:
+
+```yaml
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: rhai_example
+
+executor:
+  profile: local
+  version: noetl-runtime/1
+
+workload:
+  project_id: my-gcp-project
+  cluster_name: my-cluster
+  region: us-central1
+
+workflow:
+  - step: start
+    next:
+      - step: poll_cluster_status
+
+  - step: poll_cluster_status
+    desc: "Poll GKE cluster status until running"
+    tool:
+      kind: rhai
+      code: |
+        // Get GCP authentication token
+        let token = get_gcp_token();
+        
+        // Build API URL
+        let url = "https://container.googleapis.com/v1/projects/" 
+          + project_id + "/locations/" + region + "/clusters/" + cluster_name;
+        
+        // Poll until cluster is running
+        let max_attempts = 60;
+        let attempt = 0;
+        let status = "";
+        
+        while attempt < max_attempts {
+          attempt += 1;
+          log("Poll attempt " + attempt + "/" + max_attempts);
+          
+          // Make authenticated HTTP request
+          let response = http_get_auth(url, token);
+          let data = parse_json(response);
+          
+          status = data["status"];
+          log("Cluster status: " + status);
+          
+          if status == "RUNNING" {
+            break;
+          }
+          
+          // Wait 10 seconds before next poll
+          sleep(10000);
+        }
+        
+        // Return result
+        #{
+          "status": status,
+          "attempts": attempt,
+          "endpoint": if status == "RUNNING" { data["endpoint"] } else { "" }
+        }
+    vars:
+      cluster_status: "{{ poll_cluster_status.status }}"
+      cluster_endpoint: "{{ poll_cluster_status.endpoint }}"
+    next:
+      - step: end
+
+  - step: end
+```
+
+**Rhai Built-in Functions**:
+- `http_get(url)`: Make unauthenticated GET request
+- `http_get_auth(url, token)`: Make authenticated GET request with Bearer token
+- `http_post(url, body)`: Make POST request
+- `http_post_auth(url, body, token)`: Make authenticated POST request
+- `http_delete_auth(url, token)`: Make authenticated DELETE request
+- `get_gcp_token()`: Get GCP Application Default Credentials token
+- `parse_json(string)`: Parse JSON string to object
+- `to_json(object)`: Convert object to JSON string
+- `sleep(ms)`: Sleep for milliseconds
+- `log(message)`: Print log message
+- `env(name)`: Get environment variable
+
+**Use Cases**:
+- Polling loops (wait for resource status)
+- Complex conditional logic
+- API orchestration with authentication
+- Infrastructure automation (GCP, AWS, etc.)
 
 ## Variable System
 

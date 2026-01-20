@@ -1,0 +1,349 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: init_gcs_state_bucket
+  path: iap/gcp/init-state-bucket
+  description: Initialize GCS bucket for IaP state storage
+  labels:
+    iap.noetl.io/provider: gcp
+    iap.noetl.io/category: bootstrap
+
+executor:
+  profile: local
+  version: noetl-runtime/1
+workload:
+  # Required parameters
+  project_id: mestumre-dev
+  bucket_name: ""  # Will default to {project_id}-noetl-state
+  region: us-central1
+  
+  # Optional: storage class (STANDARD, NEARLINE, COLDLINE, ARCHIVE)
+  storage_class: STANDARD
+  
+  # Optional: enable versioning for state files
+  enable_versioning: true
+  
+  # Optional: lifecycle rules
+  snapshot_retention_days: 90
+
+workflow:
+  - step: start
+    desc: Initialize state bucket setup
+    tool:
+      kind: shell
+      cmds:
+        - echo "Initializing GCS state bucket for project '{{ workload.project_id }}'"
+    vars:
+      final_bucket_name: "{{ workload.bucket_name if workload.bucket_name else workload.project_id + '-noetl-state' }}"
+    next:
+      - step: check_bucket_exists
+
+  - step: check_bucket_exists
+    desc: Check if bucket already exists
+    tool:
+      kind: http
+      method: GET
+      url: https://storage.googleapis.com/storage/v1/b/{{ vars.final_bucket_name }}
+      auth:
+        source: adc
+    vars:
+      bucket_exists: "{{ result.status == 200 }}"
+    case:
+      - when: "{{ vars.bucket_exists }}"
+        then:
+          - step: bucket_exists_info
+      - else:
+          - step: create_bucket
+
+  - step: bucket_exists_info
+    desc: Bucket already exists
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "Bucket 'gs://{{ vars.final_bucket_name }}' already exists"
+          echo "Skipping creation, will configure versioning and lifecycle..."
+    next:
+      - step: configure_versioning
+
+  - step: create_bucket
+    desc: Create GCS bucket for state storage
+    tool:
+      kind: http
+      method: POST
+      url: https://storage.googleapis.com/storage/v1/b?project={{ workload.project_id }}
+      auth:
+        source: adc
+      headers:
+        Content-Type: application/json
+      body: |
+        {
+          "name": "{{ vars.final_bucket_name }}",
+          "location": "{{ workload.region }}",
+          "storageClass": "{{ workload.storage_class }}",
+          "iamConfiguration": {
+            "uniformBucketLevelAccess": {
+              "enabled": true
+            }
+          },
+          "labels": {
+            "managed-by": "noetl-iap",
+            "project": "{{ workload.project_id }}"
+          }
+        }
+    next:
+      - step: configure_versioning
+
+  - step: configure_versioning
+    desc: Enable versioning for state files
+    tool:
+      kind: http
+      method: PATCH
+      url: https://storage.googleapis.com/storage/v1/b/{{ vars.final_bucket_name }}
+      auth:
+        source: adc
+      headers:
+        Content-Type: application/json
+      body: |
+        {
+          "versioning": {
+            "enabled": {{ workload.enable_versioning | lower }}
+          }
+        }
+    case:
+      - when: "{{ workload.enable_versioning }}"
+        then:
+          - step: configure_lifecycle
+      - else:
+          - step: create_folder_structure
+
+  - step: configure_lifecycle
+    desc: Configure lifecycle rules for snapshot retention
+    tool:
+      kind: http
+      method: PATCH
+      url: https://storage.googleapis.com/storage/v1/b/{{ vars.final_bucket_name }}
+      auth:
+        source: adc
+      headers:
+        Content-Type: application/json
+      body: |
+        {
+          "lifecycle": {
+            "rule": [
+              {
+                "action": {
+                  "type": "Delete"
+                },
+                "condition": {
+                  "age": {{ workload.snapshot_retention_days }},
+                  "matchesPrefix": ["terraform/", "crossplane/"],
+                  "matchesSuffix": [".parquet"]
+                }
+              },
+              {
+                "action": {
+                  "type": "Delete"
+                },
+                "condition": {
+                  "numNewerVersions": 10
+                }
+              }
+            ]
+          }
+        }
+    next:
+      - step: create_folder_structure
+
+  - step: create_folder_structure
+    desc: Create folder structure markers
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "Creating folder structure in gs://{{ vars.final_bucket_name }}/"
+          
+          # Create placeholder files to establish folder structure
+          # Note: In real implementation, this would use GCS uploads
+          echo "Folders to create:"
+          echo "  - terraform/default/"
+          echo "  - terraform/default/history/"
+          echo "  - crossplane/global/"
+          echo "  - shared/modules/"
+          echo "  - shared/policies/"
+    next:
+      - step: upload_folder_markers
+
+  - step: upload_folder_markers
+    desc: Upload folder marker files
+    tool:
+      kind: http
+      method: POST
+      url: https://storage.googleapis.com/upload/storage/v1/b/{{ vars.final_bucket_name }}/o?uploadType=media&name=terraform/default/.gitkeep
+      auth:
+        source: adc
+      headers:
+        Content-Type: text/plain
+      body: "# NoETL IaP State - Default Workspace"
+    next:
+      - step: upload_crossplane_marker
+
+  - step: upload_crossplane_marker
+    desc: Upload crossplane folder marker
+    tool:
+      kind: http
+      method: POST
+      url: https://storage.googleapis.com/upload/storage/v1/b/{{ vars.final_bucket_name }}/o?uploadType=media&name=crossplane/global/.gitkeep
+      auth:
+        source: adc
+      headers:
+        Content-Type: text/plain
+      body: "# NoETL IaP Crossplane Mode - Global"
+    next:
+      - step: upload_shared_marker
+
+  - step: upload_shared_marker
+    desc: Upload shared folder marker
+    tool:
+      kind: http
+      method: POST
+      url: https://storage.googleapis.com/upload/storage/v1/b/{{ vars.final_bucket_name }}/o?uploadType=media&name=shared/modules/.gitkeep
+      auth:
+        source: adc
+      headers:
+        Content-Type: text/plain
+      body: "# NoETL IaP Shared Modules"
+    next:
+      - step: init_local_state
+
+  - step: init_local_state
+    desc: Initialize local DuckDB state file
+    tool:
+      kind: duckdb
+      database: /tmp/noetl-iap-state.duckdb
+      commands: |
+        -- Create resource types table
+        CREATE TABLE IF NOT EXISTS resource_types (
+            type_id VARCHAR PRIMARY KEY,
+            provider VARCHAR NOT NULL,
+            api_version VARCHAR NOT NULL,
+            kind VARCHAR NOT NULL,
+            plural_name VARCHAR NOT NULL,
+            description VARCHAR,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
+        -- Create resources table
+        CREATE TABLE IF NOT EXISTS resources (
+            resource_id VARCHAR PRIMARY KEY,
+            type_id VARCHAR NOT NULL,
+            name VARCHAR NOT NULL,
+            namespace VARCHAR DEFAULT 'default',
+            project VARCHAR,
+            region VARCHAR,
+            zone VARCHAR,
+            desired_state JSON NOT NULL,
+            current_state JSON,
+            status VARCHAR DEFAULT 'pending',
+            labels JSON DEFAULT '{}',
+            annotations JSON DEFAULT '{}',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            last_synced_at TIMESTAMP
+        );
+
+        -- Create snapshots table
+        CREATE TABLE IF NOT EXISTS snapshots (
+            snapshot_id VARCHAR PRIMARY KEY,
+            workspace VARCHAR NOT NULL DEFAULT 'default',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            created_by VARCHAR,
+            description VARCHAR,
+            resource_count INTEGER,
+            checksum VARCHAR,
+            tags JSON DEFAULT '[]',
+            parent_snapshot_id VARCHAR
+        );
+
+        -- Create operations log table
+        CREATE TABLE IF NOT EXISTS operations (
+            operation_id VARCHAR PRIMARY KEY,
+            resource_id VARCHAR NOT NULL,
+            operation_type VARCHAR NOT NULL,
+            status VARCHAR NOT NULL,
+            before_state JSON,
+            after_state JSON,
+            diff JSON,
+            started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            completed_at TIMESTAMP,
+            error_message VARCHAR,
+            playbook_name VARCHAR,
+            execution_id VARCHAR,
+            user_name VARCHAR
+        );
+
+        -- Create drift records table
+        CREATE TABLE IF NOT EXISTS drift_records (
+            drift_id VARCHAR PRIMARY KEY,
+            resource_id VARCHAR NOT NULL,
+            detected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            drift_type VARCHAR NOT NULL,
+            field_path VARCHAR,
+            expected_value JSON,
+            actual_value JSON,
+            resolved_at TIMESTAMP,
+            resolution_action VARCHAR
+        );
+
+        -- Create locks table
+        CREATE TABLE IF NOT EXISTS locks (
+            lock_id VARCHAR PRIMARY KEY,
+            workspace VARCHAR NOT NULL UNIQUE,
+            acquired_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            acquired_by VARCHAR NOT NULL,
+            expires_at TIMESTAMP NOT NULL
+        );
+
+        -- Insert GKE resource type
+        INSERT OR IGNORE INTO resource_types (type_id, provider, api_version, kind, plural_name, description)
+        VALUES ('container.googleapis.com/Cluster', 'gcp', 'v1', 'Cluster', 'clusters', 'GKE Cluster');
+
+        SELECT 'State database initialized successfully' as message;
+    next:
+      - step: print_summary
+
+  - step: print_summary
+    desc: Print setup summary
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "=========================================="
+          echo " IaP State Bucket Initialized"
+          echo "=========================================="
+          echo ""
+          echo "GCS Bucket: gs://{{ vars.final_bucket_name }}/"
+          echo "Project:    {{ workload.project_id }}"
+          echo "Region:     {{ workload.region }}"
+          echo "Versioning: {{ workload.enable_versioning }}"
+          echo ""
+          echo "Folder Structure:"
+          echo "  gs://{{ vars.final_bucket_name }}/terraform/default/"
+          echo "  gs://{{ vars.final_bucket_name }}/crossplane/global/"
+          echo "  gs://{{ vars.final_bucket_name }}/shared/modules/"
+          echo ""
+          echo "Local State: /tmp/noetl-iap-state.duckdb"
+          echo ""
+          echo "Next Steps:"
+          echo "  1. Provision resources:"
+          echo "     noetl run gke_autopilot.yaml --set project_id={{ workload.project_id }}"
+          echo ""
+          echo "  2. Sync state to GCS:"
+          echo "     noetl run state_sync.yaml --set action=push"
+          echo ""
+    next:
+      - step: end
+
+  - step: end
+    desc: Setup complete

@@ -5,6 +5,9 @@ metadata:
   path: automation/ibkr/build
   description: Build IBKR Client Portal Gateway Docker image
 
+executor:
+  profile: local
+  version: noetl-runtime/1
 workload:
   build_dir: /Users/akuksin/projects/noetl/noetl/docker/ibkr-gateway
   download_url: https://download2.interactivebrokers.com/portal/clientportal.gw.zip

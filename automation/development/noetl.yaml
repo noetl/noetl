@@ -5,6 +5,9 @@ metadata:
   path: automation/development/noetl
   description: Build/load/deploy helpers for NoETL in local kind
 
+executor:
+  profile: local
+  version: noetl-runtime/1
 workload:
   action: help  # deploy, status
   registry: "local"

@@ -12,7 +12,30 @@ Automation playbooks are located in the `automation/` directory and provide self
 - Environment setup and teardown (bootstrap/destroy)
 - Docker image building and deployment
 - Test infrastructure management
-- CI/CD workflows
+- Infrastructure as Playbook (IaP) for cloud resources
+
+## Runtime Modes
+
+All automation playbooks use **local runtime** by default, executing directly via the Rust interpreter without requiring a NoETL server. Playbooks include the `executor` section:
+
+```yaml
+executor:
+  profile: local           # Use local Rust interpreter
+  version: noetl-runtime/1 # Runtime version
+```
+
+### Runtime Selection
+
+```bash
+# Auto-detect (file paths default to local)
+noetl run automation/setup/bootstrap.yaml
+
+# Explicit local runtime
+noetl run automation/setup/bootstrap.yaml -r local
+
+# Verbose output
+noetl run automation/setup/bootstrap.yaml -v
+```
 
 ## Main Entry Point
 
@@ -33,6 +56,18 @@ Or use JSON payload:
 
 ```bash
 noetl run automation/main.yaml --payload '{"target":"bootstrap"}'
+```
+
+## Quick Commands
+
+For convenience, shortcut playbooks are available:
+
+```bash
+# Bootstrap (equivalent to main.yaml --set target=bootstrap)
+noetl run boot
+
+# Destroy (equivalent to main.yaml --set target=destroy)
+noetl run destroy
 ```
 
 ## Bootstrap Workflow
@@ -57,10 +92,8 @@ noetl run automation/main.yaml --set target=bootstrap
 # Direct execution
 noetl run automation/setup/bootstrap.yaml
 
-# Start from specific step
-noetl run automation/setup/bootstrap.yaml validate_prerequisites
-noetl run automation/setup/bootstrap.yaml build_docker_images
-noetl run automation/setup/bootstrap.yaml deploy_observability
+# With verbose output
+noetl run automation/setup/bootstrap.yaml -v
 ```
 
 ### Steps
@@ -610,26 +643,60 @@ noetl run automation/development/docker.yaml --set action=images-clear
 
 ## Best Practices
 
+### Execution
+
 1. **Start with help** - Always run `--set action=help` or `--set target=help` to see available options
 2. **Use full workflows** - Prefer `action=full` for complete setup rather than manual step-by-step
 3. **Check status** - Run `action=status` to verify deployments before testing
-4. **Use verbose for debugging** - Add `--verbose` when troubleshooting issues
+4. **Use verbose for debugging** - Add `-v` or `--verbose` when troubleshooting issues
 5. **Validate prerequisites** - Bootstrap validates required tools automatically
 6. **NATS is required** - Don't skip observability deployment, NATS is mandatory
+
+### Runtime Selection
+
+All automation playbooks include the `executor` section specifying local runtime:
+
+```yaml
+executor:
+  profile: local
+  version: noetl-runtime/1
+```
+
+Run with explicit runtime if needed:
+
+```bash
+# Force local runtime (default for automation)
+noetl run automation/setup/bootstrap.yaml -r local
+
+# Check current context runtime
+noetl context current
+```
+
+### Variable Passing
+
+Pass variables with `--set key=value`:
+
+```bash
+# Single variable
+noetl run automation/infrastructure/postgres.yaml --set action=deploy
+
+# Multiple variables  
+noetl run automation/setup/bootstrap.yaml --set target=noetl --set skip_qdrant=true
+```
 
 ## Troubleshooting
 
 ### Bootstrap Fails
 
-1. Check prerequisites: `noetl run automation/setup/bootstrap.yaml validate_prerequisites`
+1. Check prerequisites: `noetl run automation/setup/bootstrap.yaml --set target=validate -v`
 2. Verify Docker running: `docker ps`
 3. Check existing cluster: `kind get clusters`
-4. View logs: Add `--verbose` flag
+4. View detailed output: Add `-v` flag for verbose output
 
 ### Image Loading Issues
 
 If pods show `ImagePullBackOff`:
-1. Rebuild and load: `noetl run automation/setup/bootstrap.yaml build_docker_images`
+1. Rebuild and load: `noetl run automation/setup/bootstrap.yaml --set target=build`
 2. Check image exists: `docker images | grep noetl`
 3. Manually load: `kind load docker-image local/noetl:TAG --name noetl`
 

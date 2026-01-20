@@ -4,6 +4,9 @@ metadata:
   name: observability_automation
   path: automation/infrastructure/observability
 
+executor:
+  profile: local
+  version: noetl-runtime/1
 workload:
   action: help  # activate-all, deactivate-all, status-all, health-all, restart-all
 

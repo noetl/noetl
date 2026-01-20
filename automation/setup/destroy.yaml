@@ -4,6 +4,9 @@ metadata:
   name: noetl_destroy
   path: automation/setup/destroy
   description: Destroy NoETL development environment
+executor:
+  profile: local
+  version: noetl-runtime/1
 workflow:
   - step: start
     desc: Begin destroy workflow

@@ -4,6 +4,9 @@ metadata:
   name: kind_automation
   path: automation/infrastructure/kind
 
+executor:
+  profile: local
+  version: noetl-runtime/1
 workload:
   action: help  # create, delete, list, image-load, images-list, status, context-set
 

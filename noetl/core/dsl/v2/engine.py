@@ -1,3 +1,59 @@
+async def finalize_abandoned_execution(self, execution_id: str, reason: str = "Abandoned or timed out"):
+    """
+    Forcibly finalize an execution by emitting workflow.failed and playbook.failed events if not already completed.
+    This should be called by a periodic task or admin action for stuck/running executions with no activity.
+    """
+    # Load state
+    state = await self.state_store.load_state(execution_id)
+    if not state:
+        logger.error(f"[FINALIZE] No state found for execution {execution_id}")
+        return
+    if state.completed:
+        logger.info(f"[FINALIZE] Execution {execution_id} already completed; skipping.")
+        return
+
+    # Find last step (if any)
+    last_step = state.current_step or (list(state.step_results.keys())[-1] if state.step_results else None)
+    logger.warning(f"[FINALIZE] Forcibly finalizing execution {execution_id} at step {last_step} due to: {reason}")
+
+    from noetl.core.dsl.v2.models import Event, LifecycleEventPayload
+    from datetime import datetime, timezone
+
+    # Emit workflow.failed event
+    workflow_failed_event = Event(
+        execution_id=execution_id,
+        step="workflow",
+        name="workflow.failed",
+        payload=LifecycleEventPayload(
+            status="failed",
+            final_step=last_step,
+            result=None,
+            error={"message": reason}
+        ).model_dump(),
+        timestamp=datetime.now(timezone.utc)
+    )
+    await self._persist_event(workflow_failed_event, state)
+
+    # Emit playbook.failed event
+    playbook_path = state.playbook.metadata.get("path", "playbook")
+    playbook_failed_event = Event(
+        execution_id=execution_id,
+        step=playbook_path,
+        name="playbook.failed",
+        payload=LifecycleEventPayload(
+            status="failed",
+            final_step=last_step,
+            result=None,
+            error={"message": reason}
+        ).model_dump(),
+        timestamp=datetime.now(timezone.utc)
+    )
+    await self._persist_event(playbook_failed_event, state)
+
+    # Mark state as completed
+    state.completed = True
+    await self.state_store.save_state(state)
+    logger.info(f"[FINALIZE] Emitted terminal events for execution {execution_id}")
 """
 NoETL V2 Execution Engine
 
@@ -43,10 +99,6 @@ class ExecutionState:
         self.failed = False
         self.completed = False
         
-        # Event tracking for parent_event_id
-        self.last_event_id: Optional[int] = None  # Track last event_id for parent linkage
-        self.step_event_ids: dict[str, int] = {}  # step_name -> last event_id for that step
-        
         # Root event tracking for traceability
         self.root_event_id: Optional[int] = None  # First event (playbook.initialized) for full trace
         
@@ -61,7 +113,18 @@ class ExecutionState:
             self.variables.update(playbook.workload)
         
         # Merge payload
-        self.variables.update(payload)
+        # CRITICAL: If payload contains 'workload' or 'vars', it can overwrite sub-playbook state.
+        # We only merge keys that are NOT 'workload' or 'vars' directly into self.variables
+        # unless they are explicitly intended to be there.
+        for k, v in payload.items():
+            if k not in ("workload", "vars"):
+                self.variables[k] = v
+            else:
+                # If it's workload/vars, deep merge instead of overwrite if they exist
+                if k in self.variables and isinstance(self.variables[k], dict) and isinstance(v, dict):
+                    self.variables[k].update(v)
+                else:
+                    self.variables[k] = v
     
     def get_step(self, step_name: str) -> Optional[Step]:
         """Get step by name."""
@@ -184,11 +247,18 @@ class ExecutionState:
                 "step": event.step,
                 "timestamp": event.timestamp.isoformat() if event.timestamp else None,
             },
+            # Note: variables includes loop vars, but we avoid top-level spreading 
+            # to prevent state pollution in sub-playbooks
             "workload": self.variables,
             "vars": self.variables,
-            **self.variables,  # Make variables accessible at top level (includes loop vars)
             **self.step_results,  # Make step results accessible (e.g., {{ process }})
         }
+        
+        # Add variables to context only if they don't collide with reserved keys
+        # This provides a flatter namespace while protecting system fields
+        for k, v in self.variables.items():
+            if k not in context and k not in protected_fields:
+                context[k] = v
         
         # Set protected fields AFTER spreading variables to ensure they are not overridden
         # CRITICAL: Convert IDs to strings to prevent JavaScript precision loss with Snowflake IDs
@@ -340,11 +410,11 @@ class StateStore:
         # Reconstruct state from events in database using event sourcing
         async with get_pool_connection() as conn:
             async with conn.cursor() as cur:
-                # Get playbook info from first event
+                # Get playbook info and workload from playbook.initialized event
                 await cur.execute("""
-                    SELECT catalog_id, node_id
+                    SELECT catalog_id, result
                     FROM noetl.event
-                    WHERE execution_id = %s
+                    WHERE execution_id = %s AND event_type = 'playbook.initialized'
                     ORDER BY event_id
                     LIMIT 1
                 """, (int(execution_id),))
@@ -355,18 +425,31 @@ class StateStore:
 
                 if isinstance(result, dict):
                     catalog_id = result.get("catalog_id")
+                    event_result = result.get("result")
                 else:
                     catalog_id = result[0]
+                    event_result = result[1]
                 if catalog_id is None:
                     return None
+                
+                # Extract workload from playbook.initialized event result
+                # This contains the merged workload (playbook defaults + parent args)
+                workload = {}
+                if event_result and isinstance(event_result, dict):
+                    workload = event_result.get("workload", {})
+                    logger.debug(f"Restored workload from playbook.initialized event: {list(workload.keys()) if workload else 'empty'}")
                 
                 # Load playbook
                 playbook = await self.playbook_repo.load_playbook_by_id(catalog_id)
                 if not playbook:
                     return None
                 
-                # Create new state
-                state = ExecutionState(execution_id, playbook, {}, catalog_id)
+                # Create new state with restored workload
+                # Note: We pass workload as the payload param so it merges properly
+                # The ExecutionState.__init__ first loads playbook.workload, then merges payload
+                # To avoid double-loading playbook defaults, we pass the full workload directly
+                # and let the playbook.workload be overwritten
+                state = ExecutionState(execution_id, playbook, workload, catalog_id)
                 
                 # Identify loop steps from playbook for initialization
                 loop_steps = set()
@@ -465,16 +548,28 @@ class ControlFlowEngine:
     
     def _render_template(self, template_str: str, context: dict[str, Any]) -> Any:
         """Render Jinja2 template."""
+        if not isinstance(template_str, str) or "{{" not in template_str:
+            return template_str
+            
         try:
             # Check if this is a simple variable reference like {{ varname }} or {{ obj.attr }}
             # If so, evaluate and return the actual object instead of string representation
             import re
+            # Improved regex to handle optional spaces and nested attributes
             simple_var_match = re.match(r'^\{\{\s*([\w.]+)\s*\}\}$', template_str.strip())
             if simple_var_match:
                 var_path = simple_var_match.group(1)
-                # Navigate dot notation: workload.numbers → context['workload']['numbers']
+                # Navigate dot notation: workload.api_url → context['workload']['api_url']
                 value = context
-                for part in var_path.split('.'):
+                parts = var_path.split('.')
+                
+                # OPTIMIZATION: Check top-level directly first
+                if len(parts) == 1:
+                    part = parts[0]
+                    if part in context:
+                        return context[part]
+                
+                for part in parts:
                     if isinstance(value, dict) and part in value:
                         value = value[part]
                     elif hasattr(value, part):
@@ -486,6 +581,7 @@ class ControlFlowEngine:
                     # Successfully navigated full path
                     return value
             
+            # Standard Jinja2 rendering
             template = self.jinja_env.from_string(template_str)
             result = template.render(**context)
             
@@ -981,13 +1077,12 @@ class ControlFlowEngine:
         # Render Jinja2 templates in tool config
         # CRITICAL: Use recursive render_template to handle nested dicts/lists like params: {latitude: "{{ city.lat }}"}
         from noetl.core.dsl.render import render_template as recursive_render
-        from jinja2 import Environment, BaseLoader, StrictUndefined
         
-        env = Environment(loader=BaseLoader(), undefined=StrictUndefined)
-        rendered_tool_config = recursive_render(env, tool_config, context)
+        # Use existing engine environment to benefit from cached filters and settings
+        rendered_tool_config = recursive_render(self.jinja_env, tool_config, context)
         
         # Render Jinja2 templates in args (also use recursive rendering for nested structures)
-        rendered_args = recursive_render(env, step_args, context)
+        rendered_args = recursive_render(self.jinja_env, step_args, context)
         
         # Extract case blocks from step definition (if present) for worker-side execution
         case_blocks = None
@@ -1083,13 +1178,17 @@ class ControlFlowEngine:
         except Exception as e:
             logger.exception(f"[VARS] Error processing vars block for step '{event.step}': {e}")
     
-    async def handle_event(self, event: Event) -> list[Command]:
+    async def handle_event(self, event: Event, already_persisted: bool = False) -> list[Command]:
         """
         Handle an event and return commands to enqueue.
         
         This is the core engine method called by the API.
+        
+        Args:
+            event: The event to process
+            already_persisted: If True, skip persisting the event (it was already persisted by caller)
         """
-        logger.info(f"[ENGINE] handle_event called: event.name={event.name}, step={event.step}, execution={event.execution_id}")
+        logger.info(f"[ENGINE] handle_event called: event.name={event.name}, step={event.step}, execution={event.execution_id}, already_persisted={already_persisted}")
         commands: list[Command] = []
         
         # Load execution state (from memory cache or reconstruct from events)
@@ -1109,7 +1208,9 @@ class ControlFlowEngine:
         if event.step.endswith('_sink'):
             logger.debug(f"Synthetic sink step: {event.step} - persisting event without orchestration")
             # Persist the event but don't generate commands (no orchestration needed)
-            await self._persist_event(event, state)
+            # Skip if already persisted by API caller
+            if not already_persisted:
+                await self._persist_event(event, state)
             return commands
         
         step_def = state.get_step(event.step)
@@ -1307,6 +1408,12 @@ class ControlFlowEngine:
                         if loop_state:
                             loop_state["completed"] = True
                             loop_state["aggregation_finalized"] = True
+                            # CRITICAL: Re-initialize results from authoritative source (NATS K/V) 
+                            # if we are about to create aggregated result, to ensure no duplicates 
+                            # or stale data from memory cache.
+                            if nats_loop_state:
+                                loop_state["results"] = nats_loop_state.get("results", [])
+                                logger.info(f"[LOOP-SYNC] Re-initialized local results from NATS K/V: {len(loop_state['results'])} items")
                         
                         # Get aggregated loop results
                         loop_aggregation = state.get_loop_aggregation(event.step)
@@ -1442,7 +1549,9 @@ class ControlFlowEngine:
             completion_status = "failed" if has_error else "completed"
             
             # Persist current event FIRST to get its event_id for parent_event_id
-            await self._persist_event(event, state)
+            # Skip if already persisted by API caller
+            if not already_persisted:
+                await self._persist_event(event, state)
             
             # Now create completion events with current event as parent
             # This ensures proper ordering: step.exit -> workflow_completion -> playbook_completion
@@ -1487,7 +1596,8 @@ class ControlFlowEngine:
         await self.state_store.save_state(state)
         
         # Persist current event to database (if not already done for completion case)
-        if not completion_events:
+        # Skip if event was already persisted by API caller
+        if not completion_events and not already_persisted:
             await self._persist_event(event, state)
         
         # Persist completion events in order with proper parent_event_id chain
@@ -1738,6 +1848,18 @@ class ControlFlowEngine:
             raise ValueError("Playbook must have a 'start' step")
         
         # Emit playbook.initialized event (playbook loaded and validated)
+        # CRITICAL: Strip massive result objects from workload to prevent state pollution in sub-playbooks
+        # Only keep genuine workload variables
+        workload_snapshot = {}
+        for k, v in state.variables.items():
+            # Skip step result objects (they are usually dicts with 'id', 'status', 'data' keys)
+            if isinstance(v, dict) and 'status' in v and ('data' in v or 'error' in v):
+                continue
+            # Skip large result proxies or objects
+            if k in state.step_results:
+                continue
+            workload_snapshot[k] = v
+
         from noetl.core.dsl.v2.models import LifecycleEventPayload
         playbook_init_event = Event(
             execution_id=execution_id,
@@ -1746,7 +1868,7 @@ class ControlFlowEngine:
             payload=LifecycleEventPayload(
                 status="initialized",
                 final_step=None,
-                result={"workload": state.variables, "playbook_path": playbook_path}
+                result={"workload": workload_snapshot, "playbook_path": playbook_path}
             ).model_dump(),
             timestamp=datetime.now(timezone.utc)
         )
@@ -1761,7 +1883,7 @@ class ControlFlowEngine:
             payload=LifecycleEventPayload(
                 status="initialized",
                 final_step=None,
-                result={"first_step": "start", "playbook_path": playbook_path}
+                result={"first_step": "start", "playbook_path": playbook_path, "workload": workload_snapshot}
             ).model_dump(),
             timestamp=datetime.now(timezone.utc)
         )

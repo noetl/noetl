@@ -1,0 +1,97 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: test_rhai_polling
+  path: test/rhai
+  description: Test Rhai scripting for polling operations
+
+executor:
+  profile: local
+  version: noetl-runtime/1
+workload:
+  project_id: mestumre-dev
+  cluster_name: travel-cluster
+  region: us-central1
+  max_retries: 10
+  retry_interval: 5
+
+workflow:
+  - step: start
+    desc: Test Rhai polling
+    tool:
+      kind: rhai
+      code: |
+        // Get GCP auth token
+        let token = get_gcp_token();
+        log(`[${timestamp()}] Got auth token (length: ${token.len()})`);
+        
+        // Build URL
+        let url = `https://container.googleapis.com/v1/projects/${args.project_id}/locations/${args.region}/clusters/${args.cluster_name}`;
+        log(`[${timestamp()}] Checking cluster at: ${url}`);
+        
+        // Polling loop
+        let max_retries = 10;
+        let retry_count = 0;
+        let final_status = "UNKNOWN";
+        
+        while retry_count < max_retries {
+          retry_count += 1;
+          log(`[${timestamp()}] Attempt ${retry_count}/${max_retries}`);
+          
+          // Make HTTP request
+          let response = http_get_auth(url, token);
+          
+          log(`[${timestamp()}] HTTP Status: ${response.status}`);
+          
+          if response.status == 200 {
+            // Cluster exists - check its status
+            let cluster_status = response.body.status;
+            log(`[${timestamp()}] Cluster status: ${cluster_status}`);
+            
+            if cluster_status == "RUNNING" {
+              log(`[${timestamp()}] Cluster is RUNNING - success!`);
+              final_status = "RUNNING";
+              break;
+            } else if cluster_status == "ERROR" || cluster_status == "DEGRADED" {
+              log(`[${timestamp()}] Cluster in error state: ${cluster_status}`);
+              final_status = cluster_status;
+              break;
+            }
+            
+            // Still provisioning, wait and retry
+            log(`[${timestamp()}] Waiting ${args.retry_interval} seconds...`);
+            sleep(5);
+            
+          } else if response.status == 404 {
+            // Cluster doesn't exist
+            log(`[${timestamp()}] Cluster not found (404)`);
+            final_status = "NOT_FOUND";
+            break;
+            
+          } else {
+            // Other error
+            log(`[${timestamp()}] Unexpected status: ${response.status}`);
+            log(`[${timestamp()}] Response: ${response.body_raw}`);
+          }
+          
+          sleep(5);
+        }
+        
+        log(`[${timestamp()}] Final status: ${final_status}`);
+        
+        // Return result as map
+        #{
+          status: final_status,
+          attempts: retry_count,
+          cluster: args.cluster_name
+        }
+      args:
+        project_id: "{{ workload.project_id }}"
+        cluster_name: "{{ workload.cluster_name }}"
+        region: "{{ workload.region }}"
+        retry_interval: "{{ workload.retry_interval }}"
+    next:
+      - step: end
+
+  - step: end
+    desc: Done

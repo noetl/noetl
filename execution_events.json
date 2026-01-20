@@ -1,0 +1,426 @@
+{
+  "error": null,
+  "result": [
+    {
+      "created_at": "2026-01-20T11:56:27.292930",
+      "event_id": 543942402780693278,
+      "event_type": "playbook.initialized",
+      "node_name": "tests/fixtures/playbooks/data_transfer/http_to_postgres_simple",
+      "status": "INITIALIZED"
+    },
+    {
+      "created_at": "2026-01-20T11:56:27.400495",
+      "event_id": 543942402864579359,
+      "event_type": "workflow.initialized",
+      "node_name": "workflow",
+      "status": "INITIALIZED"
+    },
+    {
+      "created_at": "2026-01-20T11:56:27.445851",
+      "event_id": 543942403216900897,
+      "event_type": "command.issued",
+      "node_name": "start",
+      "status": "PENDING"
+    },
+    {
+      "created_at": "2026-01-20T11:56:27.502747",
+      "event_id": 543942403678274338,
+      "event_type": "command.claimed",
+      "node_name": "start",
+      "status": "RUNNING"
+    },
+    {
+      "created_at": "2026-01-20T11:56:27.568544",
+      "event_id": 543942404248699683,
+      "event_type": "command.started",
+      "node_name": "start",
+      "status": "RUNNING"
+    },
+    {
+      "created_at": "2026-01-20T11:56:27.595645",
+      "event_id": 543942404466803492,
+      "event_type": "step.enter",
+      "node_name": "start",
+      "status": "RUNNING"
+    },
+    {
+      "created_at": "2026-01-20T11:57:24.530192",
+      "event_id": 543942882055422757,
+      "event_type": "call.done",
+      "node_name": "start",
+      "status": "COMPLETED"
+    },
+    {
+      "created_at": "2026-01-20T11:57:24.557013",
+      "event_id": 543942882290303782,
+      "event_type": "step.exit",
+      "node_name": "start",
+      "status": "COMPLETED"
+    },
+    {
+      "created_at": "2026-01-20T11:57:24.572449",
+      "event_id": 543942882432910120,
+      "event_type": "command.issued",
+      "node_name": "fetch_posts",
+      "status": "PENDING"
+    },
+    {
+      "created_at": "2026-01-20T11:57:24.608741",
+      "event_id": 543942882692956969,
+      "event_type": "command.completed",
+      "node_name": "start",
+      "status": "RUNNING"
+    },
+    {
+      "created_at": "2026-01-20T11:57:24.634558",
+      "event_id": 543942882927837994,
+      "event_type": "command.claimed",
+      "node_name": "fetch_posts",
+      "status": "RUNNING"
+    },
+    {
+      "created_at": "2026-01-20T11:57:24.697541",
+      "event_id": 543942883473097515,
+      "event_type": "command.started",
+      "node_name": "fetch_posts",
+      "status": "RUNNING"
+    },
+    {
+      "created_at": "2026-01-20T11:57:24.720945",
+      "event_id": 543942883666035500,
+      "event_type": "step.enter",
+      "node_name": "fetch_posts",
+      "status": "RUNNING"
+    },
+    {
+      "created_at": "2026-01-20T11:58:20.735178",
+      "event_id": 543943353520358189,
+      "event_type": "call.done",
+      "node_name": "fetch_posts",
+      "status": "COMPLETED"
+    },
+    {
+      "created_at": "2026-01-20T11:58:20.801477",
+      "event_id": 543943354107560750,
+      "event_type": "step.exit",
+      "node_name": "fetch_posts",
+      "status": "COMPLETED"
+    },
+    {
+      "created_at": "2026-01-20T11:58:20.818036",
+      "event_id": 543943354258555696,
+      "event_type": "command.issued",
+      "node_name": "create_pg_table",
+      "status": "PENDING"
+    },
+    {
+      "created_at": "2026-01-20T11:58:20.867809",
+      "event_id": 543943354627654449,
+      "event_type": "command.completed",
+      "node_name": "fetch_posts",
+      "status": "RUNNING"
+    },
+    {
+      "created_at": "2026-01-20T11:58:20.883816",
+      "event_id": 543943354770260786,
+      "event_type": "command.claimed",
+      "node_name": "create_pg_table",
+      "status": "RUNNING"
+    },
+    {
+      "created_at": "2026-01-20T11:58:21.018742",
+      "event_id": 543943355927888691,
+      "event_type": "command.started",
+      "node_name": "create_pg_table",
+      "status": "RUNNING"
+    },
+    {
+      "created_at": "2026-01-20T11:58:21.042456",
+      "event_id": 543943356129215284,
+      "event_type": "step.enter",
+      "node_name": "create_pg_table",
+      "status": "RUNNING"
+    },
+    {
+      "created_at": "2026-01-20T11:59:17.686529",
+      "event_id": 543943831285138229,
+      "event_type": "call.done",
+      "node_name": "create_pg_table",
+      "status": "COMPLETED"
+    },
+    {
+      "created_at": "2026-01-20T11:59:17.713878",
+      "event_id": 543943831511630646,
+      "event_type": "step.exit",
+      "node_name": "create_pg_table",
+      "status": "COMPLETED"
+    },
+    {
+      "created_at": "2026-01-20T11:59:17.729099",
+      "event_id": 543943831662625592,
+      "event_type": "command.issued",
+      "node_name": "transform_and_insert",
+      "status": "PENDING"
+    },
+    {
+      "created_at": "2026-01-20T11:59:17.775714",
+      "event_id": 543943831998169913,
+      "event_type": "command.completed",
+      "node_name": "create_pg_table",
+      "status": "RUNNING"
+    },
+    {
+      "created_at": "2026-01-20T11:59:17.803171",
+      "event_id": 543943832258216762,
+      "event_type": "command.claimed",
+      "node_name": "transform_and_insert",
+      "status": "RUNNING"
+    },
+    {
+      "created_at": "2026-01-20T11:59:17.951486",
+      "event_id": 543943833516507963,
+      "event_type": "command.started",
+      "node_name": "transform_and_insert",
+      "status": "RUNNING"
+    },
+    {
+      "created_at": "2026-01-20T11:59:17.970758",
+      "event_id": 543943833684280124,
+      "event_type": "step.enter",
+      "node_name": "transform_and_insert",
+      "status": "RUNNING"
+    },
+    {
+      "created_at": "2026-01-20T11:59:18.028567",
+      "event_id": 543943834162430781,
+      "event_type": "call.done",
+      "node_name": "transform_and_insert",
+      "status": "COMPLETED"
+    },
+    {
+      "created_at": "2026-01-20T11:59:18.060849",
+      "event_id": 543943834422477630,
+      "event_type": "step.exit",
+      "node_name": "transform_and_insert",
+      "status": "COMPLETED"
+    },
+    {
+      "created_at": "2026-01-20T11:59:18.113818",
+      "event_id": 543943834892239680,
+      "event_type": "command.issued",
+      "node_name": "execute_inserts",
+      "status": "PENDING"
+    },
+    {
+      "created_at": "2026-01-20T11:59:18.162252",
+      "event_id": 543943835227784001,
+      "event_type": "command.completed",
+      "node_name": "transform_and_insert",
+      "status": "RUNNING"
+    },
+    {
+      "created_at": "2026-01-20T11:59:18.178715",
+      "event_id": 543943835395556162,
+      "event_type": "command.claimed",
+      "node_name": "execute_inserts",
+      "status": "RUNNING"
+    },
+    {
+      "created_at": "2026-01-20T11:59:18.342247",
+      "event_id": 543943836788065091,
+      "event_type": "command.started",
+      "node_name": "execute_inserts",
+      "status": "RUNNING"
+    },
+    {
+      "created_at": "2026-01-20T11:59:18.369246",
+      "event_id": 543943837014557508,
+      "event_type": "step.enter",
+      "node_name": "execute_inserts",
+      "status": "RUNNING"
+    },
+    {
+      "created_at": "2026-01-20T11:59:19.410725",
+      "event_id": 543943845755487045,
+      "event_type": "call.done",
+      "node_name": "execute_inserts",
+      "status": "COMPLETED"
+    },
+    {
+      "created_at": "2026-01-20T11:59:19.444626",
+      "event_id": 543943846040699718,
+      "event_type": "step.exit",
+      "node_name": "execute_inserts",
+      "status": "COMPLETED"
+    },
+    {
+      "created_at": "2026-01-20T11:59:19.457985",
+      "event_id": 543943846166528840,
+      "event_type": "command.issued",
+      "node_name": "verify_data",
+      "status": "PENDING"
+    },
+    {
+      "created_at": "2026-01-20T11:59:19.516713",
+      "event_id": 543943846594347849,
+      "event_type": "command.completed",
+      "node_name": "execute_inserts",
+      "status": "RUNNING"
+    },
+    {
+      "created_at": "2026-01-20T11:59:19.554971",
+      "event_id": 543943846904726346,
+      "event_type": "command.claimed",
+      "node_name": "verify_data",
+      "status": "RUNNING"
+    },
+    {
+      "created_at": "2026-01-20T11:59:19.774819",
+      "event_id": 543943848808940363,
+      "event_type": "command.started",
+      "node_name": "verify_data",
+      "status": "RUNNING"
+    },
+    {
+      "created_at": "2026-01-20T11:59:19.798067",
+      "event_id": 543943849001878348,
+      "event_type": "step.enter",
+      "node_name": "verify_data",
+      "status": "RUNNING"
+    },
+    {
+      "created_at": "2026-01-20T11:59:20.418444",
+      "event_id": 543943854211203917,
+      "event_type": "call.done",
+      "node_name": "verify_data",
+      "status": "COMPLETED"
+    },
+    {
+      "created_at": "2026-01-20T11:59:20.443156",
+      "event_id": 543943854420919118,
+      "event_type": "step.exit",
+      "node_name": "verify_data",
+      "status": "COMPLETED"
+    },
+    {
+      "created_at": "2026-01-20T11:59:20.459450",
+      "event_id": 543943854571914064,
+      "event_type": "command.issued",
+      "node_name": "show_sample",
+      "status": "PENDING"
+    },
+    {
+      "created_at": "2026-01-20T11:59:20.504841",
+      "event_id": 543943854932624209,
+      "event_type": "command.completed",
+      "node_name": "verify_data",
+      "status": "RUNNING"
+    },
+    {
+      "created_at": "2026-01-20T11:59:20.535210",
+      "event_id": 543943855125562194,
+      "event_type": "command.claimed",
+      "node_name": "show_sample",
+      "status": "RUNNING"
+    },
+    {
+      "created_at": "2026-01-20T11:59:20.752659",
+      "event_id": 543943857012998995,
+      "event_type": "command.started",
+      "node_name": "show_sample",
+      "status": "RUNNING"
+    },
+    {
+      "created_at": "2026-01-20T11:59:20.790992",
+      "event_id": 543943857306600276,
+      "event_type": "step.enter",
+      "node_name": "show_sample",
+      "status": "RUNNING"
+    },
+    {
+      "created_at": "2026-01-20T11:59:21.186207",
+      "event_id": 543943860645266261,
+      "event_type": "call.done",
+      "node_name": "show_sample",
+      "status": "COMPLETED"
+    },
+    {
+      "created_at": "2026-01-20T11:59:21.214294",
+      "event_id": 543943860880147286,
+      "event_type": "step.exit",
+      "node_name": "show_sample",
+      "status": "COMPLETED"
+    },
+    {
+      "created_at": "2026-01-20T11:59:21.227611",
+      "event_id": 543943861005976408,
+      "event_type": "command.issued",
+      "node_name": "end",
+      "status": "PENDING"
+    },
+    {
+      "created_at": "2026-01-20T11:59:21.273507",
+      "event_id": 543943861366686553,
+      "event_type": "command.completed",
+      "node_name": "show_sample",
+      "status": "RUNNING"
+    },
+    {
+      "created_at": "2026-01-20T11:59:21.292946",
+      "event_id": 543943861517681498,
+      "event_type": "command.claimed",
+      "node_name": "end",
+      "status": "RUNNING"
+    },
+    {
+      "created_at": "2026-01-20T11:59:21.510744",
+      "event_id": 543943863371563867,
+      "event_type": "command.started",
+      "node_name": "end",
+      "status": "RUNNING"
+    },
+    {
+      "created_at": "2026-01-20T11:59:21.533890",
+      "event_id": 543943863564501852,
+      "event_type": "step.enter",
+      "node_name": "end",
+      "status": "RUNNING"
+    },
+    {
+      "created_at": "2026-01-20T11:59:21.565299",
+      "event_id": 543943863832937309,
+      "event_type": "call.done",
+      "node_name": "end",
+      "status": "COMPLETED"
+    },
+    {
+      "created_at": "2026-01-20T11:59:21.589624",
+      "event_id": 543943864034263902,
+      "event_type": "step.exit",
+      "node_name": "end",
+      "status": "COMPLETED"
+    },
+    {
+      "created_at": "2026-01-20T11:59:21.595425",
+      "event_id": 543943864143315807,
+      "event_type": "workflow.completed",
+      "node_name": "workflow",
+      "status": "COMPLETED"
+    },
+    {
+      "created_at": "2026-01-20T11:59:21.596058",
+      "event_id": 543943864210424672,
+      "event_type": "playbook.completed",
+      "node_name": "tests/fixtures/playbooks/data_transfer/http_to_postgres_simple",
+      "status": "COMPLETED"
+    },
+    {
+      "created_at": "2026-01-20T11:59:21.633089",
+      "event_id": 543943864394974049,
+      "event_type": "command.completed",
+      "node_name": "end",
+      "status": "RUNNING"
+    }
+  ],
+  "status": "ok"
+}

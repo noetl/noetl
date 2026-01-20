@@ -5,6 +5,9 @@ metadata:
   path: automation/destroy
   description: Destroy the local kind environment
 
+executor:
+  profile: local
+  version: noetl-runtime/1
 workflow:
   - step: start
     desc: Run destroy workflow

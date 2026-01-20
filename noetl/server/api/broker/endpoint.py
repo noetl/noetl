@@ -22,7 +22,6 @@ from .schema import (
     EventStatus
 )
 from .service import EventService
-from ..run import evaluate_execution
 
 
 logger = setup_logger(__name__, include_location=True)
@@ -41,6 +40,9 @@ async def emit_event(payload: EventEmitRequest):
         logger.info(f"EMIT_EVENT: execution_id={payload.execution_id}, type={payload.event_type}, node={payload.node_name}")
         result = await EventService.emit_event(payload)
         logger.info(f"EVENT_STORED: event_id={result.event_id}, triggering orchestration")
+        
+        # Lazy import to avoid circular imports
+        from ..run.orchestrator import evaluate_execution
         await evaluate_execution(
             execution_id=payload.execution_id,
             trigger_event_type=payload.event_type,

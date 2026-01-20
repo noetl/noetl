@@ -114,6 +114,13 @@ noetl register playbook --file tests/fixtures/playbooks/interactive_brokers/ibkr
 
 # Step 2: Execute on server/worker using the catalog path (automation/ibkr/api)
 # Check auth status
+noetl run automation/ibkr/api -r distributed --set action=status
+
+# Keep session alive (call every ~55 seconds)
+noetl run automation/ibkr/api -r distributed --set action=tickle
+
+# Get accounts
+noetl run automation/ibkr/api -r distributed --set action=accounts
 echo '{"action":"status"}' > /tmp/ibkr_params.json
 noetl execute playbook automation/ibkr/api --input /tmp/ibkr_params.json
 
@@ -137,16 +144,16 @@ noetl run tests/fixtures/playbooks/interactive_brokers/ibkr_api.yaml --set actio
 
 **Note**: 
 - Registration uses the playbook's `metadata.path` (automation/ibkr/api), NOT the file path
-- **Distributed execution**: `noetl execute playbook <catalog_path> --input <json_file>`
-- **Local execution**: `noetl run <file_path> --set key=value` or `--payload '{"key":"value"}'`
-- `noetl run` only works with file paths (containing `/` or `.yaml` extension)
+- **Distributed execution**: `noetl run <catalog_path> -r distributed --set key=value`
+- **Local execution**: `noetl run <file_path> --set key=value`
+- Reference type (file vs catalog) is auto-detected by path pattern
 
 ### Verify Gateway (Server/Worker)
 
 Distributed verify playbook: `automation/ibkr/verify` (file: `tests/fixtures/playbooks/interactive_brokers/ibkr_gateway_verify.yaml`).
 
 ```bash
-noetl run playbook automation/ibkr/verify --payload '{"credential":"ib_gateway"}'
+noetl run automation/ibkr/verify -r distributed --set credential=ib_gateway
 ```
 
 ### Verify Gateway (Local Execution)

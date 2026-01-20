@@ -331,9 +331,12 @@ if (idToken) {
 
 ```bash
 # 1. Register the playbooks
-noetl run playbook tests/fixtures/playbooks/api_integration/auth0/provision_auth_schema.yaml
+noetl register playbook tests/fixtures/playbooks/api_integration/auth0/provision_auth_schema.yaml
 
-# 2. Test login flow with a mock token
+# 2. Execute locally to provision schema
+noetl run tests/fixtures/playbooks/api_integration/auth0/provision_auth_schema.yaml -v
+
+# 3. Test login flow with a mock token
 curl -X POST http://localhost:8082/api/execute \
   -H 'Content-Type: application/json' \
   -d '{
@@ -344,7 +347,7 @@ curl -X POST http://localhost:8082/api/execute \
     }
   }'
 
-# 3. Validate session
+# 4. Validate session
 curl -X POST http://localhost:8082/api/execute \
   -H 'Content-Type: application/json' \
   -d '{

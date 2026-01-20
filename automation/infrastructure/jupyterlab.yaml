@@ -4,6 +4,9 @@ metadata:
   name: jupyterlab_automation
   path: automation/infrastructure/jupyterlab
 
+executor:
+  profile: local
+  version: noetl-runtime/1
 workload:
   action: help  # deploy, undeploy, full, status, logs, port-forward, restart, shell, test, update-notebook
 

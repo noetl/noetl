@@ -5,6 +5,9 @@ metadata:
   path: automation/ibkr/login
   description: "Open IBKR Gateway login and wait for authentication (optional autofill)."
 
+executor:
+  profile: local
+  version: noetl-runtime/1
 workload:
   gateway_url: https://localhost:15000
   credential_name: ib_paper

@@ -5,6 +5,9 @@ metadata:
   path: automation/ibkr/setup
   description: "Install optional dependencies needed for IBKR Gateway login helper (Playwright)."
 
+executor:
+  profile: local
+  version: noetl-runtime/1
 workload:
   # Uses uv when available; otherwise falls back to pip.
   # (Kept as workload knob in case you want to extend this later.)

@@ -60,8 +60,7 @@ The GCS tool requires a service account credential with the following structure:
 Register the credential:
 
 ```bash
-noetl run playbook --path catalog/credentials/gcp_service_account \
-  --payload '{"type": "gcs", "service_account_json": {...}}'
+noetl register credential gcp_service_account.yaml
 ```
 
 ## Response Format

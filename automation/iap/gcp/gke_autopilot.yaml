@@ -1,0 +1,562 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: gke_autopilot_cluster
+  path: iap/gcp/gke-autopilot
+  description: Provision and manage GKE Autopilot clusters
+  labels:
+    iap.noetl.io/provider: gcp
+    iap.noetl.io/resource-type: container.googleapis.com/Cluster
+    iap.noetl.io/mode: terraform
+
+executor:
+  profile: local
+  version: noetl-runtime/1
+workload:
+  # Action: create, update, destroy, plan
+  action: create
+  
+  # Required parameters
+  project_id: mestumre-dev
+  cluster_name: noetl-test-cluster
+  region: us-central1
+  
+  # Network configuration
+  network: default
+  subnetwork: default
+  master_ipv4_cidr: 172.16.0.0/28
+  
+  # Cluster configuration
+  release_channel: REGULAR  # RAPID, REGULAR, STABLE
+  
+  # Private cluster settings
+  enable_private_nodes: true
+  enable_private_endpoint: false
+  
+  # State management
+  state_database: /tmp/noetl-iap-state.duckdb
+  state_bucket: ""  # Defaults to {project_id}-noetl-state
+  workspace: default
+
+workflow:
+  - step: start
+    desc: Initialize GKE Autopilot workflow
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "GKE Autopilot Cluster Management"
+          echo "================================"
+          echo "Action:   {{ workload.action }}"
+          echo "Project:  {{ workload.project_id }}"
+          echo "Cluster:  {{ workload.cluster_name }}"
+          echo "Region:   {{ workload.region }}"
+    vars:
+      resource_id: "{{ workload.project_id }}/{{ workload.region }}/{{ workload.cluster_name }}"
+      state_bucket: "{{ workload.state_bucket if workload.state_bucket else workload.project_id + '-noetl-state' }}"
+    case:
+      - when: "{{ workload.action }} == create"
+        then:
+          - step: check_existing
+      - when: "{{ workload.action }} == destroy"
+        then:
+          - step: delete_cluster
+      - when: "{{ workload.action }} == plan"
+        then:
+          - step: plan_changes
+      - when: "true"
+        then:
+          - step: show_help
+
+  - step: show_help
+    desc: Show available actions
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Usage: noetl run gke_autopilot.yaml --set action=<action>"
+          echo ""
+          echo "Available actions:"
+          echo "  create  - Create a new GKE Autopilot cluster"
+          echo "  destroy - Delete an existing cluster"
+          echo "  plan    - Show planned changes without applying"
+          echo ""
+          echo "Example:"
+          echo "  noetl run gke_autopilot.yaml \\"
+          echo "    --set action=create \\"
+          echo "    --set project_id=mestumre-dev \\"
+          echo "    --set cluster_name=my-cluster"
+    next:
+      - step: end
+
+  - step: check_existing
+    desc: Check if cluster already exists
+    tool:
+      kind: http
+      method: GET
+      url: https://container.googleapis.com/v1/projects/{{ workload.project_id }}/locations/{{ workload.region }}/clusters/{{ workload.cluster_name }}
+      auth:
+        source: adc
+    vars:
+      cluster_status: "{{ result.status }}"
+    case:
+      - when: "{{ vars.cluster_status }} == 200"
+        then:
+          - step: cluster_exists_info
+      - when: "true"
+        then:
+          - step: enable_apis
+
+  - step: cluster_exists_info
+    desc: Cluster already exists
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Cluster '{{ workload.cluster_name }}' already exists in project '{{ workload.project_id }}'"
+          echo "Status: {{ vars.current_state.status | default('unknown') }}"
+          echo ""
+          echo "To update the cluster, use action=update (not yet implemented)"
+          echo "To delete the cluster, use action=destroy"
+    next:
+      - step: update_state
+
+  - step: enable_apis
+    desc: Enable required GCP APIs
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "Enabling Container API..."
+          gcloud services enable container.googleapis.com --project {{ workload.project_id }}
+          echo "Container API enabled."
+    next:
+      - step: create_cluster
+
+  - step: create_cluster
+    desc: Create GKE Autopilot cluster
+    tool:
+      kind: http
+      method: POST
+      url: https://container.googleapis.com/v1/projects/{{ workload.project_id }}/locations/{{ workload.region }}/clusters
+      auth:
+        source: adc
+      headers:
+        Content-Type: application/json
+      body: |
+        {
+          "cluster": {
+            "name": "{{ workload.cluster_name }}",
+            "description": "GKE Autopilot cluster managed by NoETL IaP",
+            "autopilot": {
+              "enabled": true
+            },
+            "network": "projects/{{ workload.project_id }}/global/networks/{{ workload.network }}",
+            "subnetwork": "projects/{{ workload.project_id }}/regions/{{ workload.region }}/subnetworks/{{ workload.subnetwork }}",
+            "releaseChannel": {
+              "channel": "{{ workload.release_channel }}"
+            },
+            "privateClusterConfig": {
+              "enablePrivateNodes": {{ workload.enable_private_nodes | lower }},
+              "enablePrivateEndpoint": {{ workload.enable_private_endpoint | lower }},
+              "masterIpv4CidrBlock": "{{ workload.master_ipv4_cidr }}"
+            },
+            "ipAllocationPolicy": {
+              "useIpAliases": true
+            },
+            "resourceLabels": {
+              "managed-by": "noetl-iap",
+              "workspace": "{{ workload.workspace }}"
+            }
+          }
+        }
+    vars:
+      operation_name: "{{ result.body.name | default('') }}"
+      create_status: "{{ result.status }}"
+    case:
+      - when: "{{ vars.create_status }} == 200"
+        then:
+          - step: wait_for_operation
+      - when: "true"
+        then:
+          - step: create_error
+
+  - step: create_error
+    desc: Handle cluster creation error
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "ERROR: Failed to create cluster"
+          echo "Status: {{ vars.create_status }}"
+          echo ""
+          echo "Common issues:"
+          echo "  - Insufficient permissions (need roles/container.admin)"
+          echo "  - Container API not enabled"
+          echo "  - Network/subnet doesn't exist"
+          echo "  - CIDR range conflicts"
+          exit 1
+    next:
+      - step: end
+
+  - step: wait_for_operation
+    desc: Wait for cluster creation to complete
+    tool:
+      kind: rhai
+      code: |
+        // Get GCP auth token
+        let token = get_gcp_token();
+        let url = `https://container.googleapis.com/v1/projects/${args.project_id}/locations/${args.region}/clusters/${args.cluster_name}`;
+        
+        log("");
+        log(`Cluster creation initiated. Operation: ${args.operation_name}`);
+        log("Waiting for cluster to be ready (this may take 5-10 minutes)...");
+        log("");
+        
+        let max_retries = 60;
+        let retry_interval = 10;
+        let retry_count = 0;
+        let final_status = "UNKNOWN";
+        
+        while retry_count < max_retries {
+          retry_count += 1;
+          
+          let response = http_get_auth(url, token);
+          
+          if response.status == 200 {
+            let cluster_status = response.body.status;
+            log(`[${timestamp()}] Cluster status: ${cluster_status} (attempt ${retry_count}/${max_retries})`);
+            
+            if cluster_status == "RUNNING" {
+              log("");
+              log("Cluster is now RUNNING");
+              final_status = "RUNNING";
+              break;
+            } else if cluster_status == "ERROR" || cluster_status == "DEGRADED" {
+              log("");
+              log(`ERROR: Cluster reached error state: ${cluster_status}`);
+              final_status = cluster_status;
+              throw `Cluster creation failed with status: ${cluster_status}`;
+            }
+            // Still provisioning
+          } else if response.status == 404 {
+            log(`[${timestamp()}] Cluster not yet visible (attempt ${retry_count}/${max_retries})`);
+          } else {
+            log(`[${timestamp()}] Unexpected response: ${response.status}`);
+          }
+          
+          sleep(retry_interval);
+        }
+        
+        if final_status != "RUNNING" {
+          throw `Timeout waiting for cluster after ${max_retries * retry_interval} seconds`;
+        }
+        
+        #{ status: final_status, attempts: retry_count }
+      args:
+        project_id: "{{ workload.project_id }}"
+        cluster_name: "{{ workload.cluster_name }}"
+        region: "{{ workload.region }}"
+        operation_name: "{{ vars.operation_name }}"
+    next:
+      - step: get_cluster_details
+
+  - step: get_cluster_details
+    desc: Get created cluster details
+    tool:
+      kind: http
+      method: GET
+      url: https://container.googleapis.com/v1/projects/{{ workload.project_id }}/locations/{{ workload.region }}/clusters/{{ workload.cluster_name }}
+      auth:
+        source: adc
+    vars:
+      current_state: "{{ result.body }}"
+      cluster_endpoint: "{{ result.body.endpoint | default('') }}"
+      cluster_status: "{{ result.body.status | default('UNKNOWN') }}"
+    next:
+      - step: save_state
+
+  - step: save_state
+    desc: Save cluster state to DuckDB
+    tool:
+      kind: duckdb
+      database: "{{ workload.state_database }}"
+      commands: |
+        INSERT INTO resources (
+          resource_id, type_id, name, project, region, 
+          desired_state, current_state, status, labels
+        )
+        VALUES (
+          '{{ vars.resource_id }}',
+          'container.googleapis.com/Cluster',
+          '{{ workload.cluster_name }}',
+          '{{ workload.project_id }}',
+          '{{ workload.region }}',
+          '{
+            "cluster_name": "{{ workload.cluster_name }}",
+            "region": "{{ workload.region }}",
+            "network": "{{ workload.network }}",
+            "release_channel": "{{ workload.release_channel }}",
+            "enable_private_nodes": {{ workload.enable_private_nodes | lower }}
+          }',
+          '{{ vars.current_state | tojson | default("{}") }}',
+          '{{ vars.cluster_status | default("pending") }}',
+          '{"managed-by": "noetl-iap", "workspace": "{{ workload.workspace }}"}'
+        )
+        ON CONFLICT (resource_id) DO UPDATE SET
+          current_state = EXCLUDED.current_state,
+          status = EXCLUDED.status,
+          updated_at = CURRENT_TIMESTAMP,
+          last_synced_at = CURRENT_TIMESTAMP;
+
+        -- Log the operation
+        INSERT INTO operations (
+          operation_id, resource_id, operation_type, status,
+          after_state, playbook_name
+        )
+        VALUES (
+          '{{ workload.project_id }}-{{ workload.cluster_name }}-' || strftime(CURRENT_TIMESTAMP, '%Y%m%d%H%M%S'),
+          '{{ vars.resource_id }}',
+          'create',
+          'completed',
+          '{{ vars.current_state | tojson | default("{}") }}',
+          'gke_autopilot'
+        );
+
+        SELECT 'State saved successfully' as message;
+    next:
+      - step: print_success
+
+  - step: update_state
+    desc: Update state for existing cluster
+    tool:
+      kind: duckdb
+      database: "{{ workload.state_database }}"
+      commands: |
+        INSERT INTO resources (
+          resource_id, type_id, name, project, region, 
+          desired_state, current_state, status, labels
+        )
+        VALUES (
+          '{{ vars.resource_id }}',
+          'container.googleapis.com/Cluster',
+          '{{ workload.cluster_name }}',
+          '{{ workload.project_id }}',
+          '{{ workload.region }}',
+          '{}',
+          '{{ vars.current_state | tojson | default("{}") }}',
+          '{{ vars.current_state.status | default("unknown") }}',
+          '{}'
+        )
+        ON CONFLICT (resource_id) DO UPDATE SET
+          current_state = EXCLUDED.current_state,
+          status = EXCLUDED.status,
+          updated_at = CURRENT_TIMESTAMP,
+          last_synced_at = CURRENT_TIMESTAMP;
+
+        SELECT 'State updated' as message;
+    next:
+      - step: end
+
+  - step: print_success
+    desc: Print success message
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "=========================================="
+          echo " GKE Autopilot Cluster Created"
+          echo "=========================================="
+          echo ""
+          echo "Cluster:   {{ workload.cluster_name }}"
+          echo "Project:   {{ workload.project_id }}"
+          echo "Region:    {{ workload.region }}"
+          echo "Status:    {{ vars.cluster_status }}"
+          echo "Endpoint:  {{ vars.cluster_endpoint }}"
+          echo ""
+          echo "To connect to the cluster:"
+          echo "  gcloud container clusters get-credentials {{ workload.cluster_name }} \\"
+          echo "    --region {{ workload.region }} \\"
+          echo "    --project {{ workload.project_id }}"
+          echo ""
+          echo "State saved to: {{ workload.state_database }}"
+          echo ""
+    next:
+      - step: end
+
+  - step: delete_cluster
+    desc: Delete GKE Autopilot cluster
+    tool:
+      kind: http
+      method: DELETE
+      url: https://container.googleapis.com/v1/projects/{{ workload.project_id }}/locations/{{ workload.region }}/clusters/{{ workload.cluster_name }}
+      auth:
+        source: adc
+    vars:
+      delete_status: "{{ result.status }}"
+      delete_operation: "{{ result.body.name | default('') }}"
+    case:
+      - when: "{{ vars.delete_status }} == 200"
+        then:
+          - step: wait_delete
+      - when: "{{ vars.delete_status }} == 404"
+        then:
+          - step: cluster_not_found
+      - when: "true"
+        then:
+          - step: delete_error
+
+  - step: cluster_not_found
+    desc: Cluster doesn't exist
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Cluster '{{ workload.cluster_name }}' not found in project '{{ workload.project_id }}'"
+          echo "Nothing to delete."
+    next:
+      - step: remove_from_state
+
+  - step: delete_error
+    desc: Handle delete error
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "ERROR: Failed to delete cluster"
+          echo "Status: {{ vars.delete_status }}"
+          exit 1
+    next:
+      - step: end
+
+  - step: wait_delete
+    desc: Wait for cluster deletion to complete
+    tool:
+      kind: rhai
+      code: |
+        // Get GCP auth token
+        let token = get_gcp_token();
+        let url = `https://container.googleapis.com/v1/projects/${args.project_id}/locations/${args.region}/clusters/${args.cluster_name}`;
+        
+        log("");
+        log(`Cluster deletion initiated. Operation: ${args.delete_operation}`);
+        log("Waiting for deletion to complete...");
+        log("");
+        
+        let max_retries = 60;
+        let retry_interval = 10;
+        let retry_count = 0;
+        
+        while retry_count < max_retries {
+          retry_count += 1;
+          
+          let response = http_get_auth(url, token);
+          
+          if response.status == 404 {
+            // Cluster is gone
+            log("");
+            log(`[${timestamp()}] Cluster deleted successfully`);
+            return #{ status: "DELETED", attempts: retry_count };
+          } else if response.status == 200 {
+            let cluster_status = response.body.status;
+            log(`[${timestamp()}] Cluster status: ${cluster_status} (attempt ${retry_count}/${max_retries})`);
+            
+            if cluster_status == "ERROR" {
+              throw "Cluster deletion failed";
+            }
+          } else {
+            // Check if error contains "not found"
+            if contains_any(response.body_raw, ["not found", "NOT_FOUND", "404"]) {
+              log("");
+              log(`[${timestamp()}] Cluster deleted successfully`);
+              return #{ status: "DELETED", attempts: retry_count };
+            }
+            log(`[${timestamp()}] Unexpected response: ${response.status}`);
+          }
+          
+          sleep(retry_interval);
+        }
+        
+        throw `Timeout waiting for cluster deletion after ${max_retries * retry_interval} seconds`;
+      args:
+        project_id: "{{ workload.project_id }}"
+        cluster_name: "{{ workload.cluster_name }}"
+        region: "{{ workload.region }}"
+        delete_operation: "{{ vars.delete_operation }}"
+    next:
+      - step: remove_from_state
+
+  - step: remove_from_state
+    desc: Remove cluster from state
+    tool:
+      kind: duckdb
+      database: "{{ workload.state_database }}"
+      commands: |
+        -- Log the delete operation
+        INSERT INTO operations (
+          operation_id, resource_id, operation_type, status,
+          playbook_name
+        )
+        SELECT 
+          '{{ workload.project_id }}-{{ workload.cluster_name }}-delete-' || strftime(CURRENT_TIMESTAMP, '%Y%m%d%H%M%S'),
+          '{{ vars.resource_id }}',
+          'delete',
+          'completed',
+          'gke_autopilot'
+        WHERE EXISTS (SELECT 1 FROM resources WHERE resource_id = '{{ vars.resource_id }}');
+
+        -- Delete the resource
+        DELETE FROM resources WHERE resource_id = '{{ vars.resource_id }}';
+
+        SELECT 'Resource removed from state' as message;
+    next:
+      - step: print_delete_success
+
+  - step: print_delete_success
+    desc: Print delete success message
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "=========================================="
+          echo " GKE Autopilot Cluster Deleted"
+          echo "=========================================="
+          echo ""
+          echo "Cluster:   {{ workload.cluster_name }}"
+          echo "Project:   {{ workload.project_id }}"
+          echo "Region:    {{ workload.region }}"
+          echo ""
+          echo "Resource removed from state database."
+          echo ""
+    next:
+      - step: end
+
+  - step: plan_changes
+    desc: Plan changes without applying
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Plan mode not yet fully implemented."
+          echo ""
+          echo "Would create GKE Autopilot cluster:"
+          echo "  - Name:           {{ workload.cluster_name }}"
+          echo "  - Project:        {{ workload.project_id }}"
+          echo "  - Region:         {{ workload.region }}"
+          echo "  - Network:        {{ workload.network }}"
+          echo "  - Release:        {{ workload.release_channel }}"
+          echo "  - Private Nodes:  {{ workload.enable_private_nodes }}"
+          echo ""
+    next:
+      - step: end
+
+  - step: end
+    desc: Workflow complete

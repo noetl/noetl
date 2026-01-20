@@ -4,6 +4,9 @@ metadata:
   name: nats_automation
   path: automation/infrastructure/nats
 
+executor:
+  profile: local
+  version: noetl-runtime/1
 workload:
   action: help  # deploy, undeploy, status, health, logs, streams, monitoring, connect, test, restart, port-forward
 

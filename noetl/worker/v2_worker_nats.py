@@ -1,13 +1,13 @@
 """
 NoETL V2 Worker with NATS Integration
 
-Event-driven worker that:
-1. Subscribes to NATS for command notifications
-2. Fetches command details from server queue API  
+Pure event-sourced worker that:
+1. Subscribes to NATS JetStream for command notifications (event_id references)
+2. Fetches command details from GET /api/commands/{event_id} (reads command.issued event)
 3. Executes based on tool.kind
 4. Emits events back to server (POST /api/events)
 
-NO backward compatibility - pure V2 implementation.
+Single source of truth: event table. No queue table.
 """
 
 import asyncio
@@ -28,13 +28,13 @@ class V2Worker:
     """
     V2 Worker that receives command notifications from NATS and executes them.
     
-    Architecture:
-    - Subscribes to NATS subject for command notifications
-    - Receives lightweight message with {execution_id, queue_id, step, server_url}
-    - Fetches full command from server API
+    Architecture (Pure Event Sourcing):
+    - Subscribes to NATS JetStream for command notifications
+    - Receives lightweight message with {execution_id, event_id, command_id, step, server_url}
+    - Fetches full command from GET /api/commands/{event_id} (reads command.issued event)
     - Executes tool based on tool.kind
-    - Emits events to POST /api/events
-    - NEVER directly updates queue table (server does this via events)
+    - Emits events to POST /api/events (command.completed or command.failed)
+    - Single source of truth: event table. No queue table.
     """
     
     def __init__(
@@ -51,6 +51,87 @@ class V2Worker:
         self._running = False
         self._http_client: Optional[httpx.AsyncClient] = None
         self._nats_subscriber: Optional[NATSCommandSubscriber] = None
+        self._heartbeat_task: Optional[asyncio.Task] = None
+        self._registered = False
+    
+    async def _register_worker(self, server_url: str) -> bool:
+        """Register this worker in the runtime table via API."""
+        try:
+            hostname = os.environ.get("HOSTNAME", os.environ.get("POD_NAME", "unknown"))
+            register_url = f"{server_url.rstrip('/')}/api/worker/pool/register"
+            
+            payload = {
+                "name": self.worker_id,
+                "component_type": "worker_pool",
+                "runtime": "python",
+                "status": "ready",
+                "capacity": 1,  # Single worker instance
+                "pid": os.getpid(),
+                "hostname": hostname,
+                "labels": {
+                    "nats_consumer": os.environ.get("NOETL_WORKER_NATS_CONSUMER", "noetl_worker_pool"),
+                },
+                "meta": {
+                    "nats_url": self.nats_url,
+                    "started_at": datetime.now(timezone.utc).isoformat(),
+                }
+            }
+            
+            response = await self._http_client.post(register_url, json=payload, timeout=10.0)
+            if response.status_code == 200:
+                self._registered = True
+                logger.info(f"Worker {self.worker_id} registered in runtime table")
+                return True
+            else:
+                logger.warning(f"Worker registration failed: {response.status_code} - {response.text}")
+                return False
+        except Exception as e:
+            logger.warning(f"Worker registration error: {e}")
+            return False
+    
+    async def _deregister_worker(self, server_url: str) -> bool:
+        """Deregister this worker from the runtime table via API."""
+        try:
+            deregister_url = f"{server_url.rstrip('/')}/api/worker/pool/deregister"
+            
+            payload = {
+                "name": self.worker_id,
+                "component_type": "worker_pool",
+            }
+            
+            response = await self._http_client.post(deregister_url, json=payload, timeout=10.0)
+            if response.status_code == 200:
+                self._registered = False
+                logger.info(f"Worker {self.worker_id} deregistered from runtime table")
+                return True
+            else:
+                logger.warning(f"Worker deregistration failed: {response.status_code}")
+                return False
+        except Exception as e:
+            logger.warning(f"Worker deregistration error: {e}")
+            return False
+    
+    async def _heartbeat_loop(self, server_url: str):
+        """Background task to send heartbeat updates to runtime table."""
+        logger.info(f"Worker {self.worker_id} heartbeat loop started (interval: 15s)")
+        
+        while self._running:
+            try:
+                await asyncio.sleep(15)  # Heartbeat every 15 seconds
+                
+                if not self._running:
+                    break
+                
+                # Re-register acts as heartbeat (upsert updates heartbeat timestamp)
+                await self._register_worker(server_url)
+                
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.warning(f"Heartbeat error: {e}")
+                await asyncio.sleep(5)  # Back off on error
+        
+        logger.info(f"Worker {self.worker_id} heartbeat loop stopped")
     
     async def start(self):
         """Start the worker NATS subscription."""
@@ -71,11 +152,37 @@ class V2Worker:
         await self._nats_subscriber.connect()
         logger.info("Connected to NATS and subscribing to command notifications")
         
+        # Register worker in runtime table
+        server_url = self.server_url or worker_settings.server_url
+        if server_url:
+            await self._register_worker(server_url)
+            # Start heartbeat background task
+            self._heartbeat_task = asyncio.create_task(self._heartbeat_loop(server_url))
+        else:
+            logger.warning("No server_url configured - worker registration skipped")
+        
         # Subscribe to command notifications (this should never return)
         await self._nats_subscriber.subscribe(self._handle_command_notification)
     
     async def cleanup(self):
         """Cleanup resources."""
+        self._running = False
+        
+        # Cancel heartbeat task
+        if self._heartbeat_task:
+            self._heartbeat_task.cancel()
+            try:
+                await self._heartbeat_task
+            except asyncio.CancelledError:
+                pass
+        
+        # Deregister from runtime table
+        from noetl.core.config import get_worker_settings
+        worker_settings = get_worker_settings()
+        server_url = self.server_url or worker_settings.server_url
+        if server_url and self._http_client and self._registered:
+            await self._deregister_worker(server_url)
+        
         if self._nats_subscriber:
             await self._nats_subscriber.close()
         if self._http_client:
@@ -161,6 +268,31 @@ class V2Worker:
         
         logger.info("Stopped connection pool health monitor")
     
+    async def _check_execution_cancelled(self, server_url: str, execution_id: int) -> bool:
+        """
+        Check if an execution has been cancelled.
+        
+        Queries the server for execution.cancelled events.
+        
+        Returns True if execution is cancelled and should not proceed.
+        """
+        try:
+            # Query execution cancellation status via API
+            response = await self._http_client.get(
+                f"{server_url.rstrip('/')}/api/executions/{execution_id}/cancellation-check",
+                timeout=5.0
+            )
+            if response.status_code == 200:
+                data = response.json()
+                if data.get("cancelled", False):
+                    logger.info(f"[CANCEL] Execution {execution_id} has been cancelled - skipping command")
+                    return True
+            return False
+        except Exception as e:
+            # If we can't check, continue with execution (fail-open)
+            logger.warning(f"[CANCEL] Could not check cancellation status for {execution_id}: {e}")
+            return False
+    
     async def _handle_command_notification(self, notification: dict):
         """
         Handle command notification from NATS (Event-Driven).
@@ -183,6 +315,11 @@ class V2Worker:
                 
                 logger.info(f"[EVENT] Worker {self.worker_id} received notification: exec={execution_id}, command={command_id}, step={step}")
                 
+                # Check if execution has been cancelled before claiming
+                if await self._check_execution_cancelled(server_url, execution_id):
+                    logger.info(f"[CANCEL] Execution {execution_id} cancelled - skipping command {command_id}")
+                    return
+                
                 # Attempt to claim the command atomically
                 claimed = await self._claim_command(server_url, execution_id, command_id)
                 
@@ -191,6 +328,16 @@ class V2Worker:
                     return
                 
                 logger.info(f"[EVENT] Worker {self.worker_id} claimed command {command_id}")
+                
+                # Check again after claiming (in case cancellation happened during claim)
+                if await self._check_execution_cancelled(server_url, execution_id):
+                    logger.info(f"[CANCEL] Execution {execution_id} cancelled after claim - aborting command {command_id}")
+                    await self._emit_event(
+                        server_url, execution_id, step, "command.cancelled",
+                        {"command_id": command_id, "reason": "Execution cancelled"},
+                        actionable=False, informative=True
+                    )
+                    return
                 
                 # Fetch command details from command.issued event
                 command = await self._fetch_command_details(server_url, event_id)
@@ -201,7 +348,11 @@ class V2Worker:
                     return
                 
                 # Execute the command
+                import time
+                t_command_start = time.perf_counter()
                 await self._execute_command(command, server_url, command_id)
+                t_command_end = time.perf_counter()
+                logger.info(f"[PERF] _execute_command for {step} took {t_command_end - t_command_start:.4f}s")
                 
             except Exception as e:
                 logger.exception(f"Error handling command notification: {e}")
@@ -210,8 +361,7 @@ class V2Worker:
         """
         Atomically claim a command by emitting command.claimed event.
         
-        Uses idempotent event insertion - if another worker already claimed,
-        the INSERT will fail and we return False.
+        Server checks if command is already claimed - returns 409 Conflict if so.
         
         Returns True if this worker successfully claimed the command.
         """
@@ -235,11 +385,12 @@ class V2Worker:
             )
             
             if response.status_code == 200:
-                result = response.json()
-                # If commands_generated > 0 or status is "ok", we claimed it
-                # The server should prevent duplicate claims via unique constraint
                 logger.info(f"[EVENT] Successfully claimed command {command_id}")
                 return True
+            elif response.status_code == 409:
+                # Command already claimed by another worker - this is expected in multi-worker setup
+                logger.info(f"[EVENT] Command {command_id} already claimed by another worker, skipping")
+                return False
             else:
                 logger.warning(f"[EVENT] Failed to claim command {command_id}: {response.status_code}")
                 return False
@@ -299,26 +450,263 @@ class V2Worker:
         except Exception as e:
             logger.error(f"[EVENT] Failed to emit command.failed: {e}")
     
-    async def _fetch_command(self, server_url: str, queue_id: int) -> Optional[dict]:
+    async def _fetch_execution_variables(
+        self,
+        server_url: str,
+        execution_id: int
+    ) -> dict:
         """
-        DEPRECATED: Old queue-based command fetching.
+        Fetch all execution variables from server API.
         
-        Kept for backward compatibility but should not be used in event-driven architecture.
-        
-        Uses SELECT FOR UPDATE SKIP LOCKED pattern for distributed queue processing.
-        This ensures:
-        1. Row-level locking prevents multiple workers from processing same command
-        2. SKIP LOCKED allows workers to skip already-locked rows
-        3. Transaction isolation ensures visibility after commit
-        
-        Implements retry logic to handle PostgreSQL connection pooling delays.
-        
-        Returns command dict or None if not available.
+        Returns dict with variable names as keys and their values.
+        Used for case condition evaluation when variables are referenced.
         """
-        logger.info(
-            f"[QUEUE] Queue subsystem removed; _fetch_command is a no-op for queue_id={queue_id}"
-        )
+        import httpx
+        
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.get(
+                    f"{server_url}/api/vars/{execution_id}",
+                    headers={"Content-Type": "application/json"}
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    # Extract just the values from metadata structure
+                    # API returns: {variables: {name: {value, type, source_step, ...}}}
+                    variables = data.get('variables', {})
+                    return {name: meta.get('value') for name, meta in variables.items()}
+                else:
+                    logger.warning(f"[VARS] Failed to fetch variables: {response.status_code}")
+                    return {}
+        except Exception as e:
+            logger.error(f"[VARS] Error fetching variables: {e}")
+            return {}
+    
+    async def _evaluate_case_blocks_with_event(
+        self,
+        case_blocks: list,
+        response: dict,
+        render_context: dict,
+        server_url: str,
+        execution_id: int,
+        step: str,
+        event_name: str = "call.done",
+        error: str = None
+    ) -> dict | None:
+        """
+        Enhanced case evaluation with explicit event context.
+        
+        Evaluates case conditions against:
+        - Event context (event.name == 'call.done' or 'call.error')
+        - Data context (response.status_code, result.field, error, etc.)
+        
+        This allows case blocks to handle both success and error scenarios:
+        
+        case:
+          - when: "{{ event.name == 'call.error' and response.status_code == 429 }}"
+            then:
+              retry:
+                delay: "{{ response.headers.get('Retry-After', 60) }}"
+          - when: "{{ event.name == 'call.done' }}"
+            then:
+              sink: ...
+        
+        Args:
+            case_blocks: List of case conditions
+            response: Tool response/result
+            render_context: Full render context
+            server_url: Server API URL
+            execution_id: Execution ID
+            step: Step name
+            event_name: Event name ('call.done' or 'call.error')
+            error: Optional error message for call.error events
+            
+        Returns:
+            Action dict {type: 'next'|'retry'|'sink', details: {...}} or None
+        """
+        from jinja2 import Environment
+        
+        if not case_blocks or not isinstance(case_blocks, list):
+            return None
+        
+        logger.info(f"[CASE-EVAL] Evaluating {len(case_blocks)} case blocks | event={event_name} | has_error={error is not None}")
+        
+        # Create Jinja environment for condition evaluation
+        jinja_env = Environment()
+        
+        # Build hybrid evaluation context with both event and data
+        eval_context = {
+            **render_context,
+            'response': response,
+            'result': response,
+            'this': response,
+            'event': {
+                'name': event_name,  # 'call.done' or 'call.error'
+                'type': 'tool.completed' if event_name == 'call.done' else 'tool.error',
+                'step': step
+            },
+            'error': error
+        }
+        
+        # Add HTTP-specific context if available
+        if isinstance(response, dict):
+            # Add status_code to top level for convenience
+            if 'status_code' in response:
+                eval_context['status_code'] = response['status_code']
+            # Add data.status_code for nested HTTP responses
+            if isinstance(response.get('data'), dict) and 'status_code' in response['data']:
+                eval_context['status_code'] = response['data']['status_code']
+        
+        # Track if we need to fetch variables from server
+        variables_fetched = False
+        
+        # Check each case block
+        for idx, case in enumerate(case_blocks):
+            if not isinstance(case, dict):
+                continue
+            
+            when_condition = case.get('when')
+            then_block = case.get('then')
+            
+            if not when_condition or not then_block:
+                continue
+            
+            # Evaluate condition with hybrid context (with retry on missing variables)
+            max_retries = 2  # Allow one retry with server variable lookup
+            for attempt in range(max_retries):
+                try:
+                    template = jinja_env.from_string(when_condition)
+                    condition_result = template.render(eval_context)
+                    
+                    # Parse boolean result (Jinja2 returns string)
+                    matches = condition_result.strip().lower() in ['true', '1', 'yes']
+                    
+                    logger.info(f"[CASE-EVAL] Case {idx} condition: {when_condition[:100]}... = {matches}")
+                    
+                    if not matches:
+                        # Condition not met - break retry loop and try next case
+                        break
+                    
+                    # Case matched - extract action
+                    logger.info(f"[CASE-EVAL] Case {idx} matched (event={event_name})! Extracting action")
+                    
+                    # Normalize then_block to dict format
+                    then_actions = then_block if isinstance(then_block, dict) else {}
+                    
+                    # Check for routing actions (next, retry)
+                    if 'next' in then_actions:
+                        next_steps = then_actions['next']
+                        if isinstance(next_steps, list) and len(next_steps) > 0:
+                            return {
+                                'type': 'next',
+                                'steps': next_steps,
+                                'case_index': idx,
+                                'triggered_by': event_name
+                            }
+                    
+                    if 'retry' in then_actions:
+                        retry_config = then_actions['retry']
+                        return {
+                            'type': 'retry',
+                            'config': retry_config,
+                            'case_index': idx,
+                            'triggered_by': event_name
+                        }
+                    
+                    # Check for set action (update variables)
+                    if 'set' in then_actions:
+                        set_config = then_actions['set']
+                        logger.info(f"[CASE-EVAL] Case {idx} has set action - updating variables")
+                        # Set actions are handled by server after event processing
+                        # Include in case action for server to process
+                        return {
+                            'type': 'set',
+                            'config': set_config,
+                            'case_index': idx,
+                            'triggered_by': event_name
+                        }
+                    
+                    # Check for sink action (handled separately)
+                    if 'sink' in then_actions:
+                        logger.info(f"[CASE-EVAL] Case {idx} has sink action - will execute via _execute_case_sinks")
+                        # Execute sink immediately
+                        await self._execute_case_sinks(
+                            [case],
+                            response,
+                            render_context,
+                            server_url,
+                            execution_id,
+                            step
+                        )
+                        # Return None to continue normal flow (sink doesn't affect routing)
+                        return None
+                    
+                    # Successfully evaluated - break retry loop
+                    break
+                    
+                except Exception as e:
+                    # Check if error is due to missing variable reference
+                    error_msg = str(e)
+                    if ('undefined' in error_msg.lower() or 'not defined' in error_msg.lower()) and attempt == 0 and not variables_fetched:
+                        # First attempt failed due to missing variable - fetch from server
+                        logger.warning(f"[CASE-EVAL] Missing variable in condition, fetching from server: {error_msg}")
+                        
+                        # Fetch variables from server API
+                        server_vars = await self._fetch_execution_variables(server_url, execution_id)
+                        
+                        if server_vars:
+                            logger.info(f"[CASE-EVAL] Fetched {len(server_vars)} variables from server: {list(server_vars.keys())}")
+                            # Merge into eval_context under 'vars' namespace
+                            eval_context['vars'] = server_vars
+                            variables_fetched = True
+                            # Continue to retry with enriched context
+                            continue
+                        else:
+                            logger.error(f"[CASE-EVAL] Failed to fetch variables from server")
+                            break
+                    else:
+                        # Other error or retry exhausted
+                        logger.error(f"[CASE-EVAL] Error evaluating case {idx} (attempt {attempt + 1}): {e}")
+                        break
+        
+        # No matching case with routing action
+        logger.info(f"[CASE-EVAL] No matching case with routing action found for event={event_name}")
         return None
+    
+    async def _evaluate_case_blocks(
+        self,
+        case_blocks: list,
+        response: dict,
+        render_context: dict,
+        server_url: str,
+        execution_id: int,
+        step: str
+    ) -> dict | None:
+        """
+        Hybrid case evaluation: Worker-side evaluation with both event and data context.
+        
+        Evaluates case conditions against:
+        - Event context (event.name, event.type, etc.)
+        - Data context (response.status_code, result.field, error, etc.)
+        
+        Returns action to take: {type: 'next'|'retry'|'sink', details: {...}}
+        If no case matches or only sink actions, returns None.
+        
+        NOTE: This is a backward-compatible wrapper. New code should use
+        _evaluate_case_blocks_with_event for explicit event context.
+        """
+        # Delegate to enhanced method with default call.done context
+        return await self._evaluate_case_blocks_with_event(
+            case_blocks=case_blocks,
+            response=response,
+            render_context=render_context,
+            server_url=server_url,
+            execution_id=execution_id,
+            step=step,
+            event_name="call.done",
+            error=response.get('error') if isinstance(response, dict) else None
+        )
     
     async def _fetch_execution_variables(
         self,
@@ -716,7 +1104,11 @@ class V2Worker:
             )
             
             # Execute tool
+            import time
+            t_tool_start = time.perf_counter()
             response = await self._execute_tool(tool_kind, tool_config, args, step, render_context)
+            t_tool_end = time.perf_counter()
+            logger.info(f"[PERF] Tool execution for {step} took {t_tool_end - t_tool_start:.4f}s")
             
             # CRITICAL: Log case blocks at INFO level for debugging
             logger.info(f"[CASE-CHECK] After tool execution for step: {step} | case_blocks present: {case_blocks is not None} | type: {type(case_blocks)}")
@@ -734,24 +1126,48 @@ class V2Worker:
 
             logger.debug(f"[DEBUG] context has_case={'case' in context} | case_blocks={case_blocks is not None} | case_count={len(case_blocks) if case_blocks else 0}")
             
+            # Check if tool returned error status FIRST (before case evaluation)
+            # This allows case blocks to handle errors via call.error event
+            tool_error = None
+            error_response = None
+            if isinstance(response, dict):
+                if response.get('status') == 'error':
+                    tool_error = response.get('error', 'Tool returned error status')
+                    error_response = response
+                # Also check nested data errors (for tools that return {data: {...}})
+                elif isinstance(response.get('data'), dict):
+                    for key, value in response['data'].items():
+                        if isinstance(value, dict) and value.get('status') == 'error':
+                            tool_error = f"{key}: {value.get('message', 'Unknown error')}"
+                            error_response = response
+                            break
+            
             # HYBRID CASE EVALUATION: Worker-side evaluation with both event and data context
+            # Evaluate case blocks for BOTH success (call.done) and error (call.error) scenarios
             case_action = None
             if case_blocks:
-                logger.info(f"[CASE-CHECK] Evaluating case blocks for {step}")
-                case_action = await self._evaluate_case_blocks(
+                logger.info(f"[CASE-CHECK] Evaluating case blocks for {step} | has_error={tool_error is not None}")
+                
+                # Build evaluation context based on success or error
+                eval_event_name = "call.error" if tool_error else "call.done"
+                eval_response = error_response if tool_error else response
+                
+                case_action = await self._evaluate_case_blocks_with_event(
                     case_blocks,
-                    response,
+                    eval_response,
                     render_context,
                     server_url,
                     execution_id,
-                    step
+                    step,
+                    event_name=eval_event_name,
+                    error=tool_error
                 )
                 
                 # If case action resulted in routing (next/retry), report and handle
                 if case_action and case_action.get('type') in ['next', 'retry']:
                     logger.info(f"[CASE-ACTION] Case evaluation triggered {case_action['type']} action for {step}")
                     
-                    # Report case action to server via event
+                    # Report case action to server via event - this is ACTIONABLE
                     await self._emit_event(
                         server_url,
                         execution_id,
@@ -759,18 +1175,38 @@ class V2Worker:
                         "case.evaluated",
                         {
                             "action": case_action,
-                            "result": response
-                        }
+                            "result": eval_response,
+                            "triggered_by": eval_event_name
+                        },
+                        actionable=True,  # Server should process this for routing
+                        informative=True
                     )
                     
-                    # For next actions, report as call.done and let server handle routing
-                    await self._emit_event(
-                        server_url,
-                        execution_id,
-                        step,
-                        "call.done",
-                        response
-                    )
+                    # Emit appropriate event based on success or error
+                    if tool_error:
+                        await self._emit_event(
+                            server_url,
+                            execution_id,
+                            step,
+                            "call.error",
+                            {
+                                "error": tool_error,
+                                "response": error_response,
+                                "case_handled": True
+                            },
+                            actionable=True,  # Case evaluated - server may route/retry
+                            informative=True
+                        )
+                    else:
+                        await self._emit_event(
+                            server_url,
+                            execution_id,
+                            step,
+                            "call.done",
+                            response,
+                            actionable=True,
+                            informative=True
+                        )
                     
                     await self._emit_event(
                         server_url,
@@ -778,10 +1214,12 @@ class V2Worker:
                         step,
                         "step.exit",
                         {
-                            "status": "COMPLETED",
-                            "result": response,
+                            "status": "COMPLETED" if not tool_error else "CASE_HANDLED",
+                            "result": eval_response,
                             "case_action": case_action
-                        }
+                        },
+                        actionable=True,  # Server should handle routing
+                        informative=True
                     )
                     
                     # Emit command.completed
@@ -794,37 +1232,30 @@ class V2Worker:
                             {
                                 "command_id": command_id,
                                 "worker_id": self.worker_id,
-                                "result": response,
+                                "result": eval_response,
                                 "case_action": case_action
-                            }
+                            },
+                            actionable=False,  # Informational - case.evaluated has action
+                            informative=True
                         )
                     
                     logger.info(f"[EVENT] Completed {step} with case action for execution {execution_id}")
                     return  # Exit - server will handle routing based on case_action
             
-            # Check if tool returned error status (only if no case action handled it)
-            tool_error = None
-            if isinstance(response, dict):
-                if response.get('status') == 'error':
-                    tool_error = response.get('error', 'Tool returned error status')
-                # Also check nested data errors (for tools that return {data: {...}})
-                elif isinstance(response.get('data'), dict):
-                    for key, value in response['data'].items():
-                        if isinstance(value, dict) and value.get('status') == 'error':
-                            tool_error = f"{key}: {value.get('message', 'Unknown error')}"
-                            break
-            
+            # No case action handled it - check for unhandled tool errors
             if tool_error:
-                # Tool returned error - treat as failure
+                # Tool returned error - treat as failure (no case handled it)
                 logger.error(f"Tool execution failed for {step}: {tool_error}")
                 
-                # Emit call.error with error payload
+                # Emit call.error with error payload - ACTIONABLE for server to handle
                 await self._emit_event(
                     server_url,
                     execution_id,
                     step,
                     "call.error",
-                    {"error": tool_error}
+                    {"error": tool_error, "response": error_response},
+                    actionable=True,  # Server should evaluate case blocks or fail
+                    informative=True
                 )
                 
                 # Emit step.exit with failed status
@@ -836,8 +1267,10 @@ class V2Worker:
                     {
                         "status": "FAILED",  # Uppercase to match database status values
                         "error": tool_error,
-                        "result": response
-                    }
+                        "result": error_response
+                    },
+                    actionable=True,  # Server may want to handle failure
+                    informative=True
                 )
                 
                 # Emit command.failed event
@@ -851,8 +1284,10 @@ class V2Worker:
                             "command_id": command_id,
                             "worker_id": self.worker_id,
                             "error": tool_error,
-                            "result": response
-                        }
+                            "result": error_response
+                        },
+                        actionable=False,  # Informational
+                        informative=True
                     )
                 
                 logger.error(f"[EVENT] Failed {step} for execution {execution_id}" + (f" command={command_id}" if command_id else ""))
@@ -860,13 +1295,15 @@ class V2Worker:
             
             # Tool succeeded - emit success events with error recovery
             try:
-                # Emit call.done event
+                # Emit call.done event - ACTIONABLE so server evaluates routing
                 await self._emit_event(
                     server_url,
                     execution_id,
                     step,
                     "call.done",
-                    {"response": response}
+                    {"response": response},
+                    actionable=True,  # Server should evaluate next/case routing
+                    informative=True
                 )
                 
                 # Emit step.exit event
@@ -875,7 +1312,9 @@ class V2Worker:
                     execution_id,
                     step,
                     "step.exit",
-                    {"result": response, "status": "completed"}
+                    {"result": response, "status": "completed"},
+                    actionable=True,  # Server evaluates routing
+                    informative=True
                 )
                 
                 # Emit command.completed event (for event-driven tracking)
@@ -889,7 +1328,9 @@ class V2Worker:
                             "command_id": command_id,
                             "worker_id": self.worker_id,
                             "result": response
-                        }
+                        },
+                        actionable=False,  # Informational only
+                        informative=True
                     )
                 
                 logger.info(f"[EVENT] Completed {step} for execution {execution_id}" + (f" command={command_id}" if command_id else ""))
@@ -977,6 +1418,8 @@ class V2Worker:
         - Template rendering
         - Error handling
         """
+        import time
+        t_imports_start = time.perf_counter()
         # Import tool executors
         from noetl.tools import (
             http,
@@ -1000,6 +1443,8 @@ class V2Worker:
         from noetl.tools.python import execute_python_task_async
         from jinja2 import Environment, BaseLoader
         from noetl.worker.keychain_resolver import populate_keychain_context
+        t_imports_end = time.perf_counter()
+        logger.info(f"[PERF] _execute_tool imports took {t_imports_end - t_imports_start:.4f}s")
         
         # Use render_context from engine (includes workload, step results, execution_id, etc.)
         # This allows plugins to render Jinja2 templates with full state
@@ -1031,6 +1476,8 @@ class V2Worker:
             worker_settings = get_worker_settings()
             refresh_threshold = worker_settings.keychain_refresh_threshold
             
+            import time
+            k_start = time.perf_counter()
             context = await populate_keychain_context(
                 task_config=task_config_combined,
                 context=context,
@@ -1039,7 +1486,11 @@ class V2Worker:
                 api_base_url=server_url,
                 refresh_threshold_seconds=refresh_threshold
             )
+            k_end = time.perf_counter()
+            logger.info(f"[PERF] populate_keychain_context took {k_end - k_start:.4f}s")
         
+        import time
+        t_jinja_start = time.perf_counter()
         from jinja2 import Environment, BaseLoader
         from noetl.core.dsl.render import add_b64encode_filter
         from noetl.core.auth.token_resolver import register_token_functions
@@ -1047,6 +1498,8 @@ class V2Worker:
         jinja_env = Environment(loader=BaseLoader())
         jinja_env = add_b64encode_filter(jinja_env)  # Add custom filters including tojson
         register_token_functions(jinja_env, context)
+        t_jinja_end = time.perf_counter()
+        logger.info(f"[PERF] Jinja2 setup took {t_jinja_end - t_jinja_start:.4f}s")
         
         # Map V2 config format to plugin task_config format
         # Plugins use different field names than V2 DSL
@@ -1667,20 +2120,51 @@ class V2Worker:
         execution_id: int,
         step: str,
         name: str,
-        payload: dict
+        payload: dict,
+        actionable: bool = False,
+        informative: bool = True,
+        correlation: dict = None,
+        inputs: dict = None
     ):
-        """Emit an event to the server using the v2 API schema with retry logic."""
+        """
+        Emit an event to the server using the v2 API schema with retry logic.
+        
+        Implements ResultRef pattern for efficient result storage:
+        - Small results (< inline_max_bytes) stored directly in output_inline
+        - Large results stored as artifacts with output_ref pointer
+        - Correlation keys (iteration, page, attempt) for tracking
+        - Actionable/informative flags for control flow
+        
+        Args:
+            server_url: Server API URL
+            execution_id: Execution identifier
+            step: Step name
+            name: Event name (e.g., call.done, step.exit)
+            payload: Event payload data
+            actionable: If True, server should take action (evaluate case, route)
+            informative: If True, event is for logging/observability
+            correlation: Optional correlation keys dict (iteration, page, attempt)
+            inputs: Optional rendered input snapshot
+        """
         if not self._http_client:
             raise RuntimeError("HTTP client not initialized")
         
         event_url = f"{server_url.rstrip('/')}/api/events"
+        
+        # Build event data - server handles result storage (kind: data|ref|refs)
         event_data = {
             "execution_id": str(execution_id),
             "step": step,
             "name": name,
             "payload": payload,
-            "worker_id": self.worker_id
+            "worker_id": self.worker_id,
+            "actionable": actionable,
+            "informative": informative,
         }
+            
+        # Add correlation keys if provided
+        if correlation:
+            event_data["correlation"] = correlation
         
         max_retries = 3
         base_delay = 0.5

@@ -1,0 +1,198 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: state_inspect
+  path: iap/gcp/state-inspect
+  description: Inspect IaP state database
+  labels:
+    iap.noetl.io/provider: gcp
+    iap.noetl.io/category: state-management
+
+executor:
+  profile: local
+  version: noetl-runtime/1
+workload:
+  # State database location
+  state_database: /tmp/noetl-iap-state.duckdb
+  
+  # Query type: all, resources, operations, drift, summary
+  query: summary
+  
+  # Optional filters
+  resource_type: ""
+  project: ""
+  status: ""
+
+workflow:
+  - step: start
+    desc: Initialize state inspection
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "IaP State Inspector"
+          echo "==================="
+          echo "Database: {{ workload.state_database }}"
+          echo "Query:    {{ workload.query }}"
+    case:
+      - when: "{{ workload.query }} == summary"
+        then:
+          - step: show_summary
+      - when: "{{ workload.query }} == resources"
+        then:
+          - step: list_resources
+      - when: "{{ workload.query }} == operations"
+        then:
+          - step: list_operations
+      - when: "{{ workload.query }} == drift"
+        then:
+          - step: list_drift
+      - when: "{{ workload.query }} == all"
+        then:
+          - step: show_all
+      - else:
+          - step: show_help
+
+  - step: show_help
+    desc: Show available queries
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Usage: noetl run state_inspect.yaml --set query=<type>"
+          echo ""
+          echo "Available queries:"
+          echo "  summary    - Overview of managed resources (default)"
+          echo "  resources  - List all managed resources"
+          echo "  operations - List recent operations"
+          echo "  drift      - List unresolved drift"
+          echo "  all        - Show everything"
+          echo ""
+          echo "Filters (optional):"
+          echo "  --set resource_type=container.googleapis.com/Cluster"
+          echo "  --set project=mestumre-dev"
+          echo "  --set status=running"
+    next:
+      - step: end
+
+  - step: show_summary
+    desc: Show state summary
+    tool:
+      kind: duckdb
+      database: "{{ workload.state_database }}"
+      commands: |
+        SELECT '=== Resource Summary ===' as header;
+
+        SELECT 
+          type_id as resource_type,
+          COUNT(*) as total,
+          SUM(CASE WHEN status = 'running' OR status = 'RUNNING' THEN 1 ELSE 0 END) as running,
+          SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
+          SUM(CASE WHEN status = 'error' OR status = 'ERROR' THEN 1 ELSE 0 END) as errors
+        FROM resources
+        GROUP BY type_id;
+
+        SELECT '=== Recent Operations ===' as header;
+
+        SELECT 
+          operation_type,
+          status,
+          resource_id,
+          started_at
+        FROM operations
+        ORDER BY started_at DESC
+        LIMIT 5;
+
+        SELECT '=== Pending Drift ===' as header;
+
+        SELECT COUNT(*) as unresolved_drift FROM drift_records WHERE resolved_at IS NULL;
+    next:
+      - step: end
+
+  - step: list_resources
+    desc: List all managed resources
+    tool:
+      kind: duckdb
+      database: "{{ workload.state_database }}"
+      commands: |
+        SELECT 
+          resource_id,
+          name,
+          type_id as type,
+          project,
+          region,
+          status,
+          updated_at,
+          last_synced_at
+        FROM resources
+        WHERE 1=1
+          {% if workload.resource_type %}AND type_id = '{{ workload.resource_type }}'{% endif %}
+          {% if workload.project %}AND project = '{{ workload.project }}'{% endif %}
+          {% if workload.status %}AND status = '{{ workload.status }}'{% endif %}
+        ORDER BY updated_at DESC;
+    next:
+      - step: end
+
+  - step: list_operations
+    desc: List recent operations
+    tool:
+      kind: duckdb
+      database: "{{ workload.state_database }}"
+      commands: |
+        SELECT 
+          operation_id,
+          operation_type,
+          status,
+          resource_id,
+          started_at,
+          completed_at,
+          error_message
+        FROM operations
+        ORDER BY started_at DESC
+        LIMIT 20;
+    next:
+      - step: end
+
+  - step: list_drift
+    desc: List unresolved drift
+    tool:
+      kind: duckdb
+      database: "{{ workload.state_database }}"
+      commands: |
+        SELECT 
+          drift_id,
+          resource_id,
+          drift_type,
+          field_path,
+          expected_value,
+          actual_value,
+          detected_at
+        FROM drift_records
+        WHERE resolved_at IS NULL
+        ORDER BY detected_at DESC;
+    next:
+      - step: end
+
+  - step: show_all
+    desc: Show complete state
+    tool:
+      kind: duckdb
+      database: "{{ workload.state_database }}"
+      commands: |
+        SELECT '=== RESOURCES ===' as section;
+        SELECT * FROM resources ORDER BY updated_at DESC;
+
+        SELECT '=== OPERATIONS ===' as section;
+        SELECT * FROM operations ORDER BY started_at DESC LIMIT 50;
+
+        SELECT '=== DRIFT RECORDS ===' as section;
+        SELECT * FROM drift_records ORDER BY detected_at DESC;
+
+        SELECT '=== SNAPSHOTS ===' as section;
+        SELECT * FROM snapshots ORDER BY created_at DESC LIMIT 10;
+    next:
+      - step: end
+
+  - step: end
+    desc: Inspection complete

@@ -231,3 +231,90 @@ class SystemService:
             "file_path": str(MEMRAY_FILE_PATH) if MEMRAY_FILE_PATH else None,
             "start_time": PROFILING_START_TIME.isoformat() if PROFILING_START_TIME else None
         }
+
+    @staticmethod
+    async def init_database_schema() -> Dict[str, Any]:
+        """
+        Verify database connectivity and schema readiness.
+        
+        Pure event sourcing - we don't modify schema, just validate it exists.
+        Schema is managed externally (k8s init, migrations, etc).
+        
+        Returns:
+            Dictionary with validation status
+        """
+        from noetl.core.db.pool import get_pool_connection
+        from psycopg.rows import dict_row
+        
+        # Pure event sourcing: event table is the single source of truth
+        # runtime table stores server and worker pool registrations
+        required_tables = ["catalog", "credential", "event", "keychain", "runtime"]
+        
+        async with get_pool_connection() as conn:
+            async with conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute("""
+                    SELECT table_name 
+                    FROM information_schema.tables 
+                    WHERE table_schema = 'noetl' 
+                    AND table_type = 'BASE TABLE'
+                """)
+                rows = await cur.fetchall()
+                existing_tables = {row['table_name'] for row in rows}
+        
+        found = [t for t in required_tables if t in existing_tables]
+        missing = [t for t in required_tables if t not in existing_tables]
+        
+        if missing:
+            logger.warning(f"Missing tables: {missing}. Run schema DDL manually.")
+            return {
+                "status": "warning",
+                "message": f"Schema exists but missing tables: {missing}",
+                "tables": found,
+                "missing": missing
+            }
+        
+        logger.info("Database schema validated successfully")
+        return {
+            "status": "ok",
+            "message": "Database schema ready",
+            "tables": found
+        }
+
+    @staticmethod
+    async def validate_database_schema() -> Dict[str, Any]:
+        """
+        Validate that all required NoETL tables exist.
+        
+        Returns:
+            Dictionary with validation results
+        """
+        from noetl.core.db.pool import get_pool_connection
+        from psycopg.rows import dict_row
+        
+        # Pure event sourcing: event table is the single source of truth
+        # runtime table stores server and worker pool registrations
+        required_tables = ["catalog", "credential", "event", "keychain", "runtime"]
+        
+        async with get_pool_connection() as conn:
+            async with conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute("""
+                    SELECT table_name 
+                    FROM information_schema.tables 
+                    WHERE table_schema = 'noetl' 
+                    AND table_type = 'BASE TABLE'
+                """)
+                rows = await cur.fetchall()
+                existing_tables = {row['table_name'] for row in rows}
+        
+        found = [t for t in required_tables if t in existing_tables]
+        missing = [t for t in required_tables if t not in existing_tables]
+        
+        valid = len(missing) == 0
+        
+        return {
+            "status": "ok" if valid else "error",
+            "valid": valid,
+            "tables": found,
+            "missing": missing,
+            "all_tables": list(existing_tables)
+        }

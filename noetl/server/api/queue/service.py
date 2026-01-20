@@ -1,1 +1,0 @@
-"""Queue service removed."""
