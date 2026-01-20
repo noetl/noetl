@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.5.9](https://github.com/noetl/noetl/compare/v2.5.8...v2.5.9) (2026-01-20)
+
+### Bug Fixes
+
+* Make dummy changes in Dockerfile NOETL-6 ([7968ed7](https://github.com/noetl/noetl/commit/7968ed7f14f1c740381abbce9d09a63d0e5d246d))
+
 ## [2.5.8](https://github.com/noetl/noetl/compare/v2.5.7...v2.5.8) (2026-01-18)
 
 ### Bug Fixes
