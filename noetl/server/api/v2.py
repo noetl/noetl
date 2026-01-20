@@ -1,20 +1,22 @@
 """
-NoETL API Endpoints (v2 engine merged into primary API).
+NoETL API v2 - Pure Event Sourcing Architecture.
 
-This file exposes the v2 event-driven engine under the regular `/api` prefix
-so callers no longer need a `/v2` path. Legacy endpoints are superseded by
-these handlers; no backward compatibility is maintained.
+Single source of truth: noetl.event table
+- event.result stores either inline data OR reference (kind: data|ref|refs)
+- No queue tables, no projection tables
+- All state derived from events
+- NATS for command notifications only
 """
 
-import logging
 import os
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, model_validator
-from typing import Any, Optional
+from typing import Any, Optional, Literal
 from datetime import datetime, timezone
 from psycopg.types.json import Json
+from psycopg.rows import dict_row
 
-from noetl.core.dsl.v2.models import Event, Command
+from noetl.core.dsl.v2.models import Event
 from noetl.core.dsl.v2.engine import ControlFlowEngine, PlaybookRepo, StateStore
 from noetl.core.db.pool import get_pool_connection, get_snowflake_id
 from noetl.core.messaging import NATSCommandPublisher
@@ -22,7 +24,6 @@ from noetl.core.messaging import NATSCommandPublisher
 from noetl.core.logger import setup_logger
 logger = setup_logger(__name__, include_location=True)
 
-# Expose v2 engine on the primary API prefix (no "/v2" path).
 router = APIRouter(prefix="", tags=["api"])
 
 # Global engine components
@@ -38,7 +39,7 @@ def get_engine():
     
     if _engine is None:
         _playbook_repo = PlaybookRepo()
-        _state_store = StateStore(_playbook_repo)  # Pass playbook_repo for event sourcing
+        _state_store = StateStore(_playbook_repo)
         _engine = ControlFlowEngine(_playbook_repo, _state_store)
     
     return _engine
@@ -64,12 +65,12 @@ async def get_nats_publisher():
 # Request/Response Models
 # ============================================================================
 
-class StartExecutionRequest(BaseModel):
+class ExecuteRequest(BaseModel):
     """Request to start playbook execution."""
     path: Optional[str] = Field(None, description="Playbook catalog path")
     catalog_id: Optional[int] = Field(None, description="Catalog ID (alternative to path)")
     payload: dict[str, Any] = Field(default_factory=dict, description="Input payload")
-    parent_execution_id: Optional[int] = Field(None, description="Parent execution ID for sub-playbooks")
+    parent_execution_id: Optional[int] = Field(None, description="Parent execution ID")
     
     @model_validator(mode='after')
     def validate_path_or_catalog_id(self):
@@ -78,434 +79,434 @@ class StartExecutionRequest(BaseModel):
         return self
 
 
-class StartExecutionResponse(BaseModel):
+# Alias for backward compatibility with /api/run endpoint
+StartExecutionRequest = ExecuteRequest
+
+
+class ExecuteResponse(BaseModel):
     """Response for starting execution."""
-    execution_id: str = Field(..., description="Generated execution ID")
-    status: str = Field(..., description="Status (started)")
-    commands_generated: int = Field(..., description="Number of initial commands")
+    execution_id: str
+    status: str
+    commands_generated: int
 
 
 class EventRequest(BaseModel):
-    """Worker event."""
-    execution_id: str = Field(..., description="Execution ID")
-    step: str = Field(..., description="Step name")
-    name: str = Field(..., description="Event name (step.enter, call.done, step.exit)")
-    payload: dict[str, Any] = Field(default_factory=dict, description="Event data")
-    meta: Optional[dict[str, Any]] = Field(None, description="Event metadata")
-    worker_id: Optional[str] = Field(None, description="Worker ID")
+    """Worker event - reports task completion with result."""
+    execution_id: str
+    step: str
+    name: str  # step.enter, call.done, step.exit
+    payload: dict[str, Any] = Field(default_factory=dict)
+    meta: Optional[dict[str, Any]] = None
+    worker_id: Optional[str] = None
+    # ResultRef pattern
+    result_kind: Literal["data", "ref", "refs"] = "data"
+    result_uri: Optional[str] = None  # For kind=ref
+    event_ids: Optional[list[int]] = None  # For kind=refs
+    # Control flags (stored in meta column)
+    actionable: bool = True  # If True, server should take action (evaluate case, route)
+    informative: bool = True  # If True, event is for logging/observability
 
 
 class EventResponse(BaseModel):
     """Response for event."""
-    status: str = Field(..., description="Status (ok)")
-    commands_generated: int = Field(..., description="Commands generated")
+    status: str
+    event_id: int
+    commands_generated: int
 
 
 # ============================================================================
-# API Endpoints
+# Endpoints
 # ============================================================================
 
-@router.post("/execute", response_model=StartExecutionResponse)
-async def start_execution(req: StartExecutionRequest) -> StartExecutionResponse:
+@router.post("/execute", response_model=ExecuteResponse)
+async def execute(req: ExecuteRequest) -> ExecuteResponse:
     """
-    Start a new playbook execution.
+    Start playbook execution.
     
-    This is the entry point for triggering playbooks in v2.
+    Creates playbook.initialized event, emits command.issued events.
+    All state in event table - result column has kind: data|ref|refs.
     """
     try:
         engine = get_engine()
         
-        # Get catalog_id and path
+        # Resolve catalog
         async with get_pool_connection() as conn:
-            async with conn.cursor() as cur:
+            async with conn.cursor(row_factory=dict_row) as cur:
                 if req.catalog_id:
-                    # Get path from catalog_id
-                    await cur.execute("""
-                        SELECT path, catalog_id FROM noetl.catalog 
-                        WHERE catalog_id = %s
-                    """, (req.catalog_id,))
-                    result = await cur.fetchone()
-                    if not result:
-                        raise HTTPException(status_code=404, detail=f"Playbook not found with catalog_id: {req.catalog_id}")
-                    path = result['path']
-                    catalog_id = result['catalog_id']
+                    await cur.execute(
+                        "SELECT path, catalog_id FROM noetl.catalog WHERE catalog_id = %s",
+                        (req.catalog_id,)
+                    )
+                    row = await cur.fetchone()
+                    if not row:
+                        raise HTTPException(404, f"Playbook not found: catalog_id={req.catalog_id}")
+                    path, catalog_id = row['path'], row['catalog_id']
                 else:
-                    # Get catalog_id from path
-                    await cur.execute("""
-                        SELECT catalog_id, path FROM noetl.catalog 
-                        WHERE path = %s 
-                        ORDER BY version DESC 
-                        LIMIT 1
-                    """, (req.path,))
-                    result = await cur.fetchone()
-                    if not result:
-                        raise HTTPException(status_code=404, detail=f"Playbook not found: {req.path}")
-                    catalog_id = result['catalog_id']
-                    path = result['path']
+                    await cur.execute(
+                        "SELECT catalog_id, path FROM noetl.catalog WHERE path = %s ORDER BY version DESC LIMIT 1",
+                        (req.path,)
+                    )
+                    row = await cur.fetchone()
+                    if not row:
+                        raise HTTPException(404, f"Playbook not found: {req.path}")
+                    catalog_id, path = row['catalog_id'], row['path']
         
-        # Start execution (creates state, returns initial commands)
-        # Note: Keychain processing happens inside engine.start_execution
+        # Start execution
         execution_id, commands = await engine.start_execution(
-            path,
-            req.payload,
-            catalog_id,
-            req.parent_execution_id
+            path, req.payload, catalog_id, req.parent_execution_id
         )
         
-        # Get playbook.initialized event_id for tracing (root event)
-        playbook_init_event_id = None
-        root_event_id = None
+        # Get root event
         async with get_pool_connection() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute("""
-                    SELECT event_id FROM noetl.event
-                    WHERE execution_id = %s AND event_type = 'playbook.initialized'
-                    ORDER BY event_id ASC LIMIT 1
-                """, (int(execution_id),))
-                result = await cur.fetchone()
-                if result:
-                    playbook_init_event_id = result['event_id']
-                    root_event_id = result['event_id']  # First event is the root
+            async with conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute(
+                    "SELECT event_id FROM noetl.event WHERE execution_id = %s AND event_type = 'playbook.initialized' LIMIT 1",
+                    (int(execution_id),)
+                )
+                row = await cur.fetchone()
+                root_event_id = row['event_id'] if row else None
         
-        # Get NATS publisher
+        # Emit command.issued events
         nats_pub = await get_nats_publisher()
-        
-        # Server URL for worker API calls
         server_url = os.getenv("NOETL_SERVER_URL", "http://noetl.noetl.svc.cluster.local:8082")
+        command_events = []
         
-        # Emit command.issued events instead of queue table insertion
-        command_events = []  # Store (event_id, command) for NATS publishing after commit
         async with get_pool_connection() as conn:
-            async with conn.cursor() as cur:
-                for command in commands:
-                    # Generate unique command ID
-                    command_id = f"{execution_id}:{command.step}:{await get_snowflake_id()}"
-                    event_id = await get_snowflake_id()
+            async with conn.cursor(row_factory=dict_row) as cur:
+                for cmd in commands:
+                    cmd_id = f"{execution_id}:{cmd.step}:{await get_snowflake_id()}"
+                    evt_id = await get_snowflake_id()
                     
-                    # Build traceability metadata
+                    result = {
+                        "kind": "data",
+                        "data": {
+                            "tool_config": cmd.tool.config,
+                            "args": cmd.args or {},
+                            "render_context": cmd.render_context,
+                            "case": cmd.case,
+                        }
+                    }
                     meta = {
-                        "command_id": command_id,
-                        "step": command.step,
-                        "tool_kind": command.tool.kind,
-                        "priority": command.priority,
-                        "max_attempts": command.max_attempts or 3,
+                        "command_id": cmd_id,
+                        "step": cmd.step,
+                        "tool_kind": cmd.tool.kind,
+                        "max_attempts": cmd.max_attempts or 3,
                         "attempt": 1,
-                        "playbook_path": path,
-                        "catalog_id": str(catalog_id),
-                        "metadata": command.metadata,
-                        # Traceability fields
-                        "execution_id": str(execution_id),
-                        "root_event_id": str(root_event_id) if root_event_id else None,
-                        "event_chain": [str(root_event_id) if root_event_id else None, str(playbook_init_event_id) if playbook_init_event_id else None, str(event_id)]
-                    }
-                    
-                    # Ensure context has traceability fields
-                    # CRITICAL: Convert all IDs to strings to prevent JavaScript precision loss with Snowflake IDs
-                    context_data = {
-                        "tool_config": command.tool.config,
-                        "args": command.args or {},
-                        "render_context": command.render_context,
-                        "case": command.case,  # Include case blocks for worker-side execution
-                        # Add traceability to context for easy access
                         "execution_id": str(execution_id),
                         "catalog_id": str(catalog_id),
-                        "root_event_id": str(root_event_id) if root_event_id else None
                     }
                     
-                    # Insert command.issued event
+                    # Store actionable flag in meta column (not separate column)
+                    meta["actionable"] = True
+                    
                     await cur.execute("""
                         INSERT INTO noetl.event (
                             event_id, execution_id, catalog_id, event_type,
                             node_id, node_name, node_type, status,
-                            context, meta, parent_event_id, parent_execution_id,
+                            result, meta, parent_event_id, parent_execution_id,
                             created_at
                         ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """, (
-                        event_id,
-                        int(execution_id),
-                        catalog_id,
-                        "command.issued",
-                        command.step,
-                        command.step,
-                        command.tool.kind,
-                        "PENDING",
-                        Json(context_data),
-                        Json(meta),
-                        playbook_init_event_id,
-                        req.parent_execution_id,
+                        evt_id, int(execution_id), catalog_id, "command.issued",
+                        cmd.step, cmd.step, cmd.tool.kind, "PENDING",
+                        Json(result), Json(meta), root_event_id, req.parent_execution_id,
                         datetime.now(timezone.utc)
                     ))
-                    
-                    # Store for NATS publishing after commit
-                    command_events.append((event_id, command_id, command))
-                    logger.info(f"[EVENT] Emitted command.issued event_id={event_id} command_id={command_id} step={command.step} exec={execution_id}")
-                    
+                    command_events.append((evt_id, cmd_id, cmd))
+                
                 await conn.commit()
-                logger.info(f"[EVENT] Committed {len(command_events)} command.issued events for exec={execution_id}")
         
-        # Publish NATS notifications immediately after commit
-        # Workers will claim commands by emitting command.claimed events
-        for event_id, command_id, command in command_events:
-            logger.info(f"[NATS] Publishing notification for event_id={event_id} command_id={command_id} step={command.step}")
+        # NATS notifications
+        for evt_id, cmd_id, cmd in command_events:
             await nats_pub.publish_command(
                 execution_id=int(execution_id),
-                event_id=event_id,
-                command_id=command_id,
-                step=command.step,
+                event_id=evt_id,
+                command_id=cmd_id,
+                step=cmd.step,
                 server_url=server_url
             )
         
-        return StartExecutionResponse(
-            execution_id=execution_id,
-            status="started",
-            commands_generated=len(commands)
-        )
+        return ExecuteResponse(execution_id=execution_id, status="started", commands_generated=len(commands))
     
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Failed to start execution: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"execute failed: {e}", exc_info=True)
+        raise HTTPException(500, str(e))
 
 
-# ---------------------------------------------------------------------------
-# Compatibility aliases (UI still calling /api/v2/*). Forward to merged paths.
-# ---------------------------------------------------------------------------
-
-@router.post("/v2/execute", response_model=StartExecutionResponse)
-async def start_execution_compat(req: StartExecutionRequest) -> StartExecutionResponse:
-    return await start_execution(req)
+# Function alias for backward compatibility with /api/run endpoint
+async def start_execution(req: ExecuteRequest) -> ExecuteResponse:
+    """
+    Start playbook execution - function wrapper for endpoint.
+    Used by /api/run/playbook endpoint for backward compatibility.
+    """
+    return await execute(req)
 
 
 @router.get("/commands/{event_id}")
-async def get_command_details(event_id: int):
+async def get_command(event_id: int):
     """
     Get command details from command.issued event.
-    
-    Workers call this endpoint to fetch the full command configuration
-    after claiming a command via command.claimed event.
-    
-    Returns:
-        Command details including tool config, args, and render context
+    Workers call this to fetch command config after NATS notification.
     """
     try:
         async with get_pool_connection() as conn:
-            async with conn.cursor() as cur:
+            async with conn.cursor(row_factory=dict_row) as cur:
                 await cur.execute("""
-                    SELECT 
-                        execution_id,
-                        node_name as step,
-                        node_type as tool_kind,
-                        context,
-                        meta
+                    SELECT execution_id, node_name as step, node_type as tool_kind, result, meta, context
                     FROM noetl.event
                     WHERE event_id = %s AND event_type = 'command.issued'
                 """, (event_id,))
-                
                 row = await cur.fetchone()
+                
                 if not row:
-                    logger.error(f"Command.issued event not found for event_id={event_id}")
-                    raise HTTPException(
-                        status_code=404,
-                        detail=f"Command.issued event not found for event_id={event_id}"
-                    )
+                    raise HTTPException(404, f"command.issued event not found: {event_id}")
                 
-                # Row is a DictRow: {execution_id, step, tool_kind, context, meta}
-                logger.info(f"Fetched command for event_id={event_id}: step={row['step']}, tool={row['tool_kind']}")
+                # Extract context from result.data (where we stored it in execute)
+                result = row['result'] or {}
+                result_data = result.get('data', {})
                 
-                # Return command structure expected by worker
+                # Build context dict that worker expects
+                context = {
+                    "tool_config": result_data.get('tool_config', {}),
+                    "args": result_data.get('args', {}),
+                    "render_context": result_data.get('render_context', {}),
+                    "case": result_data.get('case'),
+                }
+                
                 return {
                     "execution_id": row['execution_id'],
                     "node_id": row['step'],
                     "node_name": row['step'],
                     "action": row['tool_kind'],
-                    "context": row['context'],
+                    "context": context,  # Worker expects this
                     "meta": row['meta']
                 }
-    
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to fetch command details: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/v2/commands/{event_id}")
-async def get_command_details_compat(event_id: int):
-    return await get_command_details(event_id)
+        logger.error(f"get_command failed: {e}", exc_info=True)
+        raise HTTPException(500, str(e))
 
 
 @router.post("/events", response_model=EventResponse)
 async def handle_event(req: EventRequest) -> EventResponse:
     """
-    Handle event from worker.
+    Handle worker event.
     
-    Workers send events here after completing actions.
-    Engine evaluates case/when/then rules and generates next commands.
+    Worker reports completion with result (inline or ref).
+    Engine evaluates case/when/then and generates next commands.
     
-    Pure event-driven - no queue table operations needed.
+    CRITICAL: Only process through engine for events that drive workflow:
+    - step.exit: Step completed, evaluate case rules and generate next commands
+    - call.done: Action completed, may trigger case rules
+    - call.error: Action failed, may trigger error handling
+    - loop.item/loop.done: Loop iteration events
+    
+    Skip engine for administrative events:
+    - command.claimed: Just persist, don't process
+    - command.started: Just persist, don't process
+    - command.completed: Already processed by worker
+    - command.failed: Already handled
+    - step.enter: Just marks step started
     """
     try:
         engine = get_engine()
         
-        # Build event metadata
-        event_meta = req.meta or {}
-        attempt = event_meta.get("attempt", 1)
+        # Events that should NOT trigger engine processing
+        # These are administrative events that just need to be persisted
+        skip_engine_events = {
+            "command.claimed", "command.started", "command.completed", 
+            "command.failed", "step.enter"
+        }
         
-        # Create Event
+        # For command.claimed, check if command is already claimed
+        if req.name == "command.claimed":
+            command_id = req.payload.get("command_id") or (req.meta or {}).get("command_id")
+            if command_id:
+                async with get_pool_connection() as conn:
+                    async with conn.cursor(row_factory=dict_row) as cur:
+                        # Check if this command was already claimed by another worker
+                        await cur.execute("""
+                            SELECT worker_id FROM noetl.event 
+                            WHERE execution_id = %s 
+                              AND event_type = 'command.claimed'
+                              AND (meta->>'command_id' = %s OR (result->'data'->>'command_id' = %s))
+                            LIMIT 1
+                        """, (int(req.execution_id), command_id, command_id))
+                        existing = await cur.fetchone()
+                        
+                        if existing:
+                            existing_worker = existing.get('worker_id') or (existing.get('meta') or {}).get('worker_id')
+                            if existing_worker and existing_worker != req.worker_id:
+                                # Command already claimed by another worker - reject
+                                logger.info(f"[CLAIM] Command {command_id} already claimed by {existing_worker}, rejecting claim from {req.worker_id}")
+                                raise HTTPException(409, f"Command already claimed by {existing_worker}")
+        
+        # Build result based on kind
+        if req.result_kind == "ref" and req.result_uri:
+            result_obj = {
+                "kind": "ref",
+                "store_tier": "gcs" if req.result_uri.startswith("gs://") else 
+                              "s3" if req.result_uri.startswith("s3://") else "artifact",
+                "logical_uri": req.result_uri,
+            }
+        elif req.result_kind == "refs" and req.event_ids:
+            result_obj = {
+                "kind": "refs",
+                "event_ids": req.event_ids,
+                "total_parts": len(req.event_ids),
+            }
+        else:
+            result_obj = {
+                "kind": "data",
+                "data": req.payload,
+            }
+        
+        # Persist worker event
+        evt_id = await get_snowflake_id()
+        async with get_pool_connection() as conn:
+            async with conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute(
+                    "SELECT catalog_id FROM noetl.event WHERE execution_id = %s LIMIT 1",
+                    (int(req.execution_id),)
+                )
+                row = await cur.fetchone()
+                catalog_id = row['catalog_id'] if row else None
+                
+                # Store control flags in meta column (not separate columns)
+                meta_obj = dict(req.meta or {})
+                meta_obj["actionable"] = req.actionable
+                meta_obj["informative"] = req.informative
+                if req.worker_id:
+                    meta_obj["worker_id"] = req.worker_id
+                
+                await cur.execute("""
+                    INSERT INTO noetl.event (
+                        event_id, execution_id, catalog_id, event_type,
+                        node_id, node_name, status, result, meta, created_at
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """, (
+                    evt_id, int(req.execution_id), catalog_id, req.name,
+                    req.step, req.step, "COMPLETED" if "done" in req.name or "exit" in req.name else "RUNNING",
+                    Json(result_obj), Json(meta_obj), datetime.now(timezone.utc)
+                ))
+                await conn.commit()
+        
+        # Process through engine
         event = Event(
             execution_id=req.execution_id,
             step=req.step,
             name=req.name,
             payload=req.payload,
-            meta=event_meta,
+            meta=req.meta or {},
             timestamp=datetime.now(timezone.utc),
             worker_id=req.worker_id,
-            attempt=attempt
+            attempt=(req.meta or {}).get("attempt", 1)
         )
         
-        # Process event through engine to generate next commands
-        # Note: Engine handles event persistence internally
-        commands = await engine.handle_event(event)
+        # CRITICAL: Only process through engine for workflow-driving events
+        # Skip engine for administrative events to prevent duplicate command generation
+        commands = []
+        if req.name not in skip_engine_events:
+            # Pass already_persisted=True because we already persisted the event above
+            commands = await engine.handle_event(event, already_persisted=True)
+            logger.debug(f"[ENGINE] Processed {req.name} for step {req.step}, generated {len(commands)} commands")
+        else:
+            logger.debug(f"[ENGINE] Skipped engine for administrative event {req.name}")
         
-        # Get NATS publisher
+        # Emit command.issued for next steps
         nats_pub = await get_nats_publisher()
-        
-        # Server URL for worker API calls
         server_url = os.getenv("NOETL_SERVER_URL", "http://noetl.noetl.svc.cluster.local:8082")
+        command_events = []
         
-        # Emit command.issued events instead of queue table insertion
-        command_events = []  # Store (event_id, command_id, command) for NATS publishing after commit
         async with get_pool_connection() as conn:
-            async with conn.cursor() as cur:
-                for command in commands:
-                    # Get catalog_id, parent_execution_id, and triggering event details
-                    await cur.execute("""
-                        SELECT catalog_id, parent_execution_id, event_id, parent_event_id
-                        FROM noetl.event 
-                        WHERE execution_id = %s 
-                        ORDER BY event_id DESC
-                        LIMIT 1
-                    """, (int(req.execution_id),))
-                    result = await cur.fetchone()
+            async with conn.cursor(row_factory=dict_row) as cur:
+                for cmd in commands:
+                    await cur.execute(
+                        "SELECT catalog_id, parent_execution_id FROM noetl.event WHERE execution_id = %s LIMIT 1",
+                        (int(cmd.execution_id),)
+                    )
+                    row = await cur.fetchone()
+                    cat_id = row['catalog_id'] if row else catalog_id
+                    parent_exec = row['parent_execution_id'] if row else None
                     
-                    if not result:
-                        logger.warning(f"No events found for execution {req.execution_id}")
-                        catalog_id = 1
-                        parent_execution_id = None
-                        triggering_event_id = None
-                        triggering_parent_event_id = None
-                    else:
-                        catalog_id = result['catalog_id']
-                        parent_execution_id = result['parent_execution_id']
-                        triggering_event_id = result['event_id']
-                        triggering_parent_event_id = result['parent_event_id']
+                    cmd_id = f"{cmd.execution_id}:{cmd.step}:{await get_snowflake_id()}"
+                    new_evt_id = await get_snowflake_id()
                     
-                    # Generate unique command ID
-                    command_id = f"{command.execution_id}:{command.step}:{await get_snowflake_id()}"
-                    event_id = await get_snowflake_id()
+                    result = {
+                        "kind": "data",
+                        "data": {
+                            "tool_config": cmd.tool.config,
+                            "args": cmd.args or {},
+                            "render_context": cmd.render_context,
+                            "case": cmd.case,
+                        }
+                    }
+                    meta = {
+                        "command_id": cmd_id,
+                        "step": cmd.step,
+                        "tool_kind": cmd.tool.kind,
+                        "triggered_by": req.name,
+                        "trigger_step": req.step,
+                        "actionable": True,  # Store in meta, not separate column
+                    }
                     
-                    # Insert command.issued event
                     await cur.execute("""
                         INSERT INTO noetl.event (
                             event_id, execution_id, catalog_id, event_type,
                             node_id, node_name, node_type, status,
-                            context, meta, parent_event_id, parent_execution_id,
+                            result, meta, parent_event_id, parent_execution_id,
                             created_at
                         ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """, (
-                        event_id,
-                        int(command.execution_id),
-                        catalog_id,
-                        "command.issued",
-                        command.step,
-                        command.step,
-                        command.tool.kind,
-                        "PENDING",
-                        Json({
-                            "tool_config": command.tool.config,
-                            "args": command.args or {},
-                            "render_context": command.render_context,
-                            "case": command.case,  # Pass case blocks to worker for immediate sink execution
-                            # Add traceability fields as strings
-                            "execution_id": str(command.execution_id),
-                            "catalog_id": str(catalog_id)
-                        }),
-                        Json({
-                            "command_id": command_id,
-                            "step": command.step,
-                            "tool_kind": command.tool.kind,
-                            "priority": command.priority,
-                            "max_attempts": command.max_attempts or 3,
-                            "attempt": 1,
-                            "catalog_id": str(catalog_id),
-                            "triggered_by": "event_handler",
-                            "triggering_event_id": str(triggering_event_id) if triggering_event_id else None,
-                            "metadata": command.metadata,
-                            "event_type": event.name,
-                            "event_step": event.step
-                        }),
-                        triggering_event_id,
-                        parent_execution_id,
+                        new_evt_id, int(cmd.execution_id), cat_id, "command.issued",
+                        cmd.step, cmd.step, cmd.tool.kind, "PENDING",
+                        Json(result), Json(meta), evt_id, parent_exec,
                         datetime.now(timezone.utc)
                     ))
-                    
-                    # Store for NATS publishing after commit
-                    command_events.append((event_id, command_id, command))
-                    logger.info(f"[EVENT] Emitted command.issued event_id={event_id} command_id={command_id} step={command.step} exec={command.execution_id}")
-                    
+                    command_events.append((new_evt_id, cmd_id, cmd))
+                
                 await conn.commit()
-                logger.info(f"[EVENT] Committed {len(command_events)} command.issued events for exec={event.execution_id}")
         
-        # Publish NATS notifications immediately after commit
-        # Workers will claim commands by emitting command.claimed events
-        for event_id, command_id, command in command_events:
-            logger.info(f"[NATS] Publishing notification for event_id={event_id} command_id={command_id} step={command.step}")
+        for new_evt_id, cmd_id, cmd in command_events:
             await nats_pub.publish_command(
-                execution_id=int(command.execution_id),
-                event_id=event_id,
-                command_id=command_id,
-                step=command.step,
+                execution_id=int(cmd.execution_id),
+                event_id=new_evt_id,
+                command_id=cmd_id,
+                step=cmd.step,
                 server_url=server_url
             )
         
-        # Trigger orchestrator for transition processing if this is a completion event
-        # This allows step_completed events to be emitted and workflow to progress/complete
-        # Exception: Don't trigger for "end" step to avoid race conditions with workflow completion
-        if event.name == "command.completed" and req.step.lower() != "end":
-            from .run import evaluate_execution
+        # Trigger orchestrator for workflow progression
+        if req.name == "command.completed" and req.step.lower() != "end":
+            from .run.orchestrator import evaluate_execution
             try:
-                logger.info(f"[ORCHESTRATOR] Triggering orchestrator for command.completed event in execution {event.execution_id}")
                 await evaluate_execution(
-                    execution_id=str(event.execution_id),
+                    execution_id=str(req.execution_id),
                     trigger_event_type="command.completed",
-                    trigger_event_id=None  # We don't have the persisted event_id yet in v2 flow
+                    trigger_event_id=str(evt_id)
                 )
             except Exception as e:
-                logger.exception(f"Error triggering orchestrator for execution {event.execution_id}: {e}")
+                logger.warning(f"Orchestrator error: {e}")
         
-        return EventResponse(
-            status="ok",
-            commands_generated=len(commands)
-        )
+        return EventResponse(status="ok", event_id=evt_id, commands_generated=len(commands))
     
     except Exception as e:
-        logger.error(f"Failed to handle event: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/v2/events", response_model=EventResponse)
-async def handle_event_compat(req: EventRequest) -> EventResponse:
-    return await handle_event(req)
+        logger.error(f"handle_event failed: {e}", exc_info=True)
+        raise HTTPException(500, str(e))
 
 
 @router.get("/executions/{execution_id}/status")
 async def get_execution_status(execution_id: str):
-    """Get lightweight execution status (v2 engine state)."""
+    """Get execution status from engine state."""
     try:
         engine = get_engine()
         state = engine.state_store.get_state(execution_id)
         
         if not state:
-            raise HTTPException(status_code=404, detail="Execution not found")
+            raise HTTPException(404, "Execution not found")
         
         return {
             "execution_id": execution_id,
@@ -518,5 +519,5 @@ async def get_execution_status(execution_id: str):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to get execution status: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"get_execution_status failed: {e}", exc_info=True)
+        raise HTTPException(500, str(e))

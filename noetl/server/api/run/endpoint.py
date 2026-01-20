@@ -3,7 +3,6 @@ from fastapi import APIRouter, HTTPException, Request, Path
 from fastapi.openapi.models import Example
 from noetl.core.logger import setup_logger
 from .schema import ExecutionRequest, ExecutionResponse, ResourceType
-from noetl.server.api.v2 import start_execution, StartExecutionRequest
 
 
 logger = setup_logger(__name__, include_location=True)
@@ -60,6 +59,9 @@ async def execute_resource(
     """
     try:
         logger.debug(f"EXECUTE (redirect to V2): resource_type={resource_type}, request: {payload.model_dump()}")
+        
+        # Lazy import to avoid circular imports
+        from noetl.server.api.v2 import start_execution, StartExecutionRequest
         
         # Convert old API request to V2 format
         v2_request = StartExecutionRequest(

@@ -144,22 +144,6 @@ def execute_playbook_runtime(playbook_file_path: str) -> dict:
     )
 
 
-def _get_queue_leased_count() -> int:
-    try:
-        resp = requests.get(f"{NOETL_BASE_URL}/api/queue/size", params={"status": "leased"}, timeout=10)
-        if resp.status_code == 200:
-            data = resp.json() or {}
-            return int(data.get("count") or data.get("queued") or 0)
-        resp2 = requests.get(f"{NOETL_BASE_URL}/api/queue", params={"status": "leased", "limit": 5}, timeout=10)
-        if resp2.status_code == 200:
-            data2 = resp2.json() or {}
-            items = data2.get("items") or []
-            return len(items)
-    except Exception:
-        return 0
-    return 0
-
-
 def _get_event_count(execution_id: str) -> int:
     try:
         # API expects string snowflake, converts internally

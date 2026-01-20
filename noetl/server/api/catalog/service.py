@@ -126,7 +126,7 @@ class CatalogService:
             version=None if version is None or version == "latest" else int(version)
         )
         async with get_pool_connection() as conn:
-            async with conn.cursor() as cur:
+            async with conn.cursor(row_factory=dict_row) as cur:
                 await cur.execute(query, params)
                 row = await cur.fetchone()
                 return CatalogEntry(**row) if row else None
@@ -159,7 +159,7 @@ class CatalogService:
     async def get_latest_version(resource_path: str) -> int:
         """Get the latest version number for a given resource path"""
         async with get_pool_connection() as conn:
-            async with conn.cursor() as cur:
+            async with conn.cursor(row_factory=dict_row) as cur:
                 await cur.execute(
                     "SELECT MAX(version) as max_version FROM noetl.catalog WHERE path = %(path)s",
                     {"path": resource_path}
@@ -200,7 +200,7 @@ class CatalogService:
         new_version = latest_version + 1
 
         async with get_pool_connection() as conn:
-            async with conn.cursor() as cursor:
+            async with conn.cursor(row_factory=dict_row) as cursor:
                 await cursor.execute(
                     "INSERT INTO noetl.resource (name) VALUES (%(resource_type)s) ON CONFLICT DO NOTHING",
                     {"resource_type": resource_type}

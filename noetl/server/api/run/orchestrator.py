@@ -115,7 +115,7 @@ async def _check_execution_completion(
         workflow_steps: Dictionary of step_name -> step_definition (unused but kept for API compatibility)
     """
     async with get_pool_connection() as conn:
-        async with conn.cursor() as cur:
+        async with conn.cursor(row_factory=dict_row) as cur:
             # Acquire advisory lock to ensure only ONE completion check runs at a time for this execution
             # This prevents race conditions between multiple command.completed triggers
             await cur.execute(
@@ -595,7 +595,7 @@ async def evaluate_execution(
             )
             # Get the event details - iterator metadata is in context column
             async with get_pool_connection() as conn:
-                async with conn.cursor() as cur:
+                async with conn.cursor(row_factory=dict_row) as cur:
                     await cur.execute(
                         "SELECT context, catalog_id, node_id, node_name, event_id FROM noetl.event WHERE event_id = %s",
                         (trigger_event_id,)
@@ -619,7 +619,7 @@ async def evaluate_execution(
                 f"ORCHESTRATOR: Detected iteration_completed for execution {exec_id}"
             )
             async with get_pool_connection() as conn:
-                async with conn.cursor() as cur:
+                async with conn.cursor(row_factory=dict_row) as cur:
                     await cur.execute(
                         "SELECT result, parent_execution_id FROM noetl.event WHERE event_id = %s",
                         (trigger_event_id,)
@@ -642,7 +642,7 @@ async def evaluate_execution(
             )
             # First check if retry should happen
             async with get_pool_connection() as conn:
-                async with conn.cursor() as cur:
+                async with conn.cursor(row_factory=dict_row) as cur:
                     await cur.execute(
                         "SELECT result FROM noetl.event WHERE event_id = %s",
                         (trigger_event_id,)
@@ -693,7 +693,7 @@ async def evaluate_execution(
             ):
                 # First check if success retry should happen
                 async with get_pool_connection() as conn:
-                    async with conn.cursor() as cur:
+                    async with conn.cursor(row_factory=dict_row) as cur:
                         await cur.execute(
                             "SELECT result FROM noetl.event WHERE event_id = %s",
                             (trigger_event_id,)
@@ -804,7 +804,7 @@ async def _handle_action_failure(execution_id: int, action_failed_event_id: Opti
     
     # Emit step_failed event only (not workflow_failed/playbook_failed)
     async with get_pool_connection() as conn:
-        async with conn.cursor() as cur:
+        async with conn.cursor(row_factory=dict_row) as cur:
             try:
                 now = datetime.now(timezone.utc)
                 meta = {
@@ -916,7 +916,7 @@ async def _emit_immediate_failure(
     )
     
     async with get_pool_connection() as conn:
-        async with conn.cursor() as cur:
+        async with conn.cursor(row_factory=dict_row) as cur:
             try:
                 now = datetime.now(timezone.utc)
                 meta = {"failed_at": now.isoformat(), "fallback": True}
@@ -1152,7 +1152,7 @@ async def _get_execution_state(execution_id: int) -> str:
         State: 'initial', 'in_progress', or 'completed'
     """
     async with get_pool_connection() as conn:
-        async with conn.cursor() as cur:
+        async with conn.cursor(row_factory=dict_row) as cur:
             # Check for completion
             await cur.execute(
                 """
@@ -1376,7 +1376,7 @@ async def _process_transitions(execution_id: int) -> None:
             eval_ctx[res_row["node_name"]] = result_value
 
     async with get_pool_connection() as conn:
-        async with conn.cursor() as cur:
+        async with conn.cursor(row_factory=dict_row) as cur:
             # Check for parent steps with completed iterations (fix for loop completion bug)
             # When a step has loop attribute, server expands into _iter_N jobs
             # After all iterations complete, we need to emit action_completed for parent step
@@ -2107,20 +2107,23 @@ async def _check_iterator_completions(execution_id: str) -> None:
     """
     Aggregate child execution results and continue parent workflow.
 
-    Process:
+    Pure Event Sourcing Pattern:
     1. Find parent iterator execution relationships via parent_execution_id
     2. Count completed child executions vs total expected
-    3. When all children complete, aggregate results and emit step_completed
+    3. When all children complete:
+       - Create aggregated result with {kind: "refs", event_ids: [...]}
+       - Each event_id points to a child's completion event with result
+       - Emit step_completed with the refs result
     4. Process transitions to continue parent workflow
 
-    Note: This is triggered when a child execution completes (execution_completed event)
+    No manifest table or step_state table needed.
+    All references are stored in the event.result column.
     """
     logger.info(f"Checking iterator completions for execution {execution_id}")
 
     async with get_pool_connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
-            # Find all child executions of this execution (this execution is a child that just completed)
-            # We need to check if we are a child, and if so, check parent's completion status
+            # Find if this execution has a parent (is a child of an iterator)
             await cur.execute(
                 """
                 SELECT parent_execution_id
@@ -2134,7 +2137,6 @@ async def _check_iterator_completions(execution_id: str) -> None:
             parent_row = await cur.fetchone()
 
             if not parent_row:
-                # This execution has no parent, nothing to check
                 logger.debug(
                     f"Execution {execution_id} has no parent, skipping iterator completion check"
                 )
@@ -2145,8 +2147,7 @@ async def _check_iterator_completions(execution_id: str) -> None:
                 f"Execution {execution_id} is child of {parent_execution_id}, checking parent iterator status"
             )
 
-            # Find the iterator step in the parent that spawned these child executions
-            # The iterator step would have created multiple child executions
+            # Find the iterator step in the parent that spawned child executions
             await cur.execute(
                 """
                 SELECT
@@ -2191,7 +2192,6 @@ async def _check_iterator_completions(execution_id: str) -> None:
                 f"Iterator '{iterator_step}': {completed_count}/{total_children} children completed"
             )
 
-            # Check if all children are complete
             if completed_count < total_children:
                 logger.debug(
                     f"Iterator '{iterator_step}' still has {total_children - completed_count} children running"
@@ -2202,13 +2202,13 @@ async def _check_iterator_completions(execution_id: str) -> None:
                 f"All children completed for iterator '{iterator_step}' in parent {parent_execution_id}, aggregating results"
             )
 
-            # Aggregate child execution results
+            # Gather event_ids of child completion events (ordered by event_id for determinism)
             await cur.execute(
                 """
                 SELECT
+                    e.event_id,
                     e.execution_id,
-                    e.node_name,
-                    e.context
+                    e.meta
                 FROM noetl.event e
                 WHERE e.parent_execution_id = %(parent_execution_id)s
                   AND e.event_type = 'playbook_completed'
@@ -2216,28 +2216,19 @@ async def _check_iterator_completions(execution_id: str) -> None:
                 """,
                 {"parent_execution_id": parent_execution_id},
             )
-            child_results = await cur.fetchall()
+            child_events = await cur.fetchall()
 
-            # Extract results from child executions
-            aggregated_results = []
-            for child in child_results:
-                try:
-                    context = child["context"]
-                    if isinstance(context, dict):
-                        # Extract the result from the child execution context
-                        # The result is typically in the return_step data
-                        aggregated_results.append(context)
-                    else:
-                        aggregated_results.append(
-                            {"execution_id": child["execution_id"]}
-                        )
-                except Exception as e:
-                    logger.warning(
-                        f"Failed to extract result from child {child['execution_id']}: {e}"
-                    )
-                    aggregated_results.append(
-                        {"execution_id": child["execution_id"], "error": str(e)}
-                    )
+            # Build refs result: list of event_ids pointing to child results
+            # Each child's playbook_completed event has result in its result column
+            event_ids = [child["event_id"] for child in child_events]
+            
+            # Create aggregated result with refs pattern
+            aggregated_result = {
+                "kind": "refs",
+                "event_ids": event_ids,
+                "total_parts": len(event_ids),
+                "iterator_step": iterator_step,
+            }
 
             # Emit step_completed event for the iterator step in the parent
             step_completed_event_id = await get_snowflake_id()
@@ -2259,18 +2250,11 @@ async def _check_iterator_completions(execution_id: str) -> None:
             parent_catalog_id = parent_info["catalog_id"] if parent_info else None
             parent_event_id = parent_info["workflow_event_id"] if parent_info else None
 
-            # Create context with aggregated data
-            step_context = {
-                "data": aggregated_results,
-                "iterator_step": iterator_step,
-                "total_children": total_children,
-                "completed_at": now.isoformat(),
-            }
-
             meta = {
                 "emitted_at": now.isoformat(),
                 "emitter": "orchestrator",
                 "aggregation_source": "iterator_completion",
+                "actionable": True,  # Store in meta, not separate column
             }
 
             await cur.execute(
@@ -2285,6 +2269,7 @@ async def _check_iterator_completions(execution_id: str) -> None:
                     node_name,
                     node_type,
                     status,
+                    result,
                     context,
                     meta,
                     created_at
@@ -2298,6 +2283,7 @@ async def _check_iterator_completions(execution_id: str) -> None:
                     %(node_name)s,
                     %(node_type)s,
                     %(status)s,
+                    %(result)s,
                     %(context)s,
                     %(meta)s,
                     %(created_at)s
@@ -2313,7 +2299,12 @@ async def _check_iterator_completions(execution_id: str) -> None:
                     "node_name": iterator_step,
                     "node_type": "iterator",
                     "status": "COMPLETED",
-                    "context": json.dumps(step_context),
+                    "result": json.dumps(aggregated_result),
+                    "context": json.dumps({
+                        "iterator_step": iterator_step,
+                        "total_children": total_children,
+                        "completed_at": now.isoformat(),
+                    }),
                     "meta": json.dumps(meta),
                     "created_at": now,
                 },
@@ -2321,7 +2312,8 @@ async def _check_iterator_completions(execution_id: str) -> None:
 
             logger.info(
                 f"Emitted step_completed for iterator '{iterator_step}' "
-                f"in parent {parent_execution_id}, event_id={step_completed_event_id}"
+                f"in parent {parent_execution_id}, event_id={step_completed_event_id}, "
+                f"refs to {len(event_ids)} child events"
             )
 
             # The step_completed event will trigger the orchestrator to process
@@ -2410,7 +2402,7 @@ async def _process_iteration_completed(
     
     # Count total and completed iterations for parent
     async with get_pool_connection() as conn:
-        async with conn.cursor() as cur:
+        async with conn.cursor(row_factory=dict_row) as cur:
             # Count completed iteration events (queue removed)
             await cur.execute(
                 """
@@ -2434,7 +2426,7 @@ async def _process_iteration_completed(
         if completed_iterations >= total_iterations and total_iterations > 0:
             logger.info(f"ORCHESTRATOR: All iterations complete for parent {parent_execution_id}")
             
-            async with conn.cursor() as cur:
+            async with conn.cursor(row_factory=dict_row) as cur:
                 # Gather results from all iterations in order
                 await cur.execute(
                     """
@@ -2454,7 +2446,7 @@ async def _process_iteration_completed(
                     results.append(result_data)
                 
             # Emit iterator_completed event
-            async with conn.cursor() as cur:
+            async with conn.cursor(row_factory=dict_row) as cur:
                 now = datetime.now(timezone.utc)
                 completed_event_id = await get_snowflake_id()
                 
@@ -2635,7 +2627,7 @@ async def _process_retry_eligible_event(
         
         # Get original task config and apply updates
         async with get_pool_connection() as conn:
-            async with conn.cursor() as cur:
+            async with conn.cursor(row_factory=dict_row) as cur:
                 logger.info("Queue subsystem removed; skipping success retry enqueue")
                 return
 

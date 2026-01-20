@@ -170,6 +170,29 @@ enum Commands {
         #[arg(short, long)]
         json: bool,
     },
+    /// Cancel a running execution
+    /// Examples:
+    ///     noetl cancel 12345
+    ///     noetl cancel 12345 --reason "Detected infinite loop"
+    ///     noetl cancel 12345 --cascade
+    ///     noetl --host=localhost --port=8082 cancel 12345 --json
+    #[command(verbatim_doc_comment)]
+    Cancel {
+        /// Execution ID to cancel
+        execution_id: String,
+
+        /// Reason for cancellation (optional)
+        #[arg(short, long)]
+        reason: Option<String>,
+
+        /// Also cancel child executions (sub-playbooks)
+        #[arg(long)]
+        cascade: bool,
+
+        /// Emit only the JSON response
+        #[arg(short, long)]
+        json: bool,
+    },
     /// List resources in catalog (legacy command, use 'catalog list' instead)
     /// Examples:
     ///     noetl list Playbook
@@ -1408,6 +1431,9 @@ async fn main() -> Result<()> {
         Some(Commands::Status { execution_id, json }) => {
             get_status(&client, &base_url, &execution_id, json).await?;
         }
+        Some(Commands::Cancel { execution_id, reason, cascade, json }) => {
+            cancel_execution(&client, &base_url, &execution_id, reason, cascade, json).await?;
+        }
         Some(Commands::List { resource_type, json }) => {
             list_resources(&client, &base_url, &resource_type, json).await?;
         }
@@ -1882,6 +1908,87 @@ async fn get_status(client: &Client, base_url: &str, execution_id: &str, json_on
         let status = response.status();
         let text = response.text().await?;
         eprintln!("Failed to get status: {} - {}", status, text);
+    }
+    Ok(())
+}
+
+async fn cancel_execution(
+    client: &Client,
+    base_url: &str,
+    execution_id: &str,
+    reason: Option<String>,
+    cascade: bool,
+    json_only: bool,
+) -> Result<()> {
+    let url = format!("{}/api/executions/{}/cancel", base_url, execution_id);
+    
+    // Build request body
+    let mut body = serde_json::json!({
+        "cascade": cascade
+    });
+    if let Some(r) = &reason {
+        body["reason"] = serde_json::json!(r);
+    }
+    
+    let response = client
+        .post(&url)
+        .json(&body)
+        .send()
+        .await
+        .context("Failed to send cancel request")?;
+
+    if response.status().is_success() {
+        let result: serde_json::Value = response.json().await?;
+        if json_only {
+            println!("{}", serde_json::to_string(&result)?);
+        } else {
+            let status = result.get("status").and_then(|v| v.as_str()).unwrap_or("unknown");
+            let cancelled_count = result
+                .get("cancelled_executions")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0);
+            let message = result.get("message").and_then(|v| v.as_str()).unwrap_or("");
+            
+            println!("\n\x1b[33m{}\x1b[0m", "=".repeat(60));
+            println!("Execution: {}", execution_id);
+            println!("Status:    \x1b[33m{}\x1b[0m", status.to_uppercase());
+            println!("Cancelled: {} execution(s)", cancelled_count);
+            if !message.is_empty() {
+                println!("Message:   {}", message);
+            }
+            if let Some(r) = &reason {
+                println!("Reason:    {}", r);
+            }
+            
+            // List cancelled executions
+            if let Some(cancelled) = result.get("cancelled_executions").and_then(|v| v.as_array()) {
+                if cancelled.len() > 1 {
+                    println!("\nCancelled executions:");
+                    for exec_id in cancelled {
+                        if let Some(id) = exec_id.as_str() {
+                            println!("  - {}", id);
+                        }
+                    }
+                }
+            }
+            
+            println!("\x1b[33m{}\x1b[0m\n", "=".repeat(60));
+        }
+    } else if response.status().as_u16() == 400 {
+        // Already completed/cancelled
+        let result: serde_json::Value = response.json().await?;
+        if json_only {
+            println!("{}", serde_json::to_string(&result)?);
+        } else {
+            let message = result.get("message").and_then(|v| v.as_str()).unwrap_or("Cannot cancel execution");
+            println!("\x1b[33mWarning:\x1b[0m {}", message);
+        }
+    } else {
+        let status = response.status();
+        let text = response.text().await?;
+        eprintln!("Failed to cancel execution: {} - {}", status, text);
+        std::process::exit(1);
     }
     Ok(())
 }
@@ -2731,11 +2838,13 @@ async fn build_docker_image(no_cache: bool, platform: &str) -> Result<()> {
     if no_cache {
         cmd.arg("--no-cache");
     }
-    // cmd.arg("--no-cache");
     cmd.arg("--progress=plain");
 
     // Build for specified platform (default: linux/amd64 for Kind/K8s compatibility)
     cmd.arg("--platform").arg(platform);
+
+    // Load image to local Docker daemon (required for kind load)
+    cmd.arg("--load");
 
     cmd.arg("-t")
         .arg(format!("{}/{}:{}", registry, image_name, image_tag))

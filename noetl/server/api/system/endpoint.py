@@ -187,3 +187,56 @@ def get_profiler_status():
     except Exception as e:
         logger.exception(f"Error getting profiler status: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# Database Schema Management (for CLI: noetl db init/validate)
+# ============================================================================
+
+@router.post("/db/init", response_model=Dict[str, Any], summary="Initialize Database Schema")
+async def init_database():
+    """
+    Initialize the NoETL database schema.
+    
+    Creates all required tables, indexes, and functions if they don't exist.
+    Safe to run multiple times (uses IF NOT EXISTS).
+    
+    **Response**:
+    ```json
+    {
+        "status": "ok",
+        "message": "Database schema initialized successfully"
+    }
+    ```
+    """
+    try:
+        result = await SystemService.init_database_schema()
+        return result
+    except Exception as e:
+        logger.exception(f"Error initializing database schema: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/db/validate", response_model=Dict[str, Any], summary="Validate Database Schema")
+async def validate_database():
+    """
+    Validate that the NoETL database schema is properly configured.
+    
+    Checks for required tables, columns, indexes, and functions.
+    
+    **Response**:
+    ```json
+    {
+        "status": "ok",
+        "valid": true,
+        "tables": ["catalog", "credential", "event", "queue", "keychain"],
+        "missing": []
+    }
+    ```
+    """
+    try:
+        result = await SystemService.validate_database_schema()
+        return result
+    except Exception as e:
+        logger.exception(f"Error validating database schema: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

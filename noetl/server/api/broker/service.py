@@ -6,6 +6,7 @@ Similar pattern to run/catalog services.
 """
 
 import json
+import uuid
 from typing import Optional, Dict, Any, List
 from datetime import datetime
 from psycopg.rows import dict_row
@@ -26,6 +27,14 @@ class EventService:
     async def emit_event(request: EventEmitRequest) -> EventEmitResponse:
         """
         Emit an event to the event log.
+        
+        Handles ResultRef pattern:
+        - output_inline: Small result data stored directly in event
+        - output_ref: Reference to externalized result (artifact storage)
+        - preview: Truncated preview of large results
+        - correlation: Iteration/page/attempt tracking for loops
+        - actionable: True if server should take action (routing, retry)
+        - informative: True if event is for logging only
         
         Args:
             request: Event emission request
@@ -57,13 +66,44 @@ class EventService:
         # Use provided timestamp or generate new one
         created_at = request.created_at or datetime.utcnow()
         
-        # Prepare context, meta, and result as JSON
+        # Prepare context and meta as JSON
+        # Store actionable, informative, and correlation in meta column (not separate columns)
         context = Json(request.context) if request.context else None
-        meta = Json(request.meta) if request.meta else None
-        result = Json(request.result) if request.result else None
+        meta_dict = dict(request.meta) if request.meta else {}
+        meta_dict["actionable"] = request.actionable
+        meta_dict["informative"] = request.informative
+        if request.correlation:
+            meta_dict["correlation"] = request.correlation.model_dump() if hasattr(request.correlation, 'model_dump') else request.correlation
+        meta = Json(meta_dict)
+        
+        # Handle ResultRef pattern: result column stores either inline data OR ResultRef
+        # If output_ref is provided, build a ResultRef object for the result column
+        # Otherwise use the inline result directly
+        if request.output_ref:
+            # Build ResultRef object to store in result column
+            result_ref_obj = {
+                "kind": "ref",
+                "store_tier": "artifact" if request.output_ref.startswith("artifact://") else 
+                              "gcs" if request.output_ref.startswith("gs://") else
+                              "s3" if request.output_ref.startswith("s3://") else "eventlog",
+                "logical_uri": request.output_ref,
+            }
+            # Add preview if provided
+            if request.preview:
+                result_ref_obj["preview"] = request.preview
+            # Add correlation keys if provided
+            if request.correlation:
+                result_ref_obj["correlation"] = request.correlation.model_dump() if hasattr(request.correlation, 'model_dump') else request.correlation
+            result = Json(result_ref_obj)
+        elif request.output_inline:
+            # Inline result provided separately
+            result = Json(request.output_inline)
+        else:
+            # Use original result
+            result = Json(request.result) if request.result else None
         
         async with get_pool_connection() as conn:
-            async with conn.cursor() as cur:
+            async with conn.cursor(row_factory=dict_row) as cur:
                 await cur.execute(
                     """
                     INSERT INTO noetl.event (
@@ -124,11 +164,13 @@ class EventService:
                         "created_at": created_at,
                     }
                 )
+                
                 await conn.commit()
         
         logger.info(
             f"Event emitted: event_id={event_id}, execution_id={execution_id}, "
-            f"type={request.event_type}, status={request.status}"
+            f"type={request.event_type}, status={request.status}, "
+            f"actionable={request.actionable}, has_ref={request.output_ref is not None}"
         )
         
         return EventEmitResponse(
@@ -152,7 +194,7 @@ class EventService:
         """
         
         async with get_pool_connection() as conn:
-            async with conn.cursor() as cur:
+            async with conn.cursor(row_factory=dict_row) as cur:
                 await cur.execute(
                     """
                     SELECT
@@ -250,7 +292,7 @@ class EventService:
         params["offset"] = query.offset
         
         async with get_pool_connection() as conn:
-            async with conn.cursor() as cur:
+            async with conn.cursor(row_factory=dict_row) as cur:
                 # Get total count
                 count_sql = f"""
                     SELECT COUNT(*) as total
@@ -333,7 +375,7 @@ class EventService:
         """
         
         async with get_pool_connection() as conn:
-            async with conn.cursor() as cur:
+            async with conn.cursor(row_factory=dict_row) as cur:
                 await cur.execute(
                     """
                     SELECT catalog_id 
@@ -374,7 +416,7 @@ class EventService:
         """
         
         async with get_pool_connection() as conn:
-            async with conn.cursor() as cur:
+            async with conn.cursor(row_factory=dict_row) as cur:
                 await cur.execute(
                     """
                     SELECT context 
@@ -409,7 +451,7 @@ class EventService:
         """
         
         async with get_pool_connection() as conn:
-            async with conn.cursor() as cur:
+            async with conn.cursor(row_factory=dict_row) as cur:
                 await cur.execute(
                     """
                     SELECT node_name, result 

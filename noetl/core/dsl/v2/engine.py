@@ -1,3 +1,59 @@
+async def finalize_abandoned_execution(self, execution_id: str, reason: str = "Abandoned or timed out"):
+    """
+    Forcibly finalize an execution by emitting workflow.failed and playbook.failed events if not already completed.
+    This should be called by a periodic task or admin action for stuck/running executions with no activity.
+    """
+    # Load state
+    state = await self.state_store.load_state(execution_id)
+    if not state:
+        logger.error(f"[FINALIZE] No state found for execution {execution_id}")
+        return
+    if state.completed:
+        logger.info(f"[FINALIZE] Execution {execution_id} already completed; skipping.")
+        return
+
+    # Find last step (if any)
+    last_step = state.current_step or (list(state.step_results.keys())[-1] if state.step_results else None)
+    logger.warning(f"[FINALIZE] Forcibly finalizing execution {execution_id} at step {last_step} due to: {reason}")
+
+    from noetl.core.dsl.v2.models import Event, LifecycleEventPayload
+    from datetime import datetime, timezone
+
+    # Emit workflow.failed event
+    workflow_failed_event = Event(
+        execution_id=execution_id,
+        step="workflow",
+        name="workflow.failed",
+        payload=LifecycleEventPayload(
+            status="failed",
+            final_step=last_step,
+            result=None,
+            error={"message": reason}
+        ).model_dump(),
+        timestamp=datetime.now(timezone.utc)
+    )
+    await self._persist_event(workflow_failed_event, state)
+
+    # Emit playbook.failed event
+    playbook_path = state.playbook.metadata.get("path", "playbook")
+    playbook_failed_event = Event(
+        execution_id=execution_id,
+        step=playbook_path,
+        name="playbook.failed",
+        payload=LifecycleEventPayload(
+            status="failed",
+            final_step=last_step,
+            result=None,
+            error={"message": reason}
+        ).model_dump(),
+        timestamp=datetime.now(timezone.utc)
+    )
+    await self._persist_event(playbook_failed_event, state)
+
+    # Mark state as completed
+    state.completed = True
+    await self.state_store.save_state(state)
+    logger.info(f"[FINALIZE] Emitted terminal events for execution {execution_id}")
 """
 NoETL V2 Execution Engine
 
@@ -1096,13 +1152,17 @@ class ControlFlowEngine:
         except Exception as e:
             logger.exception(f"[VARS] Error processing vars block for step '{event.step}': {e}")
     
-    async def handle_event(self, event: Event) -> list[Command]:
+    async def handle_event(self, event: Event, already_persisted: bool = False) -> list[Command]:
         """
         Handle an event and return commands to enqueue.
         
         This is the core engine method called by the API.
+        
+        Args:
+            event: The event to process
+            already_persisted: If True, skip persisting the event (it was already persisted by caller)
         """
-        logger.info(f"[ENGINE] handle_event called: event.name={event.name}, step={event.step}, execution={event.execution_id}")
+        logger.info(f"[ENGINE] handle_event called: event.name={event.name}, step={event.step}, execution={event.execution_id}, already_persisted={already_persisted}")
         commands: list[Command] = []
         
         # Load execution state (from memory cache or reconstruct from events)
@@ -1122,7 +1182,9 @@ class ControlFlowEngine:
         if event.step.endswith('_sink'):
             logger.debug(f"Synthetic sink step: {event.step} - persisting event without orchestration")
             # Persist the event but don't generate commands (no orchestration needed)
-            await self._persist_event(event, state)
+            # Skip if already persisted by API caller
+            if not already_persisted:
+                await self._persist_event(event, state)
             return commands
         
         step_def = state.get_step(event.step)
@@ -1455,7 +1517,9 @@ class ControlFlowEngine:
             completion_status = "failed" if has_error else "completed"
             
             # Persist current event FIRST to get its event_id for parent_event_id
-            await self._persist_event(event, state)
+            # Skip if already persisted by API caller
+            if not already_persisted:
+                await self._persist_event(event, state)
             
             # Now create completion events with current event as parent
             # This ensures proper ordering: step.exit -> workflow_completion -> playbook_completion
@@ -1500,7 +1564,8 @@ class ControlFlowEngine:
         await self.state_store.save_state(state)
         
         # Persist current event to database (if not already done for completion case)
-        if not completion_events:
+        # Skip if event was already persisted by API caller
+        if not completion_events and not already_persisted:
             await self._persist_event(event, state)
         
         # Persist completion events in order with proper parent_event_id chain

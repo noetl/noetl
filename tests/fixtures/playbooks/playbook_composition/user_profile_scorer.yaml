@@ -189,8 +189,9 @@ workflow:
       auth: {}
       libs: {}
       args:
-        input_data: "{{ workload.user_data | tojson }}"
+        input_data: "{{ workload.user_data | default({'name': 'TestUser', 'age': 30, 'department': 'Engineering', 'years_experience': 5, 'performance_rating': 4.0}) }}"
       code: |
+        # input_data comes directly as a dict from workload
         # Validate input is a dict
         if not isinstance(input_data, dict):
             raise ValueError(f"Expected user data dict, got {type(input_data)}")

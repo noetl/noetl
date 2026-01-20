@@ -12,6 +12,8 @@ NoETL provides a unified command-line interface for executing playbooks with two
 The main command is `noetl`, which provides:
 
 - `noetl run` - Execute playbooks (local or distributed)
+- `noetl status` - Check execution status
+- `noetl cancel` - Cancel running executions
 - `noetl context` - Manage execution contexts and runtime preferences
 - `noetl server` - Manage NoETL server process
 - `noetl worker` - Manage worker processes
@@ -34,6 +36,12 @@ noetl run ./playbooks/my_workflow.yaml --set key=value --set env=prod
 
 # Run with JSON payload
 noetl run ./playbooks/my_workflow.yaml --payload '{"key": "value"}'
+
+# Check execution status
+noetl status <execution_id>
+
+# Cancel a running execution
+noetl cancel <execution_id> --reason "No longer needed"
 
 # Set context default to local
 noetl context set-runtime local
@@ -249,6 +257,77 @@ Stop the server:
 noetl server stop
 noetl server stop --force
 ```
+
+## Execution Management
+
+### Checking Execution Status
+
+Check the status of a running or completed execution:
+
+```bash
+# Basic status check
+noetl status <execution_id>
+
+# JSON output
+noetl status <execution_id> --json
+```
+
+Example output:
+```
+============================================================
+Execution: 543857817971589380
+Status:    RUNNING
+Steps:     3 completed
+Current:   process_data
+
+Completed steps:
+  - start
+  - fetch_data
+  - validate
+============================================================
+Use --json for full execution details
+```
+
+### Cancelling Executions
+
+Cancel a running execution to stop it from processing further:
+
+```bash
+# Basic cancellation
+noetl cancel <execution_id>
+
+# With a reason
+noetl cancel <execution_id> --reason "No longer needed"
+
+# Cascade to child executions (sub-playbooks)
+noetl cancel <execution_id> --cascade
+
+# JSON output
+noetl cancel <execution_id> --json
+```
+
+Options:
+- `-r, --reason`: Provide a reason for cancellation (logged in the event)
+- `--cascade`: Also cancel child executions spawned by sub-playbook calls
+- `-j, --json`: Output JSON response only
+
+Example output:
+```
+============================================================
+Execution: 543857931469455628
+Status:    CANCELLED
+Cancelled: 1 execution(s)
+Message:   Cancelled 1 execution(s)
+Reason:    No longer needed
+============================================================
+```
+
+Use cases:
+- **Infinite loops**: Stop runaway workflows that have entered an infinite loop
+- **Long-running jobs**: Abort jobs that are no longer needed
+- **Hierarchical workflows**: Cancel parent execution and all spawned sub-playbooks
+
+See [Execution Cancellation](/features/execution_cancellation) for detailed documentation.
 
 ## Worker Management
 
