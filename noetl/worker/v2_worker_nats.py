@@ -708,6 +708,184 @@ class V2Worker:
             error=response.get('error') if isinstance(response, dict) else None
         )
     
+    async def _fetch_execution_variables(
+        self,
+        server_url: str,
+        execution_id: int
+    ) -> dict:
+        """
+        Fetch all execution variables from server API.
+        
+        Returns dict with variable names as keys and their values.
+        Used for case condition evaluation when variables are referenced.
+        """
+        import httpx
+        
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.get(
+                    f"{server_url}/api/vars/{execution_id}",
+                    headers={"Content-Type": "application/json"}
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    # Extract just the values from metadata structure
+                    # API returns: {variables: {name: {value, type, source_step, ...}}}
+                    variables = data.get('variables', {})
+                    return {name: meta.get('value') for name, meta in variables.items()}
+                else:
+                    logger.warning(f"[VARS] Failed to fetch variables: {response.status_code}")
+                    return {}
+        except Exception as e:
+            logger.error(f"[VARS] Error fetching variables: {e}")
+            return {}
+    
+    async def _evaluate_case_blocks(
+        self,
+        case_blocks: list,
+        response: dict,
+        render_context: dict,
+        server_url: str,
+        execution_id: int,
+        step: str
+    ) -> dict | None:
+        """
+        Hybrid case evaluation: Worker-side evaluation with both event and data context.
+        
+        Evaluates case conditions against:
+        - Event context (event.name, event.type, etc.)
+        - Data context (response.status_code, result.field, error, etc.)
+        
+        Returns action to take: {type: 'next'|'retry'|'sink', details: {...}}
+        If no case matches or only sink actions, returns None.
+        """
+        from jinja2 import Environment
+        
+        if not case_blocks or not isinstance(case_blocks, list):
+            return None
+        
+        logger.info(f"[CASE-EVAL] Evaluating {len(case_blocks)} case blocks with hybrid context")
+        
+        # Create Jinja environment for condition evaluation
+        jinja_env = Environment()
+        
+        # Build hybrid evaluation context with both event and data
+        # Support both event-source (event.name) and data-source (response.status_code) evaluation
+        eval_context = {
+            **render_context,
+            'response': response,
+            'result': response,
+            'this': response,
+            'event': {
+                'name': 'call.done',  # Event name for post-call evaluation
+                'type': 'tool.completed',
+                'step': step
+            },
+            'error': response.get('error') if isinstance(response, dict) else None
+        }
+        
+        # Track if we need to fetch variables from server
+        variables_fetched = False
+        
+        # Check each case block
+        for idx, case in enumerate(case_blocks):
+            if not isinstance(case, dict):
+                continue
+            
+            when_condition = case.get('when')
+            then_block = case.get('then')
+            
+            if not when_condition or not then_block:
+                continue
+            
+            # Evaluate condition with hybrid context (with retry on missing variables)
+            max_retries = 2  # Allow one retry with server variable lookup
+            for attempt in range(max_retries):
+                try:
+                    template = jinja_env.from_string(when_condition)
+                    condition_result = template.render(eval_context)
+                    
+                    # Parse boolean result (Jinja2 returns string)
+                    matches = condition_result.strip().lower() in ['true', '1', 'yes']
+                    
+                    logger.info(f"[CASE-EVAL] Case {idx} condition: {when_condition[:100]}... = {matches}")
+                    
+                    if not matches:
+                        # Condition not met - break retry loop and try next case
+                        break
+                    
+                    # Case matched - extract action
+                    logger.info(f"[CASE-EVAL] Case {idx} matched! Extracting action from then block")
+                    
+                    # Normalize then_block to dict format
+                    then_actions = then_block if isinstance(then_block, dict) else {}
+                    
+                    # Check for routing actions (next, retry)
+                    if 'next' in then_actions:
+                        next_steps = then_actions['next']
+                        if isinstance(next_steps, list) and len(next_steps) > 0:
+                            return {
+                                'type': 'next',
+                                'steps': next_steps,
+                                'case_index': idx
+                            }
+                    
+                    if 'retry' in then_actions:
+                        retry_config = then_actions['retry']
+                        return {
+                            'type': 'retry',
+                            'config': retry_config,
+                            'case_index': idx
+                        }
+                    
+                    # Check for sink action (handled separately)
+                    if 'sink' in then_actions:
+                        logger.info(f"[CASE-EVAL] Case {idx} has sink action - will execute via _execute_case_sinks")
+                        # Execute sink immediately
+                        await self._execute_case_sinks(
+                            [case],
+                            response,
+                            render_context,
+                            server_url,
+                            execution_id,
+                            step
+                        )
+                        # Return None to continue normal flow (sink doesn't affect routing)
+                        return None
+                    
+                    # Successfully evaluated - break retry loop
+                    break
+                    
+                except Exception as e:
+                    # Check if error is due to missing variable reference
+                    error_msg = str(e)
+                    if ('undefined' in error_msg.lower() or 'not defined' in error_msg.lower()) and attempt == 0 and not variables_fetched:
+                        # First attempt failed due to missing variable - fetch from server
+                        logger.warning(f"[CASE-EVAL] Missing variable in condition, fetching from server: {error_msg}")
+                        
+                        # Fetch variables from server API
+                        server_vars = await self._fetch_execution_variables(server_url, execution_id)
+                        
+                        if server_vars:
+                            logger.info(f"[CASE-EVAL] Fetched {len(server_vars)} variables from server: {list(server_vars.keys())}")
+                            # Merge into eval_context under 'vars' namespace
+                            eval_context['vars'] = server_vars
+                            variables_fetched = True
+                            # Continue to retry with enriched context
+                            continue
+                        else:
+                            logger.error(f"[CASE-EVAL] Failed to fetch variables from server")
+                            break
+                    else:
+                        # Other error or retry exhausted
+                        logger.error(f"[CASE-EVAL] Error evaluating case {idx} (attempt {attempt + 1}): {e}")
+                        break
+        
+        # No matching case with routing action
+        logger.info(f"[CASE-EVAL] No matching case with routing action found")
+        return None
+    
     async def _execute_case_sinks(
         self,
         case_blocks: list,

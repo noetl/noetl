@@ -121,6 +121,16 @@ noetl run automation/ibkr/api -r distributed --set action=tickle
 
 # Get accounts
 noetl run automation/ibkr/api -r distributed --set action=accounts
+echo '{"action":"status"}' > /tmp/ibkr_params.json
+noetl execute playbook automation/ibkr/api --input /tmp/ibkr_params.json
+
+# Keep session alive (call every ~55 seconds)
+echo '{"action":"tickle"}' > /tmp/ibkr_params.json
+noetl execute playbook automation/ibkr/api --input /tmp/ibkr_params.json
+
+# Get accounts
+echo '{"action":"accounts"}' > /tmp/ibkr_params.json
+noetl execute playbook automation/ibkr/api --input /tmp/ibkr_params.json
 
 # Get positions/orders (similar pattern)
 ```
