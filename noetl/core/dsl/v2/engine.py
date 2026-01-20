@@ -99,10 +99,6 @@ class ExecutionState:
         self.failed = False
         self.completed = False
         
-        # Event tracking for parent_event_id
-        self.last_event_id: Optional[int] = None  # Track last event_id for parent linkage
-        self.step_event_ids: dict[str, int] = {}  # step_name -> last event_id for that step
-        
         # Root event tracking for traceability
         self.root_event_id: Optional[int] = None  # First event (playbook.initialized) for full trace
         
@@ -117,7 +113,18 @@ class ExecutionState:
             self.variables.update(playbook.workload)
         
         # Merge payload
-        self.variables.update(payload)
+        # CRITICAL: If payload contains 'workload' or 'vars', it can overwrite sub-playbook state.
+        # We only merge keys that are NOT 'workload' or 'vars' directly into self.variables
+        # unless they are explicitly intended to be there.
+        for k, v in payload.items():
+            if k not in ("workload", "vars"):
+                self.variables[k] = v
+            else:
+                # If it's workload/vars, deep merge instead of overwrite if they exist
+                if k in self.variables and isinstance(self.variables[k], dict) and isinstance(v, dict):
+                    self.variables[k].update(v)
+                else:
+                    self.variables[k] = v
     
     def get_step(self, step_name: str) -> Optional[Step]:
         """Get step by name."""
@@ -240,11 +247,18 @@ class ExecutionState:
                 "step": event.step,
                 "timestamp": event.timestamp.isoformat() if event.timestamp else None,
             },
+            # Note: variables includes loop vars, but we avoid top-level spreading 
+            # to prevent state pollution in sub-playbooks
             "workload": self.variables,
             "vars": self.variables,
-            **self.variables,  # Make variables accessible at top level (includes loop vars)
             **self.step_results,  # Make step results accessible (e.g., {{ process }})
         }
+        
+        # Add variables to context only if they don't collide with reserved keys
+        # This provides a flatter namespace while protecting system fields
+        for k, v in self.variables.items():
+            if k not in context and k not in protected_fields:
+                context[k] = v
         
         # Set protected fields AFTER spreading variables to ensure they are not overridden
         # CRITICAL: Convert IDs to strings to prevent JavaScript precision loss with Snowflake IDs
@@ -534,16 +548,28 @@ class ControlFlowEngine:
     
     def _render_template(self, template_str: str, context: dict[str, Any]) -> Any:
         """Render Jinja2 template."""
+        if not isinstance(template_str, str) or "{{" not in template_str:
+            return template_str
+            
         try:
             # Check if this is a simple variable reference like {{ varname }} or {{ obj.attr }}
             # If so, evaluate and return the actual object instead of string representation
             import re
+            # Improved regex to handle optional spaces and nested attributes
             simple_var_match = re.match(r'^\{\{\s*([\w.]+)\s*\}\}$', template_str.strip())
             if simple_var_match:
                 var_path = simple_var_match.group(1)
-                # Navigate dot notation: workload.numbers → context['workload']['numbers']
+                # Navigate dot notation: workload.api_url → context['workload']['api_url']
                 value = context
-                for part in var_path.split('.'):
+                parts = var_path.split('.')
+                
+                # OPTIMIZATION: Check top-level directly first
+                if len(parts) == 1:
+                    part = parts[0]
+                    if part in context:
+                        return context[part]
+                
+                for part in parts:
                     if isinstance(value, dict) and part in value:
                         value = value[part]
                     elif hasattr(value, part):
@@ -555,6 +581,7 @@ class ControlFlowEngine:
                     # Successfully navigated full path
                     return value
             
+            # Standard Jinja2 rendering
             template = self.jinja_env.from_string(template_str)
             result = template.render(**context)
             
@@ -1050,13 +1077,12 @@ class ControlFlowEngine:
         # Render Jinja2 templates in tool config
         # CRITICAL: Use recursive render_template to handle nested dicts/lists like params: {latitude: "{{ city.lat }}"}
         from noetl.core.dsl.render import render_template as recursive_render
-        from jinja2 import Environment, BaseLoader, StrictUndefined
         
-        env = Environment(loader=BaseLoader(), undefined=StrictUndefined)
-        rendered_tool_config = recursive_render(env, tool_config, context)
+        # Use existing engine environment to benefit from cached filters and settings
+        rendered_tool_config = recursive_render(self.jinja_env, tool_config, context)
         
         # Render Jinja2 templates in args (also use recursive rendering for nested structures)
-        rendered_args = recursive_render(env, step_args, context)
+        rendered_args = recursive_render(self.jinja_env, step_args, context)
         
         # Extract case blocks from step definition (if present) for worker-side execution
         case_blocks = None
@@ -1382,6 +1408,12 @@ class ControlFlowEngine:
                         if loop_state:
                             loop_state["completed"] = True
                             loop_state["aggregation_finalized"] = True
+                            # CRITICAL: Re-initialize results from authoritative source (NATS K/V) 
+                            # if we are about to create aggregated result, to ensure no duplicates 
+                            # or stale data from memory cache.
+                            if nats_loop_state:
+                                loop_state["results"] = nats_loop_state.get("results", [])
+                                logger.info(f"[LOOP-SYNC] Re-initialized local results from NATS K/V: {len(loop_state['results'])} items")
                         
                         # Get aggregated loop results
                         loop_aggregation = state.get_loop_aggregation(event.step)
@@ -1816,6 +1848,18 @@ class ControlFlowEngine:
             raise ValueError("Playbook must have a 'start' step")
         
         # Emit playbook.initialized event (playbook loaded and validated)
+        # CRITICAL: Strip massive result objects from workload to prevent state pollution in sub-playbooks
+        # Only keep genuine workload variables
+        workload_snapshot = {}
+        for k, v in state.variables.items():
+            # Skip step result objects (they are usually dicts with 'id', 'status', 'data' keys)
+            if isinstance(v, dict) and 'status' in v and ('data' in v or 'error' in v):
+                continue
+            # Skip large result proxies or objects
+            if k in state.step_results:
+                continue
+            workload_snapshot[k] = v
+
         from noetl.core.dsl.v2.models import LifecycleEventPayload
         playbook_init_event = Event(
             execution_id=execution_id,
@@ -1824,7 +1868,7 @@ class ControlFlowEngine:
             payload=LifecycleEventPayload(
                 status="initialized",
                 final_step=None,
-                result={"workload": state.variables, "playbook_path": playbook_path}
+                result={"workload": workload_snapshot, "playbook_path": playbook_path}
             ).model_dump(),
             timestamp=datetime.now(timezone.utc)
         )
@@ -1839,7 +1883,7 @@ class ControlFlowEngine:
             payload=LifecycleEventPayload(
                 status="initialized",
                 final_step=None,
-                result={"first_step": "start", "playbook_path": playbook_path}
+                result={"first_step": "start", "playbook_path": playbook_path, "workload": workload_snapshot}
             ).model_dump(),
             timestamp=datetime.now(timezone.utc)
         )

@@ -348,7 +348,11 @@ class V2Worker:
                     return
                 
                 # Execute the command
+                import time
+                t_command_start = time.perf_counter()
                 await self._execute_command(command, server_url, command_id)
+                t_command_end = time.perf_counter()
+                logger.info(f"[PERF] _execute_command for {step} took {t_command_end - t_command_start:.4f}s")
                 
             except Exception as e:
                 logger.exception(f"Error handling command notification: {e}")
@@ -922,7 +926,11 @@ class V2Worker:
             )
             
             # Execute tool
+            import time
+            t_tool_start = time.perf_counter()
             response = await self._execute_tool(tool_kind, tool_config, args, step, render_context)
+            t_tool_end = time.perf_counter()
+            logger.info(f"[PERF] Tool execution for {step} took {t_tool_end - t_tool_start:.4f}s")
             
             # CRITICAL: Log case blocks at INFO level for debugging
             logger.info(f"[CASE-CHECK] After tool execution for step: {step} | case_blocks present: {case_blocks is not None} | type: {type(case_blocks)}")
@@ -1232,6 +1240,8 @@ class V2Worker:
         - Template rendering
         - Error handling
         """
+        import time
+        t_imports_start = time.perf_counter()
         # Import tool executors
         from noetl.tools import (
             http,
@@ -1255,6 +1265,8 @@ class V2Worker:
         from noetl.tools.python import execute_python_task_async
         from jinja2 import Environment, BaseLoader
         from noetl.worker.keychain_resolver import populate_keychain_context
+        t_imports_end = time.perf_counter()
+        logger.info(f"[PERF] _execute_tool imports took {t_imports_end - t_imports_start:.4f}s")
         
         # Use render_context from engine (includes workload, step results, execution_id, etc.)
         # This allows plugins to render Jinja2 templates with full state
@@ -1286,6 +1298,8 @@ class V2Worker:
             worker_settings = get_worker_settings()
             refresh_threshold = worker_settings.keychain_refresh_threshold
             
+            import time
+            k_start = time.perf_counter()
             context = await populate_keychain_context(
                 task_config=task_config_combined,
                 context=context,
@@ -1294,7 +1308,11 @@ class V2Worker:
                 api_base_url=server_url,
                 refresh_threshold_seconds=refresh_threshold
             )
+            k_end = time.perf_counter()
+            logger.info(f"[PERF] populate_keychain_context took {k_end - k_start:.4f}s")
         
+        import time
+        t_jinja_start = time.perf_counter()
         from jinja2 import Environment, BaseLoader
         from noetl.core.dsl.render import add_b64encode_filter
         from noetl.core.auth.token_resolver import register_token_functions
@@ -1302,6 +1320,8 @@ class V2Worker:
         jinja_env = Environment(loader=BaseLoader())
         jinja_env = add_b64encode_filter(jinja_env)  # Add custom filters including tojson
         register_token_functions(jinja_env, context)
+        t_jinja_end = time.perf_counter()
+        logger.info(f"[PERF] Jinja2 setup took {t_jinja_end - t_jinja_start:.4f}s")
         
         # Map V2 config format to plugin task_config format
         # Plugins use different field names than V2 DSL
@@ -1994,7 +2014,6 @@ class V2Worker:
                 else:
                     delay = base_delay * (2 ** attempt)  # Exponential backoff
                     logger.warning(f"[HTTP] Event {name} emission failed (attempt {attempt + 1}/{max_retries}): {e}. Retrying in {delay}s...")
-                    await asyncio.sleep(delay)
                     await asyncio.sleep(delay)
 
 

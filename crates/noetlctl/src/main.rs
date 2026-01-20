@@ -285,8 +285,8 @@ enum Commands {
         no_cache: bool,
 
         /// Target platform for the Docker image (e.g., linux/amd64, linux/arm64)
-        #[arg(long, default_value = "linux/amd64")]
-        platform: String,
+        #[arg(long)]
+        platform: Option<String>,
     },
     /// Kubernetes deployment management
     /// Examples:
@@ -535,8 +535,8 @@ enum K8sCommand {
         no_cache: bool,
 
         /// Target platform for the Docker image (e.g., linux/amd64, linux/arm64)
-        #[arg(long, default_value = "linux/amd64")]
-        platform: String,
+        #[arg(long)]
+        platform: Option<String>,
     },
     /// Reset NoETL: rebuild, redeploy, reset schema, and setup test environment
     /// Example:
@@ -550,8 +550,8 @@ enum K8sCommand {
         no_cache: bool,
 
         /// Target platform for the Docker image (e.g., linux/amd64, linux/arm64)
-        #[arg(long, default_value = "linux/amd64")]
-        platform: String,
+        #[arg(long)]
+        platform: Option<String>,
     },
 }
 
@@ -1501,7 +1501,7 @@ async fn main() -> Result<()> {
             }
         },
         Some(Commands::Build { no_cache, platform }) => {
-            build_docker_image(no_cache, &platform).await?;
+            build_docker_image(no_cache, platform).await?;
         }
         Some(Commands::K8s { command }) => match command {
             K8sCommand::Deploy => {
@@ -1511,10 +1511,10 @@ async fn main() -> Result<()> {
                 k8s_remove().await?;
             }
             K8sCommand::Redeploy { no_cache, platform } => {
-                k8s_redeploy(no_cache, &platform).await?;
+                k8s_redeploy(no_cache, platform).await?;
             }
             K8sCommand::Reset { no_cache, platform } => {
-                k8s_reset(no_cache, &platform).await?;
+                k8s_reset(no_cache, platform).await?;
             }
         },
         Some(Commands::Iap { command }) => {
@@ -2819,7 +2819,7 @@ fn send_signal(pid: i32, signal: nix::sys::signal::Signal) -> Result<()> {
 // Build Commands
 // ============================================================================
 
-async fn build_docker_image(no_cache: bool, platform: &str) -> Result<()> {
+async fn build_docker_image(no_cache: bool, platform: Option<String>) -> Result<()> {
     use chrono::Local;
     use std::io::{BufRead, BufReader};
     use std::process::Command;
@@ -2828,8 +2828,15 @@ async fn build_docker_image(no_cache: bool, platform: &str) -> Result<()> {
     let image_name = "noetl";
     let image_tag = Local::now().format("%Y-%m-%d-%H-%M").to_string();
 
+    // Default to host platform if not specified (prevents slow QEMU emulation on ARM)
+    let target_platform = platform;
+
     println!("Building Docker image: {}/{}:{}", registry, image_name, image_tag);
-    println!("Target platform: {}", platform);
+    if let Some(ref p) = target_platform {
+        println!("Target platform: {}", p);
+    } else {
+        println!("Target platform: native");
+    }
 
     let mut cmd = Command::new("docker");
     cmd.arg("buildx");
@@ -2840,8 +2847,10 @@ async fn build_docker_image(no_cache: bool, platform: &str) -> Result<()> {
     }
     cmd.arg("--progress=plain");
 
-    // Build for specified platform (default: linux/amd64 for Kind/K8s compatibility)
-    cmd.arg("--platform").arg(platform);
+    // Build for specified platform if provided
+    if let Some(ref p) = target_platform {
+        cmd.arg("--platform").arg(p);
+    }
 
     // Load image to local Docker daemon (required for kind load)
     cmd.arg("--load");
@@ -2863,9 +2872,9 @@ async fn build_docker_image(no_cache: bool, platform: &str) -> Result<()> {
     // cmd.env("DOCKER_BUILDKIT", "0");
 
     println!(
-        "Running: docker buildx build{} --progress=plain --platform {} -t {}/{}:{} -f docker/noetl/dev/Dockerfile .",
+        "Running: docker buildx build{} --progress=plain{} -t {}/{}:{} -f docker/noetl/dev/Dockerfile .",
         if no_cache { " --no-cache" } else { "" },
-        platform,
+        if let Some(ref p) = target_platform { format!(" --platform {}", p) } else { "".to_string() },
         registry,
         image_name,
         image_tag
@@ -2979,11 +2988,11 @@ async fn k8s_remove() -> Result<()> {
     Ok(())
 }
 
-async fn k8s_redeploy(no_cache: bool, platform: &str) -> Result<()> {
+async fn k8s_redeploy(no_cache: bool, platform: Option<String>) -> Result<()> {
     println!("Rebuilding and redeploying NoETL...");
 
     // Build image
-    build_docker_image(no_cache, platform).await?;
+    build_docker_image(no_cache, platform.clone()).await?;
 
     // Remove existing deployment
     k8s_remove().await.ok(); // Ignore errors if not deployed
@@ -3008,7 +3017,7 @@ async fn k8s_redeploy(no_cache: bool, platform: &str) -> Result<()> {
     Ok(())
 }
 
-async fn k8s_reset(no_cache: bool, platform: &str) -> Result<()> {
+async fn k8s_reset(no_cache: bool, platform: Option<String>) -> Result<()> {
     println!("Resetting NoETL (full rebuild + schema reset + test setup)...");
 
     // Reset postgres schema

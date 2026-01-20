@@ -32,3 +32,5 @@ data:
   NATS_SUBJECT: "noetl.commands"
   # Keychain cache refresh threshold (15 minutes - prevents expiration during long loops)
   NOETL_KEYCHAIN_REFRESH_THRESHOLD: "900"
+  # Skip slow library validation in QEMU environments
+  NOETL_SKIP_LIB_VALIDATION: "true"
