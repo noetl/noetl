@@ -90,6 +90,7 @@ bhs-state-program-analytics.code-workspace
 # Local repositories (not tracked as submodules)
 .gitmodules
 submodules/
+tools/bhs-state-program-analytics/
 /noetl/bin/
 
 # Distribution repositories (symlinks)
