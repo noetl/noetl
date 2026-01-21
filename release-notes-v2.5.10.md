@@ -1,4 +1,4 @@
-# NoETL v2.5.5 Release Notes
+# NoETL v2.5.10 Release Notes
 
 ## What's New
 
