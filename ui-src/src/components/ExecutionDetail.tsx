@@ -24,6 +24,7 @@ import {
   FilterOutlined,
   SearchOutlined,
   RightOutlined,
+  StopOutlined,
 } from "@ant-design/icons";
 import { apiService } from "../services/api";
 import { ExecutionData, ExecutionEvent } from "../types";
@@ -47,6 +48,7 @@ const ExecutionDetail: React.FC = () => {
   const [filteredEvents, setFilteredEvents] = useState<ExecutionEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [cancelling, setCancelling] = useState(false);
 
   // Pagination state for events table
   const [currentPage, setCurrentPage] = useState<number>(1);
@@ -184,6 +186,29 @@ const ExecutionDetail: React.FC = () => {
     setNodeFilter("");
     setSearchText("");
     setDateRange(null);
+  };
+
+  const handleCancelExecution = async () => {
+    if (!id) return;
+
+    try {
+      setCancelling(true);
+      await apiService.cancelExecution(id, "User requested cancellation from UI", true);
+      message.success("Execution cancelled successfully");
+
+      // Refresh execution data
+      const data = await apiService.getExecution(id);
+      setExecution(data);
+      const executionEvents = data.events || [];
+      setEvents(executionEvents);
+      setFilteredEvents(executionEvents);
+    } catch (err: any) {
+      console.error("Failed to cancel execution:", err);
+      const errorMsg = err.response?.data?.message || "Failed to cancel execution";
+      message.error(errorMsg);
+    } finally {
+      setCancelling(false);
+    }
   };
 
   // Helper to pick the first existing key from possible aliases
@@ -348,15 +373,35 @@ const ExecutionDetail: React.FC = () => {
   console.log('Rendering ExecutionDetail for execution:', execution);
   console.log('execution.start_time:', execution.start_time);
   console.log('moment: execution.start_time:', moment(execution.start_time).format("YYYY-MM-DD HH:mm:ss"));
+
+  const canCancel = execution?.status?.toLowerCase() === "running" || execution?.status?.toLowerCase() === "pending";
+  console.log('Cancel button check:', {
+    status: execution?.status,
+    statusLower: execution?.status?.toLowerCase(),
+    canCancel
+  });
+
   return (
     <Card className="execution-detail-container">
-      <Button
-        icon={<ArrowLeftOutlined />}
-        onClick={() => navigate(-1)}
-        className="execution-detail-back-button"
-      >
-        Back
-      </Button>
+      <Space className="execution-detail-header-actions">
+        <Button
+          icon={<ArrowLeftOutlined />}
+          onClick={() => navigate(-1)}
+          className="execution-detail-back-button"
+        >
+          Back
+        </Button>
+        {canCancel && (
+          <Button
+            danger
+            icon={<StopOutlined />}
+            onClick={handleCancelExecution}
+            loading={cancelling}
+          >
+            Cancel Execution
+          </Button>
+        )}
+      </Space>
 
       <Title level={3}>Execution Details</Title>
 

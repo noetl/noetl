@@ -177,44 +177,56 @@ async def execute(req: ExecuteRequest) -> ExecuteResponse:
                     cmd_id = f"{execution_id}:{cmd.step}:{await get_snowflake_id()}"
                     evt_id = await get_snowflake_id()
                     
-                    result = {
-                        "kind": "data",
-                        "data": {
-                            "tool_config": cmd.tool.config,
-                            "args": cmd.args or {},
-                            "render_context": cmd.render_context,
-                            "case": cmd.case,
-                        }
-                    }
-                    meta = {
-                        "command_id": cmd_id,
-                        "step": cmd.step,
-                        "tool_kind": cmd.tool.kind,
-                        "max_attempts": cmd.max_attempts or 3,
-                        "attempt": 1,
-                        "execution_id": str(execution_id),
-                        "catalog_id": str(catalog_id),
-                    }
-                    
-                    # Store actionable flag in meta column (not separate column)
-                    meta["actionable"] = True
-                    
-                    await cur.execute("""
-                        INSERT INTO noetl.event (
-                            event_id, execution_id, catalog_id, event_type,
-                            node_id, node_name, node_type, status,
-                            result, meta, parent_event_id, parent_execution_id,
-                            created_at
-                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    """, (
-                        evt_id, int(execution_id), catalog_id, "command.issued",
-                        cmd.step, cmd.step, cmd.tool.kind, "PENDING",
-                        Json(result), Json(meta), root_event_id, req.parent_execution_id,
-                        datetime.now(timezone.utc)
-                    ))
-                    command_events.append((evt_id, cmd_id, cmd))
+                # Build context for command execution (passes execution parameters, not results)
+                context = {
+                    "tool_config": cmd.tool.config,
+                    "args": cmd.args or {},
+                    "render_context": cmd.render_context,
+                    "case": cmd.case,
+                }
+                meta = {
+                    "command_id": cmd_id,
+                    "step": cmd.step,
+                    "tool_kind": cmd.tool.kind,
+                    "max_attempts": cmd.max_attempts or 3,
+                    "attempt": 1,
+                    "execution_id": str(execution_id),
+                    "catalog_id": str(catalog_id),
+                }
                 
-                await conn.commit()
+                # Store actionable flag in meta column (not separate column)
+                meta["actionable"] = True
+                
+                await cur.execute("""
+                    INSERT INTO noetl.event (
+                        event_id, execution_id, catalog_id, event_type,
+                        node_id, node_name, node_type, status,
+                        context, meta, parent_event_id, parent_execution_id,
+                        created_at
+                    ) VALUES (
+                        %(event_id)s, %(execution_id)s, %(catalog_id)s, %(event_type)s,
+                        %(node_id)s, %(node_name)s, %(node_type)s, %(status)s,
+                        %(context)s, %(meta)s, %(parent_event_id)s, %(parent_execution_id)s,
+                        %(created_at)s
+                    )
+                """, {
+                    "event_id": evt_id,
+                    "execution_id": int(execution_id),
+                    "catalog_id": catalog_id,
+                    "event_type": "command.issued",
+                    "node_id": cmd.step,
+                    "node_name": cmd.step,
+                    "node_type": cmd.tool.kind,
+                    "status": "PENDING",
+                    "context": Json(context),
+                    "meta": Json(meta),
+                    "parent_event_id": root_event_id,
+                    "parent_execution_id": req.parent_execution_id,
+                    "created_at": datetime.now(timezone.utc)
+                })
+                command_events.append((evt_id, cmd_id, cmd))
+            
+            await conn.commit()
         
         # NATS notifications
         for evt_id, cmd_id, cmd in command_events:
@@ -254,7 +266,7 @@ async def get_command(event_id: int):
         async with get_pool_connection() as conn:
             async with conn.cursor(row_factory=dict_row) as cur:
                 await cur.execute("""
-                    SELECT execution_id, node_name as step, node_type as tool_kind, result, meta, context
+                    SELECT execution_id, node_name as step, node_type as tool_kind, context, meta
                     FROM noetl.event
                     WHERE event_id = %s AND event_type = 'command.issued'
                 """, (event_id,))
@@ -263,17 +275,8 @@ async def get_command(event_id: int):
                 if not row:
                     raise HTTPException(404, f"command.issued event not found: {event_id}")
                 
-                # Extract context from result.data (where we stored it in execute)
-                result = row['result'] or {}
-                result_data = result.get('data', {})
-                
-                # Build context dict that worker expects
-                context = {
-                    "tool_config": result_data.get('tool_config', {}),
-                    "args": result_data.get('args', {}),
-                    "render_context": result_data.get('render_context', {}),
-                    "case": result_data.get('case'),
-                }
+                # Context already contains command execution parameters
+                context = row['context'] or {}
                 
                 return {
                     "execution_id": row['execution_id'],
@@ -445,14 +448,12 @@ async def handle_event(req: EventRequest) -> EventResponse:
                     cmd_id = f"{cmd.execution_id}:{cmd.step}:{await get_snowflake_id()}"
                     new_evt_id = await get_snowflake_id()
                     
-                    result = {
-                        "kind": "data",
-                        "data": {
-                            "tool_config": cmd.tool.config,
-                            "args": cmd.args or {},
-                            "render_context": cmd.render_context,
-                            "case": cmd.case,
-                        }
+                    # Build context for retry command (command execution parameters)
+                    context = {
+                        "tool_config": cmd.tool.config,
+                        "args": cmd.args or {},
+                        "render_context": cmd.render_context,
+                        "case": cmd.case,
                     }
                     meta = {
                         "command_id": cmd_id,
@@ -467,15 +468,29 @@ async def handle_event(req: EventRequest) -> EventResponse:
                         INSERT INTO noetl.event (
                             event_id, execution_id, catalog_id, event_type,
                             node_id, node_name, node_type, status,
-                            result, meta, parent_event_id, parent_execution_id,
+                            context, meta, parent_event_id, parent_execution_id,
                             created_at
-                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    """, (
-                        new_evt_id, int(cmd.execution_id), cat_id, "command.issued",
-                        cmd.step, cmd.step, cmd.tool.kind, "PENDING",
-                        Json(result), Json(meta), evt_id, parent_exec,
-                        datetime.now(timezone.utc)
-                    ))
+                        ) VALUES (
+                            %(event_id)s, %(execution_id)s, %(catalog_id)s, %(event_type)s,
+                            %(node_id)s, %(node_name)s, %(node_type)s, %(status)s,
+                            %(context)s, %(meta)s, %(parent_event_id)s, %(parent_execution_id)s,
+                            %(created_at)s
+                        )
+                    """, {
+                        "event_id": new_evt_id,
+                        "execution_id": int(cmd.execution_id),
+                        "catalog_id": cat_id,
+                        "event_type": "command.issued",
+                        "node_id": cmd.step,
+                        "node_name": cmd.step,
+                        "node_type": cmd.tool.kind,
+                        "status": "PENDING",
+                        "context": Json(context),
+                        "meta": Json(meta),
+                        "parent_event_id": evt_id,
+                        "parent_execution_id": parent_exec,
+                        "created_at": datetime.now(timezone.utc)
+                    })
                     command_events.append((new_evt_id, cmd_id, cmd))
                 
                 await conn.commit()

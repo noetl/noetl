@@ -20,7 +20,7 @@ from noetl.worker.keychain_resolver import populate_keychain_context
 
 from .auth import build_auth_headers
 from .request import build_request_args, redact_sensitive_headers
-from .response import process_response, create_mock_response
+from .response import process_response, create_mock_response, build_result_reference
 
 logger = setup_logger(__name__, include_location=True)
 
@@ -30,7 +30,8 @@ async def execute_http_task(
     context: Dict[str, Any],
     jinja_env: Environment,
     task_with: Dict[str, Any],
-    log_event_callback: Optional[Callable] = None
+    log_event_callback: Optional[Callable] = None,
+    sink_config: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     """
     Execute an HTTP task with async authentication resolution and credential caching.
@@ -153,9 +154,12 @@ async def execute_http_task(
             if _should_mock_request(endpoint):
                 logger.info(f"HTTP.EXECUTE_HTTP_TASK: Mocking request to local domain: {endpoint}")
                 mock_data = create_mock_response(endpoint, method, params, payload, data_map)
+                # Apply sink-driven reference if sink is configured
+                if sink_config:
+                    mock_data = build_result_reference(mock_data, sink_config)
                 return _complete_task(
                     task_id, task_name, start_time, 'success', mock_data,
-                    method, endpoint, task_with, mocked=True
+                    method, endpoint, task_with, mocked=True, sink_config=sink_config
                 )
 
             # Execute the actual HTTP request
@@ -174,6 +178,11 @@ async def execute_http_task(
                 is_success = response.is_success
                 logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Response received | status={response.status_code} | success={is_success}")
 
+                # Apply sink-driven reference if sink is configured
+                if sink_config:
+                    logger.info(f"HTTP.EXECUTE_HTTP_TASK: Sink detected, building result reference")
+                    response_data = build_result_reference(response_data, sink_config)
+
                 result = {
                     'id': task_id,
                     'status': 'success' if is_success else 'error',
@@ -186,7 +195,7 @@ async def execute_http_task(
 
                 return _complete_task(
                     task_id, task_name, start_time, result['status'], result.get('data'),
-                    method, endpoint, task_with
+                    method, endpoint, task_with, sink_config=sink_config
                 )
 
         except httpx.HTTPStatusError as e:
@@ -200,9 +209,12 @@ async def execute_http_task(
             if _should_mock_on_error():
                 mock_data = create_mock_response(endpoint, method, params, payload, data_map, "error_fallback")
                 mock_data['data']['error'] = error_msg
+                # Apply sink-driven reference if sink is configured
+                if sink_config:
+                    mock_data = build_result_reference(mock_data, sink_config)
                 return _complete_task(
                     task_id, task_name, start_time, 'success', mock_data,
-                    method, endpoint, task_with, mocked=True
+                    method, endpoint, task_with, mocked=True, sink_config=sink_config
                 )
             raise Exception(error_msg)
         except httpx.TimeoutException as e:
@@ -350,7 +362,8 @@ def _complete_task(
     method: str,
     endpoint: str,
     task_with: Dict[str, Any],
-    mocked: bool = False
+    mocked: bool = False,
+    sink_config: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     """
     Complete task execution and return result envelope.
@@ -360,19 +373,31 @@ def _complete_task(
         task_name: Task name
         start_time: Task start time
         status: Task status ('success' or 'error')
-        data: Task result data
+        data: Task result data (may contain data_reference if sink is present)
         method: HTTP method
         endpoint: Target endpoint
         task_with: Task with parameters
         mocked: Whether response was mocked
+        sink_config: Optional sink configuration (triggers result reference pattern)
 
     Returns:
         Task result dictionary
     """
     end_time = datetime.datetime.now()
     duration = (end_time - start_time).total_seconds()
-    logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Task duration={duration} seconds")
-
+    
     result = {'id': task_id, 'status': status, 'data': data}
-    logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Exit (success) - result={result}")
+    
+    # Log based on whether sink reference was used
+    if sink_config and isinstance(data, dict) and 'data_reference' in data:
+        ref = data.get('data_reference', {})
+        logger.info(
+            f"HTTP.COMPLETE_TASK: Sink-driven result | duration={duration}s | "
+            f"sink_type={ref.get('sink_type')} | table={ref.get('table')} | "
+            f"row_count={ref.get('row_count')}"
+        )
+    else:
+        logger.debug(f"HTTP.COMPLETE_TASK: Task duration={duration} seconds")
+    
+    logger.debug(f"HTTP.COMPLETE_TASK: Exit (success) - result={result}")
     return result
