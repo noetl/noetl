@@ -1,6 +1,6 @@
 [package]
 name = "noetl"
-version.workspace = true
+version = "2.5.10"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true

@@ -61,7 +61,7 @@ noetl run automation/tasks.yaml
 noetl run automation/deploy.yaml production
 
 # Pass variables
-noetl run tasks.yaml --set env=prod --set version=v2.5.5 --verbose
+noetl run tasks.yaml --set env=prod --set version=v2.5.10 --verbose
 ```
 
 ### Server Management
