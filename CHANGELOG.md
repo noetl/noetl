@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.5.11](https://github.com/noetl/noetl/compare/v2.5.10...v2.5.11) (2026-01-21)
+
+### Bug Fixes
+
+* bump noetl versions 2.5.11 ([#213](https://github.com/noetl/noetl/issues/213)) ([c6aa17f](https://github.com/noetl/noetl/commit/c6aa17f72a7f4993aedeb0b0511fd3af5dea452a))
+
 ## [2.5.10](https://github.com/noetl/noetl/compare/v2.5.9...v2.5.10) (2026-01-21)
 
 ### Bug Fixes
