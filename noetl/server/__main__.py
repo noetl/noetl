@@ -13,6 +13,7 @@ Usage:
 import argparse
 import sys
 import asyncio
+import logging
 
 
 def main():
@@ -52,6 +53,15 @@ def main():
     try:
         import uvicorn
         from noetl.server.app import create_app
+
+        class AccessLogFilter(logging.Filter):
+            def filter(self, record: logging.LogRecord) -> bool:
+                message = record.getMessage()
+                if "/api/worker/pool/register" in message:
+                    return False
+                return True
+
+        logging.getLogger("uvicorn.access").addFilter(AccessLogFilter())
         
         app = create_app()
         uvicorn.run(app, host=args.host, port=args.port)
