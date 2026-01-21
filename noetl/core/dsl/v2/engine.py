@@ -1208,7 +1208,7 @@ class ControlFlowEngine:
         # Handle synthetic steps (like sink commands)
         # These are created dynamically and don't exist in the workflow
         # They execute and emit events, but don't need orchestration
-        if event.step.endswith('_sink'):
+        if event.step.endswith('_sink') or event.step.endswith('.sink'):
             logger.debug(f"Synthetic sink step: {event.step} - persisting event without orchestration")
             # Persist the event but don't generate commands (no orchestration needed)
             # Skip if already persisted by API caller
