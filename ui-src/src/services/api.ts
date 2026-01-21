@@ -200,6 +200,14 @@ class APIService {
     await apiClient.post(`/executions/${id}/stop`);
   }
 
+  async cancelExecution(id: string, reason?: string, cascade: boolean = true): Promise<any> {
+    const response = await apiClient.post(`/executions/${id}/cancel`, {
+      reason,
+      cascade
+    });
+    return response.data;
+  }
+
   async getPlaybookContent(id: string): Promise<string | undefined> {
     try {
       const response = await apiClient.get(`/catalog/playbook/content`, {

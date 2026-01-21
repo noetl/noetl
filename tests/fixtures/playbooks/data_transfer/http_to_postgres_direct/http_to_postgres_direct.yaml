@@ -44,16 +44,22 @@ workflow:
       method: GET
       url: "{{ workload.api_url }}"
     case:
-      - when: "{{ event.name == 'step.exit' }}"
+      - when: "{{ event.name == 'call.done' and response is defined and response.metadata is defined and response.metadata.status_code == 200 }}"
         then:
           - sink:
               tool:
                 kind: postgres
                 auth: "{{ workload.pg_auth }}"
                 statement: |
-                  {% for item in result.data %}
+                  {% for item in response.data %}
                   INSERT INTO public.http_to_postgres_direct (data) VALUES ('{{ item | tojson | replace("'", "''") }}'::jsonb);
                   {% endfor %}
+      - when: "{{ event.name == 'call.error' and response is defined and response.data is defined and response.data.status_code in [500, 502, 503] }}"
+        then:
+          retry:
+            max_attempts: 3
+            backoff_multiplier: 2.0
+            initial_delay: 0.5
     next:
       - step: show_count
 
@@ -65,11 +71,27 @@ workflow:
       command: |
         SELECT COUNT(*) as records FROM public.http_to_postgres_direct;
     case:
-      - when: "{{ event.name == 'step.exit' and event.status == 'COMPLETED' }}"
+      - when: "{{ event.name == 'call.done' }}"
         then:
           - set:
-              # Postgres tool returns commands under result.data.command_*
-              direct_count: "{{ result.data.command_0.rows[0].records }}"
+              # Postgres tool response is the command results dict (command_0, command_1, ...)
+              direct_count: "{{ response.command_0.rows[0].records }}"
+    next:
+      - step: validate_count
+
+  - step: validate_count
+    desc: Fail if no rows stored
+    tool:
+      kind: python
+      auth: {}
+      libs: {}
+      args:
+        direct_count: "{{ vars.direct_count }}"
+      code: |
+        count = int(direct_count or 0)
+        if count == 0:
+            raise ValueError("No rows stored in http_to_postgres_direct")
+        result = {"status": "ok", "records": count}
     next:
       - step: end
 

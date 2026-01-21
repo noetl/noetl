@@ -15,9 +15,9 @@ Workers receive event_id references via NATS and fetch command details from the 
 **Flow:**
 1. Client: POST /api/execute
 2. Server: Creates execution, emits command.issued events
-3. Server: Publishes to NATS: {execution_id, event_id, command_id, step, server_url}
+3. Server: Publishes to NATS: `{execution_id, event_id, command_id, step, server_url}`
 4. Worker: Receives notification via pull subscription
-5. Worker: GET /api/commands/{event_id} to fetch details
+5. Worker: GET `/api/commands/{event_id}` to fetch details
 6. Worker: Executes tool
 7. Worker: POST /api/events (emit command.completed)
 8. Server: Evaluates next steps, emits new command.issued events
@@ -45,7 +45,7 @@ NATS carries lightweight references, not full command data:
 }
 ```
 
-Workers use event_id to fetch full command details from /api/commands/{event_id}.
+Workers use event_id to fetch full command details from `/api/commands/{event_id}`.
 
 ## Components
 
@@ -66,9 +66,9 @@ Workers use event_id to fetch full command details from /api/commands/{event_id}
 
 **Architecture**:
 1. Subscribe to NATS noetl.commands subject
-2. Receive notification: {execution_id, event_id, command_id, step, server_url}
+2. Receive notification: `{execution_id, event_id, command_id, step, server_url}`
 3. Emit command.claimed event (atomic claim via unique constraint)
-4. Fetch full command from GET /api/commands/{event_id}
+4. Fetch full command from GET `/api/commands/{event_id}`
 5. Execute tool based on tool.kind
 6. Emit command.completed or command.failed event
 

@@ -591,12 +591,98 @@ class V2Worker:
                     # Case matched - extract action
                     logger.info(f"[CASE-EVAL] Case {idx} matched (event={event_name})! Extracting action")
                     
-                    # Normalize then_block to dict format
-                    then_actions = then_block if isinstance(then_block, dict) else {}
+                    # Normalize then_block to list of action dicts
+                    # then_block can be: dict, list of dicts, or list with 'next' key
+                    if isinstance(then_block, dict):
+                        # Single dict - could be {next: [...]} or {sink: ...} etc
+                        if 'next' in then_block:
+                            # Special case: {next: [...]} format
+                            then_action_list = [then_block]
+                        else:
+                            # Regular action dict - wrap in list
+                            then_action_list = [then_block]
+                    elif isinstance(then_block, list):
+                        then_action_list = then_block
+                    else:
+                        then_action_list = []
                     
-                    # Check for routing actions (next, retry)
-                    if 'next' in then_actions:
-                        next_steps = then_actions['next']
+                    # Process actions in order: sink, then routing (retry/next)
+                    has_sink = False
+                    has_retry = False
+                    has_next = False
+                    retry_config = None
+                    next_steps = None
+                    set_config = None
+                    
+                    for action in then_action_list:
+                        if not isinstance(action, dict):
+                            continue
+                        
+                        if 'sink' in action:
+                            has_sink = True
+                        if 'retry' in action:
+                            has_retry = True
+                            # Get raw retry config (may contain Jinja2 templates)
+                            raw_retry_config = action['retry']
+                            
+                            # Render retry args templates with current context
+                            # This ensures page numbers and other dynamic values are computed NOW
+                            retry_config = {}
+                            for key, value in raw_retry_config.items():
+                                if key == 'args' and isinstance(value, dict):
+                                    # Recursively render args
+                                    rendered_args = {}
+                                    for arg_key, arg_value in value.items():
+                                        if isinstance(arg_value, dict):
+                                            # Recursively render nested dicts (e.g., params)
+                                            rendered_nested = {}
+                                            for nested_key, nested_value in arg_value.items():
+                                                if isinstance(nested_value, str) and '{{' in nested_value:
+                                                    template = jinja_env.from_string(nested_value)
+                                                    rendered_nested[nested_key] = template.render(eval_context)
+                                                else:
+                                                    rendered_nested[nested_key] = nested_value
+                                            rendered_args[arg_key] = rendered_nested
+                                        elif isinstance(arg_value, str) and '{{' in arg_value:
+                                            template = jinja_env.from_string(arg_value)
+                                            rendered_args[arg_key] = template.render(eval_context)
+                                        else:
+                                            rendered_args[arg_key] = arg_value
+                                    retry_config[key] = rendered_args
+                                else:
+                                    retry_config[key] = value
+                            
+                            logger.info(f"[CASE-EVAL] Rendered retry config: {retry_config}")
+                        if 'next' in action:
+                            has_next = True
+                            next_steps = action['next']
+                        if 'set' in action:
+                            set_config = action['set']
+                    
+                    # Execute sink first if present (semantic order: sink → retry/next)
+                    if has_sink:
+                        logger.info(f"[CASE-EVAL] Case {idx} has sink action - executing via _execute_case_sinks")
+                        await self._execute_case_sinks(
+                            [case],
+                            response,
+                            render_context,
+                            server_url,
+                            execution_id,
+                            step,
+                            event_name="call.done"
+                        )
+                    
+                    # Handle retry locally in the worker (don't send to server)
+                    if has_retry:
+                        logger.info(f"[CASE-EVAL] Case {idx} triggered retry - returning retry action for local handling")
+                        return {
+                            'type': 'retry',
+                            'config': retry_config,
+                            'case_index': idx,
+                            'triggered_by': event_name
+                        }
+                    
+                    if has_next:
                         if isinstance(next_steps, list) and len(next_steps) > 0:
                             return {
                                 'type': 'next',
@@ -605,21 +691,8 @@ class V2Worker:
                                 'triggered_by': event_name
                             }
                     
-                    if 'retry' in then_actions:
-                        retry_config = then_actions['retry']
-                        return {
-                            'type': 'retry',
-                            'config': retry_config,
-                            'case_index': idx,
-                            'triggered_by': event_name
-                        }
-                    
-                    # Check for set action (update variables)
-                    if 'set' in then_actions:
-                        set_config = then_actions['set']
+                    if set_config:
                         logger.info(f"[CASE-EVAL] Case {idx} has set action - updating variables")
-                        # Set actions are handled by server after event processing
-                        # Include in case action for server to process
                         return {
                             'type': 'set',
                             'config': set_config,
@@ -627,19 +700,8 @@ class V2Worker:
                             'triggered_by': event_name
                         }
                     
-                    # Check for sink action (handled separately)
-                    if 'sink' in then_actions:
-                        logger.info(f"[CASE-EVAL] Case {idx} has sink action - will execute via _execute_case_sinks")
-                        # Execute sink immediately
-                        await self._execute_case_sinks(
-                            [case],
-                            response,
-                            render_context,
-                            server_url,
-                            execution_id,
-                            step
-                        )
-                        # Return None to continue normal flow (sink doesn't affect routing)
+                    # Sink executed but no routing action - continue normal flow
+                    if has_sink:
                         return None
                     
                     # Successfully evaluated - break retry loop
@@ -849,7 +911,8 @@ class V2Worker:
                             render_context,
                             server_url,
                             execution_id,
-                            step
+                            step,
+                            event_name=event_name
                         )
                         # Return None to continue normal flow (sink doesn't affect routing)
                         return None
@@ -893,7 +956,8 @@ class V2Worker:
         render_context: dict,
         server_url: str,
         execution_id: int,
-        step: str
+        step: str,
+        event_name: str = "call.done"
     ):
         """
         Execute sinks from case blocks immediately after tool execution.
@@ -927,7 +991,7 @@ class V2Worker:
             'response': response,
             'result': response,  # Keep full response structure for {{ result.data }} access
             'this': response,    # Add this for {{ this }} (full response)
-            'event': {'name': 'step.exit'},  # Use step.exit to match playbook conditions
+            'event': {'name': event_name},
             'error': response.get('error') if isinstance(response, dict) else None
         }
         
@@ -993,6 +1057,30 @@ class V2Worker:
                 
                 logger.info(f"[SINK] Executing sink for case {idx}")
                 
+                # Extract sink type for events
+                sink_tool = sink_config.get('tool', {})
+                if isinstance(sink_tool, str):
+                    sink_kind = sink_tool
+                    sink_table = None
+                else:
+                    sink_kind = sink_tool.get('kind', 'unknown')
+                    sink_table = sink_tool.get('table')
+                
+                # Emit sink.start event
+                await self._emit_event(
+                    server_url,
+                    execution_id,
+                    f"{step}.sink",
+                    "sink.start",
+                    {
+                        "case_index": idx,
+                        "sink_type": sink_kind,
+                        "sink_table": sink_table
+                    },
+                    actionable=False,
+                    informative=True
+                )
+                
                 # Use the centralized sink executor instead of postgres-only handling
                 from noetl.core.storage import execute_sink_task
                 
@@ -1020,35 +1108,93 @@ class V2Worker:
                 
                 logger.info(f"[SINK] Sink executed successfully: {sink_result}")
                 
-                # Report sink execution via event
-                sink_kind = sink_config.get('tool', {}).get('kind', 'unknown')
+                # Extract summary from sink result
+                sink_summary = self._extract_sink_summary(sink_result, sink_kind, sink_table)
+                
+                # Emit sink.done event with summary
                 await self._emit_event(
                     server_url,
                     execution_id,
-                    step,
-                    "sink.executed",
+                    f"{step}.sink",
+                    "sink.done",
                     {
                         "case_index": idx,
                         "sink_type": sink_kind,
-                        "result": sink_result,
+                        "summary": sink_summary,
                         "has_collect": collect_config is not None,
                         "has_retry": retry_config is not None
-                    }
+                    },
+                    actionable=False,
+                    informative=True
                 )
                     
             except Exception as e:
                 logger.error(f"[SINK] Error executing sink for case {idx}: {e}", exc_info=True)
-                # Report sink failure
+                
+                # Emit sink.error event
                 await self._emit_event(
                     server_url,
                     execution_id,
-                    step,
-                    "sink.failed",
+                    f"{step}.sink",
+                    "sink.error",
                     {
                         "case_index": idx,
+                        "sink_type": sink_config.get('tool', {}).get('kind', 'unknown') if isinstance(sink_config.get('tool'), dict) else sink_config.get('tool', 'unknown'),
                         "error": str(e)
-                    }
+                    },
+                    actionable=False,
+                    informative=True
                 )
+    
+    def _extract_sink_summary(
+        self,
+        sink_result: dict,
+        sink_kind: str,
+        sink_table: Optional[str] = None
+    ) -> dict:
+        """
+        Extract summary information from sink result.
+        
+        Args:
+            sink_result: Result from execute_sink_task
+            sink_kind: Sink type (postgres, duckdb, http, etc.)
+            sink_table: Optional table name
+            
+        Returns:
+            Dictionary with summary information
+        """
+        summary = {
+            "sink_type": sink_kind,
+            "table": sink_table,
+            "status": sink_result.get('status', 'unknown')
+        }
+        
+        # Extract rows_affected from result data
+        if isinstance(sink_result, dict):
+            result_data = sink_result.get('data', {})
+            result_meta = sink_result.get('meta', {})
+            
+            # Try to extract row count from various places
+            if isinstance(result_data, dict):
+                # Check for saved/rows_affected in data
+                summary['rows_affected'] = (
+                    result_data.get('rows_affected') or
+                    result_data.get('saved') or
+                    result_data.get('row_count') or
+                    result_meta.get('rows_affected', 0)
+                )
+                
+                # Extract execution time if available
+                if 'execution_time' in result_data:
+                    summary['execution_time'] = result_data['execution_time']
+                elif 'elapsed' in result_data:
+                    summary['execution_time'] = result_data['elapsed']
+            
+            # Add any additional metadata
+            if isinstance(result_meta, dict):
+                summary['tool_info'] = result_meta.get('tool_info', {})
+        
+        return summary
     
     async def _execute_command(self, command: dict, server_url: str, command_id: str = None):
         """Execute a command and emit events."""
@@ -1106,9 +1252,12 @@ class V2Worker:
             # Execute tool
             import time
             t_tool_start = time.perf_counter()
-            response = await self._execute_tool(tool_kind, tool_config, args, step, render_context)
+            response = await self._execute_tool(tool_kind, tool_config, args, step, render_context, case_blocks=case_blocks)
             t_tool_end = time.perf_counter()
             logger.info(f"[PERF] Tool execution for {step} took {t_tool_end - t_tool_start:.4f}s")
+            
+            # Note: _internal_data will be cleaned up later (after case sink execution)
+            # We keep it in response temporarily so sinks can access the full data
             
             # CRITICAL: Log case blocks at INFO level for debugging
             logger.info(f"[CASE-CHECK] After tool execution for step: {step} | case_blocks present: {case_blocks is not None} | type: {type(case_blocks)}")
@@ -1167,7 +1316,10 @@ class V2Worker:
                 if case_action and case_action.get('type') in ['next', 'retry']:
                     logger.info(f"[CASE-ACTION] Case evaluation triggered {case_action['type']} action for {step}")
                     
-                    # Report case action to server via event - this is ACTIONABLE
+                    # ARCHITECTURE PRINCIPLE #3:
+                    # Report case action to server via ACTIONABLE event
+                    # Server will issue new command with rendered args from case_action.config
+                    # This follows server-worker-server control loop pattern
                     await self._emit_event(
                         server_url,
                         execution_id,
@@ -1175,7 +1327,7 @@ class V2Worker:
                         "case.evaluated",
                         {
                             "action": case_action,
-                            "result": eval_response,
+                            "result": eval_response,  # Data reference only (no full payload)
                             "triggered_by": eval_event_name
                         },
                         actionable=True,  # Server should process this for routing
@@ -1295,6 +1447,23 @@ class V2Worker:
             
             # Tool succeeded - emit success events with error recovery
             try:
+                # Clean up _internal_data and data before emitting events (sink-driven pattern)
+                # This prevents large payloads from being stored in events/NATS
+                if isinstance(response, dict):
+                    response_data = response.get('data', {})
+                    if isinstance(response_data, dict):
+                        # Remove _internal_data (actual response for sink execution)
+                        internal_data = response_data.pop('_internal_data', None)
+                        # Also remove 'data' field which is a duplicate for backwards compat
+                        response_data.pop('data', None)
+                        
+                        if internal_data:
+                            logger.info(
+                                f"[SINK-DRIVEN] Removed _internal_data and data before event emission | "
+                                f"payload_size_reduction: ~{len(str(internal_data))} bytes"
+                            )
+                            logger.info(f"[SINK-DRIVEN] Response now contains only reference: {response_data.get('data_reference', {})}")
+                
                 # Emit call.done event - ACTIONABLE so server evaluates routing
                 await self._emit_event(
                     server_url,
@@ -1405,7 +1574,8 @@ class V2Worker:
         config: dict,
         args: dict,
         step: str,
-        render_context: dict
+        render_context: dict,
+        case_blocks: Optional[list] = None
     ) -> Any:
         """
         Execute tool using noetl/tools/* implementations.
@@ -1417,6 +1587,14 @@ class V2Worker:
         - Event callbacks for progress tracking
         - Template rendering
         - Error handling
+        
+        Args:
+            tool_kind: Tool type (http, postgres, python, etc.)
+            config: Tool configuration
+            args: Tool arguments
+            step: Step name
+            render_context: Full render context with workload, step results, etc.
+            case_blocks: Optional case blocks for sink-driven result references
         """
         import time
         t_imports_start = time.perf_counter()
@@ -1588,8 +1766,29 @@ class V2Worker:
                 # - Auth resolution and credential caching
                 # - Template rendering
                 # - Response processing
+                
+                # Extract sink_config from case_blocks if present
+                sink_config = None
+                if case_blocks and isinstance(case_blocks, list):
+                    for case in case_blocks:
+                        if not isinstance(case, dict):
+                            continue
+                        then_block = case.get('then')
+                        if not then_block:
+                            continue
+                        # Normalize then_block to list
+                        then_actions = then_block if isinstance(then_block, list) else [then_block]
+                        # Look for sink in any then action
+                        for action in then_actions:
+                            if isinstance(action, dict) and 'sink' in action:
+                                sink_config = action['sink']
+                                logger.info(f"[SINK-DRIVEN] Extracted sink config from case blocks: {sink_config.get('tool', {}).get('kind')}")
+                                break
+                        if sink_config:
+                            break
+                
                 task_with = args  # Plugin uses 'task_with' for rendered params
-                result = await execute_http_task(task_config, context, jinja_env, task_with)
+                result = await execute_http_task(task_config, context, jinja_env, task_with, sink_config=sink_config)
                 # Check if plugin returned error status
                 if isinstance(result, dict) and result.get('status') == 'error':
                     # Keep error response intact (worker needs status field to detect error)

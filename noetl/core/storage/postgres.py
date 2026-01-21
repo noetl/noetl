@@ -126,7 +126,7 @@ def build_sql_statement(
         # Wrap values in single quotes and escape to ensure valid SQL for text values
         vals = []
         for c in cols:
-            vals.append('{{"\'" ~ (data.%s|string)|replace("\'", "\'\'") ~ "\'"}}' % c)
+            vals.append('{{"\'" ~ (data["%s"]|string)|replace("\'", "\'\'") ~ "\'"}}' % c)
 
         insert_sql = (
             f"INSERT INTO {table} (" + ", ".join(cols) + ") "

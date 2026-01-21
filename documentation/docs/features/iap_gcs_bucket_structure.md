@@ -89,7 +89,7 @@ Primary state database file containing all resource tracking tables.
 }
 ```
 
-#### snapshot_{timestamp}.meta.json
+#### `snapshot_{timestamp}.meta.json`
 ```json
 {
   "snapshot_id": "snapshot-20260118103000",

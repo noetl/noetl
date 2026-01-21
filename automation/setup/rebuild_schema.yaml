@@ -1,0 +1,122 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: rebuild_noetl_schema
+executor:
+  profile: local
+  version: noetl-runtime/1
+workload:
+  pg_host: "localhost"
+  pg_port: 54321
+  pg_user: "demo"
+  pg_database: "noetl"
+  noetl_user: "noetl"
+  noetl_password: "noetl"
+  noetl_schema: "noetl"
+workflow:
+  - step: start
+    desc: Rebuild NoETL system schema
+    tool:
+      kind: shell
+      cmds:
+        - |
+          # Prompt for password if not set in environment or workload
+          if [ -z "$PGPASSWORD" ]; then
+            read -s -p "Enter PostgreSQL password for {{ workload.pg_user }}: " PGPASSWORD
+            echo ""
+            export PGPASSWORD
+          fi
+          # Export for subsequent commands in this step if any
+          export PGHOST="{{ workload.pg_host }}"
+          export PGPORT={{ workload.pg_port }}
+          export PGUSER="{{ workload.pg_user }}"
+          export PGDATABASE="{{ workload.pg_database }}"
+          
+          echo "Validating connection to $PGHOST:$PGPORT..."
+          pg_isready -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE"
+    next:
+      - step: drop_schema
+
+  - step: drop_schema
+    desc: Drop existing NoETL schema
+    tool:
+      kind: shell
+      cmds:
+        - |
+          export PGHOST="{{ workload.pg_host }}"
+          export PGPORT={{ workload.pg_port }}
+          export PGUSER="{{ workload.pg_user }}"
+          export PGDATABASE="{{ workload.pg_database }}"
+          
+          echo "Dropping schema {{ workload.noetl_schema }} if exists..."
+          psql -v ON_ERROR_STOP=1 -c "DROP SCHEMA IF EXISTS {{ workload.noetl_schema }} CASCADE;"
+    next:
+      - step: create_user
+
+  - step: create_user
+    desc: Ensure NoETL user exists
+    tool:
+      kind: shell
+      cmds:
+        - |
+          export PGHOST="{{ workload.pg_host }}"
+          export PGPORT={{ workload.pg_port }}
+          export PGUSER="{{ workload.pg_user }}"
+          # Use postgres database for user creation if needed, or stick to configured one if permissions allow
+          export PGDATABASE="{{ workload.pg_database }}"
+          
+          echo "Creating user {{ workload.noetl_user }} if not exists..."
+          psql -v ON_ERROR_STOP=1 -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = '{{ workload.noetl_user }}') THEN CREATE USER {{ workload.noetl_user }} WITH PASSWORD '{{ workload.noetl_password }}' LOGIN; END IF; END \$\$;"
+    next:
+      - step: create_schema
+
+  - step: create_schema
+    desc: Create fresh NoETL schema
+    tool:
+      kind: shell
+      cmds:
+        - |
+          export PGHOST="{{ workload.pg_host }}"
+          export PGPORT={{ workload.pg_port }}
+          export PGUSER="{{ workload.pg_user }}"
+          export PGDATABASE="{{ workload.pg_database }}"
+          
+          echo "Creating schema {{ workload.noetl_schema }}..."
+          psql -v ON_ERROR_STOP=1 -c "CREATE SCHEMA {{ workload.noetl_schema }} AUTHORIZATION {{ workload.noetl_user }};"
+    next:
+      - step: grant_privileges
+
+  - step: grant_privileges
+    desc: Grant privileges to NoETL user
+    tool:
+      kind: shell
+      cmds:
+        - |
+          export PGHOST="{{ workload.pg_host }}"
+          export PGPORT={{ workload.pg_port }}
+          export PGUSER="{{ workload.pg_user }}"
+          export PGDATABASE="{{ workload.pg_database }}"
+          
+          echo "Granting privileges on schema {{ workload.noetl_schema }} to {{ workload.noetl_user }}..."
+          psql -v ON_ERROR_STOP=1 -c "GRANT ALL PRIVILEGES ON SCHEMA {{ workload.noetl_schema }} TO {{ workload.noetl_user }};"
+          psql -v ON_ERROR_STOP=1 -c "GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA {{ workload.noetl_schema }} TO {{ workload.noetl_user }};"
+          psql -v ON_ERROR_STOP=1 -c "GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA {{ workload.noetl_schema }} TO {{ workload.noetl_user }};"
+          psql -v ON_ERROR_STOP=1 -c "ALTER DEFAULT PRIVILEGES IN SCHEMA {{ workload.noetl_schema }} GRANT ALL ON TABLES TO {{ workload.noetl_user }};"
+          psql -v ON_ERROR_STOP=1 -c "ALTER DEFAULT PRIVILEGES IN SCHEMA {{ workload.noetl_schema }} GRANT ALL ON SEQUENCES TO {{ workload.noetl_user }};"
+    next:
+      - step: apply_ddl
+
+  - step: apply_ddl
+    desc: Apply NoETL DDL from schema_ddl.sql
+    tool:
+      kind: shell
+      cmds:
+        - |
+          export PGHOST="{{ workload.pg_host }}"
+          export PGPORT={{ workload.pg_port }}
+          export PGUSER="{{ workload.pg_user }}"
+          export PGDATABASE="{{ workload.pg_database }}"
+          
+          echo "Applying schema DDL from noetl/database/ddl/postgres/schema_ddl.sql..."
+          psql -v ON_ERROR_STOP=1 -f noetl/database/ddl/postgres/schema_ddl.sql
+          echo "✓ NoETL schema rebuild complete."

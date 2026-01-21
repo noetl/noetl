@@ -506,7 +506,12 @@ async def execute_python_task_async(
 
         exec_locals = {}
         logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Executing Python code")
-        exec(code, exec_globals, exec_locals)
+        
+        # Execute code in a thread pool to avoid blocking the event loop
+        # Note: exec() is synchronous and can be slow or hang
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, lambda: exec(code, exec_globals, exec_locals))
+        
         logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Execution completed | locals_keys={list(exec_locals.keys())}")
 
         # Check if code defines main() function (legacy support)

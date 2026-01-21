@@ -202,8 +202,8 @@ workflow:
     headers:
       Authorization: "Bearer {{ keychain.amadeus_token.access_token }}"
   case:
-    # Retry on 5xx server errors
-    - when: "{{ event.name == 'step.exit' and error is defined and error.status in [500, 502, 503] }}"
+    # Retry on 5xx server errors (call.error payload carries response.data.status_code)
+    - when: "{{ event.name == 'call.error' and response is defined and response.data is defined and response.data.status_code in [500, 502, 503] }}"
       then:
         retry:
           max_attempts: 3

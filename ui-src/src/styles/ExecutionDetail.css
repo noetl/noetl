@@ -29,8 +29,12 @@
    Navigation
    ========================================================================== */
 
-.execution-detail-back-button {
+.execution-detail-header-actions {
     margin-bottom: 16px;
+}
+
+.execution-detail-back-button {
+    /* No longer needs margin since it's in a Space component */
 }
 
 /* ==========================================================================

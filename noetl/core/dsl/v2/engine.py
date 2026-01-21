@@ -914,6 +914,7 @@ class ControlFlowEngine:
                 delay = retry_spec.get("delay", 0)
                 max_attempts = retry_spec.get("max_attempts", 3)
                 backoff = retry_spec.get("backoff", "linear")  # linear, exponential
+                retry_args = retry_spec.get("args", {})  # Get rendered args from worker
                 
                 # Get current attempt from event.attempt (Event model field)
                 current_attempt = event.attempt if event.attempt else 1
@@ -932,8 +933,10 @@ class ControlFlowEngine:
                     logger.error(f"Retry: current step not found: {event.step}")
                     continue
                 
-                # Create retry command with incremented attempt counter
-                command = await self._create_command_for_step(state, step_def, {})
+                logger.info(f"[RETRY-ACTION] Creating retry command with args: {retry_args}")
+                
+                # Create retry command with rendered args from worker
+                command = await self._create_command_for_step(state, step_def, retry_args)
                 if command:
                     # Increment attempt counter
                     command.attempt = current_attempt + 1
@@ -942,7 +945,7 @@ class ControlFlowEngine:
                     command.retry_backoff = backoff
                     commands.append(command)
                     logger.info(
-                        f"[RETRY-ACTION] Re-attempting step {event.step} "
+                        f"[RETRY-ACTION] Re-attempting step {event.step} with args {retry_args} "
                         f"(attempt {command.attempt}/{max_attempts})"
                     )
 
@@ -1221,18 +1224,45 @@ class ControlFlowEngine:
         # Update current step
         state.set_current_step(event.step)
         
+        # PRE-PROCESSING: Identify if a retry is triggered by worker or server rules
+        # This is needed to handle pagination correctly in loops
+        worker_case_action = event.payload.get("case_action")
+        has_worker_retry = worker_case_action and worker_case_action.get("type") == "retry"
+        
+        # Get render context EARLY for case evaluation
+        context = state.get_render_context(event)
+        
+        # Process case rules ONCE and store results
+        # This allows us to detect retries before deciding whether to aggregate results
+        case_commands = []
+        if event.name in ("step.exit", "call.done", "call.error"):
+            case_commands = await self._process_case_rules(state, step_def, event)
+            
+        # Identify retry commands from server rules
+        server_retry_commands = [c for c in case_commands if c.step == event.step]
+        
+        is_retrying = bool(server_retry_commands) or has_worker_retry
+        if is_retrying:
+            logger.info(f"[ENGINE] Step {event.step} is retrying (server_retry={bool(server_retry_commands)}, worker_retry={has_worker_retry})")
+            state.pagination_state.setdefault(event.step, {})["pending_retry"] = True
+        else:
+            # If no retry triggered by THIS event, clear pending flag
+            if event.step in state.pagination_state:
+                state.pagination_state[event.step]["pending_retry"] = False
+
         # Store step result if this is a step.exit event
         logger.info(f"[LOOP_DEBUG] Checking step.exit: name={event.name}, has_result={'result' in event.payload}, payload_keys={list(event.payload.keys())}")
         if event.name == "step.exit" and "result" in event.payload:
             logger.info(f"[LOOP_DEBUG] step.exit with result for {event.step}, step_def.loop={step_def.loop}, in_loop_state={event.step in state.loop_state}")
-            # Skip aggregation if a pagination retry is pending (same loop item will repeat)
-            pending_retry = state.pagination_state.get(event.step, {}).get("pending_retry", False)
-            if pending_retry:
-                logger.info(f"[LOOP_DEBUG] Pending pagination retry for {event.step}; skipping result aggregation and loop advance")
+            
+            # Use the is_retrying flag we just determined
+            if is_retrying:
+                logger.info(f"[LOOP_DEBUG] Pagination retry active for {event.step}; skipping result aggregation and loop advance")
+            
             # If pagination collected data for this step, merge it into the current result before aggregation
             # and reset pagination state for the next iteration/run when no retry is pending.
             pagination_state = state.pagination_state.get(event.step)
-            if pagination_state and not pending_retry:
+            if pagination_state and not is_retrying:
                 collected_data = pagination_state.get("collected_data", [])
                 if collected_data:
                     current_result = event.payload.get("result", {})
@@ -1271,8 +1301,9 @@ class ControlFlowEngine:
                     "iteration_count": 0,
                     "pending_retry": False,
                 }
+            
             # If in a loop, add iteration result to aggregation (for ALL iterations)
-            if step_def.loop and event.step in state.loop_state and not pending_retry:
+            if step_def.loop and event.step in state.loop_state and not is_retrying:
                 # Check if loop aggregation already finalized (loop_done happened)
                 loop_state = state.loop_state[event.step]
                 logger.info(f"[LOOP_DEBUG] Loop state: completed={loop_state.get('completed')}, finalized={loop_state.get('aggregation_finalized')}, results_count={len(loop_state.get('results', []))}")
@@ -1300,7 +1331,7 @@ class ControlFlowEngine:
                         logger.error(f"[LOOP-NATS] Error syncing to NATS K/V: {e}", exc_info=True)
                 else:
                     logger.info(f"Loop aggregation already finalized for {event.step}, skipping result storage")
-            elif not pending_retry:
+            elif not is_retrying:
                 # Not in loop or loop done - store as normal step result
                 state.mark_step_completed(event.step, event.payload["result"])
                 logger.debug(f"Stored result for step {event.step} in state")
@@ -1311,13 +1342,36 @@ class ControlFlowEngine:
             state.mark_step_completed(event.step, event.payload["response"])
             logger.debug(f"Temporarily stored call.done response for step {event.step} in state")
         
-        # Get render context (needed for case evaluation and other logic)
-        context = state.get_render_context(event)
+        # Note: Render context was already retrieved EARLY above
         
-        # CRITICAL: Process case rules FIRST for ALL events (not just step.exit)
-        # This allows steps to react to call.done, call.error, and other mid-step events
-        case_commands = await self._process_case_rules(state, step_def, event)
+        # Add case commands we already generated to the final list
         commands.extend(case_commands)
+        
+        # If server rules didn't match but worker reported a case action, process it now
+        if not commands and worker_case_action:
+            action_type = worker_case_action.get("type")
+            action_config = worker_case_action.get("config", {})
+            
+            logger.info(f"[ENGINE] Server matched no rules, but worker reported '{action_type}' action. Processing worker action.")
+            
+            if action_type == "retry":
+                # Use _process_then_actions to handle the action correctly
+                # We wrap it in a 'then' block format
+                worker_commands = await self._process_then_actions(
+                    [{"retry": action_config}],
+                    state,
+                    event
+                )
+                commands.extend(worker_commands)
+                logger.info(f"[ENGINE] Applied retry from worker for step {event.step}")
+            
+            elif action_type == "next":
+                worker_commands = await self._process_then_actions(
+                    [{"next": action_config}],
+                    state,
+                    event
+                )
+                commands.extend(worker_commands)
         
         # Handle loop.item events - continue loop iteration
         # Only process if case didn't generate commands
@@ -1537,11 +1591,16 @@ class ControlFlowEngine:
         # 2. No commands generated
         # 3. EITHER: Step has NO next or case blocks (true terminal step)
         #    OR: Step failed with no error handling (has error but no commands)
+        #    OR: Step has routing (next/case) but none of them matched/generated commands (effective terminal)
         # 4. Not already completed
         is_terminal_step = step_def and not step_def.next and not step_def.case
         is_failed_with_no_handler = has_error and not commands
         
-        if event.name == "step.exit" and not commands and (is_terminal_step or is_failed_with_no_handler) and not state.completed:
+        # EFFECTIVE TERMINAL: Step has routing but no commands were generated 
+        # (e.g. all case rules only had sinks, or structural next was skipped)
+        is_effective_terminal = step_def and not commands and not state.completed
+        
+        if event.name == "step.exit" and not commands and (is_terminal_step or is_failed_with_no_handler or is_effective_terminal) and not state.completed:
             # No more commands to execute - workflow and playbook are complete (or failed)
             state.completed = True
             # Check if step failed by looking at error in payload
