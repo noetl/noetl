@@ -98,12 +98,12 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            noetlctl/target
+            crates/noetlctl/target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Build Rust binary
         run: |
-          cd noetlctl
+          cd crates/noetlctl
           cargo build --release
           cd ..
           mkdir -p noetl/bin
