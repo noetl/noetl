@@ -75,3 +75,5 @@ ENV NOETL_ENABLE_UI=false
 # Default command: Use Python directly (more reliable across architectures)
 # Rust CLI can be used manually: noetl server start --host 0.0.0.0 --port 8082
 CMD ["python", "-m", "noetl.server", "--host", "0.0.0.0", "--port", "8082", "--init-db"]
+
+# ===
