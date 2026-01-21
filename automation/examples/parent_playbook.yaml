@@ -4,6 +4,9 @@ metadata:
   name: playbook_composition_parent
   path: automation/examples/composition
 
+executor:
+  profile: local
+  version: noetl-runtime/1
 workload:
   environment: "production"
   version: "v2.5.3"

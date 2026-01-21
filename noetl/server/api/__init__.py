@@ -1,20 +1,26 @@
 """
-NoETL API package - Top-level API routers and schemas.
+NoETL API package - V2 Event-Driven API only.
 
-Refactored from noetl.server.api to provide better organization
-and separation of concerns.
-"""
-
-"""
-NoETL API Routers - All FastAPI router definitions.
+Pure event sourcing architecture:
+- Event table is the single source of truth
+- No legacy endpoints, no queue tables
+- All state derived from events
 """
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
-# Import routers from local modules
-from . import credential, aggregate, catalog, runtime, dashboard, system, broker, \
-    database, context, run, vars, keychain, execution
+# V2 unified API (execute, events, commands)
+from . import v2
+
+# Essential management APIs (catalog, credentials, database utilities)
+from . import credential, catalog, database, keychain
+
+# Query/monitoring APIs
+from . import execution, vars, dashboard, system, runtime
+
+# Run API (playbook execution for sub-playbooks)
+from . import run
 
 router = APIRouter()
 
@@ -22,30 +28,29 @@ router = APIRouter()
 async def api_health():
     return {"status": "ok"}
 
-# Include all sub-routers
-router.include_router(context.router)
-# DISABLED: Legacy v1 event endpoint - replaced by unified /api/events
-# router.include_router(broker.router)  # Event handler (was event package)
+# V2 unified endpoints (execute, events, commands)
+router.include_router(v2.router)
+
+# Essential APIs
 router.include_router(catalog.router)
 router.include_router(credential.router)
 router.include_router(database.router)
-router.include_router(runtime.router)
+router.include_router(keychain.router)
+
+# Query/monitoring APIs
+router.include_router(execution.router)
+router.include_router(vars.router)
 router.include_router(dashboard.router)
 router.include_router(system.router)
-router.include_router(aggregate.router)
-# Note: broker.router already included above as event handler
-# Execution endpoints now under run.router (/api/run/playbook, /api/execute, /api/executions/run)
+router.include_router(runtime.router)
+
+# Run API (playbook execution for sub-playbooks)
 router.include_router(run.router)
-# Variable management endpoints
-router.include_router(vars.router)
-# Keychain management endpoints
-router.include_router(keychain.router)
-# Execution query endpoints (event history, list)
-router.include_router(execution.router)
 
 __all__ = [
     "router",
-    "context", "broker", "catalog", "credential",
-    "database", "runtime", "dashboard", "system",
-    "aggregate", "run", "vars", "keychain"
+    "v2",
+    "catalog", "credential", "database", "keychain",
+    "execution", "vars", "dashboard", "system", "runtime",
+    "run"
 ]

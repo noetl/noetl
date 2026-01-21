@@ -5,6 +5,7 @@ Provides centralized SQL query construction and execution
 following the pattern from catalog/service.py.
 """
 from typing import Dict, Any, List, Optional, Tuple
+from psycopg.rows import dict_row
 from noetl.core.db.pool import get_pool_connection
 
 
@@ -81,7 +82,7 @@ class OrchestratorQueries:
         """
         params = {"execution_id": execution_id}
         async with get_pool_connection() as conn:
-            async with conn.cursor() as cur:
+            async with conn.cursor(row_factory=dict_row) as cur:
                 await cur.execute(query, params)
                 row = await cur.fetchone()
                 return row["has_failed"] if row else False
@@ -94,7 +95,7 @@ class OrchestratorQueries:
             event_type="workflow_initialized"
         )
         async with get_pool_connection() as conn:
-            async with conn.cursor() as cur:
+            async with conn.cursor(row_factory=dict_row) as cur:
                 await cur.execute(query, params)
                 return await cur.fetchone() is not None
     
@@ -113,7 +114,7 @@ class OrchestratorQueries:
               AND event_type = 'step_completed'
         """
         async with get_pool_connection() as conn:
-            async with conn.cursor() as cur:
+            async with conn.cursor(row_factory=dict_row) as cur:
                 await cur.execute(query, {"execution_id": execution_id})
                 result = await cur.fetchone()
                 return result['count'] if result else 0
@@ -138,7 +139,7 @@ class OrchestratorQueries:
               )
         """
         async with get_pool_connection() as conn:
-            async with conn.cursor() as cur:
+            async with conn.cursor(row_factory=dict_row) as cur:
                 await cur.execute(query, {"execution_id": execution_id})
                 rows = await cur.fetchall()
                 return [row["node_name"] for row in rows]
@@ -153,7 +154,7 @@ class OrchestratorQueries:
             ORDER BY created_at LIMIT 1
         """
         async with get_pool_connection() as conn:
-            async with conn.cursor() as cur:
+            async with conn.cursor(row_factory=dict_row) as cur:
                 await cur.execute(query, {"execution_id": execution_id})
                 row = await cur.fetchone()
                 return row["meta"] if row else None
@@ -167,7 +168,7 @@ class OrchestratorQueries:
             WHERE execution_id = %(execution_id)s
         """
         async with get_pool_connection() as conn:
-            async with conn.cursor() as cur:
+            async with conn.cursor(row_factory=dict_row) as cur:
                 await cur.execute(query, {"execution_id": execution_id})
                 return await cur.fetchall()
     
@@ -183,7 +184,7 @@ class OrchestratorQueries:
             ORDER BY created_at
         """
         async with get_pool_connection() as conn:
-            async with conn.cursor() as cur:
+            async with conn.cursor(row_factory=dict_row) as cur:
                 await cur.execute(query, {"execution_id": execution_id})
                 return await cur.fetchall()
     
@@ -200,7 +201,7 @@ class OrchestratorQueries:
             LIMIT 1
         """
         async with get_pool_connection() as conn:
-            async with conn.cursor() as cur:
+            async with conn.cursor(row_factory=dict_row) as cur:
                 await cur.execute(query, {"execution_id": execution_id, "node_name": node_name})
                 row = await cur.fetchone()
                 return row["meta"] if row else None

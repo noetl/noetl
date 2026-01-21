@@ -1,0 +1,98 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: ibkr-verify-local
+  path: automation/ibkr/verify-local
+  description: "Verify Gateway is reachable and authenticated (local runner via curl -k)."
+
+executor:
+  profile: local
+  version: noetl-runtime/1
+workload:
+  gateway_url: https://localhost:15000
+  base_url: ""
+
+workflow:
+  - step: start
+    desc: Verify via curl (local mode)
+    tool:
+      kind: shell
+      cmds:
+        - |
+          set -euo pipefail
+          gateway_url="{{ workload.gateway_url }}"
+          base_url="{{ workload.base_url }}"
+          if [ -z "$base_url" ]; then
+            base_url="${gateway_url%/}"
+          fi
+
+          if ! command -v curl >/dev/null 2>&1; then
+            echo "curl not found on PATH" >&2
+            exit 1
+          fi
+
+          if ! command -v python >/dev/null 2>&1; then
+            echo "python not found on PATH" >&2
+            exit 1
+          fi
+
+          echo "Probing IBKR Gateway at: ${gateway_url}" >&2
+
+          tickle_file="$(mktemp)"
+          auth_file="$(mktemp)"
+          cleanup() { rm -f "$tickle_file" "$auth_file"; }
+          trap cleanup EXIT
+
+          # -k: self-signed certs
+          # -S: show errors
+          # --fail-with-body: non-2xx exits non-zero (keeps body if present)
+          # Short connect timeout so failures are fast and obvious.
+          curl_common=("-k" "-sS" "-L" "--fail-with-body" "--connect-timeout" "3" "--max-time" "10")
+
+          if ! curl "${curl_common[@]}" "${base_url}/tickle" >"$tickle_file"; then
+            echo "Gateway tickle failed. The gateway may not be running or reachable." >&2
+            echo "If you expect it to be running in k8s, deploy it first:" >&2
+            echo "  noetl run automation/ibkr/deploy.yaml" >&2
+            exit 1
+          fi
+
+          if ! curl "${curl_common[@]}" "${base_url}/iserver/auth/status" >"$auth_file"; then
+            echo "Gateway auth/status failed. Gateway may be up but not ready." >&2
+            exit 1
+          fi
+
+          python - "$tickle_file" "$auth_file" <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          tickle_path = pathlib.Path(sys.argv[1])
+          auth_path = pathlib.Path(sys.argv[2])
+
+          try:
+            tickle = json.loads(tickle_path.read_text())
+          except Exception as e:
+            raise SystemExit(f"tickle returned non-JSON: {e}")
+
+          try:
+            auth = json.loads(auth_path.read_text())
+          except Exception as e:
+            raise SystemExit(f"auth/status returned non-JSON: {e}")
+
+          ok = bool(auth.get('authenticated')) and bool(auth.get('connected')) and not bool(auth.get('competing'))
+          out = {
+              'authenticated': bool(auth.get('authenticated')),
+              'connected': bool(auth.get('connected')),
+              'competing': bool(auth.get('competing')),
+              'session': tickle.get('session') if isinstance(tickle, dict) else None,
+              'sso_expires': tickle.get('ssoExpires') if isinstance(tickle, dict) else None,
+              'ok': ok,
+          }
+          print(json.dumps(out, indent=2, sort_keys=True))
+          sys.exit(0 if ok else 2)
+          PY
+    next:
+      - step: end
+
+  - step: end
+    desc: Done

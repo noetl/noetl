@@ -11,6 +11,7 @@ Handles:
 import json
 from typing import Optional, Dict, Any, Tuple
 from fastapi import HTTPException
+from psycopg.rows import dict_row
 from noetl.core.logger import setup_logger
 from noetl.core.config import get_worker_settings
 from noetl.core.common import get_async_db_connection, get_snowflake_id
@@ -84,7 +85,7 @@ class RuntimeService:
         
         try:
             async with get_async_db_connection() as conn:
-                async with conn.cursor() as cursor:
+                async with conn.cursor(row_factory=dict_row) as cursor:
                     await cursor.execute(
                         """
                         INSERT INTO noetl.runtime (runtime_id, name, kind, uri, status, labels, capacity, runtime, heartbeat, created_at, updated_at)
@@ -119,7 +120,8 @@ class RuntimeService:
                 detail=f"Database error: {str(db_error)}"
             )
         
-        runtime_id = str(row[0]) if row else str(rid)
+        # dict_row returns a dictionary, access by column name
+        runtime_id = str(row['runtime_id']) if row else str(rid)
         
         return RuntimeRegistrationResponse(
             status="ok",
@@ -147,7 +149,7 @@ class RuntimeService:
         
         try:
             async with get_async_db_connection() as conn:
-                async with conn.cursor() as cursor:
+                async with conn.cursor(row_factory=dict_row) as cursor:
                     await cursor.execute(
                         """
                         UPDATE noetl.runtime
@@ -211,7 +213,7 @@ class RuntimeService:
         
         try:
             async with get_async_db_connection() as conn:
-                async with conn.cursor() as cur:
+                async with conn.cursor(row_factory=dict_row) as cur:
                     try:
                         await cur.execute(
                             """
@@ -330,7 +332,7 @@ class RuntimeService:
         
         try:
             async with get_async_db_connection() as conn:
-                async with conn.cursor() as cursor:
+                async with conn.cursor(row_factory=dict_row) as cursor:
                     await cursor.execute(
                         """
                         INSERT INTO noetl.runtime (runtime_id, name, kind, uri, status, labels, capacity, runtime, heartbeat, created_at, updated_at)
@@ -393,7 +395,7 @@ class RuntimeService:
         
         try:
             async with get_async_db_connection() as conn:
-                async with conn.cursor() as cursor:
+                async with conn.cursor(row_factory=dict_row) as cursor:
                     # Build query with optional filters
                     where_clauses = ["kind = %s"]
                     params = [kind]

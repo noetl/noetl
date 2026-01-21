@@ -268,38 +268,38 @@ class CredentialService:
                             from noetl.core.secret import decrypt_json, encrypt_json
                             response.data = decrypt_json(row["data_encrypted"])
                             logger.info(f"Successfully decrypted credential '{cred_name}'")                            
-                            # Cache to auth_cache for worker access using pool connection
+                            # Cache to keychain for worker access using pool connection
                             try:
                                 encrypted_data = encrypt_json(response.data)
                                 expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
-                                logger.info(f"About to cache credential '{cred_name}' to auth_cache")
+                                logger.info(f"About to cache credential '{cred_name}' to keychain")
                                 
                                 # Use pool connection for cache INSERT
                                 async with get_pool_connection() as cache_conn:
-                                    async with cache_conn.cursor() as cache_cursor:
+                                    async with cache_conn.cursor(row_factory=dict_row) as cache_cursor:
                                         await cache_cursor.execute(
                                             """
-                                            INSERT INTO noetl.auth_cache (
-                                                cache_key, credential_name, credential_type, 
+                                            INSERT INTO noetl.keychain (
+                                                cache_key, keychain_name, credential_type, 
                                                 cache_type, scope_type, execution_id, parent_execution_id,
                                                 data_encrypted, expires_at, created_at, accessed_at, access_count
                                             )
                                             VALUES (
-                                                %(cache_key)s, %(credential_name)s, %(credential_type)s,
+                                                %(cache_key)s, %(keychain_name)s, %(credential_type)s,
                                                 %(cache_type)s, %(scope_type)s, %(execution_id)s, %(parent_execution_id)s,
                                                 %(data_encrypted)s, %(expires_at)s, NOW(), NOW(), 0
                                             )
                                             ON CONFLICT (cache_key) DO UPDATE
                                             SET data_encrypted = EXCLUDED.data_encrypted, 
                                                 accessed_at = NOW(), 
-                                                access_count = noetl.auth_cache.access_count + 1,
+                                                access_count = noetl.keychain.access_count + 1,
                                                 expires_at = EXCLUDED.expires_at,
                                                 execution_id = EXCLUDED.execution_id,
                                                 parent_execution_id = EXCLUDED.parent_execution_id
                                             """,
                                             {
                                                 "cache_key": row["name"],
-                                                "credential_name": row["name"],
+                                                "keychain_name": row["name"],
                                                 "credential_type": row["type"],
                                                 "cache_type": "secret",  # Must be 'secret' or 'token' per check constraint
                                                 "scope_type": "execution" if execution_id else "global",
@@ -309,9 +309,9 @@ class CredentialService:
                                                 "expires_at": expires_at
                                             }
                                         )
-                                logger.info(f"Cached credential '{cred_name}' to auth_cache (expires: {expires_at})")
+                                logger.info(f"Cached credential '{cred_name}' to keychain (expires: {expires_at})")
                             except Exception as cache_err:
-                                logger.warning(f"Failed to cache credential to auth_cache: {cache_err}")
+                                logger.warning(f"Failed to cache credential to keychain: {cache_err}")
                                 
                         except Exception as dec_err:
                             logger.error(f"Failed to decrypt credential: {dec_err}")
@@ -416,7 +416,7 @@ class CredentialService:
                 if cred_ref is not None:
                     async with get_async_db_connection(optional=True) as _conn:
                         if _conn is not None:
-                            async with _conn.cursor() as _cur:
+                            async with _conn.cursor(row_factory=dict_row) as _cur:
                                 if isinstance(cred_ref, int) or (isinstance(cred_ref, str) and cred_ref.isdigit()):
                                     await _cur.execute(
                                         "SELECT data_encrypted FROM noetl.credential WHERE id = %s",

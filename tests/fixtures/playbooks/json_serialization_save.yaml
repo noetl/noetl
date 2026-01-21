@@ -6,7 +6,7 @@ metadata:
   path: tests/fixtures/playbooks/json_serialization_save
 
 workload:
-  pg_auth: pg_local
+  pg_auth: pg_k8s
 
 workflow:
   - step: start
@@ -20,7 +20,7 @@ workflow:
         result = {"status": "initialized"}
     
     case:
-      - when: "{{ event.name == 'step.exit' }}"
+      - when: "{{ event.name == 'call.done' }}"
         then:
           next:
             - step: create_test_table
@@ -38,7 +38,7 @@ workflow:
         );
     
     case:
-      - when: "{{ event.name == 'step.exit' and response is defined }}"
+      - when: "{{ event.name == 'call.done' }}"
         then:
           next:
             - step: save_dict_to_jsonb
@@ -66,7 +66,7 @@ workflow:
         }
     
     case:
-      - when: "{{ event.name == 'step.exit' and response is defined }}"
+      - when: "{{ event.name == 'call.done' }}"
         then:
           - sink:
               tool:
@@ -74,7 +74,7 @@ workflow:
                 auth: "{{ workload.pg_auth }}"
                 statement: >
                   INSERT INTO public.json_bug_test (id, payload)
-                  VALUES (1, '{{ result.data | tojson | replace("'", "''") }}'::jsonb)
+                  VALUES (1, '{{ response.data | tojson | replace("'", "''") }}'::jsonb)
           - next:
               - step: verify_save
 
@@ -87,7 +87,7 @@ workflow:
         SELECT id, payload FROM public.json_bug_test WHERE id = 1;
     
     case:
-      - when: "{{ event.name == 'step.exit' and response is defined }}"
+      - when: "{{ event.name == 'call.done' }}"
         then:
           next:
             - step: end

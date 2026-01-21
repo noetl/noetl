@@ -1,0 +1,28 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: ibkr-setup
+  path: automation/ibkr/setup
+  description: "Install optional dependencies needed for IBKR Gateway login helper (Playwright)."
+
+executor:
+  profile: local
+  version: noetl-runtime/1
+workload:
+  # Uses uv when available; otherwise falls back to pip.
+  # (Kept as workload knob in case you want to extend this later.)
+  prefer_uv: true
+
+workflow:
+  - step: start
+    desc: Install Python optional deps + Playwright browser
+    tool:
+      kind: shell
+      cmds:
+        - "cd /Users/akuksin/projects/noetl/noetl && if command -v uv >/dev/null 2>&1; then uv pip install -e '.[ibkr]'; else python -m pip install -e '.[ibkr]'; fi"
+        - "python -m playwright install chromium"
+    next:
+      - step: end
+
+  - step: end
+    desc: Done

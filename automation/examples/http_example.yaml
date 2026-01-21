@@ -4,6 +4,9 @@ metadata:
   name: http_example
   path: automation/examples/http
 
+executor:
+  profile: local
+  version: noetl-runtime/1
 workload:
   api_base: "https://jsonplaceholder.typicode.com"
 

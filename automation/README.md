@@ -2,28 +2,56 @@
 
 This directory contains NoETL playbooks for automating development, CI/CD, and testing workflows. These playbooks provide an alternative to Taskfile/Makefile commands, allowing you to manage infrastructure as code using NoETL's own DSL.
 
+## Runtime Modes
+
+NoETL playbooks can execute in two modes:
+
+| Runtime | Description | Requirements |
+|---------|-------------|--------------|
+| **local** | Rust interpreter, no server | Just the `noetl` binary |
+| **distributed** | Server-worker architecture | PostgreSQL, NoETL server/worker |
+
+All playbooks in this directory use **local runtime** by default and include the `executor` section:
+
+```yaml
+executor:
+  profile: local           # Use local Rust interpreter
+  version: noetl-runtime/1 # Runtime version
+```
+
 ## Directory Structure
 
 ```
 automation/
 ├── main.yaml                  # Main entry point with routing to sub-workflows
+├── boot.yaml                  # Quick bootstrap alias
+├── destroy.yaml               # Quick destroy alias
 ├── setup/                     # Environment setup and teardown
 │   ├── bootstrap.yaml         # Complete environment bootstrap
 │   └── destroy.yaml           # Environment cleanup
 ├── infrastructure/            # Infrastructure component management
 │   ├── postgres.yaml          # PostgreSQL deployment and management
 │   ├── qdrant.yaml            # Qdrant vector database management
-│   └── monitoring.yaml        # VictoriaMetrics monitoring stack
+│   ├── nats.yaml              # NATS JetStream messaging
+│   ├── clickhouse.yaml        # ClickHouse analytics database
+│   ├── monitoring.yaml        # VictoriaMetrics monitoring stack
+│   ├── observability.yaml     # Aggregate observability operations
+│   └── kind.yaml              # Kind Kubernetes cluster management
+├── development/               # Development workflows
+│   ├── noetl.yaml             # NoETL server/worker management
+│   ├── docker.yaml            # Docker image building
+│   └── tooling.yaml           # Development tool setup
 ├── test/                      # Testing workflows
-│   ├── pagination-server.yaml # Pagination test server automation
-│   ├── setup.yaml             # Test environment setup
-│   ├── regression.yaml        # Run regression test suite
-│   └── integration.yaml       # Integration test execution
-├── ci/                        # CI/CD workflows
-│   ├── build.yaml             # Build Docker images and binaries
-│   ├── deploy.yaml            # Deployment workflows
-│   └── quick_dev.yaml         # Fast development cycle
-└── examples/                  # Example playbooks (existing)
+│   └── pagination-server.yaml # Pagination test server automation
+├── iap/                       # Infrastructure as Playbook
+│   └── gcp/                   # GCP provider playbooks
+│       ├── gke_autopilot.yaml # GKE Autopilot cluster management
+│       ├── state_sync.yaml    # State synchronization
+│       └── init_state_bucket.yaml # Initialize GCS state bucket
+└── examples/                  # Example playbooks
+    ├── http_example.yaml      # HTTP request examples
+    ├── parent_playbook.yaml   # Playbook composition
+    └── conditional_flow.yaml  # Conditional routing
 ```
 
 ## Usage
@@ -38,12 +66,11 @@ make destroy && make bootstrap
 task bring-all
 
 # New way
-noetl run automation/setup/destroy
-noetl run automation/setup/bootstrap
+noetl run destroy && noetl run boot
 
-# Or use main entry point
-noetl run automation/main destroy
-noetl run automation/main bootstrap
+# Or explicitly
+noetl run automation/setup/destroy.yaml
+noetl run automation/setup/bootstrap.yaml
 ```
 
 ### Main Entry Point
@@ -52,16 +79,16 @@ The `main.yaml` playbook routes to different workflows:
 
 ```bash
 # Show help
-noetl run automation/main help
+noetl run automation/main.yaml --set target=help
 
 # Bootstrap environment
-noetl run automation/main bootstrap
+noetl run automation/main.yaml --set target=bootstrap
 
 # Destroy environment
-noetl run automation/main destroy
+noetl run automation/main.yaml --set target=destroy
 
 # Quick development cycle
-noetl run automation/main dev
+noetl run automation/main.yaml --set target=dev
 ```
 
 ### Individual Workflows
@@ -70,7 +97,7 @@ noetl run automation/main dev
 
 **Bootstrap Complete Environment:**
 ```bash
-noetl run automation/setup/bootstrap
+noetl run automation/setup/bootstrap.yaml
 ```
 
 Equivalent to:
@@ -91,7 +118,7 @@ Steps performed:
 
 **Destroy Environment:**
 ```bash
-noetl run automation/setup/destroy
+noetl run automation/setup/destroy.yaml
 ```
 
 Equivalent to: `make destroy`
@@ -101,76 +128,6 @@ Steps performed:
 2. Clean Docker resources (images, volumes, builders)
 3. Clear local cache directories
 4. Clear NoETL data and logs
-
-#### CI/CD Workflows
-
-**Build Images:**
-```bash
-noetl run automation/ci/build
-```
-
-Steps:
-- Build noetlctl CLI
-- Build NoETL Docker image
-- Load image to kind cluster
-
-**Deploy to Kubernetes:**
-```bash
-noetl run automation/ci/deploy
-```
-
-Steps:
-- Deploy PostgreSQL
-- Deploy NoETL
-- Deploy monitoring (optional)
-
-**Quick Development Cycle:**
-```bash
-noetl run automation/ci/quick_dev
-```
-
-Equivalent to: `task dev`
-
-Steps:
-- Build NoETL image
-- Reload to kind
-- Redeploy pods
-
-#### Test Workflows
-
-**Setup Test Environment:**
-```bash
-noetl run automation/test/setup
-```
-
-Equivalent to: `task test:k8s:setup-environment`
-
-Steps:
-- Reset database schema
-- Register test credentials
-- Register test playbooks
-- Create test tables
-
-**Pagination Test Server:**
-```bash
-# Full workflow (build + deploy + test)
-noetl run automation/test/pagination-server.yaml --set action=full
-
-# Individual actions
-noetl run automation/test/pagination-server.yaml --set action=build
-noetl run automation/test/pagination-server.yaml --set action=deploy
-noetl run automation/test/pagination-server.yaml --set action=status
-noetl run automation/test/pagination-server.yaml --set action=test
-noetl run automation/test/pagination-server.yaml --set action=logs
-noetl run automation/test/pagination-server.yaml --set action=undeploy
-```
-
-Equivalent task commands:
-- `task pagination-server:tpsb` → `--set action=build`
-- `task pagination-server:tpsd` → `--set action=deploy`
-- `task pagination-server:tpsf` → `--set action=full`
-- `task pagination-server:tpss` → `--set action=status`
-- `task pagination-server:tpst` → `--set action=test`
 
 #### Infrastructure Component Management
 
@@ -306,6 +263,54 @@ Equivalent task commands:
 - `task observability:health-all` → `--set action=health-all`
 - `task observability:restart-all` → `--set action=restart-all`
 
+#### Test Workflows
+
+**Pagination Test Server:**
+```bash
+# Full workflow (build + deploy + test)
+noetl run automation/test/pagination-server.yaml --set action=full
+
+# Individual actions
+noetl run automation/test/pagination-server.yaml --set action=build
+noetl run automation/test/pagination-server.yaml --set action=deploy
+noetl run automation/test/pagination-server.yaml --set action=status
+noetl run automation/test/pagination-server.yaml --set action=test
+noetl run automation/test/pagination-server.yaml --set action=logs
+noetl run automation/test/pagination-server.yaml --set action=undeploy
+```
+
+Equivalent task commands:
+- `task pagination-server:tpsb` → `--set action=build`
+- `task pagination-server:tpsd` → `--set action=deploy`
+- `task pagination-server:tpsf` → `--set action=full`
+- `task pagination-server:tpss` → `--set action=status`
+- `task pagination-server:tpst` → `--set action=test`
+
+#### Infrastructure as Playbook (IaP)
+
+Manage cloud infrastructure using playbooks:
+
+```bash
+# Initialize IaP state bucket
+noetl run automation/iap/gcp/init_state_bucket.yaml \
+  --set project_id=my-gcp-project \
+  --set bucket_name=my-state-bucket
+
+# Provision GKE Autopilot cluster
+noetl run automation/iap/gcp/gke_autopilot.yaml --set action=create
+
+# Destroy GKE cluster
+noetl run automation/iap/gcp/gke_autopilot.yaml --set action=destroy
+
+# Sync state to GCS
+noetl run automation/iap/gcp/state_sync.yaml --set action=push
+
+# Pull state from GCS
+noetl run automation/iap/gcp/state_sync.yaml --set action=pull
+```
+
+See [automation/iap/gcp/README.md](iap/gcp/README.md) for detailed IaP documentation.
+
 **VictoriaMetrics Monitoring Stack:**
 ```bash
 # Deploy complete monitoring stack
@@ -346,31 +351,16 @@ Equivalent task commands:
 - `task monitoring:k8s:deploy-vector` → `--set action=deploy-vector`
 - `task monitoring:k8s:deploy-vmlogs` → `--set action=deploy-vmlogs`
 
-**Run Regression Tests:**
-```bash
-noetl run automation/test/regression
-```
-
-Equivalent to: `task test:regression:full`
-
-Steps:
-- Setup test environment
-- Execute regression test suite
-- Collect results
-
 ## Migration from Taskfile
 
 ### Command Mapping
 
 | Taskfile Command | NoETL Playbook |
 |-----------------|----------------|
-| `task bring-all` | `noetl run automation/setup/bootstrap` |
-| `make destroy` | `noetl run automation/setup/destroy` |
-| `task dev` | `noetl run automation/ci/quick_dev` |
-| `task test:k8s:setup-environment` | `noetl run automation/test/setup` |
-| `task test:regression:full` | `noetl run automation/test/regression` |
-| `task docker:local:noetl-image-build` | `noetl run automation/ci/build` |
-| `task noetl:k8s:deploy` | `noetl run automation/ci/deploy` |
+| `task bring-all` | `noetl run automation/setup/bootstrap.yaml` |
+| `make destroy` | `noetl run automation/setup/destroy.yaml` |
+| `task docker:local:noetl-image-build` | `noetl run automation/development/docker.yaml --set action=build` |
+| `task noetl:k8s:deploy` | `noetl run automation/development/noetl.yaml --set action=deploy` |
 
 ### Benefits of Playbook-Based Automation
 
@@ -395,6 +385,60 @@ noetl run automation/test/regression     # Use new playbook
 ```
 
 ## Development
+
+### Playbook Structure
+
+All automation playbooks should include the `executor` section for local execution:
+
+```yaml
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: my_automation
+  path: automation/my-workflow
+  description: Description of the workflow
+
+executor:
+  profile: local           # All automation playbooks use local runtime
+  version: noetl-runtime/1
+
+workload:
+  action: help  # Default action
+
+workflow:
+  - step: start
+    desc: Route to action
+    case:
+      - when: "{{ workload.action == 'help' }}"
+        then:
+          - step: show_help
+      - when: "{{ workload.action == 'build' }}"
+        then:
+          - step: do_build
+    next:
+      - step: show_help
+
+  - step: show_help
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "Available actions:"
+          echo "  --set action=help   Show this help"
+          echo "  --set action=build  Run build"
+    next:
+      - step: end
+
+  - step: do_build
+    tool:
+      kind: shell
+      cmds:
+        - docker build -t myapp:latest .
+    next:
+      - step: end
+
+  - step: end
+```
 
 ### Adding New Automation Workflows
 
@@ -450,14 +494,13 @@ next:
 ## Future Enhancements
 
 - [ ] Replace all `subprocess` calls with native NoETL actions
-- [ ] Add `automation/observability/` for observability stack management
-- [ ] Add `automation/monitoring/` for monitoring stack workflows
-- [ ] Create `automation/gateway/` for Gateway API workflows
 - [ ] Add parallel execution for independent tasks
 - [ ] Implement approval gates for production deployments
+- [ ] Add more IaP providers (AWS, Azure)
 
 ## See Also
 
-- [Taskfile Documentation](../../ci/taskfile/README.md)
-- [Bootstrap Documentation](../../ci/bootstrap/README.md)
+- [NoETL CLI Documentation](../documentation/docs/noetlctl/index.md)
+- [Local Execution Guide](../documentation/docs/noetlctl/local_execution.md)
+- [Infrastructure as Playbook](../documentation/docs/features/infrastructure_as_playbook.md)
 - [NoETL DSL Reference](https://noetl.dev/docs/reference/dsl/)

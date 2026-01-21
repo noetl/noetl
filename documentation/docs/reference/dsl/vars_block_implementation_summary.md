@@ -364,7 +364,7 @@ async def build_rendering_context(
 ## Related Documentation
 
 - **Design Document**: `docs/variables_feature_design.md` - Complete feature design and rationale
-- **DSL Specification**: `docs/dsl_spec.md` - Vars block syntax and template namespace
+- **DSL Specification**: `doc./spec.md` - Vars block syntax and template namespace
 - **Test Playbook**: `tests/fixtures/playbooks/vars_test/test_vars_block.yaml` - Working example
 - **TransientVars API**: `noetl/server/api/context/transient.py` - Storage layer implementation
 

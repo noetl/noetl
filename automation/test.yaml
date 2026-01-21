@@ -4,6 +4,9 @@ metadata:
   name: test_automation
   path: automation/test
 
+executor:
+  profile: local
+  version: noetl-runtime/1
 workload:
   cluster: noetl
   pg_host: localhost

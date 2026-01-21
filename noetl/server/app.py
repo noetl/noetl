@@ -333,11 +333,25 @@ def _create_app(settings: Settings, enable_ui: Optional[bool] = None) -> FastAPI
             if catchall.startswith("api/"):
                 from fastapi import HTTPException
                 raise HTTPException(status_code=404, detail="API endpoint not found")
-            return FileResponse(ui_build_path / "index.html")
+            return FileResponse(
+                ui_build_path / "index.html",
+                headers={
+                    "Cache-Control": "no-cache, no-store, must-revalidate",
+                    "Pragma": "no-cache",
+                    "Expires": "0"
+                }
+            )
 
         @app.get("/", include_in_schema=False)
         async def root():
-            return FileResponse(ui_build_path / "index.html")
+            return FileResponse(
+                ui_build_path / "index.html",
+                headers={
+                    "Cache-Control": "no-cache, no-store, must-revalidate",
+                    "Pragma": "no-cache",
+                    "Expires": "0"
+                }
+            )
     else:
         @app.get("/", include_in_schema=False)
         async def root_no_ui():

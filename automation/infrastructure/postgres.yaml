@@ -4,6 +4,9 @@ metadata:
   name: postgres_automation
   path: automation/infrastructure/postgres
 
+executor:
+  profile: local
+  version: noetl-runtime/1
 workload:
   action: help  # deploy, remove, schema-reset, clear-cache, status, logs
 
@@ -83,7 +86,7 @@ workflow:
           echo "Resetting NoETL system schema..."
           kubectl config use-context kind-noetl
           echo "Resetting NoETL system schema on Postgres (DROP schema and re-run schema_ddl.sql)."
-          echo "Note - This resets the noetl database (runtime, catalog, event, queue tables)."
+          echo "Note - This resets the noetl database (catalog, credential, event, keychain, runtime tables)."
           echo "       Application data in demo_noetl database is NOT affected."
           set -a; [ -f .env ] && . .env; set +a
           export PGHOST=localhost
@@ -102,9 +105,9 @@ workflow:
           else
             echo "noetl CLI apply-schema failed; trying local DDL fallback..."
             if [ -f noetl/database/ddl/postgres/schema_ddl.sql ]; then
-              psql -v ON_ERROR_STOP=1 -c "CREATE SCHEMA ${NOETL_SCHEMA};"
               NOETL_SCHEMA=${NOETL_SCHEMA:-noetl}
               NOETL_USER=${NOETL_USER:-noetl}
+              psql -v ON_ERROR_STOP=1 -c "CREATE SCHEMA IF NOT EXISTS ${NOETL_SCHEMA} AUTHORIZATION ${NOETL_USER};"
               psql -v ON_ERROR_STOP=1 -c "GRANT ALL PRIVILEGES ON SCHEMA ${NOETL_SCHEMA} TO ${NOETL_USER};"
               psql -v ON_ERROR_STOP=1 -c "GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA ${NOETL_SCHEMA} TO ${NOETL_USER};"
               psql -v ON_ERROR_STOP=1 -c "GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA ${NOETL_SCHEMA} TO ${NOETL_USER};"

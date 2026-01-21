@@ -40,8 +40,7 @@ class ExecutionService:
     - Resolve catalog entries from various identifiers
     - Validate playbook content
     - Build execution plan
-    - Emit preliminary events
-    - Publish initial tasks to queue
+    - Emit events (pure event sourcing - event table is single source of truth)
     """
     
     @staticmethod
@@ -59,7 +58,7 @@ class ExecutionService:
         6. Emit execution start event
         7. Persist workflow/workbook/transitions
         8. Emit workflow initialized event
-        9. Publish initial steps to queue
+        9. Emit command.issued events (workers receive via NATS JetStream)
         
         Args:
             request: Validated execution request

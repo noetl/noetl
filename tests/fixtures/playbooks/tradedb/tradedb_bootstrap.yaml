@@ -1,0 +1,61 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: tradedb-bootstrap
+  path: automation/tradedb/bootstrap
+  description: Apply TradeDB schema and dictionaries
+
+workload:
+  pg_app_auth: pg_trade
+  db_name: tradedb
+  ddl_script_uri: ./submodules/IQT/scripts/tradedb/tradedb_ddl.sql
+  dictionaries_script_uri: ./submodules/IQT/scripts/tradedb/create_dictionaries.sql
+
+workflow:
+  - step: start
+    desc: Start TradeDB bootstrap
+    tool:
+      kind: python
+      args:
+        db_name: "{{ workload.db_name }}"
+      code: |
+        result = {"status": "starting", "db_name": db_name}
+    next:
+      - step: run_schema
+
+  - step: run_schema
+    desc: Apply TradeDB DDL
+    tool:
+      kind: postgres
+      auth: "{{ workload.pg_app_auth }}"
+      with:
+        db_name: "{{ workload.db_name }}"
+      script:
+        uri: "{{ workload.ddl_script_uri }}"
+        source:
+          type: file
+    next:
+      - step: run_dictionaries
+
+  - step: run_dictionaries
+    desc: Apply TradeDB dictionaries
+    tool:
+      kind: postgres
+      auth: "{{ workload.pg_app_auth }}"
+      with:
+        db_name: "{{ workload.db_name }}"
+      script:
+        uri: "{{ workload.dictionaries_script_uri }}"
+        source:
+          type: file
+    next:
+      - step: end
+
+  - step: end
+    desc: Done
+    tool:
+      kind: python
+      args:
+        db_name: "{{ workload.db_name }}"
+      code: |
+        result = {"status": "completed", "db_name": db_name}

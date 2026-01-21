@@ -51,7 +51,6 @@ async def catch_exceptions_middleware(request: Request, call_next):
                     return True
             return False
         ignore = [
-            "/api/queue",
             "heartbeat",
             "/api/executions"
         ]

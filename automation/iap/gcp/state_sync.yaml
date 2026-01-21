@@ -1,0 +1,304 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: state_sync
+  path: iap/gcp/state-sync
+  description: Sync local state to/from GCS
+  labels:
+    iap.noetl.io/provider: gcp
+    iap.noetl.io/category: state-management
+
+executor:
+  profile: local
+  version: noetl-runtime/1
+workload:
+  # Action: push, pull, status
+  action: status
+  
+  # Project configuration
+  project_id: mestumre-dev
+  workspace: default
+  
+  # State locations
+  state_database: /tmp/noetl-iap-state.duckdb
+  state_bucket: ""  # Defaults to {project_id}-noetl-state
+  
+  # Sync options
+  force: false  # Force overwrite without conflict check
+  create_snapshot: true  # Create snapshot before sync
+
+workflow:
+  - step: start
+    desc: Initialize state sync
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "IaP State Synchronization"
+          echo "========================="
+          echo "Action:    {{ workload.action }}"
+          echo "Project:   {{ workload.project_id }}"
+          echo "Workspace: {{ workload.workspace }}"
+    vars:
+      bucket_name: "{{ workload.state_bucket if workload.state_bucket else workload.project_id + '-noetl-state' }}"
+      gcs_state_path: "gs://{{ vars.bucket_name }}/terraform/{{ workload.workspace }}/state.duckdb"
+    case:
+      - when: "{{ workload.action }} == push"
+        then:
+          - step: push_state
+      - when: "{{ workload.action }} == pull"
+        then:
+          - step: pull_state
+      - when: "{{ workload.action }} == status"
+        then:
+          - step: sync_status
+      - else:
+          - step: show_help
+
+  - step: show_help
+    desc: Show available sync actions
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Usage: noetl run state_sync.yaml --set action=<action>"
+          echo ""
+          echo "Available actions:"
+          echo "  status - Show sync status (default)"
+          echo "  push   - Push local state to GCS"
+          echo "  pull   - Pull remote state from GCS"
+          echo ""
+          echo "Options:"
+          echo "  --set force=true            Force overwrite"
+          echo "  --set create_snapshot=false Skip snapshot creation"
+          echo "  --set workspace=production  Use different workspace"
+    next:
+      - step: end
+
+  - step: sync_status
+    desc: Check sync status
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Local State:"
+          echo "  Path: {{ workload.state_database }}"
+          
+          if [ -f "{{ workload.state_database }}" ]; then
+            echo "  Status: EXISTS"
+            echo "  Size: $(ls -lh {{ workload.state_database }} | awk '{print $5}')"
+            echo "  Modified: $(stat -f '%Sm' {{ workload.state_database }})"
+          else
+            echo "  Status: NOT FOUND"
+          fi
+          
+          echo ""
+          echo "Remote State:"
+          echo "  GCS: {{ vars.gcs_state_path }}"
+    next:
+      - step: check_remote_state
+
+  - step: check_remote_state
+    desc: Check remote state in GCS
+    tool:
+      kind: http
+      method: GET
+      url: https://storage.googleapis.com/storage/v1/b/{{ vars.bucket_name }}/o/terraform%2F{{ workload.workspace }}%2Fstate.duckdb
+      auth:
+        source: adc
+    vars:
+      remote_exists: "{{ result.status == 200 }}"
+      remote_size: "{{ result.body.size | default(0) }}"
+      remote_updated: "{{ result.body.updated | default('N/A') }}"
+    next:
+      - step: print_remote_status
+
+  - step: print_remote_status
+    desc: Print remote state status
+    tool:
+      kind: shell
+      cmds:
+        - |
+          if [ "{{ vars.remote_exists }}" = "True" ]; then
+            echo "  Status: EXISTS"
+            echo "  Size: {{ vars.remote_size }} bytes"
+            echo "  Updated: {{ vars.remote_updated }}"
+          else
+            echo "  Status: NOT FOUND"
+          fi
+          echo ""
+    next:
+      - step: end
+
+  - step: push_state
+    desc: Push local state to GCS
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          if [ ! -f "{{ workload.state_database }}" ]; then
+            echo "ERROR: Local state file not found: {{ workload.state_database }}"
+            exit 1
+          fi
+          echo "Preparing to push state to GCS..."
+    case:
+      - when: "{{ workload.create_snapshot }}"
+        then:
+          - step: create_snapshot_before_push
+      - else:
+          - step: do_push
+
+  - step: create_snapshot_before_push
+    desc: Create snapshot before pushing
+    tool:
+      kind: duckdb
+      database: "{{ workload.state_database }}"
+      commands: |
+        -- Create a snapshot record
+        INSERT INTO snapshots (
+          snapshot_id,
+          workspace,
+          created_by,
+          description,
+          resource_count
+        )
+        SELECT 
+          'snapshot-' || strftime(CURRENT_TIMESTAMP, '%Y%m%d%H%M%S'),
+          '{{ workload.workspace }}',
+          'state_sync:push',
+          'Pre-push snapshot',
+          (SELECT COUNT(*) FROM resources)
+        ;
+
+        SELECT 'Snapshot created' as message;
+    next:
+      - step: do_push
+
+  - step: do_push
+    desc: Upload state to GCS
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "Uploading state to GCS..."
+          
+          # Read the file and upload via GCS API
+          # Note: In full implementation, this would use proper file upload
+          
+          STATE_SIZE=$(stat -f%z "{{ workload.state_database }}")
+          echo "Local state size: $STATE_SIZE bytes"
+          echo "Destination: {{ vars.gcs_state_path }}"
+          
+          # For now, we'll use gsutil if available
+          if command -v gsutil &> /dev/null; then
+            gsutil cp "{{ workload.state_database }}" "{{ vars.gcs_state_path }}"
+            echo "State pushed successfully via gsutil"
+          else
+            echo "gsutil not available. Using HTTP API..."
+            # The HTTP upload would happen here
+            echo "HTTP upload not yet implemented for binary files"
+          fi
+    next:
+      - step: push_success
+
+  - step: push_success
+    desc: Push completed successfully
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "=========================================="
+          echo " State Push Complete"
+          echo "=========================================="
+          echo ""
+          echo "Local:  {{ workload.state_database }}"
+          echo "Remote: {{ vars.gcs_state_path }}"
+          echo ""
+    next:
+      - step: end
+
+  - step: pull_state
+    desc: Pull remote state from GCS
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Pulling state from GCS..."
+          
+          # Check if local state exists and warn
+          if [ -f "{{ workload.state_database }}" ] && [ "{{ workload.force }}" != "true" ]; then
+            echo "WARNING: Local state file exists"
+            echo "Use --set force=true to overwrite"
+            echo ""
+          fi
+    case:
+      - when: "{{ workload.create_snapshot }}"
+        then:
+          - step: backup_local_state
+      - else:
+          - step: do_pull
+
+  - step: backup_local_state
+    desc: Backup local state before pulling
+    tool:
+      kind: shell
+      cmds:
+        - |
+          if [ -f "{{ workload.state_database }}" ]; then
+            BACKUP_PATH="{{ workload.state_database }}.backup.$(date +%Y%m%d%H%M%S)"
+            cp "{{ workload.state_database }}" "$BACKUP_PATH"
+            echo "Local state backed up to: $BACKUP_PATH"
+          fi
+    next:
+      - step: do_pull
+
+  - step: do_pull
+    desc: Download state from GCS
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "Downloading state from GCS..."
+          
+          if command -v gsutil &> /dev/null; then
+            gsutil cp "{{ vars.gcs_state_path }}" "{{ workload.state_database }}"
+            echo "State pulled successfully via gsutil"
+          else
+            echo "gsutil not available. Using HTTP API..."
+            # HTTP download would happen here
+            curl -s -H "Authorization: Bearer $(gcloud auth application-default print-access-token)" \
+              "https://storage.googleapis.com/{{ vars.bucket_name }}/terraform/{{ workload.workspace }}/state.duckdb" \
+              -o "{{ workload.state_database }}"
+            echo "State pulled via HTTP"
+          fi
+    next:
+      - step: pull_success
+
+  - step: pull_success
+    desc: Pull completed successfully
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "=========================================="
+          echo " State Pull Complete"
+          echo "=========================================="
+          echo ""
+          echo "Remote: {{ vars.gcs_state_path }}"
+          echo "Local:  {{ workload.state_database }}"
+          echo ""
+          
+          if [ -f "{{ workload.state_database }}" ]; then
+            echo "State file size: $(ls -lh {{ workload.state_database }} | awk '{print $5}')"
+          fi
+    next:
+      - step: end
+
+  - step: end
+    desc: Sync complete

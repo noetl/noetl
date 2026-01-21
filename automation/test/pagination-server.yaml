@@ -4,6 +4,9 @@ metadata:
   name: pagination_server_automation
   path: automation/test/pagination-server
 
+executor:
+  profile: local
+  version: noetl-runtime/1
 workload:
   action: help  # build, deploy, full, status, logs, test, undeploy
 

@@ -4,6 +4,9 @@ metadata:
   name: monitoring_automation
   path: automation/infrastructure/monitoring
 
+executor:
+  profile: local
+  version: noetl-runtime/1
 workload:
   action: help  # deploy, undeploy, status, grafana-creds, add-helm-repos, add-vector-helm-repo, add-victoriametrics-helm-repo, add-metrics-server-helm-repo, deploy-metrics-server, remove-metrics-server, deploy-vmstack-operator, remove-vmstack-operator, deploy-vmstack, remove-vmstack, deploy-stack, deploy-dashboards, remove-dashboards, deploy-exporter, remove-exporter, deploy-noetl-scrape, remove-noetl-scrape, deploy-vector, remove-vector, deploy-vmlogs, remove-vmlogs
 

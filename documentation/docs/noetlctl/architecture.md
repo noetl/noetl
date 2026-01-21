@@ -64,13 +64,13 @@ python -m noetl.worker
 ./bin/noetl worker start
 
 # Run playbook locally (no server/worker needed)
-./bin/noetl run automation/tasks.yaml build --verbose
+./bin/noetl run automation/tasks.yaml --set target=build -v
 
-# Register playbook
+# Register playbook (distributed mode)
 ./bin/noetl register playbook --file playbook.yaml
 
-# Execute playbook (distributed execution)
-./bin/noetl execute playbook my-playbook --json
+# Execute playbook (distributed execution via server)
+./bin/noetl run catalog/path/to/playbook -r distributed
 
 # Stop server
 ./bin/noetl server stop

@@ -390,63 +390,6 @@ def execute_playbook_runtime(playbook_file_path: str, playbook_name: str) -> dic
     )
 
 
-def _get_queue_leased_count(execution_id: str | None = None) -> int:
-    """Return a conservative estimate of leased jobs across the broker.
-    Prefer dedicated size fields; avoid false positives from unrelated jobs by
-    requiring two consistent reads. If endpoints are unavailable, return 0 to
-    keep tests from failing due to missing features.
-    """
-    try:
-        import requests, time
-        # First attempt: size endpoint
-        params_size = {"status": "leased"}
-        if execution_id:
-            # If server supports execution_id on size, include it (ignored otherwise)
-            params_size["execution_id"] = execution_id
-        resp = requests.get(f"{NOETL_BASE_URL}/api/queue/size", params=params_size, timeout=5)
-        if resp.status_code == 200:
-            data = resp.json() or {}
-            # Support multiple field names the API might return
-            v = data.get("count")
-            if v is None:
-                v = data.get("leased")
-            if v is None:
-                v = data.get("queued")
-            try:
-                total = int(v or 0)
-            except Exception:
-                total = 0
-            if execution_id:
-                # Verify precise count by filtered list to avoid unrelated jobs
-                params_check = {"status": "leased", "limit": 100, "execution_id": execution_id}
-                try:
-                    resp_chk = requests.get(f"{NOETL_BASE_URL}/api/queue", params=params_check, timeout=5)
-                    if resp_chk.status_code == 200:
-                        dchk = resp_chk.json() or {}
-                        return len(dchk.get("items") or [])
-                except Exception:
-                    pass
-            return total
-        # Second attempt: list endpoint, but require two reads to reduce flakiness
-        params = {"status": "leased", "limit": 100}
-        if execution_id:
-            params["execution_id"] = execution_id
-        resp1 = requests.get(f"{NOETL_BASE_URL}/api/queue", params=params, timeout=5)
-        time.sleep(0.25)
-        resp2 = requests.get(f"{NOETL_BASE_URL}/api/queue", params=params, timeout=5)
-        if resp1.status_code == 200 and resp2.status_code == 200:
-            d1 = resp1.json() or {}
-            d2 = resp2.json() or {}
-            n1 = len((d1.get("items") or []))
-            n2 = len((d2.get("items") or []))
-            # If consistent, trust the value; otherwise choose the lower value
-            return n1 if n1 == n2 else min(n1, n2)
-    except Exception:
-        # Treat as unknown (0) rather than failing the test due to API variance
-        return 0
-    return 0
-
-
 def _get_event_failures(execution_id: str) -> int:
     try:
         import requests, time

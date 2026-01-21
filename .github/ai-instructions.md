@@ -24,19 +24,22 @@ NoETL is a workflow automation framework for data processing and MLOps orchestra
 ## Architecture Overview
 
 **Core Components:**
-- **Server** (`noetl/server/`): FastAPI-based orchestration engine with REST APIs for catalog, events, queue, and execution coordination
-- **Worker** (`noetl/worker/`): Polling workers that lease jobs from PostgreSQL queue and execute tasks
+- **Server** (`noetl/server/`): FastAPI-based orchestration engine with REST APIs for catalog, events, and execution coordination
+- **Worker** (`noetl/worker/`): Event-driven workers that receive command notifications via NATS JetStream and fetch details from event table
 - **CLI** (`noetlctl/src/main.rs`): Rust-based command interface (binary: `noetl`) managing server/worker lifecycle, build, and K8s deployment
 - **Plugins** (`noetl/tools/`): Extensible action executors (http, postgres, duckdb, python, secrets, etc.)
 - **Observability** (`ci/manifests/clickhouse/`): ClickHouse-based observability stack with OpenTelemetry schema for logs, metrics, and traces
 
 **Data Flow:**
 1. Playbooks (YAML) → Catalog registration → Event-driven execution
-2. Server evaluates next steps → Enqueues jobs → Workers execute → Report back via events
-3. All state persisted in PostgreSQL event log for reconstruction and coordination
+2. Server emits command.issued events → NATS notifies workers → Workers fetch command details → Execute → Emit command.completed events
+3. All state persisted in PostgreSQL event table (single source of truth) for reconstruction and coordination
 4. Observability data flows to ClickHouse for analytics and AI agent access via MCP server
 
 ## Development Workflows
+
+**Command Restriction:**
+- Do not use `task` commands. Use direct CLI equivalents (for example, `./bin/noetl ...` or `noetl ...`) instead.
 
 **Setup & Testing:**
 ```bash
@@ -309,7 +312,7 @@ See `tests/fixtures/playbooks/script_execution/` and `docs/script_attribute_desi
   - JDBC URL: `jdbc:postgresql://localhost:54321/demo_noetl`
   - User: `demo` / Password: `demo` (application data)
   - User: `noetl` / Password: `noetl` (NoETL metadata schema)
-  - Schema: `noetl` (for NoETL system tables: catalog, event, queue, etc.)
+  - Schema: `noetl` (for NoETL system tables: catalog, credential, event, keychain)
 - **NoETL API for Postgres Queries**:
   - Endpoint: `POST http://localhost:8082/api/postgres/execute` (NOT 30082!)
   - Documentation: `http://localhost:8082/docs#/default/execute_postgres_api_postgres_execute_post`

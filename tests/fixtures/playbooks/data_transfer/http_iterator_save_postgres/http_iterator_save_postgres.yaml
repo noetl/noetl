@@ -6,7 +6,7 @@ metadata:
   description: "Test HTTP calls in iterator with save to Postgres - validates loop execution with storage"
 
 workload:
-  pg_auth: pg_local
+  pg_auth: pg_k8s
   test_cities:
     - name: "London"
       lat: 51.5074
@@ -71,7 +71,7 @@ workflow:
       iterator: city
       mode: sequential
     case:
-      - when: "{{ event.name in ['step.exit', 'call.done'] and response is defined and response.status_code == 200 and response.data is defined }}"
+      - when: "{{ event.name in ['step.exit', 'call.done'] and response is defined and response.metadata.status_code == 200 and response.data is defined }}"
         then:
           sink:
             tool:
@@ -87,10 +87,10 @@ workflow:
                 temperature: "{{ response.data.current.temperature_2m | float }}"
                 latitude: "{{ city.lat | float }}"
                 longitude: "{{ city.lon | float }}"
-                http_status: "{{ response.status_code | int }}"
-      - when: "{{ event.name == 'step.exit' and (response is not defined or response.status_code != 200) }}"
+                http_status: "{{ response.metadata.status_code | int }}"
+      - when: "{{ event.name == 'step.exit' and (response is not defined or response.metadata.status_code != 200) }}"
         then:
-          log: "fetch_weather_data skipped for {{ city.name }}: status={{ response.status_code if response is defined else 'n/a' }}"
+          log: "fetch_weather_data skipped for {{ city.name }}: status={{ response.metadata.status_code if response is defined else 'n/a' }}"
     next:
       - step: verify_results
 

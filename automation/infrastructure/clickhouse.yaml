@@ -4,6 +4,9 @@ metadata:
   name: clickhouse_automation
   path: automation/infrastructure/clickhouse
 
+executor:
+  profile: local
+  version: noetl-runtime/1
 workload:
   action: help  # deploy, undeploy, status, health, test, connect, query, logs, logs-operator, logs-mcp, port-forward, port-forward-mcp, restart, restart-operator, restart-mcp, clean-data, optimize, deploy-cluster, deploy-crds, deploy-namespace, deploy-operator, deploy-schema, deploy-grafana-datasource, deploy-mcp-server
 

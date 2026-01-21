@@ -300,7 +300,7 @@ Verify caching behavior:
 
 ```bash
 # Execute playbook
-noetl execute tests/fixtures/playbooks/api_integration/amadeus_ai_api/amadeus_ai_api.yaml
+noetl run tests/fixtures/playbooks/api_integration/amadeus_ai_api/amadeus_ai_api.yaml -v
 
 # Check cache entries
 psql -d noetl -c "SELECT * FROM noetl.credential_cache;"

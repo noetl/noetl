@@ -47,7 +47,7 @@ workflow:
         );
     
     case:
-      - when: "{{ event.name == 'step.exit' and response is defined }}"
+      - when: "{{ event.name == 'call.done' }}"
         then:
           next:
             - step: test_mixed_types
@@ -83,7 +83,7 @@ workflow:
         result = mixed_data
     
     case:
-      - when: "{{ event.name == 'step.exit' and response is defined }}"
+      - when: "{{ event.name == 'call.done' }}"
         then:
           - sink:
               tool:
@@ -131,7 +131,7 @@ workflow:
         result = special_data
     
     case:
-      - when: "{{ event.name == 'step.exit' and response is defined }}"
+      - when: "{{ event.name == 'call.done' }}"
         then:
           sink:
             tool:
@@ -172,7 +172,7 @@ workflow:
         result = empty_scenarios
     
     case:
-      - when: "{{ event.name == 'step.exit' and response is defined }}"
+      - when: "{{ event.name == 'call.done' }}"
         then:
           sink:
             tool:
@@ -240,7 +240,7 @@ workflow:
         result = large_data
     
     case:
-      - when: "{{ event.name == 'step.exit' and response is defined }}"
+      - when: "{{ event.name == 'call.done' }}"
         then:
           sink:
             tool:
@@ -282,7 +282,7 @@ workflow:
         result = potentially_problematic
     
     case:
-      - when: "{{ event.name == 'step.exit' and response is defined }}"
+      - when: "{{ event.name == 'call.done' }}"
         then:
           sink:
             tool:
@@ -329,7 +329,7 @@ workflow:
         result = summary
     
     case:
-      - when: "{{ event.name == 'step.exit' and response is defined }}"
+      - when: "{{ event.name == 'call.done' }}"
         then:
           sink:
             tool:

@@ -4,6 +4,9 @@ metadata:
   name: gateway_ui_automation
   path: automation/infrastructure/gateway-ui
 
+executor:
+  profile: local
+  version: noetl-runtime/1
 workload:
   action: help  # deploy, logs, update, status
 

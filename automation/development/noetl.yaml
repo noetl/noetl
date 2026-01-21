@@ -1,0 +1,105 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: noetl_development_deploy
+  path: automation/development/noetl
+  description: Build/load/deploy helpers for NoETL in local kind
+
+executor:
+  profile: local
+  version: noetl-runtime/1
+workload:
+  action: help  # deploy, status
+  registry: "local"
+  image_name: "noetl"
+
+workflow:
+  - step: start
+    desc: Entry point for NoETL deploy automation
+    tool:
+      kind: shell
+      cmds:
+        - echo "NoETL Deploy Automation - Action '{{ workload.action }}'"
+    next:
+      - when: "{{ workload.action }} == deploy"
+        then:
+          - step: deploy_noetl
+        args: {}
+      - when: "{{ workload.action }} == status"
+        then:
+          - step: status
+        args: {}
+      - when: "{{ workload.action }} == help"
+        then:
+          - step: show_help
+        args: {}
+      - step: show_help
+
+  - step: deploy_noetl
+    desc: Deploy NoETL server and workers
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Deploying NoETL..."
+          kubectl apply -f ci/manifests/noetl/namespace/
+
+          if [ ! -f .noetl_last_build_tag.txt ]; then
+            echo "ERROR: .noetl_last_build_tag.txt not found. Build must have failed."
+            exit 1
+          fi
+          IMAGE_TAG=$(cat .noetl_last_build_tag.txt)
+          IMAGE="{{ workload.registry }}/{{ workload.image_name }}:$IMAGE_TAG"
+          echo "Using image: $IMAGE"
+
+          for manifest in ci/manifests/noetl/*.yaml; do
+            if [ -f "$manifest" ]; then
+              sed "s|{{ workload.registry }}/{{ workload.image_name }}:latest|$IMAGE|g" "$manifest" | kubectl apply -f -
+            fi
+          done
+
+          echo ""
+          echo "Waiting for NoETL server..."
+          kubectl wait --for=condition=ready pod -l app=noetl-server -n noetl --timeout=90s || echo "Warning: NoETL server not ready"
+          echo "Waiting for NoETL workers..."
+          kubectl wait --for=condition=ready pod -l app=noetl-worker -n noetl --timeout=90s || echo "Warning: NoETL workers not ready"
+    next:
+      - step: end
+
+  - step: status
+    desc: Show NoETL pod and service status
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "NoETL status:"
+          kubectl get pods -n noetl
+          echo ""
+          kubectl get svc -n noetl
+    next:
+      - step: end
+
+  - step: show_help
+    desc: Display available actions
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "=================================================="
+          echo " NoETL Deploy Automation"
+          echo "=================================================="
+          echo ""
+          echo "Usage:"
+          echo "  noetl run automation/development/noetl.yaml --set action=<action>"
+          echo ""
+          echo "Actions:"
+          echo "  deploy   - Deploy NoETL server and workers"
+          echo "  status   - Show NoETL pod and service status"
+          echo "  help     - Show this help"
+    next:
+      - step: end
+
+  - step: end
+    desc: Done

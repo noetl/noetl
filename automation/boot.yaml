@@ -1,0 +1,21 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: noetl_boot
+  path: automation/boot
+  description: Boot (bootstrap) the local kind environment
+
+executor:
+  profile: local
+  version: noetl-runtime/1
+workflow:
+  - step: start
+    desc: Run bootstrap workflow
+    tool:
+      kind: playbook
+      path: setup/bootstrap.yaml
+    next:
+      - step: end
+
+  - step: end
+    desc: Done

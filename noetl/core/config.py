@@ -528,34 +528,6 @@ class WorkerSettings(BaseModel):
         return f"{self.server_api_url}/worker/pool/heartbeat"
 
     @property
-    def endpoint_queue_lease(self) -> str:
-        """Queue job lease endpoint"""
-        return f"{self.server_api_url}/queue/lease"
-
-    @property
-    def endpoint_queue_complete(self) -> str:
-        """Queue job completion endpoint"""
-        return f"{self.server_api_url}/queue/complete"
-
-    def endpoint_queue_complete_by_id(self, queue_id: int) -> str:
-        """Queue job completion endpoint by queue ID"""
-        return f"{self.server_api_url}/queue/{queue_id}/complete"
-
-    @property
-    def endpoint_queue_fail(self) -> str:
-        """Queue job failure endpoint"""
-        return f"{self.server_api_url}/queue/fail"
-
-    def endpoint_queue_fail_by_id(self, queue_id: int) -> str:
-        """Queue job failure endpoint by queue ID"""
-        return f"{self.server_api_url}/queue/{queue_id}/fail"
-
-    @property
-    def endpoint_queue_size(self) -> str:
-        """Queue size endpoint"""
-        return f"{self.server_api_url}/queue/size"
-
-    @property
     def endpoint_events(self) -> str:
         """Events submission endpoint"""
         return f"{self.server_api_url}/events"

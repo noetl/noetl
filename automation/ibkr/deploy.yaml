@@ -1,0 +1,58 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: ibkr-deploy
+  path: automation/ibkr/deploy
+  description: Deploy IBKR Client Portal Gateway to Kubernetes
+
+executor:
+  profile: local
+  version: noetl-runtime/1
+workload:
+  namespace: ibkr
+  image: ibkr-client-portal:latest
+
+workflow:
+  - step: start
+    desc: Deploy IBKR Client Portal Gateway
+    next:
+      - step: namespace
+
+  - step: namespace
+    desc: Create namespace
+    tool:
+      kind: shell
+      cmds: "kubectl create namespace ibkr --dry-run=client -o yaml | kubectl apply -f -"
+    next:
+      - step: deploy
+
+  - step: deploy
+    desc: Deploy gateway using manifest
+    tool:
+      kind: shell
+      cmds: "kubectl apply -f /Users/akuksin/projects/noetl/noetl/ci/manifests/ibkr-gateway/"
+    next:
+      - step: wait
+
+  - step: wait
+    desc: Wait for deployment
+    tool:
+      kind: shell
+      cmds: "kubectl -n ibkr rollout status deployment/ibkr-client-portal --timeout=60s"
+    next:
+      - step: status
+
+  - step: status
+    desc: Show deployment status
+    tool:
+      kind: shell
+      cmds:
+        - "kubectl -n ibkr get pods"
+        - "kubectl -n ibkr get svc"
+        - "echo 'Gateway_URL: https://localhost:15000 (after kind cluster recreate)'"
+        - "echo 'Gateway_internal: https://ibkr-client-portal.ibkr.svc.cluster.local:5000'"
+    next:
+      - step: end
+
+  - step: end
+    desc: Done

@@ -1,0 +1,86 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: ibkr-login
+  path: automation/ibkr/login
+  description: "Open IBKR Gateway login and wait for authentication (optional autofill)."
+
+executor:
+  profile: local
+  version: noetl-runtime/1
+workload:
+  gateway_url: https://localhost:15000
+  credential_name: ib_paper
+  paper: true
+  headless: true
+  # manual: true opens a browser and lets you login yourself.
+  # manual: false will attempt autofill if IBKR_USERNAME/IBKR_PASSWORD are set.
+  manual: false
+  timeout_seconds: 240
+  script_uri: "gs://tradetrend/scripts/ibkr/ibkr_login_job.py"
+  script_source_type: gcs
+  script_auth: "tradetrend_noetl_sdavwe"
+  script_region: ""
+  script_endpoint: ""
+  script_timeout_seconds: 60
+
+keychain:
+  - name: ib_paper
+    kind: credential
+    scope: local
+    credential: "{{ workload.credential_name }}"
+
+workflow:
+  - step: start
+    desc: Start login flow
+    tool:
+      kind: python
+      args: {}
+      code: |
+        result = {"status": "started"}
+    next:
+      - step: login
+
+  - step: login
+    desc: Authenticate gateway via external script (K8s job)
+    tool:
+      kind: script
+      script:
+        uri: "{{ workload.script_uri }}"
+        source:
+          type: "{{ workload.script_source_type }}"
+          auth: "{{ workload.script_auth }}"
+          region: "{{ workload.script_region }}"
+          endpoint: "{{ workload.script_endpoint }}"
+          timeout: "{{ workload.script_timeout_seconds }}"
+      args:
+        gateway_url: "{{ workload.gateway_url }}"
+        timeout_seconds: "{{ workload.timeout_seconds }}"
+        paper: "{{ workload.paper }}"
+        manual: "{{ workload.manual }}"
+        headless: "{{ workload.headless }}"
+      job:
+        image: "mcr.microsoft.com/playwright/python:v1.57.0-jammy"
+        namespace: "noetl"
+        ttlSecondsAfterFinished: 3600
+        backoffLimit: 0
+        activeDeadlineSeconds: 600
+        timeout: 1200
+        install_dependencies:
+          - playwright==1.57.0
+        env:
+          IBKR_USERNAME: "{{ ib_paper.username }}"
+          IBKR_PASSWORD: "{{ ib_paper.password }}"
+          IBKR_TOTP_SECRET: "{{ ib_paper.totp_secret }}"
+          IBKR_2FA_CODE: "{{ ib_paper.two_fa_code }}"
+          PLAYWRIGHT_BROWSERS_PATH: "/ms-playwright"
+    next:
+      - step: end
+
+  - step: end
+    desc: Done
+    tool:
+      kind: python
+      args: {}
+      code: |
+        result = {"status": "completed"}

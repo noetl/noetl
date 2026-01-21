@@ -7,6 +7,27 @@ use std::path::PathBuf;
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Context {
     pub server_url: String,
+    /// Default runtime mode: local, distributed, or auto
+    #[serde(default = "default_runtime")]
+    pub runtime: String,
+}
+
+fn default_runtime() -> String {
+    "auto".to_string()
+}
+
+impl Context {
+    pub fn new(server_url: String) -> Self {
+        Self {
+            server_url,
+            runtime: default_runtime(),
+        }
+    }
+    
+    pub fn with_runtime(mut self, runtime: String) -> Self {
+        self.runtime = runtime;
+        self
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]

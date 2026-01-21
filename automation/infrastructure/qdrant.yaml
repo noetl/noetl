@@ -4,6 +4,9 @@ metadata:
   name: qdrant_automation
   path: automation/infrastructure/qdrant
 
+executor:
+  profile: local
+  version: noetl-runtime/1
 workload:
   action: help  # deploy, undeploy, status, logs, health, test, collections, restart
 

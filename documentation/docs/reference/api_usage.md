@@ -177,10 +177,13 @@ The CLI wraps the API with a convenient interface:
 
 ```bash
 # Register playbook
-noetl catalog register playbook ./my_playbook.yaml
+noetl register playbook ./my_playbook.yaml
 
-# Execute playbook
-noetl run playbook examples/my_playbook --payload '{"key": "value"}'
+# Execute playbook (distributed mode)
+noetl run examples/my_playbook -r distributed --set key=value
+
+# Execute playbook (local mode)
+noetl run ./my_playbook.yaml --set key=value
 
 # Check execution
 noetl execution status 12345

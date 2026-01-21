@@ -105,7 +105,7 @@ class ExecutionEventEmitter:
         
         async with get_pool_connection() as conn:
             logger.critical(f"DEBUG: Got connection, about to get cursor")
-            async with conn.cursor() as cur:
+            async with conn.cursor(row_factory=dict_row) as cur:
                 logger.critical(f"DEBUG: Got cursor, about to execute INSERT, context type={type(context)}, has workload={('workload' in context)}")
                 logger.critical(f"DEBUG: workload type={type(context.get('workload'))}")
                 
@@ -195,7 +195,7 @@ class ExecutionEventEmitter:
             return 0
         
         async with get_pool_connection() as conn:
-            async with conn.cursor() as cur:
+            async with conn.cursor(row_factory=dict_row) as cur:
                 # Insert workflow steps
                 for step in workflow_steps:
                     logger.critical(f"DEBUG PERSIST_WORKFLOW: step keys={step.keys()}, types={[(k, type(v).__name__) for k, v in step.items()]}")
@@ -246,7 +246,7 @@ class ExecutionEventEmitter:
             return 0
         
         async with get_pool_connection() as conn:
-            async with conn.cursor() as cur:
+            async with conn.cursor(row_factory=dict_row) as cur:
                 # Insert workbook tasks
                 for task in workbook_tasks:
                     await cur.execute(
@@ -294,7 +294,7 @@ class ExecutionEventEmitter:
             return 0
         
         async with get_pool_connection() as conn:
-            async with conn.cursor() as cur:
+            async with conn.cursor(row_factory=dict_row) as cur:
                 # Insert transitions
                 for trans in transitions:
                     await cur.execute(
@@ -364,7 +364,7 @@ class ExecutionEventEmitter:
         logger.critical(f"DEBUG WORKFLOW_INIT: About to emit_workflow_initialized, context type={type(context)}, meta type={type(meta)}")
         
         async with get_pool_connection() as conn:
-            async with conn.cursor() as cur:
+            async with conn.cursor(row_factory=dict_row) as cur:
                 await cur.execute(
                     """
                     INSERT INTO noetl.event (

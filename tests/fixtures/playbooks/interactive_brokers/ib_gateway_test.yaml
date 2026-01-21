@@ -7,7 +7,7 @@ metadata:
 
 workload:
   ib_credential: ib_paper
-  gateway_url: https://localhost:5000
+  gateway_url: https://localhost:15000
   message: Test Interactive Brokers Client Portal API via Gateway
 
 workflow:
@@ -61,7 +61,7 @@ workflow:
             result = {
                 'status': 'error',
                 'message': 'Invalid response format',
-                'note': 'Is IB Gateway running? Visit https://localhost:5000'
+                'note': 'Is IB Gateway running? Visit https://localhost:15000'
             }
         else:
             data = api_response.get('data', {})
@@ -74,7 +74,7 @@ workflow:
                     'message': 'Gateway not accessible',
                     'troubleshooting': [
                         '1. Start IB Gateway: ./bin/run.sh root/conf.yaml',
-                        '2. Open https://localhost:5000 and login',
+                      '2. Open https://localhost:15000 and login',
                         '3. Accept security certificate warnings',
                         '4. Retry this test'
                     ]
@@ -89,7 +89,7 @@ workflow:
                         'authenticated': authenticated,
                         'connected': connected,
                         'message': 'Gateway not authenticated',
-                        'action_required': 'Login via https://localhost:5000'
+                        'action_required': 'Login via https://localhost:15000'
                     }
                 else:
                     result = {

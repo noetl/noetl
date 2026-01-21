@@ -1,0 +1,174 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: ibkr-test-login
+  path: automation/ibkr/test-login
+  description: "End-to-end local test: setup deps, open login UI, wait until tickle reports authenticated, then verify endpoints."
+
+executor:
+  profile: local
+  version: noetl-runtime/1
+workload:
+  gateway_url: https://localhost:15000
+  credential_name: ib_gateway
+  username: ""
+  password: ""
+  two_fa_code: ""
+  paper: true
+  timeout_seconds: 240
+  manual: false
+  # set to false if you already installed deps
+  setup: true
+
+workflow:
+  - step: start
+    desc: Optional setup (Playwright)
+    case:
+      - when: "{{ workload.setup }}"
+        then:
+          - step: setup
+    next:
+      - step: resolve_credentials
+
+  - step: resolve_credentials
+    desc: Resolve IBKR login credentials
+    tool:
+      kind: python
+      args:
+        credential_name: "{{ workload.credential_name }}"
+        username: "{{ workload.username }}"
+        password: "{{ workload.password }}"
+        two_fa_code: "{{ workload.two_fa_code }}"
+      code: |
+        from noetl.worker.secrets import fetch_credential_by_key
+
+        credential_name = (credential_name or '').strip()
+        username = (username or '').strip()
+        password = (password or '').strip()
+        two_fa_code = (two_fa_code or '').strip()
+
+        credential_data = {}
+        if credential_name:
+            credential = fetch_credential_by_key(credential_name)
+            if isinstance(credential, dict):
+                data = credential.get('data', {})
+                if isinstance(data, dict) and 'data' in data:
+                    data = data.get('data')
+                if isinstance(data, dict):
+                    credential_data = data
+
+        if not username:
+            username = (credential_data.get('username') or '').strip()
+        if not password:
+            password = (credential_data.get('password') or '').strip()
+        if not two_fa_code:
+            two_fa_code = (credential_data.get('two_fa_code') or '').strip()
+
+        result = {
+            'username': username,
+            'password': password,
+            'two_fa_code': two_fa_code,
+        }
+    next:
+      - step: login
+
+  - step: setup
+    desc: Install deps + browser
+    tool:
+      kind: shell
+      cmds:
+        - "cd /Users/akuksin/projects/noetl/noetl && if command -v uv >/dev/null 2>&1; then uv pip install -e '.[ibkr]'; else python -m pip install -e '.[ibkr]'; fi"
+        - "python -m playwright install chromium"
+    next:
+      - step: login
+
+  - step: login
+    desc: Open browser and wait for authentication
+    tool:
+      kind: shell
+      cmds:
+        - |
+          set -euo pipefail
+          gateway_url="{{ workload.gateway_url }}"
+          timeout_seconds="{{ workload.timeout_seconds }}"
+          paper="{{ workload.paper }}"
+          manual="{{ workload.manual }}"
+          username="{{ resolve_credentials.username }}"
+          password="{{ resolve_credentials.password }}"
+          two_fa_code="{{ resolve_credentials.two_fa_code }}"
+
+          paper_arg=""
+          if [ "$paper" = "true" ] || [ "$paper" = "True" ] || [ "$paper" = "1" ]; then
+            paper_arg="--paper"
+          fi
+
+          manual_arg=""
+          if [ "$manual" = "true" ] || [ "$manual" = "True" ] || [ "$manual" = "1" ]; then
+            manual_arg="--manual"
+          fi
+
+          two_fa_arg=""
+          if [ -n "$two_fa_code" ]; then
+            two_fa_arg="--two-fa-code $two_fa_code"
+          fi
+
+          export IBKR_USERNAME="$username"
+          export IBKR_PASSWORD="$password"
+          export IBKR_2FA_CODE="$two_fa_code"
+
+          python /Users/akuksin/projects/noetl/noetl/scripts/ibkr/authenticate_gateway.py \
+            --gateway-url "$gateway_url" \
+            --timeout-seconds "$timeout_seconds" \
+            $paper_arg \
+            $manual_arg \
+            $two_fa_arg
+    next:
+      - step: verify
+
+  - step: verify
+    desc: Verify auth endpoints
+    tool:
+      kind: shell
+      cmds:
+        - |
+          set -euo pipefail
+          gateway_url="{{ workload.gateway_url }}"
+
+          tickle_json="$(curl -sk -X POST "${gateway_url}/v1/api/tickle")"
+          auth_json="$(curl -sk "${gateway_url}/v1/api/iserver/auth/status")"
+
+          tickle_file="$(mktemp)"
+          auth_file="$(mktemp)"
+          printf '%s' "$tickle_json" > "$tickle_file"
+          printf '%s' "$auth_json" > "$auth_file"
+
+          python - "$tickle_file" "$auth_file" <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          tickle_path = pathlib.Path(sys.argv[1])
+          auth_path = pathlib.Path(sys.argv[2])
+
+          tickle = json.loads(tickle_path.read_text())
+          auth = json.loads(auth_path.read_text())
+
+          ok = bool(auth.get('authenticated')) and bool(auth.get('connected')) and not bool(auth.get('competing'))
+          out = {
+              'authenticated': bool(auth.get('authenticated')),
+              'connected': bool(auth.get('connected')),
+              'competing': bool(auth.get('competing')),
+              'session': tickle.get('session') if isinstance(tickle, dict) else None,
+              'sso_expires': tickle.get('ssoExpires') if isinstance(tickle, dict) else None,
+              'ok': ok,
+          }
+          print(json.dumps(out, indent=2, sort_keys=True))
+          sys.exit(0 if ok else 2)
+          PY
+
+          rm -f "$tickle_file" "$auth_file"
+    next:
+      - step: end
+
+  - step: end
+    desc: Done

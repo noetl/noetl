@@ -4,6 +4,9 @@ metadata:
   name: noetl_destroy
   path: automation/setup/destroy
   description: Destroy NoETL development environment
+executor:
+  profile: local
+  version: noetl-runtime/1
 workflow:
   - step: start
     desc: Begin destroy workflow
@@ -73,7 +76,8 @@ workflow:
           echo "  - NoETL data: cleared"
           echo ""
           echo "You can now run bootstrap again:"
-          echo "  noetl run boot"
+          echo "  noetl run automation/boot.yaml"
+          echo "  # or: noetl run automation/setup/bootstrap.yaml"
           echo ""
     next:
       - step: end

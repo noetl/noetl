@@ -78,8 +78,14 @@ class NATSKVCache:
             self._kv = None
     
     def _make_key(self, execution_id: str, key_type: str) -> str:
-        """Create namespaced key for execution state."""
-        return f"exec:{execution_id}:{key_type}"
+        """Create namespaced key for execution state.
+        
+        NATS K/V keys must use dots as separators, not colons.
+        Format: exec.{execution_id}.{key_type}
+        """
+        # Replace colons with dots in key_type (for nested keys like "loop:step:event")
+        safe_key_type = key_type.replace(":", ".")
+        return f"exec.{execution_id}.{safe_key_type}"
     
     async def get_loop_state(self, execution_id: str, step_name: str, event_id: Optional[str] = None) -> Optional[dict[str, Any]]:
         """Get loop state for a specific step instance.
@@ -181,8 +187,8 @@ class NATSKVCache:
         if not self._kv:
             await self.connect()
         
-        # Delete all keys for this execution
-        prefix = f"exec:{execution_id}:"
+        # Delete all keys for this execution (using dot separator)
+        prefix = f"exec.{execution_id}."
         try:
             keys = await self._kv.keys()
             for key in keys:

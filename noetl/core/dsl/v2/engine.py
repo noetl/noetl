@@ -1,3 +1,59 @@
+async def finalize_abandoned_execution(self, execution_id: str, reason: str = "Abandoned or timed out"):
+    """
+    Forcibly finalize an execution by emitting workflow.failed and playbook.failed events if not already completed.
+    This should be called by a periodic task or admin action for stuck/running executions with no activity.
+    """
+    # Load state
+    state = await self.state_store.load_state(execution_id)
+    if not state:
+        logger.error(f"[FINALIZE] No state found for execution {execution_id}")
+        return
+    if state.completed:
+        logger.info(f"[FINALIZE] Execution {execution_id} already completed; skipping.")
+        return
+
+    # Find last step (if any)
+    last_step = state.current_step or (list(state.step_results.keys())[-1] if state.step_results else None)
+    logger.warning(f"[FINALIZE] Forcibly finalizing execution {execution_id} at step {last_step} due to: {reason}")
+
+    from noetl.core.dsl.v2.models import Event, LifecycleEventPayload
+    from datetime import datetime, timezone
+
+    # Emit workflow.failed event
+    workflow_failed_event = Event(
+        execution_id=execution_id,
+        step="workflow",
+        name="workflow.failed",
+        payload=LifecycleEventPayload(
+            status="failed",
+            final_step=last_step,
+            result=None,
+            error={"message": reason}
+        ).model_dump(),
+        timestamp=datetime.now(timezone.utc)
+    )
+    await self._persist_event(workflow_failed_event, state)
+
+    # Emit playbook.failed event
+    playbook_path = state.playbook.metadata.get("path", "playbook")
+    playbook_failed_event = Event(
+        execution_id=execution_id,
+        step=playbook_path,
+        name="playbook.failed",
+        payload=LifecycleEventPayload(
+            status="failed",
+            final_step=last_step,
+            result=None,
+            error={"message": reason}
+        ).model_dump(),
+        timestamp=datetime.now(timezone.utc)
+    )
+    await self._persist_event(playbook_failed_event, state)
+
+    # Mark state as completed
+    state.completed = True
+    await self.state_store.save_state(state)
+    logger.info(f"[FINALIZE] Emitted terminal events for execution {execution_id}")
 """
 NoETL V2 Execution Engine
 
@@ -43,10 +99,6 @@ class ExecutionState:
         self.failed = False
         self.completed = False
         
-        # Event tracking for parent_event_id
-        self.last_event_id: Optional[int] = None  # Track last event_id for parent linkage
-        self.step_event_ids: dict[str, int] = {}  # step_name -> last event_id for that step
-        
         # Root event tracking for traceability
         self.root_event_id: Optional[int] = None  # First event (playbook.initialized) for full trace
         
@@ -61,7 +113,18 @@ class ExecutionState:
             self.variables.update(playbook.workload)
         
         # Merge payload
-        self.variables.update(payload)
+        # CRITICAL: If payload contains 'workload' or 'vars', it can overwrite sub-playbook state.
+        # We only merge keys that are NOT 'workload' or 'vars' directly into self.variables
+        # unless they are explicitly intended to be there.
+        for k, v in payload.items():
+            if k not in ("workload", "vars"):
+                self.variables[k] = v
+            else:
+                # If it's workload/vars, deep merge instead of overwrite if they exist
+                if k in self.variables and isinstance(self.variables[k], dict) and isinstance(v, dict):
+                    self.variables[k].update(v)
+                else:
+                    self.variables[k] = v
     
     def get_step(self, step_name: str) -> Optional[Step]:
         """Get step by name."""
@@ -184,11 +247,18 @@ class ExecutionState:
                 "step": event.step,
                 "timestamp": event.timestamp.isoformat() if event.timestamp else None,
             },
+            # Note: variables includes loop vars, but we avoid top-level spreading 
+            # to prevent state pollution in sub-playbooks
             "workload": self.variables,
             "vars": self.variables,
-            **self.variables,  # Make variables accessible at top level (includes loop vars)
             **self.step_results,  # Make step results accessible (e.g., {{ process }})
         }
+        
+        # Add variables to context only if they don't collide with reserved keys
+        # This provides a flatter namespace while protecting system fields
+        for k, v in self.variables.items():
+            if k not in context and k not in protected_fields:
+                context[k] = v
         
         # Set protected fields AFTER spreading variables to ensure they are not overridden
         # CRITICAL: Convert IDs to strings to prevent JavaScript precision loss with Snowflake IDs
@@ -340,11 +410,11 @@ class StateStore:
         # Reconstruct state from events in database using event sourcing
         async with get_pool_connection() as conn:
             async with conn.cursor() as cur:
-                # Get playbook info from first event
+                # Get playbook info and workload from playbook.initialized event
                 await cur.execute("""
-                    SELECT catalog_id, node_id
+                    SELECT catalog_id, result
                     FROM noetl.event
-                    WHERE execution_id = %s
+                    WHERE execution_id = %s AND event_type = 'playbook.initialized'
                     ORDER BY event_id
                     LIMIT 1
                 """, (int(execution_id),))
@@ -352,16 +422,34 @@ class StateStore:
                 result = await cur.fetchone()
                 if not result:
                     return None
+
+                if isinstance(result, dict):
+                    catalog_id = result.get("catalog_id")
+                    event_result = result.get("result")
+                else:
+                    catalog_id = result[0]
+                    event_result = result[1]
+                if catalog_id is None:
+                    return None
                 
-                catalog_id = result[0]  # First column
+                # Extract workload from playbook.initialized event result
+                # This contains the merged workload (playbook defaults + parent args)
+                workload = {}
+                if event_result and isinstance(event_result, dict):
+                    workload = event_result.get("workload", {})
+                    logger.debug(f"Restored workload from playbook.initialized event: {list(workload.keys()) if workload else 'empty'}")
                 
                 # Load playbook
                 playbook = await self.playbook_repo.load_playbook_by_id(catalog_id)
                 if not playbook:
                     return None
                 
-                # Create new state
-                state = ExecutionState(execution_id, playbook, {}, catalog_id)
+                # Create new state with restored workload
+                # Note: We pass workload as the payload param so it merges properly
+                # The ExecutionState.__init__ first loads playbook.workload, then merges payload
+                # To avoid double-loading playbook defaults, we pass the full workload directly
+                # and let the playbook.workload be overwritten
+                state = ExecutionState(execution_id, playbook, workload, catalog_id)
                 
                 # Identify loop steps from playbook for initialization
                 loop_steps = set()
@@ -384,9 +472,14 @@ class StateStore:
                 loop_iteration_results = {}  # {step_name: [result1, result2, ...]}
                 
                 for row in rows:
-                    node_name = row[0]
-                    event_type = row[1]
-                    result_data = row[2]
+                    if isinstance(row, dict):
+                        node_name = row.get("node_name")
+                        event_type = row.get("event_type")
+                        result_data = row.get("result")
+                    else:
+                        node_name = row[0]
+                        event_type = row[1]
+                        result_data = row[2]
                     
                     # For loop steps, collect iteration results from step.exit events
                     if event_type == 'step.exit' and result_data and node_name in loop_steps:
@@ -455,16 +548,28 @@ class ControlFlowEngine:
     
     def _render_template(self, template_str: str, context: dict[str, Any]) -> Any:
         """Render Jinja2 template."""
+        if not isinstance(template_str, str) or "{{" not in template_str:
+            return template_str
+            
         try:
             # Check if this is a simple variable reference like {{ varname }} or {{ obj.attr }}
             # If so, evaluate and return the actual object instead of string representation
             import re
+            # Improved regex to handle optional spaces and nested attributes
             simple_var_match = re.match(r'^\{\{\s*([\w.]+)\s*\}\}$', template_str.strip())
             if simple_var_match:
                 var_path = simple_var_match.group(1)
-                # Navigate dot notation: workload.numbers → context['workload']['numbers']
+                # Navigate dot notation: workload.api_url → context['workload']['api_url']
                 value = context
-                for part in var_path.split('.'):
+                parts = var_path.split('.')
+                
+                # OPTIMIZATION: Check top-level directly first
+                if len(parts) == 1:
+                    part = parts[0]
+                    if part in context:
+                        return context[part]
+                
+                for part in parts:
                     if isinstance(value, dict) and part in value:
                         value = value[part]
                     elif hasattr(value, part):
@@ -476,6 +581,7 @@ class ControlFlowEngine:
                     # Successfully navigated full path
                     return value
             
+            # Standard Jinja2 rendering
             template = self.jinja_env.from_string(template_str)
             result = template.render(**context)
             
@@ -808,13 +914,10 @@ class ControlFlowEngine:
                 delay = retry_spec.get("delay", 0)
                 max_attempts = retry_spec.get("max_attempts", 3)
                 backoff = retry_spec.get("backoff", "linear")  # linear, exponential
+                retry_args = retry_spec.get("args", {})  # Get rendered args from worker
                 
-                # Get current attempt from event.meta or event.attempt (fallback)
-                current_attempt = 1
-                if event.meta and "attempt" in event.meta:
-                    current_attempt = event.meta["attempt"]
-                elif event.attempt:
-                    current_attempt = event.attempt
+                # Get current attempt from event.attempt (Event model field)
+                current_attempt = event.attempt if event.attempt else 1
                 
                 # Check if max attempts exceeded
                 if current_attempt >= max_attempts:
@@ -830,8 +933,10 @@ class ControlFlowEngine:
                     logger.error(f"Retry: current step not found: {event.step}")
                     continue
                 
-                # Create retry command with incremented attempt counter
-                command = await self._create_command_for_step(state, step_def, {})
+                logger.info(f"[RETRY-ACTION] Creating retry command with args: {retry_args}")
+                
+                # Create retry command with rendered args from worker
+                command = await self._create_command_for_step(state, step_def, retry_args)
                 if command:
                     # Increment attempt counter
                     command.attempt = current_attempt + 1
@@ -840,7 +945,7 @@ class ControlFlowEngine:
                     command.retry_backoff = backoff
                     commands.append(command)
                     logger.info(
-                        f"[RETRY-ACTION] Re-attempting step {event.step} "
+                        f"[RETRY-ACTION] Re-attempting step {event.step} with args {retry_args} "
                         f"(attempt {command.attempt}/{max_attempts})"
                     )
 
@@ -863,15 +968,9 @@ class ControlFlowEngine:
         args: dict[str, Any]
     ) -> Optional[Command]:
         """Create a command to execute a step."""
-        # Debug: Check if step has loop
-        logger.warning(f"[CREATE-CMD] Step {step.step} has loop? {step.loop is not None}")
-        if step.loop:
-            logger.warning(f"[CREATE-CMD] Loop config: in={step.loop.in_}, iterator={step.loop.iterator}, mode={step.loop.mode}")
-        else:
-            logger.error(f"[CREATE-CMD] Step {step.step} has NO LOOP but should! step_dict_keys={list(step.model_dump().keys())}, loop_value={step.model_dump().get('loop')}")
-        
         # Check if step has loop configuration
         if step.loop:
+            logger.debug(f"[CREATE-CMD] Step {step.step} has loop: in={step.loop.in_}, iterator={step.loop.iterator}, mode={step.loop.mode}")
             # Get collection to iterate
             context = state.get_render_context(Event(
                 execution_id=state.execution_id,
@@ -890,12 +989,18 @@ class ControlFlowEngine:
             
             # Get completed count from NATS K/V (authoritative) or local fallback
             # Use last event_id for this step as the loop instance identifier
+            # If no event_id yet (first time), use execution_id as fallback
             loop_event_id = state.step_event_ids.get(step.step)
+            if loop_event_id is None:
+                # For new loops, use execution_id as identifier until first event is created
+                loop_event_id = f"exec_{state.execution_id}"
+                logger.debug(f"[LOOP-INIT] No event_id yet for {step.step}, using execution fallback: {loop_event_id}")
+            
             nats_cache = await get_nats_cache()
             nats_loop_state = await nats_cache.get_loop_state(
                 str(state.execution_id),
                 step.step,
-                event_id=str(loop_event_id) if loop_event_id else None
+                event_id=str(loop_event_id)
             )
             
             # Use NATS count if available (authoritative for distributed execution)
@@ -919,7 +1024,7 @@ class ControlFlowEngine:
                             "mode": step.loop.mode,
                             "event_id": loop_event_id
                         },
-                        event_id=str(loop_event_id) if loop_event_id else None
+                        event_id=str(loop_event_id)
                     )
                 
                 loop_state = state.loop_state[step.step]
@@ -975,13 +1080,12 @@ class ControlFlowEngine:
         # Render Jinja2 templates in tool config
         # CRITICAL: Use recursive render_template to handle nested dicts/lists like params: {latitude: "{{ city.lat }}"}
         from noetl.core.dsl.render import render_template as recursive_render
-        from jinja2 import Environment, BaseLoader, StrictUndefined
         
-        env = Environment(loader=BaseLoader(), undefined=StrictUndefined)
-        rendered_tool_config = recursive_render(env, tool_config, context)
+        # Use existing engine environment to benefit from cached filters and settings
+        rendered_tool_config = recursive_render(self.jinja_env, tool_config, context)
         
         # Render Jinja2 templates in args (also use recursive rendering for nested structures)
-        rendered_args = recursive_render(env, step_args, context)
+        rendered_args = recursive_render(self.jinja_env, step_args, context)
         
         # Extract case blocks from step definition (if present) for worker-side execution
         case_blocks = None
@@ -1077,13 +1181,17 @@ class ControlFlowEngine:
         except Exception as e:
             logger.exception(f"[VARS] Error processing vars block for step '{event.step}': {e}")
     
-    async def handle_event(self, event: Event) -> list[Command]:
+    async def handle_event(self, event: Event, already_persisted: bool = False) -> list[Command]:
         """
         Handle an event and return commands to enqueue.
         
         This is the core engine method called by the API.
+        
+        Args:
+            event: The event to process
+            already_persisted: If True, skip persisting the event (it was already persisted by caller)
         """
-        logger.info(f"[ENGINE] handle_event called: event.name={event.name}, step={event.step}, execution={event.execution_id}")
+        logger.info(f"[ENGINE] handle_event called: event.name={event.name}, step={event.step}, execution={event.execution_id}, already_persisted={already_persisted}")
         commands: list[Command] = []
         
         # Load execution state (from memory cache or reconstruct from events)
@@ -1103,7 +1211,9 @@ class ControlFlowEngine:
         if event.step.endswith('_sink'):
             logger.debug(f"Synthetic sink step: {event.step} - persisting event without orchestration")
             # Persist the event but don't generate commands (no orchestration needed)
-            await self._persist_event(event, state)
+            # Skip if already persisted by API caller
+            if not already_persisted:
+                await self._persist_event(event, state)
             return commands
         
         step_def = state.get_step(event.step)
@@ -1114,18 +1224,45 @@ class ControlFlowEngine:
         # Update current step
         state.set_current_step(event.step)
         
+        # PRE-PROCESSING: Identify if a retry is triggered by worker or server rules
+        # This is needed to handle pagination correctly in loops
+        worker_case_action = event.payload.get("case_action")
+        has_worker_retry = worker_case_action and worker_case_action.get("type") == "retry"
+        
+        # Get render context EARLY for case evaluation
+        context = state.get_render_context(event)
+        
+        # Process case rules ONCE and store results
+        # This allows us to detect retries before deciding whether to aggregate results
+        case_commands = []
+        if event.name in ("step.exit", "call.done", "call.error"):
+            case_commands = await self._process_case_rules(state, step_def, event)
+            
+        # Identify retry commands from server rules
+        server_retry_commands = [c for c in case_commands if c.step == event.step]
+        
+        is_retrying = bool(server_retry_commands) or has_worker_retry
+        if is_retrying:
+            logger.info(f"[ENGINE] Step {event.step} is retrying (server_retry={bool(server_retry_commands)}, worker_retry={has_worker_retry})")
+            state.pagination_state.setdefault(event.step, {})["pending_retry"] = True
+        else:
+            # If no retry triggered by THIS event, clear pending flag
+            if event.step in state.pagination_state:
+                state.pagination_state[event.step]["pending_retry"] = False
+
         # Store step result if this is a step.exit event
         logger.info(f"[LOOP_DEBUG] Checking step.exit: name={event.name}, has_result={'result' in event.payload}, payload_keys={list(event.payload.keys())}")
         if event.name == "step.exit" and "result" in event.payload:
             logger.info(f"[LOOP_DEBUG] step.exit with result for {event.step}, step_def.loop={step_def.loop}, in_loop_state={event.step in state.loop_state}")
-            # Skip aggregation if a pagination retry is pending (same loop item will repeat)
-            pending_retry = state.pagination_state.get(event.step, {}).get("pending_retry", False)
-            if pending_retry:
-                logger.info(f"[LOOP_DEBUG] Pending pagination retry for {event.step}; skipping result aggregation and loop advance")
+            
+            # Use the is_retrying flag we just determined
+            if is_retrying:
+                logger.info(f"[LOOP_DEBUG] Pagination retry active for {event.step}; skipping result aggregation and loop advance")
+            
             # If pagination collected data for this step, merge it into the current result before aggregation
             # and reset pagination state for the next iteration/run when no retry is pending.
             pagination_state = state.pagination_state.get(event.step)
-            if pagination_state and not pending_retry:
+            if pagination_state and not is_retrying:
                 collected_data = pagination_state.get("collected_data", [])
                 if collected_data:
                     current_result = event.payload.get("result", {})
@@ -1164,8 +1301,9 @@ class ControlFlowEngine:
                     "iteration_count": 0,
                     "pending_retry": False,
                 }
+            
             # If in a loop, add iteration result to aggregation (for ALL iterations)
-            if step_def.loop and event.step in state.loop_state and not pending_retry:
+            if step_def.loop and event.step in state.loop_state and not is_retrying:
                 # Check if loop aggregation already finalized (loop_done happened)
                 loop_state = state.loop_state[event.step]
                 logger.info(f"[LOOP_DEBUG] Loop state: completed={loop_state.get('completed')}, finalized={loop_state.get('aggregation_finalized')}, results_count={len(loop_state.get('results', []))}")
@@ -1193,7 +1331,7 @@ class ControlFlowEngine:
                         logger.error(f"[LOOP-NATS] Error syncing to NATS K/V: {e}", exc_info=True)
                 else:
                     logger.info(f"Loop aggregation already finalized for {event.step}, skipping result storage")
-            elif not pending_retry:
+            elif not is_retrying:
                 # Not in loop or loop done - store as normal step result
                 state.mark_step_completed(event.step, event.payload["result"])
                 logger.debug(f"Stored result for step {event.step} in state")
@@ -1204,13 +1342,36 @@ class ControlFlowEngine:
             state.mark_step_completed(event.step, event.payload["response"])
             logger.debug(f"Temporarily stored call.done response for step {event.step} in state")
         
-        # Get render context (needed for case evaluation and other logic)
-        context = state.get_render_context(event)
+        # Note: Render context was already retrieved EARLY above
         
-        # CRITICAL: Process case rules FIRST for ALL events (not just step.exit)
-        # This allows steps to react to call.done, call.error, and other mid-step events
-        case_commands = await self._process_case_rules(state, step_def, event)
+        # Add case commands we already generated to the final list
         commands.extend(case_commands)
+        
+        # If server rules didn't match but worker reported a case action, process it now
+        if not commands and worker_case_action:
+            action_type = worker_case_action.get("type")
+            action_config = worker_case_action.get("config", {})
+            
+            logger.info(f"[ENGINE] Server matched no rules, but worker reported '{action_type}' action. Processing worker action.")
+            
+            if action_type == "retry":
+                # Use _process_then_actions to handle the action correctly
+                # We wrap it in a 'then' block format
+                worker_commands = await self._process_then_actions(
+                    [{"retry": action_config}],
+                    state,
+                    event
+                )
+                commands.extend(worker_commands)
+                logger.info(f"[ENGINE] Applied retry from worker for step {event.step}")
+            
+            elif action_type == "next":
+                worker_commands = await self._process_then_actions(
+                    [{"next": action_config}],
+                    state,
+                    event
+                )
+                commands.extend(worker_commands)
         
         # Handle loop.item events - continue loop iteration
         # Only process if case didn't generate commands
@@ -1301,6 +1462,12 @@ class ControlFlowEngine:
                         if loop_state:
                             loop_state["completed"] = True
                             loop_state["aggregation_finalized"] = True
+                            # CRITICAL: Re-initialize results from authoritative source (NATS K/V) 
+                            # if we are about to create aggregated result, to ensure no duplicates 
+                            # or stale data from memory cache.
+                            if nats_loop_state:
+                                loop_state["results"] = nats_loop_state.get("results", [])
+                                logger.info(f"[LOOP-SYNC] Re-initialized local results from NATS K/V: {len(loop_state['results'])} items")
                         
                         # Get aggregated loop results
                         loop_aggregation = state.get_loop_aggregation(event.step)
@@ -1424,11 +1591,16 @@ class ControlFlowEngine:
         # 2. No commands generated
         # 3. EITHER: Step has NO next or case blocks (true terminal step)
         #    OR: Step failed with no error handling (has error but no commands)
+        #    OR: Step has routing (next/case) but none of them matched/generated commands (effective terminal)
         # 4. Not already completed
         is_terminal_step = step_def and not step_def.next and not step_def.case
         is_failed_with_no_handler = has_error and not commands
         
-        if event.name == "step.exit" and not commands and (is_terminal_step or is_failed_with_no_handler) and not state.completed:
+        # EFFECTIVE TERMINAL: Step has routing but no commands were generated 
+        # (e.g. all case rules only had sinks, or structural next was skipped)
+        is_effective_terminal = step_def and not commands and not state.completed
+        
+        if event.name == "step.exit" and not commands and (is_terminal_step or is_failed_with_no_handler or is_effective_terminal) and not state.completed:
             # No more commands to execute - workflow and playbook are complete (or failed)
             state.completed = True
             # Check if step failed by looking at error in payload
@@ -1436,7 +1608,9 @@ class ControlFlowEngine:
             completion_status = "failed" if has_error else "completed"
             
             # Persist current event FIRST to get its event_id for parent_event_id
-            await self._persist_event(event, state)
+            # Skip if already persisted by API caller
+            if not already_persisted:
+                await self._persist_event(event, state)
             
             # Now create completion events with current event as parent
             # This ensures proper ordering: step.exit -> workflow_completion -> playbook_completion
@@ -1481,7 +1655,8 @@ class ControlFlowEngine:
         await self.state_store.save_state(state)
         
         # Persist current event to database (if not already done for completion case)
-        if not completion_events:
+        # Skip if event was already persisted by API caller
+        if not completion_events and not already_persisted:
             await self._persist_event(event, state)
         
         # Persist completion events in order with proper parent_event_id chain
@@ -1732,6 +1907,18 @@ class ControlFlowEngine:
             raise ValueError("Playbook must have a 'start' step")
         
         # Emit playbook.initialized event (playbook loaded and validated)
+        # CRITICAL: Strip massive result objects from workload to prevent state pollution in sub-playbooks
+        # Only keep genuine workload variables
+        workload_snapshot = {}
+        for k, v in state.variables.items():
+            # Skip step result objects (they are usually dicts with 'id', 'status', 'data' keys)
+            if isinstance(v, dict) and 'status' in v and ('data' in v or 'error' in v):
+                continue
+            # Skip large result proxies or objects
+            if k in state.step_results:
+                continue
+            workload_snapshot[k] = v
+
         from noetl.core.dsl.v2.models import LifecycleEventPayload
         playbook_init_event = Event(
             execution_id=execution_id,
@@ -1740,7 +1927,7 @@ class ControlFlowEngine:
             payload=LifecycleEventPayload(
                 status="initialized",
                 final_step=None,
-                result={"workload": state.variables, "playbook_path": playbook_path}
+                result={"workload": workload_snapshot, "playbook_path": playbook_path}
             ).model_dump(),
             timestamp=datetime.now(timezone.utc)
         )
@@ -1755,7 +1942,7 @@ class ControlFlowEngine:
             payload=LifecycleEventPayload(
                 status="initialized",
                 final_step=None,
-                result={"first_step": "start", "playbook_path": playbook_path}
+                result={"first_step": "start", "playbook_path": playbook_path, "workload": workload_snapshot}
             ).model_dump(),
             timestamp=datetime.now(timezone.utc)
         )

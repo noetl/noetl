@@ -11,6 +11,7 @@ This package contains all action executors moved from plugin/tools/:
 - snowflake: Snowflake task execution
 - transfer: Data transfer operations
 - container: Container execution
+- artifact: Result artifact storage (get/put from S3, GCS, filesystem)
 """
 
 # Import tool modules
@@ -24,6 +25,7 @@ from noetl.tools import (
     transfer,
     container,
     gcs,
+    artifact,
 )
 from noetl.tools.transfer import snowflake_transfer
 
@@ -38,6 +40,7 @@ from noetl.tools.transfer import execute_transfer_action
 from noetl.tools.transfer.snowflake_transfer import execute_snowflake_transfer_action
 from noetl.tools.container import execute_container_task
 from noetl.tools.gcs import execute_gcs_task
+from noetl.tools.artifact import execute_artifact_task, execute_artifact_get, execute_artifact_put
 
 # Tool registry for dynamic lookup
 REGISTRY = {
@@ -51,6 +54,7 @@ REGISTRY = {
     "snowflake_transfer": snowflake_transfer,
     "container": container,
     "gcs": gcs,
+    "artifact": artifact,
 }
 
 __all__ = [
@@ -65,6 +69,7 @@ __all__ = [
     "snowflake_transfer",
     "container",
     "gcs",
+    "artifact",
     # Executors
     "execute_python_task",
     "execute_python_task_async",
@@ -78,6 +83,10 @@ __all__ = [
     "execute_snowflake_transfer_action",
     "execute_container_task",
     "execute_gcs_task",
+    "execute_artifact_task",
+    "execute_artifact_get",
+    "execute_artifact_put",
     # Registry
     "REGISTRY",
 ]
+

@@ -1,0 +1,145 @@
+# IBKR Client Portal Gateway - Historical Market Data (server/worker)
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: ibkr-history
+  path: automation/ibkr/history
+  description: Fetch historical market data for a futures contract
+
+workload:
+  credential_name: ib_paper
+  gateway_url: ""
+  base_url: ""
+  symbol: NG
+  exchange: NYMEX
+  period: 2d
+  bar: 5mins
+  start_time: ""
+  contract_index: 0
+
+workflow:
+  - step: start
+    desc: Resolve gateway URL
+    tool:
+      kind: python
+      args:
+        credential_name: "{{ workload.credential_name }}"
+        override_gateway_url: "{{ workload.gateway_url }}"
+        override_base_url: "{{ workload.base_url }}"
+      code: |
+        from noetl.worker.secrets import fetch_credential_by_key
+
+        credential_name = (credential_name or '').strip()
+        credential_data = {}
+        if credential_name:
+            credential = fetch_credential_by_key(credential_name)
+            if isinstance(credential, dict):
+                data = credential.get('data', {})
+                if isinstance(data, dict) and 'data' in data:
+                    data = data.get('data')
+                if isinstance(data, dict):
+                    credential_data = data
+
+        gateway_url = (override_gateway_url or '').strip() or (credential_data.get('gateway_url') or '').strip()
+        base_url = (override_base_url or '').strip() or (credential_data.get('base_url') or '').strip()
+        if not base_url and gateway_url:
+          base_url = f"{gateway_url.rstrip('/')}/v1/api"
+
+        if not gateway_url and base_url:
+          gateway_url = base_url.replace('/v1/api', '')
+
+        result = {
+          'status': 'ok' if base_url else 'error',
+          'gateway_url': gateway_url,
+          'base_url': base_url,
+        }
+    next:
+      - step: get_futures
+
+  - step: get_futures
+    desc: Resolve futures contracts for symbol
+    tool:
+      kind: http
+      method: GET
+      url: "{{ start.base_url }}/trsrv/futures?symbols={{ workload.symbol }}&exchange={{ workload.exchange }}"
+      follow_redirects: true
+      headers:
+        Content-Type: application/json
+        User-Agent: NoETL/2.0
+      verify_ssl: false
+    next:
+      - step: pick_contract
+
+  - step: pick_contract
+    desc: Pick futures contract
+    tool:
+      kind: python
+      args:
+        response: "{{ get_futures }}"
+        symbol: "{{ workload.symbol }}"
+        index: "{{ workload.contract_index }}"
+      code: |
+        data = response.get('data', {})
+        if not isinstance(data, dict):
+            result = {"status": "error", "message": "Invalid futures response", "data": data}
+        else:
+            contracts = data.get(symbol, [])
+            if not contracts:
+                result = {"status": "error", "message": f"No contracts found for {symbol}", "data": data}
+            else:
+                try:
+                    contract = contracts[int(index)]
+                except Exception:
+                    contract = contracts[0]
+                result = {
+                    "status": "ok",
+                    "contract": contract,
+                    "conid": contract.get("conid"),
+                }
+    next:
+      - step: get_history
+
+  - step: get_history
+    desc: Fetch historical data
+    tool:
+      kind: http
+      method: GET
+      url: "{{ start.base_url }}/iserver/marketdata/history?conid={{ pick_contract.conid }}&period={{ workload.period }}&bar={{ workload.bar }}{% if workload.start_time %}&startTime={{ workload.start_time }}{% endif %}"
+      follow_redirects: true
+      headers:
+        Content-Type: application/json
+        User-Agent: NoETL/2.0
+      verify_ssl: false
+    next:
+      - step: summarize
+
+  - step: summarize
+    desc: Summarize historical data
+    tool:
+      kind: python
+      args:
+        contract: "{{ pick_contract.contract }}"
+        history: "{{ get_history }}"
+      code: |
+        data = history.get('data', {})
+        bars = []
+        if isinstance(data, dict):
+            bars = data.get('data', [])
+
+        result = {
+            "status": "ok" if history.get('status_code') == 200 else "error",
+            "contract": contract,
+            "bar_count": len(bars),
+            "sample": bars[:5],
+        }
+    next:
+      - step: end
+
+  - step: end
+    desc: Done
+    tool:
+      kind: python
+      args:
+        summary: "{{ summarize }}"
+      code: |
+        result = {"status": "completed", "summary": summary}

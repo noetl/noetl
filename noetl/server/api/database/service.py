@@ -121,7 +121,7 @@ class DatabaseService:
             connection_string = await DatabaseService._resolve_connection_string(request)
             
             async with get_async_db_connection(connection_string=connection_string) as conn:
-                async with conn.cursor() as cursor:
+                async with conn.cursor(row_factory=dict_row) as cursor:
                     result = None
                     
                     if request.query:

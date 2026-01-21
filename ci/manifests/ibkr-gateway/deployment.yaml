@@ -1,0 +1,28 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ibkr-client-portal
+  namespace: ibkr
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ibkr-client-portal
+  template:
+    metadata:
+      labels:
+        app: ibkr-client-portal
+    spec:
+      containers:
+      - name: gateway
+        image: ibkr-client-portal:latest
+        imagePullPolicy: Never
+        ports:
+        - containerPort: 5000
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"

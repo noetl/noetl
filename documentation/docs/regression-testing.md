@@ -215,10 +215,11 @@ task test:regression:results
 noetl register tests/fixtures/playbooks/regression_test/master_regression_test.yaml \
   --host localhost --port 8082
 
-# Execute test suite
-noetl execute playbook tests/fixtures/playbooks/regression_test/master_regression_test \
+# Execute test suite (distributed mode)
+noetl run catalog/tests/fixtures/playbooks/regression_test/master_regression_test \
+  -r distributed \
   --host localhost --port 8082 \
-  --payload '{"pg_auth": "pg_k8s"}' --merge --json
+  --set pg_auth=pg_k8s
 ```
 
 ### Via API
@@ -776,7 +777,7 @@ jobs:
 
 ## See Also
 
-- [DSL Specification](/docs/reference/dsl/dsl_spec)
+- [DSL Specification](/docs/reference/dsl/spec)
 - [Playbook Structure](/docs/features/playbook_structure)
 - [PostgreSQL Tool](/docs/reference/tools/postgres)
 - [Local Development Setup](/docs/development/local_dev_setup)

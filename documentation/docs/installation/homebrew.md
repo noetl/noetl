@@ -67,8 +67,8 @@ cp target/release/noetl /usr/local/bin/
 ## Next Steps
 
 - [Quick Start Guide](../getting-started/quickstart.md)
-- [Local Playbook Execution](../noetlctl/local-execution.md)
-- [Configuration](../configuration/overview.md)
+- [Local Playbook Execution](../noetlctl/local_execution.md)
+- [NoETL CLI](../noetlctl/index.md)
 
 ## Troubleshooting
 

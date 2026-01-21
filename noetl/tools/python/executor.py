@@ -10,10 +10,22 @@ import json
 import inspect
 import importlib.util
 from typing import Dict, Any, Optional, Callable
-from jinja2 import Environment
+try:
+    from jinja2 import Environment, BaseLoader
+except ImportError:
+    Environment, BaseLoader = None, None
+
+import ast
+import base64
+import tempfile
+try:
+    import httpx
+except ImportError:
+    httpx = None
 
 from noetl.core.logger import setup_logger
-import ast
+from noetl.core.script import resolve_script
+from noetl.worker.auth_resolver import resolve_auth
 
 logger = setup_logger(__name__, include_location=True)
 
@@ -31,12 +43,9 @@ def _inject_auth_credentials(
     
     Returns dict of original environment values for restoration.
     """
-    from noetl.worker.auth_resolver import resolve_auth
-    from jinja2 import Environment
-    
     # Get auth config from task_config or args
     auth_config = task_config.get('auth') or (args or {}).get('auth')
-    if not auth_config:
+    if not auth_config or auth_config == {}:
         return {}
     
     logger.info(f"PYTHON.AUTH: Resolving auth config: {auth_config}")
@@ -273,6 +282,8 @@ async def execute_python_task_async(
     log_event_callback: Optional[Callable] = None,
 ) -> Dict[str, Any]:
     """Execute a Python task asynchronously."""
+    import time
+    t_p_start = time.perf_counter()
     start_time = datetime.datetime.now()
     logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Entry at {start_time}")
 
@@ -310,18 +321,15 @@ async def execute_python_task_async(
         
         # Priority 1: External script
         if 'script' in task_config:
-            from noetl.core.script import resolve_script
             logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Resolving external script")
             code = resolve_script(task_config['script'], context, jinja_env)
             logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Resolved script from {task_config['script']['source']['type']}, length={len(code)} chars")
         
         # Priority 2: Base64 encoded code
         elif 'code_b64' in task_config:
-            import base64
             code = base64.b64decode(task_config['code_b64']).decode('utf-8')
             logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Decoded base64 code, length={len(code)} chars")
         elif 'code_base64' in task_config:
-            import base64
             code = base64.b64decode(task_config['code_base64']).decode('utf-8')
             logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Decoded base64 code, length={len(code)} chars")
         
@@ -375,22 +383,25 @@ async def execute_python_task_async(
                         logger.warning(f"PYTHON.EXECUTE_PYTHON_TASK: Unsupported config for '{alias}': {module_path}")
                 
                 # Validate all modules exist before execution
-                missing_modules = []
-                for module_name in modules_to_validate:
-                    # Check top-level module first (e.g., 'google' for 'google.cloud.storage')
-                    top_level = module_name.split('.')[0]
-                    spec = importlib.util.find_spec(top_level)
-                    if spec is None:
-                        missing_modules.append(module_name)
-                        logger.error(f"PYTHON.LIBS_VALIDATION: Module '{module_name}' not found (top-level '{top_level}' missing)")
-                
-                if missing_modules:
-                    raise ImportError(
-                        f"Required libraries not installed in noetl container: {', '.join(missing_modules)}. "
-                        f"Add these packages to pyproject.toml dependencies or use pre-installed libraries."
-                    )
-                
-                logger.info(f"PYTHON.LIBS_VALIDATION: All {len(modules_to_validate)} libraries validated successfully")
+                # Skip validation if NOETL_SKIP_LIB_VALIDATION=true or if in QEMU (slow)
+                if os.getenv("NOETL_SKIP_LIB_VALIDATION") != "true":
+                    missing_modules = []
+                    for module_name in modules_to_validate:
+                        # Check top-level module first (e.g., 'google' for 'google.cloud.storage')
+                        top_level = module_name.split('.')[0]
+                        # importlib.util.find_spec can be very slow in QEMU environments
+                        spec = importlib.util.find_spec(top_level)
+                        if spec is None:
+                            missing_modules.append(module_name)
+                            logger.error(f"PYTHON.LIBS_VALIDATION: Module '{module_name}' not found (top-level '{top_level}' missing)")
+                    
+                    if missing_modules:
+                        raise ImportError(
+                            f"Required libraries not installed in noetl container: {', '.join(missing_modules)}. "
+                            f"Add these packages to pyproject.toml dependencies or use pre-installed libraries."
+                        )
+                    
+                    logger.info(f"PYTHON.LIBS_VALIDATION: All {len(modules_to_validate)} libraries validated successfully")
                 
                 # Prepend imports to code
                 imports_block = '\n'.join(import_statements)
@@ -495,7 +506,12 @@ async def execute_python_task_async(
 
         exec_locals = {}
         logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Executing Python code")
-        exec(code, exec_globals, exec_locals)
+        
+        # Execute code in a thread pool to avoid blocking the event loop
+        # Note: exec() is synchronous and can be slow or hang
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, lambda: exec(code, exec_globals, exec_locals))
+        
         logger.debug(f"PYTHON.EXECUTE_PYTHON_TASK: Execution completed | locals_keys={list(exec_locals.keys())}")
 
         # Check if code defines main() function (legacy support)
@@ -548,6 +564,9 @@ async def execute_python_task_async(
             )
             result_data = await _invoke_main(main_func, call_kwargs)
 
+            t_p_end = time.perf_counter()
+            logger.info(f"[PERF] Python execution for {task_name} took {t_p_end - t_p_start:.4f}s")
+
             end_time = datetime.datetime.now()
             duration = (end_time - start_time).total_seconds()
 
@@ -582,6 +601,9 @@ async def execute_python_task_async(
                     'locals_count': len(non_builtins),
                     'locals_keys': list(non_builtins.keys())
                 }
+
+            t_p_end = time.perf_counter()
+            logger.info(f"[PERF] Python execution for {task_name} took {t_p_end - t_p_start:.4f}s")
 
             end_time = datetime.datetime.now()
             duration = (end_time - start_time).total_seconds()

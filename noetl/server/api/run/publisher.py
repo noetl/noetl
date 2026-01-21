@@ -1,7 +1,10 @@
 """
-Queue publisher module for execution tasks.
+Publisher compatibility shim.
 
-Publishes actionable tasks to queue table for worker pools to consume.
+Queue table is removed - NoETL uses pure event sourcing with NATS JetStream.
+Workers receive command.issued event references via NATS and fetch details from /api/commands/{event_id}.
+
+This module provides backward-compatible stubs for code that hasn't been fully migrated.
 """
 
 import base64
