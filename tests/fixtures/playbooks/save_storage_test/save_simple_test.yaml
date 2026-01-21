@@ -26,7 +26,7 @@ workflow:
         result = {"status": "initialized"}
     
     case:
-      - when: "{{ event.name == 'step.exit' }}"
+      - when: "{{ event.name == 'call.done' }}"
         then:
           next:
             - step: create_tables
@@ -40,7 +40,7 @@ workflow:
         pg_auth: "{{ workload.pg_auth }}"
     
     case:
-      - when: "{{ event.name == 'step.exit' and response is defined }}"
+      - when: "{{ event.name == 'call.done' }}"
         then:
           next:
             - step: truncate_tables
@@ -55,7 +55,7 @@ workflow:
         TRUNCATE TABLE simple_test_nested;
     
     case:
-      - when: "{{ event.name == 'step.exit' and response is defined }}"
+      - when: "{{ event.name == 'call.done' }}"
         then:
           next:
             - step: event_test
@@ -79,7 +79,7 @@ workflow:
         }
     
     case:
-      - when: "{{ event.name == 'step.exit' and response is defined }}"
+      - when: "{{ event.name == 'call.done' }}"
         then:
           - sink:
               tool:
@@ -107,7 +107,7 @@ workflow:
         }
     
     case:
-      - when: "{{ event.name == 'step.exit' and response is defined }}"
+      - when: "{{ event.name == 'call.done' }}"
         then:
           - sink:
               tool:
@@ -116,8 +116,8 @@ workflow:
                 statement: |
                   INSERT INTO simple_test_flat (test_id, test_name, test_value, storage_type, test_execution)
                   VALUES (
-                    '{{ response.data.record_id }}',
-                    '{{ response.data.description }}',
+                    '{{ response.record_id }}',
+                    '{{ response.description }}',
                     42,
                     'flat',
                     '{{ execution_id }}'
@@ -155,7 +155,7 @@ workflow:
         }
     
     case:
-      - when: "{{ event.name == 'step.exit' and response is defined }}"
+      - when: "{{ event.name == 'call.done' }}"
         then:
           - sink:
               tool:

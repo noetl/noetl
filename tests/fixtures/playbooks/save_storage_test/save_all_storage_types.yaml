@@ -144,7 +144,7 @@ workflow:
         result = {"status": "initialized"}
     
     case:
-      - when: "{{ event.name == 'step.exit' }}"
+      - when: "{{ event.name == 'call.done' }}"
         then:
           next:
             - step: initialize_test_data
@@ -183,7 +183,7 @@ workflow:
         result = {"status": "success", "data": test_data}
     
     case:
-      - when: "{{ event.name == 'step.exit' and response is defined }}"
+      - when: "{{ event.name == 'call.done' }}"
         then:
           sink:
             tool:
@@ -212,7 +212,7 @@ workflow:
         }
     
     case:
-      - when: "{{ event.name == 'step.exit' and response is defined }}"
+      - when: "{{ event.name == 'call.done' }}"
         then:
           sink:
             tool:
@@ -249,7 +249,7 @@ workflow:
         }
     
     case:
-      - when: "{{ event.name == 'step.exit' and response is defined }}"
+      - when: "{{ event.name == 'call.done' }}"
         then:
           sink:
             tool:
@@ -286,7 +286,7 @@ workflow:
         }
     
     case:
-      - when: "{{ event.name == 'step.exit' and response is defined }}"
+      - when: "{{ event.name == 'call.done' }}"
         then:
           - sink:
               tool:
@@ -295,13 +295,13 @@ workflow:
                 statement: |
                   INSERT INTO test_summary (summary_type, total_records, avg_value, test_execution, created_at)
                   SELECT 
-                    '{{ response.data.summary_type }}' as summary_type,
+                    '{{ response.summary_type }}' as summary_type,
                     COUNT(*) as total_records,
                     AVG(test_value) as avg_value,
-                    '{{ response.data.execution_id }}' as test_execution,
+                    '{{ response.execution_id }}' as test_execution,
                     NOW() as created_at
                   FROM simple_test_flat 
-                  WHERE test_execution = '{{ response.data.execution_id }}'
+                  WHERE test_execution = '{{ response.execution_id }}'
           - next:
               - step: test_python_save
 
@@ -325,7 +325,7 @@ workflow:
         }
     
     case:
-      - when: "{{ event.name == 'step.exit' and response is defined }}"
+      - when: "{{ event.name == 'call.done' }}"
         then:
           sink:
             tool:
@@ -377,7 +377,7 @@ workflow:
         }
     
     case:
-      - when: "{{ event.name == 'step.exit' and response is defined }}"
+      - when: "{{ event.name == 'call.done' }}"
         then:
           sink:
             tool:
@@ -425,7 +425,7 @@ workflow:
         }
     
     case:
-      - when: "{{ event.name == 'step.exit' and response is defined }}"
+      - when: "{{ event.name == 'call.done' }}"
         then:
           sink:
             tool:
@@ -490,7 +490,7 @@ workflow:
         result = {"status": "success", "data": summary}
     
     case:
-      - when: "{{ event.name == 'step.exit' and response is defined }}"
+      - when: "{{ event.name == 'call.done' }}"
         then:
           sink:
             tool:
