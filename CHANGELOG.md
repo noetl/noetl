@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.5.12](https://github.com/noetl/noetl/compare/v2.5.11...v2.5.12) (2026-01-22)
+
+### Bug Fixes
+
+* increase timeout limits for noetl worker http ([#215](https://github.com/noetl/noetl/issues/215)) ([5cccd62](https://github.com/noetl/noetl/commit/5cccd620cab2110809a190a1caa794e04813a648))
+
 ## [2.5.11](https://github.com/noetl/noetl/compare/v2.5.10...v2.5.11) (2026-01-21)
 
 ### Bug Fixes
