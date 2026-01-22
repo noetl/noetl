@@ -426,6 +426,10 @@ class WorkerSettings(BaseModel):
     
     # Keychain configuration
     keychain_refresh_threshold: int = Field(default=300, alias="NOETL_KEYCHAIN_REFRESH_THRESHOLD")
+    
+    # HTTP timeout configuration (seconds)
+    http_client_timeout: float = Field(default=120.0, alias="NOETL_WORKER_HTTP_TIMEOUT")
+    http_event_timeout: float = Field(default=60.0, alias="NOETL_WORKER_EVENT_TIMEOUT")
 
     @field_validator('pool_runtime', mode='before')
     def normalize_runtime(cls, v):

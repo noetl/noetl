@@ -138,7 +138,7 @@ class V2Worker:
         from noetl.core.config import get_worker_settings
         worker_settings = get_worker_settings()
         self._running = True
-        self._http_client = httpx.AsyncClient(timeout=30.0)
+        self._http_client = httpx.AsyncClient(timeout=worker_settings.http_client_timeout)
         self._nats_subscriber = NATSCommandSubscriber(
             nats_url=self.nats_url,
             subject=worker_settings.nats_subject,
@@ -2365,6 +2365,9 @@ class V2Worker:
         if correlation:
             event_data["correlation"] = correlation
         
+        from noetl.core.config import get_worker_settings
+        worker_settings = get_worker_settings()
+        
         max_retries = 3
         base_delay = 0.5
         
@@ -2375,7 +2378,7 @@ class V2Worker:
                 response = await self._http_client.post(
                     event_url,
                     json=event_data,
-                    timeout=10.0
+                    timeout=worker_settings.http_event_timeout
                 )
                 response.raise_for_status()
                 
