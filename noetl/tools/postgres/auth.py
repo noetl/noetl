@@ -81,7 +81,10 @@ def resolve_postgres_auth(task_config: Dict, task_with: Dict, jinja_env: Environ
                     for auth_key, task_key in field_mapping.items():
                         if task_key not in task_with and postgres_auth.get(auth_key) is not None:
                             task_with[task_key] = postgres_auth[auth_key]
-                            logger.debug(f"POSTGRES: Mapped {auth_key}={postgres_auth[auth_key]} -> {task_key}")
+                            # Mask sensitive values in logs to prevent credential leakage
+                            sensitive_terms = ('password', 'secret', 'token', 'key', 'credential')
+                            value_display = '***' if any(term in auth_key.lower() for term in sensitive_terms) else postgres_auth[auth_key]
+                            logger.debug(f"POSTGRES: Mapped {auth_key}={value_display} -> {task_key}")
                 else:
                     logger.warning(f"POSTGRES: Expected 'postgres' service, got '{resolved_auth.service}'")
             else:

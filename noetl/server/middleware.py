@@ -3,6 +3,7 @@ import json
 import time
 from fastapi import Request, Response
 from noetl.core.logger import logger
+from noetl.core.sanitize import sanitize_sensitive_data
 
 # https://stackoverflow.com/questions/69669808/fastapi-custom-middleware-getting-body-of-request-inside
 
@@ -25,8 +26,10 @@ async def catch_exceptions_middleware(request: Request, call_next):
     start_time = time.time()
     request_json = await get_body(request)
     try:
-        request_json = json.loads(request_json)
-        request_json = json.dumps(request_json, indent=2)
+        request_data = json.loads(request_json)
+        # SECURITY: Sanitize request body before logging to remove sensitive data
+        sanitized_request = sanitize_sensitive_data(request_data)
+        request_json = json.dumps(sanitized_request, indent=2)
     except Exception as err:
         pass
     try:
@@ -39,10 +42,13 @@ async def catch_exceptions_middleware(request: Request, call_next):
 
         # Try parse JSON response
         try:
-            response_json = json.loads(response_body)
+            response_data = json.loads(response_body)
             if "/openapi.json" in request.url.path:
                 response_json = "valid openapi.json"
-            response_json = json.dumps(response_json, indent=2)
+            else:
+                # SECURITY: Sanitize response body before logging to remove sensitive data
+                sanitized_response = sanitize_sensitive_data(response_data)
+                response_json = json.dumps(sanitized_response, indent=2)
         except Exception as err:
             response_json = response_body.decode()
         def filter_paths(val: str, ignore: list[str]) -> bool:
