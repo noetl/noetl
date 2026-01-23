@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.6.0](https://github.com/noetl/noetl/compare/v2.5.12...v2.6.0) (2026-01-23)
+
+### Features
+
+* Dummy chagnes to trigger GitHub Actions ([6aae66f](https://github.com/noetl/noetl/commit/6aae66f94e0a61c2b2cdba455d1ef01943b1e317))
+
 ## [2.5.12](https://github.com/noetl/noetl/compare/v2.5.11...v2.5.12) (2026-01-22)
 
 ### Bug Fixes
