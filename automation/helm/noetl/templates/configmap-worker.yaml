@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: noetl-worker-config
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: noetl-worker
+data:
+{{- range $key, $value := .Values.config.worker }}
+  {{ $key }}: {{ $value | quote }}
+{{- end }}

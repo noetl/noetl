@@ -1,0 +1,331 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: artifact_registry_repository
+  path: iap/gcp/artifact-registry
+  description: Create or delete a GCP Artifact Registry repository
+  labels:
+    iap.noetl.io/provider: gcp
+    iap.noetl.io/resource-type: artifactregistry.googleapis.com/Repository
+
+executor:
+  profile: local
+  version: noetl-runtime/1
+
+workload:
+  # Action: create, destroy, plan
+  action: create
+
+  # Required parameters
+  project_id: ""
+  region: us-central1
+  repository_id: noetl
+
+  # Repository settings
+  format: DOCKER
+  description: "NoETL container images"
+
+  # State management
+  state_database: .noetl/state.duckdb
+  state_bucket: ""  # Defaults to {project_id}-noetl-state
+  workspace: default
+
+workflow:
+  - step: start
+    desc: Route based on action
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "Artifact Registry Repository"
+          echo "============================"
+          echo "Action:     {{ workload.action }}"
+          echo "Project:    {{ workload.project_id }}"
+          echo "Region:     {{ workload.region }}"
+          echo "Repository: {{ workload.repository_id }}"
+    vars:
+      resource_id: "{{ workload.project_id }}/{{ workload.region }}/{{ workload.repository_id }}"
+      state_bucket: "{{ workload.state_bucket if workload.state_bucket else workload.project_id + '-noetl-state' }}"
+    case:
+      - when: "{{ workload.action }} == create"
+        then:
+          - step: check_existing
+      - when: "{{ workload.action }} == destroy"
+        then:
+          - step: delete_repo
+      - when: "{{ workload.action }} == plan"
+        then:
+          - step: plan_changes
+      - when: "true"
+        then:
+          - step: show_help
+
+  - step: show_help
+    desc: Show available actions
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Usage: noetl run automation/iap/gcp/artifact_registry.yaml --set action=<action>"
+          echo ""
+          echo "Available actions:"
+          echo "  create  - Create a repository"
+          echo "  destroy - Delete a repository"
+          echo "  plan    - Show planned changes"
+          echo ""
+          echo "Example:"
+          echo "  noetl run automation/iap/gcp/artifact_registry.yaml \\""
+          echo "    --set action=create \\""
+          echo "    --set project_id=mestumre-dev \\""
+          echo "    --set region=us-central1 \\""
+          echo "    --set repository_id=noetl"
+    next:
+      - step: end
+
+  - step: check_existing
+    desc: Check if repository exists
+    tool:
+      kind: http
+      method: GET
+      url: https://artifactregistry.googleapis.com/v1/projects/{{ workload.project_id }}/locations/{{ workload.region }}/repositories/{{ workload.repository_id }}
+      auth:
+        source: adc
+    vars:
+      repo_status: "{{ result.status }}"
+    case:
+      - when: "{{ vars.repo_status }} == 200"
+        then:
+          - step: repo_exists_info
+      - when: "true"
+        then:
+          - step: enable_api
+
+  - step: repo_exists_info
+    desc: Repository already exists
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Repository '{{ workload.repository_id }}' already exists in project '{{ workload.project_id }}'"
+    next:
+      - step: update_state
+
+  - step: enable_api
+    desc: Enable Artifact Registry API
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "Enabling Artifact Registry API..."
+          gcloud services enable artifactregistry.googleapis.com --project {{ workload.project_id }}
+          echo "Artifact Registry API enabled."
+    next:
+      - step: create_repo
+
+  - step: create_repo
+    desc: Create repository
+    tool:
+      kind: http
+      method: POST
+      url: https://artifactregistry.googleapis.com/v1/projects/{{ workload.project_id }}/locations/{{ workload.region }}/repositories?repositoryId={{ workload.repository_id }}
+      auth:
+        source: adc
+      headers:
+        Content-Type: application/json
+      body: |
+        {
+          "format": "{{ workload.format }}",
+          "description": "{{ workload.description }}"
+        }
+    vars:
+      create_status: "{{ result.status }}"
+    case:
+      - when: "{{ vars.create_status }} == 200"
+        then:
+          - step: save_state
+      - when: "true"
+        then:
+          - step: create_error
+
+  - step: create_error
+    desc: Handle repository creation error
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "ERROR: Failed to create repository"
+          echo "Status: {{ vars.create_status }}"
+          exit 1
+    next:
+      - step: end
+
+  - step: delete_repo
+    desc: Delete repository
+    tool:
+      kind: http
+      method: DELETE
+      url: https://artifactregistry.googleapis.com/v1/projects/{{ workload.project_id }}/locations/{{ workload.region }}/repositories/{{ workload.repository_id }}
+      auth:
+        source: adc
+    vars:
+      delete_status: "{{ result.status }}"
+    case:
+      - when: "{{ vars.delete_status }} == 200"
+        then:
+          - step: remove_from_state
+      - when: "true"
+        then:
+          - step: delete_error
+
+  - step: save_state
+    desc: Save repository state to DuckDB
+    tool:
+      kind: duckdb
+      database: "{{ workload.state_database }}"
+      commands: |
+        INSERT INTO resources (
+          resource_id, resource_type, resource_name, provider, project, region,
+          zone, status, config, state
+        )
+        VALUES (
+          '{{ vars.resource_id }}',
+          'artifactregistry.googleapis.com/Repository',
+          '{{ workload.repository_id }}',
+          'gcp',
+          '{{ workload.project_id }}',
+          '{{ workload.region }}',
+          NULL,
+          'created',
+          json('{
+            "format": "{{ workload.format }}",
+            "description": "{{ workload.description }}"
+          }'),
+          json('{"format": "{{ workload.format }}"}')
+        )
+        ON CONFLICT (resource_id) DO UPDATE SET
+          resource_type = EXCLUDED.resource_type,
+          resource_name = EXCLUDED.resource_name,
+          provider = EXCLUDED.provider,
+          project = EXCLUDED.project,
+          region = EXCLUDED.region,
+          zone = EXCLUDED.zone,
+          status = EXCLUDED.status,
+          config = EXCLUDED.config,
+          state = EXCLUDED.state,
+          updated_at = CURRENT_TIMESTAMP,
+          last_sync_at = CURRENT_TIMESTAMP;
+    next:
+      - step: print_success
+
+  - step: update_state
+    desc: Update repository state
+    tool:
+      kind: duckdb
+      database: "{{ workload.state_database }}"
+      commands: |
+        INSERT INTO resources (
+          resource_id, resource_type, resource_name, provider, project, region,
+          zone, status, config, state
+        )
+        VALUES (
+          '{{ vars.resource_id }}',
+          'artifactregistry.googleapis.com/Repository',
+          '{{ workload.repository_id }}',
+          'gcp',
+          '{{ workload.project_id }}',
+          '{{ workload.region }}',
+          NULL,
+          'existing',
+          json('{}'),
+          json('{"format": "{{ workload.format }}"}')
+        )
+        ON CONFLICT (resource_id) DO UPDATE SET
+          resource_type = EXCLUDED.resource_type,
+          resource_name = EXCLUDED.resource_name,
+          provider = EXCLUDED.provider,
+          project = EXCLUDED.project,
+          region = EXCLUDED.region,
+          zone = EXCLUDED.zone,
+          status = EXCLUDED.status,
+          config = EXCLUDED.config,
+          state = EXCLUDED.state,
+          updated_at = CURRENT_TIMESTAMP,
+          last_sync_at = CURRENT_TIMESTAMP;
+    next:
+      - step: end
+
+  - step: remove_from_state
+    desc: Remove repository from state
+    tool:
+      kind: duckdb
+      database: "{{ workload.state_database }}"
+      commands: |
+        DELETE FROM resources WHERE resource_id = '{{ vars.resource_id }}';
+    next:
+      - step: print_delete_success
+
+  - step: delete_error
+    desc: Handle delete error
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "ERROR: Failed to delete repository"
+          echo "Status: {{ vars.delete_status }}"
+          exit 1
+    next:
+      - step: end
+
+  - step: print_success
+    desc: Print success message
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "========================================="
+          echo " Artifact Registry Repository Created"
+          echo "========================================="
+          echo ""
+          echo "Project:    {{ workload.project_id }}"
+          echo "Region:     {{ workload.region }}"
+          echo "Repository: {{ workload.repository_id }}"
+          echo ""
+    next:
+      - step: end
+
+  - step: print_delete_success
+    desc: Print delete success message
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "========================================="
+          echo " Artifact Registry Repository Deleted"
+          echo "========================================="
+          echo ""
+          echo "Project:    {{ workload.project_id }}"
+          echo "Region:     {{ workload.region }}"
+          echo "Repository: {{ workload.repository_id }}"
+          echo ""
+    next:
+      - step: end
+
+  - step: plan_changes
+    desc: Plan changes without applying
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "Plan:"
+          echo "- Create repository '{{ workload.repository_id }}' in {{ workload.project_id }}/{{ workload.region }}"
+    next:
+      - step: end
+
+  - step: end
+    desc: Workflow complete

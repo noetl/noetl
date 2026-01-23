@@ -1,0 +1,48 @@
+[package]
+name = "worker-pool"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "NoETL Worker Pool - Executes workflow commands via NATS"
+
+[[bin]]
+name = "noetl-worker"
+path = "src/main.rs"
+
+[dependencies]
+# Tool library
+noetl-tools = { path = "../noetl-tools" }
+
+# Async runtime
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time", "sync"] }
+
+# NATS messaging
+async-nats = "0.38"
+futures = "0.3"
+
+# HTTP client
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Error handling
+thiserror = "2.0"
+anyhow = "1.0"
+
+# Regex
+regex = "1.10"
+
+# Utilities
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+dotenvy = "0.15"
+hostname = "0.4"
+
+[dev-dependencies]
+tokio-test = "0.4"

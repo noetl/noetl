@@ -205,3 +205,129 @@ class OrchestratorQueries:
                 await cur.execute(query, {"execution_id": execution_id, "node_name": node_name})
                 row = await cur.fetchone()
                 return row["meta"] if row else None
+
+    @staticmethod
+    async def get_execution_state_batch(execution_id: int) -> Dict[str, Any]:
+        """
+        Get all execution state data in a single efficient query.
+
+        This method eliminates N+1 query patterns by fetching all needed data
+        in one database round-trip using CTEs.
+
+        Returns:
+            Dict with keys:
+            - execution_state: 'completed' | 'in_progress' | 'initial'
+            - has_failed: bool
+            - step_results: list of {node_name, result}
+            - completed_steps: list of step names
+            - metadata: dict from playbook_started event
+            - catalog_id: int
+            - parent_execution_id: int or None
+        """
+        query = """
+        WITH exec_status AS (
+            -- Check execution completion status
+            SELECT
+                CASE
+                    WHEN EXISTS (
+                        SELECT 1 FROM noetl.event
+                        WHERE execution_id = %(execution_id)s
+                        AND event_type IN ('playbook.completed', 'workflow.completed', 'playbook_completed')
+                    ) THEN 'completed'
+                    WHEN EXISTS (
+                        SELECT 1 FROM noetl.event
+                        WHERE execution_id = %(execution_id)s
+                        AND event_type IN ('action_completed', 'command.completed', 'step.exit')
+                    ) THEN 'in_progress'
+                    ELSE 'initial'
+                END as state
+        ),
+        failure_check AS (
+            -- Check for terminal failure (failure without subsequent success)
+            SELECT
+                CASE
+                    WHEN NOT EXISTS (
+                        SELECT 1 FROM noetl.event
+                        WHERE execution_id = %(execution_id)s
+                        AND event_type IN ('playbook.failed', 'workflow.failed')
+                    ) THEN FALSE
+                    WHEN EXISTS (
+                        SELECT 1 FROM noetl.event e
+                        WHERE e.execution_id = %(execution_id)s
+                          AND e.event_type = 'action_completed'
+                          AND e.created_at > (
+                              SELECT MAX(created_at) FROM noetl.event
+                              WHERE execution_id = %(execution_id)s
+                              AND event_type IN ('playbook.failed', 'workflow.failed')
+                          )
+                    ) THEN FALSE
+                    ELSE TRUE
+                END as has_failed
+        ),
+        step_results_agg AS (
+            -- Aggregate step results as JSON array
+            SELECT COALESCE(
+                json_agg(
+                    json_build_object(
+                        'node_name', node_name,
+                        'result', result
+                    ) ORDER BY created_at
+                ),
+                '[]'::json
+            ) as results
+            FROM noetl.event
+            WHERE execution_id = %(execution_id)s
+              AND event_type IN ('action_completed', 'command.completed', 'step.exit')
+              AND result IS NOT NULL
+        ),
+        completed_steps_agg AS (
+            -- Get distinct completed step names
+            SELECT COALESCE(
+                array_agg(DISTINCT node_name),
+                ARRAY[]::text[]
+            ) as steps
+            FROM noetl.event
+            WHERE execution_id = %(execution_id)s
+              AND event_type IN ('action_completed', 'command.completed', 'step_completed')
+        ),
+        exec_metadata AS (
+            -- Get metadata from playbook_started or playbook.initialized event
+            SELECT meta, catalog_id, parent_execution_id
+            FROM noetl.event
+            WHERE execution_id = %(execution_id)s
+              AND event_type IN ('playbook_started', 'playbook.initialized')
+            ORDER BY created_at
+            LIMIT 1
+        )
+        SELECT
+            (SELECT state FROM exec_status) as execution_state,
+            (SELECT has_failed FROM failure_check) as has_failed,
+            (SELECT results FROM step_results_agg) as step_results,
+            (SELECT steps FROM completed_steps_agg) as completed_steps,
+            (SELECT meta FROM exec_metadata) as metadata,
+            (SELECT catalog_id FROM exec_metadata) as catalog_id,
+            (SELECT parent_execution_id FROM exec_metadata) as parent_execution_id
+        """
+        async with get_pool_connection() as conn:
+            async with conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute(query, {"execution_id": execution_id})
+                row = await cur.fetchone()
+                if not row:
+                    return {
+                        "execution_state": "initial",
+                        "has_failed": False,
+                        "step_results": [],
+                        "completed_steps": [],
+                        "metadata": None,
+                        "catalog_id": None,
+                        "parent_execution_id": None
+                    }
+                return {
+                    "execution_state": row.get("execution_state", "initial"),
+                    "has_failed": row.get("has_failed", False),
+                    "step_results": row.get("step_results") or [],
+                    "completed_steps": row.get("completed_steps") or [],
+                    "metadata": row.get("metadata"),
+                    "catalog_id": row.get("catalog_id"),
+                    "parent_execution_id": row.get("parent_execution_id")
+                }

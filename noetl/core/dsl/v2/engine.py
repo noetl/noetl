@@ -68,7 +68,10 @@ No backward compatibility - pure v2 implementation.
 
 import logging
 import os
-from typing import Any, Optional
+import time
+import asyncio
+from collections import OrderedDict
+from typing import Any, Optional, TypeVar, Generic
 from datetime import datetime, timezone
 from jinja2 import Template, Environment, StrictUndefined
 from psycopg.types.json import Json
@@ -79,6 +82,128 @@ from noetl.core.cache import get_nats_cache
 
 from noetl.core.logger import setup_logger
 logger = setup_logger(__name__, include_location=True)
+
+
+# Type variable for generic BoundedCache
+T = TypeVar('T')
+
+
+class BoundedCache(Generic[T]):
+    """
+    LRU cache with TTL and maximum size to prevent unbounded memory growth.
+
+    Features:
+    - Max size limit with LRU eviction
+    - TTL (time-to-live) for entries
+    - Thread-safe with asyncio.Lock
+    - Automatic cleanup of expired entries
+    """
+
+    def __init__(self, max_size: int = 1000, ttl_seconds: int = 3600):
+        """
+        Initialize bounded cache.
+
+        Args:
+            max_size: Maximum number of entries (default 1000)
+            ttl_seconds: Time-to-live in seconds (default 1 hour)
+        """
+        self._cache: OrderedDict[str, tuple[T, float]] = OrderedDict()
+        self._max_size = max_size
+        self._ttl_seconds = ttl_seconds
+        self._lock = asyncio.Lock()
+        self._cleanup_counter = 0
+        self._cleanup_interval = 100  # Cleanup every N operations
+
+    async def get(self, key: str) -> Optional[T]:
+        """Get value from cache (async)."""
+        async with self._lock:
+            if key not in self._cache:
+                return None
+            value, timestamp = self._cache[key]
+            if time.time() - timestamp > self._ttl_seconds:
+                del self._cache[key]
+                return None
+            # Move to end (most recently used)
+            self._cache.move_to_end(key)
+            return value
+
+    async def set(self, key: str, value: T):
+        """Set value in cache (async)."""
+        async with self._lock:
+            # Increment cleanup counter and maybe cleanup
+            self._cleanup_counter += 1
+            if self._cleanup_counter >= self._cleanup_interval:
+                self._cleanup_expired_sync()
+                self._cleanup_counter = 0
+
+            # Evict oldest if at capacity
+            while len(self._cache) >= self._max_size:
+                evicted_key, _ = self._cache.popitem(last=False)
+                logger.debug(f"BoundedCache: evicted {evicted_key} due to capacity")
+
+            self._cache[key] = (value, time.time())
+
+    async def delete(self, key: str) -> bool:
+        """Delete entry from cache."""
+        async with self._lock:
+            if key in self._cache:
+                del self._cache[key]
+                return True
+            return False
+
+    def get_sync(self, key: str) -> Optional[T]:
+        """Get value from cache (sync for backward compatibility)."""
+        if key not in self._cache:
+            return None
+        value, timestamp = self._cache[key]
+        if time.time() - timestamp > self._ttl_seconds:
+            # Note: no lock in sync version, best-effort
+            try:
+                del self._cache[key]
+            except KeyError:
+                pass
+            return None
+        # Move to end (most recently used)
+        try:
+            self._cache.move_to_end(key)
+        except KeyError:
+            pass
+        return value
+
+    def set_sync(self, key: str, value: T):
+        """Set value in cache (sync for backward compatibility)."""
+        # Evict oldest if at capacity
+        while len(self._cache) >= self._max_size:
+            try:
+                evicted_key, _ = self._cache.popitem(last=False)
+                logger.debug(f"BoundedCache: evicted {evicted_key} due to capacity")
+            except KeyError:
+                break
+
+        self._cache[key] = (value, time.time())
+
+    def _cleanup_expired_sync(self):
+        """Remove expired entries (internal, called with lock held)."""
+        now = time.time()
+        expired = [k for k, (_, ts) in self._cache.items()
+                   if now - ts > self._ttl_seconds]
+        for k in expired:
+            del self._cache[k]
+        if expired:
+            logger.debug(f"BoundedCache: cleaned up {len(expired)} expired entries")
+
+    async def cleanup_expired(self):
+        """Remove all expired entries (async)."""
+        async with self._lock:
+            self._cleanup_expired_sync()
+
+    def size(self) -> int:
+        """Get current cache size."""
+        return len(self._cache)
+
+    def clear(self):
+        """Clear all entries."""
+        self._cache.clear()
 
 
 class ExecutionState:
@@ -296,106 +421,105 @@ class ExecutionState:
 
 
 class PlaybookRepo:
-    """Repository for loading playbooks from catalog."""
-    
+    """Repository for loading playbooks from catalog with bounded cache."""
+
     def __init__(self):
-        self._cache: dict[str, Playbook] = {}
-    
+        # Bounded cache: max 500 playbooks, 30 min TTL
+        self._cache: BoundedCache[Playbook] = BoundedCache(
+            max_size=500,
+            ttl_seconds=1800
+        )
+
     async def load_playbook(self, path: str) -> Optional[Playbook]:
         """Load playbook from catalog by path."""
         # Check cache first
-        if path in self._cache:
-            return self._cache[path]
-        
+        cached = await self._cache.get(path)
+        if cached:
+            return cached
+
         async with get_pool_connection() as conn:
             async with conn.cursor() as cur:
                 await cur.execute("""
-                    SELECT content, layout 
-                    FROM noetl.catalog 
-                    WHERE path = %s 
-                    ORDER BY version DESC 
+                    SELECT content, layout
+                    FROM noetl.catalog
+                    WHERE path = %s
+                    ORDER BY version DESC
                     LIMIT 1
                 """, (path,))
                 row = await cur.fetchone()
-            
+
                 if not row:
                     logger.error(f"Playbook not found: {path}")
                     return None
-                
+
                 # Parse YAML content
                 import yaml
                 content_dict = yaml.safe_load(row["content"])
-                
+
                 # Validate it's v2
                 if content_dict.get("apiVersion") != "noetl.io/v2":
                     logger.error(f"Playbook {path} is not v2 format")
                     return None
-                
+
                 # Parse into Pydantic model
                 playbook = Playbook(**content_dict)
-                self._cache[path] = playbook
+                await self._cache.set(path, playbook)
                 return playbook
-    
+
     async def load_playbook_by_id(self, catalog_id: int) -> Optional[Playbook]:
         """Load playbook from catalog by ID."""
         # Check if we have it in cache
         cache_key = f"id:{catalog_id}"
-        if cache_key in self._cache:
-            return self._cache[cache_key]
-        
+        cached = await self._cache.get(cache_key)
+        if cached:
+            return cached
+
         async with get_pool_connection() as conn:
             async with conn.cursor() as cur:
                 await cur.execute("""
                     SELECT content, layout, path
-                    FROM noetl.catalog 
+                    FROM noetl.catalog
                     WHERE catalog_id = %s
                 """, (catalog_id,))
                 row = await cur.fetchone()
-            
+
                 if not row:
                     logger.error(f"Playbook not found: catalog_id={catalog_id}")
                     return None
-                
+
                 # Parse YAML content
                 import yaml
                 content_dict = yaml.safe_load(row["content"])
-                
+
                 # Validate it's v2
                 if content_dict.get("apiVersion") != "noetl.io/v2":
                     logger.error(f"Playbook catalog_id={catalog_id} is not v2 format")
                     return None
-                
+
                 # Parse into Pydantic model
                 playbook = Playbook(**content_dict)
-                self._cache[cache_key] = playbook
+                await self._cache.set(cache_key, playbook)
                 # Also cache by path for consistency
                 if row.get("path"):
-                    self._cache[row["path"]] = playbook
+                    await self._cache.set(row["path"], playbook)
                 return playbook
 
 
 class StateStore:
-    """Stores and retrieves execution state."""
-    
+    """Stores and retrieves execution state with bounded cache."""
+
     def __init__(self, playbook_repo: 'PlaybookRepo'):
-        self._memory_cache: dict[str, ExecutionState] = {}
+        # Bounded cache: max 1000 executions, 1 hour TTL
+        self._memory_cache: BoundedCache[ExecutionState] = BoundedCache(
+            max_size=1000,
+            ttl_seconds=3600
+        )
         self.playbook_repo = playbook_repo
-    
+
     async def save_state(self, state: ExecutionState):
         """Save execution state."""
-        self._memory_cache[state.execution_id] = state
-        
-        # Persist to workload table
-        state_data = {
-            "variables": state.variables,
-            "step_results": state.step_results,
-            "current_step": state.current_step,
-            "completed_steps": list(state.completed_steps),
-            "failed": state.failed,
-            "completed": state.completed,
-            "loop_state": state.loop_state,  # Include loop state for iteration result tracking
-        }
-        
+        await self._memory_cache.set(state.execution_id, state)
+
         # Pure event-driven: State is fully reconstructable from events
         # No need to persist to workload table - it's redundant with event log
         # Just keep in memory cache for performance
@@ -404,8 +528,9 @@ class StateStore:
     async def load_state(self, execution_id: str) -> Optional[ExecutionState]:
         """Load execution state from memory or reconstruct from events."""
         # Check memory first
-        if execution_id in self._memory_cache:
-            return self._memory_cache[execution_id]
+        cached = await self._memory_cache.get(execution_id)
+        if cached:
+            return cached
         
         # Reconstruct state from events in database using event sourcing
         async with get_pool_connection() as conn:
@@ -514,26 +639,111 @@ class StateStore:
                         logger.info(f"[STATE-LOAD] Updated loop_state for {step_name}: index={iteration_count}")
                 
                 # Cache and return
-                self._memory_cache[execution_id] = state
+                await self._memory_cache.set(execution_id, state)
                 return state
-    
+
     def get_state(self, execution_id: str) -> Optional[ExecutionState]:
         """Get state from memory cache (sync)."""
-        return self._memory_cache.get(execution_id)
+        return self._memory_cache.get_sync(execution_id)
+
+    async def evict_completed(self, execution_id: str):
+        """Remove completed execution from cache to free memory."""
+        deleted = await self._memory_cache.delete(execution_id)
+        if deleted:
+            logger.info(f"Evicted completed execution {execution_id} from cache")
+
+
+class TemplateCache:
+    """
+    LRU cache for compiled Jinja2 templates.
+
+    Caches compiled Template objects to avoid expensive from_string() calls.
+    Thread-safe for read operations (compiled templates are immutable).
+
+    Memory bounded: max_size limits total cached templates.
+    """
+
+    def __init__(self, max_size: int = 500):
+        self._cache: OrderedDict[str, Any] = OrderedDict()  # template_str -> compiled Template
+        self._max_size = max_size
+        self._hits = 0
+        self._misses = 0
+        self._evictions = 0
+
+    def get_or_compile(self, env: Environment, template_str: str) -> Any:
+        """Get compiled template from cache or compile and cache it."""
+        if template_str in self._cache:
+            # Cache hit - move to end (most recently used)
+            self._cache.move_to_end(template_str)
+            self._hits += 1
+            return self._cache[template_str]
+
+        # Cache miss - compile template
+        self._misses += 1
+        compiled = env.from_string(template_str)
+
+        # Add to cache with LRU eviction
+        if len(self._cache) >= self._max_size:
+            # Remove oldest entry
+            self._cache.popitem(last=False)
+            self._evictions += 1
+
+        self._cache[template_str] = compiled
+
+        # Log cache stats periodically (every 100 misses)
+        if self._misses % 100 == 0:
+            logger.debug(
+                f"[TEMPLATE-CACHE] Engine stats: size={len(self._cache)}/{self._max_size}, "
+                f"hits={self._hits}, misses={self._misses}, evictions={self._evictions}, "
+                f"hit_rate={self._hits / (self._hits + self._misses) * 100:.1f}%"
+            )
+
+        return compiled
+
+    def size(self) -> int:
+        """Return current cache size."""
+        return len(self._cache)
+
+    def stats(self) -> dict:
+        """Return cache statistics."""
+        total = self._hits + self._misses
+        return {
+            "size": len(self._cache),
+            "max_size": self._max_size,
+            "hits": self._hits,
+            "misses": self._misses,
+            "evictions": self._evictions,
+            "hit_rate": (self._hits / total * 100) if total > 0 else 0.0
+        }
+
+    def clear(self) -> None:
+        """Clear the cache and reset stats."""
+        self._cache.clear()
+        self._hits = 0
+        self._misses = 0
+        self._evictions = 0
 
 
 class ControlFlowEngine:
     """
     V2 Control Flow Engine.
-    
+
     Processes events and applies case/when/then rules to determine next actions.
     Pure event-driven architecture with no backward compatibility.
     """
-    
+
+    # Shared template cache across all ControlFlowEngine instances
+    # This allows template reuse across executions
+    _template_cache: TemplateCache = None
+
     def __init__(self, playbook_repo: PlaybookRepo, state_store: StateStore):
         self.playbook_repo = playbook_repo
         self.state_store = state_store
         self.jinja_env = Environment(undefined=StrictUndefined)
+
+        # Initialize shared template cache (singleton pattern)
+        if ControlFlowEngine._template_cache is None:
+            ControlFlowEngine._template_cache = TemplateCache(max_size=500)
     
     def _render_value_recursive(self, value: Any, context: dict[str, Any]) -> Any:
         """Recursively render templates in nested data structures."""
@@ -581,8 +791,8 @@ class ControlFlowEngine:
                     # Successfully navigated full path
                     return value
             
-            # Standard Jinja2 rendering
-            template = self.jinja_env.from_string(template_str)
+            # Standard Jinja2 rendering - use cached template
+            template = self._template_cache.get_or_compile(self.jinja_env, template_str)
             result = template.render(**context)
             
             # Try to parse as boolean for conditions

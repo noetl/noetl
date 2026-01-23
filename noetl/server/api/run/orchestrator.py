@@ -25,6 +25,8 @@ from jinja2 import Environment, TemplateSyntaxError, UndefinedError
 from psycopg.rows import dict_row
 from psycopg.types.json import Json
 
+from collections import OrderedDict
+
 from noetl.core.db.pool import get_pool_connection, get_snowflake_id
 from noetl.core.logger import setup_logger
 from noetl.server.api.broker.service import EventService
@@ -33,6 +35,65 @@ from noetl.server.api.run.publisher import QueuePublisher
 from noetl.server.api.run.queries import OrchestratorQueries
 
 logger = setup_logger(__name__, include_location=True)
+
+
+# Module-level template cache and Jinja2 environment for performance
+# Avoids creating new Environment and compiling templates on each call
+class _OrchestratorTemplateCache:
+    """LRU cache for compiled Jinja2 templates in orchestrator. Memory bounded."""
+
+    def __init__(self, max_size: int = 500):
+        self._cache: OrderedDict[str, Any] = OrderedDict()
+        self._max_size = max_size
+        self._env = Environment()  # Reusable environment
+        self._hits = 0
+        self._misses = 0
+        self._evictions = 0
+
+    def get_or_compile(self, template_str: str) -> Any:
+        """Get compiled template from cache or compile and cache it."""
+        if template_str in self._cache:
+            self._cache.move_to_end(template_str)
+            self._hits += 1
+            return self._cache[template_str]
+
+        self._misses += 1
+        compiled = self._env.from_string(template_str)
+
+        if len(self._cache) >= self._max_size:
+            self._cache.popitem(last=False)
+            self._evictions += 1
+
+        self._cache[template_str] = compiled
+
+        # Log stats periodically
+        if self._misses % 100 == 0:
+            logger.debug(
+                f"[TEMPLATE-CACHE] Orchestrator stats: size={len(self._cache)}/{self._max_size}, "
+                f"hits={self._hits}, misses={self._misses}, hit_rate={self._hits / (self._hits + self._misses) * 100:.1f}%"
+            )
+
+        return compiled
+
+    @property
+    def env(self) -> Environment:
+        """Get the shared Jinja2 environment."""
+        return self._env
+
+    def stats(self) -> dict:
+        """Return cache statistics."""
+        total = self._hits + self._misses
+        return {
+            "size": len(self._cache),
+            "max_size": self._max_size,
+            "hits": self._hits,
+            "misses": self._misses,
+            "evictions": self._evictions,
+            "hit_rate": (self._hits / total * 100) if total > 0 else 0.0
+        }
+
+
+_template_cache = _OrchestratorTemplateCache(max_size=500)
 
 
 def _render_with_params(params: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
@@ -71,13 +132,13 @@ def _evaluate_jinja_condition(condition: str, context: Dict[str, Any]) -> bool:
         True if condition evaluates to truthy value
     """
     try:
-        env = Environment()
         # Wrap condition in {{ }} if not already wrapped
         expr = condition.strip()
         if not (expr.startswith("{{") and expr.endswith("}}")):
             expr = f"{{{{ {expr} }}}}"
 
-        template = env.from_string(expr)
+        # Use cached template for performance
+        template = _template_cache.get_or_compile(expr)
         result = template.render(**context)
 
         # Convert string result to boolean
@@ -661,15 +722,19 @@ async def evaluate_execution(
             await _handle_action_failure(exec_id, trigger_event_id)
             return
 
+        # Use batch query to get all execution state in one database round-trip
+        # This avoids N+1 query patterns and improves performance
+        batch_state = await OrchestratorQueries.get_execution_state_batch(exec_id)
+
         # Check for failure states
-        if await _has_failed(exec_id):
+        if batch_state.get("has_failed", False):
             logger.info(
                 f"ORCHESTRATOR: Execution {exec_id} has failed, stopping orchestration"
             )
             return
 
-        # Reconstruct execution state from events
-        state = await _get_execution_state(exec_id)
+        # Get execution state from batch result
+        state = batch_state.get("execution_state", "initial")
         logger.info(f">>> EVALUATE_EXECUTION STATE: {state} for exec_id={exec_id}")
 
         if state == "initial":
@@ -1137,7 +1202,7 @@ async def _emit_immediate_failure(
 
 async def _get_execution_state(execution_id: int) -> str:
     """
-    Reconstruct execution state from event log.
+    Reconstruct execution state from event log using optimized batch query.
 
     State reconstruction logic:
     1. Check for execution_complete/execution_end events -> 'completed'
@@ -1151,39 +1216,9 @@ async def _get_execution_state(execution_id: int) -> str:
     Returns:
         State: 'initial', 'in_progress', or 'completed'
     """
-    async with get_pool_connection() as conn:
-        async with conn.cursor(row_factory=dict_row) as cur:
-            # Check for completion
-            await cur.execute(
-                """
-                SELECT 1 FROM noetl.event
-                WHERE execution_id = %(execution_id)s
-                  AND event_type IN ('playbook_completed', 'execution_complete', 'execution_end')
-                LIMIT 1
-                """,
-                {"execution_id": execution_id},
-            )
-            if await cur.fetchone():
-                return "completed"
-
-            # Check for any completed actions
-            await cur.execute(
-                """
-                SELECT 1 FROM noetl.event
-                WHERE execution_id = %(execution_id)s
-                  AND event_type IN ('action_completed', 'step_end')
-                LIMIT 1
-                """,
-                {"execution_id": execution_id},
-            )
-            if await cur.fetchone():
-                return "in_progress"
-
-            # Check for active queue items using query executor
-            if await OrchestratorQueries.has_pending_queue_jobs(execution_id):
-                return "in_progress"
-
-            return "initial"
+    # Use batch query for efficiency - fetches all needed data in one query
+    batch_state = await OrchestratorQueries.get_execution_state_batch(execution_id)
+    return batch_state.get("execution_state", "initial")
 
 
 async def _dispatch_first_step(execution_id: str) -> None:
@@ -1243,21 +1278,18 @@ async def _process_step_vars(
     try:
         # Render vars templates using Jinja2
         from noetl.core.dsl.render import render_template
-        from jinja2 import BaseLoader, Environment
-        
         # eval_ctx contains:
         # - 'result': current step's result (normalized, 'data' field extracted if present)
         # - step names: previous steps' results
         # Templates can use: {{ result.field }} for current step or {{ other_step.field }} for previous steps
-        
-        env = Environment(loader=BaseLoader())
+
         rendered_vars = {}
-        
+
         for var_name, var_template in vars_block.items():
             try:
-                # Render the template
+                # Render the template using cached compiled template
                 if isinstance(var_template, str):
-                    template = env.from_string(var_template)
+                    template = _template_cache.get_or_compile(var_template)
                     rendered_value = template.render(eval_ctx)
                     # Try to parse as JSON if it looks like JSON
                     if rendered_value.strip().startswith(("{", "[")):
@@ -2597,14 +2629,13 @@ async def _process_retry_eligible_event(
             'attempt': attempt_number
         }
         
-        # Evaluate condition
+        # Evaluate condition using cached template
         try:
-            env = Environment(loader=BaseLoader())
             template_str = while_condition.strip()
             if not (template_str.startswith("{{") and template_str.endswith("}}")):
                 template_str = f"{{{{ {template_str} }}}}"
-            
-            template = env.from_string(template_str)
+
+            template = _template_cache.get_or_compile(template_str)
             result = template.render(**eval_context)
             should_continue = str(result).strip().lower() in ('true', '1', 'yes')
             

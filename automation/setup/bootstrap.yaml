@@ -10,6 +10,8 @@ executor:
 workload:
   registry: "local"
   image_name: "noetl"
+  build_rust_cli: false
+  deploy_gateway: true
 workflow:
   - step: start
     desc: Begin bootstrap process
@@ -133,7 +135,22 @@ workflow:
             echo "INFO No existing cluster found, will create new one"
           fi
     next:
-      - step: build_rust_cli
+      - step: maybe_build_rust_cli
+
+  - step: maybe_build_rust_cli
+    desc: Build Rust CLI only when requested
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "Build Rust CLI flag: {{ workload.build_rust_cli }}"
+    case:
+      - when: "{{ workload.build_rust_cli }} == true"
+        then:
+          - step: build_rust_cli
+      - when: "true"
+        then:
+          - step: build_docker_images
   
   - step: build_rust_cli
     desc: Build Rust CLI binary
@@ -284,7 +301,22 @@ workflow:
       args:
         action: full
     next:
-      - step: deploy_gateway
+      - step: maybe_deploy_gateway
+
+  - step: maybe_deploy_gateway
+    desc: Deploy Gateway only when requested
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "Deploy Gateway flag: {{ workload.deploy_gateway }}"
+    case:
+      - when: "{{ workload.deploy_gateway }} == true"
+        then:
+          - step: deploy_gateway
+      - when: "true"
+        then:
+          - step: deploy_noetl
   
   - step: deploy_gateway
     desc: Deploy NoETL Gateway API
@@ -292,7 +324,7 @@ workflow:
       kind: playbook
       path: ../infrastructure/gateway.yaml
       args:
-        action: deploy-all
+        action: deploy
     next:
       - step: deploy_noetl
   

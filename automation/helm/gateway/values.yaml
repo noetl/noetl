@@ -1,0 +1,36 @@
+namespace: gateway
+
+image:
+  repository: ""
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8090
+  nodePort: null
+
+ingress:
+  enabled: false
+  className: gce
+  annotations: {}
+  host: gateway.mestumre.dev
+  tls:
+    enabled: true
+    secretName: ""
+  managedCertificate:
+    enabled: true
+    name: gateway-managed-cert
+
+env:
+  routerPort: "8090"
+  noetlBaseUrl: "http://noetl.noetl.svc.cluster.local:8082"
+  rustLog: "info,gateway=debug"
+
+resources:
+  requests:
+    memory: "128Mi"
+    cpu: "100m"
+  limits:
+    memory: "512Mi"
+    cpu: "500m"

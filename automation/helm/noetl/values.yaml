@@ -1,0 +1,154 @@
+namespace: noetl
+
+image:
+  repository: ""
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+server:
+  resources:
+    limits:
+      cpu: "2"
+      memory: "2Gi"
+    requests:
+      cpu: "100m"
+      memory: "256Mi"
+
+worker:
+  replicas: 3
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
+
+# Rust-based worker pool (noetl-tools)
+workerPool:
+  enabled: false
+  poolName: worker-rust-pool
+  replicas: 2
+  image:
+    repository: ""
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+    limits:
+      cpu: "1"
+      memory: "1Gi"
+
+service:
+  type: ClusterIP
+  port: 8082
+
+externalService:
+  enabled: false
+  type: ClusterIP
+  port: 8082
+  nodePort: null
+
+ingress:
+  enabled: false
+  className: gce
+  annotations: {}
+  host: api.mestumre.dev
+  tls:
+    enabled: true
+    secretName: ""
+  managedCertificate:
+    enabled: true
+    name: noetl-managed-cert
+
+persistence:
+  data:
+    enabled: true
+    name: noetl-data-shared
+    accessMode: ReadWriteMany
+    size: 10Gi
+    storageClassName: standard-rwx
+  logs:
+    enabled: true
+    name: noetl-logs
+    accessMode: ReadWriteOnce
+    size: 5Gi
+    storageClassName: standard
+
+config:
+  server:
+    TZ: "UTC"
+    LOG_LEVEL: "INFO"
+    PYTHONPATH: "/opt/noetl"
+    NOETL_RUN_MODE: "server"
+    NOETL_DATA_DIR: "/opt/noetl/data"
+    NOETL_DEBUG: "true"
+    NOETL_HTTP_MOCK_LOCAL: "false"
+    PAGINATION_API_URL: "http://paginated-api.test-server.svc.cluster.local:5555"
+    NOETL_SERVER_URL: "http://noetl.noetl.svc.cluster.local:8082"
+    NOETL_DISABLE_METRICS: "true"
+    NOETL_VICTORIALOGS_URL: "http://vmlogs-single-server.vmlogs.svc.cluster.local:9428"
+    NOETL_LOG_FORMAT: ""
+    NATS_URL: "nats://noetl:noetl@nats.nats.svc.cluster.local:4222"
+    NATS_USER: "noetl"
+    NATS_PASSWORD: "noetl"
+    NATS_STREAM: "NOETL_COMMANDS"
+    NATS_CONSUMER: "noetl_worker_pool"
+    NATS_SUBJECT: "noetl.commands"
+    NOETL_KEYCHAIN_REFRESH_THRESHOLD: "900"
+    NOETL_ENABLE_UI: "true"
+    NOETL_HOST: "0.0.0.0"
+    NOETL_PORT: "8082"
+    NOETL_SERVER_NAME: "server-k8s"
+    NOETL_SERVER: "uvicorn"
+    NOETL_SERVER_WORKERS: "1"
+    NOETL_SERVER_RELOAD: "false"
+    NOETL_AUTO_RECREATE_RUNTIME: "true"
+    NOETL_HEARTBEAT_RETRY_AFTER: "3"
+    NOETL_RUNTIME_SWEEP_INTERVAL: "15"
+    NOETL_RUNTIME_OFFLINE_SECONDS: "60"
+    NOETL_SERVER_METRICS_INTERVAL: "60"
+    POSTGRES_HOST: "postgres.postgres.svc.cluster.local"
+    POSTGRES_PORT: "5432"
+    NOETL_POSTGRES_DB: "noetl"
+    NOETL_USER: "noetl"
+    NOETL_SCHEMA: "noetl"
+    NOETL_DB_STARTUP_TIMEOUT: "180"
+    NOETL_DB_RETRY_INTERVAL: "5"
+  worker:
+    TZ: "UTC"
+    LOG_LEVEL: "DEBUG"
+    PYTHONPATH: "/opt/noetl"
+    NOETL_RUN_MODE: "worker"
+    NOETL_DATA_DIR: "/opt/noetl/data"
+    NOETL_DEBUG: "true"
+    NOETL_HTTP_MOCK_LOCAL: "false"
+    PAGINATION_API_URL: "http://paginated-api.test-server.svc.cluster.local:5555"
+    NOETL_SERVER_URL: "http://noetl.noetl.svc.cluster.local:8082"
+    NOETL_DISABLE_METRICS: "true"
+    NOETL_VICTORIALOGS_URL: "http://vmlogs-single-server.vmlogs.svc.cluster.local:9428"
+    NOETL_LOG_FORMAT: ""
+    POLARS_SKIP_CPU_CHECK: "1"
+    NATS_URL: "nats://noetl:noetl@nats.nats.svc.cluster.local:4222"
+    NATS_USER: "noetl"
+    NATS_PASSWORD: "noetl"
+    NATS_STREAM: "NOETL_COMMANDS"
+    NATS_CONSUMER: "noetl_worker_pool"
+    NATS_SUBJECT: "noetl.commands"
+    NOETL_KEYCHAIN_REFRESH_THRESHOLD: "900"
+    NOETL_SKIP_LIB_VALIDATION: "true"
+  workerPool:
+    RUST_LOG: "info,worker_pool=debug,noetl_tools=debug"
+    WORKER_POOL_NAME: "worker-rust-pool"
+    NOETL_SERVER_URL: "http://noetl.noetl.svc.cluster.local:8082"
+    NATS_URL: "nats://noetl:noetl@nats.nats.svc.cluster.local:4222"
+    NATS_STREAM: "NOETL_COMMANDS"
+    NATS_CONSUMER: "noetl_worker_pool"
+    WORKER_HEARTBEAT_INTERVAL: "15"
+    WORKER_MAX_CONCURRENT: "4"
+
+secrets:
+  postgresPassword: "demo"
+  noetlPassword: "noetl"

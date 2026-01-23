@@ -337,10 +337,10 @@ workflow:
           echo ""
           echo "Next Steps:"
           echo "  1. Provision resources:"
-          echo "     noetl run gke_autopilot.yaml --set project_id={{ workload.project_id }}"
+          echo "     noetl iap apply automation/iap/gcp/gke_autopilot.yaml --var project_id={{ workload.project_id }}"
           echo ""
           echo "  2. Sync state to GCS:"
-          echo "     noetl run state_sync.yaml --set action=push"
+          echo "     noetl iap apply automation/iap/gcp/state_sync.yaml --var action=push"
           echo ""
     next:
       - step: end

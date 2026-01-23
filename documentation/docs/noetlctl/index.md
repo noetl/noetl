@@ -180,7 +180,7 @@ Manage cloud infrastructure using playbooks (Terraform alternative):
 noetl iap init --project my-gcp-project --bucket my-state-bucket
 
 # Execute infrastructure playbooks
-noetl run automation/iap/gcp/gke_autopilot.yaml --set action=create
+noetl iap apply automation/iap/gcp/gke_autopilot.yaml --auto-approve --var action=create
 
 # Manage state
 noetl iap state list
@@ -425,6 +425,8 @@ noetl run automation/boot.yaml
 # or simply:
 noetl run boot
 ```
+
+Bootstrap builds only the Python server/worker image. Build Rust binaries separately and set `--set build_rust_cli=true` only when needed.
 
 ### API Testing
 

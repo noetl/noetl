@@ -1,0 +1,68 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: noetl-server
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: noetl-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: noetl-server
+  template:
+    metadata:
+      labels:
+        app: noetl-server
+    spec:
+      containers:
+        - name: noetl-server
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.service.port }}
+          envFrom:
+            - configMapRef:
+                name: noetl-server-config
+            - secretRef:
+                name: noetl-secret
+          volumeMounts:
+{{- if .Values.persistence.data.enabled }}
+            - name: noetl-data
+              mountPath: /opt/noetl/data
+{{- end }}
+{{- if .Values.persistence.logs.enabled }}
+            - name: noetl-logs
+              mountPath: /opt/noetl/logs
+{{- end }}
+          command: ["python"]
+          args: ["-m", "noetl.server", "--host", "0.0.0.0", "--port", "{{ .Values.service.port }}"]
+          resources:
+{{- toYaml .Values.server.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: {{ .Values.service.port }}
+            initialDelaySeconds: 120
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: {{ .Values.service.port }}
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 12
+      volumes:
+{{- if .Values.persistence.data.enabled }}
+        - name: noetl-data
+          persistentVolumeClaim:
+            claimName: {{ .Values.persistence.data.name }}
+{{- end }}
+{{- if .Values.persistence.logs.enabled }}
+        - name: noetl-logs
+          persistentVolumeClaim:
+            claimName: {{ .Values.persistence.logs.name }}
+{{- end }}

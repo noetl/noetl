@@ -13,7 +13,7 @@ executor:
   profile: local
   version: noetl-runtime/1
 workload:
-  # Action: create, update, destroy, plan
+  # Action: create, deploy, update, destroy, plan
   action: create
   
   # Required parameters
@@ -34,9 +34,69 @@ workload:
   enable_private_endpoint: false
   
   # State management
-  state_database: /tmp/noetl-iap-state.duckdb
+  state_database: .noetl/state.duckdb
   state_bucket: ""  # Defaults to {project_id}-noetl-state
   workspace: default
+
+  # Optional: deploy NoETL stack after cluster is ready
+  deploy_stack: false
+
+  # Helm deployment configuration (required when deploy_stack=true or action=deploy)
+  postgres_namespace: postgres
+  postgres_release_name: postgres
+  postgres_storage_class: standard
+  postgres_size: 20Gi
+  postgres_database: noetl
+  postgres_user: noetl
+  postgres_password: demo
+  postgres_image_registry: us-central1-docker.pkg.dev
+  postgres_image_repository: mestumre-dev/noetl/bitnami-postgresql
+  postgres_image_tag: multiarch
+  postgres_allow_insecure_images: true
+  init_noetl_schema: true
+  noetl_schema_path: noetl/database/ddl/postgres/schema_ddl.sql
+
+  nats_namespace: nats
+  nats_user: noetl
+  nats_password: noetl
+  nats_jetstream_file_size: 5Gi
+  nats_jetstream_mem_size: 1Gi
+
+  noetl_namespace: noetl
+  noetl_image_repository: ""
+  noetl_image_tag: latest
+  noetl_image_pull_policy: IfNotPresent
+  noetl_external_service_enabled: false
+  noetl_external_service_type: ClusterIP
+  noetl_service_port: 8082
+  noetl_data_storage_class: standard-rwx
+  noetl_data_size: 10Gi
+  noetl_logs_storage_class: standard
+  noetl_logs_size: 5Gi
+  noetl_password: noetl
+  noetl_persistence_data_enabled: false
+  noetl_persistence_logs_enabled: false
+  noetl_worker_pool_enabled: false
+  noetl_ingress_enabled: true
+  noetl_ingress_class: gce
+  noetl_ingress_host: api.mestumre.dev
+  noetl_ingress_managed_cert_enabled: true
+  noetl_ingress_managed_cert_name: noetl-managed-cert
+  noetl_ingress_allow_http: false
+
+  gateway_namespace: gateway
+  gateway_image_repository: ""
+  gateway_image_tag: latest
+  gateway_image_pull_policy: IfNotPresent
+  gateway_service_type: ClusterIP
+  gateway_service_port: 8090
+  gateway_noetl_base_url: http://noetl.noetl.svc.cluster.local:8082
+  gateway_ingress_enabled: true
+  gateway_ingress_class: gce
+  gateway_ingress_host: gateway.mestumre.dev
+  gateway_ingress_managed_cert_enabled: true
+  gateway_ingress_managed_cert_name: gateway-managed-cert
+  gateway_ingress_allow_http: false
 
 workflow:
   - step: start
@@ -52,10 +112,15 @@ workflow:
           echo "Cluster:  {{ workload.cluster_name }}"
           echo "Region:   {{ workload.region }}"
     vars:
+      action: "{{ workload.action }}"
+      deploy_stack: "{{ workload.deploy_stack | default(false) }}"
       resource_id: "{{ workload.project_id }}/{{ workload.region }}/{{ workload.cluster_name }}"
       state_bucket: "{{ workload.state_bucket if workload.state_bucket else workload.project_id + '-noetl-state' }}"
     case:
       - when: "{{ workload.action }} == create"
+        then:
+          - step: enable_apis
+      - when: "{{ workload.action }} == deploy"
         then:
           - step: check_existing
       - when: "{{ workload.action }} == destroy"
@@ -75,18 +140,32 @@ workflow:
       cmds:
         - |
           echo ""
-          echo "Usage: noetl run gke_autopilot.yaml --set action=<action>"
+          echo "Usage: noetl iap apply automation/iap/gcp/gke_autopilot.yaml --var action=<action>"
           echo ""
           echo "Available actions:"
           echo "  create  - Create a new GKE Autopilot cluster"
+          echo "  deploy  - Deploy NoETL stack to an existing cluster"
           echo "  destroy - Delete an existing cluster"
           echo "  plan    - Show planned changes without applying"
           echo ""
           echo "Example:"
-          echo "  noetl run gke_autopilot.yaml \\"
-          echo "    --set action=create \\"
-          echo "    --set project_id=mestumre-dev \\"
-          echo "    --set cluster_name=my-cluster"
+          echo "  noetl iap apply automation/iap/gcp/gke_autopilot.yaml \\"
+          echo "    --auto-approve \\"
+          echo "    --var action=create \\"
+          echo "    --var project_id=mestumre-dev \\"
+          echo "    --var cluster_name=my-cluster"
+          echo ""
+          echo "Deploy example:"
+          echo "  noetl iap apply automation/iap/gcp/gke_autopilot.yaml \\"
+          echo "    --auto-approve \\"
+          echo "    --var action=deploy \\"
+          echo "    --var deploy_stack=true \\"
+          echo "    --var project_id=mestumre-dev \\"
+          echo "    --var cluster_name=noetl-test-cluster \\"
+          echo "    --var noetl_image_repository=us-central1-docker.pkg.dev/PROJECT/noetl/noetl \\"
+          echo "    --var noetl_image_tag=latest \\"
+          echo "    --var gateway_image_repository=us-central1-docker.pkg.dev/PROJECT/noetl/noetl-gateway \\"
+          echo "    --var gateway_image_tag=latest"
     next:
       - step: end
 
@@ -103,7 +182,10 @@ workflow:
     case:
       - when: "{{ vars.cluster_status }} == 200"
         then:
-          - step: cluster_exists_info
+          - step: get_cluster_details
+      - when: "true"
+        then:
+          - step: deploy_cluster_not_found
       - when: "true"
         then:
           - step: enable_apis
@@ -202,6 +284,19 @@ workflow:
     next:
       - step: end
 
+  - step: deploy_cluster_not_found
+    desc: Cluster not found for deploy action
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "ERROR: Cluster '{{ workload.cluster_name }}' not found in project '{{ workload.project_id }}'"
+          echo "Action 'deploy' requires an existing cluster. Use action=create first."
+          exit 1
+    next:
+      - step: end
+
   - step: wait_for_operation
     desc: Wait for cluster creation to complete
     tool:
@@ -277,6 +372,216 @@ workflow:
       cluster_endpoint: "{{ result.body.endpoint | default('') }}"
       cluster_status: "{{ result.body.status | default('UNKNOWN') }}"
     next:
+      - step: maybe_deploy_stack
+
+  - step: maybe_deploy_stack
+    desc: Deploy NoETL stack if requested
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "Deploy stack flag: {{ workload.deploy_stack }}"
+    case:
+      - when: "{{ workload.deploy_stack }} == true or {{ workload.action }} == deploy"
+        then:
+          - step: configure_kubecontext
+      - when: "true"
+        then:
+          - step: save_state
+
+  - step: configure_kubecontext
+    desc: Configure kubectl context for the GKE cluster
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "Configuring kubectl context..."
+          gcloud container clusters get-credentials {{ workload.cluster_name }} \
+            --region {{ workload.region }} \
+            --project {{ workload.project_id }}
+          kubectl config current-context
+    next:
+      - step: validate_deploy_inputs
+
+  - step: validate_deploy_inputs
+    desc: Validate Helm deployment inputs
+    tool:
+      kind: shell
+      cmds:
+        - |
+          if [ -z "{{ workload.noetl_image_repository }}" ]; then
+            echo "ERROR: noetl_image_repository is required for deployment"
+            exit 1
+          fi
+          if [ -z "{{ workload.gateway_image_repository }}" ]; then
+            echo "ERROR: gateway_image_repository is required for deployment"
+            exit 1
+          fi
+    next:
+      - step: add_helm_repos
+
+  - step: add_helm_repos
+    desc: Add Helm repositories
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "Adding Helm repositories..."
+          helm repo add nats https://nats-io.github.io/k8s/helm/charts/
+          helm repo add bitnami https://charts.bitnami.com/bitnami
+          helm repo update
+    next:
+      - step: deploy_postgres_helm
+
+  - step: deploy_postgres_helm
+    desc: Deploy PostgreSQL via Helm
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "Deploying PostgreSQL..."
+          helm upgrade --install {{ workload.postgres_release_name }} bitnami/postgresql \
+            --namespace {{ workload.postgres_namespace }} \
+            --create-namespace \
+            --set fullnameOverride=postgres \
+            --set auth.postgresPassword={{ workload.postgres_password }} \
+            --set auth.username={{ workload.postgres_user }} \
+            --set auth.password={{ workload.noetl_password }} \
+            --set auth.database={{ workload.postgres_database }} \
+            --set primary.persistence.size={{ workload.postgres_size }} \
+            --set primary.persistence.storageClass={{ workload.postgres_storage_class }} \
+            --set architecture=standalone \
+            --set image.registry={{ workload.postgres_image_registry }} \
+            --set image.repository={{ workload.postgres_image_repository }} \
+            --set image.tag={{ workload.postgres_image_tag }} \
+            --set global.security.allowInsecureImages={{ workload.postgres_allow_insecure_images | lower }}
+          kubectl wait --for=condition=ready pod -l app.kubernetes.io/instance={{ workload.postgres_release_name }} -n {{ workload.postgres_namespace }} --timeout=180s
+    next:
+      - step: maybe_init_noetl_schema
+
+  - step: maybe_init_noetl_schema
+    desc: Initialize NoETL schema if enabled
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "Init NoETL schema flag: {{ workload.init_noetl_schema }}"
+    case:
+      - when: "{{ workload.init_noetl_schema }} == true"
+        then:
+          - step: init_noetl_schema
+      - when: "true"
+        then:
+          - step: deploy_nats_helm
+
+  - step: init_noetl_schema
+    desc: Initialize NoETL schema in PostgreSQL
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "Initializing NoETL schema..."
+          POSTGRES_POD=$(kubectl get pods -n {{ workload.postgres_namespace }} -l app.kubernetes.io/instance={{ workload.postgres_release_name }} -o jsonpath='{.items[0].metadata.name}')
+          if [ -z "$POSTGRES_POD" ]; then
+            echo "ERROR: PostgreSQL pod not found"
+            exit 1
+          fi
+          if [ ! -f "{{ workload.noetl_schema_path }}" ]; then
+            echo "ERROR: NoETL schema file not found: {{ workload.noetl_schema_path }}"
+            echo "Set --var noetl_schema_path=/absolute/path/to/schema_ddl.sql"
+            exit 1
+          fi
+          TABLE_EXISTS=$(kubectl exec -n {{ workload.postgres_namespace }} "$POSTGRES_POD" -- /bin/sh -c "PGPASSWORD={{ workload.postgres_password }} psql -U postgres -d {{ workload.postgres_database }} -tAc \"SELECT 1 FROM information_schema.tables WHERE table_schema='noetl' AND table_name='event'\"")
+          if [ "$TABLE_EXISTS" = "1" ]; then
+            echo "NoETL schema already present. Skipping DDL."
+            exit 0
+          fi
+          kubectl exec -n {{ workload.postgres_namespace }} "$POSTGRES_POD" -- /bin/sh -c "PGPASSWORD={{ workload.postgres_password }} psql -U postgres -d {{ workload.postgres_database }} -c \"CREATE SCHEMA IF NOT EXISTS noetl\""
+          kubectl exec -i -n {{ workload.postgres_namespace }} "$POSTGRES_POD" -- /bin/sh -c "PGPASSWORD={{ workload.postgres_password }} psql -U postgres -d {{ workload.postgres_database }}" < {{ workload.noetl_schema_path }}
+    next:
+      - step: deploy_nats_helm
+
+  - step: deploy_nats_helm
+    desc: Deploy NATS JetStream via Helm
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "Deploying NATS JetStream..."
+          helm upgrade --install nats nats/nats \
+            --namespace {{ workload.nats_namespace }} \
+            --create-namespace \
+            --set config.jetstream.enabled=true \
+            --set config.jetstream.fileStore.enabled=true \
+            --set config.jetstream.fileStore.pvc.size={{ workload.nats_jetstream_file_size }} \
+            --set config.jetstream.memoryStore.enabled=true \
+            --set config.jetstream.memoryStore.maxSize={{ workload.nats_jetstream_mem_size }} \
+            --set 'config.merge.authorization.users[0].user={{ workload.nats_user }}' \
+            --set 'config.merge.authorization.users[0].password={{ workload.nats_password }}'
+          kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=nats -n {{ workload.nats_namespace }} --timeout=180s
+    next:
+      - step: deploy_noetl_helm
+
+  - step: deploy_noetl_helm
+    desc: Deploy NoETL server and workers via Helm
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "Deploying NoETL..."
+          helm upgrade --install noetl ./automation/helm/noetl \
+            --namespace {{ workload.noetl_namespace }} \
+            --create-namespace \
+            --set image.repository={{ workload.noetl_image_repository }} \
+            --set image.tag={{ workload.noetl_image_tag }} \
+            --set image.pullPolicy={{ workload.noetl_image_pull_policy }} \
+            --set externalService.enabled={{ workload.noetl_external_service_enabled | lower }} \
+            --set externalService.type={{ workload.noetl_external_service_type }} \
+            --set externalService.port={{ workload.noetl_service_port }} \
+            --set persistence.data.enabled={{ workload.noetl_persistence_data_enabled | lower }} \
+            --set persistence.logs.enabled={{ workload.noetl_persistence_logs_enabled | lower }} \
+            --set persistence.data.storageClassName={{ workload.noetl_data_storage_class }} \
+            --set persistence.data.size={{ workload.noetl_data_size }} \
+            --set persistence.logs.storageClassName={{ workload.noetl_logs_storage_class }} \
+            --set persistence.logs.size={{ workload.noetl_logs_size }} \
+            --set workerPool.enabled={{ workload.noetl_worker_pool_enabled | lower }} \
+            --set ingress.enabled={{ workload.noetl_ingress_enabled | lower }} \
+            --set ingress.className={{ workload.noetl_ingress_class }} \
+            --set ingress.host={{ workload.noetl_ingress_host }} \
+            --set ingress.managedCertificate.enabled={{ workload.noetl_ingress_managed_cert_enabled | lower }} \
+            --set ingress.managedCertificate.name={{ workload.noetl_ingress_managed_cert_name }} \
+            --set-string ingress.annotations.kubernetes\.io/ingress\.allow-http={{ workload.noetl_ingress_allow_http | lower }} \
+            --set-string secrets.postgresPassword={{ workload.postgres_password }} \
+            --set-string secrets.noetlPassword={{ workload.noetl_password }}
+          kubectl wait --for=condition=ready pod -l app=noetl-server -n {{ workload.noetl_namespace }} --timeout=180s || true
+          kubectl wait --for=condition=ready pod -l app=noetl-worker -n {{ workload.noetl_namespace }} --timeout=180s || true
+    next:
+      - step: deploy_gateway_helm
+
+  - step: deploy_gateway_helm
+    desc: Deploy NoETL Gateway via Helm
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "Deploying NoETL Gateway..."
+          helm upgrade --install noetl-gateway ./automation/helm/gateway \
+            --namespace {{ workload.gateway_namespace }} \
+            --create-namespace \
+            --set image.repository={{ workload.gateway_image_repository }} \
+            --set image.tag={{ workload.gateway_image_tag }} \
+            --set image.pullPolicy={{ workload.gateway_image_pull_policy }} \
+            --set service.type={{ workload.gateway_service_type }} \
+            --set service.port={{ workload.gateway_service_port }} \
+            --set-string env.noetlBaseUrl={{ workload.gateway_noetl_base_url }} \
+            --set ingress.enabled={{ workload.gateway_ingress_enabled | lower }} \
+            --set ingress.className={{ workload.gateway_ingress_class }} \
+            --set ingress.host={{ workload.gateway_ingress_host }} \
+            --set ingress.managedCertificate.enabled={{ workload.gateway_ingress_managed_cert_enabled | lower }} \
+            --set ingress.managedCertificate.name={{ workload.gateway_ingress_managed_cert_name }} \
+            --set-string ingress.annotations.kubernetes\.io/ingress\.allow-http={{ workload.gateway_ingress_allow_http | lower }}
+          kubectl wait --for=condition=ready pod -l app=gateway -n {{ workload.gateway_namespace }} --timeout=180s || true
+    next:
       - step: save_state
 
   - step: save_state
@@ -286,47 +591,39 @@ workflow:
       database: "{{ workload.state_database }}"
       commands: |
         INSERT INTO resources (
-          resource_id, type_id, name, project, region, 
-          desired_state, current_state, status, labels
+          resource_id, resource_type, resource_name, provider, project, region,
+          zone, status, config, state
         )
         VALUES (
           '{{ vars.resource_id }}',
           'container.googleapis.com/Cluster',
           '{{ workload.cluster_name }}',
+          'gcp',
           '{{ workload.project_id }}',
           '{{ workload.region }}',
-          '{
+          NULL,
+          '{{ vars.cluster_status | default("pending") }}',
+          json('{
             "cluster_name": "{{ workload.cluster_name }}",
             "region": "{{ workload.region }}",
             "network": "{{ workload.network }}",
             "release_channel": "{{ workload.release_channel }}",
             "enable_private_nodes": {{ workload.enable_private_nodes | lower }}
-          }',
-          '{{ vars.current_state | tojson | default("{}") }}',
-          '{{ vars.cluster_status | default("pending") }}',
-          '{"managed-by": "noetl-iap", "workspace": "{{ workload.workspace }}"}'
+          }'),
+          json('{{ vars.current_state | tojson | default("{}") }}')
         )
         ON CONFLICT (resource_id) DO UPDATE SET
-          current_state = EXCLUDED.current_state,
+          resource_type = EXCLUDED.resource_type,
+          resource_name = EXCLUDED.resource_name,
+          provider = EXCLUDED.provider,
+          project = EXCLUDED.project,
+          region = EXCLUDED.region,
+          zone = EXCLUDED.zone,
           status = EXCLUDED.status,
+          config = EXCLUDED.config,
+          state = EXCLUDED.state,
           updated_at = CURRENT_TIMESTAMP,
-          last_synced_at = CURRENT_TIMESTAMP;
-
-        -- Log the operation
-        INSERT INTO operations (
-          operation_id, resource_id, operation_type, status,
-          after_state, playbook_name
-        )
-        VALUES (
-          '{{ workload.project_id }}-{{ workload.cluster_name }}-' || strftime(CURRENT_TIMESTAMP, '%Y%m%d%H%M%S'),
-          '{{ vars.resource_id }}',
-          'create',
-          'completed',
-          '{{ vars.current_state | tojson | default("{}") }}',
-          'gke_autopilot'
-        );
-
-        SELECT 'State saved successfully' as message;
+          last_sync_at = CURRENT_TIMESTAMP;
     next:
       - step: print_success
 
@@ -337,27 +634,33 @@ workflow:
       database: "{{ workload.state_database }}"
       commands: |
         INSERT INTO resources (
-          resource_id, type_id, name, project, region, 
-          desired_state, current_state, status, labels
+          resource_id, resource_type, resource_name, provider, project, region,
+          zone, status, config, state
         )
         VALUES (
           '{{ vars.resource_id }}',
           'container.googleapis.com/Cluster',
           '{{ workload.cluster_name }}',
+          'gcp',
           '{{ workload.project_id }}',
           '{{ workload.region }}',
-          '{}',
-          '{{ vars.current_state | tojson | default("{}") }}',
+          NULL,
           '{{ vars.current_state.status | default("unknown") }}',
-          '{}'
+          json('{}'),
+          json('{{ vars.current_state | tojson | default("{}") }}')
         )
         ON CONFLICT (resource_id) DO UPDATE SET
-          current_state = EXCLUDED.current_state,
+          resource_type = EXCLUDED.resource_type,
+          resource_name = EXCLUDED.resource_name,
+          provider = EXCLUDED.provider,
+          project = EXCLUDED.project,
+          region = EXCLUDED.region,
+          zone = EXCLUDED.zone,
           status = EXCLUDED.status,
+          config = EXCLUDED.config,
+          state = EXCLUDED.state,
           updated_at = CURRENT_TIMESTAMP,
-          last_synced_at = CURRENT_TIMESTAMP;
-
-        SELECT 'State updated' as message;
+          last_sync_at = CURRENT_TIMESTAMP;
     next:
       - step: end
 

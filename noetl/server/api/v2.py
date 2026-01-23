@@ -515,7 +515,21 @@ async def handle_event(req: EventRequest) -> EventResponse:
                 )
             except Exception as e:
                 logger.warning(f"Orchestrator error: {e}")
-        
+
+        # Evict completed executions from cache to free memory
+        # Terminal events indicate execution is done and can be cleaned up
+        terminal_events = {
+            "playbook.completed", "playbook.failed",
+            "workflow.completed", "workflow.failed",
+            "execution.cancelled"
+        }
+        if req.name in terminal_events:
+            try:
+                await engine.state_store.evict_completed(req.execution_id)
+                logger.debug(f"Evicted execution {req.execution_id} from cache after {req.name}")
+            except Exception as e:
+                logger.warning(f"Failed to evict execution {req.execution_id} from cache: {e}")
+
         return EventResponse(status="ok", event_id=evt_id, commands_generated=len(commands))
     
     except Exception as e:

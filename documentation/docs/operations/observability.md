@@ -457,7 +457,7 @@ All services automatically deploy with:
 ```bash
 noetl run automation/setup/bootstrap.yaml
 # or
-noetl run automation/main.yaml bootstrap
+noetl run automation/main.yaml --set target=bootstrap
 ```
 
 ### Verification

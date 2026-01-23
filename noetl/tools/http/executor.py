@@ -15,6 +15,7 @@ from jinja2 import Environment
 from noetl.core.dsl.render import render_template
 from noetl.core.logger import setup_logger
 from noetl.core.auth.resolver import resolve_auth_map
+from noetl.core.sanitize import sanitize_sensitive_data
 from noetl.worker.auth_compatibility import transform_credentials_to_auth, validate_auth_transition
 from noetl.worker.keychain_resolver import populate_keychain_context
 
@@ -130,15 +131,9 @@ async def execute_http_task(
         if auth_headers:
             headers.update(auth_headers)
 
-        # Log headers with safe Authorization preview
-        auth_header = headers.get('Authorization')
-        auth_preview = None
-        if auth_header:
-            auth_preview = auth_header
-            if isinstance(auth_header, str) and len(auth_header) > 24:
-                auth_preview = f"{auth_header[:12]}...{auth_header[-6:]}"
+        # Log headers with sensitive values redacted (SECURITY: no tokens/passwords in logs)
         redacted_headers = redact_sensitive_headers(headers)
-        logger.info(f"HTTP.EXECUTE_HTTP_TASK: headers_keys={list(headers.keys())} | auth_applied={len(auth_headers) if auth_headers else 0} | auth_preview={auth_preview} | redacted={redacted_headers}")
+        logger.info(f"HTTP.EXECUTE_HTTP_TASK: headers_keys={list(headers.keys())} | auth_applied={len(auth_headers) if auth_headers else 0} | redacted_headers={redacted_headers}")
 
         timeout = task_config.get('timeout', 30)
         verify_ssl = task_config.get('verify_ssl')
@@ -167,10 +162,12 @@ async def execute_http_task(
                 request_args = build_request_args(
                     endpoint, method, headers, data_map, params, payload
                 )
-                
-                # Log request with redacted sensitive headers
+
+                # SECURITY: Log request with sensitive data redacted (no tokens/passwords in logs)
                 redacted_headers = redact_sensitive_headers(headers)
-                logger.info(f"HTTP.EXECUTE_HTTP_TASK: Making request | timeout={timeout} | headers={redacted_headers} | args={request_args}")
+                # Sanitize request args for logging (may contain auth in headers or payload)
+                sanitized_args = sanitize_sensitive_data(request_args)
+                logger.info(f"HTTP.EXECUTE_HTTP_TASK: Making request | timeout={timeout} | headers={redacted_headers} | args={sanitized_args}")
                 
                 response = client.request(method, **request_args)
 

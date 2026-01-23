@@ -25,7 +25,7 @@ IaP enables you to:
 noetl iap init --project my-gcp-project --bucket my-state-bucket --workspace dev
 
 # Create a GKE cluster
-noetl run automation/iap/gcp/gke_autopilot.yaml --set action=create -v
+noetl iap apply automation/iap/gcp/gke_autopilot.yaml --auto-approve --var action=create
 
 # View managed resources
 noetl iap state list
@@ -34,7 +34,7 @@ noetl iap state list
 noetl iap sync push
 
 # Destroy the cluster
-noetl run automation/iap/gcp/gke_autopilot.yaml --set action=destroy -v
+noetl iap apply automation/iap/gcp/gke_autopilot.yaml --auto-approve --var action=destroy
 ```
 
 ## Architecture
@@ -92,7 +92,7 @@ For bootstrap scenarios (no existing infrastructure), IaP leverages:
 noetl iap init --project my-gcp-project --bucket my-state-bucket --workspace dev-alice
 
 # Execute infrastructure playbooks
-noetl run automation/iap/gcp/gke_autopilot.yaml --set action=create -v
+noetl iap apply automation/iap/gcp/gke_autopilot.yaml --auto-approve --var action=create
 
 # View managed resources
 noetl iap state list
@@ -153,7 +153,7 @@ noetl iap workspace delete dev-old --remote --force
 ```bash
 # Developer Alice sets up her workspace
 noetl iap init --project team-project --bucket team-state --workspace dev-alice
-noetl run automation/iap/gcp/gke_autopilot.yaml --set action=create -v
+noetl iap apply automation/iap/gcp/gke_autopilot.yaml --auto-approve --var action=create
 noetl iap sync push
 
 # Developer Bob creates his workspace from Alice's config
@@ -161,7 +161,7 @@ noetl iap workspace create dev-bob --from dev-alice --switch
 
 # Shared environments use dedicated workspaces
 noetl iap workspace create staging --switch
-noetl run automation/iap/gcp/gke_autopilot.yaml --set action=create -v
+noetl iap apply automation/iap/gcp/gke_autopilot.yaml --auto-approve --var action=create
 noetl iap sync push
 
 # Team members can pull shared state
@@ -508,7 +508,7 @@ noetl iap init --project my-gcp-project --bucket my-state-bucket --workspace my-
 noetl iap workspace current
 
 # Create GKE Autopilot cluster using local runtime
-noetl run gke_autopilot.yaml --set action=create -v
+noetl iap apply gke_autopilot.yaml --auto-approve --var action=create
 
 # View managed resources
 noetl iap state list
@@ -523,7 +523,7 @@ noetl iap sync push
 noetl iap sync pull
 
 # Destroy the cluster
-noetl run gke_autopilot.yaml --set action=destroy -v
+noetl iap apply gke_autopilot.yaml --auto-approve --var action=destroy
 
 # Create a workspace for another developer
 noetl iap workspace create dev-bob --switch

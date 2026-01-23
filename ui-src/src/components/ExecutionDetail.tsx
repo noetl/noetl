@@ -53,6 +53,21 @@ const ExecutionDetail: React.FC = () => {
   // Pagination state for events table
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [pageSize, setPageSize] = useState<number>(100);
+  const [totalEvents, setTotalEvents] = useState<number>(0);
+  const [totalPages, setTotalPages] = useState<number>(1);
+
+  // Server-side pagination state
+  const [serverPagination, setServerPagination] = useState<{
+    page: number;
+    page_size: number;
+    total_events: number;
+    total_pages: number;
+    has_next: boolean;
+    has_prev: boolean;
+  } | null>(null);
+
+  // Track latest event ID for incremental polling
+  const [latestEventId, setLatestEventId] = useState<number | null>(null);
 
   // Event filtering state
   const [activeTab, setActiveTab] = useState<string>("all");
@@ -72,16 +87,27 @@ const ExecutionDetail: React.FC = () => {
       try {
         setLoading(true);
         setError(null);
-        const data = await apiService.getExecution(id!);
-        data.events?.reverse(); // Show latest events first
-        console.log('data.events reversed on ui how mut');
+        // Initial fetch with pagination
+        const data = await apiService.getExecution(id!, { page: 1, page_size: pageSize });
         setExecution(data);
 
-        // Extract events from execution data or create demo events if not available
-        const executionEvents = data.events || [];
+        // Store pagination info
+        if (data.pagination) {
+          setServerPagination(data.pagination);
+          setTotalEvents(data.pagination.total_events);
+          setTotalPages(data.pagination.total_pages);
+        }
 
+        // Events are already sorted by server (DESC by event_id, most recent first)
+        const executionEvents = data.events || [];
         setEvents(executionEvents);
         setFilteredEvents(executionEvents);
+
+        // Track latest event ID for incremental polling
+        if (executionEvents.length > 0) {
+          const maxEventId = Math.max(...executionEvents.map((e: any) => e.event_id || 0));
+          setLatestEventId(maxEventId);
+        }
       } catch (err) {
         setError("Failed to load execution details.");
       } finally {
@@ -89,28 +115,77 @@ const ExecutionDetail: React.FC = () => {
       }
     };
     fetchExecution();
-    const fetchExecutionForTimeout = async () => {
-      try {
 
-        const data = await apiService.getExecution(id!);
+    // Incremental polling - only fetch new events since latestEventId
+    const fetchIncrementalEvents = async () => {
+      try {
+        // Skip polling if execution is completed/failed/cancelled
+        if (execution?.status) {
+          const status = execution.status.toUpperCase();
+          if (['COMPLETED', 'FAILED', 'CANCELLED'].includes(status)) {
+            console.log('Execution completed, skipping polling');
+            return;
+          }
+        }
+
+        // Fetch new events incrementally using since_event_id
+        const params: any = { page_size: 50 };
+        if (latestEventId) {
+          params.since_event_id = latestEventId;
+        }
+
+        const data = await apiService.getExecution(id!, params);
         setError(null);
         setExecution(data);
 
-        // Extract events from execution data or create demo events if not available
-        const executionEvents = data.events || [];
+        // Update pagination info
+        if (data.pagination) {
+          setServerPagination(data.pagination);
+          setTotalEvents(data.pagination.total_events);
+          setTotalPages(data.pagination.total_pages);
+        }
 
-        setEvents(executionEvents);
-        setFilteredEvents(executionEvents);
+        const newEvents = data.events || [];
+        if (newEvents.length > 0) {
+          // Prepend new events (they're most recent)
+          setEvents(prev => {
+            // Deduplicate by event_id
+            const existingIds = new Set(prev.map((e: any) => e.event_id));
+            const uniqueNew = newEvents.filter((e: any) => !existingIds.has(e.event_id));
+            return [...uniqueNew, ...prev];
+          });
+
+          // Update latest event ID
+          const maxEventId = Math.max(...newEvents.map((e: any) => e.event_id || 0));
+          if (maxEventId > (latestEventId || 0)) {
+            setLatestEventId(maxEventId);
+          }
+        }
       } catch (err) {
-        setError("Failed to load execution details.");
+        console.warn("Failed to fetch incremental events:", err);
       }
     };
+
+    // Adaptive polling interval - stop polling for completed executions
+    const getPollingInterval = () => {
+      if (!execution) return 5000;
+      const status = execution.status?.toUpperCase();
+      if (['COMPLETED', 'FAILED', 'CANCELLED'].includes(status || '')) {
+        return null; // Stop polling
+      }
+      return 5000;
+    };
+
     const interval = setInterval(() => {
-      console.log('Refreshing execution data for id:', id);
-      fetchExecutionForTimeout();
-    }, 5000); // Refresh every 5 seconds
+      const shouldPoll = getPollingInterval() !== null;
+      if (shouldPoll) {
+        console.log('Refreshing execution data for id:', id, 'since_event_id:', latestEventId);
+        fetchIncrementalEvents();
+      }
+    }, 5000);
+
     return () => clearInterval(interval);
-  }, [id]);
+  }, [id, latestEventId, execution?.status, pageSize]);
 
   useEffect(() => {
     const handle = setTimeout(() => setDebouncedSearch(searchText), 250);
@@ -186,6 +261,31 @@ const ExecutionDetail: React.FC = () => {
     setNodeFilter("");
     setSearchText("");
     setDateRange(null);
+  };
+
+  // Load additional events from server when user navigates pagination
+  const loadServerPage = async (page: number) => {
+    if (!id) return;
+    try {
+      const data = await apiService.getExecution(id, { page, page_size: pageSize });
+      if (data.events && data.events.length > 0) {
+        // Merge with existing events, deduplicating
+        setEvents(prev => {
+          const existingIds = new Set(prev.map((e: any) => e.event_id));
+          const uniqueNew = data.events.filter((e: any) => !existingIds.has(e.event_id));
+          const merged = [...prev, ...uniqueNew];
+          // Sort by event_id DESC (most recent first)
+          return merged.sort((a: any, b: any) => (b.event_id || 0) - (a.event_id || 0));
+        });
+      }
+      if (data.pagination) {
+        setServerPagination(data.pagination);
+        setTotalEvents(data.pagination.total_events);
+        setTotalPages(data.pagination.total_pages);
+      }
+    } catch (err) {
+      console.error("Failed to load server page:", err);
+    }
   };
 
   const handleCancelExecution = async () => {

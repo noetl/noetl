@@ -74,8 +74,7 @@ noetl run destroy
 
 Complete K8s environment setup including:
 - Prerequisite validation (noetl, docker, kind, kubectl, task, python3, uv)
-- Rust CLI binary compilation
-- Docker image building
+- Docker image building (Python server/worker image)
 - Kind cluster creation
 - Image loading to cluster
 - PostgreSQL deployment
@@ -94,6 +93,12 @@ noetl run automation/setup/bootstrap.yaml
 
 # With verbose output
 noetl run automation/setup/bootstrap.yaml -v
+
+# Skip Gateway deployment
+noetl run automation/setup/bootstrap.yaml --set deploy_gateway=false
+
+# Build Rust CLI when needed
+noetl run automation/setup/bootstrap.yaml --set build_rust_cli=true
 ```
 
 ### Steps
@@ -101,13 +106,14 @@ noetl run automation/setup/bootstrap.yaml -v
 1. **validate_prerequisites** - Check required tools
 2. **check_docker_running** - Verify Docker daemon
 3. **check_existing_cluster** - Check for existing cluster
-4. **build_rust_cli** - Build noetlctl binary
-5. **build_docker_images** - Build NoETL container
+4. **build_rust_cli** - Build noetlctl binary (optional)
+5. **build_docker_images** - Build NoETL Python container
 6. **create_kind_cluster** - Create K8s cluster
 7. **load_image_to_kind** - Load image to cluster
 8. **deploy_postgres** - Deploy PostgreSQL
-9. **deploy_noetl** - Deploy NoETL server/workers
-10. **deploy_observability** - Deploy ClickHouse, Qdrant, NATS
+9. **deploy_gateway** - Deploy Gateway API (optional)
+10. **deploy_noetl** - Deploy NoETL server/workers
+11. **deploy_observability** - Deploy ClickHouse, Qdrant, NATS
 11. **wait_for_services** - Wait for pods to be ready
 12. **test_cluster_health** - Verify endpoints
 13. **summary** - Show completion status
@@ -682,6 +688,9 @@ noetl run automation/infrastructure/postgres.yaml --set action=deploy
 
 # Multiple variables  
 noetl run automation/setup/bootstrap.yaml --set target=noetl --set skip_qdrant=true
+
+# Control Rust CLI build and Gateway deployment
+noetl run automation/setup/bootstrap.yaml --set build_rust_cli=true --set deploy_gateway=false
 ```
 
 ## Troubleshooting

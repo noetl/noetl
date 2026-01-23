@@ -1,0 +1,224 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: noetl_worker_pool_deploy
+  path: automation/deployment/worker-pool
+  description: Build and deploy NoETL Rust Worker Pool
+
+executor:
+  profile: local
+  version: noetl-runtime/1
+
+workload:
+  action: help
+  registry: "us-docker.pkg.dev/noetl-dev/noetl"
+  image_name: "noetl-worker-pool"
+  namespace: "noetl"
+  tag: ""
+
+workflow:
+  - step: start
+    desc: Entry point for Worker Pool deployment
+    tool:
+      kind: shell
+      cmds:
+        - echo "Worker Pool Deployment - Action '{{ workload.action }}'"
+    next:
+      - when: "{{ workload.action }} == build"
+        then:
+          - step: build_image
+        args: {}
+      - when: "{{ workload.action }} == push"
+        then:
+          - step: push_image
+        args: {}
+      - when: "{{ workload.action }} == deploy"
+        then:
+          - step: deploy_helm
+        args: {}
+      - when: "{{ workload.action }} == all"
+        then:
+          - step: build_image
+        args: {}
+      - when: "{{ workload.action }} == status"
+        then:
+          - step: status
+        args: {}
+      - when: "{{ workload.action }} == logs"
+        then:
+          - step: logs
+        args: {}
+      - when: "{{ workload.action }} == help"
+        then:
+          - step: show_help
+        args: {}
+      - step: show_help
+
+  - step: build_image
+    desc: Build the Worker Pool Docker image
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Building Worker Pool Docker image..."
+
+          # Generate tag from git
+          GIT_SHA=$(git rev-parse --short HEAD)
+          TIMESTAMP=$(date +%Y%m%d%H%M%S)
+
+          if [ -n "{{ workload.tag }}" ]; then
+            IMAGE_TAG="{{ workload.tag }}"
+          else
+            IMAGE_TAG="${GIT_SHA}-${TIMESTAMP}"
+          fi
+
+          IMAGE="{{ workload.registry }}/{{ workload.image_name }}:${IMAGE_TAG}"
+
+          echo "Building: $IMAGE"
+
+          docker build \
+            -f crates/worker-pool/Dockerfile \
+            -t $IMAGE \
+            -t {{ workload.registry }}/{{ workload.image_name }}:latest \
+            .
+
+          echo $IMAGE_TAG > .worker_pool_last_build_tag.txt
+          echo "Build complete: $IMAGE"
+    next:
+      - when: "{{ workload.action }} == all"
+        then:
+          - step: push_image
+        args: {}
+      - step: end
+
+  - step: push_image
+    desc: Push the Worker Pool Docker image to registry
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Pushing Worker Pool Docker image..."
+
+          if [ ! -f .worker_pool_last_build_tag.txt ]; then
+            echo "ERROR: .worker_pool_last_build_tag.txt not found. Build first."
+            exit 1
+          fi
+
+          IMAGE_TAG=$(cat .worker_pool_last_build_tag.txt)
+          IMAGE="{{ workload.registry }}/{{ workload.image_name }}:${IMAGE_TAG}"
+
+          echo "Pushing: $IMAGE"
+          docker push $IMAGE
+          docker push {{ workload.registry }}/{{ workload.image_name }}:latest
+
+          echo "Push complete"
+    next:
+      - when: "{{ workload.action }} == all"
+        then:
+          - step: deploy_helm
+        args: {}
+      - step: end
+
+  - step: deploy_helm
+    desc: Deploy Worker Pool using Helm
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Deploying Worker Pool via Helm..."
+
+          if [ -f .worker_pool_last_build_tag.txt ]; then
+            IMAGE_TAG=$(cat .worker_pool_last_build_tag.txt)
+          else
+            IMAGE_TAG="latest"
+          fi
+
+          echo "Using image tag: $IMAGE_TAG"
+
+          helm upgrade --install noetl automation/helm/noetl \
+            --namespace {{ workload.namespace }} \
+            --create-namespace \
+            --set workerPool.enabled=true \
+            --set workerPool.image.repository={{ workload.registry }}/{{ workload.image_name }} \
+            --set workerPool.image.tag=${IMAGE_TAG} \
+            --wait \
+            --timeout 5m
+
+          echo ""
+          echo "Waiting for Worker Pool pods..."
+          kubectl wait --for=condition=ready pod \
+            -l app=noetl-worker-pool \
+            -n {{ workload.namespace }} \
+            --timeout=120s || echo "Warning: Some pods may not be ready"
+
+          echo ""
+          echo "Deployment complete"
+    next:
+      - step: status
+
+  - step: status
+    desc: Show Worker Pool status
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Worker Pool Status:"
+          echo "==================="
+          kubectl get pods -n {{ workload.namespace }} -l app=noetl-worker-pool
+          echo ""
+          echo "Services:"
+          kubectl get svc -n {{ workload.namespace }}
+          echo ""
+          echo "Recent Events:"
+          kubectl get events -n {{ workload.namespace }} --sort-by='.lastTimestamp' | tail -10
+    next:
+      - step: end
+
+  - step: logs
+    desc: Show Worker Pool logs
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Worker Pool Logs:"
+          echo "================="
+          kubectl logs -n {{ workload.namespace }} -l app=noetl-worker-pool --tail=100 --all-containers
+    next:
+      - step: end
+
+  - step: show_help
+    desc: Display available actions
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "=================================================="
+          echo " NoETL Worker Pool Deployment"
+          echo "=================================================="
+          echo ""
+          echo "Usage:"
+          echo "  noetl run automation/deployment/worker-pool.yaml --set action=<action>"
+          echo ""
+          echo "Actions:"
+          echo "  build   - Build the Worker Pool Docker image"
+          echo "  push    - Push the image to registry"
+          echo "  deploy  - Deploy Worker Pool using Helm"
+          echo "  all     - Build, push, and deploy"
+          echo "  status  - Show Worker Pool pod status"
+          echo "  logs    - Show Worker Pool logs"
+          echo "  help    - Show this help"
+          echo ""
+          echo "Options:"
+          echo "  --set registry=<registry>  - Docker registry (default: us-docker.pkg.dev/noetl-dev/noetl)"
+          echo "  --set tag=<tag>            - Image tag (default: git-sha-timestamp)"
+          echo "  --set namespace=<ns>       - Kubernetes namespace (default: noetl)"
+    next:
+      - step: end
+
+  - step: end
+    desc: Done

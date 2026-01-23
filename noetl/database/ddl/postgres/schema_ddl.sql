@@ -87,6 +87,12 @@ CREATE INDEX IF NOT EXISTS idx_event_node_name ON noetl.event (node_name);
 CREATE INDEX IF NOT EXISTS idx_event_parent_event_id ON noetl.event (parent_event_id);
 CREATE INDEX IF NOT EXISTS idx_event_parent_execution_id ON noetl.event (parent_execution_id);
 
+-- Composite index for paginated event queries (sorted by event_id DESC for most recent first)
+CREATE INDEX IF NOT EXISTS idx_event_exec_id_event_id_desc ON noetl.event (execution_id, event_id DESC);
+
+-- Composite index for filtering by event_type within execution
+CREATE INDEX IF NOT EXISTS idx_event_exec_type ON noetl.event (execution_id, event_type, event_id DESC);
+
 -- Legacy compatibility view for event_log
 CREATE OR REPLACE VIEW noetl.event_log AS SELECT * FROM noetl.event;
 
