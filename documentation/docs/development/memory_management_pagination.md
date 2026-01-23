@@ -236,8 +236,8 @@ print(_template_cache.stats())
 **Performance Impact**:
 | Metric | Before | After |
 |--------|--------|-------|
-| Template compilation | 100-500ms per template | <1ms (cache hit) |
-| Case/when evaluation (10 conditions) | 1-5s | <50ms |
+| Template compilation | 100-500ms per template | &lt;1ms (cache hit) |
+| Case/when evaluation (10 conditions) | 1-5s | &lt;50ms |
 | Memory usage | Unbounded (compiled every time) | ~7.5MB max (all caches) |
 
 ### 7. UI Incremental Polling
@@ -297,12 +297,12 @@ state = batch_state["execution_state"]  # 'initial', 'in_progress', 'completed'
 
 | Metric | Before | After |
 |--------|--------|-------|
-| API response time (10K events) | 5-10s (timeout) | <500ms |
+| API response time (10K events) | 5-10s (timeout) | &lt;500ms |
 | Memory per 1000 executions | Unbounded growth | ~100MB max |
 | Orchestrator queries per eval | 5-8 queries | 1 batch query |
 | UI polling bandwidth | Full event list | Only new events |
-| Template compilation (per template) | 100-500ms | <1ms (cached) |
-| Case/when evaluation (10 conditions) | 1-5s | <50ms |
+| Template compilation (per template) | 100-500ms | &lt;1ms (cached) |
+| Case/when evaluation (10 conditions) | 1-5s | &lt;50ms |
 
 ## Migration Notes
 

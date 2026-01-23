@@ -1,6 +1,6 @@
 ---
 sidebar_position: 35
-title: GCP IaP: Autopilot Deploy Flow
+title: "GCP IaP: Autopilot Deploy Flow"
 ---
 
 # GCP IaP: Autopilot Deploy Flow
