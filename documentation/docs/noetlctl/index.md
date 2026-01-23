@@ -426,6 +426,8 @@ noetl run automation/boot.yaml
 noetl run boot
 ```
 
+Bootstrap builds only the Python server/worker image. Build Rust binaries separately and set `--set build_rust_cli=true` only when needed.
+
 ### API Testing
 
 **File**: [`automation/examples/http_example.yaml`](../../../automation/examples/http_example.yaml)

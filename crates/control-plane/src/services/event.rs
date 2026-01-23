@@ -1,4 +1,7 @@
 //! Event service for event sourcing operations.
+//!
+//! SECURITY: All event context, result, and metadata are sanitized before storage
+//! to prevent sensitive data (bearer tokens, passwords, API keys) from being persisted.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -7,6 +10,7 @@ use crate::db::models::Event;
 use crate::db::queries::event as queries;
 use crate::db::DbPool;
 use crate::error::AppResult;
+use crate::sanitize::sanitize_sensitive_data;
 
 /// Request to emit an event.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -83,7 +87,14 @@ impl EventService {
     }
 
     /// Emit a new event.
+    ///
+    /// SECURITY: Context, meta, and result fields are sanitized to remove sensitive data.
     pub async fn emit(&self, request: EmitEventRequest) -> AppResult<EmitEventResponse> {
+        // SECURITY: Sanitize all JSON fields before storage
+        let sanitized_context = request.context.as_ref().map(sanitize_sensitive_data);
+        let sanitized_meta = request.meta.as_ref().map(sanitize_sensitive_data);
+        let sanitized_result = request.result.as_ref().map(sanitize_sensitive_data);
+
         let id = queries::insert_event(
             &self.pool,
             request.event_id,
@@ -96,9 +107,9 @@ impl EventService {
             request.node_name.as_deref(),
             request.node_type.as_deref(),
             &request.status,
-            request.context.as_ref(),
-            request.meta.as_ref(),
-            request.result.as_ref(),
+            sanitized_context.as_ref(),
+            sanitized_meta.as_ref(),
+            sanitized_result.as_ref(),
             request.worker_id.as_deref(),
             request.attempt,
         )
@@ -112,6 +123,8 @@ impl EventService {
     }
 
     /// Emit playbook started event.
+    ///
+    /// SECURITY: Context and meta (including workload) are sanitized to remove sensitive data.
     #[allow(clippy::too_many_arguments)]
     pub async fn emit_playbook_started(
         &self,
@@ -125,12 +138,15 @@ impl EventService {
         parent_event_id: Option<i64>,
         requestor_info: Option<&serde_json::Value>,
     ) -> AppResult<i64> {
+        // Sanitize workload before storing - it may contain sensitive auth configuration
+        let sanitized_workload = sanitize_sensitive_data(workload);
+
         let mut context = serde_json::json!({
             "catalog_id": catalog_id.to_string(),
             "execution_id": execution_id.to_string(),
             "path": path,
             "version": version.to_string(),
-            "workload": workload,
+            "workload": sanitized_workload,
         });
 
         if let Some(parent_exec) = parent_execution_id {
@@ -146,7 +162,8 @@ impl EventService {
         });
 
         if let Some(req_info) = requestor_info {
-            meta["requestor"] = req_info.clone();
+            // Sanitize requestor info as well
+            meta["requestor"] = sanitize_sensitive_data(req_info);
         }
 
         let id = queries::insert_event(
@@ -216,6 +233,8 @@ impl EventService {
     }
 
     /// Emit step enter event.
+    ///
+    /// SECURITY: Context is sanitized to remove sensitive data.
     #[allow(clippy::too_many_arguments)]
     pub async fn emit_step_enter(
         &self,
@@ -233,6 +252,9 @@ impl EventService {
             "emitter": "control_plane",
         });
 
+        // SECURITY: Sanitize context before storing
+        let sanitized_context = context.map(sanitize_sensitive_data);
+
         let id = queries::insert_event(
             &self.pool,
             event_id,
@@ -245,7 +267,7 @@ impl EventService {
             Some(step_name),
             Some(step_type),
             "ENTERED",
-            context,
+            sanitized_context.as_ref(),
             Some(&meta),
             None,
             None,
@@ -257,6 +279,8 @@ impl EventService {
     }
 
     /// Emit command issued event.
+    ///
+    /// SECURITY: Command context is sanitized to remove sensitive data.
     #[allow(clippy::too_many_arguments)]
     pub async fn emit_command_issued(
         &self,
@@ -272,6 +296,9 @@ impl EventService {
             "emitter": "control_plane",
         });
 
+        // SECURITY: Sanitize command context before storing - may contain auth configuration
+        let sanitized_command = sanitize_sensitive_data(command);
+
         let id = queries::insert_event(
             &self.pool,
             event_id,
@@ -284,7 +311,7 @@ impl EventService {
             Some(step_name),
             Some("command"),
             "PENDING",
-            Some(command),
+            Some(&sanitized_command),
             Some(&meta),
             None,
             None,

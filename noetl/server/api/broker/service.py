@@ -3,6 +3,9 @@ NoETL Event Service - Database operations for event emission.
 
 Simple event emission service without business logic - direct database operations only.
 Similar pattern to run/catalog services.
+
+SECURITY: All event context, result, and metadata are sanitized before storage
+to prevent sensitive data (bearer tokens, passwords, API keys) from being persisted.
 """
 
 import json
@@ -14,6 +17,7 @@ from psycopg.types.json import Json
 from noetl.core.common import get_val
 from noetl.core.db.pool import get_pool_connection, get_snowflake_id
 from noetl.core.logger import setup_logger
+from noetl.core.sanitize import sanitize_sensitive_data
 from .schema import EventEmitRequest, EventEmitResponse, EventQuery, EventResponse, EventListResponse, WorkloadData
 
 
@@ -65,42 +69,51 @@ class EventService:
         
         # Use provided timestamp or generate new one
         created_at = request.created_at or datetime.utcnow()
-        
-        # Prepare context and meta as JSON
+
+        # SECURITY: Sanitize all JSON fields before storage to prevent sensitive data leakage
+        # This removes bearer tokens, passwords, API keys, etc. from context, result, and meta
+
+        # Prepare context and meta as JSON (with sanitization)
         # Store actionable, informative, and correlation in meta column (not separate columns)
-        context = Json(request.context) if request.context else None
+        sanitized_context = sanitize_sensitive_data(request.context) if request.context else None
+        context = Json(sanitized_context) if sanitized_context else None
+
         meta_dict = dict(request.meta) if request.meta else {}
         meta_dict["actionable"] = request.actionable
         meta_dict["informative"] = request.informative
         if request.correlation:
             meta_dict["correlation"] = request.correlation.model_dump() if hasattr(request.correlation, 'model_dump') else request.correlation
-        meta = Json(meta_dict)
-        
+        # Sanitize meta dict (correlation and other fields could contain sensitive data)
+        sanitized_meta = sanitize_sensitive_data(meta_dict)
+        meta = Json(sanitized_meta)
+
         # Handle ResultRef pattern: result column stores either inline data OR ResultRef
         # If output_ref is provided, build a ResultRef object for the result column
         # Otherwise use the inline result directly
         if request.output_ref:
-            # Build ResultRef object to store in result column
+            # Build ResultRef object to store in result column (refs don't contain sensitive data)
             result_ref_obj = {
                 "kind": "ref",
-                "store_tier": "artifact" if request.output_ref.startswith("artifact://") else 
+                "store_tier": "artifact" if request.output_ref.startswith("artifact://") else
                               "gcs" if request.output_ref.startswith("gs://") else
                               "s3" if request.output_ref.startswith("s3://") else "eventlog",
                 "logical_uri": request.output_ref,
             }
-            # Add preview if provided
+            # Add preview if provided (sanitize preview as it may contain data snippet)
             if request.preview:
-                result_ref_obj["preview"] = request.preview
+                result_ref_obj["preview"] = sanitize_sensitive_data(request.preview)
             # Add correlation keys if provided
             if request.correlation:
                 result_ref_obj["correlation"] = request.correlation.model_dump() if hasattr(request.correlation, 'model_dump') else request.correlation
             result = Json(result_ref_obj)
         elif request.output_inline:
-            # Inline result provided separately
-            result = Json(request.output_inline)
+            # Inline result provided separately - sanitize before storage
+            sanitized_inline = sanitize_sensitive_data(request.output_inline)
+            result = Json(sanitized_inline)
         else:
-            # Use original result
-            result = Json(request.result) if request.result else None
+            # Use original result - sanitize before storage
+            sanitized_result = sanitize_sensitive_data(request.result) if request.result else None
+            result = Json(sanitized_result) if sanitized_result else None
         
         async with get_pool_connection() as conn:
             async with conn.cursor(row_factory=dict_row) as cur:

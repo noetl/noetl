@@ -1,6 +1,9 @@
 //! Event handling API handlers.
 //!
 //! Handles worker events and command retrieval endpoints.
+//!
+//! SECURITY: All event payloads are sanitized before storage to prevent
+//! sensitive data (bearer tokens, passwords, API keys) from being persisted.
 
 use axum::{
     extract::{Path, State},
@@ -10,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 
 use crate::error::{AppError, AppResult};
+use crate::sanitize::sanitize_sensitive_data;
 use crate::state::AppState;
 
 /// Worker event request.
@@ -127,7 +131,9 @@ pub async fn handle_event(
     }
 
     // Build result object based on kind
-    let result_obj = build_result_object(&request);
+    let result_obj_raw = build_result_object(&request);
+    // SECURITY: Sanitize result data to remove sensitive information (tokens, passwords, etc.)
+    let result_obj = sanitize_sensitive_data(&result_obj_raw);
 
     // Generate event ID
     let event_id = generate_snowflake_id(&state).await?;
@@ -150,6 +156,8 @@ pub async fn handle_event(
             map.insert("worker_id".to_string(), serde_json::json!(worker_id));
         }
     }
+    // SECURITY: Sanitize meta data to remove sensitive information
+    let meta_obj = sanitize_sensitive_data(&meta_obj);
 
     // Determine status based on event name
     let status = if request.name.contains("done") || request.name.contains("exit") {

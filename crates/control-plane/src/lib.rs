@@ -51,6 +51,7 @@ pub mod handlers;
 pub mod nats;
 pub mod playbook;
 pub mod result_ext;
+pub mod sanitize;
 pub mod services;
 pub mod state;
 pub mod template;
