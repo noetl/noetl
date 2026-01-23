@@ -180,7 +180,7 @@ Manage cloud infrastructure using playbooks (Terraform alternative):
 noetl iap init --project my-gcp-project --bucket my-state-bucket
 
 # Execute infrastructure playbooks
-noetl run automation/iap/gcp/gke_autopilot.yaml --set action=create
+noetl iap apply automation/iap/gcp/gke_autopilot.yaml --auto-approve --var action=create
 
 # Manage state
 noetl iap state list

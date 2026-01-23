@@ -1,0 +1,16 @@
+{{- if .Values.persistence.logs.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Values.persistence.logs.name }}
+  namespace: {{ .Values.namespace }}
+spec:
+  accessModes:
+    - {{ .Values.persistence.logs.accessMode }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.logs.size }}
+{{- if .Values.persistence.logs.storageClassName }}
+  storageClassName: {{ .Values.persistence.logs.storageClassName }}
+{{- end }}
+{{- end }}

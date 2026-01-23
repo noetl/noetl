@@ -2,6 +2,9 @@
 members = [
     "crates/noetlctl",
     "crates/gateway",
+    "crates/control-plane",
+    "crates/noetl-tools",
+    "crates/worker-pool",
 ]
 resolver = "2"
 

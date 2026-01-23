@@ -204,7 +204,7 @@ noetl run catalog/path/to/playbook --set env=production
 noetl context add iap-gcp --server-url http://localhost:8082
 noetl context use iap-gcp
 noetl context set-runtime local
-noetl run automation/iap/gcp/gke_autopilot.yaml --set action=create
+noetl iap apply automation/iap/gcp/gke_autopilot.yaml --auto-approve --var action=create
 ```
 
 ## Playbook Executor Section
@@ -365,7 +365,7 @@ Manage cloud infrastructure using playbooks:
 noetl iap init --project my-gcp-project --bucket my-state-bucket
 
 # Execute infrastructure playbooks
-noetl run automation/iap/gcp/gke_autopilot.yaml --set action=create
+noetl iap apply automation/iap/gcp/gke_autopilot.yaml --auto-approve --var action=create
 
 # Manage state
 noetl iap state list

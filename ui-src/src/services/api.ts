@@ -171,10 +171,46 @@ class APIService {
     return response.data;
   }
 
-  async getExecution(id: string): Promise<ExecutionData> {
-    // Use primary execution detail endpoint under /api/executions
-    const response = await apiClient.get(`/executions/${id}`);
+  async getExecution(id: string, params?: {
+    page?: number;
+    page_size?: number;
+    since_event_id?: number;
+    event_type?: string;
+  }): Promise<ExecutionData> {
+    // Use primary execution detail endpoint under /api/executions with pagination support
+    const response = await apiClient.get(`/executions/${id}`, { params });
     return response.data;
+  }
+
+  async getExecutionEvents(id: string, params?: {
+    page?: number;
+    page_size?: number;
+    since_event_id?: number;
+    event_type?: string;
+  }): Promise<{
+    events: any[];
+    pagination: {
+      page: number;
+      page_size: number;
+      total_events: number;
+      total_pages: number;
+      has_next: boolean;
+      has_prev: boolean;
+    };
+  }> {
+    // Get paginated events for incremental loading
+    const response = await apiClient.get(`/executions/${id}`, { params });
+    return {
+      events: response.data.events || [],
+      pagination: response.data.pagination || {
+        page: 1,
+        page_size: params?.page_size || 100,
+        total_events: response.data.events?.length || 0,
+        total_pages: 1,
+        has_next: false,
+        has_prev: false
+      }
+    };
   }
 
   async executePlaybook(

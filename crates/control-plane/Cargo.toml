@@ -1,0 +1,62 @@
+[package]
+name = "noetl-control-plane"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "NoETL Control Plane - Async Rust server for workflow orchestration"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time", "sync"] }
+
+# Web framework
+axum = { version = "0.8", features = ["macros"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
+
+# Database
+sqlx = { version = "0.8", features = ["runtime-tokio", "tls-rustls", "postgres", "chrono", "uuid", "json"] }
+
+# Error handling
+anyhow = "1.0"
+thiserror = "2.0"
+
+# HTTP client
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+
+# NATS messaging
+async-nats = "0.38"
+
+# Templating (Jinja2-style)
+minijinja = { version = "2.5", features = ["loader"] }
+
+# Cryptography
+aes-gcm = "0.10"
+base64 = "0.22"
+rand = "0.8"
+
+# Utilities
+uuid = { version = "1", features = ["serde", "v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+dotenvy = "0.15"
+envy = "0.4"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+ctor = "0.2"
+
+# System info (for status endpoint)
+sysinfo = "0.33"
+
+[dev-dependencies]
+tokio-test = "0.4"
+
+[[bin]]
+name = "noetl-control-plane"
+path = "src/main.rs"

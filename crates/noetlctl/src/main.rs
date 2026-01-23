@@ -3972,12 +3972,12 @@ async fn iap_state_list(resource_type: Option<&str>, format: &str) -> Result<()>
 
     let query = if let Some(rt) = resource_type {
         format!(
-            "SELECT resource_id, resource_type, resource_name, status, updated_at 
+            "SELECT resource_id, resource_type, resource_name, status, CAST(updated_at AS VARCHAR) AS updated_at 
              FROM resources WHERE resource_type = '{}' ORDER BY resource_type, resource_name",
             rt
         )
     } else {
-        "SELECT resource_id, resource_type, resource_name, status, updated_at 
+        "SELECT resource_id, resource_type, resource_name, status, CAST(updated_at AS VARCHAR) AS updated_at 
          FROM resources ORDER BY resource_type, resource_name"
             .to_string()
     };

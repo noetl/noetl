@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: noetl-server-config
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: noetl-server
+data:
+{{- range $key, $value := .Values.config.server }}
+  {{ $key }}: {{ $value | quote }}
+{{- end }}

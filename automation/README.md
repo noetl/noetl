@@ -292,21 +292,22 @@ Manage cloud infrastructure using playbooks:
 
 ```bash
 # Initialize IaP state bucket
-noetl run automation/iap/gcp/init_state_bucket.yaml \
-  --set project_id=my-gcp-project \
-  --set bucket_name=my-state-bucket
+noetl iap apply automation/iap/gcp/init_state_bucket.yaml \
+  --auto-approve \
+  --var project_id=my-gcp-project \
+  --var bucket_name=my-state-bucket
 
 # Provision GKE Autopilot cluster
-noetl run automation/iap/gcp/gke_autopilot.yaml --set action=create
+noetl iap apply automation/iap/gcp/gke_autopilot.yaml --auto-approve --var action=create
 
 # Destroy GKE cluster
-noetl run automation/iap/gcp/gke_autopilot.yaml --set action=destroy
+noetl iap apply automation/iap/gcp/gke_autopilot.yaml --auto-approve --var action=destroy
 
 # Sync state to GCS
-noetl run automation/iap/gcp/state_sync.yaml --set action=push
+noetl iap apply automation/iap/gcp/state_sync.yaml --var action=push
 
 # Pull state from GCS
-noetl run automation/iap/gcp/state_sync.yaml --set action=pull
+noetl iap apply automation/iap/gcp/state_sync.yaml --var action=pull
 ```
 
 See [automation/iap/gcp/README.md](iap/gcp/README.md) for detailed IaP documentation.

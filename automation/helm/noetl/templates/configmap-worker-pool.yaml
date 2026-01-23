@@ -1,0 +1,11 @@
+{{- if .Values.workerPool.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: noetl-worker-pool-config
+  namespace: {{ .Values.namespace }}
+data:
+{{- range $key, $value := .Values.config.workerPool }}
+  {{ $key }}: {{ $value | quote }}
+{{- end }}
+{{- end }}

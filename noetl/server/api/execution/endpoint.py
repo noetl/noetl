@@ -1,6 +1,7 @@
 import json
 from datetime import datetime, timezone
-from fastapi import APIRouter, HTTPException, Request, Body
+from typing import Optional
+from fastapi import APIRouter, HTTPException, Request, Body, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from psycopg.rows import dict_row
@@ -9,8 +10,8 @@ from noetl.core.db.pool import get_pool_connection, get_snowflake_id
 from noetl.core.logger import setup_logger
 from noetl.core.common import convert_snowflake_ids_for_api
 from .schema import (
-    ExecutionEntryResponse, 
-    CancelExecutionRequest, 
+    ExecutionEntryResponse,
+    CancelExecutionRequest,
     CancelExecutionResponse,
     FinalizeExecutionRequest,
     FinalizeExecutionResponse
@@ -306,104 +307,215 @@ async def get_execution_cancellation_status(execution_id: str):
 
 
 @router.get("/executions/{execution_id}", response_class=JSONResponse)
-async def get_execution(execution_id: str):
-    """Get execution by ID with full event history"""
+async def get_execution(
+    execution_id: str,
+    page: int = Query(default=1, ge=1, description="Page number (1-indexed)"),
+    page_size: int = Query(default=100, ge=10, le=500, description="Events per page"),
+    since_event_id: Optional[int] = Query(default=None, description="Get events after this event_id (for incremental loading)"),
+    event_type: Optional[str] = Query(default=None, description="Filter by event type")
+):
+    """
+    Get execution by ID with paginated event history.
+
+    **Query Parameters**:
+    - `page`: Page number (default: 1)
+    - `page_size`: Events per page (default: 100, max: 500)
+    - `since_event_id`: Get only events after this ID (for incremental polling)
+    - `event_type`: Filter events by type
+
+    **Response includes pagination metadata**:
+    ```json
+    {
+        "execution_id": "...",
+        "events": [...],
+        "pagination": {
+            "page": 1,
+            "page_size": 100,
+            "total_events": 5000,
+            "total_pages": 50,
+            "has_next": true,
+            "has_prev": false
+        }
+    }
+    ```
+    """
     async with get_pool_connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cursor:
-            await cursor.execute("""
-            SELECT event_id,
-                   event_type,
-                   node_id,
-                   node_name,
-                   status,
-                   created_at,
-                   context,
-                   result,
-                   error,
-                   catalog_id,
-                   parent_execution_id,
-                   parent_event_id,
-                   duration
-            FROM noetl.event
-            WHERE execution_id = %(execution_id)s
-            ORDER BY event_id
-            """, {"execution_id": execution_id})
+            # Build WHERE clause for filters
+            where_clauses = ["execution_id = %(execution_id)s"]
+            params = {"execution_id": execution_id}
+
+            if since_event_id is not None:
+                where_clauses.append("event_id > %(since_event_id)s")
+                params["since_event_id"] = since_event_id
+
+            if event_type:
+                where_clauses.append("event_type = %(event_type)s")
+                params["event_type"] = event_type
+
+            where_sql = " AND ".join(where_clauses)
+
+            # Get total count for pagination
+            await cursor.execute(f"""
+                SELECT COUNT(*) as total
+                FROM noetl.event
+                WHERE {where_sql}
+            """, params)
+            count_row = await cursor.fetchone()
+            total_events = count_row["total"] if count_row else 0
+
+            # Calculate pagination
+            total_pages = (total_events + page_size - 1) // page_size if total_events > 0 else 1
+            offset = (page - 1) * page_size
+
+            # Get paginated events (ordered by event_id DESC for most recent first)
+            params["page_size"] = page_size
+            params["offset"] = offset
+            await cursor.execute(f"""
+                SELECT event_id,
+                       event_type,
+                       node_id,
+                       node_name,
+                       status,
+                       created_at,
+                       context,
+                       result,
+                       error,
+                       catalog_id,
+                       parent_execution_id,
+                       parent_event_id,
+                       duration
+                FROM noetl.event
+                WHERE {where_sql}
+                ORDER BY event_id DESC
+                LIMIT %(page_size)s OFFSET %(offset)s
+            """, params)
             rows = await cursor.fetchall()
-    if rows:
-        events = []
-        for row in rows:
-            event_data = dict(row)
-            event_data["execution_id"] = execution_id
-            event_data["timestamp"] = row["created_at"].isoformat() if row["created_at"] else None
-            if isinstance(row["context"], str):
+
+            # Also get execution metadata (first event info) in a separate efficient query
+            await cursor.execute("""
+                SELECT event_id, event_type, catalog_id, parent_execution_id, created_at, status
+                FROM noetl.event
+                WHERE execution_id = %(execution_id)s
+                ORDER BY event_id ASC
+                LIMIT 1
+            """, {"execution_id": execution_id})
+            first_event = await cursor.fetchone()
+
+            # Get terminal status efficiently
+            await cursor.execute("""
+                SELECT event_type, status, created_at
+                FROM noetl.event
+                WHERE execution_id = %(execution_id)s
+                  AND event_type IN ('execution.cancelled', 'playbook.failed', 'workflow.failed',
+                                     'playbook.completed', 'workflow.completed')
+                ORDER BY event_id DESC
+                LIMIT 1
+            """, {"execution_id": execution_id})
+            terminal_event = await cursor.fetchone()
+
+            # Get latest event for end_time and default status
+            await cursor.execute("""
+                SELECT created_at, status
+                FROM noetl.event
+                WHERE execution_id = %(execution_id)s
+                ORDER BY event_id DESC
+                LIMIT 1
+            """, {"execution_id": execution_id})
+            latest_event = await cursor.fetchone()
+
+    if first_event is None:
+        # No events found - check v2 engine fallback
+        if get_v2_engine:
+            try:
+                engine = get_v2_engine()
+                state = engine.state_store.get_state(execution_id)
+                if state:
+                    path = None
+                    if state.playbook and getattr(state.playbook, "metadata", None):
+                        path = state.playbook.metadata.get("path") or state.playbook.metadata.get("name")
+                    status = "FAILED" if state.failed else "COMPLETED" if state.completed else "RUNNING"
+                    return {
+                        "execution_id": execution_id,
+                        "path": path or "unknown",
+                        "status": status,
+                        "start_time": None,
+                        "end_time": None,
+                        "parent_execution_id": state.parent_execution_id,
+                        "events": [],
+                        "pagination": {
+                            "page": 1,
+                            "page_size": page_size,
+                            "total_events": 0,
+                            "total_pages": 1,
+                            "has_next": False,
+                            "has_prev": False
+                        }
+                    }
+            except Exception as e:
+                logger.warning(f"V2 engine fallback failed for execution {execution_id}: {e}")
+        raise HTTPException(status_code=404, detail=f"Execution {execution_id} not found")
+
+    # Process events
+    events = []
+    for row in rows:
+        event_data = dict(row)
+        event_data["execution_id"] = execution_id
+        event_data["timestamp"] = row["created_at"].isoformat() if row["created_at"] else None
+        if isinstance(row["context"], str):
+            try:
                 event_data["context"] = json.loads(row["context"])
-            if isinstance(row["result"], str):
-                try:
-                    event_data["result"] = json.loads(row["result"])
-                except json.JSONDecodeError:
-                    event_data["result"] = row["result"]
-            events.append(event_data)
-        execution_item = next((e for e in events if e.get("event_type") == "workflow.initialized"), None)
-        if execution_item is None:
-            execution_item = events[0] if events else None
-        if execution_item is None:
-            logger.error(f"No events found for execution_id: {execution_id}")
-            raise HTTPException(status_code=404, detail=f"Execution {execution_id} not found")
-        playbook_path = "unknown"
-        if execution_item.get("catalog_id"):
-            async with get_pool_connection() as conn:
-                async with conn.cursor(row_factory=dict_row) as cursor:
-                    await cursor.execute("""
-                        SELECT path FROM noetl.catalog WHERE catalog_id = %s
-                    """, (execution_item["catalog_id"],))
-                    catalog_row = await cursor.fetchone()
-            if catalog_row:
-                playbook_path = catalog_row["path"]
-        
-        # Derive status from terminal events (prioritize over chronologically last event)
-        terminal_event_types = {
-            'execution.cancelled': 'CANCELLED',
-            'playbook.failed': 'FAILED',
-            'workflow.failed': 'FAILED',
-            'playbook.completed': 'COMPLETED',
-            'workflow.completed': 'COMPLETED',
+            except json.JSONDecodeError:
+                pass
+        if isinstance(row["result"], str):
+            try:
+                event_data["result"] = json.loads(row["result"])
+            except json.JSONDecodeError:
+                pass
+        events.append(event_data)
+
+    # Get playbook path from catalog
+    playbook_path = "unknown"
+    if first_event.get("catalog_id"):
+        async with get_pool_connection() as conn:
+            async with conn.cursor(row_factory=dict_row) as cursor:
+                await cursor.execute("""
+                    SELECT path FROM noetl.catalog WHERE catalog_id = %s
+                """, (first_event["catalog_id"],))
+                catalog_row = await cursor.fetchone()
+        if catalog_row:
+            playbook_path = catalog_row["path"]
+
+    # Determine final status
+    terminal_event_types = {
+        'execution.cancelled': 'CANCELLED',
+        'playbook.failed': 'FAILED',
+        'workflow.failed': 'FAILED',
+        'playbook.completed': 'COMPLETED',
+        'workflow.completed': 'COMPLETED',
+    }
+
+    if terminal_event:
+        final_status = terminal_event_types.get(terminal_event["event_type"], terminal_event["status"])
+    elif latest_event:
+        final_status = latest_event["status"]
+    else:
+        final_status = "UNKNOWN"
+
+    return {
+        "execution_id": execution_id,
+        "path": playbook_path,
+        "status": final_status,
+        "start_time": first_event["created_at"].isoformat() if first_event.get("created_at") else None,
+        "end_time": latest_event["created_at"].isoformat() if latest_event and latest_event.get("created_at") else None,
+        "parent_execution_id": first_event.get("parent_execution_id"),
+        "events": events,
+        "pagination": {
+            "page": page,
+            "page_size": page_size,
+            "total_events": total_events,
+            "total_pages": total_pages,
+            "has_next": page < total_pages,
+            "has_prev": page > 1
         }
-        # Find the most authoritative terminal status
-        final_status = events[-1].get("status")  # Default to last event's status
-        for event in reversed(events):
-            event_type = event.get("event_type")
-            if event_type in terminal_event_types:
-                final_status = terminal_event_types[event_type]
-                break
-        
-        return {
-            "execution_id": execution_id,
-            "path": playbook_path,
-            "status": final_status,
-            "start_time": execution_item["timestamp"],
-            "end_time": events[-1].get("timestamp") if events else None,
-            "parent_execution_id": execution_item.get("parent_execution_id"),
-            "events": events,
-        }
-    # Fallback: pull from in-memory v2 engine state (for newer engine runs)
-    if get_v2_engine:
-        try:
-            engine = get_v2_engine()
-            state = engine.state_store.get_state(execution_id)
-            if state:
-                path = None
-                if state.playbook and getattr(state.playbook, "metadata", None):
-                    path = state.playbook.metadata.get("path") or state.playbook.metadata.get("name")
-                status = "FAILED" if state.failed else "COMPLETED" if state.completed else "RUNNING"
-                return {
-                    "execution_id": execution_id,
-                    "path": path or "unknown",
-                    "status": status,
-                    "start_time": None,
-                    "end_time": None,
-                    "parent_execution_id": state.parent_execution_id,
-                    "events": []
-                }
-        except Exception as e:  # pragma: no cover
-            logger.warning(f"V2 engine fallback failed for execution {execution_id}: {e}")
-    raise HTTPException(status_code=404, detail=f"Execution {execution_id} not found")
+    }

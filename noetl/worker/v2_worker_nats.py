@@ -14,6 +14,7 @@ import asyncio
 import logging
 import httpx
 import os
+from collections import OrderedDict
 from typing import Optional, Any
 from datetime import datetime, timezone
 
@@ -22,6 +23,66 @@ from noetl.core.messaging import NATSCommandSubscriber
 from noetl.core.logging_context import LoggingContext
 from noetl.core.logger import setup_logger
 logger = setup_logger(__name__, include_location=True)
+
+
+# Module-level template cache for worker - avoids compiling same templates repeatedly
+class _WorkerTemplateCache:
+    """LRU cache for compiled Jinja2 templates in worker. Memory bounded."""
+
+    def __init__(self, max_size: int = 500):
+        self._cache: OrderedDict[str, Any] = OrderedDict()
+        self._max_size = max_size
+        self._env = None  # Lazy initialization
+        self._hits = 0
+        self._misses = 0
+        self._evictions = 0
+
+    def get_env(self):
+        """Get or create Jinja2 environment."""
+        if self._env is None:
+            from jinja2 import Environment
+            self._env = Environment()
+        return self._env
+
+    def get_or_compile(self, template_str: str) -> Any:
+        """Get compiled template from cache or compile and cache it."""
+        if template_str in self._cache:
+            self._cache.move_to_end(template_str)
+            self._hits += 1
+            return self._cache[template_str]
+
+        self._misses += 1
+        compiled = self.get_env().from_string(template_str)
+
+        if len(self._cache) >= self._max_size:
+            self._cache.popitem(last=False)
+            self._evictions += 1
+
+        self._cache[template_str] = compiled
+
+        # Log stats periodically
+        if self._misses % 100 == 0:
+            logger.debug(
+                f"[TEMPLATE-CACHE] Worker stats: size={len(self._cache)}/{self._max_size}, "
+                f"hits={self._hits}, misses={self._misses}, hit_rate={self._hits / (self._hits + self._misses) * 100:.1f}%"
+            )
+
+        return compiled
+
+    def stats(self) -> dict:
+        """Return cache statistics."""
+        total = self._hits + self._misses
+        return {
+            "size": len(self._cache),
+            "max_size": self._max_size,
+            "hits": self._hits,
+            "misses": self._misses,
+            "evictions": self._evictions,
+            "hit_rate": (self._hits / total * 100) if total > 0 else 0.0
+        }
+
+
+_template_cache = _WorkerTemplateCache(max_size=500)
 
 
 class V2Worker:
@@ -576,7 +637,8 @@ class V2Worker:
             max_retries = 2  # Allow one retry with server variable lookup
             for attempt in range(max_retries):
                 try:
-                    template = jinja_env.from_string(when_condition)
+                    # Use cached template for performance
+                    template = _template_cache.get_or_compile(when_condition)
                     condition_result = template.render(eval_context)
                     
                     # Parse boolean result (Jinja2 returns string)
@@ -638,13 +700,13 @@ class V2Worker:
                                             rendered_nested = {}
                                             for nested_key, nested_value in arg_value.items():
                                                 if isinstance(nested_value, str) and '{{' in nested_value:
-                                                    template = jinja_env.from_string(nested_value)
+                                                    template = _template_cache.get_or_compile(nested_value)
                                                     rendered_nested[nested_key] = template.render(eval_context)
                                                 else:
                                                     rendered_nested[nested_key] = nested_value
                                             rendered_args[arg_key] = rendered_nested
                                         elif isinstance(arg_value, str) and '{{' in arg_value:
-                                            template = jinja_env.from_string(arg_value)
+                                            template = _template_cache.get_or_compile(arg_value)
                                             rendered_args[arg_key] = template.render(eval_context)
                                         else:
                                             rendered_args[arg_key] = arg_value
@@ -865,7 +927,8 @@ class V2Worker:
             max_retries = 2  # Allow one retry with server variable lookup
             for attempt in range(max_retries):
                 try:
-                    template = jinja_env.from_string(when_condition)
+                    # Use cached template for performance
+                    template = _template_cache.get_or_compile(when_condition)
                     condition_result = template.render(eval_context)
                     
                     # Parse boolean result (Jinja2 returns string)
@@ -1036,8 +1099,8 @@ class V2Worker:
             # Evaluate condition
             try:
                 # when_condition is already a Jinja2 template (e.g., "{{ event.name == 'step.exit' }}")
-                # so render it directly without wrapping it again
-                template = jinja_env.from_string(when_condition)
+                # so render it directly without wrapping it again - use cached template for performance
+                template = _template_cache.get_or_compile(when_condition)
                 result = template.render(eval_context)
                 # Result should be a boolean or string that evaluates to boolean
                 if isinstance(result, bool):

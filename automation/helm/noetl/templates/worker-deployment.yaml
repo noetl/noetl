@@ -1,0 +1,58 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: noetl-worker
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: noetl-worker
+    component: worker
+    runtime: cpu
+    worker-pool: worker-cpu-01
+spec:
+  replicas: {{ .Values.worker.replicas }}
+  selector:
+    matchLabels:
+      app: noetl-worker
+      worker-pool: worker-cpu-01
+  template:
+    metadata:
+      labels:
+        app: noetl-worker
+        component: worker
+        runtime: cpu
+        worker-pool: worker-cpu-01
+    spec:
+      serviceAccountName: noetl-worker
+      initContainers:
+        - name: wait-for-api
+          image: curlimages/curl:8.7.1
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -c
+            - "until curl -sf http://noetl.{{ .Values.namespace }}.svc.cluster.local:{{ .Values.service.port }}/api/health; do echo 'Waiting for NoETL API...'; sleep 3; done"
+      containers:
+        - name: worker
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - python
+          args:
+            - -m
+            - noetl.worker
+          envFrom:
+            - configMapRef:
+                name: noetl-worker-config
+          volumeMounts:
+{{- if .Values.persistence.data.enabled }}
+            - name: noetl-data
+              mountPath: /opt/noetl/data
+{{- end }}
+          resources:
+{{- toYaml .Values.worker.resources | nindent 12 }}
+      volumes:
+{{- if .Values.persistence.data.enabled }}
+        - name: noetl-data
+          persistentVolumeClaim:
+            claimName: {{ .Values.persistence.data.name }}
+{{- end }}

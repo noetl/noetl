@@ -1,0 +1,70 @@
+{{- if .Values.workerPool.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: noetl-worker-pool
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: noetl-worker-pool
+    component: worker
+    runtime: rust
+    worker-pool: {{ .Values.workerPool.poolName }}
+spec:
+  replicas: {{ .Values.workerPool.replicas }}
+  selector:
+    matchLabels:
+      app: noetl-worker-pool
+      worker-pool: {{ .Values.workerPool.poolName }}
+  template:
+    metadata:
+      labels:
+        app: noetl-worker-pool
+        component: worker
+        runtime: rust
+        worker-pool: {{ .Values.workerPool.poolName }}
+    spec:
+      serviceAccountName: noetl-worker
+      initContainers:
+        - name: wait-for-api
+          image: curlimages/curl:8.7.1
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -c
+            - "until curl -sf http://noetl.{{ .Values.namespace }}.svc.cluster.local:{{ .Values.service.port }}/api/health; do echo 'Waiting for NoETL API...'; sleep 3; done"
+      containers:
+        - name: worker-pool
+          image: "{{ .Values.workerPool.image.repository }}:{{ .Values.workerPool.image.tag }}"
+          imagePullPolicy: {{ .Values.workerPool.image.pullPolicy }}
+          envFrom:
+            - configMapRef:
+                name: noetl-worker-pool-config
+          env:
+            - name: WORKER_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          volumeMounts:
+{{- if .Values.persistence.data.enabled }}
+            - name: noetl-data
+              mountPath: /opt/noetl/data
+{{- end }}
+          resources:
+{{- toYaml .Values.workerPool.resources | nindent 12 }}
+          livenessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - "pgrep noetl-worker"
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+      volumes:
+{{- if .Values.persistence.data.enabled }}
+        - name: noetl-data
+          persistentVolumeClaim:
+            claimName: {{ .Values.persistence.data.name }}
+{{- end }}
+{{- end }}

@@ -1,0 +1,46 @@
+{{- if .Values.ingress.enabled }}
+{{- if .Values.ingress.managedCertificate.enabled }}
+apiVersion: networking.gke.io/v1
+kind: ManagedCertificate
+metadata:
+  name: {{ .Values.ingress.managedCertificate.name }}
+  namespace: {{ .Values.namespace }}
+spec:
+  domains:
+    - {{ .Values.ingress.host }}
+---
+{{- end }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: noetl
+  namespace: {{ .Values.namespace }}
+  annotations:
+    {{- if .Values.ingress.managedCertificate.enabled }}
+    networking.gke.io/managed-certificates: {{ .Values.ingress.managedCertificate.name }}
+    {{- end }}
+    {{- range $key, $value := .Values.ingress.annotations }}
+    {{ $key }}: {{ $value | quote }}
+    {{- end }}
+spec:
+  {{- if .Values.ingress.className }}
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.host }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: noetl
+                port:
+                  number: {{ .Values.service.port }}
+{{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.host }}
+      secretName: {{ .Values.ingress.tls.secretName | default "" }}
+{{- end }}
+{{- end }}

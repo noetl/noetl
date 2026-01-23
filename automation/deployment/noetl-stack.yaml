@@ -1,0 +1,309 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: noetl_stack_deploy
+  path: automation/deployment/noetl-stack
+  description: Deploy complete NoETL stack (server, workers, rust worker-pool)
+
+executor:
+  profile: local
+  version: noetl-runtime/1
+
+workload:
+  action: help
+  registry: "us-docker.pkg.dev/noetl-dev/noetl"
+  namespace: "noetl"
+  server_image: "noetl"
+  worker_pool_image: "noetl-worker-pool"
+  enable_rust_workers: "true"
+  enable_python_workers: "true"
+
+workflow:
+  - step: start
+    desc: Entry point for NoETL Stack deployment
+    tool:
+      kind: shell
+      cmds:
+        - echo "NoETL Stack Deployment - Action '{{ workload.action }}'"
+    next:
+      - when: "{{ workload.action }} == deploy"
+        then:
+          - step: check_prerequisites
+        args: {}
+      - when: "{{ workload.action }} == upgrade"
+        then:
+          - step: helm_upgrade
+        args: {}
+      - when: "{{ workload.action }} == status"
+        then:
+          - step: status
+        args: {}
+      - when: "{{ workload.action }} == logs"
+        then:
+          - step: logs
+        args: {}
+      - when: "{{ workload.action }} == destroy"
+        then:
+          - step: destroy
+        args: {}
+      - when: "{{ workload.action }} == help"
+        then:
+          - step: show_help
+        args: {}
+      - step: show_help
+
+  - step: check_prerequisites
+    desc: Check deployment prerequisites
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Checking prerequisites..."
+
+          # Check kubectl
+          if ! command -v kubectl &> /dev/null; then
+            echo "ERROR: kubectl not found"
+            exit 1
+          fi
+
+          # Check helm
+          if ! command -v helm &> /dev/null; then
+            echo "ERROR: helm not found"
+            exit 1
+          fi
+
+          # Check cluster connection
+          if ! kubectl cluster-info &> /dev/null; then
+            echo "ERROR: Cannot connect to Kubernetes cluster"
+            exit 1
+          fi
+
+          echo "Prerequisites OK"
+    next:
+      - step: create_namespace
+
+  - step: create_namespace
+    desc: Create namespace if not exists
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Creating namespace {{ workload.namespace }}..."
+          kubectl create namespace {{ workload.namespace }} --dry-run=client -o yaml | kubectl apply -f -
+    next:
+      - step: helm_deploy
+
+  - step: helm_deploy
+    desc: Deploy NoETL stack via Helm
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Deploying NoETL Stack..."
+
+          # Build helm values
+          HELM_ARGS=""
+
+          # Server image
+          if [ -n "{{ workload.registry }}" ]; then
+            HELM_ARGS="$HELM_ARGS --set image.repository={{ workload.registry }}/{{ workload.server_image }}"
+          fi
+
+          # Worker pool
+          if [ "{{ workload.enable_rust_workers }}" = "true" ]; then
+            HELM_ARGS="$HELM_ARGS --set workerPool.enabled=true"
+            if [ -n "{{ workload.registry }}" ]; then
+              HELM_ARGS="$HELM_ARGS --set workerPool.image.repository={{ workload.registry }}/{{ workload.worker_pool_image }}"
+            fi
+          else
+            HELM_ARGS="$HELM_ARGS --set workerPool.enabled=false"
+          fi
+
+          # Python workers
+          if [ "{{ workload.enable_python_workers }}" = "true" ]; then
+            HELM_ARGS="$HELM_ARGS --set worker.replicas=3"
+          else
+            HELM_ARGS="$HELM_ARGS --set worker.replicas=0"
+          fi
+
+          echo "Helm args: $HELM_ARGS"
+
+          helm upgrade --install noetl automation/helm/noetl \
+            --namespace {{ workload.namespace }} \
+            $HELM_ARGS \
+            --wait \
+            --timeout 10m
+
+          echo ""
+          echo "Deployment initiated"
+    next:
+      - step: wait_for_pods
+
+  - step: helm_upgrade
+    desc: Upgrade existing NoETL deployment
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Upgrading NoETL Stack..."
+
+          helm upgrade noetl automation/helm/noetl \
+            --namespace {{ workload.namespace }} \
+            --reuse-values \
+            --wait \
+            --timeout 5m
+
+          echo "Upgrade complete"
+    next:
+      - step: status
+
+  - step: wait_for_pods
+    desc: Wait for all pods to be ready
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Waiting for pods to be ready..."
+
+          # Wait for server
+          echo "Waiting for NoETL server..."
+          kubectl wait --for=condition=ready pod \
+            -l app=noetl-server \
+            -n {{ workload.namespace }} \
+            --timeout=180s || echo "Warning: Server not ready"
+
+          # Wait for Python workers
+          if [ "{{ workload.enable_python_workers }}" = "true" ]; then
+            echo "Waiting for Python workers..."
+            kubectl wait --for=condition=ready pod \
+              -l app=noetl-worker \
+              -n {{ workload.namespace }} \
+              --timeout=120s || echo "Warning: Python workers not ready"
+          fi
+
+          # Wait for Rust workers
+          if [ "{{ workload.enable_rust_workers }}" = "true" ]; then
+            echo "Waiting for Rust worker pool..."
+            kubectl wait --for=condition=ready pod \
+              -l app=noetl-worker-pool \
+              -n {{ workload.namespace }} \
+              --timeout=120s || echo "Warning: Rust workers not ready"
+          fi
+
+          echo ""
+          echo "All pods check complete"
+    next:
+      - step: status
+
+  - step: status
+    desc: Show NoETL stack status
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "============================================"
+          echo " NoETL Stack Status"
+          echo "============================================"
+          echo ""
+          echo "Pods:"
+          kubectl get pods -n {{ workload.namespace }} -o wide
+          echo ""
+          echo "Services:"
+          kubectl get svc -n {{ workload.namespace }}
+          echo ""
+          echo "PVCs:"
+          kubectl get pvc -n {{ workload.namespace }}
+          echo ""
+          echo "ConfigMaps:"
+          kubectl get configmap -n {{ workload.namespace }}
+          echo ""
+          echo "Deployments:"
+          kubectl get deployments -n {{ workload.namespace }}
+    next:
+      - step: end
+
+  - step: logs
+    desc: Show NoETL logs
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "NoETL Server Logs (last 50 lines):"
+          echo "==================================="
+          kubectl logs -n {{ workload.namespace }} -l app=noetl-server --tail=50 2>/dev/null || echo "No server logs"
+
+          echo ""
+          echo "Python Worker Logs (last 30 lines):"
+          echo "===================================="
+          kubectl logs -n {{ workload.namespace }} -l app=noetl-worker --tail=30 2>/dev/null || echo "No worker logs"
+
+          echo ""
+          echo "Rust Worker Pool Logs (last 30 lines):"
+          echo "======================================="
+          kubectl logs -n {{ workload.namespace }} -l app=noetl-worker-pool --tail=30 2>/dev/null || echo "No worker-pool logs"
+    next:
+      - step: end
+
+  - step: destroy
+    desc: Destroy NoETL stack
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "WARNING: This will destroy the NoETL stack in namespace {{ workload.namespace }}"
+          echo ""
+
+          helm uninstall noetl --namespace {{ workload.namespace }} || true
+
+          echo ""
+          echo "Stack destroyed. PVCs may still exist."
+          kubectl get pvc -n {{ workload.namespace }}
+    next:
+      - step: end
+
+  - step: show_help
+    desc: Display available actions
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "=================================================="
+          echo " NoETL Stack Deployment"
+          echo "=================================================="
+          echo ""
+          echo "Usage:"
+          echo "  noetl run automation/deployment/noetl-stack.yaml --set action=<action>"
+          echo ""
+          echo "Actions:"
+          echo "  deploy   - Deploy the complete NoETL stack"
+          echo "  upgrade  - Upgrade existing deployment (reuse values)"
+          echo "  status   - Show stack status"
+          echo "  logs     - Show logs from all components"
+          echo "  destroy  - Remove the NoETL stack"
+          echo "  help     - Show this help"
+          echo ""
+          echo "Options:"
+          echo "  --set registry=<registry>           - Docker registry"
+          echo "  --set namespace=<ns>                - Kubernetes namespace (default: noetl)"
+          echo "  --set enable_rust_workers=true      - Enable Rust worker pool (default: true)"
+          echo "  --set enable_python_workers=true    - Enable Python workers (default: true)"
+          echo ""
+          echo "Examples:"
+          echo "  # Deploy full stack"
+          echo "  noetl run automation/deployment/noetl-stack.yaml --set action=deploy"
+          echo ""
+          echo "  # Deploy with only Rust workers"
+          echo "  noetl run automation/deployment/noetl-stack.yaml --set action=deploy --set enable_python_workers=false"
+    next:
+      - step: end
+
+  - step: end
+    desc: Done

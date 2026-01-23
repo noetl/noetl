@@ -31,17 +31,14 @@ IaP allows you to manage cloud infrastructure using familiar NoETL playbook YAML
 
 ### Runtime Mode
 
-All IaP playbooks are designed for **local runtime** execution using the embedded Rust interpreter:
+All IaP playbooks run locally using the embedded Rust interpreter:
 
 ```bash
 # Run with local runtime (default for IaP)
-noetl run iap/gcp/gke_autopilot.yaml --set project_id=my-project
-
-# Explicitly specify local runtime
-noetl run iap/gcp/gke_autopilot.yaml -r local --set project_id=my-project
+noetl iap apply iap/gcp/gke_autopilot.yaml --auto-approve --var project_id=my-project
 
 # With verbose output
-noetl run iap/gcp/gke_autopilot.yaml -v --set project_id=my-project
+noetl iap apply iap/gcp/gke_autopilot.yaml --auto-approve --var project_id=my-project --verbose
 ```
 
 ### Context Management
@@ -62,18 +59,19 @@ noetl context current
 
 ### Variable Passing
 
-Pass playbook variables with `--set key=value`:
+Pass playbook variables with `--var key=value`:
 
 ```bash
 # Single variable
-noetl run gke_autopilot.yaml --set project_id=my-project
+noetl iap apply gke_autopilot.yaml --auto-approve --var project_id=my-project
 
 # Multiple variables
-noetl run gke_autopilot.yaml \
-  --set project_id=mestumre-dev \
-  --set cluster_name=noetl-test \
-  --set region=us-central1 \
-  --set action=create
+noetl iap apply gke_autopilot.yaml \
+  --auto-approve \
+  --var project_id=mestumre-dev \
+  --var cluster_name=noetl-test \
+  --var region=us-central1 \
+  --var action=create
 ```
 
 ## Quick Start
@@ -83,34 +81,37 @@ noetl run gke_autopilot.yaml \
 First, create the GCS bucket for state storage:
 
 ```bash
-noetl run iap/gcp/init_state_bucket.yaml \
-  --set project_id=mestumre-dev \
-  --set bucket_name=mestumre-dev-noetl-state \
-  --set region=us-central1
+noetl iap apply iap/gcp/init_state_bucket.yaml \
+  --auto-approve \
+  --var project_id=mestumre-dev \
+  --var bucket_name=mestumre-dev-noetl-state \
+  --var region=us-central1
 ```
 
 ### Provision GKE Autopilot Cluster
 
 ```bash
-noetl run iap/gcp/gke_autopilot.yaml \
-  --set project_id=mestumre-dev \
-  --set cluster_name=noetl-test-cluster \
-  --set region=us-central1
+noetl iap apply iap/gcp/gke_autopilot.yaml \
+  --auto-approve \
+  --var project_id=mestumre-dev \
+  --var cluster_name=noetl-test-cluster \
+  --var region=us-central1
 ```
 
 ### Check State
 
 ```bash
-noetl run iap/gcp/state_inspect.yaml
+noetl iap apply iap/gcp/state_inspect.yaml
 ```
 
 ### Destroy Resources
 
 ```bash
-noetl run iap/gcp/gke_autopilot.yaml \
-  --set action=destroy \
-  --set project_id=mestumre-dev \
-  --set cluster_name=noetl-test-cluster
+noetl iap apply iap/gcp/gke_autopilot.yaml \
+  --auto-approve \
+  --var action=destroy \
+  --var project_id=mestumre-dev \
+  --var cluster_name=noetl-test-cluster
 ```
 
 ## Directory Structure
@@ -281,11 +282,12 @@ workflow:
 Execute with:
 
 ```bash
-noetl run iap/gcp/gke_autopilot.yaml \
-  --set project_id=mestumre-dev \
-  --set cluster_name=my-cluster \
-  --set action=create \
-  -v
+noetl iap apply iap/gcp/gke_autopilot.yaml \
+  --auto-approve \
+  --var project_id=mestumre-dev \
+  --var cluster_name=my-cluster \
+  --var action=create \
+  --verbose
 ```
 
 ## Supported Resources
@@ -311,7 +313,7 @@ gcloud auth application-default print-access-token
 gcloud auth application-default login
 
 # Run playbook with verbose output
-noetl run iap/gcp/gke_autopilot.yaml --set project_id=my-project -v
+noetl iap apply iap/gcp/gke_autopilot.yaml --auto-approve --var project_id=my-project --verbose
 ```
 
 ### State Errors
