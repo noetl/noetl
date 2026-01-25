@@ -84,12 +84,12 @@ Retry conditions are Jinja2 expressions with access to:
 
 Register all retry test playbooks:
 ```bash
-task playbook:local:register-retry-tests
+noetl run automation/test/register-retry-tests.yaml
 ```
 
 Execute specific retry test:
 ```bash
-task playbook:local:execute PLAYBOOK_PATH=tests/retry/http_status_code
+noetl run tests/fixtures/playbooks/retry_test/http_retry_status_code.yaml
 ```
 
 ## Implementation Details

@@ -315,18 +315,6 @@ workflow:
           echo "  # Port-forward to localhost"
           echo "  noetl run automation/infrastructure/jupyterlab.yaml --set action=port-forward"
           echo ""
-          echo "Task Equivalents:"
-          echo "  deploy          -> task jupyterlab:deploy"
-          echo "  undeploy        -> task jupyterlab:undeploy"
-          echo "  full            -> task jupyterlab:full"
-          echo "  status          -> task jupyterlab:status"
-          echo "  logs            -> task jupyterlab:logs"
-          echo "  port-forward    -> task jupyterlab:port-forward"
-          echo "  restart         -> task jupyterlab:restart"
-          echo "  shell           -> task jupyterlab:shell"
-          echo "  test            -> task jupyterlab:test"
-          echo "  update-notebook -> task jupyterlab:update-notebook"
-          echo ""
     next:
       - step: end
 

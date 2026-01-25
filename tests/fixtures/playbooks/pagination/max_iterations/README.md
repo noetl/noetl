@@ -95,9 +95,9 @@ curl -X POST http://localhost:8082/api/run/playbook \
   -d '{"path": "tests/pagination/max_iterations"}'
 ```
 
-### Option 3: Using Task Runner
+### Option 3: Using NoETL CLI
 ```bash
-task test:pagination:max-iterations
+noetl run tests/fixtures/playbooks/pagination/max_iterations/test_pagination_max_iterations.yaml
 ```
 
 ## Expected Results

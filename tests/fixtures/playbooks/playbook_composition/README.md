@@ -83,10 +83,10 @@ save:
 
 ### Sample Input Data
 The main playbook processes 4 users with different profiles:
-- **Alice**: Engineering, 5yr exp, 4.2 rating → Expected: Senior/Mid-Level
-- **Bob**: Marketing, 8yr exp, 3.8 rating → Expected: Mid-Level
-- **Charlie**: Engineering, 3yr exp, 4.5 rating → Expected: Mid-Level  
-- **Diana**: Management, 15yr exp, 4.0 rating → Expected: Executive
+- **Alice**: Engineering, 5yr exp, 4.2 rating - Expected: Senior/Mid-Level
+- **Bob**: Marketing, 8yr exp, 3.8 rating - Expected: Mid-Level
+- **Charlie**: Engineering, 3yr exp, 4.5 rating - Expected: Mid-Level
+- **Diana**: Management, 15yr exp, 4.0 rating - Expected: Executive
 
 ### Validation Checks
 1. **Score Range**: All scores must be 0.0-100.0
@@ -107,38 +107,23 @@ Tests playbook parsing, planning, and structural validation without runtime exec
 ### Runtime Tests with Kubernetes Cluster
 
 #### Prerequisites
-- Kubernetes cluster deployed with NoETL (use `task bring-all` to deploy full stack)
+- Kubernetes cluster deployed with NoETL (use `noetl run automation/setup/bootstrap.yaml` to deploy full stack)
 - NoETL API accessible on `localhost:8082`
 - PostgreSQL accessible on `localhost:54321`
 
 #### Test Commands
 ```bash
 # Register required credentials
-task register-test-credentials
+noetl run automation/test/register-test-credentials.yaml
 
 # Register playbook composition test
-task test-register-playbook-composition
+noetl playbook register tests/fixtures/playbooks/playbook_composition/playbook_composition.yaml
 
 # Execute playbook composition test
-task test-execute-playbook-composition
+noetl execution create tests/fixtures/playbooks/playbook_composition/playbook_composition --data '{}'
 
 # Full integration test (credentials + register + execute)
-task test-playbook-composition-full
-```
-
-#### Alias Commands (shorter)
-```bash
-# Register credentials
-task rtc
-
-# Register playbook
-task trpc
-
-# Execute playbook
-task tepc
-
-# Full test workflow
-task tpcf
+noetl run automation/test/playbook-composition-full.yaml
 ```
 
 ## Configuration
@@ -155,14 +140,14 @@ Workload parameters:
 
 ### Score Calculation Formula
 ```
-Total Score = (Experience × 0.4) + (Performance × 0.35) + (Department × 0.15) + (Age × 0.1)
+Total Score = (Experience x 0.4) + (Performance x 0.35) + (Department x 0.15) + (Age x 0.1)
 ```
 
 ### Sample Expected Outputs
-- **Alice**: ~65-75 points → Senior/Mid-Level
-- **Bob**: ~55-65 points → Mid-Level  
-- **Charlie**: ~60-70 points → Mid-Level
-- **Diana**: ~75-85 points → Executive
+- **Alice**: ~65-75 points - Senior/Mid-Level
+- **Bob**: ~55-65 points - Mid-Level
+- **Charlie**: ~60-70 points - Mid-Level
+- **Diana**: ~75-85 points - Executive
 
 ### Validation Success Criteria
 - All 4 users processed successfully

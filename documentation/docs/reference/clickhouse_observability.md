@@ -27,24 +27,24 @@ NoETL Events → OpenTelemetry Collector → ClickHouse → Grafana Dashboards
 
 ```bash
 # Deploy all components
-task clickhouse:deploy
+noetl run automation/infrastructure/clickhouse.yaml --set action=deploy
 
 # Verify deployment
-task clickhouse:status
-task clickhouse:test
+noetl run automation/infrastructure/clickhouse.yaml --set action=status
+noetl run automation/infrastructure/clickhouse.yaml --set action=test
 ```
 
 ### Connect to ClickHouse
 
 ```bash
 # CLI access
-task clickhouse:connect
+noetl run automation/infrastructure/clickhouse.yaml --set action=connect
 
 # Execute query
-task clickhouse:query -- "SELECT COUNT(*) FROM observability.logs"
+noetl run automation/infrastructure/clickhouse.yaml --set action=query --set query="SELECT COUNT(*) FROM observability.logs"
 
 # Port forward for local access
-task clickhouse:port-forward  # HTTP:8123, Native:9000
+noetl run automation/infrastructure/clickhouse.yaml --set action=port-forward  # HTTP:8123, Native:9000
 ```
 
 ## Schema
@@ -84,7 +84,7 @@ NoETL-specific execution events:
 #### `error_rate_by_service`
 Hourly error counts per service:
 ```sql
-SELECT 
+SELECT
   toStartOfHour(Timestamp) AS Timestamp,
   ServiceName,
   ErrorCount,
@@ -98,7 +98,7 @@ ORDER BY Timestamp DESC, ErrorRate DESC
 #### `avg_duration_by_span`
 Span performance statistics:
 ```sql
-SELECT 
+SELECT
   ServiceName,
   SpanName,
   avgMerge(AvgDuration) AS AvgDuration,
@@ -113,7 +113,7 @@ ORDER BY AvgDuration DESC
 #### `noetl_execution_stats`
 Execution metrics:
 ```sql
-SELECT 
+SELECT
   EventType,
   Status,
   EventCount,
@@ -128,7 +128,7 @@ ORDER BY EventCount DESC
 
 ### Recent Errors
 ```sql
-SELECT 
+SELECT
   Timestamp,
   ServiceName,
   SeverityText,
@@ -143,7 +143,7 @@ LIMIT 100
 
 ### Slow Traces
 ```sql
-SELECT 
+SELECT
   Timestamp,
   ServiceName,
   SpanName,
@@ -158,7 +158,7 @@ LIMIT 50
 
 ### NoETL Execution Failures
 ```sql
-SELECT 
+SELECT
   Timestamp,
   ExecutionId,
   EventType,
@@ -174,24 +174,24 @@ ORDER BY Timestamp DESC
 
 ### Optimize Tables
 ```bash
-task clickhouse:optimize
+noetl run automation/infrastructure/clickhouse.yaml --set action=optimize
 ```
 
 ### Clean Data (Keep Schema)
 ```bash
-task clickhouse:clean-data
+noetl run automation/infrastructure/clickhouse.yaml --set action=clean-data
 ```
 
 ### Check Health
 ```bash
-task clickhouse:health
+noetl run automation/infrastructure/clickhouse.yaml --set action=health
 ```
 
 ### View Logs
 ```bash
-task clickhouse:logs              # ClickHouse server
-task clickhouse:logs-operator     # Operator
-task clickhouse:logs-mcp          # MCP server
+noetl run automation/infrastructure/clickhouse.yaml --set action=logs              # ClickHouse server
+noetl run automation/infrastructure/clickhouse.yaml --set action=logs-operator     # Operator
+noetl run automation/infrastructure/clickhouse.yaml --set action=logs-mcp          # MCP server
 ```
 
 ## MCP Server Integration
@@ -201,7 +201,7 @@ The ClickHouse MCP (Model Context Protocol) server provides AI agents with direc
 ### Access MCP Server
 ```bash
 # Port forward
-task clickhouse:port-forward-mcp
+noetl run automation/infrastructure/clickhouse.yaml --set action=port-forward-mcp
 
 # Test endpoint
 curl http://localhost:8124/health
@@ -250,7 +250,7 @@ Adjust in manifests as needed for your retention requirements.
 
 ### Operator Not Starting
 ```bash
-task clickhouse:logs-operator
+noetl run automation/infrastructure/clickhouse.yaml --set action=logs-operator
 kubectl describe deployment clickhouse-operator -n clickhouse
 ```
 
@@ -258,15 +258,15 @@ kubectl describe deployment clickhouse-operator -n clickhouse
 ```bash
 kubectl get chi -n clickhouse
 kubectl describe chi noetl-clickhouse -n clickhouse
-task clickhouse:logs
+noetl run automation/infrastructure/clickhouse.yaml --set action=logs
 ```
 
 ### Schema Not Initialized
 ```bash
-task clickhouse:connect
+noetl run automation/infrastructure/clickhouse.yaml --set action=connect
 # Then run: SHOW DATABASES;
 # If observability missing, re-apply schema:
-task clickhouse:deploy-schema
+noetl run automation/infrastructure/clickhouse.yaml --set action=deploy-schema
 ```
 
 ### Connection Issues

@@ -1,6 +1,6 @@
 # NoETL Automation Playbooks
 
-This directory contains NoETL playbooks for automating development, CI/CD, and testing workflows. These playbooks provide an alternative to Taskfile/Makefile commands, allowing you to manage infrastructure as code using NoETL's own DSL.
+This directory contains NoETL playbooks for automating development, CI/CD, and testing workflows. These playbooks allow you to manage infrastructure as code using NoETL's own DSL.
 
 ## Runtime Modes
 
@@ -40,7 +40,9 @@ automation/
 ├── development/               # Development workflows
 │   ├── noetl.yaml             # NoETL server/worker management
 │   ├── docker.yaml            # Docker image building
-│   └── tooling.yaml           # Development tool setup
+│   ├── setup_tooling.yaml     # OS-aware tooling setup (auto-detects OS)
+│   ├── tooling_macos.yaml     # Development tool setup for macOS (Homebrew)
+│   └── tooling_linux.yaml     # Development tool setup for Linux/WSL2 (apt-get)
 ├── test/                      # Testing workflows
 │   └── pagination-server.yaml # Pagination test server automation
 ├── iap/                       # Infrastructure as Playbook
@@ -58,19 +60,12 @@ automation/
 
 ### Quick Start
 
-Replace `make` and `task` commands with NoETL playbooks:
-
 ```bash
-# Old way
-make destroy && make bootstrap
-task bring-all
+# Destroy and rebuild environment
+noetl run automation/setup/destroy.yaml && noetl run automation/setup/bootstrap.yaml
 
-# New way
+# Or use the shorthand aliases
 noetl run destroy && noetl run boot
-
-# Or explicitly
-noetl run automation/setup/destroy.yaml
-noetl run automation/setup/bootstrap.yaml
 ```
 
 ### Main Entry Point
@@ -100,12 +95,8 @@ noetl run automation/main.yaml --set target=dev
 noetl run automation/setup/bootstrap.yaml
 ```
 
-Equivalent to:
-- `./ci/bootstrap/bootstrap.sh`
-- `task bring-all`
-
 Steps performed:
-1. Verify dependencies (Docker, kubectl, kind, task)
+1. Verify dependencies (Docker, kubectl, kind)
 2. Check ports availability (54321, 3000, 9428, 8082)
 3. Build noetlctl Rust CLI
 4. Build NoETL Docker image
@@ -120,8 +111,6 @@ Steps performed:
 ```bash
 noetl run automation/setup/destroy.yaml
 ```
-
-Equivalent to: `make destroy`
 
 Steps performed:
 1. Delete kind cluster
@@ -152,12 +141,6 @@ noetl run automation/infrastructure/postgres.yaml --set action=remove
 noetl run automation/infrastructure/postgres.yaml --set action=clear-cache
 ```
 
-Equivalent task commands:
-- `task postgres:k8s:deploy` → `--set action=deploy`
-- `task postgres:k8s:remove` → `--set action=remove`
-- `task postgres:k8s:schema-reset` → `--set action=schema-reset`
-- `task postgres:local:clear-cache` → `--set action=clear-cache`
-
 **Qdrant Vector Database:**
 ```bash
 # Deploy Qdrant
@@ -184,15 +167,6 @@ noetl run automation/infrastructure/qdrant.yaml --set action=restart
 # Remove Qdrant
 noetl run automation/infrastructure/qdrant.yaml --set action=undeploy
 ```
-
-Equivalent task commands:
-- `task qdrant:deploy` → `--set action=deploy`
-- `task qdrant:undeploy` → `--set action=undeploy`
-- `task qdrant:status` → `--set action=status`
-- `task qdrant:health` → `--set action=health`
-- `task qdrant:test` → `--set action=test`
-- `task qdrant:collections` → `--set action=collections`
-- `task qdrant:restart` → `--set action=restart`
 
 **NATS JetStream:**
 ```bash
@@ -227,17 +201,6 @@ noetl run automation/infrastructure/nats.yaml --set action=restart
 noetl run automation/infrastructure/nats.yaml --set action=undeploy
 ```
 
-Equivalent task commands:
-- `task nats:deploy` → `--set action=deploy`
-- `task nats:undeploy` → `--set action=undeploy`
-- `task nats:status` → `--set action=status`
-- `task nats:health` → `--set action=health`
-- `task nats:streams` → `--set action=streams`
-- `task nats:monitoring` → `--set action=monitoring`
-- `task nats:connect` → `--set action=connect`
-- `task nats:test` → `--set action=test`
-- `task nats:restart` → `--set action=restart`
-
 **Observability Aggregate Operations:**
 ```bash
 # Activate all observability services (ClickHouse + Qdrant + NATS)
@@ -256,13 +219,6 @@ noetl run automation/infrastructure/observability.yaml --set action=health-all
 noetl run automation/infrastructure/observability.yaml --set action=restart-all
 ```
 
-Equivalent task commands:
-- `task observability:activate-all` → `--set action=activate-all`
-- `task observability:deactivate-all` → `--set action=deactivate-all`
-- `task observability:status-all` → `--set action=status-all`
-- `task observability:health-all` → `--set action=health-all`
-- `task observability:restart-all` → `--set action=restart-all`
-
 #### Test Workflows
 
 **Pagination Test Server:**
@@ -278,13 +234,6 @@ noetl run automation/test/pagination-server.yaml --set action=test
 noetl run automation/test/pagination-server.yaml --set action=logs
 noetl run automation/test/pagination-server.yaml --set action=undeploy
 ```
-
-Equivalent task commands:
-- `task pagination-server:tpsb` → `--set action=build`
-- `task pagination-server:tpsd` → `--set action=deploy`
-- `task pagination-server:tpsf` → `--set action=full`
-- `task pagination-server:tpss` → `--set action=status`
-- `task pagination-server:tpst` → `--set action=test`
 
 #### Infrastructure as Playbook (IaP)
 
@@ -342,28 +291,7 @@ noetl run automation/infrastructure/monitoring.yaml --set action=deploy-vmlogs
 noetl run automation/infrastructure/monitoring.yaml --set action=undeploy
 ```
 
-Equivalent task commands:
-- `task monitoring:k8s:deploy` → `--set action=deploy`
-- `task monitoring:k8s:delete-stack` → `--set action=undeploy`
-- `task monitoring:k8s:grafana-creds` → `--set action=grafana-creds`
-- `task monitoring:k8s:deploy-dashboards` → `--set action=deploy-dashboards`
-- `task monitoring:k8s:deploy-exporter` → `--set action=deploy-exporter`
-- `task monitoring:k8s:deploy-noetl-scrape` → `--set action=deploy-noetl-scrape`
-- `task monitoring:k8s:deploy-vector` → `--set action=deploy-vector`
-- `task monitoring:k8s:deploy-vmlogs` → `--set action=deploy-vmlogs`
-
-## Migration from Taskfile
-
-### Command Mapping
-
-| Taskfile Command | NoETL Playbook |
-|-----------------|----------------|
-| `task bring-all` | `noetl run automation/setup/bootstrap.yaml` |
-| `make destroy` | `noetl run automation/setup/destroy.yaml` |
-| `task docker:local:noetl-image-build` | `noetl run automation/development/docker.yaml --set action=build` |
-| `task noetl:k8s:deploy` | `noetl run automation/development/noetl.yaml --set action=deploy` |
-
-### Benefits of Playbook-Based Automation
+## Benefits of Playbook-Based Automation
 
 1. **Infrastructure as Code**: All automation workflows are versioned NoETL playbooks
 2. **Observability**: Execution tracked in NoETL event log and observability stack
@@ -371,19 +299,6 @@ Equivalent task commands:
 4. **Conditional Logic**: Use Jinja2 templating for dynamic workflows
 5. **Error Handling**: Built-in retry and error handling patterns
 6. **Self-Documenting**: YAML DSL is more readable than shell scripts
-
-### Gradual Migration
-
-You can use both approaches simultaneously:
-
-```bash
-# Mix Taskfile and playbooks
-task bring-all                           # Use existing task
-noetl run automation/test/regression     # Use new playbook
-
-# Playbooks can call task commands internally
-# See bootstrap.yaml for subprocess execution examples
-```
 
 ## Development
 
@@ -443,32 +358,42 @@ workflow:
 
 ### Adding New Automation Workflows
 
-1. Create playbook in appropriate directory (`setup/`, `ci/`, `test/`)
+1. Create playbook in appropriate directory (`setup/`, `infrastructure/`, `development/`, `test/`)
 2. Follow existing patterns for error handling and status reporting
-3. Use `kind: python` with `subprocess` module to call existing `task` commands
+3. Use `kind: shell` for command execution or `kind: python` for complex logic
 4. Document in this README
 
 ### Playbook Patterns
 
-**Call Task Command:**
+**Shell Command Execution:**
 ```yaml
-- step: run_task
+- step: run_command
+  tool:
+    kind: shell
+    cmds:
+      - kubectl get pods -n noetl
+      - docker ps
+```
+
+**Python Script Execution:**
+```yaml
+- step: run_python
   tool:
     kind: python
     libs:
       subprocess: subprocess
     code: |
       proc = subprocess.run(
-          ["task", "some:task:name"],
+          ["kubectl", "get", "pods", "-n", "noetl"],
           capture_output=True,
           text=True
       )
-      
+
       result = {
           "status": "success" if proc.returncode == 0 else "error",
           "data": {
               "returncode": proc.returncode,
-              "message": "Task completed" if proc.returncode == 0 else "Task failed"
+              "message": "Command completed" if proc.returncode == 0 else "Command failed"
           }
       }
 ```
@@ -501,6 +426,7 @@ next:
 
 ## See Also
 
+- [Command Reference](../documentation/docs/operations/command-reference.md) - Complete command reference with all actions
 - [NoETL CLI Documentation](../documentation/docs/noetlctl/index.md)
 - [Local Execution Guide](../documentation/docs/noetlctl/local_execution.md)
 - [Infrastructure as Playbook](../documentation/docs/features/infrastructure_as_playbook.md)

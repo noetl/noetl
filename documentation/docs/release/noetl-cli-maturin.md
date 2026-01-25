@@ -111,10 +111,7 @@ cli = ["noetl-cli==2.5.2"]
 ### Building the CLI Wheel
 
 ```bash
-# Using taskfile
-task noetlctl:build:wheel
-
-# Or directly with maturin
+# Using maturin directly
 cd crates/noetlctl
 maturin build --release
 ```
@@ -125,7 +122,7 @@ Output: `target/wheels/noetl_cli-2.5.2-py3-none-{platform}.whl`
 
 ```bash
 # Build wheel
-task noetlctl:build:wheel
+cd crates/noetlctl && maturin build --release
 
 # Install in fresh venv
 rm -rf .venv && uv venv
@@ -148,9 +145,6 @@ export MATURIN_PYPI_TOKEN="your-token"
 # Build and publish
 cd crates/noetlctl
 maturin publish
-
-# Or via taskfile
-task noetlctl:publish
 ```
 
 ## CI/CD Integration
@@ -215,11 +209,11 @@ cp target/release/noetl ../bin/noetl
 **After:**
 ```bash
 # Build wheel
-task noetlctl:build:wheel
-
-# Or use maturin directly
 cd crates/noetlctl
-maturin develop  # Build and install in dev mode
+maturin build --release
+
+# Or build and install in dev mode
+maturin develop
 ```
 
 ### For CI/CD

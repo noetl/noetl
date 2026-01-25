@@ -22,8 +22,8 @@ PGPASSWORD=demo bin/noetl run automation/setup/rebuild_schema.yaml
 ## Notes
 - This will drop and recreate all NoETL system tables in the target database.
 - Only use in development or test environments. **Do not run in production.**
-- See [automation/setup/rebuild_schema.yaml](../../automation/setup/rebuild_schema.yaml) for playbook details.
+- Playbook path: `automation/setup/rebuild_schema.yaml`
 
 ## Related Topics
-- [Database Management](../reference/database-management)
-- [Local Development Setup](../reference/local-development)
+- [Database Management](../reference/noetl_cli_usage#database-management)
+- [Local Development Setup](../development/local_dev_setup)

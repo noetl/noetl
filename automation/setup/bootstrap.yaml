@@ -12,6 +12,7 @@ workload:
   image_name: "noetl"
   build_rust_cli: false
   deploy_gateway: true
+  kind_config: "ci/kind/config.yaml"
 workflow:
   - step: start
     desc: Begin bootstrap process
@@ -91,7 +92,19 @@ workflow:
           if [ -n "$MISSING" ]; then
             echo "FAIL Missing required tools:$MISSING"
             echo ""
-            echo "Install missing tools:"
+            echo "Install missing tools using NoETL tooling playbooks:"
+            echo ""
+            echo "  # Auto-detect OS and install all dev tools:"
+            echo "  noetl run automation/development/setup_tooling.yaml --set action=install-devtools"
+            echo ""
+            echo "  # Or use platform-specific playbooks:"
+            echo "  # macOS:"
+            echo "  noetl run automation/development/tooling_macos.yaml --set action=install-devtools"
+            echo ""
+            echo "  # Linux/WSL2:"
+            echo "  noetl run automation/development/tooling_linux.yaml --set action=install-devtools"
+            echo ""
+            echo "  # Manual installation:"
             echo "  macOS: brew install docker kind kubectl go-task"
             echo "  Linux: See https://noetl.dev/docs/installation"
             exit 1
@@ -138,32 +151,46 @@ workflow:
       - step: maybe_build_rust_cli
 
   - step: maybe_build_rust_cli
-    desc: Build Rust CLI only when requested
-    tool:
-      kind: shell
-      cmds:
-        - |
-          echo "Build Rust CLI flag: {{ workload.build_rust_cli }}"
-    case:
-      - when: "{{ workload.build_rust_cli }} == true"
-        then:
-          - step: build_rust_cli
-      - when: "true"
-        then:
-          - step: build_docker_images
-  
-  - step: build_rust_cli
-    desc: Build Rust CLI binary
+    desc: Build Rust CLI if binary not found or force flag set
     tool:
       kind: shell
       cmds:
         - |
           echo ""
-          echo "Building Rust CLI..."
-          cd crates/noetlctl
-          cargo build --release
-          mkdir -p ../../bin
-          cd ../..
+          echo "Checking for Rust CLI binary..."
+          FORCE_BUILD="{{ workload.build_rust_cli }}"
+
+          # Note: This checks for existing binary to skip long compilation times.
+          # Version mismatch is possible if source changed but binary wasn't rebuilt.
+          # For guaranteed consistency, use: --set build_rust_cli=true
+
+          if [ "$FORCE_BUILD" = "true" ]; then
+            echo "INFO Force build requested via build_rust_cli=true"
+            echo "Building Rust CLI (this may take a while)..."
+            cargo build --release --manifest-path crates/noetlctl/Cargo.toml
+            if [ -f "target/release/noetl" ]; then
+              echo "OK noetl CLI built successfully"
+              ls -la target/release/noetl
+            else
+              echo "ERROR noetl CLI build failed"
+              exit 1
+            fi
+          elif [ -f "target/release/noetl" ]; then
+            echo "OK noetl binary found at target/release/noetl"
+            echo "   To force rebuild: noetl run boot --set build_rust_cli=true"
+            ls -la target/release/noetl
+          else
+            echo "INFO noetl binary not found at target/release/noetl"
+            echo "Building Rust CLI (this may take a while)..."
+            cargo build --release --manifest-path crates/noetlctl/Cargo.toml
+            if [ -f "target/release/noetl" ]; then
+              echo "OK noetl CLI built successfully"
+              ls -la target/release/noetl
+            else
+              echo "ERROR noetl CLI build failed"
+              exit 1
+            fi
+          fi
     next:
       - step: build_docker_images
   
@@ -181,6 +208,32 @@ workflow:
           echo "Building with tag: $IMAGE_TAG"
           docker buildx build --load --platform linux/amd64 -t {{ workload.registry }}/{{ workload.image_name }}:$IMAGE_TAG -f docker/noetl/dev/Dockerfile .
     next:
+      - step: check_port_conflicts
+
+  - step: check_port_conflicts
+    desc: Check for kind port conflicts
+    tool:
+      kind: shell
+      cmds:
+        - |
+          if [ ! -f "{{ workload.kind_config }}" ]; then
+            echo "ERROR: kind config not found: {{ workload.kind_config }}"
+            exit 1
+          fi
+          PORTS=$(grep -E "hostPort:" "{{ workload.kind_config }}" | awk '{print $2}' | tr -d '"')
+          IN_USE=""
+          for port in $PORTS; do
+            if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
+              IN_USE="$IN_USE $port"
+            fi
+          done
+          if [ -n "$IN_USE" ]; then
+            echo "ERROR: The following host ports are already in use:$IN_USE"
+            echo "Stop the processes using those ports or re-run with a reduced mapping set:"
+            echo "  --set kind_config=ci/kind/config-minimal.yaml"
+            exit 1
+          fi
+    next:
       - step: create_kind_cluster
   
   - step: create_kind_cluster
@@ -195,7 +248,7 @@ workflow:
             echo "OK Cluster already exists, skipping creation"
           else
             echo "Creating kind cluster..."
-            kind create cluster --config=ci/kind/config.yaml
+            kind create cluster --config={{ workload.kind_config }}
           fi
     next:
       - step: load_image_to_kind

@@ -559,18 +559,19 @@ Validated test cases in `tests/fixtures/playbooks/pagination/`:
 - `test_pagination_offset.yaml` - Offset-based pagination
 - `test_pagination_cursor.yaml` - Cursor-based pagination
 
+- `test_pagination_retry.yaml` - Combined error + success retry
+- `test_pagination_max_iterations.yaml` - Max iteration limits
+
 Register test playbooks:
 ```bash
 noetl run automation/test/setup.yaml --set action=register-playbooks
 ```
-- `test_pagination_retry.yaml` - Combined error + success retry
-- `test_pagination_max_iterations.yaml` - Max iteration limits
 
 ### Verification
 
 Run pagination tests:
 ```bash
-task test:k8s:register-playbooks
+noetl run automation/test/setup.yaml --set action=register-playbooks
 curl -X POST http://localhost:30082/api/run/playbook \
   -H "Content-Type: application/json" \
   -d '{"path": "tests/pagination/loop_with_pagination"}'

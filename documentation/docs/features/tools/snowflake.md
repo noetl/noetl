@@ -199,4 +199,4 @@ workflow:
 ## See Also
 
 - [Transfer Tool](./transfer.md) - Transfer data from Snowflake to other databases
-- [PostgreSQL Tool](./postgres.md) - Similar SQL execution for PostgreSQL
+- [PostgreSQL Tool](./postgres) - Similar SQL execution for PostgreSQL

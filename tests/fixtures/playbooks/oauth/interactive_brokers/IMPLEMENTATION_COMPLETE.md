@@ -52,7 +52,7 @@ cd /Users/kadyapam/projects/noetl/noetl
 .venv/bin/python tests/fixtures/playbooks/oauth/interactive_brokers/validate_implementation.py
 ```
 
-**Validation Results**: ✅ All checks passed
+**Validation Results**: All checks passed
 
 ### 5. Documentation
 
@@ -77,22 +77,22 @@ cd /Users/kadyapam/projects/noetl/noetl
 
 ```
 1. IBTokenProvider._create_client_assertion()
-   ├─ Create JWT header: {"alg": "RS256", "kid": "<key_id>"}
-   ├─ Create JWT payload: {iss, sub, aud, exp, iat}
-   └─ Sign with RSA private key → Signed JWT
+   |- Create JWT header: {"alg": "RS256", "kid": "<key_id>"}
+   |- Create JWT payload: {iss, sub, aud, exp, iat}
+   \- Sign with RSA private key -> Signed JWT
 
 2. IBTokenProvider._fetch_token_impl()
-   ├─ POST to https://api.ibkr.com/v1/oauth2/token
-   ├─ Body: client_assertion=<JWT>&client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer
-   └─ Response: {access_token, expires_in: 86399}
+   |- POST to https://api.ibkr.com/v1/oauth2/token
+   |- Body: client_assertion=<JWT>&client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer
+   \- Response: {access_token, expires_in: 86399}
 
 3. Token Caching
-   ├─ Cache token with 5-minute refresh buffer
-   ├─ Check expiry on each fetch_token() call
-   └─ Auto-refresh when expired
+   |- Cache token with 5-minute refresh buffer
+   |- Check expiry on each fetch_token() call
+   \- Auto-refresh when expired
 
 4. API Usage
-   └─ Authorization: Bearer <access_token>
+   \- Authorization: Bearer <access_token>
 ```
 
 ## Credential Structure
@@ -130,7 +130,7 @@ cd /Users/kadyapam/projects/noetl/noetl
 # Login to IBKR Client Portal
 open https://www.interactivebrokers.com
 
-# Navigate to: Settings → API → OAuth Applications
+# Navigate to: Settings -> API -> OAuth Applications
 # Click: Create OAuth Application
 ```
 
@@ -159,7 +159,7 @@ cp tests/fixtures/credentials/ib_oauth.json.example \
 
 # Edit ib_oauth.json with:
 # - client_id from IBKR portal
-# - key_id from IBKR portal  
+# - key_id from IBKR portal
 # - private_key (formatted with \n)
 ```
 
@@ -167,7 +167,7 @@ cp tests/fixtures/credentials/ib_oauth.json.example \
 
 ```bash
 # Start NoETL server
-task noetl:local:start
+noetl server start
 
 # Register credential
 curl -X POST http://localhost:8083/api/credentials \
@@ -198,14 +198,14 @@ tail -f logs/noetl.log | grep "IBKR:"
 
 ## Paper Trading Account
 
-**Username**: `wzeeym257`  
-**Account**: `DU8027814`  
+**Username**: `wzeeym257`
+**Account**: `DU8027814`
 **Password**: `Test202$` (for portal login only, not API)
 
 ## API Reference
 
-**Base URL**: `https://api.ibkr.com/v1`  
-**API Version**: 2.21.0  
+**Base URL**: `https://api.ibkr.com/v1`
+**API Version**: 2.21.0
 **Documentation**: `tests/fixtures/playbooks/oauth/interactive_brokers/api-docs.json`
 
 **Key Endpoints**:
@@ -218,30 +218,30 @@ tail -f logs/noetl.log | grep "IBKR:"
 
 ```
 noetl/core/auth/
-├── ib_provider.py              # IBTokenProvider implementation
-└── providers.py                # Provider registration (updated)
+|- ib_provider.py              # IBTokenProvider implementation
+\- providers.py                # Provider registration (updated)
 
 tests/fixtures/credentials/
-├── ib_oauth.json.example       # Credential template
-└── README.md                   # Setup guide (updated)
+|- ib_oauth.json.example       # Credential template
+\- README.md                   # Setup guide (updated)
 
 tests/fixtures/playbooks/oauth/interactive_brokers/
-├── ib_oauth.yaml               # Test playbook
-├── README.md                   # Setup instructions
-├── OAUTH_IMPLEMENTATION.md     # Technical guide
-├── IMPLEMENTATION_COMPLETE.md  # This document
-├── validate_implementation.py  # Validation script
-└── api-docs.json              # IBKR API specification
+|- ib_oauth.yaml               # Test playbook
+|- README.md                   # Setup instructions
+|- OAUTH_IMPLEMENTATION.md     # Technical guide
+|- IMPLEMENTATION_COMPLETE.md  # This document
+|- validate_implementation.py  # Validation script
+\- api-docs.json              # IBKR API specification
 
 pyproject.toml                  # Dependencies (PyJWT added)
 ```
 
 ## Validation Status
 
-✅ **Dependencies**: PyJWT 2.10.1 installed  
-✅ **Token Provider**: IBTokenProvider imports successfully  
-✅ **Provider Registration**: All three aliases registered  
-✅ **JWT Signing**: RS256 signing validated with test key  
+**Dependencies**: PyJWT 2.10.1 installed
+**Token Provider**: IBTokenProvider imports successfully
+**Provider Registration**: All three aliases registered
+**JWT Signing**: RS256 signing validated with test key
 
 ## Success Criteria Met
 
@@ -297,6 +297,6 @@ pyproject.toml                  # Dependencies (PyJWT added)
 
 ---
 
-**Implementation Date**: 2024-01-XX  
-**Status**: Complete and Validated  
+**Implementation Date**: 2024-01-XX
+**Status**: Complete and Validated
 **Ready for Testing**: Yes (requires OAuth app creation)

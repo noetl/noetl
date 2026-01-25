@@ -29,43 +29,43 @@ This playbook is designed to run in a GKE cluster with workload identity enabled
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│ NoETL Worker Pod (Kubernetes)                               │
-│                                                              │
-│  ┌─────────────┐                                            │
-│  │   DuckDB    │                                            │
-│  │   Engine    │                                            │
-│  └──────┬──────┘                                            │
-│         │                                                    │
-│         │ 1. Request GCS access                             │
-│         ▼                                                    │
-│  ┌─────────────────────────────────────┐                   │
-│  │  GCP Metadata Service Client        │                   │
-│  │  (169.254.169.254)                  │                   │
-│  └──────┬──────────────────────────────┘                   │
-└─────────┼──────────────────────────────────────────────────┘
-          │
-          │ 2. Fetch OAuth token
-          ▼
-┌─────────────────────────────────────────────────────────────┐
-│ GCP Metadata Service                                        │
-│ (Workload Identity Provider)                               │
-│                                                              │
-│  - Validates K8s Service Account                           │
-│  - Returns short-lived OAuth token                         │
-│  - Maps to GCP Service Account identity                    │
-└──────┬──────────────────────────────────────────────────────┘
-       │
-       │ 3. Use token for GCS operations
-       ▼
-┌─────────────────────────────────────────────────────────────┐
-│ Google Cloud Storage                                        │
-│                                                              │
-│  gs://noetl-demo-19700101/weather/                         │
-│    ├── weather_data_<execution_id>.parquet                 │
-│    ├── weather_data_downloaded_<execution_id>.parquet      │
-│    └── aggregation_<execution_id>.parquet                  │
-└─────────────────────────────────────────────────────────────┘
++-------------------------------------------------------------+
+| NoETL Worker Pod (Kubernetes)                               |
+|                                                              |
+|  +-------------+                                            |
+|  |   DuckDB    |                                            |
+|  |   Engine    |                                            |
+|  +------+------+                                            |
+|         |                                                    |
+|         | 1. Request GCS access                             |
+|         v                                                    |
+|  +-------------------------------------+                   |
+|  |  GCP Metadata Service Client        |                   |
+|  |  (169.254.169.254)                  |                   |
+|  +------+------------------------------+                   |
++---------+----------------------------------------------+
+          |
+          | 2. Fetch OAuth token
+          v
++-------------------------------------------------------------+
+| GCP Metadata Service                                        |
+| (Workload Identity Provider)                               |
+|                                                              |
+|  - Validates K8s Service Account                           |
+|  - Returns short-lived OAuth token                         |
+|  - Maps to GCP Service Account identity                    |
++------+------------------------------------------------------+
+       |
+       | 3. Use token for GCS operations
+       v
++-------------------------------------------------------------+
+| Google Cloud Storage                                        |
+|                                                              |
+|  gs://noetl-demo-19700101/weather/                         |
+|    +-- weather_data_<execution_id>.parquet                 |
+|    +-- weather_data_downloaded_<execution_id>.parquet      |
+|    +-- aggregation_<execution_id>.parquet                  |
++-------------------------------------------------------------+
 ```
 
 ## Workflow Steps
@@ -133,13 +133,13 @@ gcloud projects get-iam-policy noetl-demo-19700101 \
 ### Register and Execute
 ```bash
 # Register playbook to catalog
-task register-playbook -- tests/fixtures/playbooks/duckdb_gcs_workload_identity/duckdb_gcs_workload_identity.yaml
+noetl playbook register tests/fixtures/playbooks/duckdb_gcs_workload_identity/duckdb_gcs_workload_identity.yaml
 
 # Execute playbook
-task execute-playbook -- tests/fixtures/playbooks/duckdb_gcs_workload_identity/workload_identity
+noetl execution create tests/fixtures/playbooks/duckdb_gcs_workload_identity/workload_identity --data '{}'
 
 # Monitor execution
-task logs-worker
+noetl logs worker
 ```
 
 ### Verification
@@ -188,11 +188,11 @@ SELECT name, value FROM duckdb_settings() WHERE name LIKE 'gcs%';
 ## Security Considerations
 
 ### Advantages of Workload Identity
-- ✅ No credential files to manage or rotate
-- ✅ Short-lived OAuth tokens (automatically refreshed)
-- ✅ Identity tied to Kubernetes service account
-- ✅ Centralized permission management in IAM
-- ✅ Audit trail via GCP Cloud Logging
+- No credential files to manage or rotate
+- Short-lived OAuth tokens (automatically refreshed)
+- Identity tied to Kubernetes service account
+- Centralized permission management in IAM
+- Audit trail via GCP Cloud Logging
 
 ### Best Practices
 - Use separate GCP service accounts for different workloads

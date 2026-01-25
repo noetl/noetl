@@ -7,6 +7,8 @@ lookup strategies: catalog_id, path + version.
 from __future__ import annotations
 from typing import Optional, Dict, Any, List, Coroutine
 from datetime import datetime
+from collections import OrderedDict
+import time
 import yaml
 from psycopg.rows import dict_row
 from psycopg.types.json import Json
@@ -16,6 +18,92 @@ from .schema import CatalogEntry, CatalogEntries
 from noetl.core.logger import setup_logger
 
 logger = setup_logger(__name__, include_location=True)
+
+
+# ==================== Catalog Cache ====================
+
+class _CatalogCache:
+    """
+    LRU cache for catalog entries to avoid repeated database lookups.
+
+    Cache entries expire after TTL seconds to ensure freshness.
+    Memory bounded with max_size limit.
+    """
+
+    def __init__(self, max_size: int = 100, ttl_seconds: int = 300):
+        self._cache: OrderedDict[str, tuple[Any, float]] = OrderedDict()
+        self._max_size = max_size
+        self._ttl = ttl_seconds
+        self._hits = 0
+        self._misses = 0
+
+    def _make_key(self, catalog_id: Optional[str], path: Optional[str], version: Optional[int]) -> str:
+        """Create cache key from lookup parameters."""
+        if catalog_id:
+            return f"id:{catalog_id}"
+        return f"path:{path}:v:{version or 'latest'}"
+
+    def get(self, catalog_id: Optional[str] = None, path: Optional[str] = None,
+            version: Optional[int] = None) -> Optional[Any]:
+        """Get entry from cache if exists and not expired."""
+        key = self._make_key(catalog_id, path, version)
+
+        if key in self._cache:
+            entry, timestamp = self._cache[key]
+            if time.time() - timestamp < self._ttl:
+                self._cache.move_to_end(key)
+                self._hits += 1
+                return entry
+            else:
+                # Expired, remove it
+                del self._cache[key]
+
+        self._misses += 1
+        return None
+
+    def put(self, entry: Any, catalog_id: Optional[str] = None,
+            path: Optional[str] = None, version: Optional[int] = None) -> None:
+        """Put entry in cache."""
+        key = self._make_key(catalog_id, path, version)
+
+        # Evict oldest if at capacity
+        if len(self._cache) >= self._max_size:
+            self._cache.popitem(last=False)
+
+        self._cache[key] = (entry, time.time())
+
+        # Also cache by catalog_id if we have it
+        if entry and hasattr(entry, 'catalog_id') and entry.catalog_id:
+            id_key = f"id:{entry.catalog_id}"
+            if id_key != key:
+                self._cache[id_key] = (entry, time.time())
+
+    def invalidate(self, catalog_id: Optional[str] = None, path: Optional[str] = None) -> None:
+        """Invalidate cache entries."""
+        keys_to_remove = []
+        for key in self._cache:
+            if catalog_id and f"id:{catalog_id}" == key:
+                keys_to_remove.append(key)
+            elif path and key.startswith(f"path:{path}:"):
+                keys_to_remove.append(key)
+        for key in keys_to_remove:
+            del self._cache[key]
+
+    def stats(self) -> dict:
+        """Return cache statistics."""
+        total = self._hits + self._misses
+        return {
+            "size": len(self._cache),
+            "max_size": self._max_size,
+            "ttl_seconds": self._ttl,
+            "hits": self._hits,
+            "misses": self._misses,
+            "hit_rate": (self._hits / total * 100) if total > 0 else 0.0
+        }
+
+
+# Global catalog cache instance
+_catalog_cache = _CatalogCache(max_size=100, ttl_seconds=300)
 
 
 # class CatalogEntry(AppBaseModel):
@@ -93,43 +181,62 @@ class CatalogService:
     async def fetch_entry(
         catalog_id: Optional[str] = None,
         path: Optional[str] = None,
-        version: Optional[int | str] = None
+        version: Optional[int | str] = None,
+        use_cache: bool = True
     ) -> CatalogEntry | None:
         """
         Execute database query to retrieve complete catalog resource.
-        
+
         Handles 'latest' version resolution automatically.
-        
+        Uses LRU cache to avoid repeated database lookups.
+
         Args:
             catalog_id: Direct catalog ID lookup
             path: Resource path
             version: Optional version (int, str, or 'latest'; defaults to latest if not provided)
-            
+            use_cache: Whether to use cache (default True)
+
         Returns:
             CatalogResource if found, None otherwise
-            
+
         Raises:
             RuntimeError: If database error occurs
         """
-        # # Handle "latest" version string or None
-        # version_int: Optional[int] = None
-        #c if version == "latest"
-        #     version_int = None
-        # elif isinstance(version, str):
-        #     version_int = int(version)
-        # else:
-        #     version_int = version
-        
+        version_int = None if version is None or version == "latest" else int(version)
+
+        # Check cache first
+        if use_cache:
+            cached = _catalog_cache.get(catalog_id=catalog_id, path=path, version=version_int)
+            if cached is not None:
+                logger.debug(f"Catalog cache hit: catalog_id={catalog_id}, path={path}")
+                return cached
+
         query, params = CatalogService._build_query(
             catalog_id=catalog_id,
             path=path,
-            version=None if version is None or version == "latest" else int(version)
+            version=version_int
         )
         async with get_pool_connection() as conn:
             async with conn.cursor(row_factory=dict_row) as cur:
                 await cur.execute(query, params)
                 row = await cur.fetchone()
-                return CatalogEntry(**row) if row else None
+                entry = CatalogEntry(**row) if row else None
+
+        # Store in cache
+        if use_cache and entry:
+            _catalog_cache.put(entry, catalog_id=catalog_id, path=path, version=version_int)
+
+        return entry
+
+    @staticmethod
+    def get_cache_stats() -> dict:
+        """Get catalog cache statistics."""
+        return _catalog_cache.stats()
+
+    @staticmethod
+    def invalidate_cache(catalog_id: Optional[str] = None, path: Optional[str] = None) -> None:
+        """Invalidate catalog cache entries."""
+        _catalog_cache.invalidate(catalog_id=catalog_id, path=path)
 
     
     @staticmethod

@@ -90,7 +90,7 @@ The notebook is automatically deployed with JupyterLab:
 
 ```bash
 # Deploy JupyterLab with both notebooks
-task jupyterlab:deploy
+noetl run automation/setup/bootstrap.yaml
 ```
 
 **Quick update** (if notebook already deployed):
@@ -129,12 +129,12 @@ kubectl wait --for=condition=ready pod -l app=jupyterlab -n noetl --timeout=90s
 
 1. **NoETL Server** deployed:
    ```bash
-   task deploy-noetl
+   noetl run automation/setup/bootstrap.yaml
    ```
 
 2. **Pagination Test Server** running (for full end-to-end test when server orchestration is implemented):
    ```bash
-   task pagination-server:test:pagination-server:full
+   noetl run automation/test/pagination-server.yaml --set action=full
    ```
 
 3. **PostgreSQL** accessible:
@@ -413,8 +413,8 @@ os.environ['NOETL_ENV'] = 'kubernetes'
 ### Test Server Not Running
 
 ```bash
-task pagination-server:test:pagination-server:status
-task pagination-server:test:pagination-server:logs
+noetl run automation/test/pagination-server.yaml --set action=status
+noetl run automation/test/pagination-server.yaml --set action=logs
 ```
 
 ### Database Connection Issues
@@ -429,7 +429,7 @@ kubectl exec -n noetl $(kubectl get pod -n noetl -l app=noetl -o jsonpath='{.ite
 
 ### Missing Credentials
 ```bash
-task register-test-credentials
+noetl run automation/setup/bootstrap.yaml
 ```
 
 ### View Execution Events

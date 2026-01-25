@@ -31,14 +31,14 @@ cleanup() {
 trap cleanup EXIT
 
 main() {
-    echo "========================================" 
+    echo "========================================"
     echo "  NoETL Bootstrap Integration Test"
     echo "========================================"
     echo ""
-    
+
     log_info "Test project: $TEST_PROJECT"
     echo ""
-    
+
     # 1. Create test project
     log_info "Step 1: Creating test project directory"
     mkdir -p "$TEST_PROJECT"
@@ -46,7 +46,7 @@ main() {
     git init
     log_success "Project directory created"
     echo ""
-    
+
     # 2. Add NoETL as submodule (use local path for testing)
     log_info "Step 2: Adding NoETL as submodule"
     git submodule add "$NOETL_ROOT" noetl 2>/dev/null || {
@@ -55,25 +55,23 @@ main() {
     }
     log_success "NoETL submodule added"
     echo ""
-    
+
     # 3. Copy bootstrap files
     log_info "Step 3: Copying bootstrap files"
-    cp noetl/ci/bootstrap/Taskfile-bootstrap.yml ./Taskfile.yml
     cp noetl/ci/bootstrap/pyproject-template.toml ./pyproject.toml
     cp noetl/ci/bootstrap/gitignore-template ./.gitignore
     chmod +x noetl/ci/bootstrap/bootstrap.sh
     log_success "Bootstrap files copied"
     echo ""
-    
+
     # 4. Verify files exist
     log_info "Step 4: Verifying files"
-    [[ -f Taskfile.yml ]] || { log_error "Taskfile.yml missing"; exit 1; }
     [[ -f pyproject.toml ]] || { log_error "pyproject.toml missing"; exit 1; }
     [[ -f .gitignore ]] || { log_error ".gitignore missing"; exit 1; }
     [[ -x noetl/ci/bootstrap/bootstrap.sh ]] || { log_error "bootstrap.sh not executable"; exit 1; }
     log_success "All files present"
     echo ""
-    
+
     # 5. Test venv creation only (skip tools and cluster for speed)
     log_info "Step 5: Testing Python venv setup"
     if command -v python3 >/dev/null 2>&1; then
@@ -83,14 +81,14 @@ main() {
         log_error "python3 not found, skipping venv test"
     fi
     echo ""
-    
+
     # 6. Verify venv
     if [[ -d .venv ]]; then
         log_success "Virtual environment created"
-        
+
         if [[ -f .venv/bin/noetl ]]; then
             log_success "NoETL CLI installed"
-            
+
             # Test CLI
             if .venv/bin/noetl --version >/dev/null 2>&1 || .venv/bin/noetl --help >/dev/null 2>&1; then
                 log_success "NoETL CLI functional"
@@ -104,54 +102,30 @@ main() {
         log_info "Venv creation skipped (python3 not available)"
     fi
     echo ""
-    
-    # 7. Test task system (if task available)
-    if command -v task >/dev/null 2>&1; then
-        log_info "Step 7: Testing task system"
-        
-        # List tasks
-        if task --list >/dev/null 2>&1; then
-            log_success "Task system functional"
-            
-            # Verify important tasks exist
-            if task --list | grep -q "bootstrap:verify"; then
-                log_success "Bootstrap tasks available"
-            fi
-            
-            if task --list | grep -q "noetl:"; then
-                log_success "NoETL tasks imported"
-            fi
-        else
-            log_error "Task system not functional"
-        fi
-    else
-        log_info "Task not available, skipping task tests"
-    fi
-    echo ""
-    
-    # 8. Verify gitignore patterns
-    log_info "Step 8: Verifying .gitignore"
+
+    # 7. Verify gitignore patterns
+    log_info "Step 7: Verifying .gitignore"
     if grep -q "credentials/" .gitignore; then
         log_success "Credentials directory ignored"
     else
         log_error "Credentials directory not ignored"
     fi
-    
+
     if grep -q "\.venv" .gitignore; then
         log_success "Venv directory ignored"
     else
         log_error "Venv directory not ignored"
     fi
     echo ""
-    
-    # 9. Test directory structure
-    log_info "Step 9: Testing project structure"
+
+    # 8. Test directory structure
+    log_info "Step 8: Testing project structure"
     mkdir -p playbooks credentials tests
     log_success "Project directories created"
     echo ""
-    
-    # 10. Create sample playbook
-    log_info "Step 10: Creating sample playbook"
+
+    # 9. Create sample playbook
+    log_info "Step 9: Creating sample playbook"
     cat > playbooks/test.yaml << 'EOF'
 apiVersion: noetl.io/v1
 kind: Playbook
@@ -173,7 +147,28 @@ workflow:
 EOF
     log_success "Sample playbook created"
     echo ""
-    
+
+    # 10. Verify NoETL automation playbooks exist
+    log_info "Step 10: Verifying NoETL automation playbooks"
+    if [[ -f noetl/automation/setup/bootstrap.yaml ]]; then
+        log_success "Bootstrap playbook found"
+    else
+        log_error "Bootstrap playbook not found"
+    fi
+
+    if [[ -f noetl/automation/infrastructure/kind.yaml ]]; then
+        log_success "Kind playbook found"
+    else
+        log_error "Kind playbook not found"
+    fi
+
+    if [[ -f noetl/automation/infrastructure/postgres.yaml ]]; then
+        log_success "Postgres playbook found"
+    else
+        log_error "Postgres playbook not found"
+    fi
+    echo ""
+
     # Summary
     echo "========================================"
     echo "  Test Summary"
@@ -186,8 +181,9 @@ EOF
     echo ""
     echo "Next steps for manual verification:"
     echo "  cd $TEST_PROJECT"
-    echo "  task --list"
-    echo "  task bootstrap:verify"
+    echo "  source .venv/bin/activate"
+    echo "  noetl --help"
+    echo "  noetl run noetl/automation/setup/bootstrap.yaml"
     echo ""
 }
 

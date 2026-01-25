@@ -33,7 +33,7 @@ NATS with JetStream provides messaging, streaming, and key-value store capabilit
 nats -s nats://noetl:noetl@localhost:30422
 
 # Via port-forward
-task nats:port-forward
+noetl run automation/infrastructure/nats.yaml --set action=port-forward
 nats -s nats://noetl:noetl@localhost:4222
 ```
 
@@ -43,7 +43,7 @@ nats -s nats://noetl:noetl@localhost:4222
 curl http://localhost:30822/varz
 
 # Via port-forward
-task nats:port-forward
+noetl run automation/infrastructure/nats.yaml --set action=port-forward
 open http://localhost:8222
 ```
 
@@ -51,27 +51,27 @@ open http://localhost:8222
 
 Deploy:
 ```bash
-task nats:deploy
+noetl run automation/infrastructure/nats.yaml --set action=deploy
 ```
 
 Check status:
 ```bash
-task nats:status
+noetl run automation/infrastructure/nats.yaml --set action=status
 ```
 
 Health check:
 ```bash
-task nats:health
+noetl run automation/infrastructure/nats.yaml --set action=health
 ```
 
 View streams:
 ```bash
-task nats:streams
+noetl run automation/infrastructure/nats.yaml --set action=streams
 ```
 
 View logs:
 ```bash
-task nats:logs
+noetl run automation/infrastructure/nats.yaml --set action=logs
 ```
 
 ## Configuration

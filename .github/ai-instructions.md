@@ -38,21 +38,22 @@ NoETL is a workflow automation framework for data processing and MLOps orchestra
 
 ## Development Workflows
 
-**Command Restriction:**
-- Do not use `task` commands. Use direct CLI equivalents (for example, `./bin/noetl ...` or `noetl ...`) instead.
-
 **Setup & Testing:**
 ```bash
-task bring-all                                      # Complete K8s dev environment (build + deploy all components)
-task deploy-postgres                                # Deploy PostgreSQL to kind cluster
-task deploy-noetl                                   # Deploy NoETL server and workers
-task observability:activate-all                     # Deploy ClickHouse, Qdrant, NATS
-task pagination-server:test:pagination-server:full  # Deploy pagination test server
-task test:regression:full                           # Complete regression test suite (setup + run)
-task test-*-full                                    # Integration tests (register credentials, playbook, execute)
+# Complete bootstrap (build + deploy all components)
+noetl run automation/setup/bootstrap.yaml
+
+# Infrastructure deployment
+noetl run automation/infrastructure/kind.yaml --set action=create      # Create Kind cluster
+noetl run automation/infrastructure/postgres.yaml --set action=deploy  # Deploy PostgreSQL
+noetl run automation/deployment/noetl-stack.yaml --set action=deploy   # Deploy NoETL server and workers
+noetl run automation/infrastructure/observability.yaml --set action=deploy  # Deploy ClickHouse, Qdrant, NATS
+
+# Run regression tests
+noetl run tests/fixtures/playbooks/regression_test/regression_test.yaml
 ```
 
-**Local Development (Rust CLI Recommended):**
+**Local Development (Rust CLI):**
 ```bash
 # Build and deployment
 noetl build [--no-cache]       # Build Docker image with Rust CLI
@@ -71,13 +72,15 @@ noetl worker stop              # Stop worker
 noetl db init                  # Initialize database schema
 noetl db validate              # Validate database schema
 
-# Legacy task commands (still available)
-task docker-build-noetl              # Build NoETL container image
-task kind-create-cluster             # Create kind Kubernetes cluster
-task test-cluster-health             # Check cluster health and endpoints
-task clear-all-cache                 # Clear local file cache
-task observability:status-all        # Check all observability services
-task observability:health-all        # Health check all services
+# Observability
+noetl run automation/infrastructure/observability.yaml --set action=status  # Check all services
+noetl run automation/infrastructure/clickhouse.yaml --set action=deploy     # Deploy ClickHouse
+noetl run automation/infrastructure/qdrant.yaml --set action=deploy         # Deploy Qdrant
+noetl run automation/infrastructure/nats.yaml --set action=deploy           # Deploy NATS
+
+# Teardown
+noetl run automation/setup/destroy.yaml                          # Destroy all infrastructure
+noetl run automation/infrastructure/kind.yaml --set action=delete  # Delete Kind cluster only
 ```
 
 ## Project-Specific Patterns
@@ -144,7 +147,7 @@ workflow:                 # Execution flow (required, must have 'start' step)
       email: "{{ result[0].email }}"
     next:
     - step: process
-  
+
   - step: process
     tool:
       kind: python
@@ -282,11 +285,13 @@ See `tests/fixtures/playbooks/script_execution/` and `docs/script_attribute_desi
 - `noetl/tools/` - All action type implementations
 
 **Development Infrastructure:**
-- `taskfile.yml` - Main task automation with included taskfiles for tests and monitoring
-- `ci/taskfile/` - Specialized taskfiles for testing, troubleshooting, and observability
-- `ci/taskfile/test-server.yml` - Pagination test server lifecycle management
+- `automation/` - NoETL playbooks for infrastructure and deployment automation
+- `automation/setup/bootstrap.yaml` - Complete environment setup
+- `automation/infrastructure/kind.yaml` - Kind cluster management
+- `automation/infrastructure/postgres.yaml` - PostgreSQL operations
+- `automation/infrastructure/observability.yaml` - Unified observability control
+- `automation/deployment/noetl-stack.yaml` - NoETL service deployment
 - `ci/kind/config.yaml` - **Kind cluster configuration with NodePort mappings** (DO NOT use port-forward, ports are permanently mapped here)
-- `tests/taskfile/noetltest.yml` - Test task definitions
 - `docker/` - Container build scripts for all components
 - `docker/test-server/` - Pagination test server Dockerfile
 - `ci/manifests/test-server/` - Kubernetes manifests for test server
@@ -294,10 +299,9 @@ See `tests/fixtures/playbooks/script_execution/` and `docs/script_attribute_desi
 - `tests/fixtures/servers/paginated_api.py` - FastAPI pagination test server
 
 **Testing:**
-- Follow `test-*-full` pattern for integration tests (e.g., `task test-control-flow-workbook-full`)
 - Use `tests/fixtures/playbooks/` for test scenarios
-- Register test credentials with `task register-test-credentials`
-- Check cluster health with `task test-cluster-health`
+- Run regression tests: `noetl run tests/fixtures/playbooks/regression_test/regression_test.yaml`
+- Check cluster health: `kubectl get pods -A` and `curl http://localhost:30083/health`
 
 ## Configuration
 
@@ -348,7 +352,7 @@ See `tests/fixtures/playbooks/script_execution/` and `docs/script_attribute_desi
 **Kind Cluster Port Mappings (CRITICAL):**
 - **Port mappings are PERMANENT** - defined in `ci/kind/config.yaml`
 - **DO NOT use `kubectl port-forward`** - ports are already mapped to localhost
-- **Use localhost ports directly**: 
+- **Use localhost ports directly**:
   - NoETL API: `http://localhost:8082` (maps to NodePort 30082)
   - Postgres: `localhost:54321` (maps to NodePort 30321)
   - ClickHouse HTTP: `localhost:30123` (maps to NodePort 30123)
@@ -366,9 +370,11 @@ See `tests/fixtures/playbooks/script_execution/` and `docs/script_attribute_desi
 - **NATS JetStream**: Messaging and key-value store for event-driven workflows
   - Access: Client (NodePort 30422), Monitoring (NodePort 30822)
   - Features: Stream persistence, KV store, credentials (noetl/noetl)
-- **Commands**: 
-  - `task observability:activate-all` / `task observability:deactivate-all`
-  - Individual: `task clickhouse:deploy`, `task qdrant:deploy`, `task nats:deploy`
+- **Commands**:
+  - Deploy all: `noetl run automation/infrastructure/observability.yaml --set action=deploy`
+  - Remove all: `noetl run automation/infrastructure/observability.yaml --set action=remove`
+  - Check status: `noetl run automation/infrastructure/observability.yaml --set action=status`
+  - Individual services: Use `automation/infrastructure/{clickhouse,qdrant,nats}.yaml` with `--set action=deploy|remove|status`
 - **Documentation**: See `docs/observability_services.md` for complete guide
 
 **Test Infrastructure:**
@@ -376,10 +382,9 @@ See `tests/fixtures/playbooks/script_execution/` and `docs/script_attribute_desi
   - Access: ClusterIP (paginated-api.test-server.svc.cluster.local:5555), NodePort (localhost:30555)
   - Endpoints: `/api/v1/assessments` (page-based), `/api/v1/users` (offset-based), `/api/v1/events` (cursor-based), `/api/v1/flaky` (retry testing)
   - Commands:
-    - Deploy: `task pagination-server:test:pagination-server:full`
-    - Status: `task pagination-server:test:pagination-server:status`
-    - Test: `task pagination-server:test:pagination-server:test`
-    - Logs: `task pagination-server:test:pagination-server:logs`
+    - Deploy: `kubectl apply -f ci/manifests/test-server/`
+    - Status: `kubectl get pods -n test-server`
+    - Logs: `kubectl logs -n test-server deployment/paginated-api`
   - Configuration: `ci/manifests/test-server/`, `docker/test-server/Dockerfile`
 
 **Timezone Configuration** (CRITICAL):
@@ -387,7 +392,7 @@ See `tests/fixtures/playbooks/script_execution/` and `docs/script_attribute_desi
 - **Requirement**: `TZ` environment variable must match between database and application
 - **Python Code**: Always use timezone-aware datetimes: `datetime.now(timezone.utc)`
 - **Never Use**: `datetime.utcnow()` or `datetime.now()` without timezone - causes timestamp offset bugs
-- **Config Files**: 
+- **Config Files**:
   - `ci/manifests/postgres/configmap.yaml` - Postgres TZ
   - `ci/manifests/noetl/configmap.yaml` - Server/Worker TZ
   - `docker/postgres/Dockerfile` - Container TZ
@@ -468,10 +473,10 @@ async def list_variables(
 - Prefer concise, clear descriptions over verbose explanations
 
 **Examples:**
-- ❌ "Comprehensive test suite that ensures all functionality works"
-- ✅ "Complete test suite that validates all functionality"
-- ❌ "Deploy comprehensive monitoring stack 🚀"  
-- ✅ "Deploy complete monitoring stack"
+- Bad: "Comprehensive test suite that ensures all functionality works"
+- Good: "Complete test suite that validates all functionality"
+- Bad: "Deploy comprehensive monitoring stack"
+- Good: "Deploy complete monitoring stack"
 
 When working with this codebase, prioritize understanding the event-driven execution model and the playbook → events → worker execution flow. The architecture is designed for distributed execution with careful state management through Postgres system state storage.
 

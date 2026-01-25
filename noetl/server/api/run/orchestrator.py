@@ -17,6 +17,7 @@ Pure event sourcing - NO business logic in events, orchestrator decides everythi
 """
 
 import json
+import time
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, Optional
 
@@ -35,6 +36,45 @@ from noetl.server.api.run.publisher import QueuePublisher
 from noetl.server.api.run.queries import OrchestratorQueries
 
 logger = setup_logger(__name__, include_location=True)
+
+
+# ==================== Performance Timing Utilities ====================
+
+class _OrchestratorTimer:
+    """Context manager for timing orchestrator operations with logging."""
+
+    def __init__(self, operation: str, execution_id: int, **extra_fields):
+        self.operation = operation
+        self.execution_id = execution_id
+        self.extra_fields = extra_fields
+        self.start_time = None
+
+    def __enter__(self):
+        self.start_time = time.perf_counter()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        duration_ms = (time.perf_counter() - self.start_time) * 1000
+        log_data = {
+            "execution_id": self.execution_id,
+            "phase": self.operation,
+            "duration_ms": round(duration_ms, 2),
+            **self.extra_fields
+        }
+
+        # Log as structured performance data
+        if duration_ms > 1000:  # Warn if > 1 second
+            logger.warning(
+                f"[PERF] Slow operation: {self.operation} took {duration_ms:.0f}ms",
+                extra={"performance": log_data}
+            )
+        else:
+            logger.info(
+                f"[PERF] {self.operation}: {duration_ms:.1f}ms",
+                extra={"performance": log_data}
+            )
+
+        return False  # Don't suppress exceptions
 
 
 # Module-level template cache and Jinja2 environment for performance
@@ -628,6 +668,8 @@ async def evaluate_execution(
         - step_end/action_completed: Analyze results, publish next steps
         - error/failed: Handle failures
     """
+    eval_start = time.perf_counter()
+
     # Convert execution_id to int for database queries
     try:
         exec_id = int(execution_id)
@@ -724,7 +766,13 @@ async def evaluate_execution(
 
         # Use batch query to get all execution state in one database round-trip
         # This avoids N+1 query patterns and improves performance
+        state_query_start = time.perf_counter()
         batch_state = await OrchestratorQueries.get_execution_state_batch(exec_id)
+        state_query_ms = (time.perf_counter() - state_query_start) * 1000
+        logger.info(
+            f"[PERF] get_execution_state_batch: {state_query_ms:.1f}ms",
+            extra={"performance": {"execution_id": exec_id, "phase": "state_batch_query", "duration_ms": round(state_query_ms, 2)}}
+        )
 
         # Check for failure states
         if batch_state.get("has_failed", False):
@@ -798,8 +846,22 @@ async def evaluate_execution(
         elif state == "completed":
             logger.debug(f"ORCHESTRATOR: Execution {exec_id} already completed, no action needed | evaluation complete")
 
+        # Log total evaluation time
+        total_eval_ms = (time.perf_counter() - eval_start) * 1000
+        if total_eval_ms > 500:  # Warn if > 500ms
+            logger.warning(
+                f"[PERF] evaluate_execution total: {total_eval_ms:.0f}ms (trigger={trigger_event_type})",
+                extra={"performance": {"execution_id": exec_id, "phase": "evaluate_execution", "duration_ms": round(total_eval_ms, 2), "trigger": trigger_event_type}}
+            )
+        else:
+            logger.info(
+                f"[PERF] evaluate_execution total: {total_eval_ms:.1f}ms",
+                extra={"performance": {"execution_id": exec_id, "phase": "evaluate_execution", "duration_ms": round(total_eval_ms, 2), "trigger": trigger_event_type}}
+            )
+
     except Exception as e:
-        logger.exception(f"ORCHESTRATOR: Error evaluating execution {exec_id}")
+        total_eval_ms = (time.perf_counter() - eval_start) * 1000
+        logger.exception(f"ORCHESTRATOR: Error evaluating execution {exec_id} (after {total_eval_ms:.0f}ms)")
         # Don't re-raise - orchestrator errors shouldn't break the system
 
 
@@ -1339,24 +1401,30 @@ async def _process_transitions(execution_id: int) -> None:
     4. Emit step_completed events
     5. Publish next steps to queue table as actionable tasks
     6. Workers execute and report results back via events
+
+    PERFORMANCE OPTIMIZATION:
+    Uses get_transition_context_batch() to fetch all needed data in one query
+    instead of 6+ sequential queries. This reduces orchestration latency significantly.
     """
-    # Find completed steps without step_completed event using async executor
-    completed_steps = (
-        await OrchestratorQueries.get_completed_steps_without_step_completed(
-            execution_id
-        )
+    process_start = time.perf_counter()
+
+    # OPTIMIZED: Single batch query for all transition context data
+    batch_query_start = time.perf_counter()
+    transition_ctx = await OrchestratorQueries.get_transition_context_batch(execution_id)
+    batch_query_ms = (time.perf_counter() - batch_query_start) * 1000
+    logger.info(
+        f"[PERF] get_transition_context_batch: {batch_query_ms:.1f}ms",
+        extra={"performance": {"execution_id": execution_id, "phase": "transition_batch_query", "duration_ms": round(batch_query_ms, 2)}}
     )
+
+    completed_steps = transition_ctx.get("completed_steps", [])
+    catalog_id = transition_ctx.get("catalog_id")
+    metadata = transition_ctx.get("metadata")
+    transition_rows = transition_ctx.get("transitions", [])
+    result_rows = transition_ctx.get("step_results", [])
 
     logger.info(f">>> PROCESS_TRANSITIONS: execution={execution_id} | completed_steps={completed_steps} | count={len(completed_steps) if completed_steps else 0}")
 
-    if not completed_steps:
-        logger.debug(f"No new completed steps found for execution {execution_id}")
-
-    # Get catalog_id
-    catalog_id = await EventService.get_catalog_id_from_execution(execution_id)
-
-    # Get execution metadata using async executor
-    metadata = await OrchestratorQueries.get_execution_metadata(execution_id)
     if not metadata:
         logger.warning(f"No execution metadata found for {execution_id}")
         return
@@ -1364,8 +1432,16 @@ async def _process_transitions(execution_id: int) -> None:
     pb_path = metadata.get("path")
     pb_version = metadata.get("version", "latest")
 
-    # Load playbook from catalog
+    # Load playbook from catalog (uses cache for performance)
+    catalog_start = time.perf_counter()
     catalog_entry = await CatalogService.fetch_entry(catalog_id=catalog_id)
+    catalog_ms = (time.perf_counter() - catalog_start) * 1000
+    if catalog_ms > 100:
+        logger.info(
+            f"[PERF] catalog_fetch: {catalog_ms:.1f}ms (catalog_id={catalog_id})",
+            extra={"performance": {"execution_id": execution_id, "phase": "catalog_fetch", "duration_ms": round(catalog_ms, 2)}}
+        )
+
     if not catalog_entry or not catalog_entry.content:
         logger.warning(f"No playbook content found for catalog_id {catalog_id}")
         return
@@ -1383,12 +1459,14 @@ async def _process_transitions(execution_id: int) -> None:
 
     if not completed_steps:
         await _check_execution_completion(execution_id, by_name)
+        total_ms = (time.perf_counter() - process_start) * 1000
+        logger.info(
+            f"[PERF] _process_transitions total (no steps): {total_ms:.1f}ms",
+            extra={"performance": {"execution_id": execution_id, "phase": "process_transitions", "duration_ms": round(total_ms, 2), "steps": 0}}
+        )
         return
 
-    # Query all transitions using async executor
-    transition_rows = await OrchestratorQueries.get_transitions(execution_id)
-
-    # Group transitions by from_step
+    # Group transitions by from_step (already fetched in batch)
     transitions_by_step = {}
     for tr in transition_rows:
         from_step = tr["from_step"]
@@ -1396,16 +1474,17 @@ async def _process_transitions(execution_id: int) -> None:
             transitions_by_step[from_step] = []
         transitions_by_step[from_step].append(tr)
 
-    # Build evaluation context with all step results using async executor
+    # Build evaluation context with all step results (already fetched in batch)
     eval_ctx = {"workload": workload}
-    result_rows = await OrchestratorQueries.get_step_results(execution_id)
     for res_row in result_rows:
-        if res_row["node_name"] and res_row["result"]:
+        node_name = res_row.get("node_name")
+        result = res_row.get("result")
+        if node_name and result:
             # Normalize result: if it has 'data' field, use that instead of the envelope
-            result_value = res_row["result"]
+            result_value = result
             if isinstance(result_value, dict) and "data" in result_value:
                 result_value = result_value["data"]
-            eval_ctx[res_row["node_name"]] = result_value
+            eval_ctx[node_name] = result_value
 
     async with get_pool_connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:

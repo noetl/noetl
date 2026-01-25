@@ -14,12 +14,13 @@ This is ideal for moderate-sized datasets (hundreds to thousands of records) whe
 
 ```bash
 # Register the playbook
-.venv/bin/noetl catalog register playbook \
-  tests/fixtures/playbooks/data_transfer/http_to_postgres_simple/http_to_postgres_simple.yaml \
-  --host localhost --port 8083
+noetl playbook register tests/fixtures/playbooks/data_transfer/http_to_postgres_simple
 
-# Execute with local PostgreSQL credentials
-.venv/bin/noetl execute playbook \
+# Execute the playbook
+noetl execution create tests/fixtures/playbooks/data_transfer/http_to_postgres_simple
+
+# Or execute with local PostgreSQL credentials explicitly
+noetl execute playbook \
   "tests/fixtures/playbooks/data_transfer/http_to_postgres_simple" \
   --host localhost --port 8083 \
   --payload '{"pg_auth": "pg_local"}' --merge

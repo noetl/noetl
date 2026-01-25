@@ -25,16 +25,16 @@ NoETL includes a dedicated FastAPI test server for testing HTTP pagination patte
 **Deployment:**
 ```bash
 # Deploy test server
-task pagination-server:test:pagination-server:full
+kubectl apply -f ci/manifests/test-server/
 
 # Check status
-task pagination-server:test:pagination-server:status
+kubectl get pods -n test-server
 
 # Test endpoints
-task pagination-server:test:pagination-server:test
+curl http://localhost:30555/health
 
 # View logs
-task pagination-server:test:pagination-server:logs
+kubectl logs -n test-server deployment/paginated-api
 ```
 
 **Access:**
@@ -52,7 +52,6 @@ task pagination-server:test:pagination-server:logs
 - Source: `tests/fixtures/servers/paginated_api.py`
 - Docker: `docker/test-server/Dockerfile`
 - Manifests: `ci/manifests/test-server/`
-- Tasks: `ci/taskfile/test-server.yml`
 
 **Port Mapping:**
 The test server's NodePort (30555) must be configured in the kind cluster configuration (`ci/kind/config.yaml`). If you recreate the cluster, the port mapping is automatically included.
@@ -129,10 +128,10 @@ NoETL's asynchronous, event-driven architecture requires specific testing patter
       FROM noetl.event
       WHERE execution_id = {{ test_playbook.execution_id }}
     )
-    SELECT 
+    SELECT
       f.status as final_status,
       s.event_count,
-      CASE WHEN f.status = 'COMPLETED' AND s.event_count >= 3 
+      CASE WHEN f.status = 'COMPLETED' AND s.event_count >= 3
            THEN true ELSE false END as test_passed
     FROM final_event f, event_stats s
   sink:
@@ -185,7 +184,7 @@ Step 3: Query events → all child execution events available
 Create the test database schema:
 
 ```bash
-task test:regression:setup
+noetl run tests/fixtures/playbooks/regression_test/create_test_schema.yaml
 ```
 
 This creates:
@@ -198,14 +197,12 @@ This creates:
 Execute the regression test suite:
 
 ```bash
-# Full flow (setup + run + results)
-task test:regression:full
+# Run regression tests
+noetl run tests/fixtures/playbooks/regression_test/regression_test.yaml
 
-# Just run tests
-task test:regression:run
-
-# View latest results
-task test:regression:results
+# View latest results via SQL
+kubectl exec -it -n postgres deploy/postgres -- psql -U noetl -d noetl -c \
+  "SELECT playbook_name, test_passed, status FROM noetl_test.regression_results ORDER BY test_timestamp DESC LIMIT 20"
 ```
 
 ### Via CLI
@@ -286,7 +283,7 @@ CREATE TABLE noetl_test.regression_summary (
 ### View Latest Results
 
 ```sql
-SELECT 
+SELECT
   test_run_id,
   playbook_name,
   test_passed,
@@ -301,7 +298,7 @@ LIMIT 20;
 ### Test Summary
 
 ```sql
-SELECT 
+SELECT
   test_run_id,
   total_tests,
   passed_tests,
@@ -316,7 +313,7 @@ LIMIT 10;
 ### Find Failures
 
 ```sql
-SELECT 
+SELECT
   playbook_name,
   status,
   execution_id,
@@ -330,7 +327,7 @@ ORDER BY test_timestamp DESC;
 ### Compare Test Runs
 
 ```sql
-SELECT 
+SELECT
   test_run_id,
   playbook_name,
   test_passed,
@@ -338,9 +335,9 @@ SELECT
   step_count
 FROM noetl_test.regression_results
 WHERE test_run_id IN (
-  SELECT test_run_id 
-  FROM noetl_test.regression_summary 
-  ORDER BY test_timestamp DESC 
+  SELECT test_run_id
+  FROM noetl_test.regression_summary
+  ORDER BY test_timestamp DESC
   LIMIT 2
 )
 ORDER BY test_run_id DESC, playbook_name;
@@ -402,12 +399,12 @@ Add a new test to `master_regression_test.yaml`. The wait step ensures all child
       FROM noetl.event
       WHERE execution_id = {{ test_my_playbook.execution_id }}
     )
-    SELECT 
+    SELECT
       '{{ test_my_playbook.execution_id }}' as execution_id,
       'my_playbook' as test_name,
       f.status as final_status,
       s.event_count,
-      CASE WHEN f.status = 'COMPLETED' AND s.event_count >= 2 
+      CASE WHEN f.status = 'COMPLETED' AND s.event_count >= 2
            THEN true ELSE false END as test_passed
     FROM final_event f, event_stats s
   sink:
@@ -452,25 +449,25 @@ command: |
     ORDER BY event_id DESC LIMIT 1
   ),
   event_stats AS (
-    SELECT 
+    SELECT
       COUNT(*) as event_count,
       COUNT(*) FILTER (WHERE error IS NOT NULL) as error_count,
       COUNT(*) FILTER (WHERE event_type = 'action_completed') as completed_actions
     FROM noetl.event
     WHERE execution_id = {{ test_playbook.execution_id }}
   )
-  SELECT 
+  SELECT
     f.status as final_status,
     s.event_count,
     s.error_count,
     s.completed_actions,
-    CASE 
-      WHEN f.status = 'COMPLETED' 
+    CASE
+      WHEN f.status = 'COMPLETED'
        AND s.event_count >= 5
        AND s.error_count = 0
        AND s.completed_actions >= 3
-      THEN true 
-      ELSE false 
+      THEN true
+      ELSE false
     END as test_passed
   FROM final_event f, event_stats s
 ```
@@ -483,7 +480,7 @@ command: |
 
 **Cause**: Event persistence lag - validation queried before all events written to database
 
-**Explanation**: 
+**Explanation**:
 - `tool: playbook` triggers child execution with new execution_id
 - Parent step waits for child completion via event stream analysis
 - When child completes, parent step returns child execution_id
@@ -498,7 +495,7 @@ await asyncio.sleep(5)  # Increase from 3 to 5 seconds for complex playbooks
 **Diagnosis**: Check parent/child execution relationship:
 ```sql
 -- Find parent and child executions
-SELECT 
+SELECT
   e1.execution_id as parent_exec_id,
   e2.execution_id as child_exec_id,
   e2.event_type,
@@ -610,10 +607,10 @@ workload:
 Include error checking in validation:
 
 ```yaml
-SELECT 
+SELECT
   f.status,
   f.error,
-  CASE 
+  CASE
     WHEN f.error IS NOT NULL THEN false
     WHEN f.status != 'COMPLETED' THEN false
     ELSE true
@@ -645,10 +642,10 @@ Always generate summary at the end:
     auth: "{{ workload.pg_auth }}"
     command: |
     INSERT INTO noetl_test.regression_summary (
-      test_run_id, total_tests, passed_tests, 
+      test_run_id, total_tests, passed_tests,
       failed_tests, success_rate
     )
-    SELECT 
+    SELECT
       {{ workload.test_run_id }},
       COUNT(*),
       COUNT(*) FILTER (WHERE test_passed = true),
@@ -713,7 +710,7 @@ Skip tests based on conditions:
 Store expected results for comparison:
 
 ```sql
-INSERT INTO noetl_test.expected_results 
+INSERT INTO noetl_test.expected_results
   (playbook_name, expected_status, min_events, max_duration_ms)
 VALUES
   ('hello_world', 'COMPLETED', 3, 1000),
@@ -724,7 +721,7 @@ Then validate against baseline:
 
 ```yaml
 command: |
-  SELECT 
+  SELECT
     r.playbook_name,
     r.status = e.expected_status as status_match,
     r.step_count >= e.min_events as event_count_ok
@@ -749,16 +746,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-      
+
       - name: Setup NoETL cluster
         run: |
-          task kind-create-cluster
-          task deploy-postgres
-          task deploy-noetl
-      
+          noetl run automation/infrastructure/kind.yaml --set action=create
+          noetl run automation/infrastructure/postgres.yaml --set action=deploy
+          noetl run automation/deployment/noetl-stack.yaml --set action=deploy
+
       - name: Run regression tests
-        run: task test:regression:full
-      
+        run: noetl run tests/fixtures/playbooks/regression_test/regression_test.yaml
+
       - name: Check results
         run: |
           # Query test results and fail if any tests failed
@@ -773,7 +770,6 @@ jobs:
 - **Schema**: `tests/fixtures/playbooks/regression_test/create_test_schema.yaml`
 - **Master Test**: `tests/fixtures/playbooks/regression_test/master_regression_test.yaml`
 - **Documentation**: `tests/fixtures/playbooks/regression_test/README.md`
-- **Tasks**: `ci/taskfile/test.yml`
 
 ## See Also
 

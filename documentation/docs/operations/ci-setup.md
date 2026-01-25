@@ -7,7 +7,7 @@ sidebar_position: 1
 
 # CI/CD Infrastructure Setup
 
-NoETL uses a comprehensive Kubernetes-based CI/CD infrastructure for local development and testing. This guide covers all components deployed to the Kind cluster.
+NoETL uses a Kubernetes-based CI/CD infrastructure for local development and testing. This guide covers all components deployed to the Kind cluster.
 
 ## Overview
 
@@ -47,13 +47,13 @@ NodePort services expose the following ports:
 
 ```bash
 # Create cluster
-task kind:local:cluster-create
+noetl run automation/infrastructure/kind.yaml --set action=create
 
 # Delete cluster
-task kind:local:cluster-delete
+noetl run automation/infrastructure/kind.yaml --set action=delete
 
 # Load images
-task kind:local:image-load
+noetl run automation/infrastructure/kind.yaml --set action=load-image
 
 # Check status
 kubectl cluster-info
@@ -66,8 +66,8 @@ kubectl get nodes
 
 PostgreSQL is deployed as a StatefulSet with persistent storage.
 
-**Namespace**: `default`  
-**Service**: `postgres`  
+**Namespace**: `postgres`
+**Service**: `postgres`
 **Port**: 5432 (internal), 30543 (NodePort)
 
 ### Configuration
@@ -89,20 +89,20 @@ Main tables:
 - `queue` - Job queue
 - `schedule` - Scheduled executions
 
-### Tasks
+### Management
 
 ```bash
 # Deploy PostgreSQL
-task postgres:k8s:deploy
+noetl run automation/infrastructure/postgres.yaml --set action=deploy
 
 # Remove PostgreSQL
-task postgres:k8s:remove
+noetl run automation/infrastructure/postgres.yaml --set action=remove
 
 # Port forward
-task postgres:k8s:port-forward
+noetl run automation/infrastructure/postgres.yaml --set action=port-forward
 
 # Access via psql
-task postgres:local:shell
+kubectl exec -it -n postgres deploy/postgres -- psql -U noetl -d noetl
 ```
 
 ## NoETL Services
@@ -111,9 +111,9 @@ task postgres:local:shell
 
 FastAPI-based orchestration engine.
 
-**Namespace**: `default`  
-**Deployment**: `noetl-server`  
-**Replicas**: 1  
+**Namespace**: `noetl`
+**Deployment**: `noetl-server`
+**Replicas**: 1
 **Port**: 8083 (internal), 30083 (NodePort)
 
 **Endpoints**:
@@ -128,8 +128,8 @@ FastAPI-based orchestration engine.
 
 Job execution workers that poll from PostgreSQL queue.
 
-**Namespace**: `default`  
-**Deployment**: `noetl-worker`  
+**Namespace**: `noetl`
+**Deployment**: `noetl-worker`
 **Replicas**: 1-5 (configurable)
 
 **Features**:
@@ -142,16 +142,16 @@ Job execution workers that poll from PostgreSQL queue.
 
 ```bash
 # Deploy both server and workers
-task noetl:k8s:deploy
+noetl run automation/deployment/noetl-stack.yaml --set action=deploy
 
 # Redeploy (rebuild + deploy)
-task noetl:k8s:redeploy
+noetl run automation/development/noetl.yaml --set action=redeploy
 
 # Remove
-task noetl:k8s:remove
+noetl run automation/deployment/noetl-stack.yaml --set action=remove
 
 # Scale workers
-kubectl scale deployment noetl-worker --replicas=3
+kubectl scale deployment noetl-worker -n noetl --replicas=3
 ```
 
 ### Configuration
@@ -175,10 +175,10 @@ VictoriaMetrics-based monitoring with Grafana dashboards.
 
 ```bash
 # Deploy monitoring stack
-task monitoring:k8s:deploy
+noetl run automation/infrastructure/monitoring.yaml --set action=deploy
 
 # Access Grafana
-kubectl port-forward -n vmstack svc/vmstack-grafana 3000:80
+noetl run automation/infrastructure/monitoring.yaml --set action=port-forward
 # Open http://localhost:3000
 ```
 
@@ -194,9 +194,7 @@ kubectl port-forward -n vmstack svc/vmstack-grafana 3000:80
 ### Complete Bootstrap
 
 ```bash
-task bootstrap
-# or
-task bring-all
+noetl run automation/setup/bootstrap.yaml
 ```
 
 This executes:
@@ -212,36 +210,34 @@ This executes:
 ### Manual Step-by-Step
 
 ```bash
-# 1. Check dependencies
-task tools:local:verify
+# 1. Build images
+noetl run automation/development/docker.yaml --set action=build
 
-# 2. Build images
-task docker:local:noetl-image-build
+# 2. Create cluster
+noetl run automation/infrastructure/kind.yaml --set action=create
 
-# 3. Create cluster
-task kind:local:cluster-create
+# 3. Load images
+noetl run automation/infrastructure/kind.yaml --set action=load-image
 
-# 4. Load images
-task kind:local:image-load
-
-# 5. Deploy components
-task postgres:k8s:deploy
-task observability:activate-all
-task monitoring:k8s:deploy
-task noetl:k8s:deploy
+# 4. Deploy components
+noetl run automation/infrastructure/postgres.yaml --set action=deploy
+noetl run automation/infrastructure/observability.yaml --set action=deploy
+noetl run automation/infrastructure/monitoring.yaml --set action=deploy
+noetl run automation/deployment/noetl-stack.yaml --set action=deploy
 ```
 
 ### Verification
 
 ```bash
 # Check cluster health
-task test-cluster-health
+kubectl get nodes
+kubectl get pods -A
 
-# Verify all components
-task bootstrap:verify
+# Verify NoETL
+curl http://localhost:30083/health
 
 # Check observability services
-task observability:status-all
+noetl run automation/infrastructure/observability.yaml --set action=status
 ```
 
 ## Development Workflows
@@ -250,41 +246,36 @@ task observability:status-all
 
 ```bash
 # Start infrastructure
-task dev:start
+noetl run automation/setup/bootstrap.yaml
 
 # Make code changes...
 
 # Rebuild and redeploy
-task noetl:k8s:redeploy
+noetl run automation/development/noetl.yaml --set action=redeploy
 
 # View logs
-task noetl:local:logs-server
-task noetl:local:logs-worker
+kubectl logs -n noetl deployment/noetl-server -f
+kubectl logs -n noetl deployment/noetl-worker -f
 ```
 
 ### Testing
 
 ```bash
-# Run integration tests
-task test-control-flow-full
-task test-iterator-save-full
-task test-save-storage-full
+# Run regression tests
+noetl run tests/fixtures/playbooks/regression_test/regression_test.yaml
 
 # Test specific playbook
-task test-playbook -- path/to/playbook.yaml
+noetl run path/to/playbook.yaml
 ```
 
 ### Cleanup
 
 ```bash
-# Stop all services
-task dev:stop
+# Destroy all infrastructure
+noetl run automation/setup/destroy.yaml
 
-# Clear caches
-task clear-all-cache
-
-# Full cleanup
-task kind:local:cluster-delete
+# Or delete just the cluster
+noetl run automation/infrastructure/kind.yaml --set action=delete
 ```
 
 ## Troubleshooting
@@ -311,23 +302,24 @@ kubectl logs <pod-name>
 kubectl logs <pod-name> --previous  # Previous container
 
 # Port conflicts
-task tshoot:local:check-ports
+lsof -i :30083  # macOS
+netstat -tulpn | grep 30083  # Linux
 
 # Image pull issues
-task kind:local:image-load
+noetl run automation/infrastructure/kind.yaml --set action=load-image
 ```
 
 ### Database Issues
 
 ```bash
 # Check PostgreSQL status
-task postgres:local:status
+kubectl get pods -n postgres
 
 # Connect to database
-task postgres:local:shell
+kubectl exec -it -n postgres deploy/postgres -- psql -U noetl -d noetl
 
 # Check schema
-psql -d demo_noetl -c '\dt'
+\dt noetl.*
 ```
 
 ## Resource Requirements
@@ -369,19 +361,21 @@ Located in `ci/manifests/`:
 - `nats/` - NATS JetStream
 - `timezone-config.yaml` - Timezone configuration
 
-### Taskfiles
+### Automation Playbooks
 
-Located in `ci/taskfile/`:
-- `kind.yml` - Kind cluster management
-- `postgres.yml` - PostgreSQL operations
-- `noetl.yml` - NoETL service management
-- `docker.yml` - Docker image building
-- `clickhouse.yml` - ClickHouse tasks
-- `qdrant.yml` - Qdrant tasks
-- `nats.yml` - NATS tasks
-- `observability.yml` - Unified observability control
-- `vmstack.yml` - Monitoring stack
-- `test.yml` - Integration tests
+Located in `automation/`:
+- `setup/bootstrap.yaml` - Full environment setup
+- `setup/destroy.yaml` - Tear down environment
+- `infrastructure/kind.yaml` - Kind cluster management
+- `infrastructure/postgres.yaml` - PostgreSQL operations
+- `infrastructure/monitoring.yaml` - VictoriaMetrics stack
+- `infrastructure/observability.yaml` - Unified observability control
+- `infrastructure/clickhouse.yaml` - ClickHouse operations
+- `infrastructure/qdrant.yaml` - Qdrant operations
+- `infrastructure/nats.yaml` - NATS operations
+- `deployment/noetl-stack.yaml` - NoETL service deployment
+- `development/docker.yaml` - Docker image building
+- `development/noetl.yaml` - Development workflow
 
 ### Environment Configuration
 
@@ -405,13 +399,13 @@ The CI infrastructure can be used in GitHub Actions:
 
 ```yaml
 - name: Setup Kind cluster
-  run: task kind:local:cluster-create
+  run: noetl run automation/infrastructure/kind.yaml --set action=create
 
 - name: Deploy infrastructure
-  run: task bring-all
+  run: noetl run automation/setup/bootstrap.yaml
 
 - name: Run tests
-  run: task test-all
+  run: pytest tests/
 ```
 
 ### Local Testing
@@ -420,17 +414,16 @@ Mirror CI behavior locally:
 
 ```bash
 # Full CI simulation
-task bring-all
-task test-all
-task clear-all-cache
-task kind:local:cluster-delete
+noetl run automation/setup/bootstrap.yaml
+pytest tests/
+noetl run automation/setup/destroy.yaml
 ```
 
 ## Best Practices
 
-1. **Always use tasks**: Use taskfile commands instead of kubectl directly
-2. **Check health before testing**: Run `task test-cluster-health`
-3. **Clean state**: Use `task clear-all-cache` between test runs
+1. **Use automation playbooks**: Use `noetl run` commands for infrastructure management
+2. **Check health before testing**: Verify all pods are running
+3. **Clean state**: Clean up between test runs if needed
 4. **Monitor resources**: Watch `kubectl top nodes` and `kubectl top pods`
 5. **Match timezones**: Ensure `TZ` is consistent across all components
 6. **Port conflicts**: Check ports before starting cluster

@@ -6,9 +6,9 @@ Complete guide to set up and test OAuth authentication with Google services.
 
 Three OAuth test scenarios are ready:
 
-1. ✅ **Google Secret Manager** - Access secrets using OAuth tokens
-2. ✅ **Google Cloud Storage (GCS)** - List buckets, download objects  
-3. 🚧 **Interactive Brokers** - Trading API (placeholder for future implementation)
+1. **Google Secret Manager** - Access secrets using OAuth tokens
+2. **Google Cloud Storage (GCS)** - List buckets, download objects
+3. **Interactive Brokers** - Trading API (placeholder for future implementation)
 
 ## Quick Start (5 minutes)
 
@@ -27,7 +27,7 @@ cat ~/.config/gcloud/configurations/config_default
 cd /path/to/noetl
 ./tests/fixtures/credentials/copy_gcloud_credentials.sh
 
-# ✅ Done! Skip to Step 2
+# Done! Skip to Step 2
 ```
 
 **Option B: Create New Service Account**
@@ -93,19 +93,19 @@ For **GCS** test:
 gsutil ls -p $PROJECT_ID | head -5
 
 # Grant access (if using service account Option B):
-# User credentials (Option A) already have access! ✅
+# User credentials (Option A) already have access!
 gcloud projects add-iam-policy-binding $PROJECT_ID \
   --member="serviceAccount:noetl-oauth-test@${PROJECT_ID}.iam.gserviceaccount.com" \
   --role="roles/storage.objectViewer"
 
-echo "✅ GCS test ready - no objects needed, test only lists buckets"
+echo "GCS test ready - no objects needed, test only lists buckets"
 ```
 
 ### Step 3: Register Credential with NoETL
 
 ```bash
 # Start NoETL (if not already running)
-task noetl:local:start
+noetl server start
 
 # Register credential
 curl -X POST http://localhost:8083/api/credentials \
@@ -124,7 +124,7 @@ Edit playbook workload section with your values:
 ```yaml
 workload:
   google_auth: google_oauth              # Keep this (credential name)
-  project_id: noetl-demo-19700101        # ← Change to your PROJECT_ID
+  project_id: noetl-demo-19700101        # <- Change to your PROJECT_ID
   secret_name: gcs_hmac_local            # Keep this (secret exists in Secret Manager)
   version: latest                        # Keep this
 ```
@@ -139,7 +139,7 @@ gcloud config get-value project
 ```yaml
 workload:
   google_auth: google_oauth              # Keep this (credential name)
-  project_id: noetl-demo-19700101        # ← Change to your PROJECT_ID
+  project_id: noetl-demo-19700101        # <- Change to your PROJECT_ID
   bucket_name: noetl-demo-19700101       # Usually matches project ID
   object_path: fixture/test_oauth.json   # Not used (test only lists buckets)
 ```
@@ -271,19 +271,26 @@ gcloud secrets list --project=$PROJECT_ID
 
 ```
 Playbook YAML
-    ↓
-{{ token(credential, audience) }} ← Jinja2 template
-    ↓
+    |
+    v
+{{ token(credential, audience) }} <- Jinja2 template
+    |
+    v
 Token Resolver (worker/context.py)
-    ↓
+    |
+    v
 Credential Fetch (encrypted DB)
-    ↓
+    |
+    v
 GoogleTokenProvider (google_provider.py)
-    ↓
-google.auth.transport.requests ← Python SDK
-    ↓
+    |
+    v
+google.auth.transport.requests <- Python SDK
+    |
+    v
 ID Token (JWT, ~1 hour expiry)
-    ↓
+    |
+    v
 HTTP Authorization: Bearer <token>
 ```
 
@@ -315,7 +322,7 @@ HTTP Authorization: Bearer <token>
 
 **Use when**: You want to impersonate another service account with different permissions
 
-**Setup**: 
+**Setup**:
 1. Create source service account (the impersonator)
 2. Grant it `roles/iam.serviceAccountTokenCreator` on target service account
 3. Use `google_oauth_impersonate.json` credential

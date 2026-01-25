@@ -11,7 +11,7 @@ Complete bootstrap infrastructure for projects that use NoETL as a git submodule
 
 **Features**:
 - Auto-detects OS (macOS or WSL2/Ubuntu)
-- Installs system tools (Docker, kubectl, helm, jq, yq, psql, task, kind)
+- Installs system tools (Docker, kubectl, helm, jq, yq, psql, kind)
 - Creates Python venv combining project + NoETL dependencies
 - Sets up Kind Kubernetes cluster with full NoETL infrastructure
 - Idempotent (can run multiple times safely)
@@ -36,63 +36,18 @@ Complete bootstrap infrastructure for projects that use NoETL as a git submodule
 **Tool Installation**:
 
 **macOS** (via Homebrew):
-- kubectl, helm, jq, yq, task
+- kubectl, helm, jq, yq
 - libpq (PostgreSQL client)
 - docker, kind
 - python@3.12
 
 **Linux/WSL2** (via apt + curl):
-- kubectl, helm, yq, task, kind
+- kubectl, helm, yq, kind
 - postgresql-client
 - build-essential, git, curl, jq
 - python3, python3-venv, python3-pip
 
-### 2. Project Taskfile Template (`ci/bootstrap/Taskfile-bootstrap.yml`)
-**Purpose**: Complete Taskfile for projects using NoETL
-
-**Key Features**:
-- Imports all NoETL tasks with `noetl:` prefix
-- Bootstrap verification and setup tasks
-- Development workflow (start/stop/restart/status)
-- Credential and playbook management
-- Kubernetes helpers (logs, port-forwarding, shell access)
-- Testing and cleanup tasks
-- Documentation and quick reference
-
-**Task Categories**:
-```bash
-# Bootstrap
-task bootstrap                    # Complete setup
-task bootstrap:verify            # Verify tools
-task bootstrap:venv              # Create Python venv
-
-# Development
-task dev:setup                   # Full environment setup
-task dev:start                   # Start infrastructure
-task dev:stop                    # Stop infrastructure
-task dev:status                  # Show status
-
-# Credentials & Playbooks
-task credentials:register        # Register credentials
-task playbooks:register          # Register playbooks
-task playbooks:list              # List playbooks
-task playbooks:execute -- <name> # Execute playbook
-
-# Kubernetes
-task k8s:logs:noetl             # Server logs
-task k8s:logs:worker            # Worker logs
-task k8s:port-forward:ui        # Port-forward UI
-task k8s:port-forward:postgres  # Port-forward Postgres
-task k8s:port-forward:grafana   # Port-forward Grafana
-
-# Cleanup
-task clean:cache                # Clear cache
-task clean:venv                 # Remove venv
-task clean:cluster              # Delete cluster
-task clean:all                  # Clean everything
-```
-
-### 3. Project pyproject.toml Template (`ci/bootstrap/pyproject-template.toml`)
+### 2. Project pyproject.toml Template (`ci/bootstrap/pyproject-template.toml`)
 **Purpose**: Python project configuration template
 
 **Features**:
@@ -121,7 +76,7 @@ uv pip install -e .         # Your project
 uv pip install -e ".[dev]" # With dev dependencies
 ```
 
-### 4. Gitignore Template (`ci/bootstrap/gitignore-template`)
+### 3. Gitignore Template (`ci/bootstrap/gitignore-template`)
 **Purpose**: Comprehensive .gitignore for projects
 
 **Excludes**:
@@ -134,12 +89,11 @@ uv pip install -e ".[dev]" # With dev dependencies
 **Includes**:
 - Template files (*.example.json, *.template.json)
 
-### 5. Documentation
+### 4. Documentation
 
 **README.md** (`ci/bootstrap/README.md`):
 - Complete overview of bootstrap system
 - Architecture and directory structure
-- Task reference
 - Development workflow guide
 - Extension patterns (custom K8s resources, Helm charts)
 - Troubleshooting guide
@@ -151,7 +105,7 @@ uv pip install -e ".[dev]" # With dev dependencies
 - Project creation from scratch
 - First playbook tutorial
 - Service access instructions
-- Common tasks reference
+- Common commands reference
 - Credential and playbook examples
 - Testing examples
 - Updating submodule instructions
@@ -165,7 +119,6 @@ project-using-noetl/
 ├── .git/                           # Project git repository
 ├── .gitignore                      # Project-specific ignores
 ├── .venv/                          # Python venv (project + noetl)
-├── Taskfile.yml                    # Project taskfile (imports noetl tasks)
 ├── pyproject.toml                  # Project dependencies
 ├── README.md                       # Project documentation
 │
@@ -183,22 +136,12 @@ project-using-noetl/
 │
 └── noetl/                          # NoETL submodule (read-only)
     ├── ci/
-    │   ├── bootstrap/              # ⭐ Bootstrap infrastructure
+    │   ├── bootstrap/              # Bootstrap infrastructure
     │   │   ├── bootstrap.sh        # Main bootstrap script
-    │   │   ├── Taskfile-bootstrap.yml
     │   │   ├── pyproject-template.toml
     │   │   ├── gitignore-template
     │   │   ├── README.md
     │   │   └── QUICKSTART.md
-    │   ├── taskfile/               # NoETL taskfiles
-    │   │   ├── kind.yml
-    │   │   ├── postgres.yml
-    │   │   ├── noetl.yml
-    │   │   ├── vmstack.yml
-    │   │   ├── docker.yml
-    │   │   ├── tools.yml
-    │   │   ├── test.yml
-    │   │   └── tshoot.yml
     │   ├── kind/                   # Kind cluster config
     │   │   ├── config.yaml
     │   │   └── cache/              # Local cache (gitignored)
@@ -208,8 +151,19 @@ project-using-noetl/
     │   └── vmstack/                # Monitoring configs
     │       ├── vmstack-values.yaml
     │       └── vmlogs-values.yaml
-    ├── noetl/                      # NoETL Python package
-    └── taskfile.yml                # NoETL main taskfile
+    ├── automation/                 # NoETL infrastructure playbooks
+    │   ├── setup/
+    │   │   ├── bootstrap.yaml
+    │   │   └── destroy.yaml
+    │   ├── infrastructure/
+    │   │   ├── kind.yaml
+    │   │   ├── postgres.yaml
+    │   │   ├── monitoring.yaml
+    │   │   └── ...
+    │   └── development/
+    │       ├── docker.yaml
+    │       └── noetl.yaml
+    └── noetl/                      # NoETL Python package
 ```
 
 ### Bootstrap Flow
@@ -226,21 +180,19 @@ project-using-noetl/
    │   ├── Install uv (fast package installer)
    │   ├── Install NoETL: uv pip install -e ./noetl
    │   └── Install project: uv pip install -e .
-   ├── Create project Taskfile.yml (if missing)
-   └── Setup NoETL infrastructure
+   └── Setup NoETL infrastructure (via playbooks)
        ├── Create Kind cluster
        ├── Deploy PostgreSQL
        ├── Deploy VictoriaMetrics monitoring
        └── Deploy NoETL server + workers
 
-2. Task System
-   ├── Project Taskfile.yml (imported from template)
-   │   ├── Bootstrap tasks
-   │   ├── Development workflow tasks
-   │   └── Includes noetl: taskfile
-   └── NoETL taskfile.yml
-       ├── Includes all ci/taskfile/*.yml
-       └── Provides infrastructure tasks
+2. NoETL Playbooks
+   └── automation/
+       ├── setup/bootstrap.yaml     # Full infrastructure setup
+       ├── infrastructure/kind.yaml # Kind cluster management
+       ├── infrastructure/postgres.yaml
+       ├── infrastructure/monitoring.yaml
+       └── deployment/noetl-stack.yaml
 ```
 
 ### Python Environment
@@ -256,31 +208,27 @@ This allows:
 - Shared dependency resolution
 - Single activation: `source .venv/bin/activate`
 
-### Task Inheritance
+### Using NoETL Playbooks
 
-Projects inherit all NoETL tasks via includes:
+NoETL provides automation playbooks for infrastructure management:
 
-```yaml
-# Project Taskfile.yml
-includes:
-  noetl:
-    taskfile: ./noetl/taskfile.yml
-    dir: ./noetl
+```bash
+# Full bootstrap
+noetl run automation/setup/bootstrap.yaml
 
-# Now available:
-# task noetl:kind:local:cluster-create
-# task noetl:postgres:k8s:deploy
-# task noetl:monitoring:k8s:deploy
-# etc.
-```
+# Individual components
+noetl run automation/infrastructure/kind.yaml --set action=create
+noetl run automation/infrastructure/kind.yaml --set action=delete
+noetl run automation/infrastructure/postgres.yaml --set action=deploy
+noetl run automation/infrastructure/monitoring.yaml --set action=deploy
+noetl run automation/deployment/noetl-stack.yaml --set action=deploy
 
-Task aliases in project Taskfile can simplify:
-```yaml
-tasks:
-  start:
-    aliases: [up]
-    cmds:
-      - task: noetl:dev:k8s:bootstrap
+# Development workflow
+noetl run automation/development/docker.yaml --set action=build
+noetl run automation/development/noetl.yaml --set action=redeploy
+
+# Destroy everything
+noetl run automation/setup/destroy.yaml
 ```
 
 ## OS-Specific Implementation
@@ -317,22 +265,12 @@ tasks:
 
 Projects can extend NoETL infrastructure:
 
-```yaml
-# In project Taskfile.yml
-tasks:
-  k8s:deploy-redis:
-    desc: Deploy Redis to cluster
-    cmds:
-      - helm repo add bitnami https://charts.bitnami.com/bitnami
-      - helm upgrade --install redis bitnami/redis \
-          --namespace redis --create-namespace \
-          --wait
-  
-  dev:setup-extended:
-    desc: Setup NoETL + custom services
-    cmds:
-      - task: noetl:dev:k8s:bootstrap
-      - task: k8s:deploy-redis
+```bash
+# Deploy Redis alongside NoETL
+helm repo add bitnami https://charts.bitnami.com/bitnami
+helm upgrade --install redis bitnami/redis \
+    --namespace redis --create-namespace \
+    --wait
 ```
 
 ### CI/CD Integration
@@ -350,10 +288,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-      
+
       - name: Bootstrap
         run: ./noetl/ci/bootstrap/bootstrap.sh --os linux
-      
+
       - name: Run tests
         run: |
           source .venv/bin/activate
@@ -498,13 +436,13 @@ Potential improvements:
 
 The bootstrap infrastructure provides:
 
-✅ **Complete automation**: Single command setup
-✅ **Cross-platform**: macOS and WSL2/Ubuntu
-✅ **Production-ready**: Full observability stack
-✅ **Developer-friendly**: Task automation and clear docs
-✅ **Extensible**: Easy to add custom infrastructure
-✅ **Secure**: Credentials management built-in
-✅ **Well-documented**: README, QUICKSTART, inline comments
-✅ **Tested patterns**: Based on NoETL's own development workflow
+- **Complete automation**: Single command setup
+- **Cross-platform**: macOS and WSL2/Ubuntu
+- **Production-ready**: Full observability stack
+- **Developer-friendly**: NoETL playbooks for all operations
+- **Extensible**: Easy to add custom infrastructure
+- **Secure**: Credentials management built-in
+- **Well-documented**: README, QUICKSTART, inline comments
+- **Tested patterns**: Based on NoETL's own development workflow
 
 Projects get NoETL's full local development infrastructure with minimal setup, allowing them to focus on building data workflows rather than infrastructure management.

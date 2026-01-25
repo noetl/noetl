@@ -21,7 +21,6 @@ git submodule update --init --recursive
 
 ```bash
 # Copy template files to project root
-cp noetl/ci/bootstrap/Taskfile-bootstrap.yml ./Taskfile.yml
 cp noetl/ci/bootstrap/pyproject-template.toml ./pyproject.toml
 cp noetl/ci/bootstrap/gitignore-template ./.gitignore
 
@@ -51,7 +50,7 @@ dependencies = [
 
 ## 4. Run Bootstrap
 
-**IMPORTANT:** Run bootstrap first to install all required tools (including `task`).
+**IMPORTANT:** Run bootstrap first to install all required tools.
 
 **Automatic (detects OS):**
 ```bash
@@ -68,21 +67,20 @@ dependencies = [
 ```
 
 This will:
-- ✅ Install system tools automatically:
+- Install system tools automatically:
   - Docker (auto-install & start)
-  - **task (Taskfile automation)** ← Required before using any task commands
   - pyenv (Python version manager)
   - tfenv (Terraform version manager)
   - uv (Fast Python package manager)
   - kubectl, helm, kind
   - jq, yq, psql
   - Python 3.12+
-- ✅ Create Python venv with your project + NoETL
-- ✅ Set up Kind Kubernetes cluster
-- ✅ Deploy PostgreSQL and monitoring stack
-- ✅ Deploy NoETL server and workers
-- ✅ Copy template files (.env.local, .gitignore, pyproject.toml)
-- ✅ Create project directories (credentials/, playbooks/, data/, logs/, secrets/)
+- Create Python venv with your project + NoETL
+- Set up Kind Kubernetes cluster
+- Deploy PostgreSQL and monitoring stack
+- Deploy NoETL server and workers
+- Copy template files (.env.local, .gitignore, pyproject.toml)
+- Create project directories (credentials/, playbooks/, data/, logs/, secrets/)
 
 **Bootstrap takes 5-10 minutes on first run.**
 
@@ -108,17 +106,12 @@ vim .env.local
 # Activate venv
 source .venv/bin/activate
 
-# List available tasks (task was installed by bootstrap)
-task --list
+# Check NoETL CLI
+noetl --help
 
-# Verify tools
-task bootstrap:verify
-
-# Check infrastructure
-task dev:status
+# Verify infrastructure
+kubectl get pods -A
 ```
-
-**Note:** If `task` command is not found, make sure the bootstrap script completed successfully. The script installs `task` automatically.
 
 ## 7. Create Your First Playbook
 
@@ -157,15 +150,12 @@ EOF
 
 ```bash
 # Register playbook
-.venv/bin/noetl register playbooks/hello_world.yaml \
+noetl register playbooks/hello_world.yaml \
   --host localhost --port 8083
 
 # Execute playbook
-.venv/bin/noetl execute playbook hello_world \
+noetl execute playbook hello_world \
   --host localhost --port 8083
-
-# Or use task
-task playbooks:register
 ```
 
 ## 9. Access Services
@@ -177,14 +167,14 @@ open http://localhost:8083
 
 **Grafana (monitoring):**
 ```bash
-task k8s:port-forward:grafana
+noetl run automation/infrastructure/monitoring.yaml --set action=port-forward
 open http://localhost:3000
 # Username: admin, Password: admin
 ```
 
 **PostgreSQL:**
 ```bash
-task k8s:port-forward:postgres
+noetl run automation/infrastructure/postgres.yaml --set action=port-forward
 psql -h localhost -U noetl -d noetl
 # Password: noetl
 ```
@@ -198,7 +188,6 @@ my-noetl-project/
 ├── .git/                           # Your project git
 ├── .gitignore                      # Ignore credentials, venv, etc.
 ├── .venv/                          # Python venv (project + noetl)
-├── Taskfile.yml                    # Your task automation
 ├── pyproject.toml                  # Your project dependencies
 ├── README.md                       # Your project docs
 │
@@ -214,34 +203,30 @@ my-noetl-project/
 └── noetl/                          # NoETL submodule (read-only)
     ├── ci/
     │   ├── bootstrap/              # Bootstrap scripts
-    │   ├── taskfile/               # NoETL taskfiles
     │   ├── kind/                   # Kind cluster config
     │   ├── manifests/              # K8s manifests
     │   └── vmstack/                # Monitoring configs
+    ├── automation/                 # NoETL infrastructure playbooks
     └── noetl/                      # NoETL Python package
 ```
 
-## Common Tasks
+## Common Commands
 
 ```bash
 # Development
-task dev:start          # Start NoETL infrastructure
-task dev:stop           # Stop NoETL infrastructure
-task dev:status         # Show infrastructure status
+noetl run automation/setup/bootstrap.yaml           # Full infrastructure setup
+noetl run automation/infrastructure/kind.yaml --set action=status  # Check cluster status
 
 # Playbooks
-task playbooks:register # Register all playbooks
-task playbooks:list     # List registered playbooks
-task playbooks:execute -- hello_world  # Execute specific playbook
+noetl register playbooks/                           # Register all playbooks
+noetl execute playbook hello_world                  # Execute specific playbook
 
 # Logs
-task k8s:logs:noetl    # NoETL server logs
-task k8s:logs:worker   # Worker logs
-task k8s:logs:postgres # Postgres logs
+kubectl logs -n noetl deployment/noetl-server       # NoETL server logs
+kubectl logs -n noetl deployment/noetl-worker       # Worker logs
 
 # Cleanup
-task clean:cache       # Clear local cache
-task clean:all         # Clean everything
+noetl run automation/setup/destroy.yaml             # Destroy infrastructure
 ```
 
 ## Next Steps
@@ -268,7 +253,7 @@ cat > credentials/my_postgres.json << 'EOF'
 EOF
 
 # Register
-.venv/bin/noetl register credentials/my_postgres.json \
+noetl register credentials/my_postgres.json \
   --host localhost --port 8083
 ```
 
@@ -292,7 +277,7 @@ workbook:
     sql: |
       SELECT * FROM {{ workload.source_table }}
       WHERE created_at >= CURRENT_DATE - INTERVAL '1 day'
-  
+
   - name: transform_data
     type: python
     code: |
@@ -302,7 +287,7 @@ workbook:
           # Your transformation logic
           df['processed_at'] = pd.Timestamp.now()
           return df.to_dict('records')
-  
+
   - name: load_data
     type: postgres
     auth:
@@ -321,13 +306,13 @@ workflow:
   - step: start
     next:
       - step: extract
-  
+
   - step: extract
     type: workbook
     name: extract_data
     next:
       - step: transform
-  
+
   - step: transform
     type: workbook
     name: transform_data
@@ -335,14 +320,14 @@ workflow:
       rows: "{{ extract.data.rows }}"
     next:
       - step: load
-  
+
   - step: load
     type: workbook
     name: load_data
     data: "{{ transform.data }}"
     next:
       - step: end
-  
+
   - step: end
     desc: Pipeline complete
 ```
@@ -428,7 +413,6 @@ lsof -i :8083  # macOS
 sudo netstat -tulpn | grep 8083  # Linux
 
 # Kill the process or change NoETL port
-# Edit noetl/ci/manifests/noetl/service.yaml
 ```
 
 **Problem: Cluster won't start**
@@ -437,16 +421,16 @@ sudo netstat -tulpn | grep 8083  # Linux
 docker info
 
 # Delete and recreate
-task dev:stop
-task dev:start
+noetl run automation/infrastructure/kind.yaml --set action=delete
+noetl run automation/infrastructure/kind.yaml --set action=create
 ```
 
 ## Support
 
-- 📖 Full documentation: `noetl/ci/bootstrap/README.md`
-- 🌐 NoETL website: https://noetl.io
-- 🐛 Report issues: https://github.com/noetl/noetl/issues
-- 💬 Ask questions: Create GitHub discussion
+- Full documentation: `noetl/ci/bootstrap/README.md`
+- NoETL website: https://noetl.io
+- Report issues: https://github.com/noetl/noetl/issues
+- Ask questions: Create GitHub discussion
 
 ## Example Projects
 

@@ -194,20 +194,17 @@ vim tests/fixtures/credentials/sf_test.json
 curl -X POST http://localhost:8082/api/credentials \
   -H "Content-Type: application/json" \
   --data-binary @tests/fixtures/credentials/sf_test.json
-
-# Or use task command
-task register-test-credentials
 ```
 
 ### Run Test Playbook
 
 ```bash
 # Register playbook
-task noetltest:playbook-register -- \
+noetl playbook register \
   tests/fixtures/playbooks/snowflake_transfer/snowflake_transfer.yaml
 
 # Execute playbook
-task noetltest:playbook-execute -- \
+noetl playbook execute \
   tests/fixtures/playbooks/snowflake_transfer
 ```
 

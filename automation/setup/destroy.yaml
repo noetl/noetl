@@ -13,16 +13,34 @@ workflow:
     tool:
       kind: shell
       cmds:
-        - echo "🔥 Starting environment destroy..."
+        - echo "Starting environment destroy..."
+    next:
+      - step: kill_port_forwards
+
+  - step: kill_port_forwards
+    desc: Kill kubectl port-forward processes
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "Killing port-forward processes..."
+          pkill -f "kubectl port-forward" 2>/dev/null || true
+          # Give Docker Desktop time to release ports
+          sleep 2
+          echo "OK Port-forward processes terminated"
     next:
       - step: delete_cluster
-  
+
   - step: delete_cluster
     desc: Delete kind cluster
     tool:
       kind: shell
       cmds:
-        - kind delete cluster --name=noetl || echo "Cluster deletion skipped or failed"
+        - |
+          echo "Deleting kind cluster..."
+          kind delete cluster --name=noetl 2>/dev/null || echo "INFO Cluster not found or already deleted"
+          # Give Docker Desktop time to release ports after cluster deletion
+          sleep 3
     next:
       - step: cleanup_docker
   
@@ -67,17 +85,20 @@ workflow:
       cmds:
         - |
           echo ""
-          echo "✅ Environment Destroyed!"
+          echo "Environment Destroyed!"
           echo ""
           echo "Cleanup completed:"
+          echo "  - Port-forward processes: killed"
           echo "  - Kind cluster: deleted"
           echo "  - Docker resources: cleaned"
           echo "  - Cache directories: cleared"
           echo "  - NoETL data: cleared"
           echo ""
           echo "You can now run bootstrap again:"
-          echo "  noetl run automation/boot.yaml"
-          echo "  # or: noetl run automation/setup/bootstrap.yaml"
+          echo "  noetl run boot"
+          echo ""
+          echo "NOTE: If ports are still in use (macOS), restart Docker Desktop:"
+          echo "  osascript -e 'quit app \"Docker\"' && sleep 5 && open -a Docker"
           echo ""
     next:
       - step: end

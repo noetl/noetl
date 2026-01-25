@@ -28,7 +28,7 @@
 ### 1. Build Docker Image
 ```bash
 cd /Users/akuksin/projects/noetl/noetl
-task docker-build-noetl
+noetl build
 ```
 
 Expected output:
@@ -36,9 +36,8 @@ Expected output:
 - Tagged as `local/noetl:latest` or `local/noetl:YYYY-MM-DD-HH-MM`
 
 ### 2. Load Image to kind Cluster
-```bash
-task kind-load-image image=local/noetl:latest
-```
+
+The image is automatically loaded to the kind cluster during the build process.
 
 Expected output:
 - Image loaded into kind cluster
@@ -51,9 +50,9 @@ kubectl set image deployment/noetl-server noetl-server=local/noetl:latest -n noe
 kubectl set image deployment/noetl-worker noetl-worker=local/noetl:latest -n noetl
 ```
 
-Or use task:
+Or use noetl CLI:
 ```bash
-task deploy-noetl
+noetl run automation/deployment/noetl-stack.yaml --set action=deploy
 ```
 
 Expected output:

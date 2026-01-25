@@ -14,25 +14,25 @@ NoETL includes three observability and data services:
 
 ### Activate All Services
 ```bash
-task observability:activate-all
+noetl run automation/infrastructure/observability.yaml --set action=deploy
 ```
 
 ### Deactivate All Services
 ```bash
-task observability:deactivate-all
+noetl run automation/infrastructure/observability.yaml --set action=remove
 ```
 
 ### Individual Service Control
 ```bash
-# Activate individual services
-task observability:activate-clickhouse
-task observability:activate-qdrant
-task observability:activate-nats
+# Deploy individual services
+noetl run automation/infrastructure/clickhouse.yaml --set action=deploy
+noetl run automation/infrastructure/qdrant.yaml --set action=deploy
+noetl run automation/infrastructure/nats.yaml --set action=deploy
 
-# Deactivate individual services
-task observability:deactivate-clickhouse
-task observability:deactivate-qdrant
-task observability:deactivate-nats
+# Remove individual services
+noetl run automation/infrastructure/clickhouse.yaml --set action=remove
+noetl run automation/infrastructure/qdrant.yaml --set action=remove
+noetl run automation/infrastructure/nats.yaml --set action=remove
 ```
 
 ## ClickHouse
@@ -52,14 +52,12 @@ Columnar analytical database for high-performance analytics on logs, metrics, an
 - ZSTD compression, bloom filter indexes
 - TTL policies (30-90 days)
 
-### Common Tasks
+### Common Operations
 ```bash
-task clickhouse:status          # Show status
-task clickhouse:connect         # Connect to CLI
-task clickhouse:query -- "..."  # Execute query
-task clickhouse:health          # Health check
-task clickhouse:logs            # View logs
-task clickhouse:port-forward    # Port forwarding
+noetl run automation/infrastructure/clickhouse.yaml --set action=status    # Show status
+noetl run automation/infrastructure/clickhouse.yaml --set action=connect   # Connect to CLI
+noetl run automation/infrastructure/clickhouse.yaml --set action=health    # Health check
+noetl run automation/infrastructure/clickhouse.yaml --set action=logs      # View logs
 ```
 
 ### Documentation
@@ -81,14 +79,13 @@ Vector similarity search engine for embeddings, semantic search, and RAG applica
 - Collection-based organization
 - 5GB persistent storage
 
-### Common Tasks
+### Common Operations
 ```bash
-task qdrant:status          # Show status
-task qdrant:health          # Health check
-task qdrant:collections     # List collections
-task qdrant:logs            # View logs
-task qdrant:port-forward    # Port forwarding
-task qdrant:test            # Run tests
+noetl run automation/infrastructure/qdrant.yaml --set action=status       # Show status
+noetl run automation/infrastructure/qdrant.yaml --set action=health       # Health check
+noetl run automation/infrastructure/qdrant.yaml --set action=collections  # List collections
+noetl run automation/infrastructure/qdrant.yaml --set action=logs         # View logs
+noetl run automation/infrastructure/qdrant.yaml --set action=test         # Run tests
 ```
 
 ### API Examples
@@ -147,15 +144,14 @@ Messaging system with streaming and key-value store for event-driven workflows.
 - Message replay
 - Credentials: noetl/noetl
 
-### Common Tasks
+### Common Operations
 ```bash
-task nats:status          # Show status
-task nats:health          # Health check
-task nats:streams         # List streams
-task nats:monitoring      # Show monitoring
-task nats:logs            # View logs
-task nats:port-forward    # Port forwarding
-task nats:test            # Run tests
+noetl run automation/infrastructure/nats.yaml --set action=status      # Show status
+noetl run automation/infrastructure/nats.yaml --set action=health      # Health check
+noetl run automation/infrastructure/nats.yaml --set action=streams     # List streams
+noetl run automation/infrastructure/nats.yaml --set action=monitoring  # Show monitoring
+noetl run automation/infrastructure/nats.yaml --set action=logs        # View logs
+noetl run automation/infrastructure/nats.yaml --set action=test        # Run tests
 ```
 
 ### CLI Examples
@@ -195,22 +191,17 @@ nats -s nats://noetl:noetl@localhost:30422 kv get config key
 
 ### Status Check
 ```bash
-task observability:status-all
+noetl run automation/infrastructure/observability.yaml --set action=status
 ```
 
 ### Health Check
 ```bash
-task observability:health-all
+noetl run automation/infrastructure/observability.yaml --set action=health
 ```
 
 ### Restart All
 ```bash
-task observability:restart-all
-```
-
-### View Logs
-```bash
-task observability:logs-all
+noetl run automation/infrastructure/observability.yaml --set action=restart
 ```
 
 ## Integration with NoETL
@@ -218,12 +209,8 @@ task observability:logs-all
 ### Bootstrap Integration
 All services automatically deploy with:
 ```bash
-task bootstrap
-# or
-task dev:start
+noetl run automation/setup/bootstrap.yaml
 ```
-
-Integrated into `task noetl:k8s:bootstrap` via `observability:activate-all`.
 
 ### Service Endpoints in Bootstrap Output
 ```
@@ -267,9 +254,9 @@ kubectl get pods -n qdrant
 kubectl get pods -n nats
 
 # Check logs
-task clickhouse:logs
-task qdrant:logs
-task nats:logs
+kubectl logs -n clickhouse deployment/clickhouse -f
+kubectl logs -n qdrant deployment/qdrant -f
+kubectl logs -n nats deployment/nats -f
 
 # Describe pods for events
 kubectl describe pod -n clickhouse

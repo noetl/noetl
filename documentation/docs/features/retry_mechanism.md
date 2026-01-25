@@ -211,15 +211,13 @@ Test playbooks are available in `tests/fixtures/playbooks/retry_test/`:
 ### Running Tests
 
 ```bash
-# Register all retry test playbooks
-task playbook:local:register-retry-tests
-
-# Run all retry tests
-task test:local:retry-all
+# Register and run retry test playbooks
+noetl run automation/test/retry-tests.yaml --set action=register
+noetl run automation/test/retry-tests.yaml --set action=run-all
 
 # Run specific retry test
-task playbook:local:execute:retry-http-status
-task playbook:local:execute:retry-python-exception
+noetl run automation/test/retry-tests.yaml --set action=run --set test=http-status
+noetl run automation/test/retry-tests.yaml --set action=run --set test=python-exception
 ```
 
 ## Best Practices

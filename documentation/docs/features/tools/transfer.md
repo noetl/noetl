@@ -324,6 +324,6 @@ source:
 
 ## See Also
 
-- [PostgreSQL Tool](./postgres.md) - Direct PostgreSQL queries
-- [DuckDB Tool](./duckdb.md) - Local analytics with DuckDB
+- [PostgreSQL Tool](./postgres) - Direct PostgreSQL queries
+- [DuckDB Tool](./duckdb) - Local analytics with DuckDB
 - [Snowflake Tool](./snowflake.md) - Snowflake queries

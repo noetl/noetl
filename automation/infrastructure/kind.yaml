@@ -189,15 +189,6 @@ workflow:
           echo "  # List clusters"
           echo "  noetl run automation/infrastructure/kind.yaml --set action=list"
           echo ""
-          echo "Task Equivalents:"
-          echo "  create      -> task kind:local:cluster-create"
-          echo "  delete      -> task kind:local:cluster-delete"
-          echo "  list        -> task kind:local:clusters-list"
-          echo "  status      -> custom status check"
-          echo "  context-set -> task kubectl:local:context-set-kind"
-          echo "  image-load  -> task kind:local:image-load"
-          echo "  images-list -> task kind:k8s:images-list"
-          echo ""
     next:
       - step: end
 

@@ -146,16 +146,15 @@ Removed connection pooling entirely from worker side:
 
 ```bash
 # Register the playbook
-.venv/bin/python -m noetl.cli.ctl catalog register \
-  tests/fixtures/playbooks/data_transfer/postgres_jsonb_test/postgres_jsonb_test.yaml
+noetl playbook register tests/fixtures/playbooks/data_transfer/postgres_jsonb_test
 
-# Execute the playbook via API
+# Execute the playbook
+noetl execution create tests/fixtures/playbooks/data_transfer/postgres_jsonb_test
+
+# Or execute via API
 curl -X POST "http://localhost:8083/api/run/playbook" \
   -H "Content-Type: application/json" \
   -d '{"path":"tests/fixtures/playbooks/data_transfer/postgres_jsonb_test"}'
-
-# Or use task command (if configured)
-task test-postgres-jsonb-full
 ```
 
 ## Validation Points

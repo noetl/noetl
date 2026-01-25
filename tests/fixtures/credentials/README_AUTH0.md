@@ -27,11 +27,11 @@ The `auth0_client` credential is used by Auth0 authentication playbooks to obtai
 4. **Register the credential:**
    ```bash
    # Option 1: Register all test credentials
-   task register-test-credentials
-   
+   noetl run automation/test/register-test-credentials.yaml
+
    # Option 2: Register via test script
    ./tests/scripts/test_auth0_integration.sh 'your_client_secret'
-   
+
    # Option 3: Manual registration via API
    curl -X POST http://localhost:8082/api/credentials \
      -H 'Content-Type: application/json' \

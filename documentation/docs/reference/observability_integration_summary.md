@@ -25,11 +25,11 @@ Added complete observability stack to NoETL with ClickHouse, Qdrant, and NATS Je
 12. `ci/manifests/nats/nats.yaml`
 13. `ci/manifests/nats/README.md`
 
-### Taskfiles (4 files)
-14. `ci/taskfile/clickhouse.yml` - 16 ClickHouse tasks
-15. `ci/taskfile/qdrant.yml` - 11 Qdrant tasks
-16. `ci/taskfile/nats.yml` - 12 NATS tasks
-17. `ci/taskfile/observability.yml` - 11 unified control tasks
+### Playbooks (4 files)
+14. `automation/infrastructure/clickhouse.yaml` - ClickHouse deployment and management
+15. `automation/infrastructure/qdrant.yaml` - Qdrant deployment and management
+16. `automation/infrastructure/nats.yaml` - NATS deployment and management
+17. `automation/infrastructure/observability.yaml` - Unified control playbook
 
 ### Documentation (3 files)
 18. `docs/observability_services.md` - Complete guide
@@ -38,18 +38,9 @@ Added complete observability stack to NoETL with ClickHouse, Qdrant, and NATS Je
 
 ## Integration Updates
 
-### Main Taskfile (`taskfile.yml`)
-- Added `clickhouse:`, `qdrant:`, `nats:`, `observability:` includes
-- Changed bootstrap to use `observability:activate-all`
-- Tasks now namespaced (e.g., `task clickhouse:deploy`)
-
-### Bootstrap (`ci/bootstrap/Taskfile-bootstrap.yml`)
-- Updated `bootstrap:verify` to check all observability services
-- Updated `dev:start` to activate all services and display all ports
-
-### Copilot Instructions (`.github/copilot-instructions.md`)
-- Added observability stack overview
-- Updated development workflows with observability commands
+### Bootstrap Playbook (`automation/setup/bootstrap.yaml`)
+- Updated verification to check all observability services
+- Activates all services and displays all ports
 
 ## Services
 
@@ -100,57 +91,57 @@ Added complete observability stack to NoETL with ClickHouse, Qdrant, and NATS Je
 
 **Resources**: 512Mi-2Gi memory, 250m-1000m CPU, 5Gi storage
 
-## Task Usage
+## Playbook Usage
 
 ### Unified Control
 ```bash
 # Activate all services
-task observability:activate-all
+noetl run automation/infrastructure/observability.yaml --set action=activate-all
 
 # Deactivate all services
-task observability:deactivate-all
+noetl run automation/infrastructure/observability.yaml --set action=deactivate-all
 
 # Status check
-task observability:status-all
+noetl run automation/infrastructure/observability.yaml --set action=status-all
 
 # Health check
-task observability:health-all
+noetl run automation/infrastructure/observability.yaml --set action=health-all
 
 # Restart all
-task observability:restart-all
+noetl run automation/infrastructure/observability.yaml --set action=restart-all
 ```
 
 ### Individual Service Control
 ```bash
 # ClickHouse
-task clickhouse:deploy
-task clickhouse:status
-task clickhouse:connect
-task clickhouse:query -- "SELECT 1"
-task clickhouse:health
-task clickhouse:logs
+noetl run automation/infrastructure/clickhouse.yaml --set action=deploy
+noetl run automation/infrastructure/clickhouse.yaml --set action=status
+noetl run automation/infrastructure/clickhouse.yaml --set action=connect
+noetl run automation/infrastructure/clickhouse.yaml --set action=query --set query="SELECT 1"
+noetl run automation/infrastructure/clickhouse.yaml --set action=health
+noetl run automation/infrastructure/clickhouse.yaml --set action=logs
 
 # Qdrant
-task qdrant:deploy
-task qdrant:status
-task qdrant:health
-task qdrant:collections
-task qdrant:logs
+noetl run automation/infrastructure/qdrant.yaml --set action=deploy
+noetl run automation/infrastructure/qdrant.yaml --set action=status
+noetl run automation/infrastructure/qdrant.yaml --set action=health
+noetl run automation/infrastructure/qdrant.yaml --set action=collections
+noetl run automation/infrastructure/qdrant.yaml --set action=logs
 
 # NATS
-task nats:deploy
-task nats:status
-task nats:health
-task nats:streams
-task nats:logs
+noetl run automation/infrastructure/nats.yaml --set action=deploy
+noetl run automation/infrastructure/nats.yaml --set action=status
+noetl run automation/infrastructure/nats.yaml --set action=health
+noetl run automation/infrastructure/nats.yaml --set action=streams
+noetl run automation/infrastructure/nats.yaml --set action=logs
 ```
 
 ### Port Forwarding
 ```bash
-task clickhouse:port-forward    # HTTP:8123, Native:9000
-task clickhouse:port-forward-mcp # MCP:8124
-task qdrant:port-forward        # HTTP:6333, gRPC:6334
-task nats:port-forward          # Client:4222, Monitoring:8222
+noetl run automation/infrastructure/clickhouse.yaml --set action=port-forward    # HTTP:8123, Native:9000
+noetl run automation/infrastructure/clickhouse.yaml --set action=port-forward-mcp # MCP:8124
+noetl run automation/infrastructure/qdrant.yaml --set action=port-forward        # HTTP:6333, gRPC:6334
+noetl run automation/infrastructure/nats.yaml --set action=port-forward          # Client:4222, Monitoring:8222
 ```
 
 ## Bootstrap Integration
@@ -158,21 +149,11 @@ task nats:port-forward          # Client:4222, Monitoring:8222
 ### Automatic Deployment
 All services automatically deploy with:
 ```bash
-task bootstrap
-# or
-task dev:start
-# or
-task bring-all
+noetl run automation/setup/bootstrap.yaml
 ```
-
-### Verification
-```bash
-task bootstrap:verify
-```
-Shows deployment status for all observability services.
 
 ### Service Endpoints
-After `dev:start`, shows all endpoints:
+After bootstrap, shows all endpoints:
 ```
 NoETL started!
   UI: http://localhost:8083
@@ -191,20 +172,12 @@ NoETL started!
 **CPU**: ~2-4 cores (~1 core per service)
 **Storage**: ~16Gi (ClickHouse 6Gi, Qdrant 5Gi, NATS 5Gi)
 
-## Task Count Summary
-
-- **ClickHouse**: 23 tasks
-- **Qdrant**: 11 tasks
-- **NATS**: 12 tasks
-- **Observability**: 11 unified tasks
-- **Total**: 57 observability tasks
-
 ## Quick Reference
 
 ### Health Checks
 ```bash
 # All services
-task observability:health-all
+noetl run automation/infrastructure/observability.yaml --set action=health-all
 
 # Individual
 curl http://localhost:30123           # ClickHouse HTTP
@@ -215,22 +188,25 @@ curl http://localhost:30822/healthz   # NATS Monitoring
 
 ### Logs
 ```bash
-task clickhouse:logs
-task qdrant:logs
-task nats:logs
+noetl run automation/infrastructure/clickhouse.yaml --set action=logs
+noetl run automation/infrastructure/qdrant.yaml --set action=logs
+noetl run automation/infrastructure/nats.yaml --set action=logs
 ```
 
 ### Restart
 ```bash
-task observability:restart-all
-# or individual: clickhouse:restart, qdrant:restart, nats:restart
+noetl run automation/infrastructure/observability.yaml --set action=restart-all
+# or individual:
+noetl run automation/infrastructure/clickhouse.yaml --set action=restart
+noetl run automation/infrastructure/qdrant.yaml --set action=restart
+noetl run automation/infrastructure/nats.yaml --set action=restart
 ```
 
 ## API Examples
 
 ### ClickHouse Query
 ```bash
-task clickhouse:query -- "SELECT COUNT(*) FROM observability.logs"
+noetl run automation/infrastructure/clickhouse.yaml --set action=query --set query="SELECT COUNT(*) FROM observability.logs"
 ```
 
 ### Qdrant Create Collection
@@ -258,29 +234,29 @@ nats -s nats://noetl:noetl@localhost:30422 pub events.test "message"
 Verify deployment:
 ```bash
 # Deploy all
-task observability:activate-all
+noetl run automation/infrastructure/observability.yaml --set action=activate-all
 
 # Check status
-task observability:status-all
+noetl run automation/infrastructure/observability.yaml --set action=status-all
 
 # Health check
-task observability:health-all
+noetl run automation/infrastructure/observability.yaml --set action=health-all
 
 # Test ClickHouse
-task clickhouse:test
+noetl run automation/infrastructure/clickhouse.yaml --set action=test
 
 # Test Qdrant
-task qdrant:test
+noetl run automation/infrastructure/qdrant.yaml --set action=test
 
 # Test NATS
-task nats:test
+noetl run automation/infrastructure/nats.yaml --set action=test
 ```
 
 ## Cleanup
 
 Remove all services:
 ```bash
-task observability:deactivate-all
+noetl run automation/infrastructure/observability.yaml --set action=deactivate-all
 ```
 
 ## Next Steps

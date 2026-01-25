@@ -93,14 +93,14 @@ Before running these tests, ensure you have the following credentials registered
 ```bash
 # Postgres credential (already available in NoETL test environment)
 # The tests use: auth: pg_k8s
-# This should already be registered via: task register-test-credentials
+# This should already be registered via: noetl run automation/test/register-test-credentials.yaml
 
 # If you need to register manually:
 noetl credential create pg_k8s --type postgres --data '{
-  "host": "postgres.postgres.svc.cluster.local", 
+  "host": "postgres.postgres.svc.cluster.local",
   "port": 5432,
   "user": "demo",
-  "password": "demo", 
+  "password": "demo",
   "database": "demo"
 }'
 ```
@@ -263,7 +263,7 @@ Follow this quick checklist to ensure reliable runs on any environment (local Do
 - These playbooks reference a Postgres credential through `workload.pg_auth`.
 - Some variants use `pg_local` (local/dev) while others may reference `pg_k8s` (cluster test env). Either:
   - Register a credential with that exact name, or
-  - Edit the playbook’s `workload.pg_auth` to match your existing credential name.
+  - Edit the playbook's `workload.pg_auth` to match your existing credential name.
 
 Examples to register credentials:
 ```bash
@@ -355,4 +355,4 @@ Troubleshooting tips:
 - Missing tables: ensure Step 3 completed (use the script or the create_tables playbook).
 - Auth failures: verify the credential name in `workload.pg_auth` matches a registered credential.
 - Connection issues: check `NOETL_SERVER_URL` and that `server` and `worker` containers/pods are running.
-- Event visibility: if executions complete but you don’t see failure events, ensure the `catalog_id` is set on queue jobs and propagated in events (register playbooks via the CLI so the server sets `catalog_id`).
+- Event visibility: if executions complete but you don't see failure events, ensure the `catalog_id` is set on queue jobs and propagated in events (register playbooks via the CLI so the server sets `catalog_id`).

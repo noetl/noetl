@@ -85,6 +85,9 @@ Complete K8s environment setup including:
 ### Usage
 
 ```bash
+# Quick bootstrap (recommended)
+noetl run boot
+
 # Via main entry point
 noetl run automation/main.yaml --set target=bootstrap
 
@@ -94,29 +97,52 @@ noetl run automation/setup/bootstrap.yaml
 # With verbose output
 noetl run automation/setup/bootstrap.yaml -v
 
-# Skip Gateway deployment
-noetl run automation/setup/bootstrap.yaml --set deploy_gateway=false
+# Force rebuild Rust CLI (even if binary exists)
+noetl run boot --set build_rust_cli=true
 
-# Build Rust CLI when needed
-noetl run automation/setup/bootstrap.yaml --set build_rust_cli=true
+# Skip Gateway deployment
+noetl run boot --set deploy_gateway=false
+
+# Use minimal kind config (fewer port mappings)
+noetl run boot --set kind_config=ci/kind/config-minimal.yaml
+```
+
+### Install Prerequisites First
+
+If bootstrap fails due to missing tools, use the OS-aware tooling playbooks:
+
+```bash
+# Auto-detect OS and install all dev tools
+noetl run automation/development/setup_tooling.yaml --set action=install-devtools
+
+# Or use platform-specific playbooks:
+# macOS
+noetl run automation/development/tooling_macos.yaml --set action=install-devtools
+
+# Linux/WSL2
+noetl run automation/development/tooling_linux.yaml --set action=install-devtools
 ```
 
 ### Steps
 
-1. **validate_prerequisites** - Check required tools
-2. **check_docker_running** - Verify Docker daemon
-3. **check_existing_cluster** - Check for existing cluster
-4. **build_rust_cli** - Build noetlctl binary (optional)
+1. **validate_prerequisites** - Check required tools (docker, kind, kubectl, task, python3, uv)
+2. **check_docker_running** - Verify Docker daemon is running
+3. **check_existing_cluster** - Check for existing kind cluster
+4. **maybe_build_rust_cli** - Check for `target/release/noetl` binary:
+   - If binary exists: skip build (saves compilation time)
+   - If binary missing: build automatically
+   - Use `--set build_rust_cli=true` to force rebuild
 5. **build_docker_images** - Build NoETL Python container
-6. **create_kind_cluster** - Create K8s cluster
-7. **load_image_to_kind** - Load image to cluster
-8. **deploy_postgres** - Deploy PostgreSQL
-9. **deploy_gateway** - Deploy Gateway API (optional)
-10. **deploy_noetl** - Deploy NoETL server/workers
-11. **deploy_observability** - Deploy ClickHouse, Qdrant, NATS
-11. **wait_for_services** - Wait for pods to be ready
-12. **test_cluster_health** - Verify endpoints
-13. **summary** - Show completion status
+6. **check_port_conflicts** - Verify required ports are available
+7. **create_kind_cluster** - Create K8s cluster (configurable via `kind_config`)
+8. **load_image_to_kind** - Load image to cluster
+9. **deploy_postgres** - Deploy PostgreSQL
+10. **deploy_gateway** - Deploy Gateway API (optional, `deploy_gateway=true`)
+11. **deploy_noetl** - Deploy NoETL server/workers
+12. **deploy_observability** - Deploy ClickHouse, Qdrant, NATS
+13. **wait_for_services** - Wait for pods to be ready
+14. **test_cluster_health** - Verify endpoints
+15. **summary** - Show completion status
 
 ### Observability Stack
 
@@ -127,10 +153,10 @@ NATS is **mandatory** for NoETL operation. Bootstrap deploys:
 
 ### Equivalent Commands
 
-| Playbook | Task Command |
+| Playbook | Description |
 |----------|-------------|
-| `noetl run automation/main.yaml --set target=bootstrap` | `task bring-all` |
-| `noetl run automation/setup/destroy.yaml` | `make destroy` |
+| `noetl run automation/main.yaml --set target=bootstrap` | Complete K8s environment setup |
+| `noetl run automation/setup/destroy.yaml` | Environment teardown |
 
 ## Destroy Workflow
 
@@ -174,16 +200,16 @@ noetl run automation/test/pagination-server.yaml --set action=undeploy
 
 ### Actions
 
-| Action | Description | Task Equivalent |
-|--------|-------------|----------------|
-| `build` | Build Docker image | `task pagination-server:tpsb` |
-| `load` | Load image to kind | `task pagination-server:tpsl` |
-| `deploy` | Deploy to K8s | `task pagination-server:tpsd` |
-| `full` | Complete workflow | `task pagination-server:tpsf` |
-| `status` | Check pod status | `task pagination-server:tpss` |
-| `test` | Test endpoints | `task pagination-server:tpst` |
-| `logs` | Show server logs | `task pagination-server:tpslog` |
-| `undeploy` | Remove from K8s | `task pagination-server:tpsu` |
+| Action | Description |
+|--------|-------------|
+| `build` | Build Docker image |
+| `load` | Load image to kind |
+| `deploy` | Deploy to K8s |
+| `full` | Complete workflow |
+| `status` | Check pod status |
+| `test` | Test endpoints |
+| `logs` | Show server logs |
+| `undeploy` | Remove from K8s |
 
 ### Test Endpoints
 
@@ -577,46 +603,51 @@ noetl run automation/infrastructure/gateway-ui.yaml --set action=logs
 
 ### Dev Tools
 
-Manage development tooling installation and validation (WSL/Ubuntu):
+Manage development tooling installation and validation. The tooling playbooks automatically detect your operating system:
 
 ```bash
-# Setup and validate all tools
-noetl run automation/development/tooling.yaml --set action=setup
+# OS-Aware Setup (auto-detects macOS vs Linux/WSL2)
+noetl run automation/development/setup_tooling.yaml --set action=detect
+noetl run automation/development/setup_tooling.yaml --set action=setup
+noetl run automation/development/setup_tooling.yaml --set action=install-devtools
 
-# Install base tools
-noetl run automation/development/tooling.yaml --set action=install-base
+# macOS (uses Homebrew)
+noetl run automation/development/tooling_macos.yaml --set action=setup
+noetl run automation/development/tooling_macos.yaml --set action=install-base
+noetl run automation/development/tooling_macos.yaml --set action=install-devtools
+noetl run automation/development/tooling_macos.yaml --set action=install-homebrew
 
-# Install all dev tools
-noetl run automation/development/tooling.yaml --set action=install-devtools
-
-# Validate installation
-noetl run automation/development/tooling.yaml --set action=validate-install
-
-# Install individual tools
-noetl run automation/development/tooling.yaml --set action=install-kind
-noetl run automation/development/tooling.yaml --set action=install-pyenv
-noetl run automation/development/tooling.yaml --set action=install-uv
-
-# Fix Docker permissions
-noetl run automation/development/tooling.yaml --set action=fix-docker-perms
+# Linux/WSL2 (uses apt-get)
+noetl run automation/development/tooling_linux.yaml --set action=setup
+noetl run automation/development/tooling_linux.yaml --set action=install-base
+noetl run automation/development/tooling_linux.yaml --set action=install-devtools
+noetl run automation/development/tooling_linux.yaml --set action=fix-docker-perms
 ```
 
+**OS-Aware Playbook (`setup_tooling.yaml`):**
+- `detect` - Detect OS and show recommended playbook
+- `setup` - Validate required tooling (auto-detects OS)
+- `validate-install` - Validate required tools (auto-detects OS)
+- `install-base` - Install basic CLI tools (auto-detects OS)
+- `install-devtools` - Install all dev tools (auto-detects OS)
+
 **Setup & Validation:**
-- `setup` - Validate required tooling on WSL2 hosts
+- `setup` - Validate required tooling
 - `validate-install` - Validate required tools are installed
 - `validate-devtools` - Validate optional dev tools
 - `validate-docker` - Validate Docker Desktop integration
 
 **Installation (Base):**
 - `install-base` - Install basic CLI tools (git, curl, jq, make, python3, etc.)
-- `install-devtools` - Install all dev tools (yq, kind, pyenv, uv, tfenv)
+- `install-devtools` - Install all dev tools (yq, kind, pyenv, uv, tfenv, kubectl)
+- `install-homebrew` - (macOS only) Install Homebrew package manager
 
 **Installation (Individual):**
 - `install-jq`, `install-yq`, `install-kind`, `install-pyenv`, `install-uv`, `install-tfenv`, `install-psql`
 
 **Configuration:**
-- `ensure-path` - Ensure tool paths in ~/.bashrc
-- `fix-docker-perms` - Add user to docker group
+- `ensure-path` - Ensure tool paths in shell config (~/.zshrc on macOS, ~/.bashrc on Linux)
+- `fix-docker-perms` - (Linux/WSL2 only) Add user to docker group
 
 ### Docker Operations
 
@@ -702,6 +733,20 @@ noetl run automation/setup/bootstrap.yaml --set build_rust_cli=true --set deploy
 3. Check existing cluster: `kind get clusters`
 4. View detailed output: Add `-v` flag for verbose output
 
+### Port 15000 Already In Use
+
+Kind uses port 15000 for the IBKR Client Portal Gateway. If that port is busy:
+
+1. Stop the process using port 15000.
+2. Or run bootstrap without the IBKR port mapping:
+  `noetl run automation/setup/bootstrap.yaml --set kind_config=ci/kind/config-no-ibkr.yaml`
+
+### Port Conflicts From Other Services
+
+If other ports are already in use (for example, 30900 for ClickHouse Native), use the minimal mapping:
+
+`noetl run automation/setup/bootstrap.yaml --set kind_config=ci/kind/config-minimal.yaml`
+
 ### Image Loading Issues
 
 If pods show `ImagePullBackOff`:
@@ -728,7 +773,7 @@ noetl run automation/test/pagination-server.yaml --set action=full
 ```
 automation/
 ├── main.yaml                      # Main router
-├── README.md                      # Complete reference and task mappings
+├── README.md                      # Complete reference and command mappings
 ├── setup/
 │   ├── bootstrap.yaml            # Complete K8s environment setup
 │   └── destroy.yaml              # Environment teardown
@@ -743,7 +788,9 @@ automation/
 │   └── qdrant.yaml               # Qdrant vector database
 ├── development/
 │   ├── docker.yaml               # Docker operations
-│   └── tooling.yaml              # Dev tools installation
+│   ├── setup_tooling.yaml        # OS-aware tooling setup (auto-detects OS)
+│   ├── tooling_macos.yaml        # Dev tools for macOS (Homebrew)
+│   └── tooling_linux.yaml        # Dev tools for Linux/WSL2 (apt-get)
 └── test/
     └── pagination-server.yaml    # Pagination test server
 ```

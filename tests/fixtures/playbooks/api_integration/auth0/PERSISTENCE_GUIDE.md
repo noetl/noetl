@@ -20,7 +20,7 @@ After implementing Auth0 OAuth implicit flow, discovered multiple issues:
 
 ### Verified Working
 - Execution 535423222926278790 completed successfully (2026-01-08 17:50:22)
-- All steps completed: start → validate_token → upsert_user → create_session → success → end
+- All steps completed: start -> validate_token -> upsert_user -> create_session -> success -> end
 - Session created in database: token=8d472a783af421d2e40d34f4b909d43b, user_id=2
 - UI successfully retrieved session token and completed login flow
 
@@ -69,11 +69,11 @@ After implementing Auth0 OAuth implicit flow, discovered multiple issues:
 
 ### What Persists Automatically
 All files are now in git and will be restored after cluster rebuild:
-- ✅ Playbook YAML files (auth0_login.yaml v15)
-- ✅ UI source files (tests/fixtures/gateway_ui/*)
-- ✅ ConfigMap manifest (ci/manifests/gateway/configmap-ui-files.yaml)
-- ✅ Setup scripts (tests/scripts/test_auth0_integration.sh)
-- ✅ Documentation (README.md with Quick Start)
+- Playbook YAML files (auth0_login.yaml v15)
+- UI source files (tests/fixtures/gateway_ui/*)
+- ConfigMap manifest (ci/manifests/gateway/configmap-ui-files.yaml)
+- Setup scripts (tests/scripts/test_auth0_integration.sh)
+- Documentation (README.md with Quick Start)
 
 ### What Needs to Be Redeployed
 
@@ -81,20 +81,17 @@ After rebuilding kind cluster, run these commands:
 
 ```bash
 # 1. Rebuild and deploy NoETL
-task bring-all
+noetl run automation/setup/bootstrap.yaml
 
-# 2. Deploy gateway (if using)
-task gateway-deploy-all
-
-# 3. Register playbooks
+# 2. Register playbooks
 curl -X POST http://localhost:8082/api/catalog/register \
   -H 'Content-Type: application/json' \
   -d "{\"content\": \"$(cat tests/fixtures/playbooks/api_integration/auth0/auth0_login.yaml)\"}"
 
-# 4. Verify UI is accessible
+# 3. Verify UI is accessible
 curl http://localhost:8080/login.html
 
-# 5. Test login flow (if needed)
+# 4. Test login flow (if needed)
 bash tests/scripts/test_auth0_integration.sh
 ```
 
@@ -104,18 +101,15 @@ To verify everything works after cluster rebuild:
 
 ```bash
 # 1. Delete cluster
-task kind-down
+kind delete cluster
 
 # 2. Recreate cluster
-task kind-up
+kind create cluster
 
 # 3. Deploy all components
-task bring-all
+noetl run automation/setup/bootstrap.yaml
 
-# 4. Deploy gateway
-task gateway-deploy-all
-
-# 5. Test Auth0 login
+# 4. Test Auth0 login
 # Open browser: http://localhost:8080/login.html
 # Click "Sign In with Auth0"
 # Login as kadyapam@gmail.com
@@ -165,7 +159,7 @@ After cluster rebuild, you must re-register credentials:
 
 ```bash
 # Method 1: Register all test credentials
-task register-test-credentials
+noetl run automation/test/register-test-credentials.yaml
 
 # Method 2: Register Auth0 credential specifically
 curl -X POST http://localhost:8082/api/credentials \

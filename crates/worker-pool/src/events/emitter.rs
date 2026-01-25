@@ -1,7 +1,7 @@
 //! Event emitter with retry logic.
 
 use anyhow::Result;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::client::{ControlPlaneClient, WorkerEvent};
 
@@ -41,26 +41,54 @@ impl EventEmitter {
 
     /// Emit an event with retry.
     pub async fn emit(&self, event: WorkerEvent) -> Result<()> {
+        let emit_start = Instant::now();
         let mut delay = self.initial_delay;
+        let mut total_retry_delay = Duration::ZERO;
+        let mut retry_count = 0u32;
 
         for attempt in 0..=self.max_retries {
             match self.client.emit_event(event.clone()).await {
-                Ok(()) => return Ok(()),
+                Ok(()) => {
+                    let total_duration = emit_start.elapsed();
+                    // Log performance metrics on success
+                    tracing::info!(
+                        target: "noetl.performance",
+                        execution_id = %event.execution_id,
+                        event_type = %event.event_type,
+                        phase = "event_emit",
+                        duration_ms = %total_duration.as_millis(),
+                        retry_count = %retry_count,
+                        retry_delay_ms = %total_retry_delay.as_millis(),
+                        "Event emitted successfully"
+                    );
+                    return Ok(());
+                }
                 Err(e) if attempt < self.max_retries => {
+                    retry_count += 1;
                     tracing::warn!(
+                        target: "noetl.performance",
                         attempt = attempt + 1,
                         max_retries = self.max_retries,
                         error = %e,
                         event_type = %event.event_type,
+                        execution_id = %event.execution_id,
+                        delay_ms = %delay.as_millis(),
                         "Event emission failed, retrying"
                     );
+                    total_retry_delay += delay;
                     tokio::time::sleep(delay).await;
                     delay = std::cmp::min(delay * 2, self.max_delay);
                 }
                 Err(e) => {
+                    let total_duration = emit_start.elapsed();
                     tracing::error!(
+                        target: "noetl.performance",
                         event_type = %event.event_type,
+                        execution_id = %event.execution_id,
                         error = %e,
+                        duration_ms = %total_duration.as_millis(),
+                        retry_count = %retry_count,
+                        retry_delay_ms = %total_retry_delay.as_millis(),
                         "Event emission failed after all retries"
                     );
                     return Err(e);

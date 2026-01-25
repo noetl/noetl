@@ -37,7 +37,7 @@ For any AI coding agent:
 
 The AI instructions cover:
 - NoETL's event-driven architecture with server-worker coordination
-- Task-based development workflows (`task bring-all`, `task test-*-full`)
+- Playbook-based development workflows using the `noetl` CLI
 - Playbook YAML structure and patterns
 - Plugin development guidelines
 - Testing patterns and credential management
@@ -47,4 +47,4 @@ The AI instructions cover:
 When onboarding with any AI coding assistant:
 1. Point your AI agent to `.github/ai-instructions.md`
 2. Reference the file when asking architecture questions
-3. Use the documented task commands for development workflows
+3. Use the documented `noetl` CLI commands for development workflows

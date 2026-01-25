@@ -1,8 +1,9 @@
 apiVersion: noetl.io/v2
 kind: Playbook
 metadata:
-  name: dev_tools_automation
-  path: automation/development/tooling
+  name: dev_tools_automation_macos
+  path: automation/development/tooling_macos
+  description: Development tools automation for macOS (uses Homebrew)
 
 executor:
   profile: local
@@ -12,11 +13,11 @@ workload:
 
 workflow:
   - step: start
-    desc: Entry point for dev tools automation
+    desc: Entry point for macOS dev tools automation
     tool:
       kind: shell
       cmds:
-        - echo "Dev Tools Automation - Action '{{ workload.action }}'"
+        - echo "macOS Dev Tools Automation - Action '{{ workload.action }}'"
     next:
       - when: "{{ workload.action }} == setup"
         then:
@@ -74,9 +75,9 @@ workflow:
         then:
           - step: ensure_path
         args: {}
-      - when: "{{ workload.action }} == fix-docker-perms"
+      - when: "{{ workload.action }} == install-homebrew"
         then:
-          - step: fix_docker_perms
+          - step: install_homebrew
         args: {}
       - when: "{{ workload.action }} == help"
         then:
@@ -85,13 +86,13 @@ workflow:
       - step: show_help
 
   - step: setup_tools
-    desc: Validate required tooling on WSL2 hosts
+    desc: Validate required tooling on macOS hosts
     tool:
       kind: shell
       cmds:
         - |
           echo ""
-          echo "Setting up and validating dev tools..."
+          echo "Setting up and validating dev tools on macOS..."
           bash -ceu '
           fail=0
           check() {
@@ -102,11 +103,21 @@ workflow:
             fi
           }
           echo "Validating required tools..."
+
+          # Check Homebrew first
+          if ! command -v brew >/dev/null 2>&1; then
+            echo "[MISSING] Homebrew not found"
+            echo "       -> Install with: /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""
+            fail=1
+          else
+            echo "[OK] brew: $(brew --version | head -n1)"
+          fi
+
           check git
           check curl
           if ! command -v jq >/dev/null 2>&1; then
             echo "[MISSING] jq not found in PATH"
-            echo "       -> Install with: noetl run automation/development/tooling.yaml --set action=install-jq"
+            echo "       -> Install with: brew install jq"
             fail=1
           else
             echo "[OK] jq: $(jq --version 2>/dev/null | head -n1 || echo installed)"
@@ -114,7 +125,7 @@ workflow:
           check python3
           if ! command -v cargo >/dev/null 2>&1; then
             echo "[MISSING] cargo (Rust toolchain) not found in PATH"
-            echo "       -> Install with: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
+            echo "       -> Install with: curl --proto '\''=https'\'' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
             fail=1
           else
             echo "[OK] cargo: $(cargo --version 2>/dev/null | head -n1 || echo installed)"
@@ -122,14 +133,14 @@ workflow:
           if command -v docker >/dev/null 2>&1; then
             echo "[OK] docker available"; if ! docker info >/dev/null 2>&1; then
               echo "[WARN] docker present but daemon not reachable"
-              echo "       -> Ensure Docker Desktop is running and WSL integration is enabled"
-              echo "       -> You may need to add your user to the docker group: noetl run automation/development/tooling.yaml --set action=fix-docker-perms"
+              echo "       -> Ensure Docker Desktop is running"
             fi
           else
             echo "[MISSING] docker not found in PATH"
+            echo "       -> Install Docker Desktop from https://www.docker.com/products/docker-desktop/"
             fail=1
           fi
-          if command -v task >/dev/null 2>&1; then echo "[OK] task available"; else echo "[INFO] task not installed (you are likely running this via task already)"; fi
+          if command -v task >/dev/null 2>&1; then echo "[OK] task available"; else echo "[INFO] task not installed (install with: brew install go-task)"; fi
           if command -v noetl >/dev/null 2>&1; then
             echo "[OK] noetl CLI: $(noetl --version 2>/dev/null | head -n1 || echo present)"
           else
@@ -149,7 +160,7 @@ workflow:
       cmds:
         - |
           echo ""
-          echo "Validating required tools installation..."
+          echo "Validating required tools installation on macOS..."
           bash -ceu '
           fail=0
           check() {
@@ -160,11 +171,19 @@ workflow:
             fi
           }
           echo "Validating required tools..."
+
+          # Check Homebrew
+          if ! command -v brew >/dev/null 2>&1; then
+            echo "[MISSING] Homebrew not found"
+            fail=1
+          else
+            echo "[OK] brew: $(brew --version | head -n1)"
+          fi
+
           check git
           check curl
           if ! command -v jq >/dev/null 2>&1; then
             echo "[MISSING] jq not found in PATH"
-            echo "       -> Install with: noetl run automation/development/tooling.yaml --set action=install-jq"
             fail=1
           else
             echo "[OK] jq: $(jq --version 2>/dev/null | head -n1 || echo installed)"
@@ -172,7 +191,6 @@ workflow:
           check python3
           if ! command -v cargo >/dev/null 2>&1; then
             echo "[MISSING] cargo (Rust toolchain) not found in PATH"
-            echo "       -> Install with: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
             fail=1
           else
             echo "[OK] cargo: $(cargo --version 2>/dev/null | head -n1 || echo installed)"
@@ -180,14 +198,13 @@ workflow:
           if command -v docker >/dev/null 2>&1; then
             echo "[OK] docker available"; if ! docker info >/dev/null 2>&1; then
               echo "[WARN] docker present but daemon not reachable"
-              echo "       -> Ensure Docker Desktop is running and WSL integration is enabled"
-              echo "       -> You may need to add your user to the docker group: noetl run automation/development/tooling.yaml --set action=fix-docker-perms"
+              echo "       -> Ensure Docker Desktop is running"
             fi
           else
             echo "[MISSING] docker not found in PATH"
             fail=1
           fi
-          if command -v task >/dev/null 2>&1; then echo "[OK] task available"; else echo "[INFO] task not installed (you are likely running this via task already)"; fi
+          if command -v task >/dev/null 2>&1; then echo "[OK] task available"; else echo "[INFO] task not installed"; fi
           if command -v noetl >/dev/null 2>&1; then
             echo "[OK] noetl CLI: $(noetl --version 2>/dev/null | head -n1 || echo present)"
           else
@@ -205,9 +222,9 @@ workflow:
       cmds:
         - |
           echo ""
-          echo "Validating optional dev tools..."
+          echo "Validating optional dev tools on macOS..."
           bash -ceu '
-          tools=(kind yq pyenv uv tfenv terraform)
+          tools=(kind yq pyenv uv tfenv terraform kubectl)
           for t in "${tools[@]}"; do
             if command -v "$t" >/dev/null 2>&1; then
               case "$t" in
@@ -217,6 +234,7 @@ workflow:
                 uv) echo "[OK] uv: $(uv --version || true)";;
                 tfenv) echo "[OK] tfenv: $(tfenv --version || true)";;
                 terraform) echo "[OK] terraform: $(terraform version | head -n1 || true)";;
+                kubectl) echo "[OK] kubectl: $(kubectl version --client --short 2>/dev/null || kubectl version --client 2>/dev/null | head -n1 || true)";;
               esac
             else
               echo "[MISSING] $t not found in PATH"
@@ -227,165 +245,190 @@ workflow:
       - step: end
 
   - step: validate_docker
-    desc: Validate Docker Desktop integration from WSL2
+    desc: Validate Docker Desktop on macOS
     tool:
       kind: shell
       cmds:
         - |
           echo ""
-          echo "Validating Docker Desktop integration..."
+          echo "Validating Docker Desktop on macOS..."
+          if ! command -v docker >/dev/null 2>&1; then
+            echo "[ERROR] Docker not found. Install Docker Desktop from https://www.docker.com/products/docker-desktop/"
+            exit 1
+          fi
           docker info
           docker run --rm hello-world
     next:
       - step: end
 
-  - step: install_base
-    desc: Install basic CLI tools
+  - step: install_homebrew
+    desc: Install Homebrew package manager
     tool:
       kind: shell
       cmds:
         - |
           echo ""
-          echo "Installing basic CLI tools..."
-          echo "  - git, curl, jq, make, ca-certificates"
-          echo "  - lsof, python3, pip, venv"
+          echo "Installing Homebrew..."
           bash -ceu '
-          sudo apt-get update
-          sudo apt-get install -y \
-            git make curl jq ca-certificates lsof \
-            build-essential unzip \
-            python3 python3-venv python3-pip
-          echo "[OK] Base tools installed. If versions are not updated in current shell, open a new terminal."
+          if command -v brew >/dev/null 2>&1; then
+            echo "[SKIP] Homebrew already installed: $(brew --version | head -n1)"
+            exit 0
+          fi
+          /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+
+          # Add brew to PATH for Apple Silicon Macs
+          if [ -f /opt/homebrew/bin/brew ]; then
+            echo "[INFO] Adding Homebrew to PATH for Apple Silicon..."
+            echo "eval \"\$(/opt/homebrew/bin/brew shellenv)\"" >> ~/.zprofile
+            eval "$(/opt/homebrew/bin/brew shellenv)"
+          fi
+
+          brew --version
+          '
+    next:
+      - step: end
+
+  - step: install_base
+    desc: Install basic CLI tools via Homebrew
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Installing basic CLI tools via Homebrew..."
+          echo "  - git, curl, jq, make"
+          echo "  - python3"
+          bash -ceu '
+          if ! command -v brew >/dev/null 2>&1; then
+            echo "[ERROR] Homebrew not found. Install it first with: noetl run automation/development/tooling_macos.yaml --set action=install-homebrew"
+            exit 1
+          fi
+
+          # Update Homebrew
+          brew update
+
+          # Install base tools
+          brew install git curl jq make coreutils
+
+          # Install Python if not present
+          if ! command -v python3 >/dev/null 2>&1; then
+            brew install python@3.11
+          fi
+
+          echo "[OK] Base tools installed."
           '
     next:
       - step: end
 
   - step: install_devtools
-    desc: Install yq, kind, pyenv, uv, tfenv (aggregate)
+    desc: Install yq, kind, pyenv, uv, tfenv, kubectl (aggregate)
     tool:
       kind: shell
       cmds:
         - |
           echo ""
-          echo "Installing dev tools (yq, kind, pyenv, uv, tfenv)..."
-          
-          # Install yq
+          echo "Installing dev tools via Homebrew (yq, kind, pyenv, uv, tfenv, kubectl)..."
+
           bash -ceu '
+          if ! command -v brew >/dev/null 2>&1; then
+            echo "[ERROR] Homebrew not found. Install it first."
+            exit 1
+          fi
+
+          # Install yq
           if command -v yq >/dev/null 2>&1; then
             echo "[SKIP] yq already installed: $(yq --version || true)"
           else
-            sudo apt-get update
-            sudo apt-get install -y software-properties-common
-            sudo add-apt-repository -y ppa:rmescandon/yq
-            sudo apt-get update
-            sudo apt-get install -y yq
-            yq --version
+            brew install yq
+            echo "[OK] yq: $(yq --version || true)"
           fi
-          '
-          
+
           # Install kind
-          bash -ceu '
           if command -v kind >/dev/null 2>&1; then
             echo "[SKIP] kind already installed: $(kind --version || true)"
           else
-            KIND_VER="${KIND_VER:-v0.23.0}"
-            curl -fsSL -o ./kind "https://kind.sigs.k8s.io/dl/${KIND_VER}/kind-linux-amd64"
-            chmod +x ./kind
-            sudo mv ./kind /usr/local/bin/kind
-            kind --version
+            brew install kind
+            echo "[OK] kind: $(kind --version || true)"
           fi
-          '
-          
-          # Install pyenv
-          bash -ceu '
-          sudo apt-get update
-          sudo apt-get install -y build-essential libssl-dev zlib1g-dev \
-            libbz2-dev libreadline-dev libsqlite3-dev curl git \
-            libncursesw5-dev xz-utils tk-dev libxml2-dev libxmlsec1-dev \
-            libffi-dev liblzma-dev
-          if [ ! -d "$HOME/.pyenv" ]; then
-            curl https://pyenv.run | bash
+
+          # Install kubectl
+          if command -v kubectl >/dev/null 2>&1; then
+            echo "[SKIP] kubectl already installed"
           else
-            echo "[SKIP] pyenv directory already exists at ~/.pyenv"
+            brew install kubectl
+            echo "[OK] kubectl installed"
           fi
-          BASHRC="$HOME/.bashrc"
-          if ! grep -q "pyenv setup (added by NoETL tooling)" "$BASHRC"; then
-            printf "\n# pyenv setup (added by NoETL tooling)\n" >> "$BASHRC"
-            printf "export PYENV_ROOT=\"$HOME/.pyenv\"\n" >> "$BASHRC"
-            printf "command -v pyenv >/dev/null || export PATH=\"$PYENV_ROOT/bin:\$PATH\"\n" >> "$BASHRC"
-            printf "eval \"$(pyenv init -)\"\n" >> "$BASHRC"
+
+          # Install pyenv
+          if command -v pyenv >/dev/null 2>&1; then
+            echo "[SKIP] pyenv already installed: $(pyenv --version || true)"
+          else
+            brew install pyenv pyenv-virtualenv
+
+            # Configure shell
+            SHELL_RC="$HOME/.zshrc"
+            if [ ! -f "$SHELL_RC" ]; then
+              SHELL_RC="$HOME/.bash_profile"
+            fi
+
+            if ! grep -q "pyenv setup (added by NoETL tooling)" "$SHELL_RC" 2>/dev/null; then
+              printf "\n# pyenv setup (added by NoETL tooling)\n" >> "$SHELL_RC"
+              printf "export PYENV_ROOT=\"\$HOME/.pyenv\"\n" >> "$SHELL_RC"
+              printf "[[ -d \$PYENV_ROOT/bin ]] && export PATH=\"\$PYENV_ROOT/bin:\$PATH\"\n" >> "$SHELL_RC"
+              printf "eval \"\$(pyenv init -)\"\n" >> "$SHELL_RC"
+              printf "eval \"\$(pyenv virtualenv-init -)\"\n" >> "$SHELL_RC"
+            fi
+            echo "[OK] pyenv: $(pyenv --version || true)"
           fi
-          export PYENV_ROOT="$HOME/.pyenv"
-          export PATH="$PYENV_ROOT/bin:$PATH"
-          command -v pyenv >/dev/null 2>&1 || eval "$(pyenv init -)" >/dev/null 2>&1 || true
-          pyenv --version || true
-          '
-          
+
           # Install uv
-          bash -ceu '
           if command -v uv >/dev/null 2>&1; then
             echo "[SKIP] uv already installed: $(uv --version || true)"
           else
             curl -LsSf https://astral.sh/uv/install.sh | sh
-            echo "[INFO] If uv is not in PATH, restart your shell or source the profile suggested by the installer."
-            uv --version || true
+            echo "[OK] uv installed"
           fi
-          '
-          
+
           # Install tfenv
-          bash -ceu '
-          if [ ! -d "$HOME/.tfenv" ]; then
-            git clone https://github.com/tfutils/tfenv.git "$HOME/.tfenv"
-          else
-            echo "[SKIP] ~/.tfenv already exists"
-          fi
-          BASHRC="$HOME/.bashrc"
-          if ! grep -q "tfenv (added by NoETL tooling)" "$BASHRC"; then
-            printf "\n# tfenv (added by NoETL tooling)\n" >> "$BASHRC"
-            printf "export PATH=\"$HOME/.tfenv/bin:\$PATH\"\n" >> "$BASHRC"
-          fi
-          export PATH="$HOME/.tfenv/bin:$PATH"
           if command -v tfenv >/dev/null 2>&1; then
+            echo "[SKIP] tfenv already installed: $(tfenv --version || true)"
+          else
+            brew install tfenv
             echo "[OK] tfenv: $(tfenv --version || true)"
             tfenv install latest
             tfenv use latest
-            terraform version
-          else
-            echo "[ERROR] tfenv not on PATH yet; open a new shell or source ~/.bashrc then rerun" >&2
           fi
-          '
-          
+
           # Install jq
-          bash -ceu '
           if command -v jq >/dev/null 2>&1; then
             echo "[SKIP] jq already installed: $(jq --version || true)"
           else
-            sudo apt-get update
-            sudo apt-get install -y jq
-            jq --version
+            brew install jq
+            echo "[OK] jq: $(jq --version || true)"
           fi
-          '
-          
+
           # Install psql
-          bash -ceu '
           if command -v psql >/dev/null 2>&1; then
             echo "[SKIP] psql already installed: $(psql --version || true)"
           else
-            sudo apt-get update
-            sudo apt-get install -y postgresql-client
-            if command -v psql >/dev/null 2>&1; then
-              echo "[OK] psql: $(psql --version || true)"
-            else
-              echo "[ERROR] psql not found in PATH after installation. You may need to restart your shell." >&2
-              exit 1
-            fi
+            brew install libpq
+            brew link --force libpq
+            echo "[OK] psql: $(psql --version || true)"
+          fi
+
+          # Install go-task
+          if command -v task >/dev/null 2>&1; then
+            echo "[SKIP] task already installed: $(task --version || true)"
+          else
+            brew install go-task
+            echo "[OK] task: $(task --version || true)"
           fi
           '
     next:
       - step: end
 
   - step: install_jq
-    desc: Install jq via apt
+    desc: Install jq via Homebrew
     tool:
       kind: shell
       cmds:
@@ -397,15 +440,14 @@ workflow:
             echo "[SKIP] jq already installed: $(jq --version || true)"
             exit 0
           fi
-          sudo apt-get update
-          sudo apt-get install -y jq
+          brew install jq
           jq --version
           '
     next:
       - step: end
 
   - step: install_yq
-    desc: Install yq via PPA
+    desc: Install yq via Homebrew
     tool:
       kind: shell
       cmds:
@@ -417,18 +459,14 @@ workflow:
             echo "[SKIP] yq already installed: $(yq --version || true)"
             exit 0
           fi
-          sudo apt-get update
-          sudo apt-get install -y software-properties-common
-          sudo add-apt-repository -y ppa:rmescandon/yq
-          sudo apt-get update
-          sudo apt-get install -y yq
+          brew install yq
           yq --version
           '
     next:
       - step: end
 
   - step: install_kind
-    desc: Install kind (Kubernetes in Docker)
+    desc: Install kind (Kubernetes in Docker) via Homebrew
     tool:
       kind: shell
       cmds:
@@ -440,17 +478,14 @@ workflow:
             echo "[SKIP] kind already installed: $(kind --version || true)"
             exit 0
           fi
-          KIND_VER="${KIND_VER:-v0.23.0}"
-          curl -fsSL -o ./kind "https://kind.sigs.k8s.io/dl/${KIND_VER}/kind-linux-amd64"
-          chmod +x ./kind
-          sudo mv ./kind /usr/local/bin/kind
+          brew install kind
           kind --version
           '
     next:
       - step: end
 
   - step: install_pyenv
-    desc: Install pyenv and initialize bash shell configuration
+    desc: Install pyenv via Homebrew
     tool:
       kind: shell
       cmds:
@@ -458,27 +493,29 @@ workflow:
           echo ""
           echo "Installing pyenv..."
           bash -ceu '
-          sudo apt-get update
-          sudo apt-get install -y build-essential libssl-dev zlib1g-dev \
-            libbz2-dev libreadline-dev libsqlite3-dev curl git \
-            libncursesw5-dev xz-utils tk-dev libxml2-dev libxmlsec1-dev \
-            libffi-dev liblzma-dev
-          if [ ! -d "$HOME/.pyenv" ]; then
-            curl https://pyenv.run | bash
-          else
-            echo "[SKIP] pyenv directory already exists at ~/.pyenv"
+          if command -v pyenv >/dev/null 2>&1; then
+            echo "[SKIP] pyenv already installed: $(pyenv --version || true)"
+            exit 0
           fi
-          BASHRC="$HOME/.bashrc"
-          if ! grep -q "pyenv setup (added by NoETL tooling)" "$BASHRC"; then
-            printf "\n# pyenv setup (added by NoETL tooling)\n" >> "$BASHRC"
-            printf "export PYENV_ROOT=\"$HOME/.pyenv\"\n" >> "$BASHRC"
-            printf "command -v pyenv >/dev/null || export PATH=\"$PYENV_ROOT/bin:\$PATH\"\n" >> "$BASHRC"
-            printf "eval \"$(pyenv init -)\"\n" >> "$BASHRC"
+
+          brew install pyenv pyenv-virtualenv
+
+          # Configure shell (prefer zsh on macOS)
+          SHELL_RC="$HOME/.zshrc"
+          if [ ! -f "$SHELL_RC" ]; then
+            SHELL_RC="$HOME/.bash_profile"
           fi
-          export PYENV_ROOT="$HOME/.pyenv"
-          export PATH="$PYENV_ROOT/bin:$PATH"
-          command -v pyenv >/dev/null 2>&1 || eval "$(pyenv init -)" >/dev/null 2>&1 || true
+
+          if ! grep -q "pyenv setup (added by NoETL tooling)" "$SHELL_RC" 2>/dev/null; then
+            printf "\n# pyenv setup (added by NoETL tooling)\n" >> "$SHELL_RC"
+            printf "export PYENV_ROOT=\"\$HOME/.pyenv\"\n" >> "$SHELL_RC"
+            printf "[[ -d \$PYENV_ROOT/bin ]] && export PATH=\"\$PYENV_ROOT/bin:\$PATH\"\n" >> "$SHELL_RC"
+            printf "eval \"\$(pyenv init -)\"\n" >> "$SHELL_RC"
+            printf "eval \"\$(pyenv virtualenv-init -)\"\n" >> "$SHELL_RC"
+          fi
+
           pyenv --version || true
+          echo "[INFO] Restart your shell or run: source $SHELL_RC"
           '
     next:
       - step: end
@@ -504,7 +541,7 @@ workflow:
       - step: end
 
   - step: install_tfenv
-    desc: Install tfenv and latest Terraform
+    desc: Install tfenv and latest Terraform via Homebrew
     tool:
       kind: shell
       cmds:
@@ -512,31 +549,26 @@ workflow:
           echo ""
           echo "Installing tfenv and Terraform..."
           bash -ceu '
-          if [ ! -d "$HOME/.tfenv" ]; then
-            git clone https://github.com/tfutils/tfenv.git "$HOME/.tfenv"
+          if command -v tfenv >/dev/null 2>&1; then
+            echo "[SKIP] tfenv already installed: $(tfenv --version || true)"
           else
-            echo "[SKIP] ~/.tfenv already exists"
+            brew install tfenv
           fi
-          BASHRC="$HOME/.bashrc"
-          if ! grep -q "tfenv (added by NoETL tooling)" "$BASHRC"; then
-            printf "\n# tfenv (added by NoETL tooling)\n" >> "$BASHRC"
-            printf "export PATH=\"$HOME/.tfenv/bin:\$PATH\"\n" >> "$BASHRC"
-          fi
-          export PATH="$HOME/.tfenv/bin:$PATH"
+
           if command -v tfenv >/dev/null 2>&1; then
             echo "[OK] tfenv: $(tfenv --version || true)"
             tfenv install latest
             tfenv use latest
             terraform version
           else
-            echo "[ERROR] tfenv not on PATH yet; open a new shell or source ~/.bashrc then rerun: noetl run automation/development/tooling.yaml --set action=install-tfenv" >&2
+            echo "[ERROR] tfenv not on PATH yet; restart your shell" >&2
           fi
           '
     next:
       - step: end
 
   - step: install_psql
-    desc: Install PostgreSQL client tools (psql) without server
+    desc: Install PostgreSQL client tools (psql) via Homebrew
     tool:
       kind: shell
       cmds:
@@ -548,13 +580,13 @@ workflow:
             echo "[SKIP] psql already installed: $(psql --version || true)"
             exit 0
           fi
-          sudo apt-get update
-          sudo apt-get install -y postgresql-client
+          brew install libpq
+          brew link --force libpq
           if command -v psql >/dev/null 2>&1; then
             echo "[OK] psql: $(psql --version || true)"
           else
-            echo "[ERROR] psql not found in PATH after installation. You may need to restart your shell." >&2
-            exit 1
+            echo "[INFO] psql installed but not in PATH. Add to PATH:"
+            echo "  export PATH=\"/opt/homebrew/opt/libpq/bin:\$PATH\""
           fi
           '
     next:
@@ -567,41 +599,34 @@ workflow:
       cmds:
         - |
           echo ""
-          echo "Ensuring common tool paths in ~/.bashrc..."
+          echo "Ensuring common tool paths in shell config..."
           bash -ceu '
-          BASHRC="$HOME/.bashrc"
-          ensure_line() { grep -qxF "$1" "$BASHRC" || echo "$1" >> "$BASHRC"; }
-          ensure_line "export PATH=\"$HOME/.local/bin:\$PATH\""
-          ensure_line "export PATH=\"/usr/local/bin:\$PATH\""
-          export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
-          echo "[OK] Ensured PATH contains: $HOME/.local/bin and /usr/local/bin"
-          echo "Current PATH: $PATH"
-          echo "[INFO] If this is your first time adding these, open a new shell or: source ~/.bashrc"
-          '
-    next:
-      - step: end
-
-  - step: fix_docker_perms
-    desc: Add current user to docker group
-    tool:
-      kind: shell
-      cmds:
-        - |
-          echo ""
-          echo "Adding current user to docker group..."
-          bash -ceu '
-          sudo groupadd -f docker
-          if id -nG "$USER" | grep -qw docker; then
-            echo "[SKIP] $USER already in docker group"
-          else
-            sudo usermod -aG docker "$USER"
-            echo "[OK] Added $USER to docker group"
+          # Determine shell config file
+          SHELL_RC="$HOME/.zshrc"
+          if [ ! -f "$SHELL_RC" ]; then
+            SHELL_RC="$HOME/.bash_profile"
           fi
-          echo
-          echo "Next steps:"
-          echo "  1) Close and reopen your WSL terminal (or run: newgrp docker)"
-          echo "  2) Ensure Docker Desktop is running and WSL integration is enabled"
-          echo "  3) Re-run: noetl run automation/development/tooling.yaml --set action=validate-docker"
+
+          ensure_line() { grep -qxF "$1" "$SHELL_RC" 2>/dev/null || echo "$1" >> "$SHELL_RC"; }
+
+          # Common paths for macOS
+          ensure_line "export PATH=\"\$HOME/.local/bin:\$PATH\""
+          ensure_line "export PATH=\"/usr/local/bin:\$PATH\""
+
+          # Homebrew paths (Apple Silicon)
+          if [ -d /opt/homebrew ]; then
+            ensure_line "eval \"\$(/opt/homebrew/bin/brew shellenv)\""
+          fi
+
+          # libpq path for psql
+          if [ -d /opt/homebrew/opt/libpq/bin ]; then
+            ensure_line "export PATH=\"/opt/homebrew/opt/libpq/bin:\$PATH\""
+          fi
+
+          export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
+          echo "[OK] Ensured PATH contains common directories"
+          echo "Current PATH: $PATH"
+          echo "[INFO] If this is your first time adding these, restart your shell or: source $SHELL_RC"
           '
     next:
       - step: end
@@ -613,64 +638,50 @@ workflow:
       cmds:
         - |
           echo "=================================================="
-          echo " Dev Tools Automation"
+          echo " macOS Dev Tools Automation"
           echo "=================================================="
           echo ""
           echo "Usage:"
-          echo "  noetl run automation/development/tooling.yaml --set action=<action>"
+          echo "  noetl run automation/development/tooling_macos.yaml --set action=<action>"
           echo ""
           echo "Setup & Validation:"
-          echo "  setup               - Validate required tooling on WSL2 hosts"
+          echo "  setup               - Validate required tooling on macOS"
           echo "  validate-install    - Validate required tools are installed"
           echo "  validate-devtools   - Validate optional dev tools available"
-          echo "  validate-docker     - Validate Docker Desktop integration"
+          echo "  validate-docker     - Validate Docker Desktop"
           echo ""
           echo "Installation (Base):"
-          echo "  install-base        - Install basic CLI tools (git, curl, jq, make, etc.)"
-          echo "  install-devtools    - Install all dev tools (yq, kind, pyenv, uv, tfenv)"
+          echo "  install-homebrew    - Install Homebrew package manager"
+          echo "  install-base        - Install basic CLI tools (git, curl, jq, make)"
+          echo "  install-devtools    - Install all dev tools (yq, kind, pyenv, uv, tfenv, kubectl)"
           echo ""
           echo "Installation (Individual):"
-          echo "  install-jq          - Install jq via apt"
-          echo "  install-yq          - Install yq via PPA"
+          echo "  install-jq          - Install jq via Homebrew"
+          echo "  install-yq          - Install yq via Homebrew"
           echo "  install-kind        - Install kind (Kubernetes in Docker)"
-          echo "  install-pyenv       - Install pyenv and initialize bash"
+          echo "  install-pyenv       - Install pyenv via Homebrew"
           echo "  install-uv          - Install uv (fast Python package manager)"
           echo "  install-tfenv       - Install tfenv and latest Terraform"
           echo "  install-psql        - Install PostgreSQL client tools"
           echo ""
           echo "Configuration:"
-          echo "  ensure-path         - Ensure tool paths in ~/.bashrc"
-          echo "  fix-docker-perms    - Add user to docker group"
+          echo "  ensure-path         - Ensure tool paths in shell config"
           echo ""
           echo "Examples:"
           echo "  # Setup and validate all tools"
-          echo "  noetl run automation/development/tooling.yaml --set action=setup"
+          echo "  noetl run automation/development/tooling_macos.yaml --set action=setup"
+          echo ""
+          echo "  # Install Homebrew first (if not installed)"
+          echo "  noetl run automation/development/tooling_macos.yaml --set action=install-homebrew"
           echo ""
           echo "  # Install base tools"
-          echo "  noetl run automation/development/tooling.yaml --set action=install-base"
+          echo "  noetl run automation/development/tooling_macos.yaml --set action=install-base"
           echo ""
           echo "  # Install all dev tools"
-          echo "  noetl run automation/development/tooling.yaml --set action=install-devtools"
+          echo "  noetl run automation/development/tooling_macos.yaml --set action=install-devtools"
           echo ""
           echo "  # Validate installation"
-          echo "  noetl run automation/development/tooling.yaml --set action=validate-install"
-          echo ""
-          echo "Task Equivalents:"
-          echo "  setup            -> task dev:tools:setup"
-          echo "  validate-install -> task dev:tools:validate-install"
-          echo "  validate-devtools -> task dev:tools:validate-devtools"
-          echo "  validate-docker  -> task dev:tools:validate-docker"
-          echo "  install-base     -> task dev:tools:install-base"
-          echo "  install-devtools -> task dev:tools:install-devtools"
-          echo "  install-jq       -> task dev:tools:install-jq"
-          echo "  install-yq       -> task dev:tools:install-yq"
-          echo "  install-kind     -> task dev:tools:install-kind"
-          echo "  install-pyenv    -> task dev:tools:install-pyenv"
-          echo "  install-uv       -> task dev:tools:install-uv"
-          echo "  install-tfenv    -> task dev:tools:install-tfenv"
-          echo "  install-psql     -> task dev:tools:install-psql"
-          echo "  ensure-path      -> task dev:tools:ensure-path"
-          echo "  fix-docker-perms -> task dev:tools:fix-docker-perms"
+          echo "  noetl run automation/development/tooling_macos.yaml --set action=validate-install"
           echo ""
     next:
       - step: end

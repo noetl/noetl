@@ -79,13 +79,13 @@ fi
 
 ```bash
 # Build for both amd64 and arm64
-task docker-build-noetl --platforms linux/amd64,linux/arm64 --push --registry ghcr.io/noetl/
+noetl build --platforms linux/amd64,linux/arm64 --push --registry ghcr.io/noetl/
 
 # Build for specific architecture
-task docker-build-noetl --platforms linux/arm64 --push --registry ghcr.io/noetl/
+noetl build --platforms linux/arm64 --push --registry ghcr.io/noetl/
 
 # Local build (auto-detects native platform)
-task docker-build-noetl
+noetl build
 ```
 
 ## Local Development Without Docker

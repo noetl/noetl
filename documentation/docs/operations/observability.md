@@ -448,6 +448,214 @@ noetl run automation/infrastructure/qdrant.yaml --set action=port-forward
 noetl run automation/infrastructure/nats.yaml --set action=port-forward
 ```
 
+## Performance Analysis
+
+NoETL includes built-in tools for analyzing playbook execution performance and identifying bottlenecks.
+
+### Event Sync Playbook
+
+The event sync playbook exports execution events from PostgreSQL to ClickHouse for analysis:
+
+```bash
+# Show available actions
+noetl run automation/observability/event-sync.yaml --set action=help
+
+# Sync events from last 24 hours to ClickHouse
+noetl run automation/observability/event-sync.yaml --set action=sync
+
+# Sync events from last 1 hour with larger batch
+noetl run automation/observability/event-sync.yaml --set action=sync --set since_hours=1 --set batch_size=5000
+
+# Count events in both databases
+noetl run automation/observability/event-sync.yaml --set action=count
+
+# Verify sync between databases
+noetl run automation/observability/event-sync.yaml --set action=verify
+```
+
+### PostgreSQL-Based Analysis (No ClickHouse Required)
+
+For immediate diagnosis without deploying ClickHouse:
+
+```bash
+# Find time gaps between events (bottleneck detection)
+noetl run automation/observability/event-sync.yaml --set action=analyze-gaps --set since_hours=1
+
+# Find slowest executions
+noetl run automation/observability/event-sync.yaml --set action=analyze-slow --set since_hours=1
+```
+
+### Direct SQL Analysis
+
+Run these queries against PostgreSQL for detailed analysis:
+
+#### Find Slowest Executions
+```sql
+SELECT
+    e.execution_id,
+    c.path as playbook_path,
+    COUNT(*) as event_count,
+    ROUND(EXTRACT(EPOCH FROM (MAX(e.created_at) - MIN(e.created_at)))::numeric, 2) as duration_seconds
+FROM noetl.event e
+LEFT JOIN noetl.catalog c ON e.catalog_id = c.catalog_id
+GROUP BY e.execution_id, c.path
+ORDER BY duration_seconds DESC
+LIMIT 20;
+```
+
+#### Analyze Event Transition Delays
+```sql
+WITH transitions AS (
+    SELECT
+        execution_id,
+        event_type,
+        created_at,
+        LAG(event_type) OVER (PARTITION BY execution_id ORDER BY created_at) as prev_event,
+        LAG(created_at) OVER (PARTITION BY execution_id ORDER BY created_at) as prev_time
+    FROM noetl.event
+    WHERE created_at > NOW() - INTERVAL '1 hour'
+)
+SELECT
+    prev_event || ' -> ' || event_type as transition,
+    COUNT(*) as occurrences,
+    ROUND(AVG(EXTRACT(EPOCH FROM (created_at - prev_time)))::numeric, 3) as avg_sec,
+    ROUND(percentile_cont(0.95) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (created_at - prev_time)))::numeric, 3) as p95_sec
+FROM transitions
+WHERE prev_event IS NOT NULL
+GROUP BY prev_event, event_type
+HAVING COUNT(*) > 5
+ORDER BY avg_sec DESC;
+```
+
+#### Find Bottleneck Gaps (>2 seconds)
+```sql
+WITH event_gaps AS (
+    SELECT
+        execution_id,
+        event_type,
+        node_name,
+        created_at,
+        LAG(created_at) OVER (PARTITION BY execution_id ORDER BY created_at) as prev_time,
+        LAG(event_type) OVER (PARTITION BY execution_id ORDER BY created_at) as prev_event_type
+    FROM noetl.event
+    WHERE created_at > NOW() - INTERVAL '1 hour'
+)
+SELECT
+    execution_id,
+    prev_event_type as from_event,
+    event_type as to_event,
+    node_name,
+    ROUND(EXTRACT(EPOCH FROM (created_at - prev_time))::numeric, 2) as gap_seconds
+FROM event_gaps
+WHERE created_at - prev_time > INTERVAL '2 seconds'
+ORDER BY gap_seconds DESC
+LIMIT 30;
+```
+
+### ClickHouse Performance Queries
+
+After syncing events to ClickHouse, use these queries for advanced analysis:
+
+```bash
+# Connect to ClickHouse
+kubectl exec -n clickhouse <pod> -- clickhouse-client
+```
+
+#### Execution Duration Distribution
+```sql
+SELECT
+    toStartOfHour(Timestamp) AS hour,
+    EventType,
+    count() AS event_count,
+    round(avg(Duration), 2) AS avg_duration_ms,
+    round(quantile(0.95)(Duration), 2) AS p95_ms
+FROM observability.noetl_events
+WHERE Timestamp >= now() - INTERVAL 24 HOUR
+GROUP BY hour, EventType
+ORDER BY hour DESC, avg_duration_ms DESC;
+```
+
+#### Bottleneck Detection (Gap Analysis)
+```sql
+SELECT
+    ExecutionId,
+    prev_event_type,
+    EventType AS curr_event_type,
+    gap_ms
+FROM (
+    SELECT
+        ExecutionId,
+        EventType,
+        lagInFrame(EventType, 1, '') OVER (
+            PARTITION BY ExecutionId ORDER BY Timestamp
+        ) AS prev_event_type,
+        dateDiff('millisecond',
+            lagInFrame(Timestamp, 1, Timestamp) OVER (
+                PARTITION BY ExecutionId ORDER BY Timestamp
+            ),
+            Timestamp
+        ) AS gap_ms
+    FROM observability.noetl_events
+    WHERE Timestamp >= now() - INTERVAL 1 HOUR
+)
+WHERE gap_ms > 5000
+ORDER BY gap_ms DESC
+LIMIT 50;
+```
+
+Full query library available at: `ci/manifests/clickhouse/performance-queries.sql`
+
+### Performance Logs
+
+The orchestrator emits `[PERF]` logs for monitoring. View them with:
+
+```bash
+# View server performance logs
+kubectl logs -n noetl deployment/noetl-server | grep '\[PERF\]'
+
+# Watch live
+kubectl logs -n noetl deployment/noetl-server -f | grep '\[PERF\]'
+```
+
+Key metrics logged:
+- `get_execution_state_batch` - State query time
+- `get_transition_context_batch` - Transition query time
+- `catalog_fetch` - Catalog/playbook fetch time
+- `evaluate_execution` - Total orchestration time
+
+Example output:
+```
+[PERF] get_execution_state_batch: 2.3ms
+[PERF] evaluate_execution total: 2.6ms
+```
+
+### Key Performance Indicators
+
+| Metric | Healthy | Warning | Critical |
+|--------|---------|---------|----------|
+| `command.completed → command.claimed` | &lt;100ms | 100ms-1s | &gt;1s |
+| `evaluate_execution` total | &lt;50ms | 50-500ms | &gt;500ms |
+| `catalog_fetch` | &lt;10ms (cached) | 10-100ms | &gt;100ms |
+| Event count per execution | &lt;100 | 100-500 | &gt;500 |
+
+### Troubleshooting Slow Executions
+
+1. **Check orchestrator delays:**
+   ```bash
+   kubectl logs -n noetl deployment/noetl-server | grep '\[PERF\]' | tail -50
+   ```
+
+2. **Analyze event gaps:**
+   ```bash
+   noetl run automation/observability/event-sync.yaml --set action=analyze-gaps
+   ```
+
+3. **Check catalog cache stats:**
+   The catalog cache has 100 entries with 5-minute TTL. Cache misses cause DB lookups.
+
+4. **Monitor state reconstruction:**
+   High event counts per execution can slow down state reconstruction. Consider archiving completed executions.
+
 ## Integration with NoETL
 
 ### Bootstrap Integration
@@ -521,9 +729,9 @@ kubectl get events -n clickhouse --sort-by='.lastTimestamp'
 kubectl describe pod <pod-name> -n <namespace>
 
 # Check logs
-task clickhouse:logs
-task qdrant:logs
-task nats:logs
+kubectl logs -n clickhouse deployment/clickhouse -f
+kubectl logs -n qdrant deployment/qdrant -f
+kubectl logs -n nats deployment/nats -f
 ```
 
 ### Connection Issues

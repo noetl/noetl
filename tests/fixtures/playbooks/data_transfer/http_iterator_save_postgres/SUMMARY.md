@@ -122,21 +122,18 @@ Complete documentation with problem description, workflow, and troubleshooting.
 
 ### Recommended Method
 ```bash
-# Reset environment and execute playbook
-task noetl:local:reset
+# Register and execute playbook
+noetl playbook register tests/fixtures/playbooks/data_transfer/http_iterator_save_postgres
 
-# Wait for services to be ready, then execute
-task playbook:local:execute \
-  PLAYBOOK=tests/fixtures/playbooks/data_transfer/http_iterator_save_postgres \
-  PORT=8083
+noetl execution create tests/fixtures/playbooks/data_transfer/http_iterator_save_postgres
 ```
 
 ### Manual Execution
 ```bash
-# 1. Reset and start services
-task noetl:local:reset
+# 1. Start services (if not running)
+noetl run automation/setup/bootstrap.yaml
 
-# 2. Execute playbook using CLI
+# 2. Execute playbook using CLI with custom options
 noetl execute playbook \
   tests/fixtures/playbooks/data_transfer/http_iterator_save_postgres \
   --host localhost \

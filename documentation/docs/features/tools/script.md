@@ -425,6 +425,6 @@ kubectl describe nodes
 
 ## See Also
 
-- [Shell Tool](./shell.md) - Execute shell commands locally
-- [Python Tool](./python.md) - Run Python scripts without Kubernetes
-- [Rhai Tool](./rhai.md) - Lightweight scripting with Rhai
+- [Shell Tool](./shell) - Execute shell commands locally
+- [Python Tool](./python) - Run Python scripts without Kubernetes
+- [Rhai Tool](./rhai) - Lightweight scripting with Rhai

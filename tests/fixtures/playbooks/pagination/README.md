@@ -132,14 +132,14 @@ curl -X POST http://localhost:8082/api/run/playbook \
   -d '{"path": "tests/pagination/cursor"}'
 ```
 
-### Option 3: Task Runner
+### Option 3: NoETL CLI
 ```bash
-task test:pagination:basic
-task test:pagination:cursor
-task test:pagination:offset
-task test:pagination:max-iterations
-task test:pagination:retry
-task test:pagination:loop
+noetl run tests/fixtures/playbooks/pagination/basic/test_pagination_basic.yaml
+noetl run tests/fixtures/playbooks/pagination/cursor/test_pagination_cursor.yaml
+noetl run tests/fixtures/playbooks/pagination/offset/test_pagination_offset.yaml
+noetl run tests/fixtures/playbooks/pagination/max_iterations/test_pagination_max_iterations.yaml
+noetl run tests/fixtures/playbooks/pagination/retry/test_pagination_retry.yaml
+noetl run tests/fixtures/playbooks/pagination/loop_with_pagination/test_loop_with_pagination.yaml
 ```
 
 ## 🎯 Expected Behavior

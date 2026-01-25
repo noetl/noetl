@@ -1,0 +1,408 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: dev_tools_setup
+  path: automation/development/setup_tooling
+  description: OS-aware development tools setup - detects OS and routes to appropriate tooling playbook
+
+executor:
+  profile: local
+  version: noetl-runtime/1
+workload:
+  action: help  # detect, setup, validate-install, validate-devtools, install-base, install-devtools, help
+
+workflow:
+  - step: start
+    desc: Entry point - detect OS and route appropriately
+    tool:
+      kind: shell
+      cmds:
+        - echo "Development Tools Setup - Action '{{ workload.action }}'"
+    next:
+      - when: "{{ workload.action }} == detect"
+        then:
+          - step: detect_os
+        args: {}
+      - when: "{{ workload.action }} == setup"
+        then:
+          - step: detect_and_setup
+        args: {}
+      - when: "{{ workload.action }} == validate-install"
+        then:
+          - step: detect_and_validate
+        args: {}
+      - when: "{{ workload.action }} == validate-devtools"
+        then:
+          - step: detect_and_validate_devtools
+        args: {}
+      - when: "{{ workload.action }} == install-base"
+        then:
+          - step: detect_and_install_base
+        args: {}
+      - when: "{{ workload.action }} == install-devtools"
+        then:
+          - step: detect_and_install_devtools
+        args: {}
+      - when: "{{ workload.action }} == help"
+        then:
+          - step: show_help
+        args: {}
+      - step: show_help
+
+  - step: detect_os
+    desc: Detect operating system and display information
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Detecting operating system..."
+          echo ""
+
+          OS_TYPE="unknown"
+          OS_NAME="Unknown"
+
+          case "$(uname -s)" in
+            Darwin)
+              OS_TYPE="macos"
+              OS_NAME="macOS $(sw_vers -productVersion 2>/dev/null || echo '')"
+              ARCH="$(uname -m)"
+              echo "[DETECTED] Operating System: $OS_NAME ($ARCH)"
+              echo "[INFO] Use tooling_macos.yaml for installation"
+              echo ""
+              echo "Recommended playbook:"
+              echo "  noetl run automation/development/tooling_macos.yaml --set action=<action>"
+              ;;
+            Linux)
+              if grep -q Microsoft /proc/version 2>/dev/null; then
+                OS_TYPE="wsl2"
+                OS_NAME="WSL2 (Windows Subsystem for Linux)"
+              elif [ -f /etc/os-release ]; then
+                . /etc/os-release
+                OS_NAME="$NAME $VERSION_ID"
+                OS_TYPE="linux"
+              else
+                OS_NAME="Linux"
+                OS_TYPE="linux"
+              fi
+              echo "[DETECTED] Operating System: $OS_NAME"
+              echo "[INFO] Use tooling_linux.yaml for installation"
+              echo ""
+              echo "Recommended playbook:"
+              echo "  noetl run automation/development/tooling_linux.yaml --set action=<action>"
+              ;;
+            MINGW*|MSYS*|CYGWIN*)
+              OS_TYPE="windows"
+              OS_NAME="Windows (Git Bash/MSYS)"
+              echo "[DETECTED] Operating System: $OS_NAME"
+              echo "[WARN] Windows native is not fully supported."
+              echo "[INFO] Consider using WSL2 for best compatibility."
+              ;;
+            *)
+              echo "[WARN] Unknown operating system: $(uname -s)"
+              echo "[INFO] Manual installation may be required."
+              ;;
+          esac
+
+          echo ""
+          echo "System Information:"
+          echo "  Kernel: $(uname -r)"
+          echo "  Architecture: $(uname -m)"
+          echo "  Shell: $SHELL"
+    next:
+      - step: end
+
+  - step: detect_and_setup
+    desc: Detect OS and run setup with appropriate tooling playbook
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Detecting OS and running setup..."
+
+          case "$(uname -s)" in
+            Darwin)
+              echo "[INFO] Detected macOS - using tooling_macos.yaml"
+              ;;
+            Linux)
+              echo "[INFO] Detected Linux/WSL2 - using tooling_linux.yaml"
+              ;;
+            *)
+              echo "[ERROR] Unsupported operating system: $(uname -s)"
+              exit 1
+              ;;
+          esac
+    case:
+      - when: "'$(uname -s)' == Darwin"
+        then:
+          - step: run_macos_setup
+      - when: "true"
+        then:
+          - step: run_linux_setup
+
+  - step: run_macos_setup
+    desc: Run macOS setup via tooling_macos.yaml
+    tool:
+      kind: playbook
+      path: tooling_macos.yaml
+      args:
+        action: setup
+    next:
+      - step: end
+
+  - step: run_linux_setup
+    desc: Run Linux/WSL2 setup via tooling_linux.yaml
+    tool:
+      kind: playbook
+      path: tooling_linux.yaml
+      args:
+        action: setup
+    next:
+      - step: end
+
+  - step: detect_and_validate
+    desc: Detect OS and run validation with appropriate tooling playbook
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Detecting OS and running validation..."
+
+          case "$(uname -s)" in
+            Darwin)
+              echo "[INFO] Detected macOS"
+              ;;
+            Linux)
+              echo "[INFO] Detected Linux/WSL2"
+              ;;
+            *)
+              echo "[ERROR] Unsupported operating system: $(uname -s)"
+              exit 1
+              ;;
+          esac
+    case:
+      - when: "'$(uname -s)' == Darwin"
+        then:
+          - step: run_macos_validate
+      - when: "true"
+        then:
+          - step: run_linux_validate
+
+  - step: run_macos_validate
+    desc: Run macOS validation via tooling_macos.yaml
+    tool:
+      kind: playbook
+      path: tooling_macos.yaml
+      args:
+        action: validate-install
+    next:
+      - step: end
+
+  - step: run_linux_validate
+    desc: Run Linux/WSL2 validation via tooling_linux.yaml
+    tool:
+      kind: playbook
+      path: tooling_linux.yaml
+      args:
+        action: validate-install
+    next:
+      - step: end
+
+  - step: detect_and_validate_devtools
+    desc: Detect OS and validate dev tools
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Detecting OS and validating dev tools..."
+
+          case "$(uname -s)" in
+            Darwin)
+              echo "[INFO] Detected macOS"
+              ;;
+            Linux)
+              echo "[INFO] Detected Linux/WSL2"
+              ;;
+            *)
+              echo "[ERROR] Unsupported operating system"
+              exit 1
+              ;;
+          esac
+    case:
+      - when: "'$(uname -s)' == Darwin"
+        then:
+          - step: run_macos_validate_devtools
+      - when: "true"
+        then:
+          - step: run_linux_validate_devtools
+
+  - step: run_macos_validate_devtools
+    desc: Run macOS dev tools validation
+    tool:
+      kind: playbook
+      path: tooling_macos.yaml
+      args:
+        action: validate-devtools
+    next:
+      - step: end
+
+  - step: run_linux_validate_devtools
+    desc: Run Linux/WSL2 dev tools validation
+    tool:
+      kind: playbook
+      path: tooling_linux.yaml
+      args:
+        action: validate-devtools
+    next:
+      - step: end
+
+  - step: detect_and_install_base
+    desc: Detect OS and install base tools
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Detecting OS and installing base tools..."
+
+          case "$(uname -s)" in
+            Darwin)
+              echo "[INFO] Detected macOS - will use Homebrew"
+              ;;
+            Linux)
+              echo "[INFO] Detected Linux/WSL2 - will use apt-get"
+              ;;
+            *)
+              echo "[ERROR] Unsupported operating system"
+              exit 1
+              ;;
+          esac
+    case:
+      - when: "'$(uname -s)' == Darwin"
+        then:
+          - step: run_macos_install_base
+      - when: "true"
+        then:
+          - step: run_linux_install_base
+
+  - step: run_macos_install_base
+    desc: Run macOS base tools installation
+    tool:
+      kind: playbook
+      path: tooling_macos.yaml
+      args:
+        action: install-base
+    next:
+      - step: end
+
+  - step: run_linux_install_base
+    desc: Run Linux/WSL2 base tools installation
+    tool:
+      kind: playbook
+      path: tooling_linux.yaml
+      args:
+        action: install-base
+    next:
+      - step: end
+
+  - step: detect_and_install_devtools
+    desc: Detect OS and install dev tools
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Detecting OS and installing dev tools..."
+
+          case "$(uname -s)" in
+            Darwin)
+              echo "[INFO] Detected macOS - will use Homebrew"
+              ;;
+            Linux)
+              echo "[INFO] Detected Linux/WSL2 - will use apt-get and manual installs"
+              ;;
+            *)
+              echo "[ERROR] Unsupported operating system"
+              exit 1
+              ;;
+          esac
+    case:
+      - when: "'$(uname -s)' == Darwin"
+        then:
+          - step: run_macos_install_devtools
+      - when: "true"
+        then:
+          - step: run_linux_install_devtools
+
+  - step: run_macos_install_devtools
+    desc: Run macOS dev tools installation
+    tool:
+      kind: playbook
+      path: tooling_macos.yaml
+      args:
+        action: install-devtools
+    next:
+      - step: end
+
+  - step: run_linux_install_devtools
+    desc: Run Linux/WSL2 dev tools installation
+    tool:
+      kind: playbook
+      path: tooling_linux.yaml
+      args:
+        action: install-devtools
+    next:
+      - step: end
+
+  - step: show_help
+    desc: Display available actions
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "=================================================="
+          echo " OS-Aware Development Tools Setup"
+          echo "=================================================="
+          echo ""
+          echo "This playbook automatically detects your operating system"
+          echo "and routes to the appropriate tooling playbook:"
+          echo "  - macOS: tooling_macos.yaml (uses Homebrew)"
+          echo "  - Linux/WSL2: tooling_linux.yaml (uses apt-get)"
+          echo ""
+          echo "Usage:"
+          echo "  noetl run automation/development/setup_tooling.yaml --set action=<action>"
+          echo ""
+          echo "Actions:"
+          echo "  detect            - Detect OS and show recommended playbook"
+          echo "  setup             - Validate required tooling (OS-aware)"
+          echo "  validate-install  - Validate required tools (OS-aware)"
+          echo "  validate-devtools - Validate optional dev tools (OS-aware)"
+          echo "  install-base      - Install basic CLI tools (OS-aware)"
+          echo "  install-devtools  - Install all dev tools (OS-aware)"
+          echo "  help              - Show this help message"
+          echo ""
+          echo "Examples:"
+          echo "  # Detect your OS"
+          echo "  noetl run automation/development/setup_tooling.yaml --set action=detect"
+          echo ""
+          echo "  # Setup tools (auto-detects OS)"
+          echo "  noetl run automation/development/setup_tooling.yaml --set action=setup"
+          echo ""
+          echo "  # Install all dev tools (auto-detects OS)"
+          echo "  noetl run automation/development/setup_tooling.yaml --set action=install-devtools"
+          echo ""
+          echo "Direct Platform Playbooks:"
+          echo "  # macOS"
+          echo "  noetl run automation/development/tooling_macos.yaml --set action=<action>"
+          echo ""
+          echo "  # Linux/WSL2"
+          echo "  noetl run automation/development/tooling_linux.yaml --set action=<action>"
+          echo ""
+    next:
+      - step: end
+
+  - step: end
+    desc: End workflow

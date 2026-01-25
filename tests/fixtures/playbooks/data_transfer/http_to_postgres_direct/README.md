@@ -210,16 +210,12 @@ INSERT INTO http_to_postgres_direct (data) VALUES ('{"id":2,"userId":1,"title":"
 
 ### 1. Register Playbook
 ```bash
-.venv/bin/noetl register \
-  tests/fixtures/playbooks/data_transfer/http_to_postgres_direct/http_to_postgres_direct.yaml \
-  --host localhost --port 8083
+noetl playbook register tests/fixtures/playbooks/data_transfer/http_to_postgres_direct
 ```
 
 ### 2. Execute Playbook
 ```bash
-.venv/bin/noetl execute playbook \
-  "tests/fixtures/playbooks/data_transfer/http_to_postgres_direct" \
-  --host localhost --port 8083 --json
+noetl execution create tests/fixtures/playbooks/data_transfer/http_to_postgres_direct
 ```
 
 ### 3. Verify Results

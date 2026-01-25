@@ -16,10 +16,10 @@ Interactive Brokers Client Portal API supports multiple authentication methods:
 
 | Method | Use Case | Implementation Status |
 |--------|----------|----------------------|
-| **OAuth 2.0** | Server-to-server, automated workflows | ✅ Supported |
-| **OAuth 1.0a** | Legacy applications | ✅ Supported |
-| **SSO** | Web-based applications | ⏳ Not implemented |
-| **CP Gateway** | Java-based local gateway | ⏳ Alternative method |
+| **OAuth 2.0** | Server-to-server, automated workflows | Supported |
+| **OAuth 1.0a** | Legacy applications | Supported |
+| **SSO** | Web-based applications | Not implemented |
+| **CP Gateway** | Java-based local gateway | Alternative method |
 
 This test focuses on **OAuth 2.0**.
 
@@ -42,7 +42,7 @@ Interactive Brokers offers several authentication methods:
    - Paper Trading: https://ndcdyn.interactivebrokers.com/sso/Login
    - Live Trading: https://www.interactivebrokers.com/sso/Login
 
-2. Navigate to **Settings → API → OAuth Applications**
+2. Navigate to **Settings -> API -> OAuth Applications**
 
 3. Click **Create Application**:
    ```
@@ -89,7 +89,7 @@ Create `tests/fixtures/credentials/ib_oauth.json`:
 
 ```bash
 # Start NoETL
-task noetl:local:start
+noetl server start
 
 # Register credential
 curl -X POST http://localhost:8083/api/credentials \
@@ -176,7 +176,7 @@ IBKR uses **Client Credentials** grant type:
 **Fix**:
 ```bash
 # Verify you've created OAuth app in IBKR portal
-# Check Settings → API → OAuth Applications
+# Check Settings -> API -> OAuth Applications
 # Ensure consumer key matches exactly
 ```
 
@@ -185,12 +185,12 @@ IBKR uses **Client Credentials** grant type:
 **Cause**: OAuth app needs proper scopes
 
 **Fix**:
-1. Go to IBKR portal → Settings → API → OAuth Applications
+1. Go to IBKR portal -> Settings -> API -> OAuth Applications
 2. Edit your application
 3. Grant required scopes:
-   - Read account information ✓
-   - Read portfolio data ✓
-   - Read market data ✓
+   - Read account information
+   - Read portfolio data
+   - Read market data
 4. Save changes and retry
 
 ### Error: "Account not accessible"
@@ -226,8 +226,8 @@ curl -v https://api.ibkr.com/v1/api/portfolio/accounts
 |---------|-----------|------------|
 | **Setup** | Register OAuth app | Download & run Java gateway |
 | **Authentication** | Token-based | Session cookies |
-| **Automation** | ✅ Fully automated | ⚠️ Manual login required |
-| **Production Ready** | ✅ Yes | ⚠️ Requires maintenance |
+| **Automation** | Fully automated | Manual login required |
+| **Production Ready** | Yes | Requires maintenance |
 | **Rate Limits** | Standard API limits | Same |
 | **Use Case** | Server-to-server | Local development |
 
@@ -235,10 +235,10 @@ curl -v https://api.ibkr.com/v1/api/portfolio/accounts
 
 ## Implementation Status
 
-- ✅ OAuth 2.0 credential schema defined
-- ⏳ Token provider implementation pending
-- ⏳ Test playbook ready (requires token provider)
-- ⏳ Integration testing pending
+- OAuth 2.0 credential schema defined
+- Token provider implementation pending
+- Test playbook ready (requires token provider)
+- Integration testing pending
 
 ## Next Steps
 
@@ -286,32 +286,32 @@ from noetl.core.auth.providers import TokenProvider
 
 class IBTokenProvider(TokenProvider):
     """Interactive Brokers OAuth token provider."""
-    
+
     def __init__(self, credential_data: dict):
         self.client_id = credential_data.get('client_id')
         self.client_secret = credential_data.get('client_secret')
         self.token_url = credential_data.get('token_url', 'https://api.ibkr.com/v1/oauth/token')
         self.access_token: Optional[str] = None
         self.token_expiry: Optional[datetime] = None
-    
+
     def _fetch_token_impl(self, audience: Optional[str] = None) -> str:
         """Fetch OAuth token from IB."""
         import requests
-        
+
         response = requests.post(
             self.token_url,
             auth=(self.client_id, self.client_secret),
             data={'grant_type': 'client_credentials'}
         )
         response.raise_for_status()
-        
+
         token_data = response.json()
         self.access_token = token_data['access_token']
         expires_in = token_data.get('expires_in', 3600)
         self.token_expiry = datetime.utcnow() + timedelta(seconds=expires_in - 300)
-        
+
         return self.access_token
-    
+
     def is_token_valid(self) -> bool:
         """Check if current token is still valid."""
         if not self.access_token or not self.token_expiry:
@@ -327,15 +327,15 @@ Update `noetl/core/auth/providers.py`:
 def get_token_provider(credential_data: Dict) -> TokenProvider:
     """Factory to get appropriate token provider."""
     provider_type = credential_data.get('type', '').lower()
-    
+
     if provider_type in ['google_service_account', 'google_oauth', 'gcp']:
         from noetl.core.auth.google_provider import GoogleTokenProvider
         return GoogleTokenProvider(credential_data)
-    
+
     elif provider_type in ['interactive_brokers_oauth', 'ib_oauth']:
         from noetl.core.auth.ib_provider import IBTokenProvider
         return IBTokenProvider(credential_data)
-    
+
     else:
         raise ValueError(f"Unsupported token provider type: {provider_type}")
 ```
@@ -399,9 +399,9 @@ To contribute to IB OAuth implementation:
 
 ## Timeline
 
-- **Phase 1**: Basic OAuth token generation ⏳
-- **Phase 2**: Account and position queries ⏳
-- **Phase 3**: Market data access ⏳
-- **Phase 4**: Order placement (live trading) ⏳
+- **Phase 1**: Basic OAuth token generation
+- **Phase 2**: Account and position queries
+- **Phase 3**: Market data access
+- **Phase 4**: Order placement (live trading)
 
 Stay tuned for updates!

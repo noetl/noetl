@@ -13,7 +13,7 @@ script_execution/
 ├── python_file_example.yaml      # Python with file source
 ├── postgres_file_example.yaml    # Postgres with file source
 ├── python_http_example.yaml      # Python with HTTP source
-├── python_gcs_example.yaml       # Python with GCS source 
+├── python_gcs_example.yaml       # Python with GCS source
 ├── postgres_s3_example.yaml      # Postgres with S3 source
 ├── k8s_job_python_gcs.yaml       # Kubernetes Job execution from GCS
 └── README.md                     # This file
@@ -220,19 +220,19 @@ def main():
         args = json.loads(sys.argv[1])
     else:
         args = {}
-    
+
     input_file = args.get('input_file', 'unknown')
     output_bucket = args.get('output_bucket', 'unknown')
-    
+
     # Access environment variables (including credentials from keychain)
     gcp_token = os.environ.get('GCP_TOKEN', 'not_set')
     gcs_bucket = os.environ.get('GCS_BUCKET', 'not_set')
-    
+
     print(f"[DATA PROCESSOR] Processing {input_file}")
     print(f"[DATA PROCESSOR] GCP Token available: {gcp_token != 'not_set'}")
-    
+
     # Your processing logic here (can use credentials for cloud storage access)
-    
+
     # Output result as JSON for NoETL to capture
     result = {
         "status": "completed",
@@ -243,7 +243,7 @@ def main():
             "gcs_bucket": gcs_bucket
         }
     }
-    
+
     print(json.dumps(result))
     return 0
 
@@ -267,44 +267,44 @@ if __name__ == "__main__":
 - Google Cloud project
 - Service account with `storage.objects.get` permission
 - Scripts uploaded to GCS bucket
-- Credential registered in NoETL: `task playbook:k8s:register-credential-gcp`
-- **Credential Integration**: ✅ Complete - automatically fetches from NoETL API
+- Credential registered in NoETL: `noetl credential create gcp_service_account --type gcp ...`
+- **Credential Integration**: Complete - automatically fetches from NoETL API
 
 **S3 Source:**
 - AWS account
 - IAM credentials with `s3:GetObject` permission
 - Scripts uploaded to S3 bucket
-- Credential registered in NoETL: `task playbook:k8s:register-credential-aws`
-- **Credential Integration**: ✅ Complete - automatically fetches from NoETL API
+- Credential registered in NoETL: `noetl credential create aws_credentials --type aws ...`
+- **Credential Integration**: Complete - automatically fetches from NoETL API
 
 ### Running Tests
 
 ```bash
 # File source tests (no cloud credentials required)
-task playbook:k8s:register tests/fixtures/playbooks/script_execution/python_file_example.yaml
-task playbook:k8s:execute python_file_script_example
+noetl playbook register tests/fixtures/playbooks/script_execution/python_file_example.yaml
+noetl execution create python_file_script_example --data '{}'
 
-task playbook:k8s:register tests/fixtures/playbooks/script_execution/postgres_file_example.yaml
-task playbook:k8s:execute postgres_file_script_example
+noetl playbook register tests/fixtures/playbooks/script_execution/postgres_file_example.yaml
+noetl execution create postgres_file_script_example --data '{}'
 
 # HTTP source test (requires internet)
-task playbook:k8s:register tests/fixtures/playbooks/script_execution/python_http_example.yaml
-task playbook:k8s:execute python_http_script_example
+noetl playbook register tests/fixtures/playbooks/script_execution/python_http_example.yaml
+noetl execution create python_http_script_example --data '{}'
 
 # Cloud source tests (requires credentials - see Prerequisites above)
-task playbook:k8s:register tests/fixtures/playbooks/script_execution/python_gcs_example.yaml
-task playbook:k8s:execute python_gcs_script_example
+noetl playbook register tests/fixtures/playbooks/script_execution/python_gcs_example.yaml
+noetl execution create python_gcs_script_example --data '{}'
 
-task playbook:k8s:register tests/fixtures/playbooks/script_execution/postgres_s3_example.yaml
-task playbook:k8s:execute postgres_s3_script_example
+noetl playbook register tests/fixtures/playbooks/script_execution/postgres_s3_example.yaml
+noetl execution create postgres_s3_script_example --data '{}'
 
 # Kubernetes Job execution test (requires GCS credentials)
 # First, upload test script to GCS:
 gsutil cp scripts/data_processor.py gs://noetl-demo-19700101/scripts/
 
 # Then register and execute
-task playbook:k8s:register tests/fixtures/playbooks/script_execution/k8s_job_python_gcs.yaml
-task playbook:k8s:execute k8s_job_python_gcs
+noetl playbook register tests/fixtures/playbooks/script_execution/k8s_job_python_gcs.yaml
+noetl execution create k8s_job_python_gcs --data '{}'
 ```
 
 ## Backward Compatibility

@@ -233,9 +233,8 @@ source .venv/bin/activate
 # Install psycopg
 pip install psycopg[binary]
 
-# Restart worker
-task noetl:local:stop
-task noetl:local:start
+# Restart worker (if running locally)
+# Stop the running server/worker processes and start them again
 ```
 
 ### 2. Connection Refused
