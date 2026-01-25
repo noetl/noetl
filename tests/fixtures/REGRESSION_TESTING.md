@@ -18,65 +18,63 @@ This framework provides:
 
 ```bash
 # Check cluster health
-task test-cluster-health
+kubectl get pods -A
 
 # If not running, bring up the cluster
-task bring-all
+noetl run automation/setup/bootstrap.yaml
 ```
 
 ### 2. Register test credentials
 
 ```bash
-task register-test-credentials
+noetl run tests/fixtures/playbooks/regression_test/register_credentials.yaml
 ```
 
 ### 3. Run regression tests
 
 ```bash
 # Run all tests
-task test-regression
+noetl run tests/fixtures/playbooks/regression_test/regression_test.yaml
 
-# Run specific category
-task test-regression-category CATEGORY=basic
-
-# Run single playbook
-task test-regression-single PLAYBOOK=hello_world
+# Run specific playbook test
+noetl run tests/fixtures/playbooks/hello_world/hello_world.yaml
 ```
 
-## Task Commands
+## Running Tests
 
-### Running Tests
+### Using NoETL CLI
 
 ```bash
-# Complete regression test suite (all 56 playbooks)
-task test:playbooks:regression
-# Alias: task tpr, task test-regression
+# Complete regression test suite (all playbooks)
+noetl run tests/fixtures/playbooks/regression_test/regression_test.yaml
 
-# Test specific category
-task test:playbooks:regression-category CATEGORY=basic
-# Alias: task tprc
-# Categories: basic, data_transfer, control_flow, storage, api_integration, advanced
+# Test specific playbook
+noetl run tests/fixtures/playbooks/hello_world/hello_world.yaml
 
-# Test single playbook
-task test:playbooks:regression-single PLAYBOOK=hello_world
-# Alias: task tprs
-
-# List all configured playbooks
-task test:playbooks:list
-# Alias: task tpl
+# List all playbooks
+ls tests/fixtures/playbooks/
 ```
 
-### Creating/Updating Baselines
+### Using pytest
 
 ```bash
-# Update all expected results (creates baseline for all playbooks)
-task test:playbooks:update-expected
-# Alias: task tpue
-# ⚠ WARNING: This overwrites all expected result files!
+# Run all tests with verbose output
+pytest tests/test_playbook_regression.py -v
 
-# Update expected result for single playbook
-task test:playbooks:update-expected-single PLAYBOOK=hello_world
-# Alias: task tpues
+# Run specific playbook
+pytest tests/test_playbook_regression.py -v -k "hello_world"
+
+# Run category
+pytest tests/test_playbook_regression.py -v --category=basic
+
+# Update expected results
+pytest tests/test_playbook_regression.py -v --update-expected
+
+# Show full traceback on failure
+pytest tests/test_playbook_regression.py -v --tb=long
+
+# Stop on first failure
+pytest tests/test_playbook_regression.py -v -x
 ```
 
 ## Test Workflow
@@ -87,18 +85,14 @@ When setting up regression testing for the first time:
 
 ```bash
 # 1. Ensure cluster is healthy
-task test-cluster-health
+kubectl get nodes
+kubectl get pods -A
 
 # 2. Register credentials
-task register-test-credentials
+noetl run tests/fixtures/playbooks/regression_test/register_credentials.yaml
 
-# 3. Create baseline for all playbooks
-task test:playbooks:update-expected
-
-# This will:
-# - Execute all 56 playbooks
-# - Capture their outputs
-# - Save as expected results in tests/fixtures/expected_results/
+# 3. Run regression tests to create baselines
+noetl run tests/fixtures/playbooks/regression_test/regression_test.yaml
 ```
 
 ### Regular Development Workflow
@@ -106,17 +100,18 @@ task test:playbooks:update-expected
 After making code changes:
 
 ```bash
-# 1. Run affected category tests
-task test-regression-category CATEGORY=basic
+# 1. Run regression tests
+noetl run tests/fixtures/playbooks/regression_test/regression_test.yaml
 
 # 2. If tests fail, investigate
 pytest tests/test_playbook_regression.py -v -k "failed_playbook_name"
 
-# 3. If behavior change is intentional, update baseline
-task test:playbooks:update-expected-single PLAYBOOK=failed_playbook_name
+# 3. View logs
+kubectl logs -n noetl deployment/noetl-server -f
+kubectl logs -n noetl deployment/noetl-worker -f
 
 # 4. Run full regression suite before committing
-task test-regression
+noetl run tests/fixtures/playbooks/regression_test/regression_test.yaml
 ```
 
 ## Test Configuration
@@ -225,70 +220,6 @@ Dynamic fields are normalized (removed) before comparison:
 
 This ensures tests compare logical behavior, not runtime-specific values.
 
-## Pytest Usage
-
-### Direct pytest Commands
-
-```bash
-# Run all tests with verbose output
-pytest tests/test_playbook_regression.py -v
-
-# Run specific playbook
-pytest tests/test_playbook_regression.py -v -k "hello_world"
-
-# Run category
-pytest tests/test_playbook_regression.py -v --category=basic
-
-# Update expected results
-pytest tests/test_playbook_regression.py -v --update-expected
-
-# Show full traceback on failure
-pytest tests/test_playbook_regression.py -v --tb=long
-
-# Stop on first failure
-pytest tests/test_playbook_regression.py -v -x
-```
-
-### Test Output
-
-```
-=== Testing playbook: hello_world ===
-Execution ID: 508590973920740065
-✓ Results match expected output (hello_world.json)
-✓ Playbook hello_world test passed
-PASSED
-```
-
-## Adding New Playbooks
-
-When creating a new playbook:
-
-1. **Add to configuration** (`tests/fixtures/playbook_test_config.yaml`):
-
-```yaml
-playbooks:
-  - name: my_new_playbook
-    path: tests/fixtures/playbooks/my_category/my_new_playbook
-    category: basic
-    enabled: true
-    requires_credentials: []
-    expected_result_file: my_new_playbook.json
-    validation:
-      execution_status: completed
-```
-
-2. **Create baseline**:
-
-```bash
-task test:playbooks:update-expected-single PLAYBOOK=my_new_playbook
-```
-
-3. **Verify test passes**:
-
-```bash
-task test:playbooks:regression-single PLAYBOOK=my_new_playbook
-```
-
 ## Debugging Failed Tests
 
 ### Step 1: Run with verbose output
@@ -318,32 +249,21 @@ kubectl logs -n noetl deployment/noetl-server -f
 
 ```bash
 # Execute playbook manually
-task playbook:local:execute PLAYBOOK=tests/fixtures/playbooks/path/to/playbook
-```
-
-### Step 5: Update baseline if intentional
-
-```bash
-task test:playbooks:update-expected-single PLAYBOOK=failed_playbook
+noetl run tests/fixtures/playbooks/path/to/playbook.yaml
 ```
 
 ## Best Practices
 
 ### Before Committing Changes
 
-1. **Run affected category tests**
+1. **Run regression tests**
    ```bash
-   task test-regression-category CATEGORY=your_category
+   noetl run tests/fixtures/playbooks/regression_test/regression_test.yaml
    ```
 
-2. **Run full regression suite**
+2. **Check logs for errors**
    ```bash
-   task test-regression
-   ```
-
-3. **Update baselines for intentional changes**
-   ```bash
-   task test:playbooks:update-expected-single PLAYBOOK=changed_playbook
+   kubectl logs -n noetl deployment/noetl-server | grep ERROR
    ```
 
 ### When Adding Features
@@ -370,8 +290,14 @@ Add to CI/CD pipeline:
 
 ```yaml
 # .github/workflows/test.yml
+- name: Setup cluster
+  run: |
+    noetl run automation/infrastructure/kind.yaml --set action=create
+    noetl run automation/infrastructure/postgres.yaml --set action=deploy
+    noetl run automation/deployment/noetl-stack.yaml --set action=deploy
+
 - name: Run regression tests
-  run: task test-regression
+  run: noetl run tests/fixtures/playbooks/regression_test/regression_test.yaml
 ```
 
 ## Architecture
@@ -405,23 +331,16 @@ Load config → Setup environment → For each playbook:
 
 ```bash
 # Check cluster health
-task test-cluster-health
+kubectl get pods -A
 
 # Restart if needed
-task bring-all
+noetl run automation/setup/bootstrap.yaml
 ```
 
 ### Credentials not registered
 
 ```bash
-task register-test-credentials
-```
-
-### Setup tasks not run
-
-```bash
-# Manually run create_tables
-task test-create-tables
+noetl run tests/fixtures/playbooks/regression_test/register_credentials.yaml
 ```
 
 ### Timeout errors
@@ -457,7 +376,7 @@ export NOETL_PORT=8083
 - `tests/test_playbook_regression.py` - Main test framework
 - `tests/fixtures/playbook_test_config.yaml` - Test configuration
 - `tests/fixtures/expected_results/` - Expected result JSON files
-- `ci/taskfile/test.yml` - Task automation commands
+- `tests/fixtures/playbooks/regression_test/` - Regression test playbooks
 
 ## Future Enhancements
 

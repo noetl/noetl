@@ -21,19 +21,20 @@ The `hello_world.yaml` playbook demonstrates:
 ### Register the Playbook
 
 ```bash
-task test-register-hello-world
+noetl run automation/playbooks/register.yaml --set path=tests/fixtures/playbooks/hello_world
 ```
 
 ### Execute the Playbook
 
 ```bash
-task test-execute-hello-world
+noetl run tests/fixtures/playbooks/hello_world/hello_world.yaml
 ```
 
 ### Full Test (Register + Execute)
 
 ```bash
-task test-hello-world-full
+noetl run automation/playbooks/register.yaml --set path=tests/fixtures/playbooks/hello_world
+noetl run tests/fixtures/playbooks/hello_world/hello_world.yaml
 ```
 
 ## Expected Output

@@ -14,8 +14,8 @@ Added complete ClickHouse observability stack to NoETL CI infrastructure, includ
 6. **observability-schema.yaml** - OpenTelemetry-compatible schema with tables and views
 7. **README.md** - Manifest documentation
 
-### Task Automation
-8. **ci/taskfile/clickhouse.yml** - Complete taskfile with 20+ tasks:
+### Playbook Automation
+8. **automation/infrastructure/clickhouse.yaml** - Complete playbook with deployment and management actions:
    - Deployment: deploy, deploy-namespace, deploy-crds, deploy-operator, deploy-cluster, deploy-schema, deploy-mcp-server
    - Management: undeploy, restart, restart-operator, restart-mcp
    - Monitoring: status, logs, logs-operator, logs-mcp, health
@@ -31,8 +31,7 @@ Added complete ClickHouse observability stack to NoETL CI infrastructure, includ
    - Troubleshooting guide
 
 ### Integration Updates
-10. **taskfile.yml** - Added clickhouse taskfile include and bootstrap integration
-11. **ci/bootstrap/Taskfile-bootstrap.yml** - Added ClickHouse to dev:start and verification
+10. **automation/setup/bootstrap.yaml** - Added ClickHouse to dev:start and verification
 
 ## Key Features
 
@@ -97,64 +96,58 @@ Three materialized views:
 
 ### Deploy Complete Stack
 ```bash
-task clickhouse:deploy
+noetl run automation/infrastructure/clickhouse.yaml --set action=deploy
 ```
 
 ### Check Status
 ```bash
-task clickhouse:status
+noetl run automation/infrastructure/clickhouse.yaml --set action=status
 ```
 
 ### Connect to CLI
 ```bash
-task clickhouse:connect
+noetl run automation/infrastructure/clickhouse.yaml --set action=connect
 ```
 
 ### Execute Query
 ```bash
-task clickhouse:query -- "SELECT COUNT(*) FROM observability.logs"
+noetl run automation/infrastructure/clickhouse.yaml --set action=query --set query="SELECT COUNT(*) FROM observability.logs"
 ```
 
 ### Port Forward
 ```bash
 # ClickHouse HTTP and Native
-task clickhouse:port-forward
+noetl run automation/infrastructure/clickhouse.yaml --set action=port-forward
 
 # MCP Server
-task clickhouse:port-forward-mcp
+noetl run automation/infrastructure/clickhouse.yaml --set action=port-forward-mcp
 ```
 
 ### View Logs
 ```bash
-task clickhouse:logs              # ClickHouse server
-task clickhouse:logs-operator     # Operator
-task clickhouse:logs-mcp          # MCP server
+noetl run automation/infrastructure/clickhouse.yaml --set action=logs              # ClickHouse server
+noetl run automation/infrastructure/clickhouse.yaml --set action=logs-operator     # Operator
+noetl run automation/infrastructure/clickhouse.yaml --set action=logs-mcp          # MCP server
 ```
 
 ### Health Check
 ```bash
-task clickhouse:health
+noetl run automation/infrastructure/clickhouse.yaml --set action=health
 ```
 
 ### Maintenance
 ```bash
-task clickhouse:optimize          # Optimize tables
-task clickhouse:clean-data        # Clean data (keep schema)
-task clickhouse:undeploy          # Remove stack
+noetl run automation/infrastructure/clickhouse.yaml --set action=optimize          # Optimize tables
+noetl run automation/infrastructure/clickhouse.yaml --set action=clean-data        # Clean data (keep schema)
+noetl run automation/infrastructure/clickhouse.yaml --set action=undeploy          # Remove stack
 ```
 
 ## Integration Points
 
 ### Bootstrap Process
 ClickHouse now included in:
-- `task bootstrap` - Main bootstrap task includes ClickHouse deployment
-- `task dev:start` - Starts ClickHouse with other infrastructure
-- `task bootstrap:verify` - Verifies ClickHouse operator and cluster
-
-### Main Taskfile
-- Added `clickhouse` include with flatten: true
-- Integrated into `noetl:k8s:bootstrap` task
-- Available globally as `task clickhouse:<task-name>`
+- `noetl run automation/setup/bootstrap.yaml` - Main bootstrap includes ClickHouse deployment
+- Verification checks ClickHouse operator and cluster
 
 ## Architecture Decisions
 
@@ -220,4 +213,4 @@ All components integrate cleanly with existing NoETL infrastructure.
 
 - `ci/manifests/clickhouse/README.md` - Manifest documentation
 - `docs/clickhouse_observability.md` - Usage guide
-- `ci/taskfile/clickhouse.yml` - Task reference
+- `automation/infrastructure/clickhouse.yaml` - Playbook reference

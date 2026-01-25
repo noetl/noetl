@@ -8,16 +8,15 @@ Both tools are deployed into a dedicated Kubernetes namespace `analytics` and ca
 
 - Local Kind cluster created for this project
 - Postgres deployed to the cluster (provided in this repo)
-- Taskfile CLI installed (`go-task`)
 
 Quick checks and setup:
 
 ```bash
 # Create Kind cluster (if not present)
-task kind:local:cluster-create
+noetl run automation/infrastructure/kind.yaml --set action=create
 
 # Deploy Postgres (required for Superset metadata and your analytics sources)
-task postgres:k8s:deploy
+noetl run automation/infrastructure/postgres.yaml --set action=deploy
 ```
 
 ## Provisioning
@@ -25,7 +24,7 @@ task postgres:k8s:deploy
 Deploy the analytics stack (Superset + JupyterLab):
 
 ```bash
-task analytics:k8s:deploy
+noetl run automation/infrastructure/jupyterlab.yaml --set action=deploy
 ```
 
 This applies the following manifests:
@@ -36,7 +35,7 @@ This applies the following manifests:
 Remove the analytics stack:
 
 ```bash
-task analytics:k8s:remove
+noetl run automation/infrastructure/jupyterlab.yaml --set action=remove
 ```
 
 ## Access
@@ -53,18 +52,18 @@ For local Kind usage we expose NodePorts.
 
 If the ports conflict on your host, update `nodePort` values in the corresponding `Service` manifests and re-apply.
 
-### Kind port mappings (host ↔ cluster)
+### Kind port mappings (host - cluster)
 
 The Kind cluster is configured to forward these NodePorts to the same ports on your localhost:
 
-- Superset: 30888 → 30888
-- JupyterLab: 30999 → 30999
+- Superset: 30888 - 30888
+- JupyterLab: 30999 - 30999
 
 Configuration lives in `ci/kind/config.yaml` under `extraPortMappings` and is applied when the cluster is created. If your Kind cluster existed before these mappings were added, recreate it to apply:
 
 ```bash
-task kind:local:cluster-delete
-task kind:local:cluster-create
+noetl run automation/infrastructure/kind.yaml --set action=delete
+noetl run automation/infrastructure/kind.yaml --set action=create
 ```
 
 If you change NodePort values in the Service manifests, also update `ci/kind/config.yaml` accordingly and recreate the cluster so the new host mappings take effect.
@@ -111,7 +110,7 @@ To connect to other in-cluster databases/services, use their Kubernetes service 
 Edit the files as needed and redeploy:
 
 ```bash
-task analytics:k8s:deploy
+noetl run automation/infrastructure/jupyterlab.yaml --set action=deploy
 ```
 
 Note: Current values are for local development only. Rotate in real environments.
@@ -121,9 +120,6 @@ Note: Current values are for local development only. Rotate in real environments
 Basic checks:
 
 ```bash
-# Ensure correct kubectl context
-task kubectl:local:context-set-kind
-
 # Check pods
 kubectl get pods -n analytics
 
@@ -144,14 +140,11 @@ nslookup postgres.postgres.svc.cluster.local
 psql "postgresql://demo:demo@postgres.postgres.svc.cluster.local:5432/demo_noetl" -c 'select 1'
 ```
 
-## Files and Tasks Reference
+## Files Reference
 
 - Manifests under `ci/manifests/analytics/`
-- Taskfile: `ci/taskfile/analytics.yml`
-- Top-level shortcuts in `taskfile.yml`:
-  - `task analytics:k8s:deploy`
-  - `task analytics:k8s:remove`
-  
+- JupyterLab playbook: `automation/infrastructure/jupyterlab.yaml`
+
 ## Execution analysis notebook (Jupyter)
 
 An exploratory dashboard-style notebook is provided to analyze NoETL playbook executions stored in Postgres:
@@ -180,4 +173,4 @@ How to run:
 2. Upload `tests/fixtures/notebooks/regression_dashboard.py` (or mount your repo into the pod).
 3. Open it and execute the cells. Adjust parameters at the top (playbook path, lookback window) as needed.
 
-Or run locally in your IDE with a Jupyter kernel; ensure Postgres is reachable on `localhost:54321`.
+Or run locally in your IDE with a Jupyter kernel; verify Postgres is reachable on `localhost:54321`.

@@ -16,7 +16,7 @@ Qdrant is a vector similarity search engine with extended filtering support for 
 curl http://localhost:30633
 
 # Via port-forward
-task qdrant:port-forward
+noetl run automation/infrastructure/qdrant.yaml --set action=port-forward
 curl http://localhost:6333
 ```
 
@@ -30,27 +30,27 @@ curl http://localhost:6333
 
 Deploy:
 ```bash
-task qdrant:deploy
+noetl run automation/infrastructure/qdrant.yaml --set action=deploy
 ```
 
 Check status:
 ```bash
-task qdrant:status
+noetl run automation/infrastructure/qdrant.yaml --set action=status
 ```
 
 Health check:
 ```bash
-task qdrant:health
+noetl run automation/infrastructure/qdrant.yaml --set action=health
 ```
 
 List collections:
 ```bash
-task qdrant:collections
+noetl run automation/infrastructure/qdrant.yaml --set action=collections
 ```
 
 View logs:
 ```bash
-task qdrant:logs
+noetl run automation/infrastructure/qdrant.yaml --set action=logs
 ```
 
 ## Configuration

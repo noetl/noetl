@@ -67,11 +67,11 @@ curl -X POST http://localhost:8082/api/credentials \
 
 ```bash
 # Register playbook
-task noetltest:playbook-register -- \
+noetl playbook register \
   tests/fixtures/playbooks/snowflake_transfer/snowflake_transfer.yaml
 
 # Execute
-task noetltest:playbook-execute -- \
+noetl playbook execute \
   tests/fixtures/playbooks/snowflake_transfer
 ```
 

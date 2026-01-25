@@ -579,10 +579,10 @@ curl http://noetl-server:8082/api/workers
 ### Supported Tool Configurations
 
 See individual tool documentation:
-- [Shell Tool](./tools/shell.md)
-- [HTTP Tool](./tools/http.md)
-- [PostgreSQL Tool](./tools/postgres.md)
-- [DuckDB Tool](./tools/duckdb.md)
+- [Shell Tool](./tools/shell)
+- [HTTP Tool](./tools/http)
+- [PostgreSQL Tool](./tools/postgres)
+- [DuckDB Tool](./tools/duckdb)
 - [Snowflake Tool](./tools/snowflake.md)
 - [Transfer Tool](./tools/transfer.md)
 - [Script Tool](./tools/script.md)

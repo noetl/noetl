@@ -99,9 +99,9 @@ curl -X POST http://localhost:8082/api/run/playbook \
   -d '{"path": "tests/pagination/retry"}'
 ```
 
-### Option 3: Using Task Runner
+### Option 3: Using NoETL CLI
 ```bash
-task test:pagination:retry
+noetl run tests/fixtures/playbooks/pagination/retry/test_pagination_retry.yaml
 ```
 
 ## Expected Results

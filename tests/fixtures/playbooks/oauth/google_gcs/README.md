@@ -75,9 +75,9 @@ gsutil ls -p $PROJECT_ID | head -5
 export BUCKET_NAME="$PROJECT_ID"  # Using project ID as bucket name (common pattern)
 if ! gsutil ls -b gs://$BUCKET_NAME &>/dev/null; then
   gsutil mb -p $PROJECT_ID gs://$BUCKET_NAME
-  echo "✅ Created bucket: $BUCKET_NAME"
+  echo "Created bucket: $BUCKET_NAME"
 else
-  echo "✅ Bucket already exists: $BUCKET_NAME"
+  echo "Bucket already exists: $BUCKET_NAME"
 fi
 ```
 
@@ -86,7 +86,7 @@ fi
 **If using your user credentials (Option A)**:
 ```bash
 # You already have access as project owner - no additional setup needed!
-echo "✅ Using user credentials - access already granted"
+echo "Using user credentials - access already granted"
 ```
 
 **If using service account (Option B)**:
@@ -134,7 +134,7 @@ gsutil ls -p $(gcloud config get-value project)
 
 ```bash
 # Start NoETL
-task noetl:local:start
+noetl server start
 
 # Execute playbook
 .venv/bin/noetl execute playbook \

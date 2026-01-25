@@ -153,10 +153,10 @@ NATS is **mandatory** for NoETL operation. Bootstrap deploys:
 
 ### Equivalent Commands
 
-| Playbook | Task Command |
+| Playbook | Description |
 |----------|-------------|
-| `noetl run automation/main.yaml --set target=bootstrap` | `task bring-all` |
-| `noetl run automation/setup/destroy.yaml` | `make destroy` |
+| `noetl run automation/main.yaml --set target=bootstrap` | Complete K8s environment setup |
+| `noetl run automation/setup/destroy.yaml` | Environment teardown |
 
 ## Destroy Workflow
 
@@ -200,16 +200,16 @@ noetl run automation/test/pagination-server.yaml --set action=undeploy
 
 ### Actions
 
-| Action | Description | Task Equivalent |
-|--------|-------------|----------------|
-| `build` | Build Docker image | `task pagination-server:tpsb` |
-| `load` | Load image to kind | `task pagination-server:tpsl` |
-| `deploy` | Deploy to K8s | `task pagination-server:tpsd` |
-| `full` | Complete workflow | `task pagination-server:tpsf` |
-| `status` | Check pod status | `task pagination-server:tpss` |
-| `test` | Test endpoints | `task pagination-server:tpst` |
-| `logs` | Show server logs | `task pagination-server:tpslog` |
-| `undeploy` | Remove from K8s | `task pagination-server:tpsu` |
+| Action | Description |
+|--------|-------------|
+| `build` | Build Docker image |
+| `load` | Load image to kind |
+| `deploy` | Deploy to K8s |
+| `full` | Complete workflow |
+| `status` | Check pod status |
+| `test` | Test endpoints |
+| `logs` | Show server logs |
+| `undeploy` | Remove from K8s |
 
 ### Test Endpoints
 
@@ -773,7 +773,7 @@ noetl run automation/test/pagination-server.yaml --set action=full
 ```
 automation/
 ├── main.yaml                      # Main router
-├── README.md                      # Complete reference and task mappings
+├── README.md                      # Complete reference and command mappings
 ├── setup/
 │   ├── bootstrap.yaml            # Complete K8s environment setup
 │   └── destroy.yaml              # Environment teardown

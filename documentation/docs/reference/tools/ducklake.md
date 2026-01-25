@@ -148,7 +148,7 @@ volumeMounts:
 If using credential references:
 
 ```bash
-task register-test-credentials
+noetl run automation/credentials/register.yaml --set env=test
 ```
 
 ## Usage Examples

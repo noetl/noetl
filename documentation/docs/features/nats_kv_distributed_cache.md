@@ -215,10 +215,10 @@ spec:
 
 ```bash
 # Deploy full environment with NATS
-task bring-all
+noetl run automation/setup/bootstrap.yaml
 
 # Test loop execution (http_to_postgres_iterator)
-task test-http-to-postgres-iterator-full
+noetl run automation/test/http-to-postgres-iterator.yaml --set action=full
 
 # Check NATS K/V bucket
 kubectl exec -it nats-0 -n nats -- nats kv ls
@@ -235,7 +235,7 @@ kubectl scale deployment noetl-worker --replicas=3
 kubectl get pods -n noetl -l app=noetl-worker
 
 # Run loop test and verify distributed execution
-task test:regression:full
+noetl run automation/test/regression.yaml --set action=full
 ```
 
 ## Performance

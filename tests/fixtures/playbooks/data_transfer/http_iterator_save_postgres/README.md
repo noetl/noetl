@@ -52,35 +52,30 @@ This test playbook validates the critical functionality of HTTP calls within an 
 ### Quick Run
 
 ```bash
-# Complete reset and execute workflow
-task noetl:local:reset && sleep 2 && \
-  task playbook:local:execute \
-    PLAYBOOK=tests/fixtures/playbooks/data_transfer/http_iterator_save_postgres \
-    PORT=8083
+# Register and execute
+noetl playbook register tests/fixtures/playbooks/data_transfer/http_iterator_save_postgres
+
+noetl execution create tests/fixtures/playbooks/data_transfer/http_iterator_save_postgres
 ```
 
 ### Step-by-Step
 
 ```bash
 # 1. Start services (if not running)
-task noetl:local:start
+noetl run automation/setup/bootstrap.yaml
 
 # 2. Re-register the playbook (if updated)
-.venv/bin/noetl catalog register \
-  tests/fixtures/playbooks/data_transfer/http_iterator_save_postgres/http_iterator_save_postgres.yaml \
-  --host localhost --port 8083
+noetl playbook register tests/fixtures/playbooks/data_transfer/http_iterator_save_postgres
 
 # 3. Execute the playbook
-task playbook:local:execute \
-  PLAYBOOK=tests/fixtures/playbooks/data_transfer/http_iterator_save_postgres \
-  PORT=8083
+noetl execution create tests/fixtures/playbooks/data_transfer/http_iterator_save_postgres
 ```
 
 ### Manual Execution
 
 ```bash
-# Execute via CLI
-.venv/bin/noetl execute playbook \
+# Execute via CLI with custom options
+noetl execute playbook \
   tests/fixtures/playbooks/data_transfer/http_iterator_save_postgres \
   --host localhost \
   --port 8083 \

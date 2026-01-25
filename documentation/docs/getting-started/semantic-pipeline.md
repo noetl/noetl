@@ -164,10 +164,10 @@ Monitor for unusual patterns:
 
 ```bash
 # Deploy observability stack (includes Qdrant)
-task observability:activate-all
+noetl run automation/infrastructure/observability.yaml --set action=activate-all
 
 # Check status
-task observability:status-all
+noetl run automation/infrastructure/observability.yaml --set action=status-all
 ```
 
 ## See Also

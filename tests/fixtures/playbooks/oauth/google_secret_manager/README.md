@@ -124,8 +124,8 @@ NoETL supports both OAuth user credentials and service account credentials:
 | **Service Account** | Downloaded JSON key | Production, CI/CD | `{"type": "service_account", "private_key": "...", "client_email": "..."}` |
 
 **What you created**:
-- If you ran `copy_gcloud_credentials.sh`: **User credentials** ✅ (simpler for testing)
-- If you downloaded a service account key: **Service account** 🔑 (better for production)
+- If you ran `copy_gcloud_credentials.sh`: **User credentials** (simpler for testing)
+- If you downloaded a service account key: **Service account** (better for production)
 
 Both work identically in NoETL! The token provider detects the type automatically.
 
@@ -151,7 +151,7 @@ gcloud config get-value project
 
 ```bash
 # Start NoETL
-task noetl:local:start
+noetl server start
 
 # Execute playbook
 .venv/bin/noetl execute playbook \

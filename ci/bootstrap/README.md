@@ -1,6 +1,6 @@
 # NoETL Bootstrap for Submodule Projects
 
-This directory contains bootstrap scripts and taskfiles for projects that use NoETL as a git submodule.
+This directory contains bootstrap scripts for projects that use NoETL as a git submodule.
 
 ## Overview
 
@@ -22,7 +22,7 @@ git submodule update --init --recursive
 
 ### 2. Run Bootstrap
 
-**The bootstrap script must be run first** - it installs all required tools including `task`, Docker, kubectl, and other dependencies.
+**The bootstrap script must be run first** - it installs all required tools including Docker, kubectl, and other dependencies.
 
 ```bash
 # Automatic (detects macOS or WSL2/Ubuntu)
@@ -37,7 +37,6 @@ This will:
 - Detect your OS (macOS or WSL2/Ubuntu)
 - Install required system tools automatically:
   - **Docker** (auto-installs and starts if not present)
-  - **task** (Taskfile automation tool) ← Required for all subsequent task commands
   - **pyenv** (Python version manager)
   - **tfenv** (Terraform version manager)
   - **uv** (Fast Python package manager)
@@ -50,7 +49,7 @@ This will:
 - Copy template files (.env.local, .gitignore, pyproject.toml)
 - Create project directories (credentials/, playbooks/, data/, logs/, secrets/)
 
-### 4. Configure Environment
+### 3. Configure Environment
 
 Edit `.env.local` to customize your environment:
 
@@ -67,10 +66,17 @@ Key configurations in `.env.local`:
 - Timezone settings (TZ - must match across all components)
 - External service credentials (GCP, AWS, Azure, etc.)
 
-### 5. Verify Setup
+### 4. Verify Setup
 
 ```bash
-task bootstrap:verify
+# Activate virtual environment
+source .venv/bin/activate
+
+# Check NoETL CLI
+noetl --help
+
+# Verify infrastructure
+kubectl get pods -A
 ```
 
 ## Files Created by Bootstrap
@@ -80,7 +86,6 @@ The bootstrap script creates the following files in your project root:
 - `.env.local` - Environment configuration (from `env-template`)
 - `.gitignore` - Git ignore rules (from `gitignore-template`)
 - `pyproject.toml` - Python project config (from `pyproject-template.toml`)
-- `Taskfile.yml` - Task automation (from `Taskfile-bootstrap.yml`)
 - `credentials/` - Directory for credential files (with README)
 - `playbooks/` - Directory for your playbooks
 - `data/` - Directory for data files
@@ -93,7 +98,6 @@ All template files are located in `noetl/ci/bootstrap/` for reference.
 
 ```
 your-project/
-├── Taskfile.yml                    # Your project taskfile (imports noetl tasks)
 ├── pyproject.toml                  # Your project dependencies
 ├── .env.local                      # Environment configuration
 ├── .venv/                          # Python venv (project + noetl)
@@ -104,46 +108,36 @@ your-project/
 └── .noetl/                         # NoETL submodule
     ├── ci/
     │   ├── bootstrap/              # Bootstrap scripts
-    │   ├── taskfile/               # NoETL taskfiles
     │   ├── kind/                   # Kind cluster config
     │   ├── manifests/              # K8s manifests
     │   └── vmstack/                # Monitoring configs
     ├── noetl/                      # NoETL Python package
-    └── taskfile.yml                # NoETL main taskfile
+    └── automation/                 # NoETL playbooks for infrastructure
 ```
 
-## Project Taskfile Structure
+## Using NoETL Playbooks
 
-Your `Taskfile.yml` should include NoETL tasks:
+NoETL provides automation playbooks for infrastructure management:
 
-```yaml
-version: '3.45'
+```bash
+# Bootstrap full environment
+noetl run automation/setup/bootstrap.yaml
 
-includes:
-  # Import all NoETL tasks with 'noetl:' prefix
-  noetl:
-    taskfile: ./.noetl/taskfile.yml
-    dir: ./.noetl
-  
-  # Import specific NoETL taskfiles
-  noetl-kind:
-    taskfile: ./.noetl/ci/taskfile/kind.yml
-    dir: ./.noetl
-    flatten: true
+# Manage Kind cluster
+noetl run automation/infrastructure/kind.yaml --set action=create
+noetl run automation/infrastructure/kind.yaml --set action=delete
 
-tasks:
-  # Your project-specific tasks
-  dev:setup:
-    desc: Complete development environment setup
-    cmds:
-      - task: bootstrap:tools
-      - task: bootstrap:venv
-      - task: noetl:dev:k8s:bootstrap
-  
-  playbook:register:
-    desc: Register your custom playbooks
-    cmds:
-      - .venv/bin/noetl register playbooks/my_workflow.yaml
+# Deploy PostgreSQL
+noetl run automation/infrastructure/postgres.yaml --set action=deploy
+
+# Deploy NoETL services
+noetl run automation/deployment/noetl-stack.yaml --set action=deploy
+
+# Redeploy after code changes
+noetl run automation/development/noetl.yaml --set action=redeploy
+
+# Build Docker image
+noetl run automation/development/docker.yaml --set action=build
 ```
 
 ## Python Environment
@@ -160,7 +154,7 @@ dependencies = [
     # Your project dependencies
     "pandas>=2.0.0",
     "scikit-learn>=1.3.0",
-    
+
     # Include noetl
     "-e ./.noetl",
 ]
@@ -192,7 +186,7 @@ Required tools (bootstrap installs automatically):
 - **tfenv** (Terraform version manager)
 - **uv** (Fast Python package manager via curl)
 - Python 3.12+
-- kubectl, helm, kind, jq, yq, task, postgresql-client
+- kubectl, helm, kind, jq, yq, postgresql-client
 
 **Note:** If Docker Desktop is not installed, the script will install it via Homebrew and attempt to start it automatically.
 
@@ -204,7 +198,7 @@ Required tools (bootstrap installs automatically):
 - **tfenv** (Terraform version manager via git)
 - **uv** (Fast Python package manager via curl)
 - Python 3.12+
-- kubectl, helm, kind, jq, yq, task, postgresql-client
+- kubectl, helm, kind, jq, yq, postgresql-client
 - build-essential, git, curl
 
 **Note:** On Linux/WSL2, the script installs Docker Engine (not Docker Desktop) and configures permissions automatically.
@@ -223,40 +217,18 @@ Options:
   --help                 Show this help message
 ```
 
-## Task Reference
-
-Bootstrap provides these tasks:
-
-```bash
-# System setup
-task bootstrap:verify          # Verify all tools installed
-task bootstrap:tools           # Install system tools
-task bootstrap:venv            # Create Python venv
-
-# NoETL infrastructure (via noetl: prefix)
-task noetl:dev:k8s:bootstrap   # Full K8s setup (cluster + all services)
-task noetl:kind:local:cluster-create      # Create Kind cluster
-task noetl:postgres:k8s:deploy            # Deploy PostgreSQL
-task noetl:monitoring:k8s:deploy          # Deploy monitoring stack
-task noetl:noetl:k8s:deploy               # Deploy NoETL server/workers
-
-# Cleanup
-task noetl:kind:local:cluster-delete      # Delete Kind cluster
-task noetl:cache:local:clear-all          # Clear local cache
-```
-
 ## Development Workflow
 
 ### 1. Start Infrastructure
 
 ```bash
 # Full setup (first time)
-task noetl:dev:k8s:bootstrap
+noetl run automation/setup/bootstrap.yaml
 
 # Or incremental
-task noetl:kind:local:cluster-create
-task noetl:postgres:k8s:deploy
-task noetl:noetl:k8s:deploy
+noetl run automation/infrastructure/kind.yaml --set action=create
+noetl run automation/infrastructure/postgres.yaml --set action=deploy
+noetl run automation/deployment/noetl-stack.yaml --set action=deploy
 ```
 
 ### 2. Register Credentials
@@ -278,7 +250,7 @@ cat > credentials/my_service.json <<EOF
 EOF
 
 # Register with NoETL
-.venv/bin/noetl register credentials/my_service.json \
+noetl register credentials/my_service.json \
   --host localhost --port 8083
 ```
 
@@ -286,11 +258,11 @@ EOF
 
 ```bash
 # Register from your project
-.venv/bin/noetl register playbooks/my_workflow.yaml \
+noetl register playbooks/my_workflow.yaml \
   --host localhost --port 8083
 
 # Execute
-.venv/bin/noetl execute playbook my_workflow \
+noetl execute playbook my_workflow \
   --host localhost --port 8083
 ```
 
@@ -301,11 +273,11 @@ EOF
 open http://localhost:8083
 
 # Grafana (monitoring)
-kubectl port-forward -n vmstack svc/vmstack-grafana 3000:80
+noetl run automation/infrastructure/monitoring.yaml --set action=port-forward
 open http://localhost:3000
 
 # PostgreSQL
-kubectl port-forward -n postgres svc/postgres 5432:5432
+noetl run automation/infrastructure/postgres.yaml --set action=port-forward
 psql -h localhost -U noetl -d noetl
 ```
 
@@ -339,30 +311,21 @@ spec:
         - containerPort: 8080
 ```
 
-Add task to deploy:
+Deploy with kubectl:
 
-```yaml
-# In your Taskfile.yml
-tasks:
-  k8s:deploy-my-service:
-    desc: Deploy my custom service
-    cmds:
-      - kubectl apply -f k8s/my-service-deployment.yaml
+```bash
+kubectl apply -f k8s/my-service-deployment.yaml
 ```
 
 ### Add Custom Helm Charts
 
 ```bash
-# Add to your Taskfile.yml
-tasks:
-  helm:deploy-redis:
-    desc: Deploy Redis to cluster
-    cmds:
-      - helm repo add bitnami https://charts.bitnami.com/bitnami
-      - helm repo update
-      - helm upgrade --install redis bitnami/redis \
-          --namespace redis --create-namespace \
-          --wait
+# Deploy Redis
+helm repo add bitnami https://charts.bitnami.com/bitnami
+helm repo update
+helm upgrade --install redis bitnami/redis \
+    --namespace redis --create-namespace \
+    --wait
 ```
 
 ## Troubleshooting
@@ -394,8 +357,8 @@ newgrp docker
 docker info
 
 # Delete and recreate cluster
-task noetl:kind:local:cluster-delete
-task noetl:kind:local:cluster-create
+noetl run automation/infrastructure/kind.yaml --set action=delete
+noetl run automation/infrastructure/kind.yaml --set action=create
 ```
 
 ### Python Dependencies Conflict
@@ -403,7 +366,9 @@ task noetl:kind:local:cluster-create
 ```bash
 # Recreate venv
 rm -rf .venv
-task bootstrap:venv
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e ./noetl -e .
 
 # Or use uv for faster resolution
 pip install uv
@@ -443,16 +408,16 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-      
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      
+
       - name: Bootstrap NoETL
         run: |
           ./noetl/ci/bootstrap/bootstrap.sh --os linux
-      
+
       - name: Run tests
         run: |
           source .venv/bin/activate
@@ -478,19 +443,9 @@ jobs:
    .env.local
    ```
 
-3. **Use Task Aliases**: Create short aliases for common workflows
-   ```yaml
-   tasks:
-     dev:
-       desc: Start development environment
-       aliases: [d]
-       cmds:
-         - task: noetl:dev:k8s:bootstrap
-   ```
+3. **Document Custom Setup**: Add `DEVELOPMENT.md` with project-specific instructions
 
-4. **Document Custom Setup**: Add `DEVELOPMENT.md` with project-specific instructions
-
-5. **Test Bootstrap Regularly**: Verify bootstrap works on clean environment
+4. **Test Bootstrap Regularly**: Verify bootstrap works on clean environment
 
 ## Support
 

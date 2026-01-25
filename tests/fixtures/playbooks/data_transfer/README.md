@@ -465,13 +465,13 @@ VALUES (
 
 ```bash
 # Reset environment
-task noetl:local:reset
+noetl run automation/setup/bootstrap.yaml --set action=reset
 
 # Register test credentials
-task register-test-credentials
+noetl run automation/credentials/register.yaml --set env=test
 
 # Create test tables
-task test:local:create-tables
+noetl run automation/database/create-tables.yaml --set env=test
 ```
 
 ### Execute Individual Playbook
@@ -658,26 +658,31 @@ def main(input_data):
 
 ```bash
 # Test individual playbook
-task test:local:execute PLAYBOOK=http_to_postgres_transfer
+noetl run tests/fixtures/playbooks/data_transfer/http_to_postgres_transfer/http_to_postgres_transfer.yaml
 
 # Test with custom payload
-.venv/bin/noetl execute playbook "path/to/playbook" \
-  --payload '{"pg_auth": "pg_local", "debug": true}' \
-  --merge
+noetl run tests/fixtures/playbooks/data_transfer/http_to_postgres_transfer/http_to_postgres_transfer.yaml \
+  --set pg_auth=pg_local --set debug=true
 ```
 
 ### Integration Testing
 
 ```bash
-# Full test cycle
-task test:local:full PLAYBOOK=http_to_postgres_simple
-
-# Steps:
+# Full test cycle - execute each step sequentially:
 # 1. Register credentials
+noetl run automation/credentials/register.yaml --set env=test
+
 # 2. Create test tables
+noetl run automation/database/create-tables.yaml --set env=test
+
 # 3. Execute playbook
+noetl run tests/fixtures/playbooks/data_transfer/http_to_postgres_simple/http_to_postgres_simple.yaml
+
 # 4. Validate data
+noetl run automation/database/validate.yaml --set table=http_to_postgres_simple
+
 # 5. Cleanup
+noetl run automation/database/cleanup.yaml --set env=test
 ```
 
 ### Validation Queries
@@ -863,7 +868,7 @@ When adding new data transfer patterns:
    - Example execution
 4. Update this main README with quick reference entry
 5. Add validation queries
-6. Create corresponding task in `ci/taskfile/`
+6. Add test automation in `automation/tests/` directory
 
 ## License
 

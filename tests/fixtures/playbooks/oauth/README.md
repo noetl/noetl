@@ -31,10 +31,10 @@ This directory contains test playbooks for OAuth-based authentication with vario
 
 ```bash
 # Start NoETL locally
-task noetl:local:start
+noetl run automation/setup/local-start.yaml
 
 # Verify services are running
-task noetl:local:status
+noetl run automation/setup/local-status.yaml
 ```
 
 ### 2. Set Up Credentials
@@ -63,14 +63,10 @@ See `tests/fixtures/credentials/README.md` for detailed setup instructions.
 
 ```bash
 # Test Secret Manager
-.venv/bin/noetl execute playbook \
-  "tests/fixtures/playbooks/oauth/google_secret_manager" \
-  --host localhost --port 8083
+noetl run tests/fixtures/playbooks/oauth/google_secret_manager/google_secret_manager.yaml
 
 # Test GCS
-.venv/bin/noetl execute playbook \
-  "tests/fixtures/playbooks/oauth/google_gcs" \
-  --host localhost --port 8083
+noetl run tests/fixtures/playbooks/oauth/google_gcs/google_gcs.yaml
 ```
 
 ## How OAuth Works in NoETL
@@ -225,8 +221,7 @@ Enable debug logging:
 export NOETL_LOG_LEVEL=DEBUG
 
 # Restart worker
-task noetl:local:worker-stop
-task noetl:local:worker-start
+noetl run automation/setup/worker-restart.yaml
 
 # Watch logs
 tail -f logs/worker-debug.log

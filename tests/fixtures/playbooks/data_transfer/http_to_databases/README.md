@@ -64,24 +64,20 @@ Cross-Verify Results (4 databases)
 ### Register the Playbook
 
 ```bash
-.venv/bin/noetl catalog register playbook \
-  tests/fixtures/playbooks/data_transfer/http_to_databases/http_to_databases.yaml \
-  --host localhost --port 8083
+noetl playbook register tests/fixtures/playbooks/data_transfer/http_to_databases
 ```
 
 ### Execute the Playbook
 
 ```bash
-.venv/bin/noetl catalog execute playbook \
-  tests/fixtures/playbooks/data_transfer/http_to_databases \
-  --host localhost --port 8083
+noetl execution create tests/fixtures/playbooks/data_transfer/http_to_databases
 ```
 
 ### Execute with Custom Parameters
 
 ```bash
 # Override credentials
-.venv/bin/noetl catalog execute playbook \
+noetl execute playbook \
   tests/fixtures/playbooks/data_transfer/http_to_databases \
   --payload '{"pg_auth": "pg_k8s", "sf_auth": "sf_prod"}' \
   --merge \

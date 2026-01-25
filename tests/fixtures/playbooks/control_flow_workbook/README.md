@@ -5,7 +5,7 @@ Verifies:
 - Multiple `next` targets **without** `when` run in **parallel**.
 - `type: workbook` step resolves to a workbook action by `name`.
 
-Tweak `workload.temperature_c` to flip the branch (>=25 → hot).
+Tweak `workload.temperature_c` to flip the branch (>=25 -> hot).
 
 ## Testing
 
@@ -18,42 +18,27 @@ Tests playbook parsing, planning, and structural validation without runtime exec
 ### Runtime Tests with Kubernetes Cluster
 
 #### Prerequisites
-- Kubernetes cluster deployed with NoETL (use `task bring-all` to deploy full stack)
+- Kubernetes cluster deployed with NoETL (use `noetl run automation/setup/bootstrap.yaml` to deploy full stack)
 - NoETL API accessible on `localhost:30082` (NodePort)
 - PostgreSQL accessible on `localhost:54321` (NodePort)
 
 #### Test Commands
 ```bash
 # Check cluster health and endpoints
-task test-cluster-health
+noetl run automation/test/cluster-health.yaml
 
 # Register control flow workbook playbook
-task test-register-control-flow-workbook
+noetl playbook register tests/fixtures/playbooks/control_flow_workbook/control_flow_workbook.yaml
 
 # Execute control flow workbook test
-task test-execute-control-flow-workbook
+noetl execution create tests/fixtures/playbooks/control_flow_workbook/control_flow_workbook --data '{}'
 
 # Full integration test (register + execute)
-task test-control-flow-workbook-full
-```
-
-#### Alias Commands (shorter)
-```bash
-# Check cluster health
-task tch
-
-# Register playbook
-task trcfw
-
-# Execute playbook
-task tecfw
-
-# Full test workflow
-task tcfwf
+noetl run automation/test/control-flow-workbook-full.yaml
 ```
 
 Tests actual execution through the NoETL server API in the Kubernetes cluster, including:
-- Real conditional branching evaluation (temperature >= 25 → hot path)
+- Real conditional branching evaluation (temperature >= 25 -> hot path)
 - Parallel step execution (`hot_task_a` and `hot_task_b` run concurrently)
 - Workbook action resolution and execution (`compute_flag` action)
 - Distributed worker execution across multiple worker pools
@@ -72,8 +57,8 @@ make test-control-flow-workbook-full
 1. **Registration**: Playbook is registered with version auto-increment
 2. **Execution**: Playbook runs with temperature_c=30 (hot path)
 3. **Workflow Steps**:
-   - `start` → `eval_flag` (calls workbook action `compute_flag`)
-   - `compute_flag` determines `is_hot=true` (30°C >= 25°C)
+   - `start` -> `eval_flag` (calls workbook action `compute_flag`)
+   - `compute_flag` determines `is_hot=true` (30C >= 25C)
    - Branches to `hot_path`
    - Parallel execution of `hot_task_a` and `hot_task_b`
    - Both tasks complete to `end`

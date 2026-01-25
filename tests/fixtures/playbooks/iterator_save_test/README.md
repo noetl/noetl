@@ -127,11 +127,11 @@ curl -X POST http://localhost:8082/api/execute \
   }'
 ```
 
-### Using Task
+### Using NoETL CLI
 
 ```bash
 # Full test: deploy + register + execute
-task test:iterator-save:full
+noetl run automation/tests/iterator-save/full.yaml
 ```
 
 ### Verify Results

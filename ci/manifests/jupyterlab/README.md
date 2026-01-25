@@ -6,7 +6,7 @@ Quick reference for using JupyterLab to run and analyze NoETL regression tests.
 
 ```bash
 # Deploy JupyterLab to kind cluster
-task jupyterlab:full
+noetl run automation/infrastructure/jupyterlab.yaml --set action=full
 ```
 
 ## Access
@@ -18,7 +18,7 @@ task jupyterlab:full
 ## Run Test
 
 1. Open notebook in browser
-2. Click "Run" → "Run All Cells"
+2. Click "Run" -> "Run All Cells"
 3. Watch real-time execution monitoring
 4. Review results and visualizations
 
@@ -26,19 +26,19 @@ task jupyterlab:full
 
 ```bash
 # Check status
-task jupyterlab:status
+noetl run automation/infrastructure/jupyterlab.yaml --set action=status
 
 # View logs
-task jupyterlab:logs
+noetl run automation/infrastructure/jupyterlab.yaml --set action=logs
 
 # Restart
-task jupyterlab:restart
+noetl run automation/infrastructure/jupyterlab.yaml --set action=restart
 
 # Update notebook
-task jupyterlab:update-notebook
+noetl run automation/infrastructure/jupyterlab.yaml --set action=update-notebook
 
 # Remove deployment
-task jupyterlab:undeploy
+noetl run automation/infrastructure/jupyterlab.yaml --set action=undeploy
 ```
 
 ## Tech Stack
@@ -51,14 +51,14 @@ task jupyterlab:undeploy
 
 ## What the Notebook Does
 
-1. ✅ Starts master regression test (53 steps expected)
-2. ✅ Monitors execution in real-time
-3. ✅ Analyzes events with DuckDB
-4. ✅ Validates results (step count, completion, failures)
-5. ✅ Detects and analyzes errors
-6. ✅ Creates performance visualizations
-7. ✅ Shows historical trends
-8. ✅ Exports results to Parquet
+1. Starts master regression test (53 steps expected)
+2. Monitors execution in real-time
+3. Analyzes events with DuckDB
+4. Validates results (step count, completion, failures)
+5. Detects and analyzes errors
+6. Creates performance visualizations
+7. Shows historical trends
+8. Exports results to Parquet
 
 ## Expected Results
 
@@ -74,11 +74,11 @@ task jupyterlab:undeploy
 kubectl get pods -n noetl -l app=jupyterlab
 
 # Connection issues
-task jupyterlab:shell
+noetl run automation/infrastructure/jupyterlab.yaml --set action=shell
 # Then test connections inside pod
 
 # Package errors
-task jupyterlab:restart
+noetl run automation/infrastructure/jupyterlab.yaml --set action=restart
 ```
 
 ## Documentation

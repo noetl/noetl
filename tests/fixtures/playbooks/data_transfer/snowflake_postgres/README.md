@@ -64,28 +64,22 @@ This test playbook validates bidirectional data transfer between Snowflake and P
 
 ```bash
 # Register and execute
-.venv/bin/noetl catalog register \
-  tests/fixtures/playbooks/data_transfer/snowflake_postgres/snowflake_postgres.yaml \
-  --host localhost --port 8083
+noetl playbook register tests/fixtures/playbooks/data_transfer/snowflake_postgres
 
-task playbook:local:execute \
-  PLAYBOOK=tests/fixtures/playbooks/data_transfer/snowflake_postgres \
-  PORT=8083
+noetl execution create tests/fixtures/playbooks/data_transfer/snowflake_postgres
 ```
 
 ### Step-by-Step
 
 ```bash
 # 1. Start services (if not running)
-task noetl:local:start
+noetl run automation/setup/bootstrap.yaml
 
 # 2. Register the playbook
-.venv/bin/noetl catalog register \
-  tests/fixtures/playbooks/data_transfer/snowflake_postgres/snowflake_postgres.yaml \
-  --host localhost --port 8083
+noetl playbook register tests/fixtures/playbooks/data_transfer/snowflake_postgres
 
 # 3. Execute
-.venv/bin/noetl execute playbook \
+noetl execute playbook \
   tests/fixtures/playbooks/data_transfer/snowflake_postgres \
   --host localhost \
   --port 8083 \

@@ -101,10 +101,10 @@ kubectl logs -n noetl deployment/noetl-server | grep 'evaluate_execution'
 
 | Metric | Description | Target |
 |--------|-------------|--------|
-| `get_execution_state_batch` | State query time | <5ms |
-| `get_transition_context_batch` | Transition query time | <10ms |
-| `catalog_fetch` | Playbook fetch (cache miss) | <100ms |
-| `evaluate_execution` | Total orchestration time | <50ms |
+| `get_execution_state_batch` | State query time | &lt;5ms |
+| `get_transition_context_batch` | Transition query time | &lt;10ms |
+| `catalog_fetch` | Playbook fetch (cache miss) | &lt;100ms |
+| `evaluate_execution` | Total orchestration time | &lt;50ms |
 
 ### Example Output
 
@@ -118,9 +118,9 @@ kubectl logs -n noetl deployment/noetl-server | grep 'evaluate_execution'
 ### Warning Thresholds
 
 Logs emit warnings when thresholds are exceeded:
-- `evaluate_execution` > 500ms
-- `catalog_fetch` > 100ms
-- State reconstruction with >50 events
+- `evaluate_execution` &gt; 500ms
+- `catalog_fetch` &gt; 100ms
+- State reconstruction with &gt;50 events
 
 ## Direct SQL Analysis
 
@@ -260,19 +260,19 @@ LIMIT 20;
 
 | Metric | Value |
 |--------|-------|
-| `command.completed → command.claimed` | <100ms |
-| `evaluate_execution` total | <50ms |
+| `command.completed → command.claimed` | &lt;100ms |
+| `evaluate_execution` total | &lt;50ms |
 | Playbook execution time | ~2-5 seconds for simple playbooks |
-| Event count per execution | <100 for typical workflows |
+| Event count per execution | &lt;100 for typical workflows |
 
 ### Warning Signs
 
 | Symptom | Possible Cause | Solution |
 |---------|----------------|----------|
-| `command.completed → command.claimed` > 1s | Orchestrator overload | Check PERF logs, scale workers |
+| `command.completed → command.claimed` &gt; 1s | Orchestrator overload | Check PERF logs, scale workers |
 | High event count per execution | Complex workflows | Consider splitting playbooks |
-| `catalog_fetch` > 100ms | Cache miss | Normal on first access |
-| `evaluate_execution` > 500ms | State reconstruction | Archive old executions |
+| `catalog_fetch` &gt; 100ms | Cache miss | Normal on first access |
+| `evaluate_execution` &gt; 500ms | State reconstruction | Archive old executions |
 
 ## Troubleshooting
 
@@ -362,5 +362,5 @@ Total orchestration overhead: ~10-50ms (optimized)
 ## References
 
 - [Observability Services](./observability)
-- [ClickHouse Queries](../../ci/manifests/clickhouse/performance-queries.sql)
-- [Event Sync Playbook](../../automation/observability/event-sync.yaml)
+- ClickHouse queries: `ci/manifests/clickhouse/performance-queries.sql`
+- Event sync playbook: `automation/observability/event-sync.yaml`

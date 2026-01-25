@@ -19,54 +19,54 @@ Kubernetes manifests for deploying the NoETL Gateway (Rust API + Static UI) to k
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────┐
-│  Browser: http://localhost:8080/login.html          │
-└────────────────┬────────────────────────────────────┘
-                 │
-                 ▼
-┌─────────────────────────────────────────────────────┐
-│  Gateway UI Pod (Nginx)                             │
-│  - Namespace: gateway                               │
-│  - NodePort: 30080 → localhost:8080                 │
-│  - Serves: /mnt/gateway-ui/* (tests/fixtures/)      │
-└────────────────┬────────────────────────────────────┘
-                 │ JavaScript fetch()
-                 ▼
-┌─────────────────────────────────────────────────────┐
-│  Gateway API Pod (Rust)                             │
-│  - Namespace: gateway                               │
-│  - NodePort: 30090 → localhost:8090                 │
-│  - Endpoints: /graphql, /api/auth/*                 │
-└────────────────┬────────────────────────────────────┘
-                 │ HTTP to NoETL server
-                 ▼
-┌─────────────────────────────────────────────────────┐
-│  NoETL Server (Python)                              │
-│  - Namespace: noetl                                 │
-│  - Service: noetl-server.noetl.svc.cluster.local   │
-└─────────────────────────────────────────────────────┘
++-----------------------------------------------------+
+|  Browser: http://localhost:8080/login.html          |
++----------------+------------------------------------+
+                 |
+                 v
++-----------------------------------------------------+
+|  Gateway UI Pod (Nginx)                             |
+|  - Namespace: gateway                               |
+|  - NodePort: 30080 -> localhost:8080                |
+|  - Serves: /mnt/gateway-ui/* (tests/fixtures/)      |
++----------------+------------------------------------+
+                 | JavaScript fetch()
+                 v
++-----------------------------------------------------+
+|  Gateway API Pod (Rust)                             |
+|  - Namespace: gateway                               |
+|  - NodePort: 30090 -> localhost:8090                |
+|  - Endpoints: /graphql, /api/auth/*                 |
++----------------+------------------------------------+
+                 | HTTP to NoETL server
+                 v
++-----------------------------------------------------+
+|  NoETL Server (Python)                              |
+|  - Namespace: noetl                                 |
+|  - Service: noetl-server.noetl.svc.cluster.local   |
++-----------------------------------------------------+
 ```
 
 ## Quick Start
 
 ```bash
 # Build and deploy everything
-task gateway:deploy-all
+noetl run automation/infrastructure/gateway.yaml --set action=deploy-all
 
 # Or step by step:
-task gateway:build-image    # Build Gateway Docker image
-task gateway:deploy         # Deploy Gateway API
-task gateway:deploy-ui      # Deploy Gateway UI
+noetl run automation/infrastructure/gateway.yaml --set action=build-image    # Build Gateway Docker image
+noetl run automation/infrastructure/gateway.yaml --set action=deploy         # Deploy Gateway API
+noetl run automation/infrastructure/gateway.yaml --set action=deploy-ui      # Deploy Gateway UI
 
 # Check status
-task gateway:status
+noetl run automation/infrastructure/gateway.yaml --set action=status
 
 # View logs
-task gateway:logs
-task gateway:logs-ui
+noetl run automation/infrastructure/gateway.yaml --set action=logs
+noetl run automation/infrastructure/gateway.yaml --set action=logs-ui
 
 # Test endpoints
-task gateway:test
+noetl run automation/infrastructure/gateway.yaml --set action=test
 ```
 
 ## Access URLs
@@ -81,8 +81,8 @@ task gateway:test
 # Gateway API
 - containerPort: 30090
   hostPort: 8090
-  
-# Gateway UI  
+
+# Gateway UI
 - containerPort: 30080
   hostPort: 8080
 ```
@@ -123,10 +123,10 @@ When you edit files in `tests/fixtures/gateway_ui/`:
    ```
 
 The ConfigMap approach ensures UI files are:
-- ✅ Version controlled (committed to git)
-- ✅ Survive cluster rebuilds
-- ✅ Deployed consistently across environments
-- ✅ No need for host mounts or volume shares
+- Version controlled (committed to git)
+- Survive cluster rebuilds
+- Deployed consistently across environments
+- No need for host mounts or volume shares
 
 ## Environment Variables
 
@@ -141,21 +141,21 @@ Gateway API deployment:
 ```bash
 # Edit tests/fixtures/gateway_ui/*.html, *.js, *.css
 # Restart UI pod to reload
-task gateway:restart
+noetl run automation/infrastructure/gateway.yaml --set action=restart
 ```
 
 **Edit Gateway code:**
 ```bash
 # Edit crates/gateway/src/**/*.rs
 # Rebuild and redeploy
-task gateway:redeploy
+noetl run automation/infrastructure/gateway.yaml --set action=redeploy
 ```
 
 ## Troubleshooting
 
 **Gateway not starting:**
 ```bash
-task gateway:logs
+noetl run automation/infrastructure/gateway.yaml --set action=logs
 # Check NoETL server is running
 kubectl get pods -n noetl
 ```
@@ -165,7 +165,7 @@ kubectl get pods -n noetl
 # Check mount
 kubectl exec -n gateway deployment/gateway-ui -- ls -la /usr/share/nginx/html
 # Restart UI
-task gateway:restart
+noetl run automation/infrastructure/gateway.yaml --set action=restart
 ```
 
 **CORS errors:**
@@ -183,5 +183,5 @@ lsof -i :8090
 
 ```bash
 # Remove Gateway completely
-task gateway:remove
+noetl run automation/infrastructure/gateway.yaml --set action=remove
 ```

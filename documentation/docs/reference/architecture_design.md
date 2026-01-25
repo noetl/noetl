@@ -1,4 +1,4 @@
-# NoETL Architecture 
+# NoETL Architecture
 
 **Architecture design patterns:**
 
@@ -136,11 +136,11 @@ Each step can have an optional **`case`** attribute (4 letters) with entries:
     params:
       page: 1
       pageSize: "{{ endpoint.page_size }}"
-  
+
   loop:
     in: "{{ workload.endpoints }}"
     iterator: endpoint
-  
+
   case:
     # example: initialize aggregation when the step starts
     - when: "{{ event.name == 'step.enter' }}"
@@ -148,7 +148,7 @@ Each step can have an optional **`case`** attribute (4 letters) with entries:
         set:
           ctx:
             pages: []
-    
+
     # retry rule on 5xx
     - when: >-
         {{ event.name == 'call.done'
@@ -159,7 +159,7 @@ Each step can have an optional **`case`** attribute (4 letters) with entries:
           max_attempts: 3
           backoff_multiplier: 2.0
           initial_delay: 0.5
-    
+
     # pagination rule
     - when: >-
         {{ event.name == 'call.done'
@@ -174,7 +174,7 @@ Each step can have an optional **`case`** attribute (4 letters) with entries:
           params:
             page: "{{ (response.paging.page | int) + 1 }}"
             pageSize: "{{ response.paging.pageSize }}"
-    
+
     # final page → set result and transition
     - when: >-
         {{ event.name == 'call.done'
@@ -244,7 +244,7 @@ All step-level decision logic is expressed via `case` entries.
 
 **Current implementation:**
 
-* `next` in the spec as “next step name(s)”.
+* `next` in the spec as "next step name(s)".
 
 * In examples like `weather_loop_example.yaml`, `next` entries also use `when / then / else` and `with`.
 
@@ -276,7 +276,7 @@ Under `case[*].then`, the **`next` action** has this structure:
 
   * `step` (required): name of the target step.
 
-  * `args` (optional, object): values to inject into the target step’s context/args.
+  * `args` (optional, object): values to inject into the target step's context/args.
 
 ### **2.3 Transition Patterns**
 
@@ -323,7 +323,7 @@ Steps that branch based on previous results use `case`-based transitions with `a
 
 Example for a workbook step:
 
-* Previous step’s `case.then.next[*].args` populates `args` for this step.
+* Previous step's `case.then.next[*].args` populates `args` for this step.
 
 * `with` is now computing its values from `args`, making the dataflow explicit.
 
@@ -333,7 +333,7 @@ Example for a workbook step:
 
 Inside `case[*].then`, the following actions are supported:
 
-* `call:` – re-invoke the current step’s tool with updated params/body/headers.
+* `call:` – re-invoke the current step's tool with updated params/body/headers.
 
 * `retry:` – re-run the last call with backoff and max\_attempts.
 
@@ -345,7 +345,7 @@ Inside `case[*].then`, the following actions are supported:
 
 * `set:` – mutate step/workflow context (e.g. `ctx`).
 
-* `result:` – set the step’s result payload.
+* `result:` – set the step's result payload.
 
 * `next:` – transition to other steps using `args` (as described above).
 
@@ -359,46 +359,46 @@ Inside `case[*].then`, the following actions are supported:
 
 The **control-flow engine** (`dsl/engine.py`) implements event-driven workflow orchestration:
 
-`class Event(BaseModel):`  
-    `execution_id: str`  
-    `step: str | None`  
-    `name: str          # "step.enter", "call.done", "step.exit", "worker.done", etc.`  
+`class Event(BaseModel):`
+    `execution_id: str`
+    `step: str | None`
+    `name: str          # "step.enter", "call.done", "step.exit", "worker.done", etc.`
     `payload: dict      # response, error, metadata...`
 
-`class Command(BaseModel):`  
-    `execution_id: str`  
-    `step: str`  
-    `tool: str`  
-    `params: dict | None = None`  
+`class Command(BaseModel):`
+    `execution_id: str`
+    `step: str`
+    `tool: str`
+    `params: dict | None = None`
     `args: dict | None = None  # passed to target step`
 
-`class ControlFlowEngine:`  
+`class ControlFlowEngine:`
     `def __init__(self, playbook_repo: PlaybookRepo, state_store: StateStore): ...`
 
-    `def handle_event(self, event: Event) -> list[Command]:`  
-        `"""`  
-        `1. Load workflow/playbook definition for execution_id.`  
-        `2. Determine current step.`  
-        `3. Build evaluation context:`  
-           `- workload/context/state`  
-           `- step metadata`  
-           `- response/error from event.payload`  
-           `- event (with event.name)`  
-           `- args for this step (from previous next.args)`  
-        `4. Evaluate step.case entries:`  
-           ``- For each entry: evaluate `when`.``  
-           ``- If true: execute `then`:``  
-             `* call => new Command(s) for same step/tool`  
-             `* retry => new Command(s) with retry metadata`  
-             `* collect/sink => update StateStore (context/results)`  
-             `* result => update step result in StateStore`  
-             `* next => create Command(s) for target step(s) with args`  
-             `* fail/skip => update state`  
-        ``5. Also respect structural `next` if no `case`-driven transitions fire and step is complete.``  
-        `6. Return list[Command] to be persisted into queue table.`  
+    `def handle_event(self, event: Event) -> list[Command]:`
+        `"""`
+        `1. Load workflow/playbook definition for execution_id.`
+        `2. Determine current step.`
+        `3. Build evaluation context:`
+           `- workload/context/state`
+           `- step metadata`
+           `- response/error from event.payload`
+           `- event (with event.name)`
+           `- args for this step (from previous next.args)`
+        `4. Evaluate step.case entries:`
+           ``- For each entry: evaluate `when`.``
+           ``- If true: execute `then`:``
+             `* call => new Command(s) for same step/tool`
+             `* retry => new Command(s) with retry metadata`
+             `* collect/sink => update StateStore (context/results)`
+             `* result => update step result in StateStore`
+             `* next => create Command(s) for target step(s) with args`
+             `* fail/skip => update state`
+        ``5. Also respect structural `next` if no `case`-driven transitions fire and step is complete.``
+        `6. Return list[Command] to be persisted into queue table.`
         `"""`
 
-The server’s HTTP handlers simply:
+The server's HTTP handlers simply:
 
 * Accept worker events.
 
@@ -502,7 +502,7 @@ All database operations in credential service MUST follow these patterns (descri
 
 ### **5.3 Worker Credential Resolution**
 
-Workers fetch credentials during execution via the worker secrets module by calling the server’s credential API (e.g., `GET /credentials/{key}?include_data=true`). Optionally, workers may pass `execution_id` (and `parent_execution_id`) to enable execution‑scoped caching.
+Workers fetch credentials during execution via the worker secrets module by calling the server's credential API (e.g., `GET /credentials/{key}?include_data=true`). Optionally, workers may pass `execution_id` (and `parent_execution_id`) to enable execution‑scoped caching.
 
 Future enhancement: Workers can optionally pass `execution_id` and `parent_execution_id` query parameters to enable execution-scoped credential caching, preventing cross-execution credential leakage.
 
@@ -516,7 +516,7 @@ Refactor `worker.py` so that workers:
 
 2. Execute the specified action (http/postgres/duckdb/python/etc.).
 
-3. POST back to server’s event endpoint, e.g.:
+3. POST back to server's event endpoint, e.g.:
 
    * `POST /v1/events`
 
@@ -534,7 +534,7 @@ Workers must **not**:
 
 * Write to the queue table except via commands persisted by the server.
 
-Remove or disable any existing “update queue” endpoints used by workers, and replace usage with event posting.
+Remove or disable any existing "update queue" endpoints used by workers, and replace usage with event posting.
 
 ---
 
@@ -544,11 +544,11 @@ Remove or disable any existing “update queue” endpoints used by workers, and
 
 Add:
 
- `class CaseEntry(BaseModel):`  
-    `when: str`  
+ `class CaseEntry(BaseModel):`
+    `when: str`
     `then: dict | list`
 
-*   
+*
   * Add `case: list[CaseEntry] | None` to the step model.
 
   * Remove support for step-level `when`.
@@ -599,7 +599,7 @@ Add:
 
      * Given a `call.done` with `hasMore == true`, `collect` and `call` work as expected.
 
-     * Given a `step.exit` event with conditions, `case.then.next` produces the right Command(s) with `args`, and args appear in the next step’s context.
+     * Given a `step.exit` event with conditions, `case.then.next` produces the right Command(s) with `args`, and args appear in the next step's context.
 
 ---
 
@@ -609,7 +609,7 @@ Implement these changes incrementally:
 
 2. Update DSL docs \+ examples (`dsl_spec.md`, `weather_loop_example.yaml`, related README snippets).
 
-3. Implement `ControlFlowEngine` and hook it into the server’s event endpoint.
+3. Implement `ControlFlowEngine` and hook it into the server's event endpoint.
 
 4. Refactor workers to send events instead of updating the queue.
 
@@ -645,7 +645,7 @@ What `case` is doing in your new design:
 
   * marking the step as `result` / `fail` / `skip`.
 
-That’s fundamentally about **“what this step does over its lifetime”**, not just “how this HTTP call behaves”.
+That's fundamentally about **"what this step does over its lifetime"**, not just "how this HTTP call behaves".
 
 A single step might:
 
@@ -657,32 +657,32 @@ A single step might:
 
 * or even be a *pure routing* step with no tool at all (only `next` logic).
 
-If you glued `case` under `tool`, you’d get weird questions:
+If you glued `case` under `tool`, you'd get weird questions:
 
-* What is `event.name == 'step.exit'` attached to? The tool doesn’t know about the whole step lifecycle.
+* What is `event.name == 'step.exit'` attached to? The tool doesn't know about the whole step lifecycle.
 
-* How do you express transitions (`next`) that aren’t tied to one specific tool call?
+* How do you express transitions (`next`) that aren't tied to one specific tool call?
 
 So:
 
-**Design:** `case` is a **step-level** attribute.  
- It owns “how this node behaves in the workflow graph”.
+**Design:** `case` is a **step-level** attribute.
+ It owns "how this node behaves in the workflow graph".
 
 Shape:
 
-`- step: fetch_all_endpoints`  
-  `desc: ...`  
-  `loop: ...`  
-  `tool: ...`  
-  `case:`  
-    `- when: "{{ event.name == 'step.enter' }}"`  
-      `then: ...`  
-    `- when: "{{ event.name == 'call.done' and error.status == 503 }}"`  
-      `then: ...`  
-    `- when: "{{ event.name == 'step.exit' }}"`  
-      `then:`  
-        `next:`  
-          `- step: validate_results`  
+`- step: fetch_all_endpoints`
+  `desc: ...`
+  `loop: ...`
+  `tool: ...`
+  `case:`
+    `- when: "{{ event.name == 'step.enter' }}"`
+      `then: ...`
+    `- when: "{{ event.name == 'call.done' and error.status == 503 }}"`
+      `then: ...`
+    `- when: "{{ event.name == 'step.exit' }}"`
+      `then:`
+        `next:`
+          `- step: validate_results`
             `args: { ... }`
 
 ---
@@ -699,13 +699,13 @@ Shape:
 
 You want to be able to say:
 
-* “This step iterates over `workload.endpoints`.”
+* "This step iterates over `workload.endpoints`."
 
-* “On each item, run this tool and maybe collect/sink results.”
+* "On each item, run this tool and maybe collect/sink results."
 
-* “When the loop is done, transition to another step.”
+* "When the loop is done, transition to another step."
 
-That’s again step-level behavior.
+That's again step-level behavior.
 
 So:
 
@@ -713,25 +713,25 @@ So:
 
 Example:
 
-`- step: fetch_all_endpoints`  
-  `desc: ...`  
-  `loop:`  
-    `in: "{{ workload.endpoints }}"`  
-    `iterator: endpoint`  
-  `tool:`  
-    `kind: http`  
-    `url: "{{ workload.api_url }}{{ endpoint.path }}"`  
-    `method: GET`  
-    `params:`  
-      `page: 1`  
-      `pageSize: "{{ endpoint.page_size }}"`  
-  `case:`  
-    `- when: "{{ event.name == 'call.done' and response.paging.hasMore }}"`  
+`- step: fetch_all_endpoints`
+  `desc: ...`
+  `loop:`
+    `in: "{{ workload.endpoints }}"`
+    `iterator: endpoint`
+  `tool:`
+    `kind: http`
+    `url: "{{ workload.api_url }}{{ endpoint.path }}"`
+    `method: GET`
+    `params:`
+      `page: 1`
+      `pageSize: "{{ endpoint.page_size }}"`
+  `case:`
+    `- when: "{{ event.name == 'call.done' and response.paging.hasMore }}"`
       `then: ...`
 
 This reads as:
 
-“This step is a loop over endpoints, using an HTTP tool, with these rules.”
+"This step is a loop over endpoints, using an HTTP tool, with these rules."
 
 Much cleaner than burying `loop` inside the tool.
 
@@ -743,14 +743,14 @@ Here it **does** help to group things.
 
 If we have have:
 
-`- step: fetch_all_endpoints`  
-  `tool: http`  
-  `url: ...`  
-  `method: ...`  
-  `headers: ...`  
-  `params: ...`  
-  `timeout: ...`  
-  `loop: ...`  
+`- step: fetch_all_endpoints`
+  `tool: http`
+  `url: ...`
+  `method: ...`
+  `headers: ...`
+  `params: ...`
+  `timeout: ...`
+  `loop: ...`
   `case: ...`
 
 This mixes three layers:
@@ -765,29 +765,29 @@ Long-term this gets messy (name collisions, harder parsing, harder codegen).
 
 strongly recommended a canonical shape like:
 
-`- step: fetch_all_endpoints`  
-  `desc: Loop over endpoints with HTTP pagination`  
-  `args: {}`  
-  `loop:`  
-    `in: "{{ workload.endpoints }}"`  
+`- step: fetch_all_endpoints`
+  `desc: Loop over endpoints with HTTP pagination`
+  `args: {}`
+  `loop:`
+    `in: "{{ workload.endpoints }}"`
     `iterator: endpoint`
 
-  `tool:`  
-    `kind: http`  
-    `url: "{{ workload.api_url }}{{ endpoint.path }}"`  
-    `method: GET`  
-    `params:`  
-      `page: 1`  
-      `pageSize: "{{ endpoint.page_size }}"`  
+  `tool:`
+    `kind: http`
+    `url: "{{ workload.api_url }}{{ endpoint.path }}"`
+    `method: GET`
+    `params:`
+      `page: 1`
+      `pageSize: "{{ endpoint.page_size }}"`
     `timeout: 5`
 
-  `case:`  
-    `- when: "{{ event.name == 'call.done' and response.paging.hasMore }}"`  
-      `then: ...`  
-    `- when: "{{ event.name == 'call.done' and not response.paging.hasMore }}"`  
+  `case:`
+    `- when: "{{ event.name == 'call.done' and response.paging.hasMore }}"`
+      `then: ...`
+    `- when: "{{ event.name == 'call.done' and not response.paging.hasMore }}"`
       `then: ...`
 
-  `# optional structural default`  
+  `# optional structural default`
   `next: validate_results`
 
 **Step-level** (graph / control):
@@ -850,7 +850,7 @@ That maps very naturally to:
 
 * **Tool** \= execution payload → sits under `tool`.
 
-Putting `case` or `loop` under `tool` would blur that boundary and make the engine “tool-aware” in places that should stay graph-aware.
+Putting `case` or `loop` under `tool` would blur that boundary and make the engine "tool-aware" in places that should stay graph-aware.
 
 ---
 
@@ -862,52 +862,52 @@ Putting `case` or `loop` under `tool` would blur that boundary and make the engi
 
 * **Move HTTP/DB/Python-specific attributes under `tool`**, with `tool.kind` (or `tool.type`) indicating which worker pool executes it.
 
-Here’s a fresh, self-contained Copilot prompt you can paste into VS Code.  
- I’ve baked in `tool.kind`, step-level `case`/`loop`, `args` for transitions, and **no backward compatibility**.
+Here's a fresh, self-contained Copilot prompt you can paste into VS Code.
+ I've baked in `tool.kind`, step-level `case`/`loop`, `args` for transitions, and **no backward compatibility**.
 
 `You are working in the NoETL repo.`
 
 `⚠️ HARD REQUIREMENTS`
 
-`- Do NOT preserve backward compatibility with the existing DSL or engine code.`  
-``- Do NOT try to keep the old step `type:` model, old `next.when/then/else`, or mixed top-level HTTP/postgres attributes.``  
-`- You are allowed to delete / replace old models, parsers, and control-flow logic and create a clean v2.`  
-`- Architecture assumptions:`  
-  `- worker.py = pure background worker pool, NO HTTP endpoints.`  
-  `- server.py = orchestration + HTTP API; the ONLY component that updates the queue table and applies DSL control flow.`  
+`- Do NOT preserve backward compatibility with the existing DSL or engine code.`
+``- Do NOT try to keep the old step `type:` model, old `next.when/then/else`, or mixed top-level HTTP/postgres attributes.``
+`- You are allowed to delete / replace old models, parsers, and control-flow logic and create a clean v2.`
+`- Architecture assumptions:`
+  `- worker.py = pure background worker pool, NO HTTP endpoints.`
+  `- server.py = orchestration + HTTP API; the ONLY component that updates the queue table and applies DSL control flow.`
   `- clictl.py = CLI to manage server and worker lifecycle (start/stop, etc.).`
 
 `We are designing a NEW NoETL DSL execution model with:`
 
-`- Step-level control:`  
-  ``- `loop` and `case` belong to the STEP, not the tool.``  
-`- Tool config:`  
-  ``- All execution-specific fields live under `tool`, keyed by `tool.kind`.``  
-`- Event-driven server-side control-flow engine:`  
-  ``- Server receives events, evaluates DSL (`case`, `next`), and writes commands into a queue table.``  
+`- Step-level control:`
+  ``- `loop` and `case` belong to the STEP, not the tool.``
+`- Tool config:`
+  ``- All execution-specific fields live under `tool`, keyed by `tool.kind`.``
+`- Event-driven server-side control-flow engine:`
+  ``- Server receives events, evaluates DSL (`case`, `next`), and writes commands into a queue table.``
   `- Workers only consume commands and emit events back; they NEVER directly update the queue via HTTP.`
 
-`-------------------------------------------------------------------------------`  
-`1. NEW DSL SHAPE (NO BACKWARD COMPAT)`  
+`-------------------------------------------------------------------------------`
+`1. NEW DSL SHAPE (NO BACKWARD COMPAT)`
 `-------------------------------------------------------------------------------`
 
 `Define a NEW step schema (v2) like this:`
 
-`- step: string         # step name`  
-`- desc: string         # description (optional)`  
-`- args: object         # inputs for this step, usually from previous steps (optional)`  
-`- loop: object?        # step-level looping`  
-`- tool: object         # tool config; MUST contain tool.kind`  
-`- case: list?          # conditional behavior, event-driven`  
+`- step: string         # step name`
+`- desc: string         # description (optional)`
+`- args: object         # inputs for this step, usually from previous steps (optional)`
+`- loop: object?        # step-level looping`
+`- tool: object         # tool config; MUST contain tool.kind`
+`- case: list?          # conditional behavior, event-driven`
 `- next: string | list? # structural default next step(s), unconditional`
 
 `1.1 Step-level LOOP`
 
-`` `loop` belongs to the step, not the tool. It controls “how many times this node runs” and over what collection: ``
+`` `loop` belongs to the step, not the tool. It controls "how many times this node runs" and over what collection: ``
 
-```` ```yaml ````  
-`loop:`  
-  `in: "{{ workload.items }}"   # expression for a collection`  
+```` ```yaml ````
+`loop:`
+  `in: "{{ workload.items }}"   # expression for a collection`
   `iterator: item               # per-item variable name`
 
 (You can extend later with `mode`, etc., but start with `in` and `iterator`.)
@@ -926,9 +926,9 @@ Every executable step MUST have:
 
 Each step may define:
 
-`case:`  
-  `- when: "<jinja expression>"`  
-    `then:`  
+`case:`
+  `- when: "<jinja expression>"`
+    `then:`
       `# action block`
 
 Semantics:
@@ -957,76 +957,76 @@ Semantics:
 
 Example for a paginated HTTP step:
 
-`- step: fetch_all_endpoints`  
-  `desc: Loop over endpoints with HTTP pagination`  
-  `loop:`  
-    `in: "{{ workload.endpoints }}"`  
+`- step: fetch_all_endpoints`
+  `desc: Loop over endpoints with HTTP pagination`
+  `loop:`
+    `in: "{{ workload.endpoints }}"`
     `iterator: endpoint`
 
-  `tool:`  
-    `kind: http`  
-    `method: GET`  
-    `endpoint: "{{ workload.api_url }}{{ endpoint.path }}"`  
-    `params:`  
-      `page: 1`  
+  `tool:`
+    `kind: http`
+    `method: GET`
+    `endpoint: "{{ workload.api_url }}{{ endpoint.path }}"`
+    `params:`
+      `page: 1`
       `pageSize: "{{ endpoint.page_size }}"`
 
-  `case:`  
-    `# initialize aggregation once when step starts`  
-    `- when: "{{ event.name == 'step.enter' }}"`  
-      `then:`  
-        `set:`  
-          `ctx:`  
+  `case:`
+    `# initialize aggregation once when step starts`
+    `- when: "{{ event.name == 'step.enter' }}"`
+      `then:`
+        `set:`
+          `ctx:`
             `pages: []`
 
-    `# retry on 5xx`  
-    `- when: >-`  
-        `{{ event.name == 'call.done'`  
-           `and error is defined`  
-           `and error.status in [500, 502, 503] }}`  
-      `then:`  
-        `retry:`  
-          `max_attempts: 3`  
-          `backoff_multiplier: 2.0`  
+    `# retry on 5xx`
+    `- when: >-`
+        `{{ event.name == 'call.done'`
+           `and error is defined`
+           `and error.status in [500, 502, 503] }}`
+      `then:`
+        `retry:`
+          `max_attempts: 3`
+          `backoff_multiplier: 2.0`
           `initial_delay: 0.5`
 
-    `# collect + paginate`  
-    `- when: >-`  
-        `{{ event.name == 'call.done'`  
-           `and response is defined`  
-           `and response.paging.hasMore == true }}`  
-      `then:`  
-        `collect:`  
-          `from: response.data`  
-          `into: pages`  
-          `mode: append`  
-        `call:`  
-          `params:`  
-            `page: "{{ (response.paging.page | int) + 1 }}"`  
+    `# collect + paginate`
+    `- when: >-`
+        `{{ event.name == 'call.done'`
+           `and response is defined`
+           `and response.paging.hasMore == true }}`
+      `then:`
+        `collect:`
+          `from: response.data`
+          `into: pages`
+          `mode: append`
+        `call:`
+          `params:`
+            `page: "{{ (response.paging.page | int) + 1 }}"`
             `pageSize: "{{ response.paging.pageSize }}"`
 
-    `# final page: set result and go to next step`  
-    `- when: >-`  
-        `{{ event.name == 'call.done'`  
-           `and response is defined`  
-           `and not response.paging.hasMore }}`  
-      `then:`  
-        `collect:`  
-          `from: response.data`  
-          `into: pages`  
-          `mode: append`  
-        `result:`  
-          `from: pages`  
-        `next:`  
-          `- step: validate_results`  
-            `args:`  
+    `# final page: set result and go to next step`
+    `- when: >-`
+        `{{ event.name == 'call.done'`
+           `and response is defined`
+           `and not response.paging.hasMore }}`
+      `then:`
+        `collect:`
+          `from: response.data`
+          `into: pages`
+          `mode: append`
+        `result:`
+          `from: pages`
+        `next:`
+          `- step: validate_results`
+            `args:`
               `pages: "{{ pages }}"`
 
 Important:
 
 * There is NO step-level `when:` anymore; everything is done through `case`.
 
-* Do NOT reintroduce a separate “before/after/error” block; use `event.name` and `case`.
+* Do NOT reintroduce a separate "before/after/error" block; use `event.name` and `case`.
 
 1.4 STEP NEXT vs NEXT ACTION
 
@@ -1038,26 +1038,26 @@ The current design:
 
 Step-level `next` (unconditional):
 
-`next: validate_results`  
-`# or`  
-`next:`  
-  `- validate_results`  
+`next: validate_results`
+`# or`
+`next:`
+  `- validate_results`
   `- another_step`
 
 No `when/then/else` on this `next` field.
 
 Conditional transitions in `case.then`:
 
-`case:`  
-  `- when: "{{ event.name == 'step.exit' and some_flag }}"`  
-    `then:`  
-      `next:`  
-        `- step: city_loop`  
-          `args:`  
-            `city: "{{ result.city }}"`  
-  `- when: "{{ event.name == 'step.exit' and not some_flag }}"`  
-    `then:`  
-      `next:`  
+`case:`
+  `- when: "{{ event.name == 'step.exit' and some_flag }}"`
+    `then:`
+      `next:`
+        `- step: city_loop`
+          `args:`
+            `city: "{{ result.city }}"`
+  `- when: "{{ event.name == 'step.exit' and not some_flag }}"`
+    `then:`
+      `next:`
         `- step: end`
 
 Rules:
@@ -1066,7 +1066,7 @@ Rules:
 
   * step: target step name
 
-  * args: object injected into the next step’s args
+  * args: object injected into the next step's args
 
 * Use **`args` only**, NOT `with`, for cross-step data passing.
 
@@ -1078,7 +1078,7 @@ Implement a core set of actions (extendable):
 
 * call:
 
-  * Re-invoke the step’s tool.
+  * Re-invoke the step's tool.
 
   * Accepts overrides like `params`, `endpoint`, `command`, etc. depending on tool.kind.
 
@@ -1088,7 +1088,7 @@ Implement a core set of actions (extendable):
 
 * collect:
 
-  * Aggregate data in the step’s context.
+  * Aggregate data in the step's context.
 
   * Fields: from, into, mode ("append", "extend", etc.).
 
@@ -1098,13 +1098,13 @@ Implement a core set of actions (extendable):
 
   * Example:
 ```
-     sink:  
-     tool:  
-     kind: postgres  
-     auth: "{{ workload.pg_auth }}"  
-     command: |  
-     INSERT INTO events (...)  
-     args:  
+     sink:
+     tool:
+     kind: postgres
+     auth: "{{ workload.pg_auth }}"
+     command: |
+     INSERT INTO events (...)
+     args:
      value: "{{ result.value }}"
 ```
 * set:
@@ -1113,7 +1113,7 @@ Implement a core set of actions (extendable):
 
 * result:
 
-  * Set this step’s result payload (what downstream steps see).
+  * Set this step's result payload (what downstream steps see).
 
 * next:
 
@@ -1123,7 +1123,7 @@ Implement a core set of actions (extendable):
 
   * Mark step (and maybe workflow) as failed or skipped.
 
-The old “rule/case/run” model is not supported; this new `case/when/then` model is used.
+The old "rule/case/run" model is not supported; this new `case/when/then` model is used.
 
 ---
 
@@ -1135,29 +1135,29 @@ Implement a NEW control-flow engine module on the server (e.g. `dsl/engine.py`).
 
 Core models:
 
-`class Event(BaseModel):`  
-    `execution_id: str`  
-    `step: str | None`  
-    `name: str               # "step.enter", "call.done", "step.exit", "worker.done", etc.`  
-    `payload: dict           # response, error, timing, etc.`  
+`class Event(BaseModel):`
+    `execution_id: str`
+    `step: str | None`
+    `name: str               # "step.enter", "call.done", "step.exit", "worker.done", etc.`
+    `payload: dict           # response, error, timing, etc.`
     `# You may add fields like worker_id, attempt, etc.`
 
-`class ToolCall(BaseModel):`  
-    `kind: str               # "http", "postgres", "duckdb", "python", "workbook", ...`  
+`class ToolCall(BaseModel):`
+    `kind: str               # "http", "postgres", "duckdb", "python", "workbook", ...`
     `config: dict            # normalized tool config (method, endpoint, command, code, etc.)`
 
-`class Command(BaseModel):`  
-    `execution_id: str`  
-    `step: str`  
-    `tool: ToolCall`  
-    `args: dict | None = None  # input args for that step/tool`  
+`class Command(BaseModel):`
+    `execution_id: str`
+    `step: str`
+    `tool: ToolCall`
+    `args: dict | None = None  # input args for that step/tool`
     `# plus metadata like attempt, backoff, priority if needed`
 
-`class ControlFlowEngine:`  
-    `def __init__(self, playbook_repo: PlaybookRepo, state_store: StateStore):`  
+`class ControlFlowEngine:`
+    `def __init__(self, playbook_repo: PlaybookRepo, state_store: StateStore):`
         `...`
 
-    `def handle_event(self, event: Event) -> list[Command]:`  
+    `def handle_event(self, event: Event) -> list[Command]:`
         `...`
 
 `handle_event` responsibilities:
@@ -1178,7 +1178,7 @@ Core models:
 
    * response / error extracted from event.payload for call.done
 
-4. Evaluate this step’s `case` entries:
+4. Evaluate this step's `case` entries:
 
    * For each entry:
 
@@ -1270,11 +1270,11 @@ Refactor worker.py to:
 
        * meta: latency, status\_code, etc.
 
-3. POST the Event to the server’s /api/events endpoint.
+3. POST the Event to the server's /api/events endpoint.
 
 Workers do not:
 
-* Call “update queue” endpoints.
+* Call "update queue" endpoints.
 
 * Directly insert/update records in the queue table except via executing Commands that the server has already decided on.
 
@@ -1366,17 +1366,17 @@ Docs & Examples:
 
     * conditional transitions via case.then.next with args.
 
-* NO backward compatibility. It’s OK if old playbooks and engine code stop working; the goal is a clean, logically correct, event-driven v2.
+* NO backward compatibility. It's OK if old playbooks and engine code stop working; the goal is a clean, logically correct, event-driven v2.
 
 ### **Small patch to the Copilot instructions**
 
-**`next` behavior when `case` is absent or doesn’t match**
+**`next` behavior when `case` is absent or doesn't match**
 
 * If a step has **no `case` at all**:
 
   * The engine:
 
-    * Runs the step’s `tool` (respecting `loop` if present).
+    * Runs the step's `tool` (respecting `loop` if present).
 
     * When the step is complete, emits an internal `step.exit` event.
 

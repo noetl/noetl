@@ -139,7 +139,6 @@ The build command:
 - Builds the Docker image with a timestamp-based tag
 - Saves the tag to `.noetl_last_build_tag.txt` for deployment use
 - Streams build output to console
-- Replaces `task docker-build-noetl`
 
 ### Kubernetes Management
 
@@ -168,8 +167,8 @@ noetl k8s reset --no-cache  # Reset with clean build
 The k8s commands:
 - `deploy`: Applies Kubernetes manifests to kind cluster
 - `remove`: Deletes NoETL resources from cluster
-- `redeploy`: Builds image, loads to kind, and deploys (replaces `task noetl:k8s:redeploy`)
-- `reset`: Full workflow - resets database schema, redeploys, runs test setup (replaces `task noetl:k8s:reset`)
+- `redeploy`: Builds image, loads to kind, and deploys
+- `reset`: Full workflow - resets database schema, redeploys, runs test setup
 
 ### Configuration and Contexts
 
@@ -339,15 +338,15 @@ args: ["worker", "start"]
 
 This provides a unified binary for both local development and containerized deployments.
 
-## Command Mapping
+## Command Reference
 
-The Rust CLI replaces several task commands:
+Common operations with the `noetl` CLI:
 
-| Task Command | noetl Command |
-|-------------|---------------|
-| `task docker-build-noetl` | `noetl build` |
-| `task noetl:k8s:deploy` | `noetl k8s deploy` |
-| `task noetl:k8s:redeploy` | `noetl k8s redeploy` |
-| `task noetl:k8s:reset` | `noetl k8s reset` |
-| `task noetl:server:start` | `noetl server start` |
-| `task noetl:worker:start` | `noetl worker start` |
+| Operation | Command |
+|-----------|---------|
+| Build Docker image | `noetl build` |
+| Deploy to K8s | `noetl k8s deploy` |
+| Redeploy to K8s | `noetl k8s redeploy` |
+| Reset K8s deployment | `noetl k8s reset` |
+| Start server | `noetl server start` |
+| Start worker | `noetl worker start` |

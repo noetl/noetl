@@ -335,5 +335,5 @@ If cluster was created before port mapping added, recreate cluster:
 
 ```bash
 kind delete cluster --name noetl
-task bring-all  # Recreates cluster with updated config
+noetl run automation/setup/bootstrap.yaml  # Recreates cluster with updated config
 ```

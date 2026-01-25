@@ -327,7 +327,7 @@ Use cases:
 - **Long-running jobs**: Abort jobs that are no longer needed
 - **Hierarchical workflows**: Cancel parent execution and all spawned sub-playbooks
 
-See [Execution Cancellation](/features/execution_cancellation) for detailed documentation.
+See [Execution Cancellation](../features/execution_cancellation) for detailed documentation.
 
 ## Worker Management
 

@@ -77,7 +77,7 @@ Bootstrap complete NoETL environment with one command:
 # From repository root
 make bootstrap
 # or
-task bring-all
+noetl run automation/setup/bootstrap.yaml
 ```
 
 This will:
@@ -90,15 +90,15 @@ This will:
 
 ```bash
 # Deploy ClickHouse, Qdrant, and NATS for tracing/observability
-task observability:activate-all
+noetl run automation/infrastructure/observability.yaml --set action=deploy-all
 
 # Or deploy individually
-task clickhouse:deploy
-task qdrant:deploy
-task nats:deploy
+noetl run automation/infrastructure/clickhouse.yaml --set action=deploy
+noetl run automation/infrastructure/qdrant.yaml --set action=deploy
+noetl run automation/infrastructure/nats.yaml --set action=deploy
 
 # Check observability services status
-task observability:status-all
+noetl run automation/infrastructure/observability.yaml --set action=status
 ```
 
 Observability components:
@@ -116,20 +116,20 @@ If not using bootstrap, ensure:
 4. **Credentials Registered**: `pg_k8s` credential with connection details
 5. **Docker Registry Access**: For pushing built container image (Kind uses local load)
 
-## Task Commands Reference
+## Commands Reference
 
-All tasks are available via the NoETL taskfile:
+All commands are available via the NoETL CLI:
 
-| Task Command | Alias | Description |
-|--------------|-------|-------------|
-| `task test:container:full` | `tcf` | Complete workflow (build → register → execute → verify) |
-| `task test:container:build-image` | `tcbi` | Build image and load into Kind cluster |
-| `task test:container:register` | `tcr` | Register playbook with NoETL server |
-| `task test:container:execute` | `tce` | Execute the playbook |
-| `task test:container:verify` | `tcv` | Verify results in PostgreSQL |
-| `task test:container:cleanup` | `tcc` | Drop container_test schema |
+| Command | Description |
+|---------|-------------|
+| `noetl run automation/tests/container/full.yaml` | Complete workflow (build -> register -> execute -> verify) |
+| `noetl build --target container-test` | Build image and load into Kind cluster |
+| `noetl run automation/playbooks/register.yaml --set path=tests/fixtures/playbooks/container_postgres_init` | Register playbook with NoETL server |
+| `noetl run tests/fixtures/playbooks/container_postgres_init/container_postgres_init.yaml` | Execute the playbook |
+| `noetl run automation/tests/container/verify.yaml` | Verify results in PostgreSQL |
+| `noetl run automation/tests/container/cleanup.yaml` | Drop container_test schema |
 
-**Quick Start**: Run `task test:container:full` for automated end-to-end testing.
+**Quick Start**: Run `noetl run automation/tests/container/full.yaml` for automated end-to-end testing.
 
 ## Environment Variables
 
@@ -185,7 +185,7 @@ Run the full test workflow with one command:
 
 ```bash
 # From repository root
-task test:container:full
+noetl run automation/tests/container/full.yaml
 ```
 
 This executes:
@@ -203,17 +203,17 @@ This executes:
 # Complete setup
 make bootstrap
 # or
-task bring-all
+noetl run automation/setup/bootstrap.yaml
 
 # Register test credentials
-task test:k8s:register-credentials
+noetl run automation/credentials/register.yaml --set env=k8s
 ```
 
 #### 2. Build and Load Container Image
 
 ```bash
-# Using task (recommended)
-task test:container:build-image
+# Using noetl CLI (recommended)
+noetl build --target container-test
 
 # Or using build script
 cd tests/fixtures/playbooks/container_postgres_init
@@ -234,20 +234,20 @@ curl -X POST "http://localhost:8082/api/credentials" \
   --data-binary @tests/fixtures/credentials/pg_k8s.json
 ```
 
-Or use the task:
+Or use the noetl CLI:
 
 ```bash
-task test:k8s:register-credentials
+noetl run automation/credentials/register.yaml --set env=k8s
 ```
 
 #### 4. Register Playbook
 
 ```bash
-# Using task (recommended)
-task test:container:register
+# Using noetl CLI (recommended)
+noetl run automation/playbooks/register.yaml --set path=tests/fixtures/playbooks/container_postgres_init
 
-# Or using CLI
-.venv/bin/noetl register tests/fixtures/playbooks/container_postgres_init/container_postgres_init.yaml \
+# Or directly via CLI
+noetl register tests/fixtures/playbooks/container_postgres_init/container_postgres_init.yaml \
   --host localhost --port 8082
 
 # Or via script
@@ -257,11 +257,11 @@ task test:container:register
 #### 5. Execute Playbook
 
 ```bash
-# Using task (recommended)
-task test:container:execute
+# Using noetl CLI (recommended)
+noetl run tests/fixtures/playbooks/container_postgres_init/container_postgres_init.yaml
 
-# Or using CLI
-.venv/bin/noetl execute playbook tests/fixtures/playbooks/container_postgres_init \
+# Or using execute command
+noetl execute playbook tests/fixtures/playbooks/container_postgres_init \
   --host localhost --port 8082 \
   --json
 
@@ -277,11 +277,10 @@ curl -X POST "http://localhost:8082/api/playbooks/execute" \
 #### 6. Verify Results
 
 ```bash
-# Using task (recommended)
-task test:container:verify
+# Using noetl CLI (recommended)
+noetl run automation/tests/container/verify.yaml
 
 # Or manually check PostgreSQL
-
 ```bash
 # Connect to Postgres pod
 kubectl exec -n postgres deployment/postgres -- psql -U demo -d demo_noetl -c "
@@ -392,45 +391,25 @@ runtime:
   cleanup: true  # Delete Job and ConfigMap after completion
 ```
 
-## Testing with Task Automation
+## Testing with NoETL Automation
 
-Add these tasks to `ci/taskfile/test.yml`:
+The container test workflow can be automated using NoETL playbooks:
 
-```yaml
-test:container:build-image:
-  desc: Build container test image and load into Kind
-  cmds:
-    - docker build -t noetl/postgres-container-test:latest tests/fixtures/playbooks/container_postgres_init/
-    - kind load docker-image noetl/postgres-container-test:latest --name noetl-cluster
+```bash
+# Build container test image and load into Kind
+noetl build --target container-test
 
-test:container:register:
-  desc: Register container_postgres_init playbook
-  cmds:
-    - |
-      .venv/bin/noetl register tests/fixtures/playbooks/container_postgres_init/container_postgres_init.yaml \
-        --host localhost --port 8082
+# Register container_postgres_init playbook
+noetl run automation/playbooks/register.yaml --set path=tests/fixtures/playbooks/container_postgres_init
 
-test:container:execute:
-  desc: Execute container_postgres_init playbook
-  cmds:
-    - |
-      .venv/bin/noetl execute playbook tests/fixtures/playbooks/container_postgres_init \
-        --host localhost --port 8082 \
-        --json
+# Execute container_postgres_init playbook
+noetl run tests/fixtures/playbooks/container_postgres_init/container_postgres_init.yaml
 
-test:container:verify:
-  desc: Verify container test results
-  cmds:
-    - kubectl exec -n postgres deployment/postgres -- psql -U demo -d demo_noetl -c "SELECT * FROM container_test.execution_log;"
+# Verify container test results
+noetl run automation/tests/container/verify.yaml
 
-test:container:full:
-  desc: Full container test workflow (build, register, execute, verify)
-  aliases: [tcf, test-container-full]
-  cmds:
-    - task: test:container:build-image
-    - task: test:container:register
-    - task: test:container:execute
-    - task: test:container:verify
+# Full container test workflow (build, register, execute, verify)
+noetl run automation/tests/container/full.yaml
 ```
 
 ## Troubleshooting
@@ -470,7 +449,7 @@ spec:
 kubectl rollout status -n noetl deployment/noetl-worker
 
 # Test
-task test:container:full
+noetl run automation/tests/container/full.yaml
 ```
 
 **Option 2: Use Remote Storage (Production)**

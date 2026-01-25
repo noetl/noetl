@@ -26,7 +26,7 @@ This directory contains Jupyter-friendly notebooks and scripts to analyze NoETL 
 ## How to run
 
 ### Option A: In-cluster JupyterLab (Kind)
-1. Provision analytics stack (Superset + JupyterLab): `task analytics:k8s:deploy`.
+1. Provision analytics stack (Superset + JupyterLab): `noetl run automation/deployment/analytics-stack.yaml --set action=deploy`.
 2. Open `http://localhost:30999` and authenticate (default token: `noetl`).
 3. Upload/open `tests/fixtures/notebooks/regression_dashboard.py`.
 4. Run cells top-to-bottom. Adjust at the top:

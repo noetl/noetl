@@ -10,14 +10,14 @@ Container-based PostgreSQL initialization demonstrating Kubernetes Job execution
 cd tests/fixtures/playbooks/container_postgres_init
 ./build.sh
 
-# Or use task
-task test:container:build-image
+# Or use noetl CLI
+noetl build --target container-test
 
 # 2. Run full test
-task test:container:full
+noetl run automation/tests/container/full.yaml
 
 # 3. Verify results
-task test:container:verify
+noetl run automation/tests/container/verify.yaml
 ```
 
 ## File Structure
@@ -39,16 +39,16 @@ container_postgres_init/
     └── seed_data.sql              # Data inserts
 ```
 
-## Task Commands
+## NoETL Commands
 
-| Task | Alias | Description |
-|------|-------|-------------|
-| `test:container:build-image` | `tcbi` | Build and load image into Kind |
-| `test:container:register` | `tcr` | Register playbook |
-| `test:container:execute` | `tce` | Execute playbook |
-| `test:container:verify` | `tcv` | Verify results in DB |
-| `test:container:cleanup` | `tcc` | Drop test schema |
-| `test:container:full` | `tcf` | Full workflow |
+| Command | Description |
+|---------|-------------|
+| `noetl build --target container-test` | Build and load image into Kind |
+| `noetl run automation/playbooks/register.yaml --set path=tests/fixtures/playbooks/container_postgres_init` | Register playbook |
+| `noetl run tests/fixtures/playbooks/container_postgres_init/container_postgres_init.yaml` | Execute playbook |
+| `noetl run automation/tests/container/verify.yaml` | Verify results in DB |
+| `noetl run automation/tests/container/cleanup.yaml` | Drop test schema |
+| `noetl run automation/tests/container/full.yaml` | Full workflow |
 
 ## Playbook Steps
 

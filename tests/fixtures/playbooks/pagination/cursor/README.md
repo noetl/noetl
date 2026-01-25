@@ -91,9 +91,9 @@ curl -X POST http://localhost:8082/api/run/playbook \
   -d '{"path": "tests/pagination/cursor"}'
 ```
 
-### Option 3: Using Task Runner
+### Option 3: Using NoETL CLI
 ```bash
-task test:pagination:cursor
+noetl run tests/fixtures/playbooks/pagination/cursor/test_pagination_cursor.yaml
 ```
 
 ## Expected Results

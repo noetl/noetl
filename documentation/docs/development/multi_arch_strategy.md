@@ -151,7 +151,7 @@ Platform-agnostic - build once, copy to both images.
 
 2. **Docker single-arch**:
    ```bash
-   task docker-build-noetl
+   noetl build
    docker run noetl-local-dev:latest server start
    ```
 
@@ -163,7 +163,7 @@ Platform-agnostic - build once, copy to both images.
 
 4. **Kubernetes deployment**:
    ```bash
-   task deploy-noetl
+   noetl run automation/infrastructure/noetl.yaml --set action=deploy
    kubectl get pods -o wide  # Verify runs on any node
    ```
 

@@ -41,26 +41,20 @@ Verify Count
 ### Register the Playbook
 
 ```bash
-.venv/bin/noetl catalog register playbook \
-  tests/fixtures/playbooks/data_transfer/http_to_postgres_iterator/http_to_postgres_iterator.yaml \
-  --host localhost --port 8083
+noetl playbook register tests/fixtures/playbooks/data_transfer/http_to_postgres_iterator
 ```
 
 ### Execute the Playbook
 
 ```bash
-.venv/bin/noetl execute playbook \
-  "examples/data_transfer/http_to_postgres_iterator" \
-  --host localhost --port 8083 \
-  --payload '{"pg_auth": "pg_local"}' \
-  --merge
+noetl execution create tests/fixtures/playbooks/data_transfer/http_to_postgres_iterator
 ```
 
 ### Execute with Custom API URL
 
 ```bash
-.venv/bin/noetl execute playbook \
-  "examples/data_transfer/http_to_postgres_iterator" \
+noetl execute playbook \
+  "tests/fixtures/playbooks/data_transfer/http_to_postgres_iterator" \
   --payload '{"api_url": "https://jsonplaceholder.typicode.com/users", "pg_auth": "pg_local"}' \
   --merge \
   --host localhost --port 8083

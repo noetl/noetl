@@ -633,10 +633,10 @@ Example output:
 
 | Metric | Healthy | Warning | Critical |
 |--------|---------|---------|----------|
-| `command.completed → command.claimed` | <100ms | 100ms-1s | >1s |
-| `evaluate_execution` total | <50ms | 50-500ms | >500ms |
-| `catalog_fetch` | <10ms (cached) | 10-100ms | >100ms |
-| Event count per execution | <100 | 100-500 | >500 |
+| `command.completed → command.claimed` | &lt;100ms | 100ms-1s | &gt;1s |
+| `evaluate_execution` total | &lt;50ms | 50-500ms | &gt;500ms |
+| `catalog_fetch` | &lt;10ms (cached) | 10-100ms | &gt;100ms |
+| Event count per execution | &lt;100 | 100-500 | &gt;500 |
 
 ### Troubleshooting Slow Executions
 
@@ -729,9 +729,9 @@ kubectl get events -n clickhouse --sort-by='.lastTimestamp'
 kubectl describe pod <pod-name> -n <namespace>
 
 # Check logs
-task clickhouse:logs
-task qdrant:logs
-task nats:logs
+kubectl logs -n clickhouse deployment/clickhouse -f
+kubectl logs -n qdrant deployment/qdrant -f
+kubectl logs -n nats deployment/nats -f
 ```
 
 ### Connection Issues

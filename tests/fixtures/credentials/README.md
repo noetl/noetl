@@ -329,7 +329,7 @@ After registering credentials, test token generation:
 
 ```bash
 # Start NoETL locally
-task noetl:local:start
+noetl server start
 
 # Register credentials
 curl -X POST http://localhost:8083/api/credentials \

@@ -2,7 +2,7 @@
 
 This directory contains playbooks for Auth0 authentication integration with noetl-gateway.
 
-## ⚡ Quick Start (Working Implementation)
+## Quick Start (Working Implementation)
 
 The Auth0 integration uses **OAuth Implicit Flow** with browser-based authentication. No passwords are needed in environment variables.
 
@@ -77,13 +77,13 @@ kubectl exec -n postgres deployment/postgres -- \
 # View recent sessions
 kubectl exec -n postgres deployment/postgres -- \
   psql -U demo -d demo_noetl -c \
-  "SELECT LEFT(session_token, 20), user_id, created_at 
+  "SELECT LEFT(session_token, 20), user_id, created_at
    FROM auth.sessions ORDER BY created_at DESC LIMIT 3;"
 
 # View users
 kubectl exec -n postgres deployment/postgres -- \
   psql -U demo -d demo_noetl -c \
-  "SELECT user_id, email, auth0_id, is_active 
+  "SELECT user_id, email, auth0_id, is_active
    FROM auth.users;"
 ```
 
@@ -141,9 +141,9 @@ curl -s "http://localhost:8082/api/executions/EXECUTION_ID" | \
 ```bash
 kubectl exec -n postgres deployment/postgres -- \
   psql -U demo -d demo_noetl -c \
-  "SELECT session_token, user_id, created_at 
-   FROM auth.sessions 
-   WHERE created_at > NOW() - INTERVAL '5 minutes' 
+  "SELECT session_token, user_id, created_at
+   FROM auth.sessions
+   WHERE created_at > NOW() - INTERVAL '5 minutes'
    ORDER BY created_at DESC;"
 ```
 
@@ -179,7 +179,7 @@ This directory contains playbooks for Auth0 authentication integration with noet
 ### 1. Create Auth0 Application
 
 1. Go to [Auth0 Dashboard](https://manage.auth0.com/)
-2. Navigate to **Applications** → **Create Application**
+2. Navigate to **Applications** -> **Create Application**
 3. Choose **Single Page Web Applications** (SPA)
 4. Name it (e.g., "NoETL Gateway")
 5. Click **Create**
@@ -224,7 +224,7 @@ These are already configured in:
 ### 4. Create Test User (Optional)
 
 In Auth0 Dashboard:
-1. Navigate to **User Management** → **Users**
+1. Navigate to **User Management** -> **Users**
 2. Click **Create User**
 3. Set email and password
 4. Click **Create**
@@ -235,11 +235,10 @@ In Auth0 Dashboard:
 
 ```bash
 # Deploy gateway and UI to kind cluster
-task gateway-deploy-all
+noetl run automation/setup/bootstrap.yaml
 
 # Verify services are running
 kubectl get pods -n gateway
-task gateway-status
 ```
 
 **Expected output:**
@@ -256,7 +255,7 @@ gateway-ui-<hash>  1/1  Running
 
 ```bash
 # Register credentials
-task register-test-credentials
+noetl run automation/test/register-test-credentials.yaml
 
 # Register and execute provisioning playbook
 cd /Users/akuksin/projects/noetl/noetl
@@ -312,7 +311,7 @@ playbooks = glob.glob("tests/fixtures/playbooks/api_integration/auth0/*.yaml")
 for playbook_file in sorted(playbooks):
     with open(playbook_file, 'r') as f:
         content = f.read()
-    
+
     response = requests.post(
         "http://localhost:8082/api/catalog/register",
         json={"content": content}
@@ -339,7 +338,7 @@ kubectl exec -n postgres deployment/postgres -- \
 -- Insert test user
 INSERT INTO auth.users (auth0_id, email, display_name, is_active)
 VALUES ('test|12345', 'test@example.com', 'Test User', true)
-ON CONFLICT (auth0_id) DO UPDATE SET 
+ON CONFLICT (auth0_id) DO UPDATE SET
   email = EXCLUDED.email,
   display_name = EXCLUDED.display_name,
   is_active = true
@@ -352,8 +351,8 @@ ON CONFLICT DO NOTHING;
 
 -- Create test session token
 INSERT INTO auth.sessions (
-  user_id, 
-  session_token, 
+  user_id,
+  session_token,
   auth0_token,
   expires_at,
   is_active,
@@ -422,8 +421,8 @@ Wait 2-3 seconds, then check execution result:
 ```bash
 kubectl exec -n postgres deployment/postgres -- \
   psql -U noetl -d noetl -c \
-  "SELECT event_type, status, node_name FROM noetl.event 
-   WHERE node_name LIKE '%validate%' 
+  "SELECT event_type, status, node_name FROM noetl.event
+   WHERE node_name LIKE '%validate%'
    ORDER BY event_id DESC LIMIT 5;"
 ```
 
@@ -456,7 +455,7 @@ Test the full OAuth flow through the browser UI:
 
 For automated testing without browser interaction:
 
-**⚠️ Note:** This option requires `AUTH0_USER_PASSWORD` environment variable because it uses Resource Owner Password Grant (machine-to-machine flow) instead of browser OAuth. This is for CI/CD and automated testing only.
+**Note:** This option requires `AUTH0_USER_PASSWORD` environment variable because it uses Resource Owner Password Grant (machine-to-machine flow) instead of browser OAuth. This is for CI/CD and automated testing only.
 
 #### Current Auth0 Configuration:
 - **Domain:** `mestumre-development.us.auth0.com`
@@ -489,14 +488,14 @@ Our playbooks default to **My Account API** for user authentication flows.
 Use the automated test script to test the complete Auth0 integration:
 
 **1. Get Auth0 Client Secret:**
-   - Go to [Auth0 Dashboard](https://manage.auth0.com/) → Applications → Your Application
+   - Go to [Auth0 Dashboard](https://manage.auth0.com/) -> Applications -> Your Application
    - Click **Settings** tab
    - Scroll down and copy **Client Secret**
 
 **2. Enable Resource Owner Password Grant (if not already enabled):**
-   - In Auth0 Dashboard → Applications → Your Application → Settings
-   - Scroll to **Advanced Settings** → **Grant Types**
-   - Check ✓ **Password**
+   - In Auth0 Dashboard -> Applications -> Your Application -> Settings
+   - Scroll to **Advanced Settings** -> **Grant Types**
+   - Check **Password**
    - Click **Save Changes**
 
 **3. Store client secret - Choose one method:**
@@ -538,18 +537,18 @@ export AUTH0_USER_PASSWORD='password_for_kadyapam@gmail.com'
 1. Stores Auth0 client secret in NoETL credential table (if provided as argument)
 2. Registers two playbooks:
    - `get_auth0_token` - Gets Auth0 access token via password grant
-   - `test_auth0_full_flow` - Complete flow: get token → validate → create session
+   - `test_auth0_full_flow` - Complete flow: get token -> validate -> create session
 3. Executes the full flow test with your credentials
 4. Verifies user creation in `auth.users` table
 5. Displays the session token for UI testing
 
 **Expected output:**
 ```
-✓ Auth0 client credential registered
-✓ Registered: api_integration/auth0/get_auth0_token v1
-✓ Registered: api_integration/auth0/test_auth0_full_flow v1
-✓ Token request started: execution_id=123456
-✓ Full flow test started: execution_id=123457
+Auth0 client credential registered
+Registered: api_integration/auth0/get_auth0_token v1
+Registered: api_integration/auth0/test_auth0_full_flow v1
+Token request started: execution_id=123456
+Full flow test started: execution_id=123457
 
 user_id | auth0_id                       | email
 --------|--------------------------------|-------------------
@@ -657,9 +656,9 @@ curl -X POST http://localhost:8082/api/execute \
 # Query execution events to get session token
 kubectl exec -n postgres deployment/postgres -- \
   psql -U noetl -d noetl -c \
-  "SELECT event_type, status, result_summary 
-   FROM noetl.event 
-   WHERE execution_id = 123456789 
+  "SELECT event_type, status, result_summary
+   FROM noetl.event
+   WHERE execution_id = 123456789
    ORDER BY event_id DESC LIMIT 10;"
 ```
 
@@ -667,8 +666,8 @@ kubectl exec -n postgres deployment/postgres -- \
 ```bash
 kubectl exec -n postgres deployment/postgres -- \
   psql -U demo -d demo_noetl -c \
-  "SELECT user_id, auth0_id, email, display_name, is_active, created_at 
-   FROM auth.users 
+  "SELECT user_id, auth0_id, email, display_name, is_active, created_at
+   FROM auth.users
    WHERE email = 'kadyapam@gmail.com';"
 ```
 
@@ -683,10 +682,10 @@ user_id | auth0_id                       | email               | display_name | 
 ```bash
 kubectl exec -n postgres deployment/postgres -- \
   psql -U demo -d demo_noetl -c \
-  "SELECT session_token, expires_at 
-   FROM auth.sessions 
+  "SELECT session_token, expires_at
+   FROM auth.sessions
    WHERE user_id = (SELECT user_id FROM auth.users WHERE email = 'kadyapam@gmail.com')
-   ORDER BY created_at DESC 
+   ORDER BY created_at DESC
    LIMIT 1;"
 ```
 
@@ -731,22 +730,19 @@ To implement full Auth0 Universal Login (redirect to Auth0 login page):
 ### Step 9: Verify Everything Works
 
 ```bash
-# Check gateway logs
-task gateway-logs
-
 # Check recent auth events
 kubectl exec -n postgres deployment/postgres -- \
   psql -U demo -d demo_noetl -c \
-  "SELECT event_type, event_status, user_id, created_at 
-   FROM auth.audit_log 
+  "SELECT event_type, event_status, user_id, created_at
+   FROM auth.audit_log
    ORDER BY created_at DESC LIMIT 10;"
 
 # Check active sessions
 kubectl exec -n postgres deployment/postgres -- \
   psql -U demo -d demo_noetl -c \
-  "SELECT session_id, user_id, session_token, expires_at, is_active 
-   FROM auth.sessions 
-   WHERE is_active = true 
+  "SELECT session_id, user_id, session_token, expires_at, is_active
+   FROM auth.sessions
+   WHERE is_active = true
    ORDER BY created_at DESC;"
 ```
 
@@ -774,13 +770,13 @@ curl -X POST http://localhost:8090/api/check-access \
 ```
 
 **What just happened?**
-- ✅ Auth0 application configured
-- ✅ Auth schema provisioned with 8 tables
-- ✅ 4 authentication playbooks registered
-- ✅ Test user created with admin role
-- ✅ Test session token created
-- ✅ Auth flow tested (with and without Auth0)
-- ✅ Gateway integrated with authentication
+- Auth0 application configured
+- Auth schema provisioned with 8 tables
+- 4 authentication playbooks registered
+- Test user created with admin role
+- Test session token created
+- Auth flow tested (with and without Auth0)
+- Gateway integrated with authentication
 
 **Next Steps:**
 - Review [TESTING.md](TESTING.md) for comprehensive tests
@@ -795,8 +791,8 @@ The Auth0 integration enables user authentication and authorization for the noet
 ## Architecture
 
 ```
-Client → noetl-gateway → Auth0 (authentication) → noetl-server (playbook execution)
-                    ↓
+Client -> noetl-gateway -> Auth0 (authentication) -> noetl-server (playbook execution)
+                    |
               auth schema (user tracking, roles, playbook permissions)
 ```
 
@@ -924,8 +920,8 @@ Used by auth playbooks for runtime operations.
 noetl credential register -f tests/fixtures/credentials/pg_k8s.json
 
 # Run provisioning playbook
-noetl playbook register -f tests/fixtures/playbooks/api_integration/auth0/provision_auth_schema.yaml
-noetl playbook run tests/api_integration/auth0/provision_auth_schema
+noetl playbook register api_integration/auth0/provision_auth_schema
+noetl execution create api_integration/auth0/provision_auth_schema
 ```
 
 ### Step 2: Register Auth User Credential
@@ -942,9 +938,9 @@ noetl credential register -f tests/fixtures/credentials/pg_auth_user.json
 ### Step 4: Deploy Authentication Playbooks
 ```bash
 # Register auth playbooks
-noetl playbook register -f tests/fixtures/playbooks/api_integration/auth0/auth0_login.yaml
-noetl playbook register -f tests/fixtures/playbooks/api_integration/auth0/auth0_validate_session.yaml
-noetl playbook register -f tests/fixtures/playbooks/api_integration/auth0/check_playbook_access.yaml
+noetl playbook register api_integration/auth0/auth0_login
+noetl playbook register api_integration/auth0/auth0_validate_session
+noetl playbook register api_integration/auth0/check_playbook_access
 ```
 
 ## Usage Flow
@@ -956,8 +952,8 @@ POST /auth/login
   "auth0_token": "eyJ..."
 }
 
-→ Runs: auth0_login playbook
-← Returns: { "session_token": "...", "user_id": "..." }
+-> Runs: auth0_login playbook
+<- Returns: { "session_token": "...", "user_id": "..." }
 ```
 
 ### 2. Session Validation
@@ -967,8 +963,8 @@ POST /auth/validate
   "session_token": "..."
 }
 
-→ Runs: auth0_validate_session playbook
-← Returns: { "valid": true, "user": {...}, "permissions": [...] }
+-> Runs: auth0_validate_session playbook
+<- Returns: { "valid": true, "user": {...}, "permissions": [...] }
 ```
 
 ### 3. Playbook Execution Request
@@ -980,9 +976,9 @@ POST /playbook/execute
   "payload": {...}
 }
 
-→ Runs: check_playbook_access playbook
-→ If authorized: Executes requested playbook
-← Returns: Execution result
+-> Runs: check_playbook_access playbook
+-> If authorized: Executes requested playbook
+<- Returns: Execution result
 ```
 
 ## Security Considerations
@@ -1060,13 +1056,13 @@ POST /playbook/execute
 
 ```bash
 # Run schema provisioning test
-task test:auth0:provision
+noetl execution create api_integration/auth0/provision_auth_schema
 
 # Run authentication flow test
-task test:auth0:login
+noetl execution create api_integration/auth0/auth0_login
 
 # Run authorization test
-task test:auth0:permissions
+noetl execution create api_integration/auth0/check_playbook_access
 ```
 
 ## Future Enhancements

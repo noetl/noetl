@@ -101,22 +101,7 @@ The following directories contain complete, tested playbooks:
 2. PostgreSQL database available
 3. Required credentials registered
 
-### Using Task Runner
-
-```bash
-# Full test with setup
-task test-hello-world-full
-
-# Pagination tests
-task test:pagination:basic
-task test:pagination:cursor
-task test:pagination:retry
-
-# Data transfer tests
-task test-http-to-postgres-transfer-full
-```
-
-### Using CLI
+### Using NoETL CLI
 
 ```bash
 # Local execution (file path)
@@ -133,5 +118,4 @@ To add new examples:
 
 1. Create playbook in `tests/fixtures/playbooks/<category>/`
 2. Add `README.md` with documentation
-3. Add corresponding task in `taskfile.yml` for testing
-4. Update fixture inventory in `tests/fixtures/playbooks/README.md`
+3. Update fixture inventory in `tests/fixtures/playbooks/README.md`

@@ -303,9 +303,8 @@ Potential improvements:
 
 1. **Build and Deploy**
    ```bash
-   task docker-build-noetl
-   task kind-load-image image=local/noetl:latest
-   task deploy-noetl
+   noetl build
+   noetl run automation/deployment/noetl-stack.yaml --set action=deploy
    ```
 
 2. **Start Mock Server**

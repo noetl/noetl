@@ -46,22 +46,22 @@ This directory contains Kubernetes manifests for deploying ClickHouse observabil
 
 Deploy complete stack:
 ```bash
-task clickhouse:deploy
+noetl run automation/infrastructure/clickhouse.yaml --set action=deploy
 ```
 
 Check status:
 ```bash
-task clickhouse:status
+noetl run automation/infrastructure/clickhouse.yaml --set action=status
 ```
 
 Connect to ClickHouse CLI:
 ```bash
-task clickhouse:connect
+noetl run automation/infrastructure/clickhouse.yaml --set action=connect
 ```
 
 Run test queries:
 ```bash
-task clickhouse:test
+noetl run automation/infrastructure/clickhouse.yaml --set action=test
 ```
 
 ## Access
@@ -72,7 +72,7 @@ task clickhouse:test
 curl http://localhost:30123
 
 # Via port-forward
-task clickhouse:port-forward
+noetl run automation/infrastructure/clickhouse.yaml --set action=port-forward
 # Then access: http://localhost:8123
 ```
 
@@ -82,13 +82,13 @@ task clickhouse:port-forward
 clickhouse-client --host localhost --port 30900
 
 # Via port-forward
-task clickhouse:port-forward
+noetl run automation/infrastructure/clickhouse.yaml --set action=port-forward
 # Then: clickhouse-client --host localhost --port 9000
 ```
 
 ### MCP Server
 ```bash
-task clickhouse:port-forward-mcp
+noetl run automation/infrastructure/clickhouse.yaml --set action=port-forward-mcp
 # Then access: http://localhost:8124
 ```
 
@@ -96,31 +96,31 @@ task clickhouse:port-forward-mcp
 
 View logs:
 ```bash
-task clickhouse:logs              # ClickHouse server logs
-task clickhouse:logs-operator     # Operator logs
-task clickhouse:logs-mcp          # MCP server logs
+noetl run automation/infrastructure/clickhouse.yaml --set action=logs              # ClickHouse server logs
+noetl run automation/infrastructure/clickhouse.yaml --set action=logs-operator     # Operator logs
+noetl run automation/infrastructure/clickhouse.yaml --set action=logs-mcp          # MCP server logs
 ```
 
 Execute queries:
 ```bash
-task clickhouse:query -- "SELECT version()"
-task clickhouse:query -- "SHOW DATABASES"
-task clickhouse:query -- "SELECT COUNT(*) FROM observability.logs"
+noetl run automation/infrastructure/clickhouse.yaml --set action=query -- "SELECT version()"
+noetl run automation/infrastructure/clickhouse.yaml --set action=query -- "SHOW DATABASES"
+noetl run automation/infrastructure/clickhouse.yaml --set action=query -- "SELECT COUNT(*) FROM observability.logs"
 ```
 
 Health check:
 ```bash
-task clickhouse:health
+noetl run automation/infrastructure/clickhouse.yaml --set action=health
 ```
 
 Clean data (keeps schema):
 ```bash
-task clickhouse:clean-data
+noetl run automation/infrastructure/clickhouse.yaml --set action=clean-data
 ```
 
 Remove stack:
 ```bash
-task clickhouse:undeploy
+noetl run automation/infrastructure/clickhouse.yaml --set action=undeploy
 ```
 
 ## Schema Details
