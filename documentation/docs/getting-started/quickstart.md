@@ -10,14 +10,14 @@ Get NoETL running quickly with either PyPI installation or a full local developm
 
 ## Option 1: PyPI Installation (Simplest)
 
-### Install NoETL Python Package
+### Install NoETL CLI
 
 ```bash
-# Install NoETL
-pip install noetl
+# Install NoETL CLI (includes Python runtime)
+pip install noetlctl
 
 # Verify installation
-python -c "import noetl; print(noetl.__version__)"
+noetl --version
 ```
 
 ### Install NoETL CLI (Rust Binary)
@@ -87,7 +87,7 @@ noetl run automation/development/tooling_linux.yaml --set action=install-devtool
 
 **What `noetl run boot` does:**
 1. Validates prerequisites (docker, kind, kubectl, task, python3, uv)
-2. Checks for existing Rust CLI binary (`target/release/noetlctl`) - builds only if missing
+2. Checks for existing Rust CLI binary (`target/release/noetl`) - builds only if missing
 3. Builds NoETL Docker images
 4. Creates Kind Kubernetes cluster with pre-configured NodePort mappings
 5. Deploys PostgreSQL database

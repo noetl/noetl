@@ -168,26 +168,26 @@ workflow:
             echo "INFO Force build requested via build_rust_cli=true"
             echo "Building Rust CLI (this may take a while)..."
             cargo build --release --manifest-path crates/noetlctl/Cargo.toml
-            if [ -f "target/release/noetlctl" ]; then
-              echo "OK noetlctl built successfully"
-              ls -la target/release/noetlctl
+            if [ -f "target/release/noetl" ]; then
+              echo "OK noetl CLI built successfully"
+              ls -la target/release/noetl
             else
-              echo "ERROR noetlctl build failed"
+              echo "ERROR noetl CLI build failed"
               exit 1
             fi
-          elif [ -f "target/release/noetlctl" ]; then
-            echo "OK noetlctl binary found at target/release/noetlctl"
+          elif [ -f "target/release/noetl" ]; then
+            echo "OK noetl binary found at target/release/noetl"
             echo "   To force rebuild: noetl run boot --set build_rust_cli=true"
-            ls -la target/release/noetlctl
+            ls -la target/release/noetl
           else
-            echo "INFO noetlctl binary not found at target/release/noetlctl"
+            echo "INFO noetl binary not found at target/release/noetl"
             echo "Building Rust CLI (this may take a while)..."
             cargo build --release --manifest-path crates/noetlctl/Cargo.toml
-            if [ -f "target/release/noetlctl" ]; then
-              echo "OK noetlctl built successfully"
-              ls -la target/release/noetlctl
+            if [ -f "target/release/noetl" ]; then
+              echo "OK noetl CLI built successfully"
+              ls -la target/release/noetl
             else
-              echo "ERROR noetlctl build failed"
+              echo "ERROR noetl CLI build failed"
               exit 1
             fi
           fi

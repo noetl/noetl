@@ -128,7 +128,7 @@ noetl run automation/development/tooling_linux.yaml --set action=install-devtool
 1. **validate_prerequisites** - Check required tools (docker, kind, kubectl, task, python3, uv)
 2. **check_docker_running** - Verify Docker daemon is running
 3. **check_existing_cluster** - Check for existing kind cluster
-4. **maybe_build_rust_cli** - Check for `target/release/noetlctl` binary:
+4. **maybe_build_rust_cli** - Check for `target/release/noetl` binary:
    - If binary exists: skip build (saves compilation time)
    - If binary missing: build automatically
    - Use `--set build_rust_cli=true` to force rebuild
