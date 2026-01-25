@@ -1,0 +1,43 @@
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: noetl
+nodes:
+  - role: control-plane
+    extraPortMappings:
+        # NoETL API
+      - containerPort: 30082
+        hostPort: 18082
+        listenAddress: "127.0.0.1"
+        protocol: TCP
+
+        # PostgreSQL
+      - containerPort: 30321
+        hostPort: 15432
+        listenAddress: "127.0.0.1"
+        protocol: TCP
+
+        # NATS Client
+      - containerPort: 30422
+        hostPort: 31422
+        listenAddress: "127.0.0.1"
+        protocol: TCP
+
+        # NATS Monitoring
+      - containerPort: 30822
+        hostPort: 31822
+        listenAddress: "127.0.0.1"
+        protocol: TCP
+
+    # ci/kind/cache added to .gitignore
+    extraMounts:
+      - hostPath: ci/kind/cache/pg-data
+        containerPath: /mnt/data/pg-data
+
+      - hostPath: ci/kind/cache/noetl-data
+        containerPath: /mnt/data/noetl-data
+
+      - hostPath: ci/kind/cache/noetl-logs
+        containerPath: /mnt/data/noetl-logs
+
+      - hostPath: tests/fixtures/gateway_ui
+        containerPath: /mnt/gateway-ui

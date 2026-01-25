@@ -12,6 +12,7 @@ workload:
   image_name: "noetl"
   build_rust_cli: false
   deploy_gateway: true
+  kind_config: "ci/kind/config.yaml"
 workflow:
   - step: start
     desc: Begin bootstrap process
@@ -193,6 +194,32 @@ workflow:
           echo "Building with tag: $IMAGE_TAG"
           docker buildx build --load --platform linux/amd64 -t {{ workload.registry }}/{{ workload.image_name }}:$IMAGE_TAG -f docker/noetl/dev/Dockerfile .
     next:
+      - step: check_port_conflicts
+
+  - step: check_port_conflicts
+    desc: Check for kind port conflicts
+    tool:
+      kind: shell
+      cmds:
+        - |
+          if [ ! -f "{{ workload.kind_config }}" ]; then
+            echo "ERROR: kind config not found: {{ workload.kind_config }}"
+            exit 1
+          fi
+          PORTS=$(grep -E "hostPort:" "{{ workload.kind_config }}" | awk '{print $2}' | tr -d '"')
+          IN_USE=""
+          for port in $PORTS; do
+            if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
+              IN_USE="$IN_USE $port"
+            fi
+          done
+          if [ -n "$IN_USE" ]; then
+            echo "ERROR: The following host ports are already in use:$IN_USE"
+            echo "Stop the processes using those ports or re-run with a reduced mapping set:"
+            echo "  --set kind_config=ci/kind/config-minimal.yaml"
+            exit 1
+          fi
+    next:
       - step: create_kind_cluster
   
   - step: create_kind_cluster
@@ -207,7 +234,7 @@ workflow:
             echo "OK Cluster already exists, skipping creation"
           else
             echo "Creating kind cluster..."
-            kind create cluster --config=ci/kind/config.yaml
+            kind create cluster --config={{ workload.kind_config }}
           fi
     next:
       - step: load_image_to_kind

@@ -707,6 +707,20 @@ noetl run automation/setup/bootstrap.yaml --set build_rust_cli=true --set deploy
 3. Check existing cluster: `kind get clusters`
 4. View detailed output: Add `-v` flag for verbose output
 
+### Port 15000 Already In Use
+
+Kind uses port 15000 for the IBKR Client Portal Gateway. If that port is busy:
+
+1. Stop the process using port 15000.
+2. Or run bootstrap without the IBKR port mapping:
+  `noetl run automation/setup/bootstrap.yaml --set kind_config=ci/kind/config-no-ibkr.yaml`
+
+### Port Conflicts From Other Services
+
+If other ports are already in use (for example, 30900 for ClickHouse Native), use the minimal mapping:
+
+`noetl run automation/setup/bootstrap.yaml --set kind_config=ci/kind/config-minimal.yaml`
+
 ### Image Loading Issues
 
 If pods show `ImagePullBackOff`:
