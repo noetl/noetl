@@ -40,7 +40,9 @@ automation/
 ├── development/               # Development workflows
 │   ├── noetl.yaml             # NoETL server/worker management
 │   ├── docker.yaml            # Docker image building
-│   └── tooling.yaml           # Development tool setup
+│   ├── setup_tooling.yaml     # OS-aware tooling setup (auto-detects OS)
+│   ├── tooling_macos.yaml     # Development tool setup for macOS (Homebrew)
+│   └── tooling_linux.yaml     # Development tool setup for Linux/WSL2 (apt-get)
 ├── test/                      # Testing workflows
 │   └── pagination-server.yaml # Pagination test server automation
 ├── iap/                       # Infrastructure as Playbook

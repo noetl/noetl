@@ -577,46 +577,51 @@ noetl run automation/infrastructure/gateway-ui.yaml --set action=logs
 
 ### Dev Tools
 
-Manage development tooling installation and validation (WSL/Ubuntu):
+Manage development tooling installation and validation. The tooling playbooks automatically detect your operating system:
 
 ```bash
-# Setup and validate all tools
-noetl run automation/development/tooling.yaml --set action=setup
+# OS-Aware Setup (auto-detects macOS vs Linux/WSL2)
+noetl run automation/development/setup_tooling.yaml --set action=detect
+noetl run automation/development/setup_tooling.yaml --set action=setup
+noetl run automation/development/setup_tooling.yaml --set action=install-devtools
 
-# Install base tools
-noetl run automation/development/tooling.yaml --set action=install-base
+# macOS (uses Homebrew)
+noetl run automation/development/tooling_macos.yaml --set action=setup
+noetl run automation/development/tooling_macos.yaml --set action=install-base
+noetl run automation/development/tooling_macos.yaml --set action=install-devtools
+noetl run automation/development/tooling_macos.yaml --set action=install-homebrew
 
-# Install all dev tools
-noetl run automation/development/tooling.yaml --set action=install-devtools
-
-# Validate installation
-noetl run automation/development/tooling.yaml --set action=validate-install
-
-# Install individual tools
-noetl run automation/development/tooling.yaml --set action=install-kind
-noetl run automation/development/tooling.yaml --set action=install-pyenv
-noetl run automation/development/tooling.yaml --set action=install-uv
-
-# Fix Docker permissions
-noetl run automation/development/tooling.yaml --set action=fix-docker-perms
+# Linux/WSL2 (uses apt-get)
+noetl run automation/development/tooling_linux.yaml --set action=setup
+noetl run automation/development/tooling_linux.yaml --set action=install-base
+noetl run automation/development/tooling_linux.yaml --set action=install-devtools
+noetl run automation/development/tooling_linux.yaml --set action=fix-docker-perms
 ```
 
+**OS-Aware Playbook (`setup_tooling.yaml`):**
+- `detect` - Detect OS and show recommended playbook
+- `setup` - Validate required tooling (auto-detects OS)
+- `validate-install` - Validate required tools (auto-detects OS)
+- `install-base` - Install basic CLI tools (auto-detects OS)
+- `install-devtools` - Install all dev tools (auto-detects OS)
+
 **Setup & Validation:**
-- `setup` - Validate required tooling on WSL2 hosts
+- `setup` - Validate required tooling
 - `validate-install` - Validate required tools are installed
 - `validate-devtools` - Validate optional dev tools
 - `validate-docker` - Validate Docker Desktop integration
 
 **Installation (Base):**
 - `install-base` - Install basic CLI tools (git, curl, jq, make, python3, etc.)
-- `install-devtools` - Install all dev tools (yq, kind, pyenv, uv, tfenv)
+- `install-devtools` - Install all dev tools (yq, kind, pyenv, uv, tfenv, kubectl)
+- `install-homebrew` - (macOS only) Install Homebrew package manager
 
 **Installation (Individual):**
 - `install-jq`, `install-yq`, `install-kind`, `install-pyenv`, `install-uv`, `install-tfenv`, `install-psql`
 
 **Configuration:**
-- `ensure-path` - Ensure tool paths in ~/.bashrc
-- `fix-docker-perms` - Add user to docker group
+- `ensure-path` - Ensure tool paths in shell config (~/.zshrc on macOS, ~/.bashrc on Linux)
+- `fix-docker-perms` - (Linux/WSL2 only) Add user to docker group
 
 ### Docker Operations
 
@@ -743,7 +748,9 @@ automation/
 │   └── qdrant.yaml               # Qdrant vector database
 ├── development/
 │   ├── docker.yaml               # Docker operations
-│   └── tooling.yaml              # Dev tools installation
+│   ├── setup_tooling.yaml        # OS-aware tooling setup (auto-detects OS)
+│   ├── tooling_macos.yaml        # Dev tools for macOS (Homebrew)
+│   └── tooling_linux.yaml        # Dev tools for Linux/WSL2 (apt-get)
 └── test/
     └── pagination-server.yaml    # Pagination test server
 ```

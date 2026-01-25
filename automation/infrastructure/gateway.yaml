@@ -261,17 +261,6 @@ workflow:
           echo ""
           echo "Gateway Location: crates/gateway"
           echo ""
-          echo "Task Equivalents:"
-          echo "  build-image -> task gateway-build-image"
-          echo "  deploy      -> task gateway-deploy"
-          echo "  deploy-all  -> task gateway-deploy-all"
-          echo "  remove      -> task gateway-remove"
-          echo "  redeploy    -> task gateway-redeploy"
-          echo "  restart     -> task gateway-restart"
-          echo "  status      -> task gateway-status"
-          echo "  logs        -> task gateway-logs"
-          echo "  test        -> task gateway-test"
-          echo ""
     next:
       - step: end
 

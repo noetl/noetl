@@ -142,11 +142,6 @@ workflow:
           echo ""
           echo "Gateway UI Location: tests/fixtures/gateway_ui"
           echo ""
-          echo "Task Equivalents:"
-          echo "  deploy -> task gateway-ui-deploy"
-          echo "  logs   -> task gateway-ui-logs"
-          echo "  update -> task gateway-ui-update"
-          echo ""
     next:
       - step: end
 

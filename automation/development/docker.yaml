@@ -162,12 +162,6 @@ workflow:
           echo "  # Clear all images"
           echo "  noetl run automation/development/docker.yaml --set action=images-clear"
           echo ""
-          echo "Task Equivalents:"
-          echo "  build             -> task docker:local:build"
-          echo "  noetl-image-build -> task docker:local:noetl-image-build"
-          echo "  cleanup-all       -> task docker:local:cleanup-all"
-          echo "  images-clear      -> task docker:local:images-clear"
-          echo ""
     next:
       - step: end
 
