@@ -11,7 +11,113 @@ from noetl.core.db.pool import get_pool_connection
 
 class OrchestratorQueries:
     """SQL query builder and executor for orchestration operations."""
-    
+
+    # ==================== Batch Query for Transitions ====================
+
+    @staticmethod
+    async def get_transition_context_batch(execution_id: int) -> Dict[str, Any]:
+        """
+        Get all data needed for _process_transitions in a single query.
+
+        This eliminates N+1 query patterns by fetching:
+        - completed_steps_without_step_completed
+        - catalog_id
+        - execution_metadata (path, version)
+        - transitions
+        - step_results for evaluation context
+
+        Returns:
+            Dict with keys:
+            - completed_steps: list of step names needing transition processing
+            - catalog_id: int
+            - metadata: dict with path, version
+            - transitions: list of {from_step, to_step, condition, with_params}
+            - step_results: list of {node_name, result}
+        """
+        query = """
+        WITH completed_without_step_completed AS (
+            -- Steps with action_completed/command.completed but no step_completed
+            SELECT DISTINCT node_name
+            FROM noetl.event
+            WHERE execution_id = %(execution_id)s
+              AND event_type IN ('action_completed', 'command.completed')
+              AND node_name NOT IN (
+                  SELECT node_name FROM noetl.event
+                  WHERE execution_id = %(execution_id)s AND event_type = 'step_completed'
+              )
+        ),
+        exec_meta AS (
+            -- Get execution metadata from playbook_started
+            SELECT meta, catalog_id
+            FROM noetl.event
+            WHERE execution_id = %(execution_id)s
+              AND event_type IN ('playbook_started', 'playbook.initialized')
+            ORDER BY created_at
+            LIMIT 1
+        ),
+        transitions_agg AS (
+            -- Get all transitions as JSON array
+            SELECT COALESCE(
+                json_agg(
+                    json_build_object(
+                        'from_step', from_step,
+                        'to_step', to_step,
+                        'condition', condition,
+                        'with_params', with_params
+                    )
+                ),
+                '[]'::json
+            ) as transitions
+            FROM noetl.transition
+            WHERE execution_id = %(execution_id)s
+        ),
+        step_results_agg AS (
+            -- Get all step results for eval context
+            SELECT COALESCE(
+                json_agg(
+                    json_build_object(
+                        'node_name', node_name,
+                        'result', result
+                    ) ORDER BY created_at
+                ),
+                '[]'::json
+            ) as results
+            FROM noetl.event
+            WHERE execution_id = %(execution_id)s
+              AND event_type IN ('action_completed', 'command.completed', 'step.exit')
+              AND result IS NOT NULL
+        ),
+        completed_steps_arr AS (
+            SELECT COALESCE(array_agg(node_name), ARRAY[]::text[]) as steps
+            FROM completed_without_step_completed
+        )
+        SELECT
+            (SELECT steps FROM completed_steps_arr) as completed_steps,
+            (SELECT catalog_id FROM exec_meta) as catalog_id,
+            (SELECT meta FROM exec_meta) as metadata,
+            (SELECT transitions FROM transitions_agg) as transitions,
+            (SELECT results FROM step_results_agg) as step_results
+        """
+        async with get_pool_connection() as conn:
+            async with conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute(query, {"execution_id": execution_id})
+                row = await cur.fetchone()
+                if not row:
+                    return {
+                        "completed_steps": [],
+                        "catalog_id": None,
+                        "metadata": None,
+                        "transitions": [],
+                        "step_results": []
+                    }
+                return {
+                    "completed_steps": row.get("completed_steps") or [],
+                    "catalog_id": row.get("catalog_id"),
+                    "metadata": row.get("metadata"),
+                    "transitions": row.get("transitions") or [],
+                    "step_results": row.get("step_results") or []
+                }
+
     # ==================== Query Builder ====================
     
     @staticmethod

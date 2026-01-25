@@ -1,0 +1,537 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: event_sync_to_clickhouse
+  path: automation/observability/event-sync
+  description: "Sync events from PostgreSQL noetl.event to ClickHouse observability.noetl_events for performance analysis"
+
+executor:
+  profile: local
+  version: noetl-runtime/1
+
+workload:
+  action: help  # sync, sync-recent, count, verify, analyze-gaps, analyze-slow
+  pg_auth: pg_local
+  since_hours: 24
+  batch_size: 1000
+  clickhouse_pod: ""  # Auto-detected if empty
+
+workflow:
+  - step: start
+    desc: Entry point for event sync automation
+    tool:
+      kind: shell
+      cmds:
+        - echo "Event Sync Automation - Action '{{ workload.action }}'"
+    next:
+      - when: "{{ workload.action }} == sync"
+        then:
+          - step: detect_clickhouse_pod
+        args: {}
+      - when: "{{ workload.action }} == sync-recent"
+        then:
+          - step: detect_clickhouse_pod
+        args: {}
+      - when: "{{ workload.action }} == count"
+        then:
+          - step: count_events
+        args: {}
+      - when: "{{ workload.action }} == verify"
+        then:
+          - step: verify_sync
+        args: {}
+      - when: "{{ workload.action }} == analyze-gaps"
+        then:
+          - step: analyze_event_gaps
+        args: {}
+      - when: "{{ workload.action }} == analyze-slow"
+        then:
+          - step: analyze_slow_executions
+        args: {}
+      - step: show_help
+
+  - step: detect_clickhouse_pod
+    desc: Detect ClickHouse pod name
+    tool:
+      kind: shell
+      cmds:
+        - |
+          POD=$(kubectl get pods -n clickhouse -l clickhouse.altinity.com/chi=noetl-clickhouse -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+          if [ -z "$POD" ]; then
+            echo "ERROR: ClickHouse pod not found. Deploy ClickHouse first:"
+            echo "  noetl run automation/infrastructure/clickhouse.yaml --set action=deploy"
+            exit 1
+          fi
+          echo "$POD"
+    next:
+      - step: init_schema
+
+  - step: init_schema
+    desc: Initialize ClickHouse observability schema
+    tool:
+      kind: shell
+      cmds:
+        - |
+          POD=$(kubectl get pods -n clickhouse -l clickhouse.altinity.com/chi=noetl-clickhouse -o jsonpath='{.items[0].metadata.name}')
+          echo "Initializing ClickHouse schema..."
+
+          # Get schema SQL from ConfigMap
+          SCHEMA_SQL=$(kubectl get configmap clickhouse-observability-schema -n clickhouse -o jsonpath='{.data.init\.sql}' 2>/dev/null)
+
+          if [ -n "$SCHEMA_SQL" ]; then
+            echo "$SCHEMA_SQL" | kubectl exec -i -n clickhouse $POD -- clickhouse-client --multiquery
+            echo "Schema initialized"
+          else
+            echo "Schema ConfigMap not found, checking if database exists..."
+            kubectl exec -n clickhouse $POD -- clickhouse-client --query="CREATE DATABASE IF NOT EXISTS observability"
+          fi
+    next:
+      - step: export_events_from_postgres
+
+  - step: export_events_from_postgres
+    desc: Export events from PostgreSQL
+    tool:
+      kind: postgres
+      auth: "{{ workload.pg_auth }}"
+      command: |
+        SELECT
+          execution_id::text as ExecutionId,
+          event_id::text as EventId,
+          catalog_id::text as CatalogId,
+          created_at as Timestamp,
+          event_type as EventType,
+          COALESCE(status, '') as Status,
+          COALESCE(node_name, '') as StepName,
+          COALESCE(node_name, '') as NodeName,
+          '' as PlaybookPath,
+          COALESCE((duration * 1000)::bigint, 0) as Duration,
+          COALESCE(error, '') as ErrorMessage,
+          COALESCE(worker_id, '') as WorkerId,
+          COALESCE(meta::text, '{}') as Metadata
+        FROM noetl.event
+        WHERE created_at >= NOW() - INTERVAL '{{ workload.since_hours }} hours'
+        ORDER BY created_at ASC
+        LIMIT {{ workload.batch_size }};
+    next:
+      - step: transform_for_clickhouse
+
+  - step: transform_for_clickhouse
+    desc: Transform events to ClickHouse JSON format
+    tool:
+      kind: python
+      auth: {}
+      libs:
+        json: json
+      args:
+        events_data: "{{ export_events_from_postgres }}"
+      code: |
+        """Transform PostgreSQL events to ClickHouse JSONEachRow format."""
+        import json
+
+        # Get rows from postgres result
+        if isinstance(events_data, dict):
+            rows = events_data.get('rows', events_data.get('data', []))
+        elif isinstance(events_data, list):
+            rows = events_data
+        else:
+            rows = []
+
+        if not rows:
+            result = {
+                'status': 'empty',
+                'count': 0,
+                'json_lines': '',
+                'message': 'No events to sync'
+            }
+        else:
+            # Transform to ClickHouse format (JSONEachRow)
+            json_lines = []
+            for row in rows:
+                # Parse metadata if it's a string
+                metadata = row.get('metadata', '{}')
+                if isinstance(metadata, str):
+                    try:
+                        metadata = json.loads(metadata)
+                    except:
+                        metadata = {}
+
+                # Add worker_id to metadata
+                worker_id = row.get('workerid', row.get('WorkerId', ''))
+                if worker_id:
+                    metadata['worker_id'] = worker_id
+
+                ch_row = {
+                    'Timestamp': row.get('timestamp', row.get('Timestamp', '')),
+                    'EventId': str(row.get('eventid', row.get('EventId', ''))),
+                    'ExecutionId': str(row.get('executionid', row.get('ExecutionId', ''))),
+                    'EventType': row.get('eventtype', row.get('EventType', '')),
+                    'Status': row.get('status', row.get('Status', '')),
+                    'StepName': row.get('stepname', row.get('StepName', '')),
+                    'NodeName': row.get('nodename', row.get('NodeName', '')),
+                    'PlaybookPath': row.get('playbookpath', row.get('PlaybookPath', '')),
+                    'Duration': int(row.get('duration', row.get('Duration', 0)) or 0),
+                    'ErrorMessage': row.get('errormessage', row.get('ErrorMessage', '')),
+                    'Metadata': metadata
+                }
+                json_lines.append(json.dumps(ch_row))
+
+            result = {
+                'status': 'success',
+                'count': len(json_lines),
+                'json_lines': '\n'.join(json_lines),
+                'message': f'Transformed {len(json_lines)} events for ClickHouse'
+            }
+    next:
+      - step: insert_to_clickhouse
+
+  - step: insert_to_clickhouse
+    desc: Insert events into ClickHouse
+    tool:
+      kind: shell
+      cmds:
+        - |
+          POD=$(kubectl get pods -n clickhouse -l clickhouse.altinity.com/chi=noetl-clickhouse -o jsonpath='{.items[0].metadata.name}')
+
+          COUNT="{{ transform_for_clickhouse.count }}"
+          if [ "$COUNT" = "0" ]; then
+            echo "No events to insert"
+            exit 0
+          fi
+
+          echo "Inserting $COUNT events into ClickHouse..."
+
+          # Create temp file with JSON data
+          JSON_DATA='{{ transform_for_clickhouse.json_lines }}'
+
+          # Insert via clickhouse-client
+          echo "$JSON_DATA" | kubectl exec -i -n clickhouse $POD -- clickhouse-client \
+            --query="INSERT INTO observability.noetl_events FORMAT JSONEachRow"
+
+          echo "Successfully inserted $COUNT events"
+    next:
+      - step: show_sync_summary
+
+  - step: show_sync_summary
+    desc: Show sync summary
+    tool:
+      kind: shell
+      cmds:
+        - |
+          POD=$(kubectl get pods -n clickhouse -l clickhouse.altinity.com/chi=noetl-clickhouse -o jsonpath='{.items[0].metadata.name}')
+          echo ""
+          echo "=== Sync Summary ==="
+          echo "Events synced: {{ transform_for_clickhouse.count }}"
+          echo ""
+          echo "ClickHouse event count:"
+          kubectl exec -n clickhouse $POD -- clickhouse-client --query="SELECT count() as total_events FROM observability.noetl_events"
+          echo ""
+          echo "Events by type (last 24h):"
+          kubectl exec -n clickhouse $POD -- clickhouse-client --query="
+            SELECT EventType, count() as cnt
+            FROM observability.noetl_events
+            WHERE Timestamp >= now() - INTERVAL 24 HOUR
+            GROUP BY EventType
+            ORDER BY cnt DESC
+            LIMIT 10"
+    next:
+      - step: end
+
+  - step: count_events
+    desc: Count events in both databases
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "=== Event Counts ==="
+          echo ""
+          echo "PostgreSQL (noetl.event):"
+    next:
+      - step: count_pg_events
+
+  - step: count_pg_events
+    desc: Count PostgreSQL events
+    tool:
+      kind: postgres
+      auth: "{{ workload.pg_auth }}"
+      command: |
+        SELECT
+          COUNT(*) as total_events,
+          COUNT(DISTINCT execution_id) as unique_executions,
+          MIN(created_at) as oldest_event,
+          MAX(created_at) as newest_event
+        FROM noetl.event;
+    next:
+      - step: count_ch_events
+
+  - step: count_ch_events
+    desc: Count ClickHouse events
+    tool:
+      kind: shell
+      cmds:
+        - |
+          POD=$(kubectl get pods -n clickhouse -l clickhouse.altinity.com/chi=noetl-clickhouse -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+          if [ -z "$POD" ]; then
+            echo "ClickHouse not deployed"
+            exit 0
+          fi
+          echo ""
+          echo "ClickHouse (observability.noetl_events):"
+          kubectl exec -n clickhouse $POD -- clickhouse-client --query="
+            SELECT
+              count() as total_events,
+              uniq(ExecutionId) as unique_executions,
+              min(Timestamp) as oldest_event,
+              max(Timestamp) as newest_event
+            FROM observability.noetl_events
+            FORMAT Vertical" 2>/dev/null || echo "Table not initialized"
+    next:
+      - step: end
+
+  - step: verify_sync
+    desc: Verify sync between PostgreSQL and ClickHouse
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "=== Sync Verification ==="
+          POD=$(kubectl get pods -n clickhouse -l clickhouse.altinity.com/chi=noetl-clickhouse -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+          if [ -z "$POD" ]; then
+            echo "ClickHouse not deployed"
+            exit 1
+          fi
+
+          echo ""
+          echo "ClickHouse event type distribution:"
+          kubectl exec -n clickhouse $POD -- clickhouse-client --query="
+            SELECT
+              EventType,
+              count() as event_count,
+              avg(Duration) as avg_duration_ms,
+              max(Duration) as max_duration_ms
+            FROM observability.noetl_events
+            WHERE Timestamp >= now() - INTERVAL 24 HOUR
+            GROUP BY EventType
+            ORDER BY event_count DESC"
+    next:
+      - step: end
+
+  - step: analyze_event_gaps
+    desc: Analyze time gaps between events to find bottlenecks
+    tool:
+      kind: postgres
+      auth: "{{ workload.pg_auth }}"
+      command: |
+        WITH event_gaps AS (
+            SELECT
+                execution_id,
+                event_type,
+                node_name,
+                created_at,
+                LAG(created_at) OVER (PARTITION BY execution_id ORDER BY created_at) as prev_time,
+                LAG(event_type) OVER (PARTITION BY execution_id ORDER BY created_at) as prev_event_type
+            FROM noetl.event
+            WHERE created_at > NOW() - INTERVAL '{{ workload.since_hours }} hours'
+        )
+        SELECT
+            execution_id,
+            prev_event_type as from_event,
+            event_type as to_event,
+            node_name,
+            ROUND(EXTRACT(EPOCH FROM (created_at - prev_time))::numeric, 2) as gap_seconds,
+            created_at
+        FROM event_gaps
+        WHERE created_at - prev_time > INTERVAL '2 seconds'
+        ORDER BY gap_seconds DESC
+        LIMIT 50;
+    next:
+      - step: show_gap_analysis
+
+  - step: show_gap_analysis
+    desc: Display gap analysis results
+    tool:
+      kind: python
+      auth: {}
+      libs:
+        json: json
+      args:
+        gaps_data: "{{ analyze_event_gaps }}"
+      code: |
+        """Analyze and summarize event gaps."""
+        if isinstance(gaps_data, dict):
+            rows = gaps_data.get('rows', gaps_data.get('data', []))
+        elif isinstance(gaps_data, list):
+            rows = gaps_data
+        else:
+            rows = []
+
+        if not rows:
+            result = {
+                'status': 'success',
+                'message': 'No significant gaps found (>2 seconds)',
+                'summary': []
+            }
+        else:
+            # Group by transition type
+            transitions = {}
+            for row in rows:
+                from_evt = row.get('from_event', 'unknown')
+                to_evt = row.get('to_event', 'unknown')
+                key = f"{from_evt} -> {to_evt}"
+                gap = float(row.get('gap_seconds', 0))
+
+                if key not in transitions:
+                    transitions[key] = {'count': 0, 'total_gap': 0, 'max_gap': 0}
+                transitions[key]['count'] += 1
+                transitions[key]['total_gap'] += gap
+                transitions[key]['max_gap'] = max(transitions[key]['max_gap'], gap)
+
+            summary = []
+            for transition, stats in sorted(transitions.items(), key=lambda x: x[1]['max_gap'], reverse=True):
+                summary.append({
+                    'transition': transition,
+                    'occurrences': stats['count'],
+                    'avg_gap_sec': round(stats['total_gap'] / stats['count'], 2),
+                    'max_gap_sec': round(stats['max_gap'], 2)
+                })
+
+            result = {
+                'status': 'success',
+                'message': f'Found {len(rows)} gaps across {len(transitions)} transition types',
+                'summary': summary[:10],  # Top 10 problematic transitions
+                'total_gaps': len(rows)
+            }
+    next:
+      - step: end
+
+  - step: analyze_slow_executions
+    desc: Find slowest executions and their event counts
+    tool:
+      kind: postgres
+      auth: "{{ workload.pg_auth }}"
+      command: |
+        SELECT
+            e.execution_id,
+            c.path as playbook_path,
+            COUNT(*) as event_count,
+            MIN(e.created_at) as started_at,
+            MAX(e.created_at) as ended_at,
+            ROUND(EXTRACT(EPOCH FROM (MAX(e.created_at) - MIN(e.created_at)))::numeric, 2) as duration_seconds,
+            COUNT(DISTINCT e.node_name) as unique_steps,
+            SUM(CASE WHEN e.status = 'FAILED' THEN 1 ELSE 0 END) as failed_events
+        FROM noetl.event e
+        LEFT JOIN noetl.catalog c ON e.catalog_id = c.catalog_id
+        WHERE e.created_at > NOW() - INTERVAL '{{ workload.since_hours }} hours'
+        GROUP BY e.execution_id, c.path
+        HAVING EXTRACT(EPOCH FROM (MAX(e.created_at) - MIN(e.created_at))) > 5
+        ORDER BY duration_seconds DESC
+        LIMIT 20;
+    next:
+      - step: show_slow_analysis
+
+  - step: show_slow_analysis
+    desc: Display slow execution analysis
+    tool:
+      kind: python
+      auth: {}
+      libs: {}
+      args:
+        slow_data: "{{ analyze_slow_executions }}"
+      code: |
+        """Analyze slow executions."""
+        if isinstance(slow_data, dict):
+            rows = slow_data.get('rows', slow_data.get('data', []))
+        elif isinstance(slow_data, list):
+            rows = slow_data
+        else:
+            rows = []
+
+        if not rows:
+            result = {
+                'status': 'success',
+                'message': 'No slow executions found (>5 seconds)',
+                'executions': []
+            }
+        else:
+            executions = []
+            total_duration = 0
+            total_events = 0
+
+            for row in rows:
+                duration = float(row.get('duration_seconds', 0))
+                events = int(row.get('event_count', 0))
+                total_duration += duration
+                total_events += events
+
+                executions.append({
+                    'execution_id': str(row.get('execution_id', '')),
+                    'playbook': row.get('playbook_path', 'unknown'),
+                    'duration_sec': duration,
+                    'event_count': events,
+                    'events_per_sec': round(events / duration, 2) if duration > 0 else 0,
+                    'unique_steps': row.get('unique_steps', 0),
+                    'failed': row.get('failed_events', 0)
+                })
+
+            avg_duration = total_duration / len(rows) if rows else 0
+            avg_events = total_events / len(rows) if rows else 0
+
+            result = {
+                'status': 'success',
+                'message': f'Found {len(rows)} slow executions',
+                'summary': {
+                    'avg_duration_sec': round(avg_duration, 2),
+                    'avg_event_count': round(avg_events, 2),
+                    'slowest_duration_sec': round(executions[0]['duration_sec'], 2) if executions else 0
+                },
+                'executions': executions[:10]  # Top 10 slowest
+            }
+    next:
+      - step: end
+
+  - step: show_help
+    desc: Show available actions
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "=================================================="
+          echo " Event Sync - PostgreSQL to ClickHouse"
+          echo "=================================================="
+          echo ""
+          echo "Usage:"
+          echo "  noetl run automation/observability/event-sync.yaml --set action=<action>"
+          echo ""
+          echo "Sync Actions:"
+          echo "  sync         - Full sync of events from last N hours"
+          echo "  sync-recent  - Same as sync (alias)"
+          echo "  count        - Count events in both databases"
+          echo "  verify       - Verify sync between databases"
+          echo ""
+          echo "Analysis Actions:"
+          echo "  analyze-gaps - Find time gaps between events (bottlenecks)"
+          echo "  analyze-slow - Find slowest executions"
+          echo ""
+          echo "Options:"
+          echo "  --set since_hours=N   - Sync events from last N hours (default: 24)"
+          echo "  --set batch_size=N    - Max events per batch (default: 1000)"
+          echo "  --set pg_auth=NAME    - PostgreSQL auth profile (default: pg_local)"
+          echo ""
+          echo "Examples:"
+          echo "  # Sync last 24 hours of events"
+          echo "  noetl run automation/observability/event-sync.yaml --set action=sync"
+          echo ""
+          echo "  # Sync last 1 hour with larger batch"
+          echo "  noetl run automation/observability/event-sync.yaml --set action=sync --set since_hours=1 --set batch_size=5000"
+          echo ""
+          echo "  # Analyze bottlenecks"
+          echo "  noetl run automation/observability/event-sync.yaml --set action=analyze-gaps --set since_hours=1"
+          echo ""
+          echo "  # Find slow executions"
+          echo "  noetl run automation/observability/event-sync.yaml --set action=analyze-slow"
+          echo ""
+    next:
+      - step: end
+
+  - step: end
+    desc: End workflow

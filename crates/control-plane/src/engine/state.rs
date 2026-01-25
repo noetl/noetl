@@ -3,6 +3,7 @@
 //! Provides state reconstruction for event-sourced workflow execution.
 
 use std::collections::HashMap;
+use std::time::Instant;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -158,6 +159,8 @@ impl WorkflowState {
 
     /// Reconstruct workflow state from a list of events.
     pub fn from_events(events: &[Event]) -> Option<Self> {
+        let start = Instant::now();
+
         if events.is_empty() {
             return None;
         }
@@ -169,6 +172,31 @@ impl WorkflowState {
         // Process events in order
         for event in events {
             state.apply_event(event);
+        }
+
+        let duration = start.elapsed();
+        let event_count = events.len();
+
+        // Log performance metrics for state reconstruction
+        tracing::info!(
+            target: "noetl.performance",
+            execution_id = %first.execution_id,
+            phase = "state_reconstruction",
+            event_count = %event_count,
+            step_count = %state.steps.len(),
+            duration_ms = %duration.as_millis(),
+            "State reconstructed from events"
+        );
+
+        // Warn if reconstruction is slow (potential bottleneck)
+        if duration.as_millis() > 100 || event_count > 50 {
+            tracing::warn!(
+                target: "noetl.performance",
+                execution_id = %first.execution_id,
+                event_count = %event_count,
+                duration_ms = %duration.as_millis(),
+                "Slow state reconstruction detected - consider optimizing event loading"
+            );
         }
 
         Some(state)
