@@ -164,6 +164,20 @@ See [Multi-Architecture Build Strategy](./multi_arch_strategy.md) for complete d
 ### "cargo: command not found"
 **Solution**: Install Rust from https://rustup.rs/ or use Docker for development
 
+### Missing development tools
+**Solution**: Use the OS-aware tooling playbooks to install all required tools:
+
+```bash
+# Auto-detect OS and install all dev tools
+noetl run automation/development/setup_tooling.yaml --set action=install-devtools
+
+# macOS (uses Homebrew)
+noetl run automation/development/tooling_macos.yaml --set action=install-devtools
+
+# Linux/WSL2 (uses apt-get)
+noetl run automation/development/tooling_linux.yaml --set action=install-devtools
+```
+
 ## Task Commands
 
 ```bash
@@ -199,10 +213,30 @@ noetl/
 
 ## Related Documentation
 
+- [Automation Playbooks](./automation_playbooks.md) - Complete playbook reference
 - [Multi-Architecture Build Strategy](./multi_arch_strategy.md)
 - [Multi-Architecture Builds (Implementation Guide)](./multi_arch_builds.md)
 - [Rust CLI Migration](./rust_cli_migration.md)
 - [PyPI Rust Bundling](./pypi_rust_bundling.md)
+
+## OS-Aware Tooling Setup
+
+NoETL provides playbooks that automatically detect your operating system and install required development tools:
+
+```bash
+# Detect OS and show recommended setup
+noetl run automation/development/setup_tooling.yaml --set action=detect
+
+# Install all dev tools (auto-detects macOS vs Linux/WSL2)
+noetl run automation/development/setup_tooling.yaml --set action=install-devtools
+
+# Validate installed tools
+noetl run automation/development/setup_tooling.yaml --set action=validate-install
+```
+
+**Platform-specific playbooks:**
+- `automation/development/tooling_macos.yaml` - macOS (uses Homebrew)
+- `automation/development/tooling_linux.yaml` - Linux/WSL2 (uses apt-get)
 
 ## Quick Reference Card
 

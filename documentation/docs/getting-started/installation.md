@@ -78,14 +78,38 @@ For production deployments, NoETL runs as a Kubernetes service with PostgreSQL b
 git clone https://github.com/noetl/noetl.git
 cd noetl
 
+# Install development tools (auto-detects OS)
+noetl run automation/development/setup_tooling.yaml --set action=install-devtools
+
 # Bootstrap complete environment
-noetl run automation/main.yaml bootstrap
+noetl run boot
 ```
 
 This creates a Kind cluster with:
 - NoETL server and workers (3 replicas)
 - PostgreSQL database
 - Observability stack (ClickHouse, Qdrant, NATS)
+
+### Development Tools Setup
+
+NoETL provides OS-aware tooling playbooks that automatically install required tools:
+
+```bash
+# Detect your operating system
+noetl run automation/development/setup_tooling.yaml --set action=detect
+
+# Install all dev tools (macOS uses Homebrew, Linux/WSL2 uses apt-get)
+noetl run automation/development/setup_tooling.yaml --set action=install-devtools
+
+# Validate installed tools
+noetl run automation/development/setup_tooling.yaml --set action=validate-install
+```
+
+**Platform-specific playbooks:**
+- **macOS**: `automation/development/tooling_macos.yaml` (uses Homebrew)
+- **Linux/WSL2**: `automation/development/tooling_linux.yaml` (uses apt-get)
+
+**Tools installed:** docker, kind, kubectl, go-task, jq, yq, pyenv, uv, tfenv, psql
 
 **Optional**: Deploy VictoriaMetrics monitoring stack:
 

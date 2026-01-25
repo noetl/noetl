@@ -85,6 +85,9 @@ Complete K8s environment setup including:
 ### Usage
 
 ```bash
+# Quick bootstrap (recommended)
+noetl run boot
+
 # Via main entry point
 noetl run automation/main.yaml --set target=bootstrap
 
@@ -94,29 +97,52 @@ noetl run automation/setup/bootstrap.yaml
 # With verbose output
 noetl run automation/setup/bootstrap.yaml -v
 
-# Skip Gateway deployment
-noetl run automation/setup/bootstrap.yaml --set deploy_gateway=false
+# Force rebuild Rust CLI (even if binary exists)
+noetl run boot --set build_rust_cli=true
 
-# Build Rust CLI when needed
-noetl run automation/setup/bootstrap.yaml --set build_rust_cli=true
+# Skip Gateway deployment
+noetl run boot --set deploy_gateway=false
+
+# Use minimal kind config (fewer port mappings)
+noetl run boot --set kind_config=ci/kind/config-minimal.yaml
+```
+
+### Install Prerequisites First
+
+If bootstrap fails due to missing tools, use the OS-aware tooling playbooks:
+
+```bash
+# Auto-detect OS and install all dev tools
+noetl run automation/development/setup_tooling.yaml --set action=install-devtools
+
+# Or use platform-specific playbooks:
+# macOS
+noetl run automation/development/tooling_macos.yaml --set action=install-devtools
+
+# Linux/WSL2
+noetl run automation/development/tooling_linux.yaml --set action=install-devtools
 ```
 
 ### Steps
 
-1. **validate_prerequisites** - Check required tools
-2. **check_docker_running** - Verify Docker daemon
-3. **check_existing_cluster** - Check for existing cluster
-4. **build_rust_cli** - Build noetlctl binary (optional)
+1. **validate_prerequisites** - Check required tools (docker, kind, kubectl, task, python3, uv)
+2. **check_docker_running** - Verify Docker daemon is running
+3. **check_existing_cluster** - Check for existing kind cluster
+4. **maybe_build_rust_cli** - Check for `target/release/noetlctl` binary:
+   - If binary exists: skip build (saves compilation time)
+   - If binary missing: build automatically
+   - Use `--set build_rust_cli=true` to force rebuild
 5. **build_docker_images** - Build NoETL Python container
-6. **create_kind_cluster** - Create K8s cluster
-7. **load_image_to_kind** - Load image to cluster
-8. **deploy_postgres** - Deploy PostgreSQL
-9. **deploy_gateway** - Deploy Gateway API (optional)
-10. **deploy_noetl** - Deploy NoETL server/workers
-11. **deploy_observability** - Deploy ClickHouse, Qdrant, NATS
-11. **wait_for_services** - Wait for pods to be ready
-12. **test_cluster_health** - Verify endpoints
-13. **summary** - Show completion status
+6. **check_port_conflicts** - Verify required ports are available
+7. **create_kind_cluster** - Create K8s cluster (configurable via `kind_config`)
+8. **load_image_to_kind** - Load image to cluster
+9. **deploy_postgres** - Deploy PostgreSQL
+10. **deploy_gateway** - Deploy Gateway API (optional, `deploy_gateway=true`)
+11. **deploy_noetl** - Deploy NoETL server/workers
+12. **deploy_observability** - Deploy ClickHouse, Qdrant, NATS
+13. **wait_for_services** - Wait for pods to be ready
+14. **test_cluster_health** - Verify endpoints
+15. **summary** - Show completion status
 
 ### Observability Stack
 

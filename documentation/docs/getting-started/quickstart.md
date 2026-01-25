@@ -57,18 +57,53 @@ cd noetl
 # Install NoETL CLI
 cargo install --path crates/noetlctl
 
+# (Optional) Install dev tools - auto-detects macOS vs Linux/WSL2
+noetl run automation/development/setup_tooling.yaml --set action=install-devtools
+
 # Bootstrap entire environment (one command)
 noetl run boot
 ```
 
+### Prerequisites Setup
+
+NoETL provides OS-aware tooling playbooks that automatically install required development tools:
+
+```bash
+# Detect your OS and see recommended setup
+noetl run automation/development/setup_tooling.yaml --set action=detect
+
+# Install all development tools (auto-detects OS)
+noetl run automation/development/setup_tooling.yaml --set action=install-devtools
+
+# Or use platform-specific playbooks:
+# macOS (uses Homebrew)
+noetl run automation/development/tooling_macos.yaml --set action=install-devtools
+
+# Linux/WSL2 (uses apt-get)
+noetl run automation/development/tooling_linux.yaml --set action=install-devtools
+```
+
+**Tools installed:** git, curl, jq, docker, kind, kubectl, go-task, pyenv, uv, tfenv
+
 **What `noetl run boot` does:**
-1. Creates Kind Kubernetes cluster with pre-configured NodePort mappings
-2. Builds NoETL Docker images
-3. Deploys PostgreSQL database
-4. Deploys NoETL server (control plane) and workers (data plane)
-5. Initializes database schema
-6. Deploys observability stack (ClickHouse, Qdrant, NATS JetStream)
-7. Sets up monitoring (if configured)
+1. Validates prerequisites (docker, kind, kubectl, task, python3, uv)
+2. Checks for existing Rust CLI binary (`target/release/noetlctl`) - builds only if missing
+3. Builds NoETL Docker images
+4. Creates Kind Kubernetes cluster with pre-configured NodePort mappings
+5. Deploys PostgreSQL database
+6. Deploys NoETL server (control plane) and workers (data plane)
+7. Initializes database schema
+8. Deploys observability stack (ClickHouse, Qdrant, NATS JetStream)
+9. Sets up monitoring (if configured)
+
+**Bootstrap options:**
+```bash
+# Force rebuild Rust CLI (even if binary exists)
+noetl run boot --set build_rust_cli=true
+
+# Use minimal kind config (fewer port mappings)
+noetl run boot --set kind_config=ci/kind/config-minimal.yaml
+```
 
 **Services available after boot:**
 

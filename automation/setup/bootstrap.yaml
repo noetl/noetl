@@ -151,32 +151,46 @@ workflow:
       - step: maybe_build_rust_cli
 
   - step: maybe_build_rust_cli
-    desc: Build Rust CLI only when requested
-    tool:
-      kind: shell
-      cmds:
-        - |
-          echo "Build Rust CLI flag: {{ workload.build_rust_cli }}"
-    case:
-      - when: "{{ workload.build_rust_cli }} == true"
-        then:
-          - step: build_rust_cli
-      - when: "true"
-        then:
-          - step: build_docker_images
-  
-  - step: build_rust_cli
-    desc: Build Rust CLI binary
+    desc: Build Rust CLI if binary not found or force flag set
     tool:
       kind: shell
       cmds:
         - |
           echo ""
-          echo "Building Rust CLI..."
-          cd crates/noetlctl
-          cargo build --release
-          mkdir -p ../../bin
-          cd ../..
+          echo "Checking for Rust CLI binary..."
+          FORCE_BUILD="{{ workload.build_rust_cli }}"
+
+          # Note: This checks for existing binary to skip long compilation times.
+          # Version mismatch is possible if source changed but binary wasn't rebuilt.
+          # For guaranteed consistency, use: --set build_rust_cli=true
+
+          if [ "$FORCE_BUILD" = "true" ]; then
+            echo "INFO Force build requested via build_rust_cli=true"
+            echo "Building Rust CLI (this may take a while)..."
+            cargo build --release --manifest-path crates/noetlctl/Cargo.toml
+            if [ -f "target/release/noetlctl" ]; then
+              echo "OK noetlctl built successfully"
+              ls -la target/release/noetlctl
+            else
+              echo "ERROR noetlctl build failed"
+              exit 1
+            fi
+          elif [ -f "target/release/noetlctl" ]; then
+            echo "OK noetlctl binary found at target/release/noetlctl"
+            echo "   To force rebuild: noetl run boot --set build_rust_cli=true"
+            ls -la target/release/noetlctl
+          else
+            echo "INFO noetlctl binary not found at target/release/noetlctl"
+            echo "Building Rust CLI (this may take a while)..."
+            cargo build --release --manifest-path crates/noetlctl/Cargo.toml
+            if [ -f "target/release/noetlctl" ]; then
+              echo "OK noetlctl built successfully"
+              ls -la target/release/noetlctl
+            else
+              echo "ERROR noetlctl build failed"
+              exit 1
+            fi
+          fi
     next:
       - step: build_docker_images
   
