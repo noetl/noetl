@@ -20,7 +20,7 @@ spec:
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
-            - containerPort: {{ .Values.service.port }}
+            - containerPort: {{ .Values.env.routerPort }}
               name: http
               protocol: TCP
           env:
@@ -35,12 +35,12 @@ spec:
           livenessProbe:
             httpGet:
               path: /health
-              port: {{ .Values.service.port }}
+              port: {{ .Values.env.routerPort }}
             initialDelaySeconds: 10
             periodSeconds: 30
           readinessProbe:
             httpGet:
               path: /health
-              port: {{ .Values.service.port }}
+              port: {{ .Values.env.routerPort }}
             initialDelaySeconds: 5
             periodSeconds: 10
