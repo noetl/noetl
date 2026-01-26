@@ -76,42 +76,141 @@ noetl iap apply gke_autopilot.yaml \
 
 ## Quick Start
 
-### Initialize State Bucket
+### Deploy Complete NoETL Stack to GKE
 
-First, create the GCS bucket for state storage:
+The fastest way to deploy the entire stack:
 
 ```bash
-noetl iap apply iap/gcp/init_state_bucket.yaml \
-  --auto-approve \
-  --var project_id=mestumre-dev \
-  --var bucket_name=mestumre-dev-noetl-state \
-  --var region=us-central1
+noetl run automation/iap/gcp/deploy_gke_stack.yaml \
+  --set project_id=noetl-demo-19700101
 ```
 
-### Provision GKE Autopilot Cluster
+This creates:
+- GKE Autopilot cluster
+- Artifact Registry repository
+- **Builds and pushes all container images** (NoETL server, Gateway, Worker Pool)
+- PostgreSQL (Bitnami Helm chart) with NoETL schema initialized
+- NATS JetStream
+- ClickHouse (IPv4-compatible for GKE Autopilot)
+- NoETL server and workers
+- NoETL Gateway
+- In-cluster credentials automatically registered (pg_demo, pg_k8s, nats_k8s, clickhouse_k8s)
+
+To skip image building (if images already exist):
+```bash
+noetl run automation/iap/gcp/deploy_gke_stack.yaml \
+  --set project_id=noetl-demo-19700101 \
+  --set build_images=false
+```
+
+### Initialize State Bucket
+
+Create the GCS bucket for state storage:
 
 ```bash
-noetl iap apply iap/gcp/gke_autopilot.yaml \
-  --auto-approve \
-  --var project_id=mestumre-dev \
-  --var cluster_name=noetl-test-cluster \
-  --var region=us-central1
+noetl run automation/iap/gcp/init_state_bucket.yaml \
+  --set project_id=noetl-demo-19700101
+```
+
+### Provision GKE Autopilot Cluster Only
+
+```bash
+noetl run automation/iap/gcp/gke_autopilot.yaml \
+  --set action=create \
+  --set project_id=noetl-demo-19700101 \
+  --set cluster_name=noetl-cluster
+```
+
+### Build and Push Container Images
+
+Images are built automatically by the deployment playbook. You can choose between:
+
+**Option 1: Google Cloud Build (Recommended for ARM Mac)**
+
+Cloud Build runs on native AMD64 machines, making Rust compilation fast (~5-10 minutes instead of ~2 hours):
+
+```bash
+noetl run automation/iap/gcp/deploy_gke_stack.yaml \
+  --set project_id=noetl-demo-19700101 \
+  --set use_cloud_build=true
+```
+
+**Option 2: Local Docker Build**
+
+If you're on an AMD64 machine or have time to spare:
+
+```bash
+noetl run automation/iap/gcp/deploy_gke_stack.yaml \
+  --set project_id=noetl-demo-19700101 \
+  --set use_cloud_build=false
+```
+
+**Option 3: Skip Image Building**
+
+If images already exist in the registry:
+
+```bash
+noetl run automation/iap/gcp/deploy_gke_stack.yaml \
+  --set project_id=noetl-demo-19700101 \
+  --set build_images=false
+```
+
+**Manual Build (if needed):**
+
+```bash
+# Configure Docker for Artifact Registry
+gcloud auth configure-docker us-central1-docker.pkg.dev
+
+# Set environment variables
+export PROJECT_ID=noetl-demo-19700101
+export REGION=us-central1
+export REGISTRY=${REGION}-docker.pkg.dev/${PROJECT_ID}/noetl
+export TAG=$(date +%Y%m%d%H%M%S)
+
+# IMPORTANT: Use --platform linux/amd64 when building on ARM Mac (M1/M2/M3)
+# GKE Autopilot runs AMD64 nodes
+
+# Build and push NoETL server (Python - fast)
+docker build --platform linux/amd64 -t ${REGISTRY}/noetl:${TAG} \
+  -f docker/noetl/pip/Dockerfile --build-arg NOETL_VERSION=latest .
+docker push ${REGISTRY}/noetl:${TAG}
+
+# Build and push Gateway (Rust - use Cloud Build on ARM Mac)
+gcloud builds submit --project $PROJECT_ID \
+  --tag ${REGISTRY}/noetl-gateway:${TAG} \
+  --timeout=3600 \
+  --machine-type=e2-highcpu-32 \
+  -f crates/gateway/Dockerfile .
+```
+
+### Deploy Stack to Existing Cluster
+
+```bash
+noetl run automation/iap/gcp/gke_autopilot.yaml \
+  --set action=deploy \
+  --set project_id=noetl-demo-19700101 \
+  --set noetl_image_repository=us-central1-docker.pkg.dev/noetl-demo-19700101/noetl/noetl
 ```
 
 ### Check State
 
 ```bash
-noetl iap apply iap/gcp/state_inspect.yaml
+noetl run automation/iap/gcp/state_inspect.yaml \
+  --set project_id=noetl-demo-19700101
 ```
 
 ### Destroy Resources
 
 ```bash
-noetl iap apply iap/gcp/gke_autopilot.yaml \
-  --auto-approve \
-  --var action=destroy \
-  --var project_id=mestumre-dev \
-  --var cluster_name=noetl-test-cluster
+# Destroy entire stack
+noetl run automation/iap/gcp/deploy_gke_stack.yaml \
+  --set action=destroy \
+  --set project_id=noetl-demo-19700101
+
+# Or destroy cluster only
+noetl run automation/iap/gcp/gke_autopilot.yaml \
+  --set action=destroy \
+  --set project_id=noetl-demo-19700101
 ```
 
 ## Directory Structure
@@ -119,18 +218,15 @@ noetl iap apply iap/gcp/gke_autopilot.yaml \
 ```
 iap/gcp/
 ├── README.md                    # This file
-├── init_state_bucket.yaml       # Initialize GCS state bucket
+├── deploy_gke_stack.yaml        # Complete stack deployment (recommended)
 ├── gke_autopilot.yaml           # GKE Autopilot cluster management
+├── artifact_registry.yaml       # Artifact Registry repository management
+├── init_state_bucket.yaml       # Initialize GCS state bucket
 ├── state_inspect.yaml           # Inspect current state
 ├── state_sync.yaml              # Sync state to/from GCS
-├── resources/                   # Reusable resource playbooks
-│   ├── gke_autopilot.yaml      # GKE Autopilot resource
-│   ├── vpc_network.yaml        # VPC network resource
-│   └── service_account.yaml    # Service account resource
-├── schema/                      # DuckDB schema definitions
-│   └── state_schema.sql        # State management schema
-└── tests/                       # Integration tests
-    └── test_gke_lifecycle.yaml # GKE lifecycle test
+├── test_rhai.yaml               # Rhai scripting test
+└── schema/                      # DuckDB schema definitions
+    └── state_schema.sql        # State management schema
 ```
 
 ## Authentication
@@ -292,16 +388,74 @@ noetl iap apply iap/gcp/gke_autopilot.yaml \
 
 ## Supported Resources
 
-| Resource Type | API | Status |
-|--------------|-----|--------|
+| Resource Type | API/Method | Status |
+|--------------|------------|--------|
 | GKE Autopilot Cluster | container.googleapis.com | Implemented |
-| VPC Network | compute.googleapis.com | Planned |
-| Firewall Rules | compute.googleapis.com | Planned |
-| Service Account | iam.googleapis.com | Planned |
-| Cloud SQL Instance | sqladmin.googleapis.com | Planned |
-| GCS Bucket | storage.googleapis.com | Planned |
+| Artifact Registry | artifactregistry.googleapis.com | Implemented |
+| GCS Bucket | storage.googleapis.com | Implemented |
+| PostgreSQL (Helm) | bitnami/postgresql | Implemented |
+| NATS JetStream (Helm) | nats/nats | Implemented |
+| ClickHouse | Kubernetes manifests | Implemented |
+| NoETL (Helm) | automation/helm/noetl | Implemented |
+| Gateway (Helm) | automation/helm/gateway | Implemented |
+
+### Components Deployed
+
+The `deploy_gke_stack.yaml` playbook deploys:
+
+| Component | Namespace | Description |
+|-----------|-----------|-------------|
+| PostgreSQL | postgres | Primary database for NoETL |
+| NATS JetStream | nats | Message queue for event-driven workflows |
+| ClickHouse | clickhouse | Analytics database for observability |
+| NoETL Server | noetl | FastAPI server for playbook orchestration |
+| NoETL Worker | noetl | Python workers for step execution |
+| Gateway | gateway | Rust-based API gateway |
 
 ## Troubleshooting
+
+### exec format error (CrashLoopBackOff)
+
+This indicates an architecture mismatch (ARM64 image on AMD64 cluster):
+
+```bash
+# Rebuild with correct platform
+docker build --platform linux/amd64 -t ${REGISTRY}/noetl:${TAG} \
+  -f docker/noetl/pip/Dockerfile .
+docker push ${REGISTRY}/noetl:${TAG}
+
+# Update deployment
+kubectl set image deployment/noetl-server noetl=${REGISTRY}/noetl:${TAG} -n noetl
+```
+
+### PostgreSQL Schema Not Initialized
+
+If NoETL server fails with "relation does not exist":
+
+```bash
+POSTGRES_POD=$(kubectl get pods -n postgres -l app.kubernetes.io/instance=postgres -o jsonpath='{.items[0].metadata.name}')
+
+# Create schema and apply DDL
+kubectl exec -n postgres $POSTGRES_POD -- /bin/sh -c \
+  "PGPASSWORD=demo psql -U postgres -d noetl -c 'CREATE SCHEMA IF NOT EXISTS noetl'"
+kubectl exec -i -n postgres $POSTGRES_POD -- /bin/sh -c \
+  "PGPASSWORD=demo psql -U postgres -d noetl" < noetl/database/ddl/postgres/schema_ddl.sql
+kubectl exec -n postgres $POSTGRES_POD -- /bin/sh -c \
+  "PGPASSWORD=demo psql -U postgres -d noetl -c 'GRANT ALL ON SCHEMA noetl TO noetl; GRANT ALL ON ALL TABLES IN SCHEMA noetl TO noetl; GRANT ALL ON ALL SEQUENCES IN SCHEMA noetl TO noetl;'"
+
+# Restart NoETL
+kubectl rollout restart deployment/noetl-server -n noetl
+```
+
+### ClickHouse IPv6 Error
+
+If ClickHouse fails with IPv6 errors on GKE Autopilot:
+
+```bash
+kubectl delete statefulset clickhouse -n clickhouse
+kubectl delete configmap clickhouse-config -n clickhouse
+kubectl apply -f ci/manifests/clickhouse/clickhouse-gke.yaml
+```
 
 ### Authentication Errors
 

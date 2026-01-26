@@ -34,6 +34,7 @@ tests/fixtures/playbooks/**/temp/
 !.github/workflows
 !.gitignore
 !.dockerignore
+!.gcloudignore
 !.env.server
 !.env.worker
 # Distribution repositories (symlinks)
@@ -100,6 +101,8 @@ homebrew-tap
 
 # Extracted release tarballs (from testing)
 noetl-*/
+# Exception: keep crates/noetl-tools (part of Rust workspace)
+!crates/noetl-tools/
 
 # Debian package build artifacts
 build/deb/
@@ -116,4 +119,6 @@ homebrew-tap
 
 # Extracted release tarballs (from testing)
 noetl-*/
+# Exception: keep crates/noetl-tools (part of Rust workspace)
+!crates/noetl-tools/
 bin/
