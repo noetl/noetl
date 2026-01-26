@@ -3,6 +3,14 @@ NATS K/V cache for distributed execution state.
 
 Replaces in-memory cache with distributed NATS JetStream K/V store
 to enable horizontal scaling of server pods.
+
+IMPORTANT: NATS K/V has a 1MB max value size limit. This module stores ONLY:
+- Loop metadata (collection_size, iterator, mode)
+- Completion counts (completed_count integer)
+- Pointers/references (event_id, execution_id)
+
+NEVER store actual result values in NATS K/V - they are stored in the
+event table and retrieved via the aggregate service when needed.
 """
 
 import json
@@ -111,16 +119,30 @@ class NATSKVCache:
     
     async def set_loop_state(self, execution_id: str, step_name: str, state: dict[str, Any], event_id: Optional[str] = None) -> bool:
         """Set loop state for a specific step instance.
-        
+
+        IMPORTANT: state should contain only metadata and counts, NOT result values:
+        - collection_size: int - number of items in the loop collection
+        - completed_count: int - number of completed iterations
+        - iterator: str - iterator variable name
+        - mode: str - sequential or parallel
+        - event_id: str - event ID that initiated this loop
+
+        NEVER include 'results' array with actual values - those belong in the event table.
+
         Args:
             execution_id: Execution identifier
             step_name: Name of the step
-            state: Loop state dictionary
+            state: Loop state dictionary (metadata only, no result values)
             event_id: Event ID that initiated this step instance (for uniqueness)
         """
         if not self._kv:
             await self.connect()
-        
+
+        # Safety check: warn and strip results if accidentally included
+        if "results" in state:
+            logger.warning(f"[NATS-KV] Stripping 'results' array from loop state for {step_name} - use completed_count instead")
+            state = {k: v for k, v in state.items() if k != "results"}
+
         key_suffix = f"loop:{step_name}:{event_id}" if event_id else f"loop:{step_name}"
         key = self._make_key(execution_id, key_suffix)
         try:
@@ -132,55 +154,76 @@ class NATSKVCache:
             logger.error(f"Failed to set loop state in NATS K/V: {e}")
             return False
     
-    async def append_loop_result(self, execution_id: str, step_name: str, result: Any, event_id: Optional[str] = None) -> bool:
-        """Atomically append result to loop results array.
-        
+    async def increment_loop_completed(self, execution_id: str, step_name: str, event_id: Optional[str] = None) -> int:
+        """Atomically increment the completed_count for a loop.
+
+        This replaces the old append_loop_result which stored actual results.
+        NATS K/V now only tracks the count of completed iterations - actual
+        results are stored in the event table and fetched via aggregate service.
+
         Args:
             execution_id: Execution identifier
             step_name: Name of the step
-            result: Result to append
             event_id: Event ID that initiated this step instance (for uniqueness)
+
+        Returns:
+            The new completed_count value, or -1 on failure
         """
         if not self._kv:
             await self.connect()
-        
+
         key_suffix = f"loop:{step_name}:{event_id}" if event_id else f"loop:{step_name}"
         key = self._make_key(execution_id, key_suffix)
-        
-        # Read-modify-write with retry logic
+
+        # Read-modify-write with retry logic (optimistic locking)
         max_retries = 5
         for attempt in range(max_retries):
             try:
                 # Get current state
                 entry = await self._kv.get(key)
                 if not entry:
-                    logger.warning(f"Loop state not found for {step_name}, cannot append result")
-                    return False
-                
+                    logger.warning(f"Loop state not found for {step_name}, cannot increment count")
+                    return -1
+
                 state = json.loads(entry.value.decode('utf-8'))
-                
-                # Append result
-                if "results" not in state:
-                    state["results"] = []
-                state["results"].append(result)
-                
+
+                # Increment completed count
+                current_count = state.get("completed_count", 0)
+                state["completed_count"] = current_count + 1
+
                 # Update with revision check (optimistic locking)
                 value = json.dumps(state).encode('utf-8')
                 await self._kv.update(key, value, last=entry.revision)
-                
-                logger.debug(f"Appended result to loop state: {key}, results_count={len(state['results'])}")
-                return True
-                
+
+                logger.debug(f"Incremented loop completed count: {key}, completed_count={state['completed_count']}")
+                return state["completed_count"]
+
             except Exception as e:
                 if "wrong last sequence" in str(e).lower() and attempt < max_retries - 1:
                     # Concurrent update, retry
                     await asyncio.sleep(0.01 * (attempt + 1))  # Exponential backoff
                     continue
                 else:
-                    logger.error(f"Failed to append loop result: {e}")
-                    return False
-        
-        return False
+                    logger.error(f"Failed to increment loop completed count: {e}")
+                    return -1
+
+        return -1
+
+    async def get_loop_completed_count(self, execution_id: str, step_name: str, event_id: Optional[str] = None) -> int:
+        """Get the completed iteration count for a loop.
+
+        Args:
+            execution_id: Execution identifier
+            step_name: Name of the step
+            event_id: Event ID that initiated this step instance (for uniqueness)
+
+        Returns:
+            The completed_count value, or 0 if not found
+        """
+        state = await self.get_loop_state(execution_id, step_name, event_id)
+        if state:
+            return state.get("completed_count", 0)
+        return 0
     
     async def delete_execution_state(self, execution_id: str):
         """Delete all state for an execution (cleanup)."""
