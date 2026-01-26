@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.7.1](https://github.com/noetl/noetl/compare/v2.7.0...v2.7.1) (2026-01-26)
+
+### Bug Fixes
+
+* note deprecated cli ([#225](https://github.com/noetl/noetl/issues/225)) ([48b9962](https://github.com/noetl/noetl/commit/48b9962a59806cccc93293af9125d5832d59f19e))
+
 ## [2.7.0](https://github.com/noetl/noetl/compare/v2.6.0...v2.7.0) (2026-01-26)
 
 ### Features
