@@ -1215,7 +1215,8 @@ class ControlFlowEngine:
             
             # Use NATS count if available (authoritative for distributed execution)
             if nats_loop_state:
-                completed_count = len(nats_loop_state.get("results", []))
+                # Use completed_count field (not results array - results are stored in event table)
+                completed_count = nats_loop_state.get("completed_count", 0)
                 logger.debug(f"[LOOP-NATS] Got completed count from NATS K/V: {completed_count}")
             else:
                 # Initialize loop state if not present (first iteration)
@@ -1224,12 +1225,14 @@ class ControlFlowEngine:
                     logger.info(f"Initialized loop for {step.step} with {len(collection)} items, event_id={loop_event_id}")
                     
                     # Store initial state in NATS K/V with event_id for instance uniqueness
+                    # NOTE: We store only metadata and completed_count, NOT results array
+                    # Results are stored in event table and fetched via aggregate service
                     await nats_cache.set_loop_state(
                         str(state.execution_id),
                         step.step,
                         {
                             "collection_size": len(collection),
-                            "results": [],
+                            "completed_count": 0,  # Count only, not results array
                             "iterator": step.loop.iterator,
                             "mode": step.loop.mode,
                             "event_id": loop_event_id
@@ -1522,21 +1525,22 @@ class ControlFlowEngine:
                     state.add_loop_result(event.step, event.payload["result"], failed=failed)
                     logger.info(f"Added iteration result to loop aggregation for step {event.step}")
                     
-                    # Sync to distributed NATS K/V cache for multi-server deployments
+                    # Sync completed count to distributed NATS K/V cache for multi-server deployments
+                    # NOTE: We only increment the count, NOT store the actual result
+                    # Results are stored in event table and fetched via aggregate service
                     try:
                         nats_cache = await get_nats_cache()
                         # Get event_id from loop state to identify this loop instance
                         loop_event_id = loop_state.get("event_id")
-                        success = await nats_cache.append_loop_result(
+                        new_count = await nats_cache.increment_loop_completed(
                             str(state.execution_id),
                             event.step,
-                            event.payload["result"],
                             event_id=str(loop_event_id) if loop_event_id else None
                         )
-                        if success:
-                            logger.debug(f"[LOOP-NATS] Synced iteration result to NATS K/V for {event.step}, event_id={loop_event_id}")
+                        if new_count >= 0:
+                            logger.debug(f"[LOOP-NATS] Incremented completion count in NATS K/V for {event.step}: {new_count}, event_id={loop_event_id}")
                         else:
-                            logger.error(f"[LOOP-NATS] Failed to sync loop result to NATS K/V for {event.step}, event_id={loop_event_id}")
+                            logger.error(f"[LOOP-NATS] Failed to increment completion count in NATS K/V for {event.step}, event_id={loop_event_id}")
                     except Exception as e:
                         logger.error(f"[LOOP-NATS] Error syncing to NATS K/V: {e}", exc_info=True)
                 else:
@@ -1619,8 +1623,9 @@ class ControlFlowEngine:
                     logger.warning(f"No loop state for step {event.step}")
                 else:
                     # Use NATS count if available (authoritative), otherwise local cache
+                    # NOTE: NATS K/V stores only completed_count, not results array
                     if nats_loop_state:
-                        completed_count = len(nats_loop_state.get("results", []))
+                        completed_count = nats_loop_state.get("completed_count", 0)
                         logger.debug(f"[LOOP-NATS] Got count from NATS K/V: {completed_count}")
                     elif loop_state:
                         completed_count = len(loop_state.get("results", []))
@@ -1638,13 +1643,14 @@ class ControlFlowEngine:
                         logger.info(f"[LOOP-SETUP] Rendered collection for {event.step}: {len(collection)} items")
                         
                         # Store initial loop state in NATS K/V with event_id
+                        # NOTE: We store only metadata and completed_count, NOT results array
                         loop_event_id = loop_state.get("event_id")
                         await nats_cache.set_loop_state(
                             str(state.execution_id),
                             event.step,
                             {
                                 "collection_size": len(collection),
-                                "results": [],
+                                "completed_count": 0,  # Count only, not results array
                                 "iterator": loop_state.get("iterator"),
                                 "mode": loop_state.get("mode"),
                                 "event_id": loop_event_id
@@ -1667,19 +1673,19 @@ class ControlFlowEngine:
                     else:
                         # Loop done - create aggregated result and store as step result
                         logger.info(f"[LOOP] Loop completed for step {event.step}, creating aggregated result")
-                        
+
                         # Mark loop as completed in local state
                         if loop_state:
                             loop_state["completed"] = True
                             loop_state["aggregation_finalized"] = True
-                            # CRITICAL: Re-initialize results from authoritative source (NATS K/V) 
-                            # if we are about to create aggregated result, to ensure no duplicates 
-                            # or stale data from memory cache.
-                            if nats_loop_state:
-                                loop_state["results"] = nats_loop_state.get("results", [])
-                                logger.info(f"[LOOP-SYNC] Re-initialized local results from NATS K/V: {len(loop_state['results'])} items")
-                        
-                        # Get aggregated loop results
+                            # NOTE: Results are stored locally in loop_state["results"] during execution
+                            # For distributed deployments, the aggregate service fetches from event table
+                            # NATS K/V only stores counts, NOT results (to respect 1MB limit)
+                            logger.debug(f"[LOOP-COMPLETE] Local results count: {len(loop_state.get('results', []))}")
+
+                        # Get aggregated loop results from local state
+                        # NOTE: For distributed scenarios where local results may be incomplete,
+                        # use the aggregate service endpoint to fetch authoritative results from event table
                         loop_aggregation = state.get_loop_aggregation(event.step)
                         
                         # Check if step has pagination data to merge
