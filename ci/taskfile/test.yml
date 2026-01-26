@@ -101,7 +101,7 @@ tasks:
     cmds:
       - task: kubectl:local:context-set-kind
       - echo "=== Registering all test credentials from directory ==="
-      - noetl register credential --directory tests/fixtures/credentials
+      - ./bin/noetl register credential --directory tests/fixtures/credentials
       - echo "\n=== Test credentials registered successfully ==="
 
   test:k8s:register-playbooks:
@@ -112,7 +112,7 @@ tasks:
     cmds:
       - task: kubectl:local:context-set-kind
       - echo "=== Registering all test playbooks from directory ==="
-      - noetl register playbook --directory tests/fixtures/playbooks
+      - ./bin/noetl register playbook --directory tests/fixtures/playbooks
       - echo "=== All test playbooks registered successfully ==="
 
   test:local:register-credentials:
@@ -228,7 +228,7 @@ tasks:
     cmds:
       - task: kubectl:local:context-set-kind
       - echo "=== Creating database tables for save storage tests ==="
-      - noetl --host {{.NOETL_HOST}} --port {{.NOETL_PORT}} execute playbook "tests/fixtures/playbooks/save_storage_test/create_tables" --json
+      - ./bin/noetl --host={{.NOETL_HOST}} --port={{.NOETL_PORT}} execute playbook "tests/fixtures/playbooks/save_storage_test/create_tables" --json
       - sleep 10
       - echo "=== Database tables created successfully ==="
 
@@ -274,7 +274,7 @@ tasks:
     cmds:
       - task: kubectl:local:context-set-kind
       - echo "=== Executing container_postgres_init playbook ==="
-      - noetl --host {{.NOETL_HOST}} --port {{.NOETL_PORT}} execute playbook tests/fixtures/playbooks/container_postgres_init --json
+      - ./bin/noetl --host={{.NOETL_HOST}} --port={{.NOETL_PORT}} execute playbook tests/fixtures/playbooks/container_postgres_init --json
       - echo "=== Playbook execution completed ==="
 
   test:container:verify:

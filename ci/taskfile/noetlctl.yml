@@ -7,13 +7,13 @@ tasks:
     cmds:
       - cargo build --release
       - mkdir -p ../../bin
-      # Binary now installed via pip install noetl[cli]
+      - cp target/release/noetl ../../bin/noetl
     sources:
       - src/**/*.rs
       - Cargo.toml
       - Cargo.lock
     generates:
-      # Binary installed via pip, not tracked as artifact
+      - ../../bin/noetl
 
   noetlctl:local:install:
     desc: Install noetl-cli binary to ~/.local/bin/
