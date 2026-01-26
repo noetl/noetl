@@ -15,6 +15,8 @@ Migration:
 For more information, see:
 - documentation/docs/development/rust_cli_migration.md
 - documentation/docs/development/pypi_rust_bundling.md
+
+Note: This module remains for backward compatibility only.
 """
 
 import sys
