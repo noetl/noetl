@@ -15,24 +15,24 @@ executor:
 workload:
   # Action: create, deploy, update, destroy, plan
   action: create
-  
-  # Required parameters
-  project_id: mestumre-dev
-  cluster_name: noetl-test-cluster
+
+  # Required parameters - must be provided via --set project_id=<your-project>
+  project_id: ""  # e.g., noetl-demo-19700101
+  cluster_name: noetl-cluster
   region: us-central1
-  
+
   # Network configuration
   network: default
   subnetwork: default
   master_ipv4_cidr: 172.16.0.0/28
-  
+
   # Cluster configuration
   release_channel: REGULAR  # RAPID, REGULAR, STABLE
-  
+
   # Private cluster settings
   enable_private_nodes: true
   enable_private_endpoint: false
-  
+
   # State management
   state_database: .noetl/state.duckdb
   state_bucket: ""  # Defaults to {project_id}-noetl-state
@@ -49,9 +49,10 @@ workload:
   postgres_database: noetl
   postgres_user: noetl
   postgres_password: demo
-  postgres_image_registry: us-central1-docker.pkg.dev
-  postgres_image_repository: mestumre-dev/noetl/bitnami-postgresql
-  postgres_image_tag: multiarch
+  postgres_image_registry: ""  # e.g., us-central1-docker.pkg.dev
+  postgres_image_repository: ""  # e.g., {project_id}/noetl/bitnami-postgresql
+  postgres_image_tag: ""  # e.g., multiarch or 16
+  postgres_use_bitnami: true  # Use bitnami/postgresql from public Helm repo
   postgres_allow_insecure_images: true
   init_noetl_schema: true
   noetl_schema_path: noetl/database/ddl/postgres/schema_ddl.sql
@@ -62,8 +63,16 @@ workload:
   nats_jetstream_file_size: 5Gi
   nats_jetstream_mem_size: 1Gi
 
+  # ClickHouse configuration
+  clickhouse_enabled: true
+  clickhouse_namespace: clickhouse
+  clickhouse_storage_size: 10Gi
+  clickhouse_storage_class: standard
+  clickhouse_memory_limit: 2Gi
+  clickhouse_cpu_limit: 2000m
+
   noetl_namespace: noetl
-  noetl_image_repository: ""
+  noetl_image_repository: ""  # e.g., us-central1-docker.pkg.dev/{project_id}/noetl/noetl
   noetl_image_tag: latest
   noetl_image_pull_policy: IfNotPresent
   noetl_external_service_enabled: false
@@ -79,13 +88,13 @@ workload:
   noetl_worker_pool_enabled: false
   noetl_ingress_enabled: true
   noetl_ingress_class: gce
-  noetl_ingress_host: api.mestumre.dev
+  noetl_ingress_host: ""  # e.g., api.{domain}
   noetl_ingress_managed_cert_enabled: true
   noetl_ingress_managed_cert_name: noetl-managed-cert
   noetl_ingress_allow_http: false
 
   gateway_namespace: gateway
-  gateway_image_repository: ""
+  gateway_image_repository: ""  # e.g., us-central1-docker.pkg.dev/{project_id}/noetl/noetl-gateway
   gateway_image_tag: latest
   gateway_image_pull_policy: IfNotPresent
   gateway_service_type: ClusterIP
@@ -93,7 +102,7 @@ workload:
   gateway_noetl_base_url: http://noetl.noetl.svc.cluster.local:8082
   gateway_ingress_enabled: true
   gateway_ingress_class: gce
-  gateway_ingress_host: gateway.mestumre.dev
+  gateway_ingress_host: ""  # e.g., gateway.{domain}
   gateway_ingress_managed_cert_enabled: true
   gateway_ingress_managed_cert_name: gateway-managed-cert
   gateway_ingress_allow_http: false
@@ -111,6 +120,12 @@ workflow:
           echo "Project:  {{ workload.project_id }}"
           echo "Cluster:  {{ workload.cluster_name }}"
           echo "Region:   {{ workload.region }}"
+          if [ -z "{{ workload.project_id }}" ]; then
+            echo ""
+            echo "ERROR: project_id is required"
+            echo "Usage: noetl run automation/iap/gcp/gke_autopilot.yaml --set project_id=<your-gcp-project> --set action=<action>"
+            exit 1
+          fi
     vars:
       action: "{{ workload.action }}"
       deploy_stack: "{{ workload.deploy_stack | default(false) }}"
@@ -140,7 +155,7 @@ workflow:
       cmds:
         - |
           echo ""
-          echo "Usage: noetl iap apply automation/iap/gcp/gke_autopilot.yaml --var action=<action>"
+          echo "Usage: noetl run automation/iap/gcp/gke_autopilot.yaml --set action=<action> --set project_id=<project>"
           echo ""
           echo "Available actions:"
           echo "  create  - Create a new GKE Autopilot cluster"
@@ -148,24 +163,41 @@ workflow:
           echo "  destroy - Delete an existing cluster"
           echo "  plan    - Show planned changes without applying"
           echo ""
-          echo "Example:"
-          echo "  noetl iap apply automation/iap/gcp/gke_autopilot.yaml \\"
-          echo "    --auto-approve \\"
-          echo "    --var action=create \\"
-          echo "    --var project_id=mestumre-dev \\"
-          echo "    --var cluster_name=my-cluster"
+          echo "Required parameters:"
+          echo "  project_id     - GCP project ID (e.g., noetl-demo-19700101)"
           echo ""
-          echo "Deploy example:"
-          echo "  noetl iap apply automation/iap/gcp/gke_autopilot.yaml \\"
-          echo "    --auto-approve \\"
-          echo "    --var action=deploy \\"
-          echo "    --var deploy_stack=true \\"
-          echo "    --var project_id=mestumre-dev \\"
-          echo "    --var cluster_name=noetl-test-cluster \\"
-          echo "    --var noetl_image_repository=us-central1-docker.pkg.dev/PROJECT/noetl/noetl \\"
-          echo "    --var noetl_image_tag=latest \\"
-          echo "    --var gateway_image_repository=us-central1-docker.pkg.dev/PROJECT/noetl/noetl-gateway \\"
-          echo "    --var gateway_image_tag=latest"
+          echo "Optional parameters:"
+          echo "  cluster_name   - Cluster name (default: noetl-cluster)"
+          echo "  region         - GCP region (default: us-central1)"
+          echo ""
+          echo "Example - Create cluster:"
+          echo "  noetl run automation/iap/gcp/gke_autopilot.yaml \\"
+          echo "    --set action=create \\"
+          echo "    --set project_id=noetl-demo-19700101"
+          echo ""
+          echo "Example - Deploy stack to existing cluster:"
+          echo "  noetl run automation/iap/gcp/gke_autopilot.yaml \\"
+          echo "    --set action=deploy \\"
+          echo "    --set project_id=noetl-demo-19700101 \\"
+          echo "    --set noetl_image_repository=us-central1-docker.pkg.dev/noetl-demo-19700101/noetl/noetl \\"
+          echo "    --set noetl_image_tag=latest \\"
+          echo "    --set gateway_image_repository=us-central1-docker.pkg.dev/noetl-demo-19700101/noetl/noetl-gateway \\"
+          echo "    --set gateway_image_tag=latest"
+          echo ""
+          echo "Example - Create and deploy in one step:"
+          echo "  noetl run automation/iap/gcp/gke_autopilot.yaml \\"
+          echo "    --set action=create \\"
+          echo "    --set deploy_stack=true \\"
+          echo "    --set project_id=noetl-demo-19700101 \\"
+          echo "    --set noetl_image_repository=us-central1-docker.pkg.dev/noetl-demo-19700101/noetl/noetl \\"
+          echo "    --set noetl_image_tag=latest"
+          echo ""
+          echo "Components deployed (when deploy_stack=true):"
+          echo "  - PostgreSQL (Bitnami Helm chart)"
+          echo "  - NATS JetStream"
+          echo "  - ClickHouse (when clickhouse_enabled=true)"
+          echo "  - NoETL Server and Workers"
+          echo "  - NoETL Gateway"
     next:
       - step: end
 
@@ -519,6 +551,174 @@ workflow:
             --set 'config.merge.authorization.users[0].user={{ workload.nats_user }}' \
             --set 'config.merge.authorization.users[0].password={{ workload.nats_password }}'
           kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=nats -n {{ workload.nats_namespace }} --timeout=180s
+    next:
+      - step: maybe_deploy_clickhouse
+
+  - step: maybe_deploy_clickhouse
+    desc: Deploy ClickHouse if enabled
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "ClickHouse enabled: {{ workload.clickhouse_enabled }}"
+    case:
+      - when: "{{ workload.clickhouse_enabled }} == true"
+        then:
+          - step: deploy_clickhouse
+      - when: "true"
+        then:
+          - step: deploy_noetl_helm
+
+  - step: deploy_clickhouse
+    desc: Deploy ClickHouse for observability
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "Deploying ClickHouse..."
+          kubectl create namespace {{ workload.clickhouse_namespace }} --dry-run=client -o yaml | kubectl apply -f -
+
+          # Create ClickHouse ConfigMap
+          cat <<EOF | kubectl apply -f -
+          apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            name: clickhouse-config
+            namespace: {{ workload.clickhouse_namespace }}
+          data:
+            users.xml: |
+              <clickhouse>
+                <users>
+                  <default>
+                    <password></password>
+                    <networks>
+                      <ip>::/0</ip>
+                    </networks>
+                    <profile>default</profile>
+                    <quota>default</quota>
+                  </default>
+                </users>
+              </clickhouse>
+            config.xml: |
+              <clickhouse>
+                <logger>
+                  <level>information</level>
+                  <console>true</console>
+                </logger>
+                <http_port>8123</http_port>
+                <tcp_port>9000</tcp_port>
+                <listen_host>::</listen_host>
+                <max_connections>4096</max_connections>
+                <path>/var/lib/clickhouse/</path>
+                <tmp_path>/var/lib/clickhouse/tmp/</tmp_path>
+              </clickhouse>
+          EOF
+
+          # Create ClickHouse Service
+          cat <<EOF | kubectl apply -f -
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: clickhouse
+            namespace: {{ workload.clickhouse_namespace }}
+            labels:
+              app: clickhouse
+          spec:
+            type: ClusterIP
+            ports:
+              - port: 8123
+                targetPort: 8123
+                protocol: TCP
+                name: http
+              - port: 9000
+                targetPort: 9000
+                protocol: TCP
+                name: native
+            selector:
+              app: clickhouse
+          EOF
+
+          # Create ClickHouse StatefulSet
+          cat <<EOF | kubectl apply -f -
+          apiVersion: apps/v1
+          kind: StatefulSet
+          metadata:
+            name: clickhouse
+            namespace: {{ workload.clickhouse_namespace }}
+            labels:
+              app: clickhouse
+          spec:
+            serviceName: clickhouse
+            replicas: 1
+            selector:
+              matchLabels:
+                app: clickhouse
+            template:
+              metadata:
+                labels:
+                  app: clickhouse
+              spec:
+                containers:
+                - name: clickhouse
+                  image: clickhouse/clickhouse-server:24.11
+                  ports:
+                  - name: http
+                    containerPort: 8123
+                  - name: native
+                    containerPort: 9000
+                  volumeMounts:
+                  - name: data
+                    mountPath: /var/lib/clickhouse
+                  - name: config
+                    mountPath: /etc/clickhouse-server/config.d/
+                  - name: users
+                    mountPath: /etc/clickhouse-server/users.d/
+                  resources:
+                    requests:
+                      memory: "512Mi"
+                      cpu: "500m"
+                    limits:
+                      memory: "{{ workload.clickhouse_memory_limit }}"
+                      cpu: "{{ workload.clickhouse_cpu_limit }}"
+                  livenessProbe:
+                    httpGet:
+                      path: /ping
+                      port: 8123
+                    initialDelaySeconds: 30
+                    periodSeconds: 10
+                  readinessProbe:
+                    httpGet:
+                      path: /ping
+                      port: 8123
+                    initialDelaySeconds: 10
+                    periodSeconds: 5
+                volumes:
+                - name: config
+                  configMap:
+                    name: clickhouse-config
+                    items:
+                    - key: config.xml
+                      path: config.xml
+                - name: users
+                  configMap:
+                    name: clickhouse-config
+                    items:
+                    - key: users.xml
+                      path: users.xml
+            volumeClaimTemplates:
+            - metadata:
+                name: data
+              spec:
+                accessModes: [ "ReadWriteOnce" ]
+                storageClassName: {{ workload.clickhouse_storage_class }}
+                resources:
+                  requests:
+                    storage: {{ workload.clickhouse_storage_size }}
+          EOF
+
+          echo "Waiting for ClickHouse to be ready..."
+          kubectl wait --for=condition=ready pod -l app=clickhouse -n {{ workload.clickhouse_namespace }} --timeout=180s || true
+          echo "ClickHouse deployed."
     next:
       - step: deploy_noetl_helm
 

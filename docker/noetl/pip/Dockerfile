@@ -18,6 +18,9 @@ RUN pip install --no-cache-dir --upgrade pip
 
 FROM base AS final
 
+# Re-declare ARG - ARGs don't persist across FROM statements in multi-stage builds
+ARG NOETL_VERSION=latest
+
 WORKDIR /opt/noetl
 
 RUN if [ "$NOETL_VERSION" = "latest" ]; then \

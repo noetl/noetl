@@ -1,0 +1,60 @@
+[package]
+name = "noetl-tools"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "NoETL Tool Library - Shared tool implementations for workflow execution"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1", features = ["process", "fs", "sync", "time", "io-util", "rt-multi-thread"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# HTTP client
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+
+# Template engine
+minijinja = { version = "2.5", features = ["loader"] }
+
+# Rhai scripting
+rhai = { version = "1.19", features = ["sync"] }
+
+# DuckDB
+duckdb = { version = "1.1", features = ["bundled"] }
+
+# PostgreSQL (async)
+deadpool-postgres = "0.14"
+tokio-postgres = { version = "0.7", features = ["with-serde_json-1", "with-chrono-0_4"] }
+
+# Kubernetes (for script tool)
+kube = { version = "0.98", features = ["runtime", "client", "derive"] }
+k8s-openapi = { version = "0.24", features = ["v1_32"] }
+
+# GCP auth
+gcp_auth = "0.12"
+
+# Regex for parsing
+regex = "1.10"
+
+# Error handling
+thiserror = "2.0"
+anyhow = "1.0"
+
+# Async trait
+async-trait = "0.1"
+
+# Utilities
+tracing = "0.1"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+base64 = "0.22"
+tempfile = "3.10"
+
+[dev-dependencies]
+tokio-test = "0.4"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }

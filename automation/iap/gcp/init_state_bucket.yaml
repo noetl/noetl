@@ -12,17 +12,17 @@ executor:
   profile: local
   version: noetl-runtime/1
 workload:
-  # Required parameters
-  project_id: mestumre-dev
+  # Required parameters - must be provided via --set project_id=<your-project>
+  project_id: ""  # e.g., noetl-demo-19700101
   bucket_name: ""  # Will default to {project_id}-noetl-state
   region: us-central1
-  
+
   # Optional: storage class (STANDARD, NEARLINE, COLDLINE, ARCHIVE)
   storage_class: STANDARD
-  
+
   # Optional: enable versioning for state files
   enable_versioning: true
-  
+
   # Optional: lifecycle rules
   snapshot_retention_days: 90
 
@@ -32,7 +32,14 @@ workflow:
     tool:
       kind: shell
       cmds:
-        - echo "Initializing GCS state bucket for project '{{ workload.project_id }}'"
+        - |
+          echo "Initializing GCS state bucket for project '{{ workload.project_id }}'"
+          if [ -z "{{ workload.project_id }}" ]; then
+            echo ""
+            echo "ERROR: project_id is required"
+            echo "Usage: noetl run automation/iap/gcp/init_state_bucket.yaml --set project_id=<your-gcp-project>"
+            exit 1
+          fi
     vars:
       final_bucket_name: "{{ workload.bucket_name if workload.bucket_name else workload.project_id + '-noetl-state' }}"
     next:

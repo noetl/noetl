@@ -13,7 +13,7 @@ path = "src/main.rs"
 
 [dependencies]
 # Tool library
-noetl-tools = { path = "../noetl-tools" }
+noetl-tools = { path = "../tools" }
 
 # Async runtime
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time", "sync"] }

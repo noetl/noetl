@@ -3,7 +3,7 @@
 FROM lukemathwalker/cargo-chef:0.1.73-rust-1.91.1-alpine3.22 AS chef
 WORKDIR /app
 RUN apk update && \
-    apk add --no-cache clang lld llvm musl-dev make pkgconfig openssl-dev openssl-libs-static
+    apk add --no-cache clang lld llvm musl-dev make pkgconfig openssl-dev openssl-libs-static g++ libc-dev
 
 # Planner stage - analyzes dependencies
 FROM chef AS planner

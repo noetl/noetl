@@ -271,6 +271,49 @@ Control all observability services (ClickHouse, Qdrant, NATS) together:
 noetl run tests/fixtures/playbooks/regression_test/regression_test.yaml
 ```
 
+## GCP Infrastructure as Playbook (IAP)
+
+NoETL provides Infrastructure as Playbook capabilities for GCP resources.
+
+### GKE Autopilot Cluster
+
+| Action | Command |
+|--------|---------|
+| Create cluster | `noetl run automation/iap/gcp/gke_autopilot.yaml --set action=create --set project_id=<project>` |
+| Deploy stack | `noetl run automation/iap/gcp/gke_autopilot.yaml --set action=deploy --set project_id=<project>` |
+| Destroy cluster | `noetl run automation/iap/gcp/gke_autopilot.yaml --set action=destroy --set project_id=<project>` |
+| Show plan | `noetl run automation/iap/gcp/gke_autopilot.yaml --set action=plan --set project_id=<project>` |
+
+### Full GKE Stack Deployment
+
+Deploy complete NoETL stack to GKE (PostgreSQL, NATS, ClickHouse, NoETL, Gateway):
+
+| Action | Command |
+|--------|---------|
+| Deploy all | `noetl run automation/iap/gcp/deploy_gke_stack.yaml --set project_id=<project>` |
+| Destroy all | `noetl run automation/iap/gcp/deploy_gke_stack.yaml --set action=destroy --set project_id=<project>` |
+| Check status | `noetl run automation/iap/gcp/deploy_gke_stack.yaml --set action=status --set project_id=<project>` |
+
+**Example - Deploy to noetl-demo-19700101:**
+```bash
+noetl run automation/iap/gcp/deploy_gke_stack.yaml \
+  --set project_id=noetl-demo-19700101 \
+  --set region=us-central1
+```
+
+### Artifact Registry
+
+| Action | Command |
+|--------|---------|
+| Create repository | `noetl run automation/iap/gcp/artifact_registry.yaml --set action=create --set project_id=<project>` |
+| Delete repository | `noetl run automation/iap/gcp/artifact_registry.yaml --set action=destroy --set project_id=<project>` |
+
+### GCS State Bucket
+
+| Action | Command |
+|--------|---------|
+| Initialize bucket | `noetl run automation/iap/gcp/init_state_bucket.yaml --set project_id=<project>` |
+
 ## Rust CLI Commands
 
 The `noetl` Rust CLI provides direct commands:
@@ -353,6 +396,14 @@ automation/
 │   ├── monitoring.yaml           # VictoriaMetrics stack
 │   ├── jupyterlab.yaml           # JupyterLab deployment
 │   └── gateway.yaml              # Gateway API service
+├── iap/
+│   └── gcp/
+│       ├── gke_autopilot.yaml    # GKE Autopilot cluster management
+│       ├── deploy_gke_stack.yaml # Full GKE stack deployment
+│       ├── artifact_registry.yaml # Artifact Registry management
+│       ├── init_state_bucket.yaml # GCS state bucket initialization
+│       ├── state_sync.yaml       # State synchronization
+│       └── state_inspect.yaml    # State inspection
 ├── deployment/
 │   └── noetl-stack.yaml          # NoETL service deployment
 ├── development/
@@ -361,6 +412,9 @@ automation/
 │   ├── setup_tooling.yaml        # OS-aware tooling setup
 │   ├── tooling_macos.yaml        # macOS tools (Homebrew)
 │   └── tooling_linux.yaml        # Linux tools (apt-get)
+├── helm/
+│   ├── noetl/                    # NoETL Helm chart
+│   └── gateway/                  # Gateway Helm chart
 └── test/
     └── pagination-server.yaml    # Pagination test server
 ```
@@ -371,3 +425,4 @@ automation/
 - [Observability Services](./observability.md)
 - [Automation Playbooks](../development/automation_playbooks.md)
 - [Local Development Setup](../development/local_dev_setup.md)
+- [GKE Deployment Guide](./gke-deployment.md)

@@ -1,0 +1,56 @@
+# Cloud Build ignore file
+# This file specifies which files to exclude when uploading to Cloud Build
+
+# Git files
+.git/
+.gitignore
+
+# IDE and editor files
+.idea/
+.vscode/
+*.iml
+.DS_Store
+
+# Python artifacts
+.venv/
+venv/
+env/
+*.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+dist/
+build/
+
+# Node modules
+node_modules/
+
+# Rust build artifacts (but keep source)
+target/
+
+# Test data
+tests/fixtures/playbooks/**/test_data/
+tests/fixtures/playbooks/**/temp/
+
+# Secrets and environment files
+.env.*
+!.env.server
+!.env.worker
+.secrets/
+
+# Terraform
+.terraform*
+
+# Local data
+data/noetldb/
+logs/
+
+# Distribution
+homebrew-tap/
+
+# Large unnecessary directories for container builds
+documentation/docs/
+ci/
+automation/playbooks/
+
+# NOTE: Do NOT ignore crates/noetl-tools - it's needed for Rust builds
