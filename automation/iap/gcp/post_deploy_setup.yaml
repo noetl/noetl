@@ -1,0 +1,307 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: post_deploy_setup
+  path: automation/iap/gcp/post_deploy_setup
+  description: "Post-deployment setup for GKE NoETL stack - creates users, databases, schemas, and registers credentials"
+
+executor:
+  profile: local
+  version: noetl-runtime/1
+
+workload:
+  action: help  # setup, setup-postgres, setup-clickhouse, register-credentials, verify
+
+  # PostgreSQL configuration
+  postgres_admin_password: demo
+  demo_user: demo
+  demo_password: demo
+  demo_database: demo_noetl
+
+workflow:
+  - step: start
+    desc: Entry point for post-deployment setup
+    tool:
+      kind: shell
+      cmds:
+        - echo "Post-Deployment Setup - Action '{{ workload.action }}'"
+    case:
+      - when: "{{ workload.action }} == setup"
+        then:
+          - step: setup_postgres
+      - when: "{{ workload.action }} == setup-postgres"
+        then:
+          - step: setup_postgres
+      - when: "{{ workload.action }} == setup-clickhouse"
+        then:
+          - step: setup_clickhouse
+      - when: "{{ workload.action }} == register-credentials"
+        then:
+          - step: register_credentials
+      - when: "{{ workload.action }} == verify"
+        then:
+          - step: verify_setup
+      - step: show_help
+
+  - step: setup_postgres
+    desc: Setup PostgreSQL users, databases, and schemas
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "=== Setting up PostgreSQL ==="
+
+          POSTGRES_POD=$(kubectl get pods -n postgres -l app.kubernetes.io/instance=postgres -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+          if [ -z "$POSTGRES_POD" ]; then
+            echo "ERROR: PostgreSQL pod not found"
+            exit 1
+          fi
+          echo "PostgreSQL pod: $POSTGRES_POD"
+
+          # Wait for PostgreSQL to be ready
+          echo "Waiting for PostgreSQL to accept connections..."
+          MAX_RETRIES=30
+          RETRY_COUNT=0
+          while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+            if kubectl exec -n postgres "$POSTGRES_POD" -- /bin/sh -c "PGPASSWORD={{ workload.postgres_admin_password }} psql -U postgres -c 'SELECT 1'" 2>/dev/null; then
+              echo "PostgreSQL is ready"
+              break
+            fi
+            sleep 3
+            RETRY_COUNT=$((RETRY_COUNT + 1))
+          done
+
+          if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
+            echo "ERROR: PostgreSQL not ready after $MAX_RETRIES attempts"
+            exit 1
+          fi
+
+          echo ""
+          echo "--- Creating demo user and database ---"
+          kubectl exec -n postgres "$POSTGRES_POD" -- /bin/sh -c "PGPASSWORD={{ workload.postgres_admin_password }} psql -U postgres <<EOF
+          -- Create demo user if not exists
+          DO \\\$\\\$
+          BEGIN
+            IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = '{{ workload.demo_user }}') THEN
+              CREATE ROLE {{ workload.demo_user }} WITH LOGIN PASSWORD '{{ workload.demo_password }}' CREATEDB;
+              RAISE NOTICE 'User {{ workload.demo_user }} created';
+            ELSE
+              RAISE NOTICE 'User {{ workload.demo_user }} already exists';
+            END IF;
+          END
+          \\\$\\\$;
+
+          -- Create demo_noetl database if not exists
+          SELECT 'CREATE DATABASE {{ workload.demo_database }} OWNER {{ workload.demo_user }}'
+          WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '{{ workload.demo_database }}')\gexec
+
+          -- Grant permissions
+          GRANT ALL PRIVILEGES ON DATABASE {{ workload.demo_database }} TO {{ workload.demo_user }};
+          EOF"
+
+          echo ""
+          echo "--- Initializing NoETL schema in demo_noetl ---"
+          # Check if schema exists
+          TABLE_EXISTS=$(kubectl exec -n postgres "$POSTGRES_POD" -- /bin/sh -c "PGPASSWORD={{ workload.demo_password }} psql -U {{ workload.demo_user }} -d {{ workload.demo_database }} -tAc \"SELECT 1 FROM information_schema.tables WHERE table_schema='noetl' AND table_name='event'\"" 2>/dev/null || echo "")
+
+          if [ "$TABLE_EXISTS" = "1" ]; then
+            echo "NoETL schema already exists in {{ workload.demo_database }}"
+          else
+            echo "Creating NoETL schema in {{ workload.demo_database }}..."
+            kubectl exec -n postgres "$POSTGRES_POD" -- /bin/sh -c "PGPASSWORD={{ workload.demo_password }} psql -U {{ workload.demo_user }} -d {{ workload.demo_database }} -c 'CREATE SCHEMA IF NOT EXISTS noetl'"
+
+            if [ -f "noetl/database/ddl/postgres/schema_ddl.sql" ]; then
+              cat noetl/database/ddl/postgres/schema_ddl.sql | kubectl exec -i -n postgres "$POSTGRES_POD" -- /bin/sh -c "PGPASSWORD={{ workload.demo_password }} psql -U {{ workload.demo_user }} -d {{ workload.demo_database }}"
+              echo "Schema DDL applied to {{ workload.demo_database }}"
+            else
+              echo "WARNING: Schema DDL file not found locally"
+            fi
+          fi
+
+          echo ""
+          echo "--- Verifying setup ---"
+          kubectl exec -n postgres "$POSTGRES_POD" -- /bin/sh -c "PGPASSWORD={{ workload.postgres_admin_password }} psql -U postgres -c '\\du'"
+          kubectl exec -n postgres "$POSTGRES_POD" -- /bin/sh -c "PGPASSWORD={{ workload.postgres_admin_password }} psql -U postgres -c '\\l'"
+    next:
+      - step: setup_clickhouse
+
+  - step: setup_clickhouse
+    desc: Setup ClickHouse observability schema
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "=== Setting up ClickHouse ==="
+
+          POD=$(kubectl get pods -n clickhouse -l app=clickhouse -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+          if [ -z "$POD" ]; then
+            POD=$(kubectl get pods -n clickhouse -l clickhouse.altinity.com/chi=noetl-clickhouse -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+          fi
+
+          if [ -z "$POD" ]; then
+            echo "WARNING: ClickHouse pod not found, skipping ClickHouse setup"
+            exit 0
+          fi
+          echo "ClickHouse pod: $POD"
+
+          echo ""
+          echo "--- Creating observability database and schema ---"
+          kubectl exec -n clickhouse $POD -- clickhouse-client --query="CREATE DATABASE IF NOT EXISTS observability"
+
+          kubectl exec -n clickhouse $POD -- clickhouse-client --query="
+          CREATE TABLE IF NOT EXISTS observability.noetl_events
+          (
+              Timestamp DateTime64(3),
+              EventId String,
+              ExecutionId String,
+              EventType String,
+              Status String,
+              StepName String,
+              NodeName String,
+              PlaybookPath String,
+              Duration Int64,
+              ErrorMessage String,
+              Metadata String
+          )
+          ENGINE = MergeTree()
+          ORDER BY (ExecutionId, Timestamp)
+          PARTITION BY toYYYYMM(Timestamp)
+          "
+
+          echo ""
+          echo "--- Verifying ClickHouse setup ---"
+          kubectl exec -n clickhouse $POD -- clickhouse-client --query="SHOW DATABASES"
+          kubectl exec -n clickhouse $POD -- clickhouse-client --query="SHOW TABLES FROM observability"
+    next:
+      - step: register_credentials
+
+  - step: register_credentials
+    desc: Register credentials for GKE cluster access
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "=== Registering Credentials ==="
+
+          # Register pg_demo credential
+          if [ -f "tests/fixtures/credentials/pg_demo.json" ]; then
+            echo "Registering pg_demo..."
+            noetl register credential --file tests/fixtures/credentials/pg_demo.json 2>/dev/null || echo "Already registered or error"
+          fi
+
+          # Register pg_noetl_k8s credential
+          if [ -f "tests/fixtures/credentials/pg_noetl_k8s.json" ]; then
+            echo "Registering pg_noetl_k8s..."
+            noetl register credential --file tests/fixtures/credentials/pg_noetl_k8s.json 2>/dev/null || echo "Already registered or error"
+          fi
+
+          echo ""
+          echo "Credentials registered. List with: noetl list credentials"
+    next:
+      - step: verify_setup
+
+  - step: verify_setup
+    desc: Verify all components are properly configured
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "=========================================="
+          echo " GKE NoETL Stack Verification"
+          echo "=========================================="
+          echo ""
+
+          echo "=== Kubernetes Cluster ==="
+          kubectl cluster-info | head -2
+          echo ""
+
+          echo "=== Pods Status ==="
+          kubectl get pods -A | grep -E "postgres|nats|clickhouse|noetl|gateway" || echo "(none found)"
+          echo ""
+
+          echo "=== Services ==="
+          kubectl get svc -A | grep -E "postgres|nats|clickhouse|noetl|gateway" || echo "(none found)"
+          echo ""
+
+          echo "=== PostgreSQL Databases ==="
+          POSTGRES_POD=$(kubectl get pods -n postgres -l app.kubernetes.io/instance=postgres -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+          if [ -n "$POSTGRES_POD" ]; then
+            kubectl exec -n postgres "$POSTGRES_POD" -- /bin/sh -c "PGPASSWORD={{ workload.postgres_admin_password }} psql -U postgres -c '\\l'" 2>/dev/null || echo "Could not connect"
+          else
+            echo "PostgreSQL pod not found"
+          fi
+          echo ""
+
+          echo "=== ClickHouse Databases ==="
+          CH_POD=$(kubectl get pods -n clickhouse -l app=clickhouse -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+          if [ -n "$CH_POD" ]; then
+            kubectl exec -n clickhouse $CH_POD -- clickhouse-client --query="SHOW DATABASES" 2>/dev/null || echo "Could not connect"
+          else
+            echo "ClickHouse pod not found"
+          fi
+          echo ""
+
+          echo "=== Gateway Endpoint ==="
+          GATEWAY_IP=$(kubectl get svc gateway -n gateway -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null)
+          if [ -n "$GATEWAY_IP" ]; then
+            echo "Gateway IP: $GATEWAY_IP"
+            echo "Health check: $(curl -s http://$GATEWAY_IP/health 2>/dev/null || echo 'not reachable')"
+          else
+            echo "Gateway external IP not assigned"
+          fi
+          echo ""
+
+          echo "=== NoETL Server ==="
+          NOETL_POD=$(kubectl get pods -n noetl -l app=noetl -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+          if [ -n "$NOETL_POD" ]; then
+            echo "NoETL pod: $NOETL_POD"
+            kubectl exec -n noetl $NOETL_POD -- curl -s http://localhost:8082/health 2>/dev/null || echo "Health check failed"
+          else
+            echo "NoETL pod not found"
+          fi
+          echo ""
+
+          echo "=========================================="
+          echo " Verification Complete"
+          echo "=========================================="
+    next:
+      - step: end
+
+  - step: show_help
+    desc: Show available actions and usage
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "=========================================="
+          echo " Post-Deployment Setup"
+          echo "=========================================="
+          echo ""
+          echo "Usage:"
+          echo "  noetl run automation/iap/gcp/post_deploy_setup.yaml --set action=<action>"
+          echo ""
+          echo "Actions:"
+          echo "  setup              - Run full setup (postgres + clickhouse + credentials)"
+          echo "  setup-postgres     - Setup PostgreSQL users and databases only"
+          echo "  setup-clickhouse   - Setup ClickHouse observability schema only"
+          echo "  register-credentials - Register credentials only"
+          echo "  verify             - Verify all components are configured"
+          echo ""
+          echo "Options:"
+          echo "  --set demo_user=NAME       - Demo user name (default: demo)"
+          echo "  --set demo_password=PASS   - Demo user password (default: demo)"
+          echo "  --set demo_database=NAME   - Demo database name (default: demo_noetl)"
+          echo ""
+          echo "Examples:"
+          echo "  # Run full setup"
+          echo "  noetl run automation/iap/gcp/post_deploy_setup.yaml --set action=setup"
+          echo ""
+          echo "  # Verify setup"
+          echo "  noetl run automation/iap/gcp/post_deploy_setup.yaml --set action=verify"
+          echo ""
+    next:
+      - step: end
+
+  - step: end
+    desc: Workflow complete

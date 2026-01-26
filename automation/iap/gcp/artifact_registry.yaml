@@ -43,6 +43,12 @@ workflow:
           echo "Project:    {{ workload.project_id }}"
           echo "Region:     {{ workload.region }}"
           echo "Repository: {{ workload.repository_id }}"
+          if [ -z "{{ workload.project_id }}" ]; then
+            echo ""
+            echo "ERROR: project_id is required"
+            echo "Usage: noetl run automation/iap/gcp/artifact_registry.yaml --set project_id=<your-gcp-project> --set action=<action>"
+            exit 1
+          fi
     vars:
       resource_id: "{{ workload.project_id }}/{{ workload.region }}/{{ workload.repository_id }}"
       state_bucket: "{{ workload.state_bucket if workload.state_bucket else workload.project_id + '-noetl-state' }}"
@@ -67,19 +73,24 @@ workflow:
       cmds:
         - |
           echo ""
-          echo "Usage: noetl run automation/iap/gcp/artifact_registry.yaml --set action=<action>"
+          echo "Usage: noetl run automation/iap/gcp/artifact_registry.yaml --set action=<action> --set project_id=<project>"
           echo ""
           echo "Available actions:"
           echo "  create  - Create a repository"
           echo "  destroy - Delete a repository"
           echo "  plan    - Show planned changes"
           echo ""
+          echo "Required parameters:"
+          echo "  project_id     - GCP project ID (e.g., noetl-demo-19700101)"
+          echo ""
+          echo "Optional parameters:"
+          echo "  region         - GCP region (default: us-central1)"
+          echo "  repository_id  - Repository name (default: noetl)"
+          echo ""
           echo "Example:"
-          echo "  noetl run automation/iap/gcp/artifact_registry.yaml \\""
-          echo "    --set action=create \\""
-          echo "    --set project_id=mestumre-dev \\""
-          echo "    --set region=us-central1 \\""
-          echo "    --set repository_id=noetl"
+          echo "  noetl run automation/iap/gcp/artifact_registry.yaml \\"
+          echo "    --set action=create \\"
+          echo "    --set project_id=noetl-demo-19700101"
     next:
       - step: end
 

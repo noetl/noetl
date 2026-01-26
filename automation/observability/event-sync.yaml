@@ -56,7 +56,11 @@ workflow:
       kind: shell
       cmds:
         - |
+          # Try Altinity operator label first, then simple app label
           POD=$(kubectl get pods -n clickhouse -l clickhouse.altinity.com/chi=noetl-clickhouse -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+          if [ -z "$POD" ]; then
+            POD=$(kubectl get pods -n clickhouse -l app=clickhouse -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+          fi
           if [ -z "$POD" ]; then
             echo "ERROR: ClickHouse pod not found. Deploy ClickHouse first:"
             echo "  noetl run automation/infrastructure/clickhouse.yaml --set action=deploy"
@@ -72,7 +76,7 @@ workflow:
       kind: shell
       cmds:
         - |
-          POD=$(kubectl get pods -n clickhouse -l clickhouse.altinity.com/chi=noetl-clickhouse -o jsonpath='{.items[0].metadata.name}')
+          POD=$(kubectl get pods -n clickhouse -l app=clickhouse -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || kubectl get pods -n clickhouse -l clickhouse.altinity.com/chi=noetl-clickhouse -o jsonpath='{.items[0].metadata.name}')
           echo "Initializing ClickHouse schema..."
 
           # Get schema SQL from ConfigMap
@@ -190,7 +194,7 @@ workflow:
       kind: shell
       cmds:
         - |
-          POD=$(kubectl get pods -n clickhouse -l clickhouse.altinity.com/chi=noetl-clickhouse -o jsonpath='{.items[0].metadata.name}')
+          POD=$(kubectl get pods -n clickhouse -l app=clickhouse -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || kubectl get pods -n clickhouse -l clickhouse.altinity.com/chi=noetl-clickhouse -o jsonpath='{.items[0].metadata.name}')
 
           COUNT="{{ transform_for_clickhouse.count }}"
           if [ "$COUNT" = "0" ]; then
@@ -217,7 +221,7 @@ workflow:
       kind: shell
       cmds:
         - |
-          POD=$(kubectl get pods -n clickhouse -l clickhouse.altinity.com/chi=noetl-clickhouse -o jsonpath='{.items[0].metadata.name}')
+          POD=$(kubectl get pods -n clickhouse -l app=clickhouse -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || kubectl get pods -n clickhouse -l clickhouse.altinity.com/chi=noetl-clickhouse -o jsonpath='{.items[0].metadata.name}')
           echo ""
           echo "=== Sync Summary ==="
           echo "Events synced: {{ transform_for_clickhouse.count }}"
@@ -269,7 +273,10 @@ workflow:
       kind: shell
       cmds:
         - |
-          POD=$(kubectl get pods -n clickhouse -l clickhouse.altinity.com/chi=noetl-clickhouse -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+          POD=$(kubectl get pods -n clickhouse -l app=clickhouse -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+          if [ -z "$POD" ]; then
+            POD=$(kubectl get pods -n clickhouse -l clickhouse.altinity.com/chi=noetl-clickhouse -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+          fi
           if [ -z "$POD" ]; then
             echo "ClickHouse not deployed"
             exit 0
@@ -294,7 +301,10 @@ workflow:
       cmds:
         - |
           echo "=== Sync Verification ==="
-          POD=$(kubectl get pods -n clickhouse -l clickhouse.altinity.com/chi=noetl-clickhouse -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+          POD=$(kubectl get pods -n clickhouse -l app=clickhouse -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+          if [ -z "$POD" ]; then
+            POD=$(kubectl get pods -n clickhouse -l clickhouse.altinity.com/chi=noetl-clickhouse -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+          fi
           if [ -z "$POD" ]; then
             echo "ClickHouse not deployed"
             exit 1

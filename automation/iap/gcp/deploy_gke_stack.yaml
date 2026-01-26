@@ -991,13 +991,15 @@ workflow:
           echo "Deploying NoETL Gateway..."
           echo "Gateway Public: {{ workload.gateway_public }}"
 
-          # Determine service type based on gateway_public setting
+          # Determine service type and port based on gateway_public setting
           if [ "{{ workload.gateway_public }}" = "true" ]; then
             SERVICE_TYPE="LoadBalancer"
-            echo "Gateway will be exposed as public LoadBalancer"
+            SERVICE_PORT="80"
+            echo "Gateway will be exposed as public LoadBalancer on port 80"
           else
             SERVICE_TYPE="ClusterIP"
-            echo "Gateway will be internal ClusterIP only"
+            SERVICE_PORT="8090"
+            echo "Gateway will be internal ClusterIP on port 8090"
           fi
 
           helm upgrade --install noetl-gateway ./automation/helm/gateway \
@@ -1007,7 +1009,7 @@ workflow:
             --set image.tag={{ workload.gateway_image_tag }} \
             --set image.pullPolicy=IfNotPresent \
             --set service.type=$SERVICE_TYPE \
-            --set service.port=8090 \
+            --set service.port=$SERVICE_PORT \
             --set-string env.noetlBaseUrl=http://noetl.noetl.svc.cluster.local:8082 \
             --set-string env.rustLog=info,gateway=debug \
             --set ingress.enabled=false
@@ -1034,11 +1036,11 @@ workflow:
               echo "=============================================="
               echo " GATEWAY PUBLIC ENDPOINT"
               echo "=============================================="
-              echo "  URL: http://$EXTERNAL_IP:8090"
+              echo "  URL: http://$EXTERNAL_IP"
               echo ""
-              echo "  GraphQL endpoint: http://$EXTERNAL_IP:8090/graphql"
-              echo "  Health check:     http://$EXTERNAL_IP:8090/health"
-              echo "  Auth login:       POST http://$EXTERNAL_IP:8090/api/auth/login"
+              echo "  GraphQL endpoint: http://$EXTERNAL_IP/graphql"
+              echo "  Health check:     http://$EXTERNAL_IP/health"
+              echo "  Auth login:       POST http://$EXTERNAL_IP/api/auth/login"
               echo "=============================================="
             else
               echo "WARNING: External IP not assigned yet"
