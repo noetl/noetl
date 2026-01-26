@@ -190,7 +190,5 @@ This bypasses Gateway authentication - use for trusted internal services only.
 
 ## Related Documentation
 
-- [Gateway Auth Integration](../../../crates/gateway/AUTH_INTEGRATION.md)
-- [Gateway README](../../../crates/gateway/README.md)
-- [Auth0 Playbooks](../../../tests/fixtures/playbooks/api_integration/auth0/)
-- [GKE Deployment](./README.md)
+- [GKE User Guide](./gke_user_guide)
+- [GKE Quick Start](./gke_quick_start)

@@ -61,4 +61,4 @@ noetl run automation/iap/gcp/post_deploy_setup.yaml --set action=verify
 ```
 
 ---
-See [GKE_USER_GUIDE.md](GKE_USER_GUIDE.md) for detailed documentation.
+See [GKE User Guide](./gke_user_guide) for detailed documentation.
