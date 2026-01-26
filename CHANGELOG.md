@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.7.0](https://github.com/noetl/noetl/compare/v2.6.0...v2.7.0) (2026-01-26)
+
+### Features
+
+* add Cloud Build support for GKE deployment and noetl-tools crate ([7d6458f](https://github.com/noetl/noetl/commit/7d6458f70845c6a9e000684c2496766a958cf20e))
+
+### Bug Fixes
+
+* decouple schema init from postgres deployment and add gateway public endpoint ([f906c16](https://github.com/noetl/noetl/commit/f906c16b97125ffe3f8801f761c4f926feda0e34))
+
 ## [2.6.0](https://github.com/noetl/noetl/compare/v2.5.12...v2.6.0) (2026-01-23)
 
 ### Features
