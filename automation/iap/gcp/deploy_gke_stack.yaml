@@ -34,6 +34,10 @@ workload:
   deploy_noetl: true
   deploy_gateway: true
 
+  # Gateway exposure - when true, Gateway becomes public LoadBalancer
+  # NoETL server always stays internal (ClusterIP)
+  gateway_public: true
+
   # NoETL image configuration
   noetl_image_tag: latest
   gateway_image_tag: latest
@@ -128,10 +132,13 @@ workflow:
           echo "  noetl_image_tag   - NoETL image tag (default: latest)"
           echo "  gateway_image_tag - Gateway image tag (default: latest)"
           echo "  docker_platform   - Docker build platform (default: linux/amd64)"
+          echo "  gateway_public    - Expose Gateway as public LoadBalancer (default: true)"
+          echo "                      NoETL server always stays internal (ClusterIP)"
           echo ""
           echo "Component toggles (all default to true):"
           echo "  create_cluster, create_artifact_registry, build_images,"
           echo "  deploy_postgres, deploy_nats, deploy_clickhouse, deploy_noetl, deploy_gateway"
+          echo "  init_noetl_schema - Initialize NoETL schema (runs even if postgres exists)"
           echo ""
           echo "Example - Full deployment (builds images, creates cluster, deploys stack):"
           echo "  noetl run automation/iap/gcp/deploy_gke_stack.yaml \\"
@@ -452,7 +459,7 @@ workflow:
           - step: deploy_postgres
       - when: "true"
         then:
-          - step: maybe_deploy_nats
+          - step: maybe_init_schema
 
   - step: deploy_postgres
     desc: Deploy PostgreSQL via Helm
@@ -477,7 +484,7 @@ workflow:
       - step: maybe_init_schema
 
   - step: maybe_init_schema
-    desc: Initialize NoETL schema if enabled
+    desc: Initialize NoETL schema if enabled (runs even if postgres already exists)
     tool:
       kind: shell
       cmds:
@@ -492,7 +499,7 @@ workflow:
           - step: maybe_deploy_nats
 
   - step: init_noetl_schema
-    desc: Initialize NoETL database schema
+    desc: Initialize NoETL database schema (handles both local and remote postgres)
     tool:
       kind: shell
       cmds:
@@ -500,22 +507,34 @@ workflow:
           set -e
           echo "Initializing NoETL schema..."
 
-          # Wait for postgres to be ready
-          echo "Waiting for PostgreSQL to be ready..."
-          kubectl wait --for=condition=ready pod -l app.kubernetes.io/instance=postgres -n postgres --timeout=120s
+          # Check if postgres namespace and pods exist
+          echo "Checking for PostgreSQL in cluster..."
+          if ! kubectl get namespace postgres &>/dev/null; then
+            echo "WARNING: postgres namespace not found"
+            echo "Skipping schema initialization - PostgreSQL not deployed"
+            exit 0
+          fi
 
-          POSTGRES_POD=$(kubectl get pods -n postgres -l app.kubernetes.io/instance=postgres -o jsonpath='{.items[0].metadata.name}')
+          # Wait for postgres to be ready (with longer timeout for remote/existing postgres)
+          echo "Waiting for PostgreSQL to be ready..."
+          kubectl wait --for=condition=ready pod -l app.kubernetes.io/instance=postgres -n postgres --timeout=180s || {
+            echo "WARNING: PostgreSQL pod not ready after 180s"
+            echo "Attempting to continue anyway..."
+          }
+
+          POSTGRES_POD=$(kubectl get pods -n postgres -l app.kubernetes.io/instance=postgres -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
           if [ -z "$POSTGRES_POD" ]; then
-            echo "ERROR: PostgreSQL pod not found"
-            exit 1
+            echo "WARNING: PostgreSQL pod not found in postgres namespace"
+            echo "Skipping schema initialization - no PostgreSQL pod available"
+            exit 0
           fi
           echo "PostgreSQL pod: $POSTGRES_POD"
 
-          # Check if schema file exists
+          # Check if schema file exists locally
           SCHEMA_FILE="{{ workload.noetl_schema_path }}"
           echo "Looking for schema file: $SCHEMA_FILE"
           if [ ! -f "$SCHEMA_FILE" ]; then
-            echo "WARNING: NoETL schema file not found: $SCHEMA_FILE"
+            echo "WARNING: NoETL schema file not found locally: $SCHEMA_FILE"
             echo "Current directory: $(pwd)"
             echo "Listing schema directory:"
             ls -la noetl/database/ddl/postgres/ 2>/dev/null || echo "Directory not found"
@@ -526,10 +545,22 @@ workflow:
 
           # Check if PostgreSQL is accepting connections
           echo "Testing PostgreSQL connectivity..."
-          kubectl exec -n postgres "$POSTGRES_POD" -- /bin/sh -c "PGPASSWORD=demo psql -U postgres -d noetl -c 'SELECT 1'" || {
-            echo "ERROR: Cannot connect to PostgreSQL"
+          MAX_RETRIES=30
+          RETRY_COUNT=0
+          while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+            if kubectl exec -n postgres "$POSTGRES_POD" -- /bin/sh -c "PGPASSWORD=demo psql -U postgres -d noetl -c 'SELECT 1'" 2>/dev/null; then
+              echo "PostgreSQL is accepting connections"
+              break
+            fi
+            echo "Waiting for PostgreSQL to accept connections... ($RETRY_COUNT/$MAX_RETRIES)"
+            sleep 3
+            RETRY_COUNT=$((RETRY_COUNT + 1))
+          done
+
+          if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
+            echo "ERROR: Cannot connect to PostgreSQL after $MAX_RETRIES attempts"
             exit 1
-          }
+          fi
 
           # Check if schema already exists
           TABLE_EXISTS=$(kubectl exec -n postgres "$POSTGRES_POD" -- /bin/sh -c "PGPASSWORD=demo psql -U postgres -d noetl -tAc \"SELECT 1 FROM information_schema.tables WHERE table_schema='noetl' AND table_name='event'\"" 2>/dev/null || echo "")
@@ -541,11 +572,17 @@ workflow:
             echo "Schema not found. Creating noetl schema..."
             kubectl exec -n postgres "$POSTGRES_POD" -- /bin/sh -c "PGPASSWORD=demo psql -U postgres -d noetl -c \"CREATE SCHEMA IF NOT EXISTS noetl\""
 
-            echo "Running DDL from $SCHEMA_FILE..."
+            echo "Running DDL from $SCHEMA_FILE via kubectl exec..."
+            # Use kubectl exec with stdin to pipe the schema file
             cat "$SCHEMA_FILE" | kubectl exec -i -n postgres "$POSTGRES_POD" -- /bin/sh -c "PGPASSWORD=demo psql -U postgres -d noetl"
 
             echo "Granting permissions to noetl user..."
             kubectl exec -n postgres "$POSTGRES_POD" -- /bin/sh -c "PGPASSWORD=demo psql -U postgres -d noetl -c \"GRANT ALL ON SCHEMA noetl TO noetl; GRANT ALL ON ALL TABLES IN SCHEMA noetl TO noetl; GRANT ALL ON ALL SEQUENCES IN SCHEMA noetl TO noetl; ALTER DEFAULT PRIVILEGES IN SCHEMA noetl GRANT ALL ON TABLES TO noetl; ALTER DEFAULT PRIVILEGES IN SCHEMA noetl GRANT ALL ON SEQUENCES TO noetl;\""
+
+            # Also grant on auth schema if it exists (for Gateway auth)
+            echo "Creating and granting permissions on auth schema (if not exists)..."
+            kubectl exec -n postgres "$POSTGRES_POD" -- /bin/sh -c "PGPASSWORD=demo psql -U postgres -d noetl -c \"CREATE SCHEMA IF NOT EXISTS auth\""
+            kubectl exec -n postgres "$POSTGRES_POD" -- /bin/sh -c "PGPASSWORD=demo psql -U postgres -d noetl -c \"GRANT ALL ON SCHEMA auth TO noetl; GRANT ALL ON ALL TABLES IN SCHEMA auth TO noetl; GRANT ALL ON ALL SEQUENCES IN SCHEMA auth TO noetl; ALTER DEFAULT PRIVILEGES IN SCHEMA auth GRANT ALL ON TABLES TO noetl; ALTER DEFAULT PRIVILEGES IN SCHEMA auth GRANT ALL ON SEQUENCES TO noetl;\""
 
             # Verify schema was created
             VERIFY=$(kubectl exec -n postgres "$POSTGRES_POD" -- /bin/sh -c "PGPASSWORD=demo psql -U postgres -d noetl -tAc \"SELECT count(*) FROM information_schema.tables WHERE table_schema='noetl'\"" 2>/dev/null || echo "0")
@@ -946,23 +983,68 @@ workflow:
           - step: print_success
 
   - step: deploy_gateway
-    desc: Deploy NoETL Gateway via Helm
+    desc: Deploy NoETL Gateway via Helm (public LoadBalancer or internal ClusterIP)
     tool:
       kind: shell
       cmds:
         - |
           echo "Deploying NoETL Gateway..."
+          echo "Gateway Public: {{ workload.gateway_public }}"
+
+          # Determine service type based on gateway_public setting
+          if [ "{{ workload.gateway_public }}" = "true" ]; then
+            SERVICE_TYPE="LoadBalancer"
+            echo "Gateway will be exposed as public LoadBalancer"
+          else
+            SERVICE_TYPE="ClusterIP"
+            echo "Gateway will be internal ClusterIP only"
+          fi
+
           helm upgrade --install noetl-gateway ./automation/helm/gateway \
             --namespace gateway \
             --create-namespace \
             --set image.repository={{ vars.gateway_image }} \
             --set image.tag={{ workload.gateway_image_tag }} \
             --set image.pullPolicy=IfNotPresent \
-            --set service.type=ClusterIP \
+            --set service.type=$SERVICE_TYPE \
             --set service.port=8090 \
             --set-string env.noetlBaseUrl=http://noetl.noetl.svc.cluster.local:8082 \
+            --set-string env.rustLog=info,gateway=debug \
             --set ingress.enabled=false
           kubectl wait --for=condition=ready pod -l app=gateway -n gateway --timeout=180s || true
+
+          # If public, show the external IP
+          if [ "{{ workload.gateway_public }}" = "true" ]; then
+            echo ""
+            echo "Waiting for LoadBalancer external IP..."
+            EXTERNAL_IP=""
+            MAX_WAIT=120
+            WAITED=0
+            while [ -z "$EXTERNAL_IP" ] && [ $WAITED -lt $MAX_WAIT ]; do
+              EXTERNAL_IP=$(kubectl get svc noetl-gateway -n gateway -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
+              if [ -z "$EXTERNAL_IP" ]; then
+                sleep 5
+                WAITED=$((WAITED + 5))
+                echo "Waiting for external IP... ($WAITED/$MAX_WAIT)"
+              fi
+            done
+
+            if [ -n "$EXTERNAL_IP" ]; then
+              echo ""
+              echo "=============================================="
+              echo " GATEWAY PUBLIC ENDPOINT"
+              echo "=============================================="
+              echo "  URL: http://$EXTERNAL_IP:8090"
+              echo ""
+              echo "  GraphQL endpoint: http://$EXTERNAL_IP:8090/graphql"
+              echo "  Health check:     http://$EXTERNAL_IP:8090/health"
+              echo "  Auth login:       POST http://$EXTERNAL_IP:8090/api/auth/login"
+              echo "=============================================="
+            else
+              echo "WARNING: External IP not assigned yet"
+              echo "Check later with: kubectl get svc noetl-gateway -n gateway"
+            fi
+          fi
     next:
       - step: print_success
 
@@ -990,7 +1072,36 @@ workflow:
           echo "Services:"
           kubectl get svc -A | grep -E "postgres|nats|clickhouse|noetl|gateway" || echo "  (none found)"
           echo ""
-          echo "To access services locally, use port-forwarding:"
+
+          # Show Gateway public endpoint if available
+          if [ "{{ workload.gateway_public }}" = "true" ]; then
+            GATEWAY_IP=$(kubectl get svc noetl-gateway -n gateway -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
+            if [ -n "$GATEWAY_IP" ]; then
+              echo "==========================================="
+              echo " PUBLIC API ACCESS (via Gateway)"
+              echo "==========================================="
+              echo ""
+              echo "  Base URL:         http://$GATEWAY_IP:8090"
+              echo "  GraphQL:          http://$GATEWAY_IP:8090/graphql"
+              echo "  Health:           http://$GATEWAY_IP:8090/health"
+              echo "  Auth Login:       POST http://$GATEWAY_IP:8090/api/auth/login"
+              echo ""
+              echo "  Note: NoETL server is internal-only (ClusterIP)."
+              echo "        All external requests go through Gateway."
+              echo ""
+            else
+              echo "Gateway external IP not yet assigned. Check with:"
+              echo "  kubectl get svc noetl-gateway -n gateway"
+              echo ""
+            fi
+          fi
+
+          echo "==========================================="
+          echo " INTERNAL ACCESS (port-forwarding)"
+          echo "==========================================="
+          echo ""
+          echo "To access internal services locally:"
+          echo "  kubectl port-forward -n gateway svc/noetl-gateway 8090:8090"
           echo "  kubectl port-forward -n noetl svc/noetl 8082:8082"
           echo "  kubectl port-forward -n postgres svc/postgres 5432:5432"
           echo "  kubectl port-forward -n clickhouse svc/clickhouse 8123:8123"
