@@ -141,7 +141,7 @@ class V2Worker:
             response = await self._http_client.post(register_url, json=payload, timeout=10.0)
             if response.status_code == 200:
                 self._registered = True
-                logger.info(f"Worker {self.worker_id} registered in runtime table")
+                logger.debug(f"Worker {self.worker_id} registered in runtime table")
                 return True
             else:
                 logger.warning(f"Worker registration failed: {response.status_code} - {response.text}")
@@ -163,7 +163,7 @@ class V2Worker:
             response = await self._http_client.post(deregister_url, json=payload, timeout=10.0)
             if response.status_code == 200:
                 self._registered = False
-                logger.info(f"Worker {self.worker_id} deregistered from runtime table")
+                logger.debug(f"Worker {self.worker_id} deregistered from runtime table")
                 return True
             else:
                 logger.warning(f"Worker deregistration failed: {response.status_code}")
