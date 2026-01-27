@@ -21,7 +21,7 @@ workload:
   auth0_token: ""
   client_ip: "0.0.0.0"
   auth0_domain: "mestumre-development.us.auth0.com"
-  db_credential: pg_k8s
+  db_credential: pg_auth
 
 workflow:
   - step: start
@@ -122,7 +122,7 @@ workflow:
         )
         VALUES (
           {{ upsert_user.command_0.rows[0].user_id }},
-          md5(random()::text || clock_timestamp()::text),
+          replace(gen_random_uuid()::text, '-', ''),
           '{{ workload.auth0_token }}',
           NOW() + INTERVAL '24 hours',
           '{{ workload.client_ip }}'::inet
@@ -144,7 +144,7 @@ workflow:
         session_token: "{{ create_session.command_0.rows[0].session_token }}"
         user_id: "{{ create_session.command_0.rows[0].user_id }}"
         expires_at: "{{ create_session.command_0.rows[0].expires_at }}"
-        email: "{{ upsert_user[0].email }}"
+        email: "{{ upsert_user.command_0.rows[0].email }}"
       code: |
         # Arguments injected: session_token, user_id, expires_at, email
         result = {

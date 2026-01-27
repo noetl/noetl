@@ -1,0 +1,8 @@
+{
+  "label": "Gateway",
+  "position": 5,
+  "link": {
+    "type": "generated-index",
+    "description": "NoETL Gateway documentation - deployment, configuration, and integration guides."
+  }
+}

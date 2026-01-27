@@ -7,11 +7,14 @@ metadata:
     app: gateway
 spec:
   type: {{ .Values.service.type }}
+{{- if and (eq .Values.service.type "LoadBalancer") .Values.service.loadBalancerIP }}
+  loadBalancerIP: {{ .Values.service.loadBalancerIP }}
+{{- end }}
   selector:
     app: gateway
   ports:
     - name: http
-      port: {{ .Values.service.port }}
+      port: 80
       targetPort: {{ .Values.service.targetPort | default .Values.env.routerPort | default "8090" }}
       protocol: TCP
 {{- if .Values.service.nodePort }}

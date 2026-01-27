@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Login - Cybx AI Gateway</title>
   <script src="/config.js"></script>
-  <link rel="stylesheet" href="/static/styles.css">
+  <link rel="stylesheet" href="/styles.css">
   <style>
     body {
       display: flex;
@@ -290,10 +290,11 @@
   </div>
 
   <script>
-    const API_BASE = window.location.origin;
-    const NOETL_API = window.location.origin.replace(':8080', ':8082'); // NoETL API for testing
-    const AUTH_LOGIN_URL = `${API_BASE}/api/auth/login`;
-    const AUTH_VALIDATE_URL = `${NOETL_API}/api/execute`; // Direct to NoETL playbook
+    // Gateway API - handles auth and proxies to NoETL internally
+    // Use port-forwarded gateway (8091) for local testing to bypass Cloudflare CORS issues
+    const GATEWAY_API = 'http://localhost:8091';
+    const AUTH_LOGIN_URL = `${GATEWAY_API}/api/auth/login`;
+    const AUTH_VALIDATE_URL = `${GATEWAY_API}/api/auth/validate`;
 
     // Check if already logged in
     window.addEventListener('DOMContentLoaded', async () => {
@@ -331,100 +332,46 @@
         const params = new URLSearchParams(hash.substring(1));
         const accessToken = params.get('access_token');
         const idToken = params.get('id_token');
-        
+
         if (accessToken && idToken) {
           showAlert('Processing Auth0 login...', 'info');
-          
+
           try {
-            // Call auth0_login playbook with the ID token (can be validated at /userinfo)
-            console.log('DEBUG: Calling auth0_login with id_token:', idToken.substring(0, 20) + '...');
-            const response = await fetch(`${NOETL_API}/api/execute`, {
+            // Call Gateway's auth login endpoint with the Auth0 tokens
+            console.log('DEBUG: Calling Gateway auth/login with id_token');
+            const response = await fetch(AUTH_LOGIN_URL, {
               method: 'POST',
               headers: {'Content-Type': 'application/json'},
               body: JSON.stringify({
-                path: 'api_integration/auth0/auth0_login',
-                payload: {
-                  auth0_token: idToken,
-                  client_ip: '127.0.0.1'
-                }
+                auth0_token: idToken,
+                auth0_domain: auth0Config.domain
               })
             });
-            
+
             if (response.ok) {
               const data = await response.json();
-              const executionId = data.execution_id;
-              console.log('DEBUG: Playbook execution started, ID:', executionId);
-              
-              showAlert('Auth0 login successful! Fetching session...', 'info');
-              
-              // Wait a bit for playbook to complete before polling
-              await new Promise(resolve => setTimeout(resolve, 2000));
-              
-              // Check execution status first
-              const statusResponse = await fetch(`${NOETL_API}/api/executions/${executionId}`);
-              if (statusResponse.ok) {
-                const statusData = await statusResponse.json();
-                console.log('DEBUG: Execution status:', statusData.status);
-                console.log('DEBUG: Full execution data:', statusData);
-              }
-              
-              // Poll for execution completion and get session token
-              let attempts = 0;
-              const maxAttempts = 20;
-              let sessionToken = null;
-              
-              while (attempts < maxAttempts && !sessionToken) {
-                await new Promise(resolve => setTimeout(resolve, 500));
-                attempts++;
-                
-                try {
-                  // Query database for session token using id_token (which we passed to playbook)
-                  const queryPayload = {
-                    query: `SELECT session_token FROM auth.sessions WHERE auth0_token = '${idToken}' ORDER BY created_at DESC LIMIT 1`,
-                    connection_string: 'postgresql://demo:demo@postgres.postgres.svc.cluster.local:5432/demo_noetl'
-                  };
-                  console.log(`DEBUG: Query attempt ${attempts}:`, queryPayload.query.substring(0, 100) + '...');
-                  
-                  const sessionResponse = await fetch(`${NOETL_API}/api/postgres/execute`, {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify(queryPayload)
-                  });
-                  
-                  if (sessionResponse.ok) {
-                    const sessionData = await sessionResponse.json();
-                    console.log(`DEBUG: Session query response (attempt ${attempts}):`, sessionData);
-                    
-                    if (sessionData.result && sessionData.result.length > 0) {
-                      // Result is array of arrays: [["session_token_value"]]
-                      sessionToken = sessionData.result[0][0];
-                      console.log('DEBUG: Found session token:', sessionToken);
-                      break;
-                    } else {
-                      console.log(`DEBUG: Attempt ${attempts}/${maxAttempts}: No session found yet, result:`, sessionData.result);
-                    }
-                  } else {
-                    console.error('DEBUG: Session query failed:', await sessionResponse.text());
-                  }
-                } catch (err) {
-                  console.error('DEBUG: Error fetching session:', err);
+              console.log('DEBUG: Gateway login response:', data);
+
+              if (data.session_token) {
+                // Store session token and user info
+                localStorage.setItem('session_token', data.session_token);
+                if (data.user) {
+                  localStorage.setItem('user_info', JSON.stringify(data.user));
                 }
-              }
-              
-              if (sessionToken) {
-                localStorage.setItem('session_token', sessionToken);
-                console.log('DEBUG: Session token stored in localStorage');
-                showAlert('Login complete! Redirecting...', 'success');
-                
+
+                showAlert('Login successful! Redirecting...', 'success');
+
+                // Clean URL hash and redirect
+                window.location.hash = '';
                 setTimeout(() => {
                   window.location.href = '/dashboard.html';
                 }, 1000);
               } else {
-                console.error('DEBUG: Failed to get session token after', maxAttempts, 'attempts');
-                throw new Error('Session token not found after login');
+                throw new Error('No session token in response');
               }
             } else {
-              throw new Error('Failed to create NoETL session');
+              const errorData = await response.json().catch(() => ({}));
+              throw new Error(errorData.error || `Login failed: ${response.status}`);
             }
           } catch (error) {
             console.error('Auth0 callback error:', error);
@@ -435,7 +382,7 @@
           return;
         }
       }
-      
+
       // Check if already logged in with session token
       const token = localStorage.getItem('session_token');
       if (token) {
@@ -481,7 +428,7 @@
       }
     });
 
-    // Validate session helper
+    // Validate session helper - calls Gateway API
     async function validateSession(token) {
       try {
         const response = await fetch(AUTH_VALIDATE_URL, {
@@ -490,26 +437,17 @@
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            path: 'api_integration/auth0/auth0_validate_session',
-            workload: {
-              session_token: token
-            }
+            session_token: token
           }),
         });
 
-        const data = await response.json();
-        
-        // For NoETL playbook execution, wait for result
-        if (data.execution_id) {
-          // Wait 2 seconds for playbook to complete
-          await new Promise(resolve => setTimeout(resolve, 2000));
-          
-          // Check execution result (simplified for demo)
-          // In production, poll the execution status endpoint
-          return true; // Assume success if execution started
+        if (!response.ok) {
+          console.error('Session validation failed:', response.status);
+          return false;
         }
 
-        // For direct gateway API response
+        const data = await response.json();
+
         if (data.valid && data.user) {
           localStorage.setItem('user_info', JSON.stringify(data.user));
           return true;

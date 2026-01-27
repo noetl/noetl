@@ -45,9 +45,8 @@ impl NoetlClient {
     }
 
     pub async fn get_playbook_status(&self, execution_id: &str) -> anyhow::Result<serde_json::Value> {
-        // Placeholder path; adjust to real API
         let url = format!(
-            "{}/api/playbooks/executions/{}/status",
+            "{}/api/executions/{}/status",
             self.base_url.trim_end_matches('/'),
             execution_id
         );

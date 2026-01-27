@@ -16,7 +16,7 @@ use axum::{
     http::{HeaderName, Method},
 };
 use dotenvy::dotenv;
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing_subscriber::EnvFilter;
 
 mod auth;
@@ -57,15 +57,20 @@ async fn main() -> anyhow::Result<()> {
         .data(noetl_arc.clone())
         .finish();
 
-    // CORS configuration for Auth0 + local development
-    // Cannot use wildcards with credentials=true, so specify allowed origins
-    let allowed_origins = [
-        "http://localhost:8080".parse().unwrap(),
-        "http://localhost:3000".parse().unwrap(),
-    ];
-    
+    // CORS configuration - read allowed origins from env var (comma-separated)
+    // Example: CORS_ALLOWED_ORIGINS=http://localhost:8090,http://gateway.mestumre.dev
+    let cors_origins_str = std::env::var("CORS_ALLOWED_ORIGINS")
+        .unwrap_or_else(|_| "http://localhost:8080,http://localhost:8090,http://localhost:3000".to_string());
+
+    let allowed_origins: Vec<axum::http::HeaderValue> = cors_origins_str
+        .split(',')
+        .filter_map(|s| s.trim().parse().ok())
+        .collect();
+
+    tracing::info!("CORS allowed origins: {:?}", cors_origins_str);
+
     let cors = CorsLayer::new()
-        .allow_origin(allowed_origins)
+        .allow_origin(AllowOrigin::list(allowed_origins))
         .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
         .allow_headers([
             CONTENT_TYPE,

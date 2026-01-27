@@ -1,6 +1,8 @@
 // Authentication utilities for Gateway UI
 
-const API_BASE = window.location.origin;
+// For local testing, point to the gateway URL
+// const API_BASE = window.location.origin;
+const API_BASE = 'https://gateway.mestumre.dev';
 const AUTH_VALIDATE_URL = `${API_BASE}/api/auth/validate`;
 const AUTH_CHECK_ACCESS_URL = `${API_BASE}/api/auth/check-access`;
 
@@ -165,7 +167,7 @@ function clearAuth() {
  * Redirect to login page
  */
 function redirectToLogin() {
-  window.location.href = '/static/login.html';
+  window.location.href = '/login.html';
 }
 
 /**

@@ -30,6 +30,12 @@ spec:
               value: {{ .Values.env.noetlBaseUrl | quote }}
             - name: RUST_LOG
               value: {{ .Values.env.rustLog | quote }}
+            - name: CORS_ALLOWED_ORIGINS
+              value: {{ .Values.env.corsAllowedOrigins | quote }}
+            - name: NATS_URL
+              value: {{ .Values.env.natsUrl | quote }}
+            - name: NATS_UPDATES_SUBJECT_PREFIX
+              value: {{ .Values.env.natsUpdatesSubjectPrefix | quote }}
           resources:
 {{- toYaml .Values.resources | nindent 12 }}
           livenessProbe:
