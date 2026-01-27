@@ -142,9 +142,9 @@ The `loop:` attribute **repeats the step's tool execution** over a collection:
 ```yaml
 - step: process_items
   loop:
-    collection: "{{ workload.items }}"
-    element: item
-    mode: sequential | parallel
+    in: "{{ workload.items }}"    # Collection expression (Jinja2)
+    iterator: item                  # Variable name bound per iteration
+    mode: sequential                # sequential | parallel | async
   tool:
     kind: python
     args:
@@ -153,11 +153,16 @@ The `loop:` attribute **repeats the step's tool execution** over a collection:
       result = {"processed": current_item["id"]}
 ```
 
+**V2 DSL Loop Syntax:**
+- `in:` - Jinja2 expression evaluating to a list/array
+- `iterator:` - Variable name bound to current element in each iteration
+- `mode:` - Execution mode: `sequential` (default), `parallel`, or `async`
+
 **Semantics:**
 - `loop` calls the step's `tool` **N times** (once per collection element)
 - `mode: sequential` - executes iterations one at a time, in order
-- `mode: parallel` - executes all iterations concurrently
-- The `element` variable is bound to the current element in each iteration
+- `mode: parallel` / `async` - executes iterations concurrently
+- The `iterator` variable is bound to the current element in each iteration
 - `case` blocks evaluate **per iteration** (can trigger per-iteration sinks)
 
 ### 1.5.1 Implementation: Loop is a Step-Level Attribute, Workers Execute Tools
@@ -166,7 +171,7 @@ The `loop:` attribute **repeats the step's tool execution** over a collection:
 
 1. **Server evaluates `loop` on step:**
    - Server detects `loop:` attribute when processing step transitions
-   - Server renders `loop.collection` template to get the actual collection
+   - Server renders `loop.in` template to get the actual collection
    - Server emits `iterator_started` event with collection metadata and nested task config
 
 2. **Server dispatches iteration commands:**
@@ -193,7 +198,8 @@ The `loop:` attribute **repeats the step's tool execution** over a collection:
 │  ┌─────────────┐    ┌─────────────────────────────────────────┐ │
 │  │ Step with   │───▶│ 1. Evaluate loop.collection              │ │
 │  │ loop:       │    │ 2. Emit iterator_started                 │ │
-│  │   element   │    │ 3. For each element:                     │ │
+│  │   in        │    │ 3. For each element:                     │ │
+│  │   iterator  │    │    - Bind iterator variable               │ │
 │  │   mode      │    │    - Create command with tool+context    │ │
 │  │   tool      │    │    - Dispatch to NATS                    │ │
 │  └─────────────┘    │ 4. Track iteration events                │ │
@@ -272,9 +278,11 @@ A language is Turing-complete if it can simulate a Turing machine, requiring:
 |-------------|-----------|----------------|
 | **Conditional branching (if-then)** | ✅ Yes | `case: when:` blocks with Jinja2 predicates |
 | **Goto/jump** | ✅ Yes | `next:` clauses route to arbitrary named steps |
-| **Unbounded iteration** | ⚠️ Bounded | `loop:` and `retry:` have `max_attempts` limits |
+| **Unbounded iteration** | ✅ Yes | Backward `next:` jumps create unbounded loops |
 | **Read/write storage** | ✅ Yes | `vars:` persistence, `sink:` to databases |
 | **Arbitrary computation** | ✅ Yes | `tool: kind: python` executes arbitrary Python code |
+
+**Note on unbounded iteration:** While `loop:` iterates over finite collections and `retry:` has `max_attempts`, true unbounded iteration is achieved via **backward jumps** with `next:` pointing to earlier steps. This is the standard while-loop pattern in workflow languages.
 
 ### 2.3 If-Then-Goto Equivalence
 
@@ -313,16 +321,37 @@ Loops are supported through:
     - step: after_loop  # Exit loop
 ```
 
-### 2.5 Verdict: Effectively Turing-Complete
+### 2.5 Verdict: Turing-Complete
 
-The NoETL DSL achieves **practical Turing-completeness** through:
-- Conditional branching via `case`
-- Arbitrary jumps via `next`
-- Bounded loops via `loop` and `retry`
-- Unbounded computation via backward jumps and recursive playbooks
-- State storage via `vars` and `sink`
+The NoETL DSL achieves **full Turing-completeness** through:
+- **Conditional branching** via `case: when: then:`
+- **Arbitrary jumps** via `next:` to any named step
+- **Unbounded iteration** via backward `next:` jumps (while-loop pattern)
+- **State storage** via `vars:` and `sink:` to databases
+- **Arbitrary computation** via `tool: kind: python`
 
-**Caveat:** `max_attempts` limits are a practical safeguard; theoretically unbounded computation is possible via step recursion.
+```yaml
+# Unbounded while-loop pattern:
+- step: check_condition
+  tool:
+    kind: python
+    code: |
+      result = {"continue": some_external_condition()}
+  case:
+    - when: "{{ result.continue == true }}"
+      then:
+        next:
+          - step: do_work  # Continue loop
+  next:
+    - step: after_loop  # Exit when condition is false
+
+- step: do_work
+  tool: { ... }
+  next:
+    - step: check_condition  # Backward jump - creates unbounded loop
+```
+
+**Note:** `loop:` iterates over finite collections. `retry:` has `max_attempts` for safety. For truly unbounded iteration, use the backward `next:` jump pattern shown above.
 
 ---
 
@@ -726,7 +755,9 @@ Before freezing the DSL, consider adding:
 | `case: then: next: args:` | `result`, `response`, `workload`, `vars`, step results |
 | `retry:` conditions | `response`, `error`, `attempt`, `_retry.index` |
 | `vars:` extraction | `result` (current step result) |
-| `loop:` context | `element` (bound element), `loop_index` |
+| `loop:` context | `{{ <iterator_name> }}` (bound element), `loop_index` |
+
+**Note:** In `loop:` context, the variable name is defined by `loop.iterator`. For example, if `iterator: item`, then `{{ item }}` is available.
 
 ---
 
