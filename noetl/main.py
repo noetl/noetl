@@ -17,6 +17,8 @@ For more information, see:
 - documentation/docs/development/pypi_rust_bundling.md
 
 Note: This module remains for backward compatibility only.
+
+to be removed in future releases.
 """
 
 import sys
