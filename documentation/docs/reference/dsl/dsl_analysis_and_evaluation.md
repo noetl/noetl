@@ -57,6 +57,21 @@ case:
         backoff_multiplier: 2.0
 ```
 
+#### Implementation Note: Hybrid Case Evaluation
+
+The `case` evaluation is a **hybrid server-worker model**:
+
+1. **Server passes `case` blocks to worker** as part of the command context
+2. **Worker evaluates `case` on `call.done`/`call.error`** events immediately after tool execution
+3. **Worker executes `sink` actions** directly if matched by a `case` condition
+4. **Worker reports `case.evaluated` event** with the matched action (next, retry, sink result)
+5. **Server handles routing** based on the `case.evaluated` event
+
+This hybrid approach enables:
+- **Per-iteration sinks** in loops (worker executes sink atomically with tool)
+- **Immediate retry decisions** without server round-trip
+- **Consistent state tracking** via events
+
 ### 1.3 Step-Level `next` and `sink` as Syntactic Sugar
 
 The `next:` and `sink:` attributes at the step level are **syntactic sugar** for implicit `case` conditions:
@@ -127,8 +142,8 @@ The `loop:` attribute **repeats the step's tool execution** over a collection:
 ```yaml
 - step: process_items
   loop:
-    in: "{{ workload.items }}"
-    iterator: item
+    collection: "{{ workload.items }}"
+    element: item
     mode: sequential | parallel
   tool:
     kind: python
@@ -142,8 +157,76 @@ The `loop:` attribute **repeats the step's tool execution** over a collection:
 - `loop` calls the step's `tool` **N times** (once per collection element)
 - `mode: sequential` - executes iterations one at a time, in order
 - `mode: parallel` - executes all iterations concurrently
-- The `iterator` variable is bound to the current element in each iteration
+- The `element` variable is bound to the current element in each iteration
 - `case` blocks evaluate **per iteration** (can trigger per-iteration sinks)
+
+### 1.5.1 Implementation: Loop is a Step-Level Attribute, Workers Execute Tools
+
+**Critical architectural distinction:** The `loop:` attribute is evaluated at the **step level** by the server (control plane), but workers execute **tool commands** in isolated runtimes:
+
+1. **Server evaluates `loop` on step:**
+   - Server detects `loop:` attribute when processing step transitions
+   - Server renders `loop.collection` template to get the actual collection
+   - Server emits `iterator_started` event with collection metadata and nested task config
+
+2. **Server dispatches iteration commands:**
+   - For each element in the collection, server creates a **command** (not a "step")
+   - Each command contains: `tool_kind`, `tool_config`, `args`, `render_context`
+   - Commands are dispatched to NATS JetStream for worker pickup
+   - The iterator variable (`element`) is bound in the command's render context
+
+3. **Workers execute tools in isolation:**
+   - Each worker receives ONE command (one iteration)
+   - Worker executes the **tool** (HTTP, Python, Postgres, etc.) - NOT the "step"
+   - Worker has no knowledge of the loop; it only sees a single tool execution task
+   - Worker reports events (`call.done`, `call.error`, `iteration_completed`)
+
+4. **Server aggregates results:**
+   - Server tracks iteration completions via events
+   - When all iterations complete, server emits `iterator_completed`
+   - Server continues workflow routing based on aggregated results
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                         SERVER (Control Plane)                   │
+│                                                                  │
+│  ┌─────────────┐    ┌─────────────────────────────────────────┐ │
+│  │ Step with   │───▶│ 1. Evaluate loop.collection              │ │
+│  │ loop:       │    │ 2. Emit iterator_started                 │ │
+│  │   element   │    │ 3. For each element:                     │ │
+│  │   mode      │    │    - Create command with tool+context    │ │
+│  │   tool      │    │    - Dispatch to NATS                    │ │
+│  └─────────────┘    │ 4. Track iteration events                │ │
+│                     │ 5. Emit iterator_completed when done     │ │
+│                     └─────────────────────────────────────────┘ │
+└───────────────────────────────┬─────────────────────────────────┘
+                                │ Commands via NATS
+                    ┌───────────┼───────────┐
+                    ▼           ▼           ▼
+            ┌─────────────┬─────────────┬─────────────┐
+            │  Worker 1   │  Worker 2   │  Worker N   │
+            │  (iter 0)   │  (iter 1)   │  (iter N-1) │
+            ├─────────────┼─────────────┼─────────────┤
+            │ Execute     │ Execute     │ Execute     │
+            │ TOOL only   │ TOOL only   │ TOOL only   │
+            │ (isolated)  │ (isolated)  │ (isolated)  │
+            └──────┬──────┴──────┬──────┴──────┬──────┘
+                   │             │             │
+                   └─────────────┴─────────────┘
+                          Events to Server
+```
+
+**Key Insight:** Workers execute **tools**, not **steps**. The step construct (including `case`, `loop`, `next`, `sink`) is interpreted entirely by the server. Workers are stateless tool executors that:
+- Receive a command with tool configuration and render context
+- Execute the tool (in an isolated runtime/subprocess)
+- Report events back to the server
+- Have no knowledge of workflow state, routing, or iteration position
+
+This architecture enables:
+- **Horizontal scaling:** Any worker can pick up any iteration
+- **Fault isolation:** Tool failures don't crash the workflow engine
+- **State consistency:** All state lives in the server's event store
+- **Load distribution:** Parallel loops distribute across the worker pool
 
 ### 1.6 Retry within Case: Loop-Until Equivalent
 
@@ -643,13 +726,80 @@ Before freezing the DSL, consider adding:
 | `case: then: next: args:` | `result`, `response`, `workload`, `vars`, step results |
 | `retry:` conditions | `response`, `error`, `attempt`, `_retry.index` |
 | `vars:` extraction | `result` (current step result) |
-| `loop:` context | `iterator_name` (bound element), `loop_index` |
+| `loop:` context | `element` (bound element), `loop_index` |
 
 ---
 
-## 7. Summary
+## 7. Implementation Architecture
 
-### 7.1 Strengths
+### 7.1 Distributed Execution Model
+
+NoETL implements a **server-worker architecture** where the DSL semantics are interpreted as follows:
+
+| DSL Construct | Evaluated By | Execution Location |
+|---------------|--------------|-------------------|
+| `step:` | Server | Server dispatches commands |
+| `tool:` | Worker | Worker executes tool in isolated runtime |
+| `case:` | Hybrid | Server passes blocks; worker evaluates on events |
+| `loop:` | Server | Server iterates collection, dispatches N commands |
+| `next:` | Server | Server determines routing, issues commands |
+| `sink:` | Worker | Worker executes sink after tool (atomic) |
+| `vars:` | Server | Server persists variables from event results |
+| `retry:` | Hybrid | Worker evaluates; server may re-dispatch |
+
+### 7.2 What Workers Execute
+
+Workers are **stateless tool executors**. They:
+- Receive a **command** (not a step) via NATS JetStream
+- Extract `tool_kind`, `tool_config`, `args`, `render_context` from command
+- Execute the **tool** (HTTP, Python, Postgres, etc.) in an isolated subprocess
+- Evaluate `case` blocks (if present) for immediate routing decisions
+- Execute `sink` actions (if triggered by `case` or default)
+- Report events (`call.done`, `call.error`, `case.evaluated`, `step.exit`)
+
+**Workers never see:**
+- Workflow graph structure
+- Loop collection (only individual elements)
+- Step routing logic (`next:`)
+- Other steps' results (only render context passed by server)
+
+### 7.3 Iteration Distribution in Loops
+
+When a step has `loop:`:
+
+1. **Server evaluates collection** via Jinja2 template rendering
+2. **Server emits `iterator_started`** with collection metadata
+3. **For each element**, server creates a **command** containing:
+   - Tool configuration (from step's `tool:` block)
+   - Args with `element` bound to current item
+   - Full render context for Jinja2 templates
+   - `sink:` block (if defined) for per-iteration persistence
+4. **Commands are dispatched to NATS** for worker pickup
+5. **Any available worker** picks up each command (load distribution)
+6. **Workers execute in isolation** - no coordination with other iterations
+7. **Server tracks completion** via `iteration_completed` events
+8. **Server aggregates results** and emits `iterator_completed`
+
+**Mode effects:**
+- `mode: sequential` - Server dispatches commands one at a time, waiting for completion
+- `mode: parallel` - Server dispatches all commands at once (limited by worker pool size)
+
+### 7.4 State Management
+
+All workflow state is managed by the **server** via the event store:
+
+- **Step results:** Stored in `noetl.event` table with `result` column
+- **Variables (`vars:`):** Server extracts and stores in execution context
+- **Iteration tracking:** Server tracks via `iteration_completed` events
+- **Completion detection:** Server counts events to determine workflow completion
+
+Workers are ephemeral and stateless. If a worker crashes mid-execution, another worker can retry the command (via NATS redelivery).
+
+---
+
+## 8. Summary
+
+### 8.1 Strengths
 
 - ✅ **Turing-complete** via conditional branching, loops, and state storage
 - ✅ **Event-driven** with reactive `case` evaluation
@@ -657,18 +807,18 @@ Before freezing the DSL, consider adding:
 - ✅ **Rich context passing** via `args`, `vars`, and `workload`
 - ✅ **Composable** via sub-playbooks and workbook tasks
 - ✅ **Visualizable** as directed graph with clear semantics
+- ✅ **Distributed** with stateless workers and centralized state
 
-### 7.2 BPMN 2.0 Coverage
+### 8.2 BPMN 2.0 Coverage
 
 - **Covered:** Sequential, parallel (fork), loops, conditional branching, error handling, subprocesses
 - **Partial:** Parallel join (implicit), event waiting (polling only)
 - **Missing:** Timer events, human tasks, compensation, inclusive gateway
 
-### 7.3 Design Quality
+### 8.3 Design Quality
 
 - **Consistency:** Good - v2 enforces `case` for conditional routing
 - **Unambiguity:** Good - clear separation of concerns
 - **Readability:** Moderate - some verbosity in tool blocks
 - **Machine-parseable:** Excellent - standard YAML with clear schema
-
-The NoETL DSL is well-suited for **automated data workflows and MLOps orchestration**, covering approximately **80-85%** of BPMN 2.0 patterns relevant to this domain.
+- **Scalability:** Excellent - distributed worker pool with event-driven coordination
