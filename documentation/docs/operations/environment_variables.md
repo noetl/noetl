@@ -10,6 +10,7 @@ This document provides a comprehensive list of environment variables supported b
 | `NOETL_PORT` | Port for the NoETL server | `8080` |
 | `NOETL_ENABLE_UI` | Enable or disable the UI components | `true` |
 | `LOG_LEVEL` | Logging level (INFO, DEBUG, WARNING, ERROR) | `INFO` |
+| `NOETL_LOG_FORMAT` | Log output format: `json` for GCP/structured logging, `victorialogs` for VictoriaLogs, or empty for human-readable | (empty) |
 | `NOETL_DATA_DIR` | Directory for NoETL data files | `data` |
 
 ## Database Configuration
