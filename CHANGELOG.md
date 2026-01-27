@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.7.2](https://github.com/noetl/noetl/compare/v2.7.1...v2.7.2) (2026-01-27)
+
+### Bug Fixes
+
+* Logs ([2067e03](https://github.com/noetl/noetl/commit/2067e0322d64a42edbbd9834145e03c9ee4171bb))
+
 ## [2.7.1](https://github.com/noetl/noetl/compare/v2.7.0...v2.7.1) (2026-01-26)
 
 ### Bug Fixes
