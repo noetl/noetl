@@ -291,8 +291,8 @@
 
   <script>
     // Gateway API - handles auth and proxies to NoETL internally
-    // Use port-forwarded gateway (8091) for local testing to bypass Cloudflare CORS issues
-    const GATEWAY_API = 'http://localhost:8091';
+    // Production gateway via Cloudflare (SSL: Flexible, cache bypass for API/OPTIONS)
+    const GATEWAY_API = 'https://gateway.mestumre.dev';
     const AUTH_LOGIN_URL = `${GATEWAY_API}/api/auth/login`;
     const AUTH_VALIDATE_URL = `${GATEWAY_API}/api/auth/validate`;
 

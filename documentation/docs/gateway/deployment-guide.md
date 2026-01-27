@@ -46,6 +46,19 @@ The Gateway provides:
 - **CORS Support**: Configurable cross-origin resource sharing
 - **GraphQL Proxy**: Proxies authenticated requests to NoETL's GraphQL API
 
+## Current Production Configuration
+
+:::info Working Production Setup (mestumre.dev)
+| Setting | Value |
+|---------|-------|
+| Gateway URL | `https://gateway.mestumre.dev` |
+| Static IP | `34.46.180.136` |
+| Auth0 Domain | `mestumre-development.us.auth0.com` |
+| SSL Mode | Flexible (Cloudflare → HTTP origin) |
+| GKE Cluster | `noetl-cluster` (us-central1) |
+| Project | `noetl-demo-19700101` |
+:::
+
 ## Prerequisites
 
 - Google Cloud SDK (`gcloud`) configured with appropriate permissions
@@ -478,3 +491,11 @@ kubectl get events -n gateway --sort-by=.lastTimestamp
 kubectl rollout restart deployment/gateway -n gateway
 kubectl rollout status deployment/gateway -n gateway
 ```
+
+## Next Steps
+
+Once the gateway is deployed and working:
+
+1. **Configure Auth0** - See [Auth0 Setup](./auth0-setup) for detailed Auth0 configuration
+2. **Set up Cloudflare** - See [Cloudflare Setup](./cloudflare-setup) for DNS and SSL configuration
+3. **Use the API** - See [API Usage Guide](./api-usage) for how to authenticate and call playbooks

@@ -23,21 +23,32 @@ Cloudflare provides:
 - NoETL Gateway deployed with a static IP address
 - Cloudflare account (free tier is sufficient)
 
+## Current Production Configuration
+
+:::info NoETL Gateway (mestumre.dev)
+| Setting | Value |
+|---------|-------|
+| Domain | `mestumre.dev` |
+| Subdomain | `gateway.mestumre.dev` |
+| Static IP | `34.46.180.136` |
+| SSL Mode | **Flexible** |
+:::
+
 ## DNS Configuration
 
 ### Add A Record for Gateway
 
 1. Log into [Cloudflare Dashboard](https://dash.cloudflare.com)
-2. Select your domain
+2. Select your domain (e.g., `mestumre.dev`)
 3. Go to **DNS** > **Records**
-4. Click **Add record**
+4. Click **Add record** (or **Edit** existing)
 5. Configure:
 
 | Field | Value |
 |-------|-------|
 | Type | A |
 | Name | gateway |
-| IPv4 address | YOUR_STATIC_IP (e.g., 34.46.180.136) |
+| IPv4 address | `34.46.180.136` |
 | Proxy status | Proxied (orange cloud) |
 | TTL | Auto |
 
@@ -49,10 +60,10 @@ DNS changes typically propagate within minutes when using Cloudflare. Verify:
 
 ```bash
 # Check DNS resolution
-dig gateway.yourdomain.com
+dig gateway.mestumre.dev
 
-# Should return your static IP (or Cloudflare proxy IP if proxied)
-nslookup gateway.yourdomain.com
+# Should return Cloudflare proxy IPs (not your static IP - that's expected when proxied)
+nslookup gateway.mestumre.dev
 ```
 
 ## SSL/TLS Configuration
@@ -65,11 +76,11 @@ nslookup gateway.yourdomain.com
 | Mode | Description | When to Use |
 |------|-------------|-------------|
 | **Off** | No encryption | Never (insecure) |
-| **Flexible** | HTTPS to Cloudflare, HTTP to origin | Origin doesn't support HTTPS |
+| **Flexible** | HTTPS to Cloudflare, HTTP to origin | LoadBalancer without TLS (current setup) |
 | **Full** | HTTPS to origin (self-signed OK) | Origin has any certificate |
 | **Full (strict)** | HTTPS to origin (valid cert required) | Origin has valid certificate |
 
-**Recommended**: Use **Full** if your gateway's LoadBalancer doesn't have a certificate, or **Full (strict)** if using Ingress with managed certificates.
+**Recommended for NoETL Gateway**: Use **Flexible** when using a LoadBalancer service without TLS termination (HTTP on port 80). Use **Full** or **Full (strict)** if using GKE Ingress with managed certificates.
 
 ### Edge Certificates
 
@@ -88,20 +99,24 @@ This redirects all HTTP requests to HTTPS.
 
 ## Caching Configuration
 
-### API Caching (Disable)
+### API and OPTIONS Caching (Disable) - Required for CORS
 
-API endpoints should not be cached. Create a Cache Rule:
+API endpoints and OPTIONS preflight requests must not be cached. Create a Cache Rule:
 
 1. Go to **Caching** > **Cache Rules**
 2. Click **Create rule**
 3. Configure:
-   - **Rule name**: Bypass API cache
-   - **When incoming requests match**:
-     - Field: URI Path
-     - Operator: starts with
-     - Value: `/api`
+   - **Rule name**: `Bypass API and OPTIONS`
+   - **When incoming requests match** (use "Edit expression"):
+     ```
+     (http.request.uri.path contains "/api") or (http.request.method eq "OPTIONS")
+     ```
    - **Then**: Bypass cache
 4. Click **Deploy**
+
+:::warning Important for CORS
+This rule is **critical** for CORS to work. Without it, Cloudflare may cache OPTIONS preflight responses without the required CORS headers, causing authentication to fail.
+:::
 
 ### Static Assets (Optional)
 
@@ -165,13 +180,17 @@ If CORS preflight (OPTIONS) requests fail after working initially:
 
 ### Gateway CORS Configuration
 
-Ensure gateway allows Cloudflare-proxied requests:
+Ensure gateway allows Cloudflare-proxied requests. Current configuration:
 
 ```yaml
-# values.yaml
+# automation/helm/gateway/values.yaml
 env:
-  corsAllowedOrigins: "https://gateway.yourdomain.com,https://app.yourdomain.com"
+  corsAllowedOrigins: "http://localhost:8080,http://localhost:8090,http://localhost:3000,https://gateway.mestumre.dev"
 ```
+
+This allows:
+- Local development on ports 8080, 8090, 3000
+- Production requests via `https://gateway.mestumre.dev`
 
 ## Page Rules (Legacy)
 
@@ -297,17 +316,31 @@ curl https://www.cloudflare.com/ips-v6
 
 ## Quick Reference
 
-### DNS Record
+### DNS Record (mestumre.dev)
 
-| Type | Name | Content | Proxy |
-|------|------|---------|-------|
-| A | gateway | 34.46.180.136 | Proxied |
+| Type | Name | Content | Proxy | TTL |
+|------|------|---------|-------|-----|
+| A | gateway | `34.46.180.136` | Proxied | Auto |
 
-### Important Settings
+### Required Settings
 
-| Setting | Location | Recommended Value |
-|---------|----------|-------------------|
-| SSL Mode | SSL/TLS > Overview | Full |
+| Setting | Location | Value |
+|---------|----------|-------|
+| SSL Mode | SSL/TLS > Overview | **Flexible** (for HTTP LoadBalancer) |
 | Always HTTPS | SSL/TLS > Edge Certificates | On |
-| API Cache | Caching > Cache Rules | Bypass |
-| OPTIONS Cache | Caching > Cache Rules | Bypass |
+| Cache Bypass | Caching > Cache Rules | `(http.request.uri.path contains "/api") or (http.request.method eq "OPTIONS")` |
+
+### Verification Commands
+
+```bash
+# Test DNS
+dig gateway.mestumre.dev
+
+# Test health endpoint
+curl https://gateway.mestumre.dev/health
+
+# Test CORS preflight
+curl -I -X OPTIONS https://gateway.mestumre.dev/api/auth/login \
+  -H "Origin: http://localhost:8090" \
+  -H "Access-Control-Request-Method: POST"
+```

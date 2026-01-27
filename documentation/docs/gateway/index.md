@@ -54,6 +54,7 @@ For development documentation, local setup, and code details, see the [Gateway C
 | [Helm Reference](./helm-reference) | Complete Helm chart configuration |
 | [Auth0 Setup](./auth0-setup) | Auth0 application and integration |
 | [Cloudflare Setup](./cloudflare-setup) | DNS, SSL, caching configuration |
+| [API Usage Guide](./api-usage) | How to authenticate and call playbooks |
 
 ## Quick Start
 
