@@ -63,25 +63,42 @@ This model is particularly important for:
 
 ### 2.2 Minimal structure
 ```yaml
-apiVersion: noetl.io/v1
+apiVersion: noetl.io/v2
 kind: Playbook
-name: example
-path: examples/example
+metadata:
+  name: example
+  path: examples/example
 
 workload:
   jobId: "{{ job.uuid }}"
   items: []
 
+workbook:
+  - name: do_work
+    tool:
+      kind: http
+      url: "https://example.com"
+      method: GET
+
 workflow:
   - step: start
+    tool:
+      kind: python
+      code: "result = {'status': 'initialized'}"
     next:
       - step: do_work
 
-workbook:
-  - name: do_work
-    type: http
-    endpoint: "https://example.com"
-    method: GET
+  - step: do_work
+    tool:
+      kind: workbook
+      name: do_work
+    next:
+      - step: end
+
+  - step: end
+    tool:
+      kind: python
+      code: "result = {'status': 'completed'}"
 ```
 
 ### 2.3 Jinja2 templating
@@ -148,10 +165,10 @@ Context is hierarchical and should be treated as a structured object:
 - `results.<step_or_task_name>`: outputs of tool execution
 - `loop.<loop_name>`: loop control + iteration results
 
-### 4.2 Step parameters (`with`)
-`with` binds values into the called workbook task or step.
+### 4.2 Step parameters (`args`)
+`args` binds values into the step's tool for rendering.
 - All values are rendered with the current context.
-- Bound values become part of the input contract of the task.
+- Bound values become part of the input contract of the tool.
 
 Example (from a weather loop pattern):
 ```yaml
@@ -159,11 +176,14 @@ Example (from a weather loop pattern):
   loop:
     in: "{{ workload.cities }}"
     iterator: city
+    mode: sequential
+  tool:
+    kind: http
+    url: "{{ workload.base_url }}/weather"
+    params:
+      city: "{{ city }}"
   next:
-    - step: fetch_and_evaluate
-      with:
-        city: "{{ city }}"
-        base_url: "{{ workload.base_url }}"
+    - step: evaluate_weather
 ```
 
 ### 4.3 Output and result addressing
@@ -175,20 +195,28 @@ Example (from a weather loop pattern):
 ## 5. Workflow Routing: `case`, `next`, and server vs worker decisions
 
 ### 5.1 `next` (step-level routing shortcut)
-`next` is a list of routing rules evaluated after step execution (or as a pure router step):
+
+In v2, `next` provides unconditional default routing. For conditional routing, use `case`:
+
 ```yaml
-next:
+# Conditional routing uses case
+case:
   - when: "{{ some_condition }}"
     then:
-      - step: a
-      - step: b
-  - else:
-      - step: c
+      next:
+        - step: a
+        - step: b
+next:
+  - step: c  # Default fallback
 ```
+
 Rules:
-- Evaluate rules in order.
+- `case` rules are evaluated in order.
 - `when` is a Jinja2 expression returning boolean.
-- `then` and `else` contain one or more next-step invocations.
+- `then` contains actions including `next` with step references.
+- `next` at step level is the fallback when no `case` matches.
+
+**Note:** The v1 pattern `next: [{ when: ..., then: ... }]` is NOT supported in v2.
 
 ### 5.2 `case` (generalized router)
 `case` is the generalized form of `next`. It can be evaluated:
@@ -304,10 +332,11 @@ A **sink** persists results, enabling event streams to become materialized datas
 Example:
 ```yaml
 sink:
-  tool: postgres
-  table: noetl.event_sink
-  mode: insert
-  values:
+  tool:
+    kind: postgres
+    table: noetl.event_sink
+    mode: insert
+  args:
     execution_id: "{{ workload.jobId }}"
     step: "{{ step.name }}"
     payload: "{{ result }}"

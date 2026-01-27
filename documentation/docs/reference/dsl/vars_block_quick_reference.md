@@ -150,22 +150,24 @@ workflow:
 - step: process_data
   tool:
     kind: python
+    args:
+      env: "{{ workload.environment }}"
     code: |
-      def main(env):
-        return {"processed": 100, "env": env}
-  args:
-    env: "{{ workload.environment }}"
+      # Pure Python - variables from args are directly available
+      result = {"processed": 100, "env": env}
   vars:
     processed_count: "{{ result.processed }}"
+  next:
+    - step: notify
   
 - step: notify
   tool:
     kind: http
     method: POST
-    endpoint: "{{ workload.notification_url }}"
-    payload:
-    environment: "{{ workload.environment }}"
-    count: "{{ vars.processed_count }}"
+    url: "{{ workload.notification_url }}"
+    body:
+      environment: "{{ workload.environment }}"
+      count: "{{ vars.processed_count }}"
 ```
 
 ## Jinja2 Filters

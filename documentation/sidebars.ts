@@ -79,6 +79,9 @@ const sidebars: SidebarsConfig = {
             'reference/dsl/vars_block_implementation_summary',
             'reference/dsl/unified_retry',
             'reference/dsl/http_pagination_quick_reference',
+            'reference/dsl/dsl_analysis_and_evaluation',
+            'reference/dsl/workflow_patterns_comparison',
+            'reference/dsl/dsl_enhancement_phases',
           ],
         },
         {

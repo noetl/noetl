@@ -489,7 +489,8 @@ With unified retry, we removed:
 
 **Before (deprecated):**
 ```yaml
-tool: http
+tool:
+  kind: http
 loop:
   pagination:
     type: response_based
@@ -503,7 +504,8 @@ loop:
 
 **After (unified retry):**
 ```yaml
-tool: http
+tool:
+  kind: http
 retry:
   - when: "{{ response.data.paging.hasMore }}"
     then:

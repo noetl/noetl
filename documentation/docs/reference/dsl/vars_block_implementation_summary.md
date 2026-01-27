@@ -230,26 +230,28 @@ export NOETL_SERVER_URL="http://noetl-server:8080"
 
 ```yaml
 - step: fetch_data
-  tool: postgres
-  query: "SELECT user_id, email FROM users WHERE active = true LIMIT 1"
+  tool:
+    kind: postgres
+    query: "SELECT user_id, email FROM users WHERE active = true LIMIT 1"
   vars:
     user_id: "{{ result[0].user_id }}"
     email: "{{ result[0].email }}"
   next:
-  - step: send_notification
+    - step: send_notification
 ```
 
 ### Using Extracted Variables
 
 ```yaml
 - step: send_notification
-  tool: http
-  method: POST
-  endpoint: "https://api.example.com/notify"
-  payload:
-    user_id: "{{ vars.user_id }}"
-    email: "{{ vars.email }}"
-    timestamp: "{{ workload.execution_time }}"
+  tool:
+    kind: http
+    method: POST
+    url: "https://api.example.com/notify"
+    body:
+      user_id: "{{ vars.user_id }}"
+      email: "{{ vars.email }}"
+      timestamp: "{{ workload.execution_time }}"
 ```
 
 ### Complex Extraction

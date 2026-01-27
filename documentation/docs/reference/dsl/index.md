@@ -36,6 +36,12 @@ The NoETL Domain-Specific Language (DSL) defines how workflows are structured an
 - [Unified Retry](./unified_retry) - Retry patterns for error recovery and success-driven repetition
 - [HTTP Pagination Reference](./http_pagination_quick_reference) - Quick reference for pagination patterns
 
+## Analysis & Completeness
+
+- [DSL Analysis & Evaluation](./dsl_analysis_and_evaluation) - Turing-completeness, BPMN 2.0 coverage, and Petri net analysis
+- [Workflow Patterns Comparison](./workflow_patterns_comparison) - Van der Aalst patterns comparison across NoETL, BPMN, Argo, GitHub Actions, Step Functions
+- [DSL Enhancement Phases](./dsl_enhancement_phases) - Roadmap for inclusive gateway, timers, signals, and other enhancements
+
 ---
 
 ## DSL Overview
