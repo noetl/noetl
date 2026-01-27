@@ -363,7 +363,7 @@ The NoETL DSL achieves **full Turing-completeness** through:
 |------------------|------------------|----------------|
 | **Sequential execution** | ✅ Full | `next:` with single step |
 | **Parallel execution (fork)** | ✅ Full | `next:` with multiple steps |
-| **Parallel join** | ⚠️ Implicit | Convergence at common step (typically `end`) |
+| **Parallel join** | ✅ Full | `case:` on `step.enter` checks `vars` for completion state |
 | **Exclusive gateway (XOR)** | ✅ Full | `case:` with multiple `when:` (first match wins) |
 | **Inclusive gateway (OR)** | ❌ Missing | No mechanism for multiple conditional branches |
 | **Sequential loops** | ✅ Full | `loop: mode: sequential` |
@@ -411,24 +411,56 @@ This creates a **fork** where all listed steps execute concurrently.
 
 ### 3.4 Parallel Join (Synchronization)
 
-**Implicit support** through convergence at a common step:
+**Fully supported via `case` evaluation on `step.enter`.** The DSL uses event-driven case evaluation to implement synchronization:
+
+**Method 1: Using `vars` to track completion state:**
 
 ```yaml
+# Fork into parallel branches
+- step: start
+  tool: { ... }
+  next:
+    - step: branch_a
+    - step: branch_b
+
 - step: branch_a
   tool: { ... }
+  vars:
+    branch_a_done: true
   next:
     - step: join_point
 
 - step: branch_b
   tool: { ... }
+  vars:
+    branch_b_done: true
   next:
     - step: join_point
 
+# AND-join: case evaluates on step.enter to check all predecessors
 - step: join_point
-  tool: { ... }  # Waits for all incoming branches
+  case:
+    - when: "{{ event.name == 'step.enter' and vars.branch_a_done and vars.branch_b_done }}"
+      then:
+        next:
+          - step: continue_workflow
+    # If not all branches done, step waits (triggered again when next branch completes)
 ```
 
-**Note:** The server tracks parallel execution paths and the join step executes when all incoming paths complete.
+**Method 2: Using sub-playbook (simpler for complex parallel work):**
+
+```yaml
+# Parent playbook - sub-playbook's 'end' naturally synchronizes
+- step: parallel_work
+  tool:
+    kind: playbook
+    path: "workflows/parallel_branches"
+  # Blocks until sub-playbook completes (all branches reach 'end')
+  next:
+    - step: after_all_branches
+```
+
+**Key insight:** The `case` evaluation on `step.enter` acts as a **guard condition** - checking preconditions before dispatching tool execution to workers.
 
 ### 3.5 Loops with Sequential Execution
 
@@ -559,9 +591,150 @@ workload:
 
 ---
 
-## 4. Visualization Capability
+## 4. Petri Net Completeness Analysis
 
-### 4.1 Graph Structure
+Petri nets are a mathematical modeling language for concurrent and distributed systems. This section analyzes NoETL DSL coverage of Petri net constructs.
+
+### 4.1 Petri Net Fundamentals
+
+| Petri Net Concept | Description | NoETL DSL Equivalent |
+|-------------------|-------------|---------------------|
+| **Place** | State/condition holder | Step completion state (tracked in events) |
+| **Transition** | Action/event that fires | `tool:` execution within a step |
+| **Token** | Marker indicating active state | Execution context / workflow instance |
+| **Arc (Place→Transition)** | Input dependency | `next:` routing from predecessor |
+| **Arc (Transition→Place)** | Output production | Event emission after tool completion |
+| **Marking** | Distribution of tokens | Execution state (which steps are active) |
+
+### 4.2 Petri Net Patterns Coverage
+
+| Pattern | Petri Net Construct | NoETL Support | Implementation |
+|---------|---------------------|---------------|----------------|
+| **Sequence** | P₁ → T → P₂ | ✅ Full | `step_a → next: step_b` |
+| **Choice (XOR-split)** | One token, multiple output paths | ✅ Full | `case: when:` with exclusive conditions |
+| **Parallelism (AND-split)** | One token spawns multiple | ✅ Full | `next:` with multiple steps |
+| **Synchronization (AND-join)** | Multiple tokens merge | ✅ Full | `case:` on `step.enter` checks `vars` for all predecessors |
+| **Merge (XOR-join)** | Any input enables transition | ✅ Full | Multiple `next:` pointing to same step |
+| **Iteration** | Backward arc (loop) | ✅ Full | `next:` pointing to earlier step; NATS KV for loop state |
+| **Mutex (mutual exclusion)** | Shared resource protection | ✅ Full | NATS KV atomic operations; database transactions |
+| **Producer-Consumer** | Buffered communication | ✅ Full | NATS JetStream (commands dispatched to workers) |
+| **Bounded buffer** | Capacity-limited queue | ✅ Full | NATS JetStream stream limits (max messages, bytes) |
+
+**Infrastructure note:** NATS provides two key subsystems:
+- **JetStream** - Durable message streams for command dispatch (producer-consumer, bounded buffers)
+- **KV Store** - Distributed key-value for loop/iterator state control (iteration tracking, mutex)
+
+### 4.3 Petri Net Firing Semantics
+
+**Petri net firing rule:** A transition fires when ALL input places have tokens.
+
+**NoETL behavior:** The DSL uses **event-driven case evaluation** at each step:
+- Server routes to a step via `next:`, which triggers step evaluation
+- `case` blocks evaluate on `step.enter` **before** dispatching tool to worker
+- `case` blocks evaluate on `call.done`/`call.error` **after** worker completes
+- This enables precondition checking and conditional execution at each step
+
+**Achieving AND-join (synchronization) via `case` conditions:**
+
+```yaml
+# Fork into parallel branches
+- step: start
+  tool: { ... }
+  next:
+    - step: branch_a
+    - step: branch_b
+
+- step: branch_a
+  tool: { ... }
+  vars:
+    branch_a_done: true
+  next:
+    - step: join_point
+
+- step: branch_b
+  tool: { ... }
+  vars:
+    branch_b_done: true
+  next:
+    - step: join_point
+
+# AND-join: check all predecessors completed before executing
+- step: join_point
+  case:
+    - when: "{{ event.name == 'step.enter' and vars.branch_a_done and vars.branch_b_done }}"
+      then:
+        next:
+          - step: after_join  # Proceed only when BOTH branches done
+    - when: "{{ event.name == 'step.enter' }}"
+      then:
+        # Not all branches done yet - wait (no next, step doesn't proceed)
+        set:
+          ctx:
+            waiting: true
+```
+
+**Alternative: Synchronization via sub-playbooks:**
+
+```yaml
+# Parent playbook - sub-playbook's 'end' naturally waits for all branches
+- step: do_parallel_work
+  tool:
+    kind: playbook
+    path: "workflows/parallel_branches"
+  # Blocks until sub-playbook completes (all branches reach 'end')
+  next:
+    - step: after_sync
+```
+
+**Key insight:** The `case` evaluation on `step.enter` acts as a **guard condition** - the step can check preconditions (via `vars`, previous step results, or external state) before deciding to execute or wait.
+
+### 4.4 Token Semantics
+
+| Petri Net Token Behavior | NoETL Implementation |
+|--------------------------|---------------------|
+| **Token creation** | Workflow execution start |
+| **Token consumption** | Step completion event |
+| **Token duplication** | `next:` with multiple targets (fork) |
+| **Token merge** | Multiple paths to same step (join) |
+| **Colored tokens** (data) | Execution context with `args`, `vars`, `workload` |
+
+### 4.5 Liveness and Safety Properties
+
+| Property | Definition | NoETL Support |
+|----------|------------|---------------|
+| **Liveness** | Every transition can eventually fire | ✅ Via reachability from `start` |
+| **Boundedness** | Places have max tokens | ✅ Single execution instance per workflow |
+| **Safety** | No deadlocks | ⚠️ Possible via mutual `next:` cycles without exit |
+| **Reachability** | State can be reached | ✅ All steps reachable via `next:` graph |
+
+### 4.6 Advanced Petri Net Constructs
+
+| Construct | NoETL Support | Notes |
+|-----------|---------------|-------|
+| **Inhibitor arcs** (fire if empty) | ⚠️ Partial | `case: when: "{{ not condition }}"` |
+| **Priority transitions** | ❌ Missing | No transition priority mechanism |
+| **Timed transitions** | ❌ Missing | No timer/delay constructs |
+| **Stochastic firing** | ❌ Missing | No probabilistic transitions |
+| **Hierarchical nets** | ✅ Full | `tool: kind: playbook` (sub-workflows) |
+| **Colored Petri nets** | ✅ Full | Typed data via `args`, `vars`, Jinja2 |
+
+### 4.7 Petri Net Completeness Verdict
+
+**NoETL DSL is Petri net complete for workflow-class applications:**
+
+- ✅ **Basic Petri net patterns:** Sequence, choice, parallelism, synchronization, iteration
+- ✅ **Data-carrying tokens:** Via execution context (`args`, `vars`, `workload`)
+- ✅ **Hierarchical composition:** Via sub-playbooks
+- ⚠️ **Resource modeling:** Implicit via database operations (not explicit places)
+- ❌ **Time semantics:** No timer constructs
+
+The DSL covers the **workflow net** subset of Petri nets (single start, single end, all nodes on path from start to end), which is appropriate for data pipeline and MLOps orchestration use cases.
+
+---
+
+## 5. Visualization Capability
+
+### 5.1 Graph Structure
 
 The DSL naturally maps to a directed graph:
 
@@ -575,7 +748,7 @@ The DSL naturally maps to a directed graph:
 | `retry:` | Self-loop marker on node |
 | `tool: kind: playbook` | Subgraph reference |
 
-### 4.2 Visualization Strengths
+### 5.2 Visualization Strengths
 
 - ✅ **Named nodes:** Each step has unique `step:` identifier
 - ✅ **Explicit edges:** `next:` defines clear transitions
@@ -583,7 +756,7 @@ The DSL naturally maps to a directed graph:
 - ✅ **Hierarchical:** Sub-playbooks create nested graphs
 - ✅ **Implicit routing visible:** Steps without `next:` route to `end`
 
-### 4.3 Visualization Example
+### 5.3 Visualization Example
 
 ```
                     ┌──────────────┐
@@ -620,9 +793,9 @@ The DSL naturally maps to a directed graph:
 
 ---
 
-## 5. Design Recommendations
+## 6. Design Recommendations
 
-### 5.1 Consistency Improvements
+### 6.1 Consistency Improvements
 
 | Area | Current State | Recommendation |
 |------|---------------|----------------|
@@ -630,7 +803,7 @@ The DSL naturally maps to a directed graph:
 | **Step-level shortcuts** | `next:`, `sink:` as sugar | Document as implicit `else` condition |
 | **Event naming** | `step.exit`, `call.done`, etc. | Standardize and document all event names |
 
-### 5.2 Unambiguity Improvements
+### 6.2 Unambiguity Improvements
 
 | Issue | Recommendation |
 |-------|----------------|
@@ -638,7 +811,7 @@ The DSL naturally maps to a directed graph:
 | **Loop vs iterator** | Clarify `loop:` (step attribute) vs `iterator` (tool kind) |
 | **Case evaluation timing** | Document all trigger conditions explicitly |
 
-### 5.3 Human Readability
+### 6.3 Human Readability
 
 **Shorthand syntax for common patterns:**
 
@@ -659,11 +832,11 @@ The DSL naturally maps to a directed graph:
     result = {"done": True}
 ```
 
-### 5.4 Future-Proofing: Recommended Additions
+### 6.4 Future-Proofing: Recommended Additions
 
 Before freezing the DSL, consider adding:
 
-#### 5.4.1 Timer Events
+#### 6.4.1 Timer Events
 
 ```yaml
 - step: scheduled_task
@@ -680,7 +853,7 @@ Before freezing the DSL, consider adding:
       - step: timeout_handler
 ```
 
-#### 5.4.2 Wait for External Event
+#### 6.4.2 Wait for External Event
 
 ```yaml
 - step: await_payment
@@ -697,7 +870,7 @@ Before freezing the DSL, consider adding:
       - step: payment_timeout
 ```
 
-#### 5.4.3 Human Task
+#### 6.4.3 Human Task
 
 ```yaml
 - step: approval_request
@@ -716,7 +889,7 @@ Before freezing the DSL, consider adding:
           - step: rejected_flow
 ```
 
-#### 5.4.4 Explicit Join Gateway
+#### 6.4.4 Explicit Join Gateway
 
 ```yaml
 - step: wait_for_all
@@ -732,9 +905,9 @@ Before freezing the DSL, consider adding:
 
 ---
 
-## 6. Event Model Reference
+## 7. Event Model Reference
 
-### 6.1 Events that Trigger `case` Evaluation
+### 7.1 Events that Trigger `case` Evaluation
 
 | Event Name | Trigger Condition |
 |------------|------------------|
@@ -746,7 +919,7 @@ Before freezing the DSL, consider adding:
 | `loop.done` | All loop iterations completed |
 | `retry.attempt` | Retry attempt completed |
 
-### 6.2 Template Context by Location
+### 7.2 Template Context by Location
 
 | Location | Available Variables |
 |----------|---------------------|
@@ -761,9 +934,9 @@ Before freezing the DSL, consider adding:
 
 ---
 
-## 7. Implementation Architecture
+## 8. Implementation Architecture
 
-### 7.1 Distributed Execution Model
+### 8.1 Distributed Execution Model
 
 NoETL implements a **server-worker architecture** where the DSL semantics are interpreted as follows:
 
@@ -778,7 +951,7 @@ NoETL implements a **server-worker architecture** where the DSL semantics are in
 | `vars:` | Server | Server persists variables from event results |
 | `retry:` | Hybrid | Worker evaluates; server may re-dispatch |
 
-### 7.2 What Workers Execute
+### 8.2 What Workers Execute
 
 Workers are **stateless tool executors**. They:
 - Receive a **command** (not a step) via NATS JetStream
@@ -794,7 +967,7 @@ Workers are **stateless tool executors**. They:
 - Step routing logic (`next:`)
 - Other steps' results (only render context passed by server)
 
-### 7.3 Iteration Distribution in Loops
+### 8.3 Iteration Distribution in Loops
 
 When a step has `loop:`:
 
@@ -815,7 +988,7 @@ When a step has `loop:`:
 - `mode: sequential` - Server dispatches commands one at a time, waiting for completion
 - `mode: parallel` - Server dispatches all commands at once (limited by worker pool size)
 
-### 7.4 State Management
+### 8.4 State Management
 
 All workflow state is managed by the **server** via the event store:
 
@@ -828,9 +1001,9 @@ Workers are ephemeral and stateless. If a worker crashes mid-execution, another 
 
 ---
 
-## 8. Summary
+## 9. Summary
 
-### 8.1 Strengths
+### 9.1 Strengths
 
 - ✅ **Turing-complete** via conditional branching, loops, and state storage
 - ✅ **Event-driven** with reactive `case` evaluation
@@ -840,13 +1013,19 @@ Workers are ephemeral and stateless. If a worker crashes mid-execution, another 
 - ✅ **Visualizable** as directed graph with clear semantics
 - ✅ **Distributed** with stateless workers and centralized state
 
-### 8.2 BPMN 2.0 Coverage
+### 9.2 BPMN 2.0 Coverage
 
 - **Covered:** Sequential, parallel (fork), loops, conditional branching, error handling, subprocesses
 - **Partial:** Parallel join (implicit), event waiting (polling only)
 - **Missing:** Timer events, human tasks, compensation, inclusive gateway
 
-### 8.3 Design Quality
+### 9.3 Petri Net Coverage
+
+- **Covered:** Sequence, choice, parallelism, synchronization, iteration, colored tokens (data)
+- **Partial:** Mutex (via database transactions), inhibitor arcs (via negated conditions)
+- **Missing:** Timed transitions, priority, stochastic firing, bounded buffers
+
+### 9.4 Design Quality
 
 - **Consistency:** Good - v2 enforces `case` for conditional routing
 - **Unambiguity:** Good - clear separation of concerns
