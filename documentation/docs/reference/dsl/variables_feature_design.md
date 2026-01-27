@@ -130,15 +130,15 @@ workflow:
   desc: Use extracted variables in subsequent step
   tool:
     kind: python
+    args:
+      # Access stored variables via {{ vars.var_name }}
+      user_id: "{{ vars.user_id }}"
+      user_email: "{{ vars.user_email }}"
     code: |
-      def main(user_id, user_email):
-        return {"status": "processed", "user": user_id}
-  args:
-    # Access stored variables via {{ vars.var_name }}
-    user_id: "{{ vars.user_id }}"
-    user_email: "{{ vars.user_email }}"
+      # Pure Python - variables from args are directly available
+      result = {"status": "processed", "user": user_id}
   next:
-  - step: notify
+    - step: notify
 ```
 
 ### 2. Template Access Patterns
@@ -182,15 +182,17 @@ workflow:
     # vars.process_items_item: current item
     # vars.process_items_count: total items processed
     processed_count: 0  # User-defined counter
-  task:
-    type: python
+  tool:
+    kind: python
+    args:
+      item: "{{ item }}"
     code: |
-      def main(item):
-        return {"id": item["id"], "status": "done"}
-    vars:
-      # Update counter after each iteration
-      processed_count: "{{ vars.processed_count + 1 }}"
-      last_item_id: "{{ item.id }}"
+      # Pure Python - variables from args are directly available
+      result = {"id": item["id"], "status": "done"}
+  vars:
+    # Update counter after each iteration
+    processed_count: "{{ vars.processed_count + 1 }}"
+    last_item_id: "{{ item.id }}"
 ```
 
 ### 4. Pre-Step and Post-Step Variables (Future Enhancement - NOT IMPLEMENTED)
@@ -691,7 +693,7 @@ Get all variables for execution as flat dict. Returns: `{var_name: var_value, ..
 ### Example 1: Counter and State Tracking
 
 ```yaml
-apiVersion: noetl.io/v1
+apiVersion: noetl.io/v2
 kind: Playbook
 metadata:
   name: batch_processor
@@ -700,78 +702,91 @@ metadata:
 workload:
   batch_size: 100
   max_retries: 3
+  api_url: "https://api.example.com"
 
 workflow:
 - step: start
   desc: Initialize processing state
+  tool:
+    kind: python
+    code: |
+      result = {"status": "initialized"}
   vars:
     processed: 0
     failed: 0
     current_batch: 1
     start_time: "{{ now() }}"
   next:
-  - step: fetch_batch
+    - step: fetch_batch
 
 - step: fetch_batch
   desc: Get next batch of items
-  tool: http
-  method: GET
-  endpoint: "{{ workload.api_url }}/items"
-  params:
-    limit: "{{ workload.batch_size }}"
-    offset: "{{ (vars.current_batch - 1) * workload.batch_size }}"
+  tool:
+    kind: http
+    method: GET
+    url: "{{ workload.api_url }}/items"
+    params:
+      limit: "{{ workload.batch_size }}"
+      offset: "{{ (vars.current_batch - 1) * workload.batch_size }}"
   vars:
     last_fetch_time: "{{ now() }}"
-    last_batch_size: "{{ this.data.items | length }}"
-  next:
-  - when: "{{ this.data.items | length > 0 }}"
-    then:
-    - step: process_batch
-  - when: "{{ this.data.items | length == 0 }}"
-    then:
-    - step: finalize
+    last_batch_size: "{{ result.items | length }}"
+  case:
+    - when: "{{ result.items | length > 0 }}"
+      then:
+        next:
+          - step: process_batch
+    - when: "{{ result.items | length == 0 }}"
+      then:
+        next:
+          - step: finalize
 
 - step: process_batch
   desc: Process items in batch
-  type: iterator
-  collection: "{{ fetch_batch.data.items }}"
-  element: item
-  mode: async
-  task:
-    type: python
+  loop:
+    in: "{{ fetch_batch.items }}"
+    iterator: item
+    mode: async
+  tool:
+    kind: python
+    args:
+      item: "{{ item }}"
     code: |
-      def main(item):
-        # Process item
-        if item["status"] == "error":
-          raise Exception("Processing failed")
-        return {"id": item["id"], "result": "success"}
-    vars:
-      processed: "{{ vars.processed + 1 if this.status == 'success' else vars.processed }}"
-      failed: "{{ vars.failed + 1 if this.status == 'error' else vars.failed }}"
+      # Pure Python - variables from args are directly available
+      if item["status"] == "error":
+        raise Exception("Processing failed")
+      result = {"id": item["id"], "result": "success"}
   vars:
+    processed: "{{ vars.processed + 1 if this.status == 'success' else vars.processed }}"
+    failed: "{{ vars.failed + 1 if this.status == 'error' else vars.failed }}"
     current_batch: "{{ vars.current_batch + 1 }}"
   next:
-  - step: fetch_batch
+    - step: fetch_batch
 
 - step: finalize
   desc: Compute final statistics
+  tool:
+    kind: http
+    method: POST
+    url: "{{ workload.api_url }}/stats"
+    body:
+      processed: "{{ vars.processed }}"
+      failed: "{{ vars.failed }}"
+      duration_seconds: "{{ vars.total_duration }}"
+      success_rate: "{{ vars.success_rate }}"
   vars:
     end_time: "{{ now() }}"
     total_duration: "{{ vars.end_time - vars.start_time }}"
     success_rate: "{{ (vars.processed / (vars.processed + vars.failed)) * 100 if (vars.processed + vars.failed) > 0 else 0 }}"
-  tool: http
-  method: POST
-  endpoint: "{{ workload.api_url }}/stats"
-  payload:
-    processed: "{{ vars.processed }}"
-    failed: "{{ vars.failed }}"
-    duration_seconds: "{{ vars.total_duration }}"
-    success_rate: "{{ vars.success_rate }}"
   next:
-  - step: end
+    - step: end
 
 - step: end
   desc: End workflow
+  tool:
+    kind: python
+    code: |
+      result = {"status": "completed"}
 ```
 
 ### Example 2: Conditional Logic with Variables
@@ -854,30 +869,31 @@ workflow:
   - step: validate_config
 
 - step: validate_config
-  tool: python
-  code: |
-    def main(config):
-      # Validate configuration
+  tool:
+    kind: python
+    args:
+      config:
+        api_endpoint: "{{ vars.api_endpoint }}"
+        api_timeout: "{{ vars.api_timeout }}"
+        db_config: "{{ vars.db_config }}"
+    code: |
+      # Pure Python - variables from args are directly available
       required = ["api_endpoint", "api_timeout", "db_config"]
       for key in required:
         if not config.get(key):
           raise ValueError(f"Missing required config: {key}")
-      return {"valid": True}
-  args:
-    config:
-      api_endpoint: "{{ vars.api_endpoint }}"
-      api_timeout: "{{ vars.api_timeout }}"
-      db_config: "{{ vars.db_config }}"
+      result = {"valid": True}
   next:
-  - step: execute_with_config
+    - step: execute_with_config
 
 - step: execute_with_config
-  tool: http
-  endpoint: "{{ vars.api_endpoint }}/data"
-  timeout: "{{ vars.api_timeout }}"
-  payload:
-    query: "{{ workload.query }}"
-    features: "{{ vars.feature_flags }}"
+  tool:
+    kind: http
+    url: "{{ vars.api_endpoint }}/data"
+    timeout: "{{ vars.api_timeout }}"
+    body:
+      query: "{{ workload.query }}"
+      features: "{{ vars.feature_flags }}"
 ```
 
 ## Migration Notes

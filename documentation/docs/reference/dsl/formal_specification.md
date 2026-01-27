@@ -8,7 +8,7 @@ description: Extended formal specification with detailed semantics
 
 > Scope: This document defines the **formal (normative) semantics** of the NoETL Playbook DSL and its **event-sourced execution model**, including **loop**, **retry**, **sink**, **case**, **next**, variable persistence (**vars**), and the **control‑plane vs data‑plane** responsibility split.
 >
-> Versioning: the DSL is versioned via `apiVersion`. Examples in the public reference show `apiVersion: noetl.io/v1`. This spec is written to be compatible with `v1` and forward‑compatible with `v2` by treating unknown keys as extensions where explicitly stated.
+> Versioning: the DSL is versioned via `apiVersion`. The current version is `apiVersion: noetl.io/v2`. All playbooks MUST use v2 syntax.
 
 ---
 
@@ -253,14 +253,14 @@ case:
 
 ### 7.2 Next shortcut
 
-`next` at step level is syntactic sugar for a simple unconditional transition.
+`next` at step level provides unconditional routing when no `case` rule matches.
 
 `next` MAY be:
 
 - a string step name
-- a list of transitions
+- a list of step references with optional `args`
 
-Transition form MAY include `when` and `args`.
+**V2 Restriction:** In v2, `next` MUST NOT contain `when` or `then` clauses. Conditional routing MUST use `case`.
 
 ### 7.3 Sink shortcut
 
