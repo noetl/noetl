@@ -5,7 +5,29 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>NoETL Gateway - Dashboard</title>
   <script src="/config.js"></script>
+  <script src="/auth.js"></script>
   <style>
+    :root {
+      --primary: #667eea;
+      --primary-dark: #5a67d8;
+      --secondary: #764ba2;
+      --success: #48bb78;
+      --warning: #ed8936;
+      --danger: #e53e3e;
+      --info: #38b2ac;
+      --dark: #1a202c;
+      --gray-100: #f7fafc;
+      --gray-200: #edf2f7;
+      --gray-300: #e2e8f0;
+      --gray-400: #cbd5e0;
+      --gray-500: #a0aec0;
+      --gray-600: #718096;
+      --gray-700: #4a5568;
+      --gray-800: #2d3748;
+      --sidebar-width: 260px;
+      --header-height: 64px;
+    }
+
     * {
       margin: 0;
       padding: 0;
@@ -14,275 +36,1535 @@
 
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-      background: #f7fafc;
-      color: #2d3748;
+      background: var(--gray-100);
+      color: var(--gray-800);
+      min-height: 100vh;
     }
 
-    .header {
-      background: white;
-      border-bottom: 1px solid #e2e8f0;
-      padding: 1rem 2rem;
+    /* Layout */
+    .app-layout {
       display: flex;
-      justify-content: space-between;
-      align-items: center;
-      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+      min-height: 100vh;
     }
 
-    .header-left {
+    /* Sidebar */
+    .sidebar {
+      width: var(--sidebar-width);
+      background: var(--dark);
+      color: white;
+      position: fixed;
+      top: 0;
+      left: 0;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      z-index: 100;
+      transition: transform 0.3s ease;
+    }
+
+    .sidebar-header {
+      padding: 1.5rem;
       display: flex;
       align-items: center;
       gap: 1rem;
+      border-bottom: 1px solid rgba(255,255,255,0.1);
     }
 
-    .logo {
+    .sidebar-logo {
       width: 40px;
       height: 40px;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      border-radius: 8px;
+      background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+      border-radius: 10px;
       display: flex;
       align-items: center;
       justify-content: center;
     }
 
-    .logo svg {
+    .sidebar-logo svg {
       width: 24px;
       height: 24px;
       stroke: white;
     }
 
-    .header h1 {
-      font-size: 1.5rem;
+    .sidebar-title {
+      font-size: 1.25rem;
+      font-weight: 700;
+    }
+
+    .sidebar-nav {
+      flex: 1;
+      padding: 1rem 0;
+      overflow-y: auto;
+    }
+
+    .nav-section {
+      padding: 0.5rem 1rem;
+      font-size: 0.7rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--gray-500);
+      margin-top: 1rem;
+    }
+
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 0.75rem 1.5rem;
+      color: var(--gray-400);
+      text-decoration: none;
+      cursor: pointer;
+      transition: all 0.2s;
+      border-left: 3px solid transparent;
+    }
+
+    .nav-item:hover {
+      background: rgba(255,255,255,0.05);
+      color: white;
+    }
+
+    .nav-item.active {
+      background: rgba(102, 126, 234, 0.15);
+      color: var(--primary);
+      border-left-color: var(--primary);
+    }
+
+    .nav-item svg {
+      width: 20px;
+      height: 20px;
+    }
+
+    .nav-item .badge {
+      margin-left: auto;
+      background: var(--primary);
+      color: white;
+      font-size: 0.7rem;
+      padding: 0.2rem 0.5rem;
+      border-radius: 10px;
       font-weight: 600;
     }
 
-    .header-right {
+    .sidebar-footer {
+      padding: 1rem 1.5rem;
+      border-top: 1px solid rgba(255,255,255,0.1);
+    }
+
+    .user-profile {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .user-avatar {
+      width: 36px;
+      height: 36px;
+      background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 600;
+      font-size: 0.9rem;
+    }
+
+    .user-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .user-name {
+      font-size: 0.9rem;
+      font-weight: 600;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .user-email {
+      font-size: 0.75rem;
+      color: var(--gray-500);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .btn-logout {
+      background: none;
+      border: none;
+      color: var(--gray-500);
+      cursor: pointer;
+      padding: 0.5rem;
+      border-radius: 6px;
+      transition: all 0.2s;
+    }
+
+    .btn-logout:hover {
+      background: rgba(229, 62, 62, 0.2);
+      color: var(--danger);
+    }
+
+    /* Main Content */
+    .main-content {
+      flex: 1;
+      margin-left: var(--sidebar-width);
+      min-height: 100vh;
+    }
+
+    .header {
+      background: white;
+      height: var(--header-height);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 2rem;
+      border-bottom: 1px solid var(--gray-200);
+      position: sticky;
+      top: 0;
+      z-index: 50;
+    }
+
+    .header-title {
+      font-size: 1.5rem;
+      font-weight: 600;
+      color: var(--dark);
+    }
+
+    .header-actions {
       display: flex;
       align-items: center;
       gap: 1rem;
     }
 
-    .user-info {
-      text-align: right;
-    }
-
-    .user-email {
-      font-size: 0.9rem;
-      color: #718096;
-    }
-
-    .btn-logout {
-      padding: 0.5rem 1rem;
-      background: #e53e3e;
-      color: white;
-      border: none;
-      border-radius: 6px;
-      cursor: pointer;
-      font-size: 0.9rem;
-      font-weight: 500;
-      transition: all 0.2s;
-    }
-
-    .btn-logout:hover {
-      background: #c53030;
-    }
-
-    .container {
-      max-width: 1200px;
-      margin: 2rem auto;
-      padding: 0 2rem;
-    }
-
-    .welcome-section {
-      background: white;
+    .page-content {
       padding: 2rem;
-      border-radius: 12px;
-      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-      margin-bottom: 2rem;
     }
 
-    .welcome-section h2 {
-      font-size: 1.75rem;
-      margin-bottom: 0.5rem;
-      color: #1a202c;
-    }
-
-    .welcome-section p {
-      color: #718096;
-      font-size: 1rem;
-    }
-
+    /* Stats Grid */
     .stats-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
       gap: 1.5rem;
       margin-bottom: 2rem;
     }
 
     .stat-card {
       background: white;
-      padding: 1.5rem;
       border-radius: 12px;
-      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-      border-left: 4px solid #667eea;
+      padding: 1.5rem;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+      display: flex;
+      align-items: flex-start;
+      gap: 1rem;
+      transition: transform 0.2s, box-shadow 0.2s;
     }
 
-    .stat-card h3 {
+    .stat-card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    }
+
+    .stat-icon {
+      width: 48px;
+      height: 48px;
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.5rem;
+    }
+
+    .stat-icon.playbooks { background: rgba(102, 126, 234, 0.1); }
+    .stat-icon.executions { background: rgba(72, 187, 120, 0.1); }
+    .stat-icon.running { background: rgba(237, 137, 54, 0.1); }
+    .stat-icon.success { background: rgba(56, 178, 172, 0.1); }
+
+    .stat-content {
+      flex: 1;
+    }
+
+    .stat-label {
       font-size: 0.875rem;
-      color: #718096;
+      color: var(--gray-600);
+      margin-bottom: 0.25rem;
+    }
+
+    .stat-value {
+      font-size: 2rem;
+      font-weight: 700;
+      color: var(--dark);
+      line-height: 1;
+    }
+
+    .stat-change {
+      font-size: 0.75rem;
+      margin-top: 0.5rem;
+    }
+
+    .stat-change.positive { color: var(--success); }
+    .stat-change.negative { color: var(--danger); }
+
+    /* Section */
+    .section {
+      background: white;
+      border-radius: 12px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+      margin-bottom: 2rem;
+    }
+
+    .section-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 1.25rem 1.5rem;
+      border-bottom: 1px solid var(--gray-200);
+    }
+
+    .section-title {
+      font-size: 1.125rem;
+      font-weight: 600;
+      color: var(--dark);
+    }
+
+    .section-actions {
+      display: flex;
+      gap: 0.75rem;
+    }
+
+    .section-body {
+      padding: 1.5rem;
+    }
+
+    /* Buttons */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.625rem 1.25rem;
+      border-radius: 8px;
+      font-size: 0.875rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s;
+      border: none;
+      text-decoration: none;
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+      color: white;
+    }
+
+    .btn-primary:hover:not(:disabled) {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+    }
+
+    .btn-secondary {
+      background: var(--gray-200);
+      color: var(--gray-700);
+    }
+
+    .btn-secondary:hover {
+      background: var(--gray-300);
+    }
+
+    .btn-ghost {
+      background: transparent;
+      color: var(--gray-600);
+    }
+
+    .btn-ghost:hover {
+      background: var(--gray-100);
+      color: var(--gray-800);
+    }
+
+    .btn-success {
+      background: var(--success);
+      color: white;
+    }
+
+    .btn-danger {
+      background: var(--danger);
+      color: white;
+    }
+
+    .btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .btn-sm {
+      padding: 0.375rem 0.75rem;
+      font-size: 0.8125rem;
+    }
+
+    .btn-icon {
+      padding: 0.5rem;
+    }
+
+    /* Table */
+    .data-table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    .data-table th,
+    .data-table td {
+      padding: 0.875rem 1rem;
+      text-align: left;
+      border-bottom: 1px solid var(--gray-200);
+    }
+
+    .data-table th {
+      font-size: 0.75rem;
+      font-weight: 600;
       text-transform: uppercase;
       letter-spacing: 0.05em;
+      color: var(--gray-600);
+      background: var(--gray-50);
+    }
+
+    .data-table tbody tr {
+      transition: background 0.2s;
+    }
+
+    .data-table tbody tr:hover {
+      background: var(--gray-50);
+    }
+
+    .data-table tbody tr:last-child td {
+      border-bottom: none;
+    }
+
+    /* Status Badge */
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.375rem;
+      padding: 0.25rem 0.75rem;
+      border-radius: 9999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+
+    .status-badge::before {
+      content: '';
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+    }
+
+    .status-completed, .status-success { background: rgba(72, 187, 120, 0.15); color: #22543d; }
+    .status-completed::before, .status-success::before { background: var(--success); }
+
+    .status-running, .status-active { background: rgba(56, 178, 172, 0.15); color: #234e52; }
+    .status-running::before, .status-active::before { background: var(--info); animation: pulse 1.5s infinite; }
+
+    .status-failed, .status-error { background: rgba(229, 62, 62, 0.15); color: #742a2a; }
+    .status-failed::before, .status-error::before { background: var(--danger); }
+
+    .status-pending, .status-queued { background: rgba(237, 137, 54, 0.15); color: #744210; }
+    .status-pending::before, .status-queued::before { background: var(--warning); }
+
+    .status-cancelled, .status-inactive { background: rgba(160, 174, 192, 0.15); color: #4a5568; }
+    .status-cancelled::before, .status-inactive::before { background: var(--gray-500); }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+
+    /* Search & Filter */
+    .search-bar {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .search-input-wrapper {
+      flex: 1;
+      position: relative;
+    }
+
+    .search-input-wrapper svg {
+      position: absolute;
+      left: 1rem;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 20px;
+      height: 20px;
+      color: var(--gray-400);
+    }
+
+    .search-input {
+      width: 100%;
+      padding: 0.75rem 1rem 0.75rem 2.75rem;
+      border: 2px solid var(--gray-200);
+      border-radius: 10px;
+      font-size: 0.9375rem;
+      transition: all 0.2s;
+      outline: none;
+    }
+
+    .search-input:focus {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+    }
+
+    .filter-select {
+      padding: 0.75rem 1rem;
+      border: 2px solid var(--gray-200);
+      border-radius: 10px;
+      font-size: 0.9375rem;
+      outline: none;
+      background: white;
+      cursor: pointer;
+      min-width: 150px;
+    }
+
+    .filter-select:focus {
+      border-color: var(--primary);
+    }
+
+    /* Cards Grid */
+    .cards-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+      gap: 1.25rem;
+    }
+
+    .playbook-card {
+      background: white;
+      border: 2px solid var(--gray-200);
+      border-radius: 12px;
+      padding: 1.25rem;
+      transition: all 0.2s;
+      cursor: pointer;
+    }
+
+    .playbook-card:hover {
+      border-color: var(--primary);
+      box-shadow: 0 4px 12px rgba(102, 126, 234, 0.15);
+    }
+
+    .playbook-card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 0.75rem;
+    }
+
+    .playbook-card-title {
+      font-size: 1rem;
+      font-weight: 600;
+      color: var(--dark);
+      margin-bottom: 0.25rem;
+    }
+
+    .playbook-card-path {
+      font-size: 0.8125rem;
+      color: var(--gray-500);
+      font-family: monospace;
+    }
+
+    .playbook-card-description {
+      font-size: 0.875rem;
+      color: var(--gray-600);
+      margin-bottom: 1rem;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    .playbook-card-footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding-top: 0.75rem;
+      border-top: 1px solid var(--gray-200);
+    }
+
+    .playbook-card-meta {
+      font-size: 0.75rem;
+      color: var(--gray-500);
+    }
+
+    /* Modal */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.5);
+      backdrop-filter: blur(4px);
+      z-index: 1000;
+      justify-content: center;
+      align-items: center;
+      padding: 2rem;
+    }
+
+    .modal-overlay.active {
+      display: flex;
+    }
+
+    .modal {
+      background: white;
+      border-radius: 16px;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+      width: 100%;
+      max-width: 800px;
+      max-height: calc(100vh - 4rem);
+      display: flex;
+      flex-direction: column;
+      animation: modalEnter 0.2s ease-out;
+    }
+
+    @keyframes modalEnter {
+      from {
+        opacity: 0;
+        transform: scale(0.95) translateY(10px);
+      }
+      to {
+        opacity: 1;
+        transform: scale(1) translateY(0);
+      }
+    }
+
+    .modal-large {
+      max-width: 1000px;
+    }
+
+    .modal-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 1.5rem;
+      border-bottom: 1px solid var(--gray-200);
+    }
+
+    .modal-title {
+      font-size: 1.25rem;
+      font-weight: 600;
+      color: var(--dark);
+    }
+
+    .modal-close {
+      background: none;
+      border: none;
+      width: 36px;
+      height: 36px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      color: var(--gray-500);
+      transition: all 0.2s;
+    }
+
+    .modal-close:hover {
+      background: var(--gray-100);
+      color: var(--gray-700);
+    }
+
+    .modal-body {
+      flex: 1;
+      padding: 1.5rem;
+      overflow-y: auto;
+    }
+
+    .modal-footer {
+      display: flex;
+      justify-content: flex-end;
+      gap: 0.75rem;
+      padding: 1.25rem 1.5rem;
+      border-top: 1px solid var(--gray-200);
+      background: var(--gray-50);
+      border-radius: 0 0 16px 16px;
+    }
+
+    /* Form */
+    .form-group {
+      margin-bottom: 1.5rem;
+    }
+
+    .form-label {
+      display: block;
+      font-size: 0.875rem;
+      font-weight: 600;
+      color: var(--gray-700);
       margin-bottom: 0.5rem;
     }
 
-    .stat-card .value {
-      font-size: 2rem;
-      font-weight: 700;
-      color: #1a202c;
+    .form-input,
+    .form-textarea,
+    .form-select {
+      width: 100%;
+      padding: 0.75rem 1rem;
+      border: 2px solid var(--gray-200);
+      border-radius: 8px;
+      font-size: 0.9375rem;
+      transition: all 0.2s;
+      outline: none;
     }
 
-    .actions-section {
-      background: white;
-      padding: 2rem;
-      border-radius: 12px;
-      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    .form-input:focus,
+    .form-textarea:focus,
+    .form-select:focus {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
     }
 
-    .actions-section h3 {
-      font-size: 1.25rem;
-      margin-bottom: 1.5rem;
-      color: #1a202c;
+    .form-textarea {
+      min-height: 150px;
+      font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+      font-size: 0.875rem;
+      resize: vertical;
     }
 
-    .actions-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    .form-help {
+      font-size: 0.8125rem;
+      color: var(--gray-500);
+      margin-top: 0.5rem;
+    }
+
+    /* Code Block */
+    .code-block {
+      background: var(--dark);
+      color: #e2e8f0;
+      padding: 1rem;
+      border-radius: 8px;
+      font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+      font-size: 0.8125rem;
+      overflow-x: auto;
+      max-height: 400px;
+      overflow-y: auto;
+    }
+
+    /* Empty State */
+    .empty-state {
+      text-align: center;
+      padding: 3rem 2rem;
+      color: var(--gray-500);
+    }
+
+    .empty-state-icon {
+      font-size: 3rem;
+      margin-bottom: 1rem;
+      opacity: 0.5;
+    }
+
+    .empty-state-title {
+      font-size: 1.125rem;
+      font-weight: 600;
+      color: var(--gray-700);
+      margin-bottom: 0.5rem;
+    }
+
+    .empty-state-description {
+      font-size: 0.9375rem;
+      max-width: 400px;
+      margin: 0 auto;
+    }
+
+    /* Loading */
+    .loading-spinner {
+      display: inline-block;
+      width: 20px;
+      height: 20px;
+      border: 3px solid var(--gray-200);
+      border-top-color: var(--primary);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+
+    .loading-spinner.lg {
+      width: 40px;
+      height: 40px;
+      border-width: 4px;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .loading-overlay {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 3rem;
+      color: var(--gray-600);
       gap: 1rem;
     }
 
-    .action-btn {
-      padding: 1rem;
-      background: #f7fafc;
-      border: 2px solid #e2e8f0;
-      border-radius: 8px;
+    /* Tabs */
+    .tabs {
+      display: flex;
+      border-bottom: 2px solid var(--gray-200);
+      margin-bottom: 1.5rem;
+    }
+
+    .tab {
+      padding: 0.75rem 1.25rem;
+      background: none;
+      border: none;
+      font-size: 0.9375rem;
+      font-weight: 500;
+      color: var(--gray-500);
       cursor: pointer;
+      border-bottom: 2px solid transparent;
+      margin-bottom: -2px;
       transition: all 0.2s;
-      text-align: left;
+    }
+
+    .tab:hover {
+      color: var(--primary);
+    }
+
+    .tab.active {
+      color: var(--primary);
+      border-bottom-color: var(--primary);
+    }
+
+    /* Execution Details */
+    .execution-info-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 1.5rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .info-item {
+      padding: 1rem;
+      background: var(--gray-50);
+      border-radius: 8px;
+    }
+
+    .info-label {
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--gray-500);
+      margin-bottom: 0.25rem;
+    }
+
+    .info-value {
       font-size: 1rem;
-      color: #2d3748;
+      color: var(--dark);
       font-weight: 500;
     }
 
-    .action-btn:hover {
-      border-color: #667eea;
-      background: #edf2f7;
-      transform: translateY(-2px);
+    /* Events Timeline */
+    .events-timeline {
+      position: relative;
+      padding-left: 1.5rem;
     }
 
-    .action-btn .icon {
-      font-size: 1.5rem;
+    .events-timeline::before {
+      content: '';
+      position: absolute;
+      left: 0.5rem;
+      top: 0;
+      bottom: 0;
+      width: 2px;
+      background: var(--gray-200);
+    }
+
+    .event-item {
+      position: relative;
+      padding: 1rem 0 1rem 1.5rem;
+      border-bottom: 1px solid var(--gray-100);
+    }
+
+    .event-item:last-child {
+      border-bottom: none;
+    }
+
+    .event-item::before {
+      content: '';
+      position: absolute;
+      left: -1.25rem;
+      top: 1.25rem;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: white;
+      border: 2px solid var(--gray-400);
+    }
+
+    .event-item.success::before { border-color: var(--success); }
+    .event-item.running::before { border-color: var(--info); }
+    .event-item.failed::before { border-color: var(--danger); }
+
+    .event-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
       margin-bottom: 0.5rem;
     }
 
-    .session-info {
-      background: #f0fff4;
-      border: 1px solid #9ae6b4;
-      padding: 1rem;
-      border-radius: 8px;
-      margin-top: 2rem;
-      font-size: 0.9rem;
+    .event-name {
+      font-weight: 600;
+      color: var(--dark);
     }
 
-    .session-info strong {
-      color: #2f855a;
+    .event-time {
+      font-size: 0.8125rem;
+      color: var(--gray-500);
     }
 
-    .loading {
-      text-align: center;
-      padding: 3rem;
-      color: #718096;
+    .event-details {
+      font-size: 0.875rem;
+      color: var(--gray-600);
+    }
+
+    /* Responsive */
+    @media (max-width: 1024px) {
+      .sidebar {
+        transform: translateX(-100%);
+      }
+
+      .sidebar.open {
+        transform: translateX(0);
+      }
+
+      .main-content {
+        margin-left: 0;
+      }
+
+      .header {
+        padding-left: 1rem;
+      }
+
+      .menu-toggle {
+        display: flex;
+      }
+    }
+
+    /* Utility */
+    .hidden { display: none !important; }
+    .text-center { text-align: center; }
+    .text-right { text-align: right; }
+    .truncate {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .mono { font-family: 'Monaco', 'Menlo', 'Consolas', monospace; }
+
+    /* Toast Notifications */
+    .toast-container {
+      position: fixed;
+      bottom: 2rem;
+      right: 2rem;
+      z-index: 2000;
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+
+    .toast {
+      background: white;
+      border-radius: 10px;
+      padding: 1rem 1.5rem;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      animation: toastEnter 0.3s ease-out;
+      min-width: 300px;
+    }
+
+    @keyframes toastEnter {
+      from {
+        opacity: 0;
+        transform: translateY(20px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .toast.success { border-left: 4px solid var(--success); }
+    .toast.error { border-left: 4px solid var(--danger); }
+    .toast.info { border-left: 4px solid var(--info); }
+
+    .toast-icon {
+      font-size: 1.25rem;
+    }
+
+    .toast-content {
+      flex: 1;
+    }
+
+    .toast-title {
+      font-weight: 600;
+      color: var(--dark);
+      margin-bottom: 0.125rem;
+    }
+
+    .toast-message {
+      font-size: 0.875rem;
+      color: var(--gray-600);
     }
   </style>
 </head>
 <body>
-  <div class="header">
-    <div class="header-left">
-      <div class="logo">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
-          <polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
-          <line x1="12" y1="22.08" x2="12" y2="12"></line>
-        </svg>
+  <div class="app-layout">
+    <!-- Sidebar -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-header">
+        <div class="sidebar-logo">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
+            <polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
+            <line x1="12" y1="22.08" x2="12" y2="12"></line>
+          </svg>
+        </div>
+        <span class="sidebar-title">NoETL</span>
       </div>
-      <h1>NoETL Gateway</h1>
-    </div>
-    <div class="header-right">
-      <div class="user-info">
-        <div id="userName">Loading...</div>
-        <div class="user-email" id="userEmail"></div>
+
+      <nav class="sidebar-nav">
+        <div class="nav-section">Main</div>
+        <a class="nav-item active" onclick="showPage('dashboard')" data-page="dashboard">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="3" width="7" height="7"></rect>
+            <rect x="14" y="3" width="7" height="7"></rect>
+            <rect x="14" y="14" width="7" height="7"></rect>
+            <rect x="3" y="14" width="7" height="7"></rect>
+          </svg>
+          Dashboard
+        </a>
+
+        <div class="nav-section">Workflows</div>
+        <a class="nav-item" onclick="showPage('playbooks')" data-page="playbooks">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+            <polyline points="14 2 14 8 20 8"></polyline>
+            <line x1="16" y1="13" x2="8" y2="13"></line>
+            <line x1="16" y1="17" x2="8" y2="17"></line>
+            <polyline points="10 9 9 9 8 9"></polyline>
+          </svg>
+          Playbooks
+          <span class="badge" id="playbookBadge">0</span>
+        </a>
+        <a class="nav-item" onclick="showPage('executions')" data-page="executions">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polygon points="5 3 19 12 5 21 5 3"></polygon>
+          </svg>
+          Executions
+          <span class="badge" id="executionBadge">0</span>
+        </a>
+
+        <div class="nav-section">Management</div>
+        <a class="nav-item" onclick="showPage('credentials')" data-page="credentials">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+            <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+          </svg>
+          Credentials
+        </a>
+        <a class="nav-item" onclick="showPage('settings')" data-page="settings">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+          </svg>
+          Settings
+        </a>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="user-profile">
+          <div class="user-avatar" id="userAvatar">U</div>
+          <div class="user-info">
+            <div class="user-name" id="userName">User</div>
+            <div class="user-email" id="userEmail">user@example.com</div>
+          </div>
+          <button class="btn-logout" onclick="logout()" title="Logout">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+              <polyline points="16 17 21 12 16 7"></polyline>
+              <line x1="21" y1="12" x2="9" y2="12"></line>
+            </svg>
+          </button>
+        </div>
       </div>
-      <button class="btn-logout" onclick="logout()">Logout</button>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="main-content">
+      <!-- Dashboard Page -->
+      <div id="page-dashboard" class="page">
+        <header class="header">
+          <h1 class="header-title">Dashboard</h1>
+          <div class="header-actions">
+            <button class="btn btn-primary" onclick="openExecuteModal()">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polygon points="5 3 19 12 5 21 5 3"></polygon>
+              </svg>
+              Execute Playbook
+            </button>
+          </div>
+        </header>
+
+        <div class="page-content">
+          <div class="stats-grid">
+            <div class="stat-card">
+              <div class="stat-icon playbooks">&#128203;</div>
+              <div class="stat-content">
+                <div class="stat-label">Total Playbooks</div>
+                <div class="stat-value" id="statPlaybooks">-</div>
+              </div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-icon executions">&#128640;</div>
+              <div class="stat-content">
+                <div class="stat-label">Total Executions</div>
+                <div class="stat-value" id="statExecutions">-</div>
+              </div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-icon running">&#9654;</div>
+              <div class="stat-content">
+                <div class="stat-label">Active Executions</div>
+                <div class="stat-value" id="statActive">-</div>
+              </div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-icon success">&#10003;</div>
+              <div class="stat-content">
+                <div class="stat-label">Success Rate</div>
+                <div class="stat-value" id="statSuccessRate">-</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="section">
+            <div class="section-header">
+              <h2 class="section-title">Recent Executions</h2>
+              <div class="section-actions">
+                <button class="btn btn-ghost btn-sm" onclick="loadRecentExecutions()">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="23 4 23 10 17 10"></polyline>
+                    <polyline points="1 20 1 14 7 14"></polyline>
+                    <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                  </svg>
+                  Refresh
+                </button>
+              </div>
+            </div>
+            <div class="section-body" id="recentExecutionsContainer">
+              <div class="loading-overlay">
+                <div class="loading-spinner lg"></div>
+                <span>Loading recent executions...</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Playbooks Page -->
+      <div id="page-playbooks" class="page hidden">
+        <header class="header">
+          <h1 class="header-title">Playbooks</h1>
+          <div class="header-actions">
+            <button class="btn btn-secondary" onclick="loadPlaybooks()">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="23 4 23 10 17 10"></polyline>
+                <polyline points="1 20 1 14 7 14"></polyline>
+                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+              </svg>
+              Refresh
+            </button>
+            <button class="btn btn-primary" onclick="openCreatePlaybookModal()">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="12" y1="5" x2="12" y2="19"></line>
+                <line x1="5" y1="12" x2="19" y2="12"></line>
+              </svg>
+              New Playbook
+            </button>
+          </div>
+        </header>
+
+        <div class="page-content">
+          <div class="search-bar">
+            <div class="search-input-wrapper">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="11" cy="11" r="8"></circle>
+                <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+              </svg>
+              <input type="text" class="search-input" placeholder="Search playbooks..." id="playbookSearch" oninput="filterPlaybooks()">
+            </div>
+            <select class="filter-select" id="playbookStatusFilter" onchange="filterPlaybooks()">
+              <option value="">All Status</option>
+              <option value="active">Active</option>
+              <option value="inactive">Inactive</option>
+            </select>
+          </div>
+
+          <div id="playbooksContainer">
+            <div class="loading-overlay">
+              <div class="loading-spinner lg"></div>
+              <span>Loading playbooks...</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Executions Page -->
+      <div id="page-executions" class="page hidden">
+        <header class="header">
+          <h1 class="header-title">Executions</h1>
+          <div class="header-actions">
+            <button class="btn btn-secondary" onclick="loadExecutions()">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="23 4 23 10 17 10"></polyline>
+                <polyline points="1 20 1 14 7 14"></polyline>
+                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+              </svg>
+              Refresh
+            </button>
+          </div>
+        </header>
+
+        <div class="page-content">
+          <div class="search-bar">
+            <div class="search-input-wrapper">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="11" cy="11" r="8"></circle>
+                <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+              </svg>
+              <input type="text" class="search-input" placeholder="Search executions..." id="executionSearch" oninput="filterExecutions()">
+            </div>
+            <select class="filter-select" id="executionStatusFilter" onchange="filterExecutions()">
+              <option value="">All Status</option>
+              <option value="running">Running</option>
+              <option value="completed">Completed</option>
+              <option value="failed">Failed</option>
+              <option value="pending">Pending</option>
+            </select>
+          </div>
+
+          <div class="section">
+            <div class="section-body" style="padding: 0; overflow-x: auto;">
+              <table class="data-table" id="executionsTable">
+                <thead>
+                  <tr>
+                    <th>Execution ID</th>
+                    <th>Playbook</th>
+                    <th>Status</th>
+                    <th>Started</th>
+                    <th>Duration</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="executionsTableBody">
+                  <tr>
+                    <td colspan="6" class="text-center" style="padding: 3rem;">
+                      <div class="loading-spinner lg"></div>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Credentials Page -->
+      <div id="page-credentials" class="page hidden">
+        <header class="header">
+          <h1 class="header-title">Credentials</h1>
+          <div class="header-actions">
+            <button class="btn btn-secondary" onclick="loadCredentials()">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="23 4 23 10 17 10"></polyline>
+                <polyline points="1 20 1 14 7 14"></polyline>
+                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+              </svg>
+              Refresh
+            </button>
+            <button class="btn btn-primary" onclick="openCreateCredentialModal()">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="12" y1="5" x2="12" y2="19"></line>
+                <line x1="5" y1="12" x2="19" y2="12"></line>
+              </svg>
+              New Credential
+            </button>
+          </div>
+        </header>
+
+        <div class="page-content">
+          <div class="section">
+            <div class="section-body" style="padding: 0; overflow-x: auto;">
+              <table class="data-table" id="credentialsTable">
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>Type</th>
+                    <th>Description</th>
+                    <th>Created</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="credentialsTableBody">
+                  <tr>
+                    <td colspan="5" class="text-center" style="padding: 3rem;">
+                      <div class="loading-spinner lg"></div>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Settings Page -->
+      <div id="page-settings" class="page hidden">
+        <header class="header">
+          <h1 class="header-title">Settings</h1>
+        </header>
+
+        <div class="page-content">
+          <div class="section">
+            <div class="section-header">
+              <h2 class="section-title">Gateway Configuration</h2>
+            </div>
+            <div class="section-body">
+              <div class="form-group">
+                <label class="form-label">Gateway URL</label>
+                <input type="text" class="form-input" id="settingsGatewayUrl" readonly>
+                <p class="form-help">The gateway API endpoint used for all requests.</p>
+              </div>
+              <div class="form-group">
+                <label class="form-label">Session Token</label>
+                <input type="text" class="form-input mono" id="settingsSessionToken" readonly>
+                <p class="form-help">Your current authentication token.</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="section">
+            <div class="section-header">
+              <h2 class="section-title">User Information</h2>
+            </div>
+            <div class="section-body">
+              <pre class="code-block" id="settingsUserInfo">{}</pre>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- Execute Playbook Modal -->
+  <div id="executeModal" class="modal-overlay" onclick="closeModalOnOverlay(event, 'executeModal')">
+    <div class="modal">
+      <div class="modal-header">
+        <h2 class="modal-title">Execute Playbook</h2>
+        <button class="modal-close" onclick="closeModal('executeModal')">
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <!-- Mode 1: Select playbook from dropdown (when opened from header button) -->
+        <div id="executePlaybookSelectGroup" class="form-group">
+          <label class="form-label">Select Playbook</label>
+          <select class="form-select" id="executePlaybookSelect" onchange="onExecutePlaybookChange()">
+            <option value="">-- Select a playbook --</option>
+          </select>
+        </div>
+        <!-- Mode 2: Playbook already selected, show path and version selector -->
+        <div id="executePlaybookFixedGroup" class="form-group hidden">
+          <label class="form-label">Playbook</label>
+          <input type="text" class="form-input mono" id="executePlaybookPath" readonly style="background: var(--gray-100);">
+        </div>
+        <div id="executeVersionGroup" class="form-group hidden">
+          <label class="form-label">Version</label>
+          <select class="form-select" id="executeVersionSelect" onchange="onExecuteVersionChange()">
+          </select>
+        </div>
+        <div id="executePlaybookDetails" class="hidden">
+          <div class="form-group">
+            <label class="form-label">Description</label>
+            <p id="executePlaybookDescription" style="color: var(--gray-600);">-</p>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Variables (JSON)</label>
+            <textarea class="form-textarea" id="executeVariables" placeholder='{"key": "value"}'>{}</textarea>
+            <p class="form-help">Enter execution variables as a JSON object.</p>
+          </div>
+        </div>
+        <div id="executeResult" class="hidden"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeModal('executeModal')">Cancel</button>
+        <button class="btn btn-primary" id="executeBtn" disabled onclick="executePlaybook()">
+          <span id="executeBtnText">Execute</span>
+          <span id="executeBtnSpinner" class="loading-spinner hidden"></span>
+        </button>
+      </div>
     </div>
   </div>
 
-  <div class="container">
-    <div id="loadingState" class="loading">
-      Loading your dashboard...
-    </div>
-
-    <div id="dashboard" style="display: none;">
-      <div class="welcome-section">
-        <h2>Welcome Back!</h2>
-        <p>Your NoETL Gateway is ready to execute playbooks and manage workflows.</p>
+  <!-- Playbook Detail Modal -->
+  <div id="playbookDetailModal" class="modal-overlay" onclick="closeModalOnOverlay(event, 'playbookDetailModal')">
+    <div class="modal modal-large">
+      <div class="modal-header">
+        <h2 class="modal-title" id="playbookDetailTitle">Playbook Details</h2>
+        <button class="modal-close" onclick="closeModal('playbookDetailModal')">
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
       </div>
-
-      <div class="stats-grid">
-        <div class="stat-card">
-          <h3>Session Status</h3>
-          <div class="value" style="color: #48bb78;">Active</div>
-        </div>
-        <div class="stat-card" style="border-left-color: #ed8936;">
-          <h3>Available Playbooks</h3>
-          <div class="value" id="playbookCount">-</div>
-        </div>
-        <div class="stat-card" style="border-left-color: #38b2ac;">
-          <h3>Your Roles</h3>
-          <div class="value" id="roleCount">-</div>
+      <div class="modal-body" id="playbookDetailBody">
+        <div class="loading-overlay">
+          <div class="loading-spinner lg"></div>
         </div>
       </div>
-
-      <div class="actions-section">
-        <h3>Quick Actions</h3>
-        <div class="actions-grid">
-          <button class="action-btn" onclick="alert('View Playbooks - Coming soon!')">
-            <div class="icon">📋</div>
-            View Playbooks
-          </button>
-          <button class="action-btn" onclick="alert('Execute Playbook - Coming soon!')">
-            <div class="icon">▶️</div>
-            Execute Playbook
-          </button>
-          <button class="action-btn" onclick="alert('View History - Coming soon!')">
-            <div class="icon">📊</div>
-            Execution History
-          </button>
-          <button class="action-btn" onclick="alert('Settings - Coming soon!')">
-            <div class="icon">⚙️</div>
-            Settings
-          </button>
-        </div>
-      </div>
-
-      <div class="session-info">
-        <strong>Session Token:</strong> <span id="sessionToken"></span><br>
-        <strong>Expires:</strong> <span id="expiresAt">24 hours from login</span>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeModal('playbookDetailModal')">Close</button>
+        <button class="btn btn-primary" onclick="executeFromDetail()">Execute</button>
       </div>
     </div>
   </div>
+
+  <!-- Execution Detail Modal -->
+  <div id="executionDetailModal" class="modal-overlay" onclick="closeModalOnOverlay(event, 'executionDetailModal')">
+    <div class="modal modal-large">
+      <div class="modal-header">
+        <h2 class="modal-title">Execution Details</h2>
+        <button class="modal-close" onclick="closeModal('executionDetailModal')">
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </div>
+      <div class="modal-body" id="executionDetailBody">
+        <div class="loading-overlay">
+          <div class="loading-spinner lg"></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeModal('executionDetailModal')">Close</button>
+        <button class="btn btn-danger hidden" id="cancelExecutionBtn" onclick="cancelExecution()">Cancel Execution</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Create Playbook Modal -->
+  <div id="createPlaybookModal" class="modal-overlay" onclick="closeModalOnOverlay(event, 'createPlaybookModal')">
+    <div class="modal modal-large">
+      <div class="modal-header">
+        <h2 class="modal-title">Create New Playbook</h2>
+        <button class="modal-close" onclick="closeModal('createPlaybookModal')">
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label">Playbook YAML</label>
+          <textarea class="form-textarea" id="newPlaybookContent" style="min-height: 400px;" placeholder="# Paste your playbook YAML here
+name: my_playbook
+description: My awesome playbook
+workflow:
+  - name: step1
+    action: log
+    config:
+      message: Hello World"></textarea>
+          <p class="form-help">Enter the playbook definition in YAML format.</p>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeModal('createPlaybookModal')">Cancel</button>
+        <button class="btn btn-primary" onclick="createPlaybook()">
+          <span id="createPlaybookBtnText">Create Playbook</span>
+          <span id="createPlaybookBtnSpinner" class="loading-spinner hidden"></span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Create Credential Modal -->
+  <div id="createCredentialModal" class="modal-overlay" onclick="closeModalOnOverlay(event, 'createCredentialModal')">
+    <div class="modal">
+      <div class="modal-header">
+        <h2 class="modal-title">Create New Credential</h2>
+        <button class="modal-close" onclick="closeModal('createCredentialModal')">
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label">Name</label>
+          <input type="text" class="form-input" id="newCredentialName" placeholder="my-api-key">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Type</label>
+          <select class="form-select" id="newCredentialType">
+            <option value="api_key">API Key</option>
+            <option value="oauth2">OAuth2</option>
+            <option value="basic">Basic Auth</option>
+            <option value="ssh">SSH Key</option>
+            <option value="custom">Custom</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Description</label>
+          <input type="text" class="form-input" id="newCredentialDescription" placeholder="Description of this credential">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Credential Data (JSON)</label>
+          <textarea class="form-textarea" id="newCredentialData" placeholder='{"key": "value"}'>{}</textarea>
+          <p class="form-help">Enter credential data as a JSON object. This data will be encrypted.</p>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeModal('createCredentialModal')">Cancel</button>
+        <button class="btn btn-primary" onclick="createCredential()">Create Credential</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Container -->
+  <div class="toast-container" id="toastContainer"></div>
 
   <script>
-    const NOETL_API = window.location.origin.replace(':8080', ':8082');
+    // Configuration - use DASHBOARD_API to avoid conflict with auth.js API_BASE
+    const DASHBOARD_API = window.GATEWAY_CONFIG?.gatewayUrl || 'https://gateway.mestumre.dev';
+    const PROXY_BASE = `${DASHBOARD_API}/noetl`;
 
-    async function loadDashboard() {
+    // State
+    let currentPage = 'dashboard';
+    let playbooks = [];
+    let executions = [];
+    let credentials = [];
+    let currentPlaybook = null;
+    let currentExecution = null;
+
+    // Initialize
+    async function init() {
       const token = localStorage.getItem('session_token');
       const userInfo = JSON.parse(localStorage.getItem('user_info') || '{}');
 
@@ -291,21 +1573,980 @@
         return;
       }
 
-      // Show user info
-      document.getElementById('userName').textContent = userInfo.display_name || 'User';
+      // Set user info
+      const name = userInfo.display_name || userInfo.email || 'User';
+      document.getElementById('userName').textContent = name;
       document.getElementById('userEmail').textContent = userInfo.email || '';
-      document.getElementById('sessionToken').textContent = token.substring(0, 20) + '...';
+      document.getElementById('userAvatar').textContent = name.charAt(0).toUpperCase();
 
-      // Show roles
-      const roles = userInfo.roles || ['admin'];
-      document.getElementById('roleCount').textContent = roles.length;
+      // Load initial data
+      await Promise.all([
+        loadDashboardStats(),
+        loadPlaybooks(),
+        loadRecentExecutions()
+      ]);
+    }
 
-      // Mock playbook count
-      document.getElementById('playbookCount').textContent = '4';
+    // API Helper
+    async function apiRequest(method, endpoint, body = null) {
+      const token = localStorage.getItem('session_token');
+      if (!token) {
+        throw new Error('Not authenticated');
+      }
 
-      // Hide loading, show dashboard
-      document.getElementById('loadingState').style.display = 'none';
-      document.getElementById('dashboard').style.display = 'block';
+      const options = {
+        method,
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        }
+      };
+
+      if (body) {
+        options.body = JSON.stringify(body);
+      }
+
+      const response = await fetch(`${PROXY_BASE}${endpoint}`, options);
+
+      if (response.status === 401) {
+        localStorage.removeItem('session_token');
+        localStorage.removeItem('user_info');
+        window.location.href = '/login.html';
+        throw new Error('Session expired');
+      }
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(errorText || `Request failed: ${response.status}`);
+      }
+
+      const text = await response.text();
+      if (!text) return null;
+      try {
+        return JSON.parse(text);
+      } catch {
+        return text;
+      }
+    }
+
+    // Page Navigation
+    function showPage(page) {
+      currentPage = page;
+
+      // Hide all pages
+      document.querySelectorAll('.page').forEach(p => p.classList.add('hidden'));
+
+      // Show selected page
+      document.getElementById(`page-${page}`).classList.remove('hidden');
+
+      // Update nav
+      document.querySelectorAll('.nav-item').forEach(item => {
+        item.classList.toggle('active', item.dataset.page === page);
+      });
+
+      // Load page data
+      switch (page) {
+        case 'dashboard':
+          loadDashboardStats();
+          loadRecentExecutions();
+          break;
+        case 'playbooks':
+          loadPlaybooks();
+          break;
+        case 'executions':
+          loadExecutions();
+          break;
+        case 'credentials':
+          loadCredentials();
+          break;
+        case 'settings':
+          loadSettings();
+          break;
+      }
+    }
+
+    // Dashboard
+    async function loadDashboardStats() {
+      try {
+        const stats = await apiRequest('GET', '/dashboard/stats');
+        document.getElementById('statPlaybooks').textContent = stats.total_playbooks || 0;
+        document.getElementById('statExecutions').textContent = stats.total_executions || 0;
+        document.getElementById('statActive').textContent = stats.active_executions || 0;
+        document.getElementById('statSuccessRate').textContent = stats.success_rate ? `${stats.success_rate}%` : '-';
+
+        document.getElementById('playbookBadge').textContent = stats.total_playbooks || 0;
+        document.getElementById('executionBadge').textContent = stats.total_executions || 0;
+      } catch (error) {
+        console.error('Failed to load dashboard stats:', error);
+      }
+    }
+
+    async function loadRecentExecutions() {
+      const container = document.getElementById('recentExecutionsContainer');
+
+      try {
+        const data = await apiRequest('GET', '/executions?limit=10');
+        executions = Array.isArray(data) ? data : (data.executions || []);
+
+        if (executions.length === 0) {
+          container.innerHTML = `
+            <div class="empty-state">
+              <div class="empty-state-icon">&#128640;</div>
+              <div class="empty-state-title">No executions yet</div>
+              <div class="empty-state-description">Execute a playbook to see it here.</div>
+            </div>
+          `;
+          return;
+        }
+
+        container.innerHTML = `
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Playbook</th>
+                <th>Status</th>
+                <th>Started</th>
+                <th>Duration</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${executions.slice(0, 5).map(exec => `
+                <tr onclick="viewExecution('${exec.execution_id}')" style="cursor: pointer;">
+                  <td class="truncate" style="max-width: 250px;">${escapeHtml(exec.path || exec.playbook_name || '-')}</td>
+                  <td><span class="status-badge status-${(exec.status || 'pending').toLowerCase()}">${exec.status || 'Unknown'}</span></td>
+                  <td>${exec.started_at ? formatDate(exec.started_at) : '-'}</td>
+                  <td>${formatDuration(exec.duration)}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        `;
+      } catch (error) {
+        console.error('Failed to load recent executions:', error);
+        container.innerHTML = `
+          <div class="empty-state">
+            <div class="empty-state-icon">&#9888;</div>
+            <div class="empty-state-title">Failed to load executions</div>
+            <div class="empty-state-description">${escapeHtml(error.message)}</div>
+          </div>
+        `;
+      }
+    }
+
+    // Playbooks
+    async function loadPlaybooks() {
+      const container = document.getElementById('playbooksContainer');
+
+      try {
+        const data = await apiRequest('POST', '/catalog/list', { resource_type: 'Playbook' });
+        playbooks = data.entries || [];
+
+        // Show unique playbooks count (not total versions)
+        const uniqueCount = getUniquePlaybooksByPath(playbooks).length;
+        document.getElementById('playbookBadge').textContent = uniqueCount;
+
+        if (playbooks.length === 0) {
+          container.innerHTML = `
+            <div class="empty-state">
+              <div class="empty-state-icon">&#128203;</div>
+              <div class="empty-state-title">No playbooks found</div>
+              <div class="empty-state-description">Create your first playbook to get started.</div>
+              <button class="btn btn-primary" style="margin-top: 1rem;" onclick="openCreatePlaybookModal()">Create Playbook</button>
+            </div>
+          `;
+          return;
+        }
+
+        renderPlaybooks();
+      } catch (error) {
+        console.error('Failed to load playbooks:', error);
+        container.innerHTML = `
+          <div class="empty-state">
+            <div class="empty-state-icon">&#9888;</div>
+            <div class="empty-state-title">Failed to load playbooks</div>
+            <div class="empty-state-description">${escapeHtml(error.message)}</div>
+          </div>
+        `;
+      }
+    }
+
+    // Get unique playbooks by path, keeping only the latest version
+    function getUniquePlaybooksByPath(playbookList) {
+      const byPath = {};
+      playbookList.forEach(pb => {
+        const path = pb.path;
+        if (!byPath[path]) {
+          byPath[path] = pb;
+        } else {
+          // Compare versions - keep the higher one
+          const currentVersion = parseInt(byPath[path].version) || 0;
+          const newVersion = parseInt(pb.version) || 0;
+          if (newVersion > currentVersion) {
+            byPath[path] = pb;
+          }
+        }
+      });
+      return Object.values(byPath);
+    }
+
+    // Get all versions of a playbook by path
+    function getPlaybookVersions(path) {
+      return playbooks
+        .filter(pb => pb.path === path)
+        .sort((a, b) => (parseInt(b.version) || 0) - (parseInt(a.version) || 0));
+    }
+
+    function renderPlaybooks() {
+      const container = document.getElementById('playbooksContainer');
+      const search = document.getElementById('playbookSearch').value.toLowerCase();
+      const status = document.getElementById('playbookStatusFilter').value;
+
+      // First filter, then deduplicate
+      const filtered = playbooks.filter(pb => {
+        const matchesSearch = !search ||
+          (pb.path || '').toLowerCase().includes(search) ||
+          (pb.description || '').toLowerCase().includes(search);
+        const matchesStatus = !status || (pb.status || 'active').toLowerCase() === status;
+        return matchesSearch && matchesStatus;
+      });
+
+      // Get unique playbooks (latest version only)
+      const uniquePlaybooks = getUniquePlaybooksByPath(filtered);
+
+      if (uniquePlaybooks.length === 0) {
+        container.innerHTML = `
+          <div class="empty-state">
+            <div class="empty-state-icon">&#128269;</div>
+            <div class="empty-state-title">No matching playbooks</div>
+            <div class="empty-state-description">Try adjusting your search or filter.</div>
+          </div>
+        `;
+        return;
+      }
+
+      container.innerHTML = `
+        <div class="cards-grid">
+          ${uniquePlaybooks.map(pb => {
+            const versions = getPlaybookVersions(pb.path);
+            const versionCount = versions.length;
+            return `
+            <div class="playbook-card" onclick="viewPlaybook('${escapeHtml(pb.path)}')">
+              <div class="playbook-card-header">
+                <div>
+                  <div class="playbook-card-title">${escapeHtml(pb.path?.split('/').pop() || pb.path)}</div>
+                  <div class="playbook-card-path">${escapeHtml(pb.path)}</div>
+                </div>
+                <span class="status-badge status-${(pb.status || 'active').toLowerCase()}">${pb.status || 'Active'}</span>
+              </div>
+              <div class="playbook-card-description">${escapeHtml(pb.description || 'No description')}</div>
+              <div class="playbook-card-footer">
+                <span class="playbook-card-meta">v${escapeHtml(pb.version || 'latest')}${versionCount > 1 ? ` (${versionCount} versions)` : ''}</span>
+                <button class="btn btn-sm btn-primary" onclick="event.stopPropagation(); executePlaybookDirect('${escapeHtml(pb.path)}')">Execute</button>
+              </div>
+            </div>
+          `;}).join('')}
+        </div>
+      `;
+    }
+
+    function filterPlaybooks() {
+      renderPlaybooks();
+    }
+
+    async function viewPlaybook(path) {
+      openModal('playbookDetailModal');
+      document.getElementById('playbookDetailTitle').textContent = path;
+      document.getElementById('playbookDetailBody').innerHTML = `
+        <div class="loading-overlay">
+          <div class="loading-spinner lg"></div>
+        </div>
+      `;
+
+      try {
+        const data = await apiRequest('POST', '/catalog/resource', { path, version: 'latest' });
+        currentPlaybook = data;
+
+        document.getElementById('playbookDetailBody').innerHTML = `
+          <div class="execution-info-grid">
+            <div class="info-item">
+              <div class="info-label">Path</div>
+              <div class="info-value mono">${escapeHtml(data.path)}</div>
+            </div>
+            <div class="info-item">
+              <div class="info-label">Version</div>
+              <div class="info-value">${escapeHtml(data.version || 'latest')}</div>
+            </div>
+            <div class="info-item">
+              <div class="info-label">Status</div>
+              <div class="info-value"><span class="status-badge status-${(data.status || 'active').toLowerCase()}">${data.status || 'Active'}</span></div>
+            </div>
+            <div class="info-item">
+              <div class="info-label">Catalog ID</div>
+              <div class="info-value">${data.catalog_id || '-'}</div>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Description</label>
+            <p style="color: var(--gray-600);">${escapeHtml(data.description || 'No description')}</p>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Content</label>
+            <pre class="code-block">${escapeHtml(data.content || JSON.stringify(data.payload, null, 2) || 'No content')}</pre>
+          </div>
+        `;
+      } catch (error) {
+        document.getElementById('playbookDetailBody').innerHTML = `
+          <div class="empty-state">
+            <div class="empty-state-icon">&#9888;</div>
+            <div class="empty-state-title">Failed to load playbook</div>
+            <div class="empty-state-description">${escapeHtml(error.message)}</div>
+          </div>
+        `;
+      }
+    }
+
+    function executeFromDetail() {
+      if (!currentPlaybook) return;
+      closeModal('playbookDetailModal');
+      executePlaybookDirect(currentPlaybook.path);
+    }
+
+    // Executions
+    async function loadExecutions() {
+      const tbody = document.getElementById('executionsTableBody');
+
+      try {
+        const data = await apiRequest('GET', '/executions');
+        executions = Array.isArray(data) ? data : (data.executions || []);
+
+        document.getElementById('executionBadge').textContent = executions.length;
+
+        if (executions.length === 0) {
+          tbody.innerHTML = `
+            <tr>
+              <td colspan="6">
+                <div class="empty-state">
+                  <div class="empty-state-icon">&#128640;</div>
+                  <div class="empty-state-title">No executions yet</div>
+                </div>
+              </td>
+            </tr>
+          `;
+          return;
+        }
+
+        renderExecutions();
+      } catch (error) {
+        console.error('Failed to load executions:', error);
+        tbody.innerHTML = `
+          <tr>
+            <td colspan="6">
+              <div class="empty-state">
+                <div class="empty-state-icon">&#9888;</div>
+                <div class="empty-state-title">Failed to load executions</div>
+                <div class="empty-state-description">${escapeHtml(error.message)}</div>
+              </div>
+            </td>
+          </tr>
+        `;
+      }
+    }
+
+    function renderExecutions() {
+      const tbody = document.getElementById('executionsTableBody');
+      const search = document.getElementById('executionSearch').value.toLowerCase();
+      const status = document.getElementById('executionStatusFilter').value;
+
+      const filtered = executions.filter(exec => {
+        const matchesSearch = !search ||
+          (exec.execution_id || '').toString().includes(search) ||
+          (exec.path || exec.playbook_name || '').toLowerCase().includes(search);
+        const matchesStatus = !status || (exec.status || '').toLowerCase() === status;
+        return matchesSearch && matchesStatus;
+      });
+
+      if (filtered.length === 0) {
+        tbody.innerHTML = `
+          <tr>
+            <td colspan="6">
+              <div class="empty-state">
+                <div class="empty-state-icon">&#128269;</div>
+                <div class="empty-state-title">No matching executions</div>
+              </div>
+            </td>
+          </tr>
+        `;
+        return;
+      }
+
+      tbody.innerHTML = filtered.map(exec => `
+        <tr>
+          <td><code>${exec.execution_id}</code></td>
+          <td class="truncate" style="max-width: 200px;">${escapeHtml(exec.path || exec.playbook_name || '-')}</td>
+          <td><span class="status-badge status-${(exec.status || 'pending').toLowerCase()}">${exec.status || 'Unknown'}</span></td>
+          <td>${exec.started_at ? formatDate(exec.started_at) : '-'}</td>
+          <td>${formatDuration(exec.duration)}</td>
+          <td>
+            <button class="btn btn-sm btn-ghost" onclick="viewExecution('${exec.execution_id}')">View</button>
+          </td>
+        </tr>
+      `).join('');
+    }
+
+    function filterExecutions() {
+      renderExecutions();
+    }
+
+    async function viewExecution(executionId) {
+      openModal('executionDetailModal');
+      currentExecution = { execution_id: executionId };
+      document.getElementById('cancelExecutionBtn').classList.add('hidden');
+      document.getElementById('executionDetailBody').innerHTML = `
+        <div class="loading-overlay">
+          <div class="loading-spinner lg"></div>
+        </div>
+      `;
+
+      try {
+        const data = await apiRequest('GET', `/executions/${executionId}`);
+        currentExecution = data;
+
+        const isRunning = ['running', 'pending', 'queued'].includes((data.status || '').toLowerCase());
+        if (isRunning) {
+          document.getElementById('cancelExecutionBtn').classList.remove('hidden');
+        }
+
+        const events = data.events || [];
+
+        document.getElementById('executionDetailBody').innerHTML = `
+          <div class="execution-info-grid">
+            <div class="info-item">
+              <div class="info-label">Execution ID</div>
+              <div class="info-value mono">${data.execution_id}</div>
+            </div>
+            <div class="info-item">
+              <div class="info-label">Playbook</div>
+              <div class="info-value">${escapeHtml(data.path || data.playbook_name || '-')}</div>
+            </div>
+            <div class="info-item">
+              <div class="info-label">Catalog ID</div>
+              <div class="info-value mono">${data.catalog_id || '-'}</div>
+            </div>
+            <div class="info-item">
+              <div class="info-label">Version</div>
+              <div class="info-value">${data.version || '-'}</div>
+            </div>
+            <div class="info-item">
+              <div class="info-label">Status</div>
+              <div class="info-value"><span class="status-badge status-${(data.status || 'pending').toLowerCase()}">${data.status || 'Unknown'}</span></div>
+            </div>
+            <div class="info-item">
+              <div class="info-label">Duration</div>
+              <div class="info-value">${formatDuration(data.duration)}</div>
+            </div>
+            <div class="info-item">
+              <div class="info-label">Started</div>
+              <div class="info-value">${data.started_at ? formatDate(data.started_at) : '-'}</div>
+            </div>
+            <div class="info-item">
+              <div class="info-label">Completed</div>
+              <div class="info-value">${data.completed_at ? formatDate(data.completed_at) : '-'}</div>
+            </div>
+          </div>
+
+          ${data.error ? `
+            <div style="background: rgba(229, 62, 62, 0.1); border: 1px solid var(--danger); border-radius: 8px; padding: 1rem; margin-bottom: 1.5rem;">
+              <strong style="color: var(--danger);">Error:</strong>
+              <p style="color: var(--gray-700); margin-top: 0.5rem;">${escapeHtml(data.error)}</p>
+            </div>
+          ` : ''}
+
+          ${data.result ? `
+            <div class="form-group">
+              <label class="form-label">Result</label>
+              <pre class="code-block">${JSON.stringify(data.result, null, 2)}</pre>
+            </div>
+          ` : ''}
+
+          <div class="form-group">
+            <label class="form-label">Events (${events.length})</label>
+            ${events.length > 0 ? `
+              <div class="events-timeline">
+                ${events.map(event => `
+                  <div class="event-item ${(event.status || '').toLowerCase()}">
+                    <div class="event-header">
+                      <span class="event-name">${escapeHtml(event.node_name || event.event_type || 'Event')}</span>
+                      <span class="event-time">${event.timestamp ? formatDate(event.timestamp) : ''}</span>
+                    </div>
+                    <div class="event-details">
+                      <span class="status-badge status-${(event.status || 'pending').toLowerCase()}">${event.status || 'Unknown'}</span>
+                      ${event.duration ? ` - ${formatDuration(event.duration)}` : ''}
+                    </div>
+                  </div>
+                `).join('')}
+              </div>
+            ` : '<p style="color: var(--gray-500);">No events recorded.</p>'}
+          </div>
+        `;
+      } catch (error) {
+        document.getElementById('executionDetailBody').innerHTML = `
+          <div class="empty-state">
+            <div class="empty-state-icon">&#9888;</div>
+            <div class="empty-state-title">Failed to load execution</div>
+            <div class="empty-state-description">${escapeHtml(error.message)}</div>
+          </div>
+        `;
+      }
+    }
+
+    async function cancelExecution() {
+      if (!currentExecution) return;
+
+      if (!confirm('Are you sure you want to cancel this execution?')) return;
+
+      try {
+        await apiRequest('POST', `/executions/${currentExecution.execution_id}/cancel`, {
+          reason: 'Cancelled by user',
+          cascade: true
+        });
+        showToast('success', 'Execution Cancelled', 'The execution has been cancelled.');
+        closeModal('executionDetailModal');
+        loadExecutions();
+        loadRecentExecutions();
+      } catch (error) {
+        showToast('error', 'Failed to Cancel', error.message);
+      }
+    }
+
+    // Credentials
+    async function loadCredentials() {
+      const tbody = document.getElementById('credentialsTableBody');
+
+      try {
+        const data = await apiRequest('GET', '/credentials');
+        credentials = data.items || [];
+
+        if (credentials.length === 0) {
+          tbody.innerHTML = `
+            <tr>
+              <td colspan="5">
+                <div class="empty-state">
+                  <div class="empty-state-icon">&#128274;</div>
+                  <div class="empty-state-title">No credentials found</div>
+                  <div class="empty-state-description">Create your first credential to get started.</div>
+                </div>
+              </td>
+            </tr>
+          `;
+          return;
+        }
+
+        tbody.innerHTML = credentials.map(cred => `
+          <tr>
+            <td><strong>${escapeHtml(cred.name)}</strong></td>
+            <td><span class="status-badge">${escapeHtml(cred.credential_type || 'custom')}</span></td>
+            <td class="truncate" style="max-width: 300px;">${escapeHtml(cred.description || '-')}</td>
+            <td>${cred.created_at ? formatDate(cred.created_at) : '-'}</td>
+            <td>
+              <button class="btn btn-sm btn-ghost" onclick="deleteCredential('${escapeHtml(cred.id || cred.name)}')">Delete</button>
+            </td>
+          </tr>
+        `).join('');
+      } catch (error) {
+        console.error('Failed to load credentials:', error);
+        tbody.innerHTML = `
+          <tr>
+            <td colspan="5">
+              <div class="empty-state">
+                <div class="empty-state-icon">&#9888;</div>
+                <div class="empty-state-title">Failed to load credentials</div>
+                <div class="empty-state-description">${escapeHtml(error.message)}</div>
+              </div>
+            </td>
+          </tr>
+        `;
+      }
+    }
+
+    async function createCredential() {
+      const name = document.getElementById('newCredentialName').value.trim();
+      const type = document.getElementById('newCredentialType').value;
+      const description = document.getElementById('newCredentialDescription').value.trim();
+      const dataText = document.getElementById('newCredentialData').value;
+
+      if (!name) {
+        showToast('error', 'Validation Error', 'Please enter a credential name.');
+        return;
+      }
+
+      let data;
+      try {
+        data = JSON.parse(dataText);
+      } catch {
+        showToast('error', 'Validation Error', 'Invalid JSON in credential data.');
+        return;
+      }
+
+      try {
+        await apiRequest('POST', '/credentials', {
+          name,
+          credential_type: type,
+          description,
+          data
+        });
+        showToast('success', 'Credential Created', `Credential "${name}" has been created.`);
+        closeModal('createCredentialModal');
+        loadCredentials();
+      } catch (error) {
+        showToast('error', 'Failed to Create', error.message);
+      }
+    }
+
+    async function deleteCredential(identifier) {
+      if (!confirm(`Are you sure you want to delete credential "${identifier}"?`)) return;
+
+      try {
+        await apiRequest('DELETE', `/credentials/${identifier}`);
+        showToast('success', 'Credential Deleted', `Credential "${identifier}" has been deleted.`);
+        loadCredentials();
+      } catch (error) {
+        showToast('error', 'Failed to Delete', error.message);
+      }
+    }
+
+    // Settings
+    function loadSettings() {
+      const token = localStorage.getItem('session_token');
+      const userInfo = JSON.parse(localStorage.getItem('user_info') || '{}');
+
+      document.getElementById('settingsGatewayUrl').value = DASHBOARD_API;
+      document.getElementById('settingsSessionToken').value = token || '';
+      document.getElementById('settingsUserInfo').textContent = JSON.stringify(userInfo, null, 2);
+    }
+
+    // Execute Modal - state
+    let executeMode = 'select'; // 'select' (from header) or 'direct' (from card)
+    let executeSelectedPath = null;
+
+    // Open execute modal from header button (select playbook from dropdown)
+    async function openExecuteModal() {
+      executeMode = 'select';
+      executeSelectedPath = null;
+
+      openModal('executeModal');
+      document.getElementById('executeResult').classList.add('hidden');
+      document.getElementById('executePlaybookDetails').classList.add('hidden');
+      document.getElementById('executeVariables').value = '{}';
+      document.getElementById('executeBtn').disabled = true;
+
+      // Show playbook dropdown, hide fixed path and version
+      document.getElementById('executePlaybookSelectGroup').classList.remove('hidden');
+      document.getElementById('executePlaybookFixedGroup').classList.add('hidden');
+      document.getElementById('executeVersionGroup').classList.add('hidden');
+
+      const select = document.getElementById('executePlaybookSelect');
+      select.innerHTML = '<option value="">-- Select a playbook --</option>';
+
+      if (playbooks.length === 0) {
+        await loadPlaybooks();
+      }
+
+      // Show only unique playbooks (latest version)
+      const uniquePlaybooks = getUniquePlaybooksByPath(playbooks);
+      uniquePlaybooks.forEach(pb => {
+        const option = document.createElement('option');
+        option.value = pb.path;
+        option.textContent = pb.path;
+        option.dataset.path = pb.path;
+        option.dataset.catalogId = pb.catalog_id;
+        option.dataset.description = pb.description || '';
+        select.appendChild(option);
+      });
+    }
+
+    // Called when playbook is selected from dropdown (header button mode)
+    function onExecutePlaybookChange() {
+      const select = document.getElementById('executePlaybookSelect');
+      const option = select.options[select.selectedIndex];
+
+      if (!select.value) {
+        document.getElementById('executePlaybookDetails').classList.add('hidden');
+        document.getElementById('executeVersionGroup').classList.add('hidden');
+        document.getElementById('executeBtn').disabled = true;
+        return;
+      }
+
+      const path = option.dataset.path;
+      executeSelectedPath = path;
+
+      // Populate version dropdown
+      populateVersionDropdown(path);
+      document.getElementById('executeVersionGroup').classList.remove('hidden');
+
+      document.getElementById('executePlaybookDescription').textContent = option.dataset.description || 'No description';
+      document.getElementById('executePlaybookDetails').classList.remove('hidden');
+      document.getElementById('executeBtn').disabled = false;
+    }
+
+    // Populate version dropdown for a given playbook path
+    function populateVersionDropdown(path) {
+      const versions = getPlaybookVersions(path);
+      const versionSelect = document.getElementById('executeVersionSelect');
+      versionSelect.innerHTML = '';
+
+      versions.forEach((pb, idx) => {
+        const option = document.createElement('option');
+        option.value = pb.catalog_id;
+        option.textContent = `v${pb.version || 'latest'}${idx === 0 ? ' (latest)' : ''}`;
+        option.dataset.path = pb.path;
+        option.dataset.catalogId = pb.catalog_id;
+        option.dataset.description = pb.description || '';
+        option.dataset.version = pb.version || 'latest';
+        versionSelect.appendChild(option);
+      });
+    }
+
+    // Called when version is changed
+    function onExecuteVersionChange() {
+      const versionSelect = document.getElementById('executeVersionSelect');
+      const option = versionSelect.options[versionSelect.selectedIndex];
+      if (option && option.dataset.description) {
+        document.getElementById('executePlaybookDescription').textContent = option.dataset.description || 'No description';
+      }
+    }
+
+    async function executePlaybook() {
+      let path;
+      let version;
+      let catalogId;
+      const variablesText = document.getElementById('executeVariables').value;
+
+      // Get path based on mode
+      if (executeMode === 'select') {
+        const select = document.getElementById('executePlaybookSelect');
+        const option = select.options[select.selectedIndex];
+        path = option.dataset.path;
+      } else {
+        path = executeSelectedPath;
+      }
+
+      // Get selected version and catalog_id from version dropdown
+      const versionSelect = document.getElementById('executeVersionSelect');
+      const versionOption = versionSelect.options[versionSelect.selectedIndex];
+      if (versionOption) {
+        version = versionOption.dataset.version;
+        catalogId = versionOption.dataset.catalogId;
+      }
+
+      if (!path && !catalogId) {
+        showToast('error', 'Validation Error', 'No playbook selected.');
+        return;
+      }
+
+      let payload;
+      try {
+        payload = JSON.parse(variablesText);
+      } catch {
+        showToast('error', 'Validation Error', 'Invalid JSON in variables.');
+        return;
+      }
+
+      document.getElementById('executeBtn').disabled = true;
+      document.getElementById('executeBtnText').classList.add('hidden');
+      document.getElementById('executeBtnSpinner').classList.remove('hidden');
+
+      // Debug: log what we're sending
+      console.log('Executing playbook:', { path, version, catalogId });
+
+      try {
+        // Build request with path + version (preferred since backend now supports it)
+        // Note: catalog_id has JS precision issues with large numbers, so we use path + version
+        const requestBody = {
+          path: path,
+          args: payload
+        };
+
+        // Add version to run specific version (not "latest")
+        if (version && version !== 'latest') {
+          requestBody.version = String(version);
+        }
+
+        console.log('Request body:', JSON.stringify(requestBody));
+        const result = await apiRequest('POST', '/run/playbook', requestBody);
+
+        document.getElementById('executeResult').innerHTML = `
+          <div style="background: rgba(72, 187, 120, 0.1); border: 1px solid var(--success); border-radius: 8px; padding: 1rem;">
+            <strong style="color: var(--success);">Execution Started</strong>
+            <p style="margin-top: 0.5rem;">Execution ID: <code>${result.execution_id}</code></p>
+            <button class="btn btn-sm btn-primary" style="margin-top: 0.5rem;" onclick="closeModal('executeModal'); viewExecution('${result.execution_id}')">View Details</button>
+          </div>
+        `;
+        document.getElementById('executeResult').classList.remove('hidden');
+
+        loadDashboardStats();
+        loadRecentExecutions();
+        loadExecutions();
+
+      } catch (error) {
+        document.getElementById('executeResult').innerHTML = `
+          <div style="background: rgba(229, 62, 62, 0.1); border: 1px solid var(--danger); border-radius: 8px; padding: 1rem;">
+            <strong style="color: var(--danger);">Execution Failed</strong>
+            <p style="margin-top: 0.5rem;">${escapeHtml(error.message)}</p>
+          </div>
+        `;
+        document.getElementById('executeResult').classList.remove('hidden');
+      }
+
+      document.getElementById('executeBtn').disabled = false;
+      document.getElementById('executeBtnText').classList.remove('hidden');
+      document.getElementById('executeBtnSpinner').classList.add('hidden');
+    }
+
+    // Open execute modal for a specific playbook (from card button)
+    async function executePlaybookDirect(path) {
+      executeMode = 'direct';
+      executeSelectedPath = path;
+
+      openModal('executeModal');
+      document.getElementById('executeResult').classList.add('hidden');
+      document.getElementById('executeVariables').value = '{}';
+
+      // Hide playbook dropdown, show fixed path and version selector
+      document.getElementById('executePlaybookSelectGroup').classList.add('hidden');
+      document.getElementById('executePlaybookFixedGroup').classList.remove('hidden');
+      document.getElementById('executeVersionGroup').classList.remove('hidden');
+      document.getElementById('executePlaybookDetails').classList.remove('hidden');
+
+      // Set playbook path
+      document.getElementById('executePlaybookPath').value = path;
+
+      if (playbooks.length === 0) {
+        await loadPlaybooks();
+      }
+
+      // Populate version dropdown
+      populateVersionDropdown(path);
+
+      // Set description from latest version
+      const versions = getPlaybookVersions(path);
+      if (versions.length > 0) {
+        document.getElementById('executePlaybookDescription').textContent = versions[0].description || 'No description';
+      }
+
+      document.getElementById('executeBtn').disabled = false;
+    }
+
+    // Create Playbook
+    function openCreatePlaybookModal() {
+      document.getElementById('newPlaybookContent').value = '';
+      openModal('createPlaybookModal');
+    }
+
+    async function createPlaybook() {
+      const content = document.getElementById('newPlaybookContent').value.trim();
+
+      if (!content) {
+        showToast('error', 'Validation Error', 'Please enter playbook content.');
+        return;
+      }
+
+      document.getElementById('createPlaybookBtnText').classList.add('hidden');
+      document.getElementById('createPlaybookBtnSpinner').classList.remove('hidden');
+
+      try {
+        const result = await apiRequest('POST', '/catalog/register', {
+          content,
+          resource_type: 'Playbook'
+        });
+
+        showToast('success', 'Playbook Created', `Playbook "${result.path || 'new'}" has been created.`);
+        closeModal('createPlaybookModal');
+        loadPlaybooks();
+        loadDashboardStats();
+
+      } catch (error) {
+        showToast('error', 'Failed to Create', error.message);
+      }
+
+      document.getElementById('createPlaybookBtnText').classList.remove('hidden');
+      document.getElementById('createPlaybookBtnSpinner').classList.add('hidden');
+    }
+
+    function openCreateCredentialModal() {
+      document.getElementById('newCredentialName').value = '';
+      document.getElementById('newCredentialType').value = 'api_key';
+      document.getElementById('newCredentialDescription').value = '';
+      document.getElementById('newCredentialData').value = '{}';
+      openModal('createCredentialModal');
+    }
+
+    // Modal helpers
+    function openModal(modalId) {
+      document.getElementById(modalId).classList.add('active');
+    }
+
+    function closeModal(modalId) {
+      document.getElementById(modalId).classList.remove('active');
+    }
+
+    function closeModalOnOverlay(event, modalId) {
+      if (event.target.classList.contains('modal-overlay')) {
+        closeModal(modalId);
+      }
+    }
+
+    // Toast notifications
+    function showToast(type, title, message) {
+      const container = document.getElementById('toastContainer');
+      const toast = document.createElement('div');
+      toast.className = `toast ${type}`;
+
+      const icons = {
+        success: '&#10003;',
+        error: '&#10007;',
+        info: 'i'
+      };
+
+      toast.innerHTML = `
+        <span class="toast-icon">${icons[type] || icons.info}</span>
+        <div class="toast-content">
+          <div class="toast-title">${escapeHtml(title)}</div>
+          <div class="toast-message">${escapeHtml(message)}</div>
+        </div>
+      `;
+
+      container.appendChild(toast);
+
+      setTimeout(() => {
+        toast.style.opacity = '0';
+        toast.style.transform = 'translateX(100px)';
+        setTimeout(() => toast.remove(), 300);
+      }, 5000);
+    }
+
+    // Utility functions
+    function escapeHtml(text) {
+      if (!text) return '';
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    function formatDate(dateStr) {
+      if (!dateStr) return '-';
+      const date = new Date(dateStr);
+      return date.toLocaleString();
+    }
+
+    function formatDuration(seconds) {
+      if (!seconds && seconds !== 0) return '-';
+      if (seconds < 1) return `${Math.round(seconds * 1000)}ms`;
+      if (seconds < 60) return `${seconds.toFixed(1)}s`;
+      const minutes = Math.floor(seconds / 60);
+      const secs = Math.round(seconds % 60);
+      return `${minutes}m ${secs}s`;
     }
 
     function logout() {
@@ -316,8 +2557,8 @@
       }
     }
 
-    // Load dashboard on page load
-    window.addEventListener('DOMContentLoaded', loadDashboard);
+    // Initialize on load
+    window.addEventListener('DOMContentLoaded', init);
   </script>
 </body>
 </html>

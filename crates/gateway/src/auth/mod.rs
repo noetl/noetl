@@ -143,8 +143,10 @@ pub async fn login(
         .map_err(|e| AuthError::NoetlError(format!("Failed to get status: {}", e)))?;
 
     // Parse login response from playbook output
+    // NoETL returns results in variables.success for completed executions
     let output = status_result
-        .get("output")
+        .get("variables")
+        .and_then(|v| v.get("success"))
         .ok_or_else(|| AuthError::InternalError("No output from login playbook".to_string()))?;
 
     let status_str = output
@@ -166,21 +168,24 @@ pub async fn login(
         .get("user")
         .ok_or_else(|| AuthError::InternalError("No user data returned".to_string()))?;
 
+    let email = user_obj
+        .get("email")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| AuthError::InternalError("Invalid email".to_string()))?
+        .to_string();
+
     let user = UserInfo {
         user_id: user_obj
             .get("user_id")
             .and_then(|v| v.as_i64())
             .ok_or_else(|| AuthError::InternalError("Invalid user_id".to_string()))? as i32,
-        email: user_obj
-            .get("email")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| AuthError::InternalError("Invalid email".to_string()))?
-            .to_string(),
+        email: email.clone(),
+        // Use display_name if present, otherwise fall back to email
         display_name: user_obj
             .get("display_name")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| AuthError::InternalError("Invalid display_name".to_string()))?
-            .to_string(),
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| email.clone()),
     };
 
     let expires_at = output
@@ -228,8 +233,10 @@ pub async fn validate_session(
         .await
         .map_err(|e| AuthError::NoetlError(format!("Failed to get status: {}", e)))?;
 
+    // NoETL returns results in variables.success for completed executions
     let output = status_result
-        .get("output")
+        .get("variables")
+        .and_then(|v| v.get("success"))
         .ok_or_else(|| AuthError::InternalError("No output from validate session playbook".to_string()))?;
 
     let valid = output.get("valid").and_then(|v| v.as_bool()).unwrap_or(false);
@@ -315,8 +322,10 @@ pub async fn check_access(
         .await
         .map_err(|e| AuthError::NoetlError(format!("Failed to get status: {}", e)))?;
 
+    // NoETL returns results in variables.success for completed executions
     let output = status_result
-        .get("output")
+        .get("variables")
+        .and_then(|v| v.get("success"))
         .ok_or_else(|| AuthError::InternalError("No output from check access playbook".to_string()))?;
 
     let allowed = output.get("allowed").and_then(|v| v.as_bool()).unwrap_or(false);

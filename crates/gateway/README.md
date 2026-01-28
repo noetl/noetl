@@ -2,6 +2,14 @@
 
 Pure API gateway for NoETL - provides GraphQL and REST interfaces for playbook execution with Auth0 authentication.
 
+## Documentation
+
+For deployment and operations documentation, see:
+- [Deployment Guide](../../documentation/docs/gateway/deployment-guide.md) - Building and deploying to GKE
+- [Helm Reference](../../documentation/docs/gateway/helm-reference.md) - Helm chart configuration
+- [Auth0 Setup](../../documentation/docs/gateway/auth0-setup.md) - Auth0 integration
+- [Cloudflare Setup](../../documentation/docs/gateway/cloudflare-setup.md) - DNS and CDN configuration
+
 ## Architecture Principles
 
 **Pure Gateway Design:**

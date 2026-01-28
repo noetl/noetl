@@ -1,66 +1,110 @@
-use async_graphql::{Context, EmptySubscription, ID, Json, Object, Result as GqlResult, Schema};
+//! Simplified GraphQL schema for gateway.
+//!
+//! The gateway acts as an authenticated proxy. Most API calls should go through
+//! the REST proxy at /noetl/* which forwards directly to NoETL server.
+//!
+//! This GraphQL schema provides:
+//! - Health check
+//! - executePlaybook mutation (used by auth module for login/validate playbooks)
+//! - proxyRequest mutation (generic API proxy for clients preferring GraphQL)
 
-use super::types::Execution;
-use crate::{noetl_client::NoetlClient, result_ext::ResultExt};
+use async_graphql::{Context, EmptySubscription, Json, Object, Result as GqlResult, Schema};
+use std::sync::Arc;
+
+use super::types::*;
+use crate::noetl_client::NoetlClient;
+
 pub type AppSchema = Schema<QueryRoot, MutationRoot, EmptySubscription>;
+
+// ============================================================================
+// QUERY ROOT
+// ============================================================================
 
 pub struct QueryRoot;
 
 #[Object]
 impl QueryRoot {
+    /// Health check endpoint.
     async fn health(&self) -> &str {
         "ok"
     }
+
+    /// Gateway version info.
+    async fn version(&self) -> &str {
+        env!("CARGO_PKG_VERSION")
+    }
 }
+
+// ============================================================================
+// MUTATION ROOT
+// ============================================================================
 
 pub struct MutationRoot;
 
 #[Object]
 impl MutationRoot {
-    /// Execute a NoETL playbook workflow.
-    ///
-    /// Triggers execution of a registered playbook in the NoETL catalog. The playbook
-    /// is queued for processing by available workers in the distributed execution environment.
-    /// # Example
-    ///
-    /// ```graphql
-    /// mutation ExecuteAmadeus($name: String!, $vars: JSON) {
-    ///   executePlaybook(name: $name, variables: $vars) {
-    ///     id
-    ///     name
-    ///     status
-    ///   }
-    /// }
-    /// ```
-    /// ```json
-    /// {
-    ///   "name": "api_integration/amadeus_ai_api",
-    ///   "vars": {
-    ///     "query": "I want a one-way flight from SFO to JFK on March 15, 2026 for 1 adult"
-    ///   }
-    /// }
-    /// ```
+    /// Execute a playbook by path.
+    /// This is kept for backward compatibility with auth module and simple use cases.
+    /// For full API access, use the REST proxy at /noetl/* or proxyRequest mutation.
     async fn execute_playbook(
         &self,
         ctx: &Context<'_>,
-        #[graphql(name = "name", desc = "The playbook name as registered in the NoETL catalog")] name: String,
-        #[graphql(
-            name = "variables",
-            desc = "Optional workflow variables merged with playbook's workload section"
-        )]
-        variables: Option<Json<serde_json::Value>>,
-    ) -> GqlResult<Execution> {
-        let client = ctx.data::<NoetlClient>()?;
-        let vars = variables.map(|j| j.0).unwrap_or(serde_json::Value::Null);
-        let resp = client.execute_playbook(&name, vars).await.log("execute playbook")?;
-        
-        // Gateway delegates all data retrieval to NoETL server API
-        // For detailed execution results, clients should poll NoETL status endpoints
-        Ok(Execution {
-            id: ID(resp.execution_id.clone()),
-            name: resp.name.unwrap_or(name),
-            status: resp.status,
-            text_output: None,
+        #[graphql(desc = "Playbook path")] name: String,
+        #[graphql(desc = "Execution variables")] variables: Option<Json<serde_json::Value>>,
+    ) -> GqlResult<ExecuteResult> {
+        let client = ctx.data::<Arc<NoetlClient>>()?;
+        let args = variables.map(|j| j.0).unwrap_or(serde_json::Value::Null);
+
+        let result = client
+            .execute_playbook(&name, args)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        Ok(ExecuteResult {
+            execution_id: result.execution_id,
+            name: result.name.or(Some(name)),
+            status: result.status,
         })
+    }
+
+    /// Generic proxy for any NoETL API call via GraphQL.
+    /// This allows clients to make any API request through GraphQL if they prefer
+    /// that over the REST proxy at /noetl/*.
+    ///
+    /// Example:
+    /// ```graphql
+    /// mutation {
+    ///   proxyRequest(input: {
+    ///     method: "POST",
+    ///     endpoint: "/api/catalog/list",
+    ///     body: { "resource_type": "Playbook" }
+    ///   }) {
+    ///     success
+    ///     data
+    ///     error
+    ///   }
+    /// }
+    /// ```
+    async fn proxy_request(
+        &self,
+        ctx: &Context<'_>,
+        #[graphql(desc = "Proxy request parameters")] input: ProxyRequestInput,
+    ) -> GqlResult<ProxyResponse> {
+        let client = ctx.data::<Arc<NoetlClient>>()?;
+
+        let body = input.body.map(|j| j.0);
+
+        match client.api_call(&input.method, &input.endpoint, body).await {
+            Ok(data) => Ok(ProxyResponse {
+                success: true,
+                data: Some(Json(data)),
+                error: None,
+            }),
+            Err(e) => Ok(ProxyResponse {
+                success: false,
+                data: None,
+                error: Some(e.to_string()),
+            }),
+        }
     }
 }

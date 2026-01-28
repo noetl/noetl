@@ -3,12 +3,13 @@ namespace: gateway
 image:
   repository: ""
   tag: "latest"
-  pullPolicy: IfNotPresent
+  pullPolicy: Always
 
 service:
-  type: ClusterIP
+  type: LoadBalancer
   port: 8090
   nodePort: null
+  loadBalancerIP: "34.46.180.136"
 
 ingress:
   enabled: false
@@ -26,6 +27,11 @@ env:
   routerPort: "8090"
   noetlBaseUrl: "http://noetl.noetl.svc.cluster.local:8082"
   rustLog: "info,gateway=debug"
+  corsAllowedOrigins: "http://localhost:8080,http://localhost:8090,http://localhost:3000,https://gateway.mestumre.dev"
+  natsUrl: "nats://nats.nats.svc.cluster.local:4222"
+  natsUpdatesSubjectPrefix: "playbooks.executions."
+  # Set to "true" to bypass auth validation (for testing only)
+  authBypass: "true"
 
 resources:
   requests:

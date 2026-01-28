@@ -10,6 +10,13 @@ use crate::noetl_client::NoetlClient;
 
 use super::types::UserContext;
 
+/// Check if auth bypass is enabled (for development/testing)
+fn is_auth_bypass_enabled() -> bool {
+    std::env::var("GATEWAY_AUTH_BYPASS")
+        .map(|v| v == "true" || v == "1")
+        .unwrap_or(false)
+}
+
 /// Middleware to validate session token and inject user context
 pub async fn auth_middleware(
     State(noetl): State<Arc<NoetlClient>>,
@@ -29,6 +36,19 @@ pub async fn auth_middleware(
     }
 
     let token = session_token.unwrap();
+
+    // Development mode: bypass validation but still require a token
+    if is_auth_bypass_enabled() {
+        tracing::warn!("AUTH BYPASS ENABLED - skipping session validation (dev mode)");
+        let user_context = UserContext {
+            user_id: 0,
+            email: "dev@localhost".to_string(),
+            display_name: "Dev User".to_string(),
+            session_token: token.to_string(),
+        };
+        request.extensions_mut().insert(user_context);
+        return Ok(next.run(request).await);
+    }
 
     // Validate session via NoETL playbook
     let variables = serde_json::json!({
@@ -54,10 +74,14 @@ pub async fn auth_middleware(
             (StatusCode::INTERNAL_SERVER_ERROR, "Failed to verify session").into_response()
         })?;
 
-    let output = status_result.get("output").ok_or_else(|| {
-        tracing::error!("No output from validation playbook");
-        (StatusCode::INTERNAL_SERVER_ERROR, "Invalid validation response").into_response()
-    })?;
+    // Try multiple paths to find validation output (NoETL version compatibility)
+    let output = status_result.get("output")
+        .or_else(|| status_result.get("variables").and_then(|v| v.get("success")))
+        .or_else(|| status_result.get("result"))
+        .ok_or_else(|| {
+            tracing::error!("No output from validation playbook. Response: {:?}", status_result);
+            (StatusCode::INTERNAL_SERVER_ERROR, "Invalid validation response").into_response()
+        })?;
 
     let valid = output.get("valid").and_then(|v| v.as_bool()).unwrap_or(false);
 

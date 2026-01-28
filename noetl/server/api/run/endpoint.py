@@ -58,19 +58,32 @@ async def execute_resource(
     - Execute playbook: `POST /api/run/playbook`
     """
     try:
-        logger.debug(f"EXECUTE (redirect to V2): resource_type={resource_type}, request: {payload.model_dump()}")
-        
+        logger.debug(f"[RUN] Incoming request: path={payload.path}, version={payload.version}, catalog_id={payload.catalog_id}")
+
         # Lazy import to avoid circular imports
         from noetl.server.api.v2 import start_execution, StartExecutionRequest
-        
+
         # Convert old API request to V2 format
+        # Parse version if provided (can be string like "1" or "latest")
+        version_int = None
+        if payload.version and payload.version != "latest":
+            try:
+                version_int = int(payload.version)
+            except ValueError:
+                pass  # Keep None for non-numeric versions
+
+        logger.debug(f"[RUN] Parsed version: '{payload.version}' -> version_int={version_int}")
+
         v2_request = StartExecutionRequest(
             path=payload.path,
             catalog_id=int(payload.catalog_id) if payload.catalog_id else None,
+            version=version_int,
             payload=payload.args or {},
             parent_execution_id=int(payload.context.parent_execution_id) if payload.context and payload.context.parent_execution_id else None
         )
-        
+
+        logger.debug(f"[RUN] V2 request: path={v2_request.path}, version={v2_request.version}, catalog_id={v2_request.catalog_id}")
+
         # Call V2 API
         v2_response = await start_execution(v2_request)
         

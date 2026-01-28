@@ -69,9 +69,10 @@ class ExecuteRequest(BaseModel):
     """Request to start playbook execution."""
     path: Optional[str] = Field(None, description="Playbook catalog path")
     catalog_id: Optional[int] = Field(None, description="Catalog ID (alternative to path)")
+    version: Optional[int] = Field(None, description="Specific version to execute (used with path)")
     payload: dict[str, Any] = Field(default_factory=dict, description="Input payload")
     parent_execution_id: Optional[int] = Field(None, description="Parent execution ID")
-    
+
     @model_validator(mode='after')
     def validate_path_or_catalog_id(self):
         if not self.path and not self.catalog_id:
@@ -122,13 +123,16 @@ class EventResponse(BaseModel):
 async def execute(req: ExecuteRequest) -> ExecuteResponse:
     """
     Start playbook execution.
-    
+
     Creates playbook.initialized event, emits command.issued events.
     All state in event table - result column has kind: data|ref|refs.
     """
     try:
         engine = get_engine()
-        
+
+        # Log incoming request for debugging version selection
+        logger.debug(f"[EXECUTE] Request: path={req.path}, catalog_id={req.catalog_id}, version={req.version}")
+
         # Resolve catalog
         async with get_pool_connection() as conn:
             async with conn.cursor(row_factory=dict_row) as cur:
@@ -142,14 +146,26 @@ async def execute(req: ExecuteRequest) -> ExecuteResponse:
                         raise HTTPException(404, f"Playbook not found: catalog_id={req.catalog_id}")
                     path, catalog_id = row['path'], row['catalog_id']
                 else:
-                    await cur.execute(
-                        "SELECT catalog_id, path FROM noetl.catalog WHERE path = %s ORDER BY version DESC LIMIT 1",
-                        (req.path,)
-                    )
-                    row = await cur.fetchone()
-                    if not row:
-                        raise HTTPException(404, f"Playbook not found: {req.path}")
+                    # If version specified, look up exact path + version
+                    # Otherwise, get the latest version
+                    if req.version is not None:
+                        await cur.execute(
+                            "SELECT catalog_id, path, version FROM noetl.catalog WHERE path = %s AND version = %s",
+                            (req.path, req.version)
+                        )
+                        row = await cur.fetchone()
+                        if not row:
+                            raise HTTPException(404, f"Playbook not found: {req.path} v{req.version}")
+                    else:
+                        await cur.execute(
+                            "SELECT catalog_id, path, version FROM noetl.catalog WHERE path = %s ORDER BY version DESC LIMIT 1",
+                            (req.path,)
+                        )
+                        row = await cur.fetchone()
+                        if not row:
+                            raise HTTPException(404, f"Playbook not found: {req.path}")
                     catalog_id, path = row['catalog_id'], row['path']
+                    logger.debug(f"[EXECUTE] Resolved playbook: {path} v{row.get('version', '?')} -> catalog_id={catalog_id}")
         
         # Start execution
         execution_id, commands = await engine.start_execution(
