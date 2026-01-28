@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.7.3](https://github.com/noetl/noetl/compare/v2.7.2...v2.7.3) (2026-01-28)
+
+### Bug Fixes
+
+* Enhance playbook execution with versioning support and improve UI for playbook selection ([877f667](https://github.com/noetl/noetl/commit/877f66760395ef7f29e5d5bd274326ee0e588fd6))
+* Update API request parameters for NoETL execution ([f01f475](https://github.com/noetl/noetl/commit/f01f4750dc430c3e60a526f91a61a5beb0be4087))
+
 ## [2.7.2](https://github.com/noetl/noetl/compare/v2.7.1...v2.7.2) (2026-01-27)
 
 ### Bug Fixes
