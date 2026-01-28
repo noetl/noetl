@@ -296,16 +296,6 @@
     const AUTH_LOGIN_URL = `${GATEWAY_API}/api/auth/login`;
     const AUTH_VALIDATE_URL = `${GATEWAY_API}/api/auth/validate`;
 
-    // Check if already logged in
-    window.addEventListener('DOMContentLoaded', async () => {
-      const token = localStorage.getItem('session_token');
-      if (token) {
-        // Don't auto-validate, just redirect to dashboard
-        window.location.href = '/dashboard.html';
-        return;
-      }
-    });
-
     // Auth0 Universal Login redirect
     function loginWithAuth0() {
       const auth0Domain = auth0Config.domain;
@@ -384,9 +374,24 @@
       }
 
       // Check if already logged in with session token
+      // Use "soft" auth - if token AND user_info exist, redirect without backend validation
+      // This enables testing while backend validation playbook is being fixed
       const token = localStorage.getItem('session_token');
-      if (token) {
+      const userInfo = localStorage.getItem('user_info');
+      if (token && userInfo) {
+        console.log('Token and user_info found, redirecting to dashboard (soft auth mode)');
         window.location.href = '/dashboard.html';
+        return;
+      } else if (token && !userInfo) {
+        // Token exists but no user_info - try to validate
+        const valid = await validateSession(token);
+        if (valid) {
+          window.location.href = '/dashboard.html';
+        } else {
+          // Token is invalid, clear it
+          localStorage.removeItem('session_token');
+          console.log('Invalid session token cleared (no user_info cached)');
+        }
         return;
       }
     });

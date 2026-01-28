@@ -11,7 +11,7 @@ use axum::{
     Router,
     extract::State,
     response::Html,
-    routing::{get, post},
+    routing::{get, post, put, delete, patch},
     http::header::{AUTHORIZATION, CONTENT_TYPE},
     http::{HeaderName, Method},
 };
@@ -22,10 +22,12 @@ use tracing_subscriber::EnvFilter;
 mod auth;
 mod graphql;
 mod noetl_client;
+mod proxy;
 mod result_ext;
 
 use crate::graphql::schema::{AppSchema, MutationRoot, QueryRoot};
 use crate::noetl_client::NoetlClient;
+use crate::proxy::ProxyState;
 use crate::result_ext::ResultExt;
 
 #[ctor::ctor]
@@ -53,8 +55,12 @@ async fn main() -> anyhow::Result<()> {
     let noetl = NoetlClient::new(noetl_base.clone());
     let noetl_arc = Arc::new(noetl);
 
+    // Proxy state for forwarding requests to NoETL
+    let proxy_state = Arc::new(ProxyState::new(noetl_base.clone()));
+
     let schema: AppSchema = Schema::build(QueryRoot, MutationRoot, async_graphql::EmptySubscription)
         .data(noetl_arc.clone())
+        .data(proxy_state.clone())
         .finish();
 
     // CORS configuration - read allowed origins from env var (comma-separated)
@@ -71,12 +77,13 @@ async fn main() -> anyhow::Result<()> {
 
     let cors = CorsLayer::new()
         .allow_origin(AllowOrigin::list(allowed_origins))
-        .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
+        .allow_methods([Method::GET, Method::POST, Method::PUT, Method::DELETE, Method::PATCH, Method::OPTIONS])
         .allow_headers([
             CONTENT_TYPE,
             AUTHORIZATION,
             HeaderName::from_static("x-session-id"),
             HeaderName::from_static("x-user-id"),
+            HeaderName::from_static("x-request-id"),
         ])
         .allow_credentials(true);
 
@@ -89,7 +96,7 @@ async fn main() -> anyhow::Result<()> {
         .with_state(noetl_arc.clone());
 
     // Protected GraphQL routes (auth required)
-    let protected_routes = Router::new()
+    let graphql_routes = Router::new()
         .route("/graphql", get(graphiql).post_service(GraphQL::new(schema.clone())))
         .route_layer(middleware::from_fn_with_state(
             noetl_arc.clone(),
@@ -97,17 +104,33 @@ async fn main() -> anyhow::Result<()> {
         ))
         .with_state(());
 
-    // Main gateway app - pure API routes only
+    // Protected proxy routes - forward authenticated requests to NoETL server
+    // Route: /noetl/{path} -> NoETL /api/{path}
+    let proxy_routes = Router::new()
+        .route("/noetl/{*path}", get(proxy::proxy_get))
+        .route("/noetl/{*path}", post(proxy::proxy_post))
+        .route("/noetl/{*path}", put(proxy::proxy_put))
+        .route("/noetl/{*path}", delete(proxy::proxy_delete))
+        .route("/noetl/{*path}", patch(proxy::proxy_patch))
+        .route_layer(middleware::from_fn_with_state(
+            noetl_arc.clone(),
+            auth::middleware::auth_middleware,
+        ))
+        .with_state(proxy_state);
+
+    // Main gateway app
     let app = Router::new()
         .merge(public_routes)
-        .merge(protected_routes)
+        .merge(graphql_routes)
+        .merge(proxy_routes)
         .layer(cors);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
     tracing::info!(%addr, noetl_base, "starting gateway server http://localhost:{}", port);
     tracing::info!("Auth endpoints: POST /api/auth/login, POST /api/auth/validate, POST /api/auth/check-access");
     tracing::info!("Protected GraphQL: POST /graphql (requires authentication)");
-    
+    tracing::info!("Protected Proxy: /noetl/* -> NoETL /api/* (requires authentication)");
+
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .log("Failed to bind to address")?;

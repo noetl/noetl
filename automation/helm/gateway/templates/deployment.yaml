@@ -36,6 +36,10 @@ spec:
               value: {{ .Values.env.natsUrl | quote }}
             - name: NATS_UPDATES_SUBJECT_PREFIX
               value: {{ .Values.env.natsUpdatesSubjectPrefix | quote }}
+            {{- if .Values.env.authBypass }}
+            - name: GATEWAY_AUTH_BYPASS
+              value: {{ .Values.env.authBypass | quote }}
+            {{- end }}
           resources:
 {{- toYaml .Values.resources | nindent 12 }}
           livenessProbe:
