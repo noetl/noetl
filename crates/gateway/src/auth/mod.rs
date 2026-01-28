@@ -9,8 +9,17 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use tokio::time::{timeout, Duration};
 
+use crate::callbacks::CallbackManager;
 use crate::noetl_client::NoetlClient;
+
+/// Combined state for auth handlers
+#[derive(Clone)]
+pub struct AuthState {
+    pub noetl: Arc<NoetlClient>,
+    pub callbacks: Arc<CallbackManager>,
+}
 
 /// Authentication error responses
 #[derive(Debug)]
@@ -111,12 +120,17 @@ pub struct CheckAccessResponse {
 
 /// Login endpoint - authenticates user via Auth0 and creates session
 pub async fn login(
-    State(noetl): State<Arc<NoetlClient>>,
+    State(state): State<Arc<AuthState>>,
     Json(req): Json<LoginRequest>,
 ) -> Result<Json<LoginResponse>, AuthError> {
     tracing::info!("Auth login request for domain: {}", req.auth0_domain);
 
-    // Call NoETL auth0_login playbook
+    // Register callback to receive result via NATS
+    let (request_id, nats_subject, rx) = state.callbacks.register().await;
+    tracing::debug!("Registered callback request_id={}, subject={}", request_id, nats_subject);
+
+    // Call NoETL auth0_login playbook with callback info
+    // The gateway tool abstracts NATS - playbooks just see callback_subject
     let variables = serde_json::json!({
         "auth0_token": req.auth0_token,
         "auth0_refresh_token": req.auth0_refresh_token.unwrap_or_default(),
@@ -124,30 +138,38 @@ pub async fn login(
         "session_duration_hours": req.session_duration_hours,
         "client_ip": req.client_ip.unwrap_or_else(|| "0.0.0.0".to_string()),
         "client_user_agent": req.client_user_agent.unwrap_or_else(|| "unknown".to_string()),
+        "callback_subject": nats_subject,
+        "request_id": request_id.clone(),
     });
 
-    let result = noetl
+    let result = state.noetl
         .execute_playbook("api_integration/auth0/auth0_login", variables)
         .await
-        .map_err(|e| AuthError::NoetlError(format!("Login playbook failed: {}", e)))?;
+        .map_err(|e| {
+            // Cancel callback on error
+            let callbacks = state.callbacks.clone();
+            let req_id = request_id.clone();
+            tokio::spawn(async move { callbacks.cancel(&req_id).await });
+            AuthError::NoetlError(format!("Login playbook failed: {}", e))
+        })?;
 
-    tracing::info!("Auth login execution_id: {}", result.execution_id);
+    tracing::info!("Auth login execution_id: {}, request_id: {}", result.execution_id, request_id);
 
-    // Poll for result (simplified - in production use NATS or webhooks)
-    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-
-    // Get execution result from NoETL
-    let status_result = noetl
-        .get_playbook_status(&result.execution_id)
+    // Wait for callback with 30 second timeout
+    let callback_result = timeout(Duration::from_secs(30), rx)
         .await
-        .map_err(|e| AuthError::NoetlError(format!("Failed to get status: {}", e)))?;
+        .map_err(|_| {
+            let callbacks = state.callbacks.clone();
+            let req_id = request_id.clone();
+            tokio::spawn(async move { callbacks.cancel(&req_id).await });
+            AuthError::InternalError("Login playbook timed out".to_string())
+        })?
+        .map_err(|_| AuthError::InternalError("Callback channel closed".to_string()))?;
 
-    // Parse login response from playbook output
-    // NoETL returns results in variables.success for completed executions
-    let output = status_result
-        .get("variables")
-        .and_then(|v| v.get("success"))
-        .ok_or_else(|| AuthError::InternalError("No output from login playbook".to_string()))?;
+    tracing::info!("Received callback for request_id={}, status={}", request_id, callback_result.status);
+
+    // Extract output from callback data
+    let output = callback_result.data;
 
     let status_str = output
         .get("status")
@@ -207,37 +229,46 @@ pub async fn login(
 
 /// Validate session endpoint - checks if session token is valid
 pub async fn validate_session(
-    State(noetl): State<Arc<NoetlClient>>,
+    State(state): State<Arc<AuthState>>,
     Json(req): Json<ValidateSessionRequest>,
 ) -> Result<Json<ValidateSessionResponse>, AuthError> {
     tracing::info!("Auth validate_session request");
 
-    // Call NoETL auth0_validate_session playbook
+    // Register callback to receive result via NATS
+    let (request_id, nats_subject, rx) = state.callbacks.register().await;
+
+    // Call NoETL auth0_validate_session playbook with callback info
+    // The gateway tool abstracts NATS - playbooks just see callback_subject
     let variables = serde_json::json!({
         "session_token": req.session_token,
+        "callback_subject": nats_subject,
+        "request_id": request_id.clone(),
     });
 
-    let result = noetl
+    let result = state.noetl
         .execute_playbook("api_integration/auth0/auth0_validate_session", variables)
         .await
-        .map_err(|e| AuthError::NoetlError(format!("Validate session playbook failed: {}", e)))?;
+        .map_err(|e| {
+            let callbacks = state.callbacks.clone();
+            let req_id = request_id.clone();
+            tokio::spawn(async move { callbacks.cancel(&req_id).await });
+            AuthError::NoetlError(format!("Validate session playbook failed: {}", e))
+        })?;
 
-    tracing::info!("Auth validate_session execution_id: {}", result.execution_id);
+    tracing::info!("Auth validate_session execution_id: {}, request_id: {}", result.execution_id, request_id);
 
-    // Poll for result
-    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-
-    // Get execution result
-    let status_result = noetl
-        .get_playbook_status(&result.execution_id)
+    // Wait for callback with 30 second timeout
+    let callback_result = timeout(Duration::from_secs(30), rx)
         .await
-        .map_err(|e| AuthError::NoetlError(format!("Failed to get status: {}", e)))?;
+        .map_err(|_| {
+            let callbacks = state.callbacks.clone();
+            let req_id = request_id.clone();
+            tokio::spawn(async move { callbacks.cancel(&req_id).await });
+            AuthError::InternalError("Validate session playbook timed out".to_string())
+        })?
+        .map_err(|_| AuthError::InternalError("Callback channel closed".to_string()))?;
 
-    // NoETL returns results in variables.success for completed executions
-    let output = status_result
-        .get("variables")
-        .and_then(|v| v.get("success"))
-        .ok_or_else(|| AuthError::InternalError("No output from validate session playbook".to_string()))?;
+    let output = callback_result.data;
 
     let valid = output.get("valid").and_then(|v| v.as_bool()).unwrap_or(false);
 
@@ -290,7 +321,7 @@ pub async fn validate_session(
 
 /// Check playbook access endpoint - verifies user has permission for playbook
 pub async fn check_access(
-    State(noetl): State<Arc<NoetlClient>>,
+    State(state): State<Arc<AuthState>>,
     Json(req): Json<CheckAccessRequest>,
 ) -> Result<Json<CheckAccessResponse>, AuthError> {
     tracing::info!(
@@ -299,34 +330,43 @@ pub async fn check_access(
         req.permission_type
     );
 
-    // Call NoETL check_playbook_access playbook
+    // Register callback to receive result via NATS
+    let (request_id, nats_subject, rx) = state.callbacks.register().await;
+
+    // Call NoETL check_playbook_access playbook with callback info
+    // The gateway tool abstracts NATS - playbooks just see callback_subject
     let variables = serde_json::json!({
         "session_token": req.session_token,
         "playbook_path": req.playbook_path,
         "permission_type": req.permission_type,
+        "callback_subject": nats_subject,
+        "request_id": request_id.clone(),
     });
 
-    let result = noetl
+    let result = state.noetl
         .execute_playbook("api_integration/auth0/check_playbook_access", variables)
         .await
-        .map_err(|e| AuthError::NoetlError(format!("Check access playbook failed: {}", e)))?;
+        .map_err(|e| {
+            let callbacks = state.callbacks.clone();
+            let req_id = request_id.clone();
+            tokio::spawn(async move { callbacks.cancel(&req_id).await });
+            AuthError::NoetlError(format!("Check access playbook failed: {}", e))
+        })?;
 
-    tracing::info!("Auth check_access execution_id: {}", result.execution_id);
+    tracing::info!("Auth check_access execution_id: {}, request_id: {}", result.execution_id, request_id);
 
-    // Poll for result
-    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-
-    // Get execution result
-    let status_result = noetl
-        .get_playbook_status(&result.execution_id)
+    // Wait for callback with 30 second timeout
+    let callback_result = timeout(Duration::from_secs(30), rx)
         .await
-        .map_err(|e| AuthError::NoetlError(format!("Failed to get status: {}", e)))?;
+        .map_err(|_| {
+            let callbacks = state.callbacks.clone();
+            let req_id = request_id.clone();
+            tokio::spawn(async move { callbacks.cancel(&req_id).await });
+            AuthError::InternalError("Check access playbook timed out".to_string())
+        })?
+        .map_err(|_| AuthError::InternalError("Callback channel closed".to_string()))?;
 
-    // NoETL returns results in variables.success for completed executions
-    let output = status_result
-        .get("variables")
-        .and_then(|v| v.get("success"))
-        .ok_or_else(|| AuthError::InternalError("No output from check access playbook".to_string()))?;
+    let output = callback_result.data;
 
     let allowed = output.get("allowed").and_then(|v| v.as_bool()).unwrap_or(false);
 

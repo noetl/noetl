@@ -12,6 +12,7 @@ This package contains all action executors moved from plugin/tools/:
 - transfer: Data transfer operations
 - container: Container execution
 - artifact: Result artifact storage (get/put from S3, GCS, filesystem)
+- gateway: Communication with API gateway (callbacks, wait, notify)
 """
 
 # Import tool modules
@@ -26,6 +27,7 @@ from noetl.tools import (
     container,
     gcs,
     artifact,
+    gateway,
 )
 from noetl.tools.transfer import snowflake_transfer
 
@@ -41,6 +43,7 @@ from noetl.tools.transfer.snowflake_transfer import execute_snowflake_transfer_a
 from noetl.tools.container import execute_container_task
 from noetl.tools.gcs import execute_gcs_task
 from noetl.tools.artifact import execute_artifact_task, execute_artifact_get, execute_artifact_put
+from noetl.tools.gateway import execute_gateway_task
 
 # Tool registry for dynamic lookup
 REGISTRY = {
@@ -55,6 +58,7 @@ REGISTRY = {
     "container": container,
     "gcs": gcs,
     "artifact": artifact,
+    "gateway": gateway,
 }
 
 __all__ = [
@@ -70,6 +74,7 @@ __all__ = [
     "container",
     "gcs",
     "artifact",
+    "gateway",
     # Executors
     "execute_python_task",
     "execute_python_task_async",
@@ -86,6 +91,7 @@ __all__ = [
     "execute_artifact_task",
     "execute_artifact_get",
     "execute_artifact_put",
+    "execute_gateway_task",
     # Registry
     "REGISTRY",
 ]

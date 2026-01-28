@@ -20,11 +20,13 @@ use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing_subscriber::EnvFilter;
 
 mod auth;
+mod callbacks;
 mod graphql;
 mod noetl_client;
 mod proxy;
 mod result_ext;
 
+use crate::callbacks::CallbackManager;
 use crate::graphql::schema::{AppSchema, MutationRoot, QueryRoot};
 use crate::noetl_client::NoetlClient;
 use crate::proxy::ProxyState;
@@ -54,6 +56,22 @@ async fn main() -> anyhow::Result<()> {
 
     let noetl = NoetlClient::new(noetl_base.clone());
     let noetl_arc = Arc::new(noetl);
+
+    // Callback manager using NATS pub/sub
+    let callback_subject_prefix = std::env::var("NATS_CALLBACK_SUBJECT_PREFIX")
+        .unwrap_or_else(|_| "noetl.callbacks".to_string());
+    let callback_manager = Arc::new(CallbackManager::new(Some(callback_subject_prefix.clone())));
+
+    // Start NATS callback listener
+    callbacks::start_nats_listener(&nats_url, callback_manager.clone())
+        .await
+        .log("Failed to start NATS callback listener")?;
+
+    // Combined auth state
+    let auth_state = Arc::new(auth::AuthState {
+        noetl: noetl_arc.clone(),
+        callbacks: callback_manager.clone(),
+    });
 
     // Proxy state for forwarding requests to NoETL
     let proxy_state = Arc::new(ProxyState::new(noetl_base.clone()));
@@ -93,13 +111,13 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/auth/login", post(auth::login))
         .route("/api/auth/validate", post(auth::validate_session))
         .route("/api/auth/check-access", post(auth::check_access))
-        .with_state(noetl_arc.clone());
+        .with_state(auth_state.clone());
 
     // Protected GraphQL routes (auth required)
     let graphql_routes = Router::new()
         .route("/graphql", get(graphiql).post_service(GraphQL::new(schema.clone())))
         .route_layer(middleware::from_fn_with_state(
-            noetl_arc.clone(),
+            auth_state.clone(),
             auth::middleware::auth_middleware,
         ))
         .with_state(());
@@ -113,7 +131,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/noetl/{*path}", delete(proxy::proxy_delete))
         .route("/noetl/{*path}", patch(proxy::proxy_patch))
         .route_layer(middleware::from_fn_with_state(
-            noetl_arc.clone(),
+            auth_state.clone(),
             auth::middleware::auth_middleware,
         ))
         .with_state(proxy_state);

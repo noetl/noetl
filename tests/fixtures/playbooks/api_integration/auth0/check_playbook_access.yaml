@@ -5,12 +5,12 @@ metadata:
   path: api_integration/auth0/check_playbook_access
   description: |
     Check if user has permission to access a playbook.
-    
+
     Input:
       - session_token: NoETL session token
       - playbook_path: Path to playbook
       - action: Action type (execute, view, modify)
-    
+
     Output:
       - allowed: Boolean
   tags:
@@ -22,6 +22,8 @@ workload:
   playbook_path: "{{ playbook_path }}"
   action: "{{ action | default('execute') }}"
   db_credential: pg_k8s
+  callback_subject: ""  # Set by gateway for async response
+  request_id: ""
 
 workflow:
   - step: start
@@ -68,7 +70,7 @@ workflow:
       kind: postgres
       auth: "{{ workload.db_credential }}"
       command: |
-        SELECT 
+        SELECT
           COUNT(*) > 0 as has_permission
         FROM auth.user_roles ur
         JOIN auth.roles r ON ur.role_id = r.role_id
@@ -113,6 +115,10 @@ workflow:
             "message": f"Access granted to {action} playbook"
         }
     case:
+      - when: "{{ event.name == 'step.exit' and workload.callback_subject }}"
+        then:
+          next:
+            - step: callback_granted
       - when: "{{ event.name == 'step.exit' }}"
         then:
           next:
@@ -135,6 +141,44 @@ workflow:
             "action": action,
             "message": "Access denied"
         }
+    case:
+      - when: "{{ event.name == 'step.exit' and workload.callback_subject }}"
+        then:
+          next:
+            - step: callback_denied
+      - when: "{{ event.name == 'step.exit' }}"
+        then:
+          next:
+            - step: end
+
+  - step: callback_granted
+    desc: Send granted result to gateway
+    tool:
+      kind: gateway
+      action: callback
+      step: access_granted
+      data:
+        allowed: true
+        playbook_path: "{{ access_granted.playbook_path }}"
+        action: "{{ access_granted.action }}"
+        message: "{{ access_granted.message }}"
+    case:
+      - when: "{{ event.name == 'step.exit' }}"
+        then:
+          next:
+            - step: end
+
+  - step: callback_denied
+    desc: Send denied result to gateway
+    tool:
+      kind: gateway
+      action: callback
+      step: access_denied
+      data:
+        allowed: false
+        playbook_path: "{{ access_denied.playbook_path }}"
+        action: "{{ access_denied.action }}"
+        message: "{{ access_denied.message }}"
     case:
       - when: "{{ event.name == 'step.exit' }}"
         then:

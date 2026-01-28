@@ -22,6 +22,8 @@ workload:
   client_ip: "0.0.0.0"
   auth0_domain: "mestumre-development.us.auth0.com"
   db_credential: pg_auth
+  callback_subject: ""  # Set by gateway for async response
+  request_id: ""
 
 workflow:
   - step: start
@@ -156,6 +158,27 @@ workflow:
             },
             "expires_at": str(expires_at)
         }
+    case:
+      - when: "{{ event.name == 'step.exit' and workload.callback_subject }}"
+        then:
+          next:
+            - step: callback
+      - when: "{{ event.name == 'step.exit' }}"
+        then:
+          next:
+            - step: end
+
+  - step: callback
+    desc: Send result to gateway
+    tool:
+      kind: gateway
+      action: callback
+      step: success
+      data:
+        status: "{{ success.status }}"
+        session_token: "{{ success.session_token }}"
+        user: "{{ success.user }}"
+        expires_at: "{{ success.expires_at }}"
     case:
       - when: "{{ event.name == 'step.exit' }}"
         then:

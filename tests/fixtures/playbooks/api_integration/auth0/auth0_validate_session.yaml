@@ -5,10 +5,10 @@ metadata:
   path: api_integration/auth0/auth0_validate_session
   description: |
     Validate NoETL session token.
-    
+
     Input:
       - session_token: NoETL session token
-    
+
     Output:
       - valid: Boolean
       - user: User details
@@ -19,6 +19,8 @@ metadata:
 workload:
   session_token: "{{ session_token }}"
   db_credential: pg_k8s
+  callback_subject: ""  # Set by gateway for async response
+  request_id: ""
 
 workflow:
   - step: start
@@ -42,7 +44,7 @@ workflow:
       kind: postgres
       auth: "{{ workload.db_credential }}"
       command: |
-        SELECT 
+        SELECT
           s.session_id,
           s.user_id,
           s.expires_at,
@@ -50,7 +52,7 @@ workflow:
           u.email,
           u.display_name,
           u.is_active as user_is_active,
-          CASE 
+          CASE
             WHEN s.expires_at < NOW() THEN false
             WHEN NOT s.is_active THEN false
             WHEN NOT u.is_active THEN false
@@ -125,6 +127,10 @@ workflow:
             "message": "Session is valid"
         }
     case:
+      - when: "{{ event.name == 'step.exit' and workload.callback_subject }}"
+        then:
+          next:
+            - step: callback_success
       - when: "{{ event.name == 'step.exit' }}"
         then:
           next:
@@ -142,6 +148,41 @@ workflow:
             "valid": False,
             "message": "Session not found or expired"
         }
+    case:
+      - when: "{{ event.name == 'step.exit' and workload.callback_subject }}"
+        then:
+          next:
+            - step: callback_failed
+      - when: "{{ event.name == 'step.exit' }}"
+        then:
+          next:
+            - step: end
+
+  - step: callback_success
+    desc: Send valid result to gateway
+    tool:
+      kind: gateway
+      action: callback
+      step: success
+      data:
+        valid: true
+        user: "{{ success.user }}"
+        message: "{{ success.message }}"
+    case:
+      - when: "{{ event.name == 'step.exit' }}"
+        then:
+          next:
+            - step: end
+
+  - step: callback_failed
+    desc: Send invalid result to gateway
+    tool:
+      kind: gateway
+      action: callback
+      step: validation_failed
+      data:
+        valid: false
+        message: "{{ validation_failed.message }}"
     case:
       - when: "{{ event.name == 'step.exit' }}"
         then:
