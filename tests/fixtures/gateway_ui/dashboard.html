@@ -2233,9 +2233,10 @@ workflow:
       document.getElementById('executeBtnSpinner').classList.remove('hidden');
 
       try {
-        const result = await apiRequest('POST', '/execute', {
-          catalog_id: parseInt(catalogId) || catalogId,
-          payload
+        // NoETL expects path and args, not catalog_id
+        const result = await apiRequest('POST', '/run/playbook', {
+          path: path,
+          args: payload
         });
 
         document.getElementById('executeResult').innerHTML = `
