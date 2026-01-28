@@ -1379,10 +1379,21 @@
         </button>
       </div>
       <div class="modal-body">
-        <div class="form-group">
+        <!-- Mode 1: Select playbook from dropdown (when opened from header button) -->
+        <div id="executePlaybookSelectGroup" class="form-group">
           <label class="form-label">Select Playbook</label>
           <select class="form-select" id="executePlaybookSelect" onchange="onExecutePlaybookChange()">
             <option value="">-- Select a playbook --</option>
+          </select>
+        </div>
+        <!-- Mode 2: Playbook already selected, show path and version selector -->
+        <div id="executePlaybookFixedGroup" class="form-group hidden">
+          <label class="form-label">Playbook</label>
+          <input type="text" class="form-input mono" id="executePlaybookPath" readonly style="background: var(--gray-100);">
+        </div>
+        <div id="executeVersionGroup" class="form-group hidden">
+          <label class="form-label">Version</label>
+          <select class="form-select" id="executeVersionSelect" onchange="onExecuteVersionChange()">
           </select>
         </div>
         <div id="executePlaybookDetails" class="hidden">
@@ -1730,7 +1741,9 @@ workflow:
         const data = await apiRequest('POST', '/catalog/list', { resource_type: 'Playbook' });
         playbooks = data.entries || [];
 
-        document.getElementById('playbookBadge').textContent = playbooks.length;
+        // Show unique playbooks count (not total versions)
+        const uniqueCount = getUniquePlaybooksByPath(playbooks).length;
+        document.getElementById('playbookBadge').textContent = uniqueCount;
 
         if (playbooks.length === 0) {
           container.innerHTML = `
@@ -1757,11 +1770,38 @@ workflow:
       }
     }
 
+    // Get unique playbooks by path, keeping only the latest version
+    function getUniquePlaybooksByPath(playbookList) {
+      const byPath = {};
+      playbookList.forEach(pb => {
+        const path = pb.path;
+        if (!byPath[path]) {
+          byPath[path] = pb;
+        } else {
+          // Compare versions - keep the higher one
+          const currentVersion = parseInt(byPath[path].version) || 0;
+          const newVersion = parseInt(pb.version) || 0;
+          if (newVersion > currentVersion) {
+            byPath[path] = pb;
+          }
+        }
+      });
+      return Object.values(byPath);
+    }
+
+    // Get all versions of a playbook by path
+    function getPlaybookVersions(path) {
+      return playbooks
+        .filter(pb => pb.path === path)
+        .sort((a, b) => (parseInt(b.version) || 0) - (parseInt(a.version) || 0));
+    }
+
     function renderPlaybooks() {
       const container = document.getElementById('playbooksContainer');
       const search = document.getElementById('playbookSearch').value.toLowerCase();
       const status = document.getElementById('playbookStatusFilter').value;
 
+      // First filter, then deduplicate
       const filtered = playbooks.filter(pb => {
         const matchesSearch = !search ||
           (pb.path || '').toLowerCase().includes(search) ||
@@ -1770,7 +1810,10 @@ workflow:
         return matchesSearch && matchesStatus;
       });
 
-      if (filtered.length === 0) {
+      // Get unique playbooks (latest version only)
+      const uniquePlaybooks = getUniquePlaybooksByPath(filtered);
+
+      if (uniquePlaybooks.length === 0) {
         container.innerHTML = `
           <div class="empty-state">
             <div class="empty-state-icon">&#128269;</div>
@@ -1783,7 +1826,10 @@ workflow:
 
       container.innerHTML = `
         <div class="cards-grid">
-          ${filtered.map(pb => `
+          ${uniquePlaybooks.map(pb => {
+            const versions = getPlaybookVersions(pb.path);
+            const versionCount = versions.length;
+            return `
             <div class="playbook-card" onclick="viewPlaybook('${escapeHtml(pb.path)}')">
               <div class="playbook-card-header">
                 <div>
@@ -1794,11 +1840,11 @@ workflow:
               </div>
               <div class="playbook-card-description">${escapeHtml(pb.description || 'No description')}</div>
               <div class="playbook-card-footer">
-                <span class="playbook-card-meta">v${escapeHtml(pb.version || 'latest')}</span>
-                <button class="btn btn-sm btn-primary" onclick="event.stopPropagation(); executePlaybookDirect('${escapeHtml(pb.path)}', ${pb.catalog_id})">Execute</button>
+                <span class="playbook-card-meta">v${escapeHtml(pb.version || 'latest')}${versionCount > 1 ? ` (${versionCount} versions)` : ''}</span>
+                <button class="btn btn-sm btn-primary" onclick="event.stopPropagation(); executePlaybookDirect('${escapeHtml(pb.path)}')">Execute</button>
               </div>
             </div>
-          `).join('')}
+          `;}).join('')}
         </div>
       `;
     }
@@ -1864,7 +1910,7 @@ workflow:
     function executeFromDetail() {
       if (!currentPlaybook) return;
       closeModal('playbookDetailModal');
-      executePlaybookDirect(currentPlaybook.path, currentPlaybook.catalog_id);
+      executePlaybookDirect(currentPlaybook.path);
     }
 
     // Executions
@@ -1983,6 +2029,14 @@ workflow:
             <div class="info-item">
               <div class="info-label">Playbook</div>
               <div class="info-value">${escapeHtml(data.path || data.playbook_name || '-')}</div>
+            </div>
+            <div class="info-item">
+              <div class="info-label">Catalog ID</div>
+              <div class="info-value mono">${data.catalog_id || '-'}</div>
+            </div>
+            <div class="info-item">
+              <div class="info-label">Version</div>
+              <div class="info-value">${data.version || '-'}</div>
             </div>
             <div class="info-item">
               <div class="info-label">Status</div>
@@ -2172,13 +2226,25 @@ workflow:
       document.getElementById('settingsUserInfo').textContent = JSON.stringify(userInfo, null, 2);
     }
 
-    // Execute Modal
+    // Execute Modal - state
+    let executeMode = 'select'; // 'select' (from header) or 'direct' (from card)
+    let executeSelectedPath = null;
+
+    // Open execute modal from header button (select playbook from dropdown)
     async function openExecuteModal() {
+      executeMode = 'select';
+      executeSelectedPath = null;
+
       openModal('executeModal');
       document.getElementById('executeResult').classList.add('hidden');
       document.getElementById('executePlaybookDetails').classList.add('hidden');
       document.getElementById('executeVariables').value = '{}';
       document.getElementById('executeBtn').disabled = true;
+
+      // Show playbook dropdown, hide fixed path and version
+      document.getElementById('executePlaybookSelectGroup').classList.remove('hidden');
+      document.getElementById('executePlaybookFixedGroup').classList.add('hidden');
+      document.getElementById('executeVersionGroup').classList.add('hidden');
 
       const select = document.getElementById('executePlaybookSelect');
       select.innerHTML = '<option value="">-- Select a playbook --</option>';
@@ -2187,9 +2253,11 @@ workflow:
         await loadPlaybooks();
       }
 
-      playbooks.forEach(pb => {
+      // Show only unique playbooks (latest version)
+      const uniquePlaybooks = getUniquePlaybooksByPath(playbooks);
+      uniquePlaybooks.forEach(pb => {
         const option = document.createElement('option');
-        option.value = pb.catalog_id || pb.path;
+        option.value = pb.path;
         option.textContent = pb.path;
         option.dataset.path = pb.path;
         option.dataset.catalogId = pb.catalog_id;
@@ -2198,27 +2266,84 @@ workflow:
       });
     }
 
+    // Called when playbook is selected from dropdown (header button mode)
     function onExecutePlaybookChange() {
       const select = document.getElementById('executePlaybookSelect');
       const option = select.options[select.selectedIndex];
 
       if (!select.value) {
         document.getElementById('executePlaybookDetails').classList.add('hidden');
+        document.getElementById('executeVersionGroup').classList.add('hidden');
         document.getElementById('executeBtn').disabled = true;
         return;
       }
+
+      const path = option.dataset.path;
+      executeSelectedPath = path;
+
+      // Populate version dropdown
+      populateVersionDropdown(path);
+      document.getElementById('executeVersionGroup').classList.remove('hidden');
 
       document.getElementById('executePlaybookDescription').textContent = option.dataset.description || 'No description';
       document.getElementById('executePlaybookDetails').classList.remove('hidden');
       document.getElementById('executeBtn').disabled = false;
     }
 
+    // Populate version dropdown for a given playbook path
+    function populateVersionDropdown(path) {
+      const versions = getPlaybookVersions(path);
+      const versionSelect = document.getElementById('executeVersionSelect');
+      versionSelect.innerHTML = '';
+
+      versions.forEach((pb, idx) => {
+        const option = document.createElement('option');
+        option.value = pb.catalog_id;
+        option.textContent = `v${pb.version || 'latest'}${idx === 0 ? ' (latest)' : ''}`;
+        option.dataset.path = pb.path;
+        option.dataset.catalogId = pb.catalog_id;
+        option.dataset.description = pb.description || '';
+        option.dataset.version = pb.version || 'latest';
+        versionSelect.appendChild(option);
+      });
+    }
+
+    // Called when version is changed
+    function onExecuteVersionChange() {
+      const versionSelect = document.getElementById('executeVersionSelect');
+      const option = versionSelect.options[versionSelect.selectedIndex];
+      if (option && option.dataset.description) {
+        document.getElementById('executePlaybookDescription').textContent = option.dataset.description || 'No description';
+      }
+    }
+
     async function executePlaybook() {
-      const select = document.getElementById('executePlaybookSelect');
-      const option = select.options[select.selectedIndex];
-      const catalogId = option.dataset.catalogId;
-      const path = option.dataset.path;
+      let path;
+      let version;
+      let catalogId;
       const variablesText = document.getElementById('executeVariables').value;
+
+      // Get path based on mode
+      if (executeMode === 'select') {
+        const select = document.getElementById('executePlaybookSelect');
+        const option = select.options[select.selectedIndex];
+        path = option.dataset.path;
+      } else {
+        path = executeSelectedPath;
+      }
+
+      // Get selected version and catalog_id from version dropdown
+      const versionSelect = document.getElementById('executeVersionSelect');
+      const versionOption = versionSelect.options[versionSelect.selectedIndex];
+      if (versionOption) {
+        version = versionOption.dataset.version;
+        catalogId = versionOption.dataset.catalogId;
+      }
+
+      if (!path && !catalogId) {
+        showToast('error', 'Validation Error', 'No playbook selected.');
+        return;
+      }
 
       let payload;
       try {
@@ -2232,12 +2357,24 @@ workflow:
       document.getElementById('executeBtnText').classList.add('hidden');
       document.getElementById('executeBtnSpinner').classList.remove('hidden');
 
+      // Debug: log what we're sending
+      console.log('Executing playbook:', { path, version, catalogId });
+
       try {
-        // NoETL expects path and args, not catalog_id
-        const result = await apiRequest('POST', '/run/playbook', {
+        // Build request with path + version (preferred since backend now supports it)
+        // Note: catalog_id has JS precision issues with large numbers, so we use path + version
+        const requestBody = {
           path: path,
           args: payload
-        });
+        };
+
+        // Add version to run specific version (not "latest")
+        if (version && version !== 'latest') {
+          requestBody.version = String(version);
+        }
+
+        console.log('Request body:', JSON.stringify(requestBody));
+        const result = await apiRequest('POST', '/run/playbook', requestBody);
 
         document.getElementById('executeResult').innerHTML = `
           <div style="background: rgba(72, 187, 120, 0.1); border: 1px solid var(--success); border-radius: 8px; padding: 1rem;">
@@ -2267,12 +2404,38 @@ workflow:
       document.getElementById('executeBtnSpinner').classList.add('hidden');
     }
 
-    function executePlaybookDirect(path, catalogId) {
-      openExecuteModal().then(() => {
-        const select = document.getElementById('executePlaybookSelect');
-        select.value = catalogId || path;
-        onExecutePlaybookChange();
-      });
+    // Open execute modal for a specific playbook (from card button)
+    async function executePlaybookDirect(path) {
+      executeMode = 'direct';
+      executeSelectedPath = path;
+
+      openModal('executeModal');
+      document.getElementById('executeResult').classList.add('hidden');
+      document.getElementById('executeVariables').value = '{}';
+
+      // Hide playbook dropdown, show fixed path and version selector
+      document.getElementById('executePlaybookSelectGroup').classList.add('hidden');
+      document.getElementById('executePlaybookFixedGroup').classList.remove('hidden');
+      document.getElementById('executeVersionGroup').classList.remove('hidden');
+      document.getElementById('executePlaybookDetails').classList.remove('hidden');
+
+      // Set playbook path
+      document.getElementById('executePlaybookPath').value = path;
+
+      if (playbooks.length === 0) {
+        await loadPlaybooks();
+      }
+
+      // Populate version dropdown
+      populateVersionDropdown(path);
+
+      // Set description from latest version
+      const versions = getPlaybookVersions(path);
+      if (versions.length > 0) {
+        document.getElementById('executePlaybookDescription').textContent = versions[0].description || 'No description';
+      }
+
+      document.getElementById('executeBtn').disabled = false;
     }
 
     // Create Playbook

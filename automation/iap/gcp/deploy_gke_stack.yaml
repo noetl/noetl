@@ -34,6 +34,15 @@ workload:
   deploy_noetl: true
   deploy_gateway: true
 
+  # Build control - which images to build (only relevant when build_images=true)
+  # Python images:
+  build_noetl: true          # Python NoETL (docker/noetl/pip) - same image for server AND worker
+  # Rust images (all disabled by default - slow to compile):
+  build_noetlctl: false      # Rust noetlctl CLI binary (crates/noetlctl) - builds 'noetl' command
+  build_gateway: false       # Rust Gateway (crates/gateway) - API gateway
+  build_worker_pool: false   # Rust Worker Pool (crates/worker-pool) - not used yet
+  build_control_plane: false # Rust Control Plane (crates/control-plane) - not used yet
+
   # Gateway exposure - when true, Gateway becomes public LoadBalancer
   # NoETL server always stays internal (ClusterIP)
   gateway_public: true
@@ -93,6 +102,7 @@ workflow:
     vars:
       artifact_registry: "{{ workload.region }}-docker.pkg.dev/{{ workload.project_id }}/{{ workload.repository_id }}"
       noetl_image: "{{ workload.region }}-docker.pkg.dev/{{ workload.project_id }}/{{ workload.repository_id }}/noetl"
+      noetlctl_image: "{{ workload.region }}-docker.pkg.dev/{{ workload.project_id }}/{{ workload.repository_id }}/noetlctl"
       gateway_image: "{{ workload.region }}-docker.pkg.dev/{{ workload.project_id }}/{{ workload.repository_id }}/noetl-gateway"
       worker_image: "{{ workload.region }}-docker.pkg.dev/{{ workload.project_id }}/{{ workload.repository_id }}/noetl-worker"
     case:
@@ -135,19 +145,40 @@ workflow:
           echo "  gateway_public    - Expose Gateway as public LoadBalancer (default: true)"
           echo "                      NoETL server always stays internal (ClusterIP)"
           echo ""
-          echo "Component toggles (all default to true):"
+          echo "Deploy toggles (all default to true except gateway):"
           echo "  create_cluster, create_artifact_registry, build_images,"
-          echo "  deploy_postgres, deploy_nats, deploy_clickhouse, deploy_noetl, deploy_gateway"
-          echo "  init_noetl_schema - Initialize NoETL schema (runs even if postgres exists)"
+          echo "  deploy_postgres, deploy_nats, deploy_clickhouse, deploy_noetl"
+          echo "  deploy_gateway          - Deploy Gateway (default: true)"
+          echo "  init_noetl_schema       - Initialize NoETL schema (runs even if postgres exists)"
           echo ""
-          echo "Example - Full deployment (builds images, creates cluster, deploys stack):"
+          echo "Build toggles (controls which images to build when build_images=true):"
+          echo "  Python images:"
+          echo "    build_noetl           - Build Python NoETL (server+worker, same image) (default: true)"
+          echo "  Rust images (all default to false - slow to compile):"
+          echo "    build_noetlctl        - Build Rust noetlctl CLI binary (default: false)"
+          echo "    build_gateway         - Build Rust Gateway (default: false)"
+          echo "    build_worker_pool     - Build Rust Worker Pool (default: false, not used yet)"
+          echo "    build_control_plane   - Build Rust Control Plane (default: false, not used yet)"
+          echo ""
+          echo "Example - Full deployment (builds Python noetl, creates cluster, deploys stack):"
           echo "  noetl run automation/iap/gcp/deploy_gke_stack.yaml \\"
           echo "    --set project_id=noetl-demo-19700101"
           echo ""
-          echo "Example - Deploy without building images (images already exist):"
+          echo "Example - Build only Python NoETL and deploy (no Rust builds):"
           echo "  noetl run automation/iap/gcp/deploy_gke_stack.yaml \\"
           echo "    --set project_id=noetl-demo-19700101 \\"
-          echo "    --set build_images=false"
+          echo "    --set deploy_gateway=false"
+          echo ""
+          echo "Example - Build Python NoETL + Rust noetlctl CLI:"
+          echo "  noetl run automation/iap/gcp/deploy_gke_stack.yaml \\"
+          echo "    --set project_id=noetl-demo-19700101 \\"
+          echo "    --set build_noetlctl=true"
+          echo ""
+          echo "Example - Build all Rust components (gateway, noetlctl):"
+          echo "  noetl run automation/iap/gcp/deploy_gke_stack.yaml \\"
+          echo "    --set project_id=noetl-demo-19700101 \\"
+          echo "    --set build_noetlctl=true \\"
+          echo "    --set build_gateway=true"
           echo ""
           echo "Example - Deploy to existing cluster without rebuilding:"
           echo "  noetl run automation/iap/gcp/deploy_gke_stack.yaml \\"
@@ -250,10 +281,11 @@ workflow:
             # Enable Cloud Build API
             gcloud services enable cloudbuild.googleapis.com --project {{ workload.project_id }}
 
-            # Build NoETL server (Python - fast)
-            echo ""
-            echo "=== Building NoETL Server via Cloud Build ==="
-            if [ -f "docker/noetl/pip/Dockerfile" ]; then
+            # Build NoETL server (Python - fast) - only if build_noetl is true
+            if [ "{{ workload.build_noetl }}" = "true" ]; then
+              echo ""
+              echo "=== Building NoETL Server (Python) via Cloud Build ==="
+              if [ -f "docker/noetl/pip/Dockerfile" ]; then
               # Create temporary cloudbuild.yaml for noetl
               cat > /tmp/cloudbuild-noetl.yaml << 'CLOUDBUILD'
           steps:
@@ -281,15 +313,59 @@ workflow:
                 --config=/tmp/cloudbuild-noetl.yaml \
                 --substitutions=_IMAGE={{ vars.noetl_image }},_TAG=$TAG \
                 .
-              echo "NoETL server image built: {{ vars.noetl_image }}:$TAG"
+                echo "NoETL server image built: {{ vars.noetl_image }}:$TAG"
+              else
+                echo "WARNING: docker/noetl/pip/Dockerfile not found, skipping"
+              fi
             else
-              echo "WARNING: docker/noetl/pip/Dockerfile not found, skipping"
+              echo ""
+              echo "=== Skipping NoETL Server build (build_noetl=false) ==="
             fi
 
-            # Build Gateway (Rust - slow locally, fast on Cloud Build)
-            echo ""
-            echo "=== Building Gateway via Cloud Build ==="
-            if [ -f "crates/gateway/Dockerfile" ]; then
+            # Build noetlctl (Rust CLI) - only if build_noetlctl is true
+            if [ "{{ workload.build_noetlctl }}" = "true" ]; then
+              echo ""
+              echo "=== Building noetlctl (Rust CLI) via Cloud Build ==="
+              if [ -f "crates/noetlctl/Dockerfile" ]; then
+              # Create temporary cloudbuild.yaml for noetlctl
+              cat > /tmp/cloudbuild-noetlctl.yaml << 'CLOUDBUILD'
+          steps:
+            - name: 'gcr.io/cloud-builders/docker'
+              args:
+                - 'build'
+                - '-t'
+                - '$_IMAGE:$_TAG'
+                - '-t'
+                - '$_IMAGE:latest'
+                - '-f'
+                - 'crates/noetlctl/Dockerfile'
+                - '.'
+          images:
+            - '$_IMAGE:$_TAG'
+            - '$_IMAGE:latest'
+          timeout: 3600s
+          options:
+            machineType: 'E2_HIGHCPU_32'
+          CLOUDBUILD
+              gcloud builds submit \
+                --project {{ workload.project_id }} \
+                --config=/tmp/cloudbuild-noetlctl.yaml \
+                --substitutions=_IMAGE={{ vars.noetlctl_image }},_TAG=$TAG \
+                .
+                echo "noetlctl image built: {{ vars.noetlctl_image }}:$TAG"
+              else
+                echo "WARNING: crates/noetlctl/Dockerfile not found, skipping"
+              fi
+            else
+              echo ""
+              echo "=== Skipping noetlctl build (build_noetlctl=false) ==="
+            fi
+
+            # Build Gateway (Rust) - only if build_gateway is true
+            if [ "{{ workload.build_gateway }}" = "true" ]; then
+              echo ""
+              echo "=== Building Gateway via Cloud Build ==="
+              if [ -f "crates/gateway/Dockerfile" ]; then
               # Create temporary cloudbuild.yaml for gateway
               cat > /tmp/cloudbuild-gateway.yaml << 'CLOUDBUILD'
           steps:
@@ -315,15 +391,34 @@ workflow:
                 --config=/tmp/cloudbuild-gateway.yaml \
                 --substitutions=_IMAGE={{ vars.gateway_image }},_TAG=$TAG \
                 .
-              echo "Gateway image built: {{ vars.gateway_image }}:$TAG"
+                echo "Gateway image built: {{ vars.gateway_image }}:$TAG"
+              else
+                echo "WARNING: crates/gateway/Dockerfile not found, skipping"
+              fi
             else
-              echo "WARNING: crates/gateway/Dockerfile not found, skipping"
+              echo ""
+              echo "=== Skipping Gateway build (build_gateway=false) ==="
             fi
 
-            # Skip worker-pool build - not used yet
-            echo ""
-            echo "=== Skipping Worker Pool (Rust, not used yet) ==="
-            echo "To build worker-pool, set build_worker=true"
+            # Build Worker Pool (Rust) - only if build_worker_pool is true
+            if [ "{{ workload.build_worker_pool }}" = "true" ]; then
+              echo ""
+              echo "=== Building Worker Pool (Rust) via Cloud Build ==="
+              echo "WARNING: Worker Pool build not implemented yet"
+            else
+              echo ""
+              echo "=== Skipping Worker Pool build (build_worker_pool=false) ==="
+            fi
+
+            # Build Control Plane (Rust) - only if build_control_plane is true
+            if [ "{{ workload.build_control_plane }}" = "true" ]; then
+              echo ""
+              echo "=== Building Control Plane (Rust) via Cloud Build ==="
+              echo "WARNING: Control Plane build not implemented yet"
+            else
+              echo ""
+              echo "=== Skipping Control Plane build (build_control_plane=false) ==="
+            fi
 
           else
             echo ""
@@ -334,10 +429,11 @@ workflow:
             # Configure Docker for Artifact Registry
             gcloud auth configure-docker {{ workload.region }}-docker.pkg.dev --quiet
 
-            # Build and push NoETL server image
-            echo ""
-            echo "=== Building NoETL Server ==="
-            if [ -f "docker/noetl/pip/Dockerfile" ]; then
+            # Build and push NoETL server image - only if build_noetl is true
+            if [ "{{ workload.build_noetl }}" = "true" ]; then
+              echo ""
+              echo "=== Building NoETL Server (Python) ==="
+              if [ -f "docker/noetl/pip/Dockerfile" ]; then
               docker build --platform {{ workload.docker_platform }} \
                 -t {{ vars.noetl_image }}:$TAG \
                 -t {{ vars.noetl_image }}:{{ workload.noetl_image_tag }} \
@@ -345,31 +441,77 @@ workflow:
                 --build-arg NOETL_VERSION=latest \
                 .
               docker push {{ vars.noetl_image }}:$TAG
-              docker push {{ vars.noetl_image }}:{{ workload.noetl_image_tag }}
-              echo "NoETL server image pushed: {{ vars.noetl_image }}:$TAG"
+                docker push {{ vars.noetl_image }}:{{ workload.noetl_image_tag }}
+                echo "NoETL server image pushed: {{ vars.noetl_image }}:$TAG"
+              else
+                echo "WARNING: docker/noetl/pip/Dockerfile not found, skipping"
+              fi
             else
-              echo "WARNING: docker/noetl/pip/Dockerfile not found, skipping"
+              echo ""
+              echo "=== Skipping NoETL Server build (build_noetl=false) ==="
             fi
 
-            # Build and push Gateway image
-            echo ""
-            echo "=== Building Gateway ==="
-            if [ -f "crates/gateway/Dockerfile" ]; then
+            # Build and push noetlctl image (Rust CLI) - only if build_noetlctl is true
+            if [ "{{ workload.build_noetlctl }}" = "true" ]; then
+              echo ""
+              echo "=== Building noetlctl (Rust CLI) ==="
+              if [ -f "crates/noetlctl/Dockerfile" ]; then
+              docker build --platform {{ workload.docker_platform }} \
+                -t {{ vars.noetlctl_image }}:$TAG \
+                -t {{ vars.noetlctl_image }}:latest \
+                -f crates/noetlctl/Dockerfile \
+                .
+              docker push {{ vars.noetlctl_image }}:$TAG
+                docker push {{ vars.noetlctl_image }}:latest
+                echo "noetlctl image pushed: {{ vars.noetlctl_image }}:$TAG"
+              else
+                echo "WARNING: crates/noetlctl/Dockerfile not found, skipping"
+              fi
+            else
+              echo ""
+              echo "=== Skipping noetlctl build (build_noetlctl=false) ==="
+            fi
+
+            # Build and push Gateway image - only if build_gateway is true
+            if [ "{{ workload.build_gateway }}" = "true" ]; then
+              echo ""
+              echo "=== Building Gateway ==="
+              if [ -f "crates/gateway/Dockerfile" ]; then
               docker build --platform {{ workload.docker_platform }} \
                 -t {{ vars.gateway_image }}:$TAG \
                 -t {{ vars.gateway_image }}:{{ workload.gateway_image_tag }} \
                 -f crates/gateway/Dockerfile \
                 .
               docker push {{ vars.gateway_image }}:$TAG
-              docker push {{ vars.gateway_image }}:{{ workload.gateway_image_tag }}
-              echo "Gateway image pushed: {{ vars.gateway_image }}:$TAG"
+                docker push {{ vars.gateway_image }}:{{ workload.gateway_image_tag }}
+                echo "Gateway image pushed: {{ vars.gateway_image }}:$TAG"
+              else
+                echo "WARNING: crates/gateway/Dockerfile not found, skipping"
+              fi
             else
-              echo "WARNING: crates/gateway/Dockerfile not found, skipping"
+              echo ""
+              echo "=== Skipping Gateway build (build_gateway=false) ==="
             fi
 
-            # Skip worker-pool build - not used yet
-            echo ""
-            echo "=== Skipping Worker Pool (not used yet) ==="
+            # Build Worker Pool (Rust) - only if build_worker_pool is true
+            if [ "{{ workload.build_worker_pool }}" = "true" ]; then
+              echo ""
+              echo "=== Building Worker Pool (Rust) ==="
+              echo "WARNING: Worker Pool build not implemented yet"
+            else
+              echo ""
+              echo "=== Skipping Worker Pool build (build_worker_pool=false) ==="
+            fi
+
+            # Build Control Plane (Rust) - only if build_control_plane is true
+            if [ "{{ workload.build_control_plane }}" = "true" ]; then
+              echo ""
+              echo "=== Building Control Plane (Rust) ==="
+              echo "WARNING: Control Plane build not implemented yet"
+            else
+              echo ""
+              echo "=== Skipping Control Plane build (build_control_plane=false) ==="
+            fi
           fi
 
           echo ""
@@ -1023,7 +1165,7 @@ workflow:
             MAX_WAIT=120
             WAITED=0
             while [ -z "$EXTERNAL_IP" ] && [ $WAITED -lt $MAX_WAIT ]; do
-              EXTERNAL_IP=$(kubectl get svc noetl-gateway -n gateway -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
+              EXTERNAL_IP=$(kubectl get svc gateway -n gateway -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
               if [ -z "$EXTERNAL_IP" ]; then
                 sleep 5
                 WAITED=$((WAITED + 5))
@@ -1044,7 +1186,7 @@ workflow:
               echo "=============================================="
             else
               echo "WARNING: External IP not assigned yet"
-              echo "Check later with: kubectl get svc noetl-gateway -n gateway"
+              echo "Check later with: kubectl get svc gateway -n gateway"
             fi
           fi
     next:
@@ -1077,7 +1219,7 @@ workflow:
 
           # Show Gateway public endpoint if available
           if [ "{{ workload.gateway_public }}" = "true" ]; then
-            GATEWAY_IP=$(kubectl get svc noetl-gateway -n gateway -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
+            GATEWAY_IP=$(kubectl get svc gateway -n gateway -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
             if [ -n "$GATEWAY_IP" ]; then
               echo "==========================================="
               echo " PUBLIC API ACCESS (via Gateway)"
@@ -1093,7 +1235,7 @@ workflow:
               echo ""
             else
               echo "Gateway external IP not yet assigned. Check with:"
-              echo "  kubectl get svc noetl-gateway -n gateway"
+              echo "  kubectl get svc gateway -n gateway"
               echo ""
             fi
           fi
@@ -1103,7 +1245,7 @@ workflow:
           echo "==========================================="
           echo ""
           echo "To access internal services locally:"
-          echo "  kubectl port-forward -n gateway svc/noetl-gateway 8090:8090"
+          echo "  kubectl port-forward -n gateway svc/gateway 80:80"
           echo "  kubectl port-forward -n noetl svc/noetl 8082:8082"
           echo "  kubectl port-forward -n postgres svc/postgres 5432:5432"
           echo "  kubectl port-forward -n clickhouse svc/clickhouse 8123:8123"

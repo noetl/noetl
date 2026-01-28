@@ -3,7 +3,7 @@ namespace: noetl
 image:
   repository: ""
   tag: "latest"
-  pullPolicy: IfNotPresent
+  pullPolicy: Always
 
 server:
   resources:

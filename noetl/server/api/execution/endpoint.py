@@ -474,17 +474,20 @@ async def get_execution(
                 pass
         events.append(event_data)
 
-    # Get playbook path from catalog
+    # Get playbook path and version from catalog
     playbook_path = "unknown"
-    if first_event.get("catalog_id"):
+    playbook_version = None
+    catalog_id = first_event.get("catalog_id")
+    if catalog_id:
         async with get_pool_connection() as conn:
             async with conn.cursor(row_factory=dict_row) as cursor:
                 await cursor.execute("""
-                    SELECT path FROM noetl.catalog WHERE catalog_id = %s
-                """, (first_event["catalog_id"],))
+                    SELECT path, version FROM noetl.catalog WHERE catalog_id = %s
+                """, (catalog_id,))
                 catalog_row = await cursor.fetchone()
         if catalog_row:
             playbook_path = catalog_row["path"]
+            playbook_version = catalog_row["version"]
 
     # Determine final status
     terminal_event_types = {
@@ -505,6 +508,8 @@ async def get_execution(
     return {
         "execution_id": execution_id,
         "path": playbook_path,
+        "catalog_id": str(catalog_id) if catalog_id else None,
+        "version": playbook_version,
         "status": final_status,
         "start_time": first_event["created_at"].isoformat() if first_event.get("created_at") else None,
         "end_time": latest_event["created_at"].isoformat() if latest_event and latest_event.get("created_at") else None,
