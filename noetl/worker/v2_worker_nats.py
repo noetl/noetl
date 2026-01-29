@@ -2015,7 +2015,17 @@ class V2Worker:
             # Script loading is now handled by python plugin via 'script' field
             # This is a legacy fallback
             return await self._execute_script(config, args)
-            
+
+        elif tool_kind == "gateway":
+            # Gateway tool for async callbacks to API gateway
+            from noetl.tools.gateway import execute_gateway_task
+            task_with = {**config, **args}
+            result = await execute_gateway_task(task_config, context, jinja_env, task_with)
+            # Check if plugin returned error status
+            if isinstance(result, dict) and result.get('status') == 'error':
+                return result
+            return result.get('data', result) if isinstance(result, dict) else result
+
         else:
             raise NotImplementedError(f"Tool kind '{tool_kind}' not implemented")
     

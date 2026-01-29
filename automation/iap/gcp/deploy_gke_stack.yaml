@@ -285,7 +285,7 @@ workflow:
             if [ "{{ workload.build_noetl }}" = "true" ]; then
               echo ""
               echo "=== Building NoETL Server (Python) via Cloud Build ==="
-              if [ -f "docker/noetl/pip/Dockerfile" ]; then
+              if [ -f "docker/noetl/dev/Dockerfile" ]; then
               # Create temporary cloudbuild.yaml for noetl
               cat > /tmp/cloudbuild-noetl.yaml << 'CLOUDBUILD'
           steps:
@@ -297,9 +297,7 @@ workflow:
                 - '-t'
                 - '$_IMAGE:latest'
                 - '-f'
-                - 'docker/noetl/pip/Dockerfile'
-                - '--build-arg'
-                - 'NOETL_VERSION=latest'
+                - 'docker/noetl/dev/Dockerfile'
                 - '.'
           images:
             - '$_IMAGE:$_TAG'
@@ -315,7 +313,7 @@ workflow:
                 .
                 echo "NoETL server image built: {{ vars.noetl_image }}:$TAG"
               else
-                echo "WARNING: docker/noetl/pip/Dockerfile not found, skipping"
+                echo "WARNING: docker/noetl/dev/Dockerfile not found, skipping"
               fi
             else
               echo ""
@@ -433,18 +431,17 @@ workflow:
             if [ "{{ workload.build_noetl }}" = "true" ]; then
               echo ""
               echo "=== Building NoETL Server (Python) ==="
-              if [ -f "docker/noetl/pip/Dockerfile" ]; then
+              if [ -f "docker/noetl/dev/Dockerfile" ]; then
               docker build --platform {{ workload.docker_platform }} \
                 -t {{ vars.noetl_image }}:$TAG \
                 -t {{ vars.noetl_image }}:{{ workload.noetl_image_tag }} \
-                -f docker/noetl/pip/Dockerfile \
-                --build-arg NOETL_VERSION=latest \
+                -f docker/noetl/dev/Dockerfile \
                 .
               docker push {{ vars.noetl_image }}:$TAG
                 docker push {{ vars.noetl_image }}:{{ workload.noetl_image_tag }}
                 echo "NoETL server image pushed: {{ vars.noetl_image }}:$TAG"
               else
-                echo "WARNING: docker/noetl/pip/Dockerfile not found, skipping"
+                echo "WARNING: docker/noetl/dev/Dockerfile not found, skipping"
               fi
             else
               echo ""

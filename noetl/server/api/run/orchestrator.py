@@ -288,14 +288,61 @@ async def _check_execution_completion(
             row = await cur.fetchone()
             pending_parents = row["pending_parents"] if row else 0
             
+            # Check for pending commands (command.issued without command.completed)
+            # This is critical for V2 executions that use different event naming
+            await cur.execute(
+                """
+                SELECT COUNT(*) as pending_commands
+                FROM (
+                    SELECT node_name
+                    FROM noetl.event
+                    WHERE execution_id = %(execution_id)s
+                      AND event_type = 'command.issued'
+                    EXCEPT
+                    SELECT node_name
+                    FROM noetl.event
+                    WHERE execution_id = %(execution_id)s
+                      AND event_type = 'command.completed'
+                ) AS pending
+                """,
+                {"execution_id": int(execution_id)},
+            )
+            row = await cur.fetchone()
+            pending_commands = row["pending_commands"] if row else 0
+
+            # Also check for V2-style incomplete steps (step.enter without step.exit)
+            await cur.execute(
+                """
+                SELECT COUNT(*) as v2_incomplete_steps
+                FROM (
+                    SELECT node_name
+                    FROM noetl.event
+                    WHERE execution_id = %(execution_id)s
+                      AND event_type = 'step.enter'
+                    EXCEPT
+                    SELECT node_name
+                    FROM noetl.event
+                    WHERE execution_id = %(execution_id)s
+                      AND event_type = 'step.exit'
+                ) AS incomplete_v2
+                """,
+                {"execution_id": int(execution_id)},
+            )
+            row = await cur.fetchone()
+            v2_incomplete_steps = row["v2_incomplete_steps"] if row else 0
+
             logger.info(
-                f"Execution {execution_id}: running_actions={running_count} | pending_jobs={pending_count} | incomplete_steps={incomplete_steps} | pending_parents={pending_parents}"
+                f"Execution {execution_id}: running_actions={running_count} | pending_jobs={pending_count} | "
+                f"incomplete_steps={incomplete_steps} | pending_parents={pending_parents} | "
+                f"pending_commands={pending_commands} | v2_incomplete_steps={v2_incomplete_steps}"
             )
 
-            # If there are any running actions, pending jobs, incomplete steps, or pending parent aggregations, execution is not complete
-            if running_count > 0 or pending_count > 0 or incomplete_steps > 0 or pending_parents > 0:
+            # If there are any running actions, pending jobs, incomplete steps, pending commands, or pending parent aggregations, execution is not complete
+            if running_count > 0 or pending_count > 0 or incomplete_steps > 0 or pending_parents > 0 or pending_commands > 0 or v2_incomplete_steps > 0:
                 logger.debug(
-                    f"Execution {execution_id} not complete: {running_count} running, {pending_count} pending, {pending_parents} parents awaiting aggregation"
+                    f"Execution {execution_id} not complete: {running_count} running, {pending_count} pending, "
+                    f"{pending_parents} parents awaiting aggregation, {pending_commands} pending commands, "
+                    f"{v2_incomplete_steps} V2 incomplete steps"
                 )
                 return
 

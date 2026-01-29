@@ -2885,12 +2885,14 @@ dependencies = [
  "anyhow",
  "async-graphql",
  "async-graphql-axum",
+ "async-nats",
  "axum",
  "base64-compat",
  "chrono",
  "ctor 0.6.3",
  "dotenvy",
  "envy",
+ "futures",
  "once_cell",
  "reqwest",
  "serde",
@@ -2901,6 +2903,7 @@ dependencies = [
  "tower-http",
  "tracing",
  "tracing-subscriber",
+ "url",
  "uuid",
 ]
 

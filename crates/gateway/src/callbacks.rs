@@ -101,7 +101,28 @@ pub async fn start_nats_listener(
     nats_url: &str,
     manager: Arc<CallbackManager>,
 ) -> anyhow::Result<()> {
-    let client = async_nats::connect(nats_url).await?;
+    // Parse URL to extract credentials if present (nats://user:pass@host:port)
+    let client = if let Ok(url) = url::Url::parse(nats_url) {
+        let host = url.host_str().unwrap_or("localhost");
+        let port = url.port().unwrap_or(4222);
+        let server_addr = format!("{}:{}", host, port);
+
+        if !url.username().is_empty() {
+            let user = url.username();
+            let pass = url.password().unwrap_or("");
+            tracing::info!("Connecting to NATS with auth: {} (user: {})", server_addr, user);
+            async_nats::ConnectOptions::with_user_and_password(user.to_string(), pass.to_string())
+                .connect(&server_addr)
+                .await?
+        } else {
+            tracing::info!("Connecting to NATS: {}", server_addr);
+            async_nats::connect(&server_addr).await?
+        }
+    } else {
+        tracing::info!("Connecting to NATS: {}", nats_url);
+        async_nats::connect(nats_url).await?
+    };
+
     let subject = manager.subscription_subject();
 
     tracing::info!("Subscribing to NATS callbacks: {}", subject);

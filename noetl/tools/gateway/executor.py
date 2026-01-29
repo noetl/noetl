@@ -149,13 +149,21 @@ async def _execute_callback(
     step_name = task_config.get('step', context.get('current_step', 'unknown'))
 
     # Build callback payload
+    import socket
+    worker_hostname = socket.gethostname()
     payload = {
         'request_id': request_id,
         'execution_id': execution_id,
         'step': step_name,
         'status': 'success',
-        'data': data
+        'data': data,
+        '_source': f'gateway_executor:{worker_hostname}'
     }
+
+    # Debug logging to trace callback payload
+    logger.info(f"GATEWAY.CALLBACK: Payload data type: {type(data)}")
+    logger.info(f"GATEWAY.CALLBACK: Payload data: {json.dumps(data, default=str) if isinstance(data, dict) else data}")
+    logger.info(f"GATEWAY.CALLBACK: Full payload: {json.dumps(payload, default=str)}")
 
     # Publish to NATS
     success = await _publish_callback(callback_subject, payload)

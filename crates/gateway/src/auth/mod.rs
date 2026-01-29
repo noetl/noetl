@@ -155,8 +155,8 @@ pub async fn login(
 
     tracing::info!("Auth login execution_id: {}, request_id: {}", result.execution_id, request_id);
 
-    // Wait for callback with 30 second timeout
-    let callback_result = timeout(Duration::from_secs(30), rx)
+    // Wait for callback with 60 second timeout
+    let callback_result = timeout(Duration::from_secs(60), rx)
         .await
         .map_err(|_| {
             let callbacks = state.callbacks.clone();
@@ -166,7 +166,7 @@ pub async fn login(
         })?
         .map_err(|_| AuthError::InternalError("Callback channel closed".to_string()))?;
 
-    tracing::info!("Received callback for request_id={}, status={}", request_id, callback_result.status);
+    tracing::info!("Received callback for request_id={}, status={}, data={:?}", request_id, callback_result.status, callback_result.data);
 
     // Extract output from callback data
     let output = callback_result.data;
@@ -257,8 +257,8 @@ pub async fn validate_session(
 
     tracing::info!("Auth validate_session execution_id: {}, request_id: {}", result.execution_id, request_id);
 
-    // Wait for callback with 30 second timeout
-    let callback_result = timeout(Duration::from_secs(30), rx)
+    // Wait for callback with 60 second timeout
+    let callback_result = timeout(Duration::from_secs(60), rx)
         .await
         .map_err(|_| {
             let callbacks = state.callbacks.clone();
@@ -355,8 +355,8 @@ pub async fn check_access(
 
     tracing::info!("Auth check_access execution_id: {}, request_id: {}", result.execution_id, request_id);
 
-    // Wait for callback with 30 second timeout
-    let callback_result = timeout(Duration::from_secs(30), rx)
+    // Wait for callback with 60 second timeout
+    let callback_result = timeout(Duration::from_secs(60), rx)
         .await
         .map_err(|_| {
             let callbacks = state.callbacks.clone();

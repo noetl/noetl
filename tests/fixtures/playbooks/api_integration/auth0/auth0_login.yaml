@@ -44,37 +44,51 @@ workflow:
             "client_ip_present": bool(context.get('workload', {}).get('client_ip'))
         }
     case:
-      - when: "{{ event.name == 'step.exit' }}"
+      - when: "{{ event.name == 'call.done' }}"
         then:
           next:
             - step: validate_token
 
   - step: validate_token
-    desc: Decode Auth0 ID token (JWT) without external libraries
+    desc: Decode Auth0 ID token (JWT) and send error callback if needed
     tool:
       kind: python
       libs:
         base64: base64
         json: json
+        nats: nats
+        asyncio: asyncio
+        os: os
       code: |
         # Decode the ID token (JWT format: header.payload.signature)
         token = context.get('workload', {}).get('auth0_token', '')
-        
+        callback_subject = context.get('workload', {}).get('callback_subject', '')
+        request_id = context.get('workload', {}).get('request_id', '')
+        nats_url = os.environ.get('NATS_URL', 'nats://noetl:noetl@nats.nats.svc.cluster.local:4222')
+
+        # Debug info
+        debug_info = {
+            "nats_url": nats_url,
+            "callback_subject": callback_subject,
+            "request_id": request_id,
+            "token_length": len(token) if token else 0
+        }
+
         try:
             # Split JWT and get payload (middle part)
             parts = token.split('.')
             if len(parts) != 3:
                 raise ValueError("Invalid JWT format")
-            
+
             # Decode base64 payload (add padding if needed)
             payload = parts[1]
             padding = 4 - (len(payload) % 4)
             if padding != 4:
                 payload += '=' * padding
-            
+
             decoded_bytes = base64.urlsafe_b64decode(payload)
             decoded = json.loads(decoded_bytes)
-            
+
             result = {
                 "sub": decoded.get("sub"),
                 "email": decoded.get("email"),
@@ -82,9 +96,64 @@ workflow:
                 "email_verified": decoded.get("email_verified", False)
             }
         except Exception as e:
-            result = {"error": str(e)}
+            error_msg = str(e)
+            result = {
+                "error": error_msg,
+                "callback_subject": callback_subject,
+                "callback_attempted": False,
+                "debug": debug_info
+            }
+
+            # If callback subject is set, send error callback directly
+            if callback_subject:
+                # Use a mutable container to capture callback result
+                callback_status = {"sent": False, "error": None, "connected": False}
+
+                async def send_callback():
+                    try:
+                        # Parse NATS URL for auth
+                        from urllib.parse import urlparse
+                        parsed = urlparse(nats_url)
+                        host = parsed.hostname or 'localhost'
+                        port = parsed.port or 4222
+                        server_addr = f"nats://{host}:{port}"
+
+                        callback_status["server_addr"] = server_addr
+                        callback_status["has_auth"] = bool(parsed.username)
+
+                        if parsed.username:
+                            nc = await nats.connect(
+                                server_addr,
+                                user=parsed.username,
+                                password=parsed.password or ''
+                            )
+                        else:
+                            nc = await nats.connect(server_addr)
+
+                        callback_status["connected"] = True
+
+                        callback_data = {
+                            "request_id": request_id,
+                            "status": "error",
+                            "error": error_msg,
+                            "message": "Token validation failed"
+                        }
+                        await nc.publish(callback_subject, json.dumps(callback_data).encode())
+                        await nc.flush()
+                        await nc.close()
+                        callback_status["sent"] = True
+                    except Exception as cb_err:
+                        callback_status["error"] = str(cb_err)
+
+                try:
+                    asyncio.run(send_callback())
+                    result["callback_attempted"] = True
+                    result["callback_status"] = callback_status
+                except Exception as run_err:
+                    result["callback_error"] = str(run_err)
+                    result["callback_status"] = callback_status
     case:
-      - when: "{{ event.name == 'step.exit' and result.sub is defined }}"
+      - when: "{{ event.name == 'call.done' and result.sub is defined }}"
         then:
           next:
             - step: upsert_user
@@ -104,7 +173,7 @@ workflow:
           last_login_at = NOW()
         RETURNING user_id, email, display_name, is_active;
     case:
-      - when: "{{ event.name == 'step.exit' and result.command_0 is defined }}"
+      - when: "{{ event.name == 'call.done' and result.command_0 is defined }}"
         then:
           next:
             - step: create_session
@@ -131,7 +200,7 @@ workflow:
         )
         RETURNING session_token, user_id, expires_at;
     case:
-      - when: "{{ event.name == 'step.exit' and result.command_0 is defined }}"
+      - when: "{{ event.name == 'call.done' and result.command_0 is defined }}"
         then:
           next:
             - step: success
@@ -159,11 +228,11 @@ workflow:
             "expires_at": str(expires_at)
         }
     case:
-      - when: "{{ event.name == 'step.exit' and workload.callback_subject }}"
+      - when: "{{ event.name == 'call.done' and callback_subject }}"
         then:
           next:
             - step: callback
-      - when: "{{ event.name == 'step.exit' }}"
+      - when: "{{ event.name == 'call.done' }}"
         then:
           next:
             - step: end
@@ -180,7 +249,7 @@ workflow:
         user: "{{ success.user }}"
         expires_at: "{{ success.expires_at }}"
     case:
-      - when: "{{ event.name == 'step.exit' }}"
+      - when: "{{ event.name == 'call.done' }}"
         then:
           next:
             - step: end

@@ -75,6 +75,7 @@ from typing import Any, Optional, TypeVar, Generic
 from datetime import datetime, timezone
 from jinja2 import Template, Environment, StrictUndefined
 from psycopg.types.json import Json
+from psycopg.rows import dict_row
 
 from noetl.core.dsl.v2.models import Event, Command, Playbook, Step, CaseEntry, ToolCall
 from noetl.core.db.pool import get_pool_connection, get_snowflake_id
@@ -221,6 +222,7 @@ class ExecutionState:
         self.step_event_ids: dict[str, int] = {}  # Track last event per step
         self.step_results: dict[str, Any] = {}
         self.completed_steps: set[str] = set()
+        self.issued_steps: set[str] = set()  # Track steps that have commands issued (pending execution)
         self.failed = False
         self.completed = False
         
@@ -530,7 +532,9 @@ class StateStore:
         # Check memory first
         cached = await self._memory_cache.get(execution_id)
         if cached:
+            logger.info(f"[STATE-CACHE-HIT] Execution {execution_id}: found in cache, issued_steps={cached.issued_steps}, completed_steps={cached.completed_steps}")
             return cached
+        logger.info(f"[STATE-CACHE-MISS] Execution {execution_id}: not in cache, reconstructing from events")
         
         # Reconstruct state from events in database using event sourcing
         async with get_pool_connection() as conn:
@@ -605,13 +609,21 @@ class StateStore:
                         node_name = row[0]
                         event_type = row[1]
                         result_data = row[2]
-                    
+
+                    # Track issued commands for pending detection (race condition fix)
+                    if event_type == 'command.issued':
+                        state.issued_steps.add(node_name)
+                        logger.debug(f"[STATE-LOAD] Reconstructed issued_step: {node_name}")
+                    elif event_type == 'command.completed':
+                        state.issued_steps.discard(node_name)
+                        logger.debug(f"[STATE-LOAD] Removed completed command from issued_steps: {node_name}")
+
                     # For loop steps, collect iteration results from step.exit events
                     if event_type == 'step.exit' and result_data and node_name in loop_steps:
                         if node_name not in loop_iteration_results:
                             loop_iteration_results[node_name] = []
                         loop_iteration_results[node_name].append(result_data)
-                    
+
                     # Restore step results from step.exit events (final result only)
                     if event_type == 'step.exit' and result_data:
                         state.mark_step_completed(node_name, result_data)
@@ -638,6 +650,11 @@ class StateStore:
                         state.loop_state[step_name]["index"] = iteration_count
                         logger.info(f"[STATE-LOAD] Updated loop_state for {step_name}: index={iteration_count}")
                 
+                # Log reconstructed state for debugging
+                if state.issued_steps:
+                    logger.info(f"[STATE-LOAD] Reconstructed {len(state.issued_steps)} pending commands (issued_steps): {state.issued_steps}")
+                logger.info(f"[STATE-LOAD] Execution {execution_id}: completed_steps={len(state.completed_steps)}, issued_steps={len(state.issued_steps)}")
+
                 # Cache and return
                 await self._memory_cache.set(execution_id, state)
                 return state
@@ -815,7 +832,9 @@ class ControlFlowEngine:
                 logger.info(f"[COND] Evaluated '{when_expr}' => {result}")
                 return result
             if isinstance(result, str):
-                is_true = result.lower() in ("true", "1", "yes")
+                # Check for explicit false values, otherwise treat non-empty strings as truthy
+                is_false = result.lower() in ("false", "0", "no", "none", "")
+                is_true = not is_false
                 logger.info(f"[COND] Evaluated '{when_expr}' => '{result}' => {is_true}")
                 return is_true
             bool_result = bool(result)
@@ -1564,10 +1583,11 @@ class ControlFlowEngine:
         # If server rules didn't match but worker reported a case action, process it now
         if not commands and worker_case_action:
             action_type = worker_case_action.get("type")
-            action_config = worker_case_action.get("config", {})
-            
-            logger.info(f"[ENGINE] Server matched no rules, but worker reported '{action_type}' action. Processing worker action.")
-            
+            # Worker sends "steps" for next actions, "config" for retry
+            action_config = worker_case_action.get("config") or worker_case_action.get("steps", {})
+
+            logger.info(f"[ENGINE] Server matched no rules, but worker reported '{action_type}' action. Processing worker action. config={action_config}")
+
             if action_type == "retry":
                 # Use _process_then_actions to handle the action correctly
                 # We wrap it in a 'then' block format
@@ -1578,14 +1598,17 @@ class ControlFlowEngine:
                 )
                 commands.extend(worker_commands)
                 logger.info(f"[ENGINE] Applied retry from worker for step {event.step}")
-            
+
             elif action_type == "next":
+                # Worker sends steps as a list: [{"step": "upsert_user"}]
+                # _process_then_actions expects next items to be step names or {step: name, args: {...}}
                 worker_commands = await self._process_then_actions(
                     [{"next": action_config}],
                     state,
                     event
                 )
                 commands.extend(worker_commands)
+                logger.info(f"[ENGINE] Applied next from worker: {len(worker_commands)} commands generated")
         
         # Handle loop.item events - continue loop iteration
         # Only process if case didn't generate commands
@@ -1812,11 +1835,52 @@ class ControlFlowEngine:
         is_terminal_step = step_def and not step_def.next and not step_def.case
         is_failed_with_no_handler = has_error and not commands
         
-        # EFFECTIVE TERMINAL: Step has routing but no commands were generated 
+        # EFFECTIVE TERMINAL: Step has routing but no commands were generated
         # (e.g. all case rules only had sinks, or structural next was skipped)
         is_effective_terminal = step_def and not commands and not state.completed
-        
-        if event.name == "step.exit" and not commands and (is_terminal_step or is_failed_with_no_handler or is_effective_terminal) and not state.completed:
+
+        # Check for pending commands using multiple methods:
+        # 1. In-memory state tracking (issued_steps vs completed_steps)
+        # 2. Database query as backup
+        # This prevents premature completion when case blocks trigger on call.done but step.exit has no matching case
+        has_pending_commands = False
+
+        # Debug: log current state before pending check
+        logger.info(f"[PENDING-CHECK] Execution {event.execution_id}: issued_steps={state.issued_steps if hasattr(state, 'issued_steps') else 'N/A'}, completed_steps={state.completed_steps}")
+
+        # First check in-memory: issued_steps that aren't in completed_steps
+        issued_not_completed = state.issued_steps - state.completed_steps if hasattr(state, 'issued_steps') else set()
+        if issued_not_completed:
+            has_pending_commands = True
+            logger.info(f"[COMPLETION] Execution {event.execution_id} has {len(issued_not_completed)} pending commands in memory: {issued_not_completed}")
+        else:
+            # Fall back to database query
+            async with get_pool_connection() as conn:
+                async with conn.cursor(row_factory=dict_row) as cur:
+                    await cur.execute(
+                        """
+                        SELECT COUNT(*) as pending_count
+                        FROM (
+                            SELECT node_name
+                            FROM noetl.event
+                            WHERE execution_id = %(execution_id)s
+                              AND event_type = 'command.issued'
+                            EXCEPT
+                            SELECT node_name
+                            FROM noetl.event
+                            WHERE execution_id = %(execution_id)s
+                              AND event_type = 'command.completed'
+                        ) AS pending
+                        """,
+                        {"execution_id": int(event.execution_id)},
+                    )
+                    row = await cur.fetchone()
+                    pending_count = row["pending_count"] if row else 0
+                    has_pending_commands = pending_count > 0
+                    if has_pending_commands:
+                        logger.info(f"[COMPLETION] Execution {event.execution_id} has {pending_count} pending commands in DB")
+
+        if event.name == "step.exit" and not commands and not has_pending_commands and (is_terminal_step or is_failed_with_no_handler or is_effective_terminal) and not state.completed:
             # No more commands to execute - workflow and playbook are complete (or failed)
             state.completed = True
             # Check if step failed by looking at error in payload
@@ -1895,7 +1959,12 @@ class ControlFlowEngine:
                 if step_status == "FAILED":
                     logger.error(f"[FAILURE] Step {event.step} failed, stopping execution")
                     return []  # Return empty commands list to stop workflow
-        
+
+        # Track issued steps for pending commands detection
+        for cmd in commands:
+            state.issued_steps.add(cmd.step)
+            logger.info(f"[ISSUED] Added {cmd.step} to issued_steps for execution {state.execution_id}, total issued={len(state.issued_steps)}")
+
         return commands
     
     async def _persist_event(self, event: Event, state: ExecutionState):
