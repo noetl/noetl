@@ -1,479 +1,575 @@
 ---
 sidebar_position: 3
 title: DSL Enhancement Phases
-description: Roadmap for NoETL DSL improvements to achieve full BPMN 2.0 and workflow pattern coverage
+description: Roadmap for NoETL DSL improvements - Petri Net architecture with spec-based configuration
 ---
 
 # DSL Enhancement Phases
 
-This document outlines planned enhancements to the NoETL DSL to achieve complete coverage of BPMN 2.0 patterns and advanced workflow capabilities. Each phase is prioritized by impact and implementation complexity.
+This document outlines the NoETL DSL architecture evolution toward a Petri Net-compatible execution model with unified `spec:` configuration.
 
 ---
 
-## Phase 1: Inclusive Gateway (OR-Split/OR-Join)
+## Phase 1: Core Architecture (spec, case_mode, eval_mode, task lists)
 
-**Priority:** High  
-**Status:** Not Implemented  
-**Gap:** No mechanism for multiple conditional branches where ALL matching conditions fire
+**Priority:** Critical
+**Status:** Planned
+**Goal:** Establish foundational DSL patterns that enable all subsequent enhancements
 
-### Problem Statement
+### 1.1 The `spec:` Configuration Pattern
 
-Currently, the DSL supports:
-- **AND-split** (parallel fork): `next:` with multiple steps - ALL paths taken unconditionally
-- **XOR-split** (exclusive choice): `case:` with `when:` conditions - FIRST match wins
+Every DSL construct can have a `spec:` attribute that configures its behavior. This provides a uniform, extensible configuration mechanism.
 
-Missing: **OR-split** (inclusive gateway) - evaluate ALL conditions, take ALL paths where condition is TRUE.
-
-### Current Workaround
-
-Use explicit parallel fork with guards at each branch:
+**Key principle:** `spec:` controls *how* a construct behaves, while other attributes define *what* it does.
 
 ```yaml
-- step: dispatch
-  tool: { kind: python, code: "result = {}" }
-  next:
-    - step: check_a
-    - step: check_b
-    - step: check_c
-
-- step: check_a
+- step: process
+  spec:                          # Step-level behavior
+    case_mode: inclusive
+    eval_mode: on_event
+  tool:
+    kind: http
+    spec:                        # Tool-level behavior
+      timeout: 30s
+      retry: 3
+    url: "{{ api_url }}"
+  loop:
+    spec:                        # Loop-level behavior
+      mode: parallel
+      batch_size: 10
+    collection: "{{ items }}"
+    element: item
+  retry:
+    spec:                        # Retry-level behavior
+      mode: exponential
+      jitter: true
+    max_attempts: 5
+    delay: 10
   case:
-    - when: "{{ workload.condition_a }}"
+    - when: "{{ condition }}"
+      spec:                      # Condition-level behavior
+        cache: true
       then:
-        next:
-          - step: do_a
-  next:
-    - step: or_join
+        - save_result:           # Task name (any name works)
+            tool:
+              kind: postgres
+              spec:              # Spec goes on tool, not task key
+                async: true
+              command: "INSERT INTO ..."
+        - next:
+            spec:                # Transition-level behavior
+              delay: 5s
+            next:
+              - step: end
+```
 
-- step: check_b
+**`spec:` options by construct:**
+
+| Construct | `spec:` Options |
+|-----------|-----------------|
+| `step` | `case_mode`, `eval_mode`, `timeout`, `on_error` |
+| `tool` | `timeout`, `retry`, `async`, `auth_mode` |
+| `loop` | `mode` (parallel/sequential), `batch_size`, `on_error` |
+| `retry` | `mode` (exponential/linear/fixed), `jitter`, `backoff_base`, `on_exhausted` |
+| `when` | `cache`, `eval` (strict/lenient) |
+| `next` | `delay`, `guard` |
+
+**Existing data mechanisms:** `vars:` (transient table), `args:` (event context) - these are not part of `spec:`
+
+**Note:** Task keys in `then:` (like `save_result:`, `notify:`, `sink:`) are just names/identifiers. The `tool:` inside defines what action to perform. `spec:` belongs to the `tool:`, not the task key.
+
+### 1.2 Inclusive Gateway via `case_mode`
+
+The `case:` construct gains inclusive evaluation mode:
+
+- **`case_mode: exclusive`** (default) - XOR-split: first matching `when:` wins
+- **`case_mode: inclusive`** - OR-split: ALL matching `when:` conditions execute
+
+```yaml
+- step: process_order
+  spec:
+    case_mode: inclusive         # Evaluate ALL conditions
+  tool:
+    kind: python
+    code: |
+      result = {"order_id": order_id, "total": total}
   case:
-    - when: "{{ workload.condition_b }}"
+    # All matching conditions execute their then: blocks
+    - when: "{{ workload.notify_customer }}"
       then:
-        next:
-          - step: do_b
-  next:
-    - step: or_join
+        - send_email:                # Task name - can be anything
+            tool:
+              kind: http
+              method: POST
+              url: "{{ notification_api }}/email"
 
-# ... each branch checks its condition and either proceeds or skips to join
+    - when: "{{ workload.requires_audit }}"
+      then:
+        - write_audit:               # Task name - can be anything
+            tool:
+              kind: postgres
+              command: "INSERT INTO audit_log ..."
+
+    - when: "{{ total > 1000 }}"
+      then:
+        - fraud_check:               # Task name - can be anything
+            tool:
+              kind: http
+              url: "{{ fraud_check_api }}"
+
+    # next: acts as break - exits case evaluation
+    - when: "{{ event.name == 'call.done' }}"
+      then:
+        - next:
+            next:
+              - step: finalize
+
+    # else: only fires when NO conditions matched
+    - else:
+        - next:
+            next:
+              - step: error_handler
 ```
 
-**Limitation:** Verbose, requires explicit skip-to-join logic, error-prone.
+**Execution semantics:**
+1. All `when:` conditions are evaluated
+2. ALL matching `then:` blocks execute sequentially on the same worker
+3. `next:` in any `then:` block acts as a break - stops evaluation and transitions
+4. `else:` only executes if zero `when:` conditions matched
 
-### Proposed Enhancement
+### 1.3 Petri Net Mode via `eval_mode`
 
-#### Option A: `mode: inclusive` on `next:`
+The `eval_mode` controls when case conditions are evaluated:
 
-```yaml
-- step: decision_point
-  tool: { kind: python, code: "..." }
-  next:
-    mode: inclusive  # Evaluate ALL conditions, take ALL matching paths
-    branches:
-      - when: "{{ workload.priority == 'high' }}"
-        step: high_priority_handler
-      - when: "{{ workload.requires_audit }}"
-        step: audit_logger
-      - when: "{{ workload.notify_user }}"
-        step: send_notification
-    default: skip_to_end  # If no conditions match
-```
-
-#### Option B: Explicit `or_gateway:` construct
+- **`eval_mode: on_entry`** (default) - case evaluated once when step is entered
+- **`eval_mode: on_event`** - case evaluated on EVERY event for this execution (Petri Net mode)
 
 ```yaml
-- step: or_split
-  or_gateway:
-    - when: "{{ condition_a }}"
-      then: branch_a
-    - when: "{{ condition_b }}"
-      then: branch_b
-    - when: "{{ condition_c }}"
-      then: branch_c
-    default: fallback_step
-```
-
-#### Option C: `all_matching: true` flag on `case:`
-
-```yaml
-- step: decision
-  tool: { kind: python, code: "..." }
+- step: wait_and_process
+  spec:
+    eval_mode: on_event          # Re-evaluate on every event
+    case_mode: inclusive
   case:
-    all_matching: true  # Fire ALL matching conditions (not just first)
-    conditions:
-      - when: "{{ condition_a }}"
-        then:
-          next:
-            - step: branch_a
-      - when: "{{ condition_b }}"
-        then:
-          next:
-            - step: branch_b
+    - when: "{{ event.name == 'message.received' and event.data.type == 'approval' }}"
+      then:
+        - mark_approved:
+            tool: { kind: python, code: "result = {'approved': True}" }
+        - next:
+            next:
+              - step: process_approved
+
+    - when: "{{ event.name == 'timer.fired' and event.data.timer_id == 'timeout' }}"
+      then:
+        - next:
+            next:
+              - step: handle_timeout
 ```
 
-### OR-Join (Inclusive Merge)
+**Petri Net mapping:**
 
-The corresponding OR-join waits for ALL active incoming branches (only those that were actually taken):
+| Petri Net Concept | DSL Element |
+|-------------------|-------------|
+| Place | `step:` |
+| Transition | `when:` condition |
+| Token | Event / execution state |
+| Firing | `then:` task execution |
+| Guard | `when:` expression |
+| Arc | `next:` transition |
+
+### 1.4 `then:` as Sequential Task List
+
+The `then:` block is a list of **tasks** that execute sequentially on the same worker. Each task is a dict with a **key name** (any identifier) and a **`tool:`** that defines what action to perform:
 
 ```yaml
-- step: or_join
-  join:
-    mode: inclusive  # Wait for all ACTIVE incoming branches
-    timeout: 300     # Optional timeout in seconds
-  next:
-    - step: continue_workflow
+then:
+  - save_order:                  # Task name (any identifier)
+      tool:
+        kind: postgres
+        command: "INSERT INTO orders ..."
+
+  - notify_webhook:              # Task name (any identifier)
+      tool:
+        kind: http
+        url: "{{ webhook_url }}"
+
+  - next:                        # Transition control
+      next:
+        - step: confirmation
 ```
 
-**Implementation Note:** Server must track which branches were activated at the OR-split to know which ones to wait for at OR-join.
+**Task structure:**
 
-### Implementation Requirements
+- **Named tasks** (any key name): Contains a `tool:` that defines the action
+- **`next:`**: Controls transition to next step
 
-1. **Server-side tracking:** Track activated branches per execution
-2. **Event extension:** Add `branches.activated` event with list of taken paths
-3. **Join logic:** OR-join step queries active branches and waits accordingly
-4. **NATS KV:** Store branch activation state for join resolution
+**Data handling (existing mechanisms):**
 
----
+1. **`vars:`** - stored in `noetl.transient` table, tied to `execution_id`, accessible via server API across steps
+2. **`args:`** - stored in `noetl.event` context column, can be templates (evaluated lazily when needed)
+3. **Tool results** - automatically available as `{{ task_name.result }}` or `{{ step_name.data }}`
+4. **Template expressions** - `{{ workload.field }}`, `{{ step_name.data.result }}`
 
-## Phase 2: Timer Events
+```yaml
+- step: process
+  tool:
+    kind: python
+    args:                        # Passed via context, stored in event
+      order_id: "{{ workload.order_id }}"
+    code: "result = {'processed': order_id}"
+  case:
+    - when: "{{ event.name == 'call.done' }}"
+      then:
+        - next:
+            next:
+              - step: done
+```
 
-**Priority:** High  
-**Status:** Not Implemented  
-**Gap:** No timer start events, intermediate timer events, or deadline-based triggers
+**Example with tool spec:**
 
-### Problem Statement
+```yaml
+then:
+  - persist_data:
+      tool:
+        kind: postgres
+        spec:                    # Spec on tool
+          async: true
+          timeout: 30s
+        command: "INSERT INTO ..."
+  - next:
+      next:
+        - step: done
+```
 
-Workflows cannot:
-- Start on a schedule (cron-like)
-- Wait for a duration before proceeding
-- Have deadline-based timeouts on steps
+**Error handling:** If any task fails, execution breaks and returns control to the case evaluator (or error handler if configured).
 
-### Current Workaround
+### 1.5 Optional `tool:` on Step
 
-External scheduler (cron, Kubernetes CronJob) triggers workflow via API.
+When using `case:` to drive all tool executions, the step-level `tool:` becomes optional:
 
-### Proposed Enhancement
+```yaml
+# Traditional: tool on step
+- step: process
+  tool:
+    kind: python
+    code: "result = {...}"
+  case:
+    - when: "{{ event.name == 'call.done' }}"
+      then:
+        - next:
+            next:
+              - step: end
 
-#### Timer Start Event
+# New: case-driven execution (no step-level tool)
+- step: process
+  spec:
+    case_mode: inclusive
+    eval_mode: on_event
+  case:
+    - when: "{{ event.name == 'start' }}"
+      then:
+        - compute:
+            tool: { kind: python, code: "result = {...}" }
+    - when: "{{ event.name == 'call.done' }}"
+      then:
+        - next:
+            next:
+              - step: end
+```
+
+### 1.6 `next:` Syntax
+
+The `next:` task in a `then:` list has consistent syntax:
+
+```yaml
+# Standard form
+- next:
+    next:
+      - step: target_step
+      - step: parallel_step    # Multiple targets = parallel fork
+
+# With spec (delayed transition)
+- next:
+    spec:
+      delay: 5s
+    next:
+      - step: target_step
+
+# Tool-based form (alternative syntax)
+- next:
+    tool:
+      kind: next
+      step: target_step
+```
+
+### 1.7 Root-Level `executor:` (Not `spec:`)
+
+Runtime configuration stays in `executor:` at root level, NOT in `spec:`:
 
 ```yaml
 apiVersion: noetl.io/v2
 kind: Playbook
 metadata:
-  name: scheduled_report
-  path: reports/daily_summary
-trigger:
-  timer:
-    cron: "0 6 * * *"  # Daily at 6 AM
-    timezone: "America/New_York"
+  name: example
+  path: workflows/example
+
+executor:                        # Runtime configuration
+  profile: local                 # local | distributed
+  version: noetl-runtime/1
+
 workflow:
   - step: start
+    spec:                        # DSL construct behavior (NOT at root)
+      case_mode: inclusive
     # ...
 ```
 
-#### Intermediate Timer Event (Wait/Delay)
+---
 
-```yaml
-- step: rate_limit_pause
-  timer:
-    duration: 60s  # Wait 60 seconds before next step
-  next:
-    - step: continue_processing
-```
+## Phase 1 Implementation Plan
 
-Or as ISO 8601 duration:
+### Step 1: Schema Updates
 
-```yaml
-- step: wait_for_settlement
-  timer:
-    duration: PT2H30M  # Wait 2 hours 30 minutes
-  next:
-    - step: check_settlement
-```
+1. **Update playbook schema** to accept `spec:` on all constructs
+2. **Define `spec:` schemas** for each construct type
+3. **Validation** - ensure `spec:` options are valid for each construct
 
-#### Timer Boundary Event (Step Timeout with Alternative Path)
+### Step 2: Worker Changes
 
-```yaml
-- step: long_running_task
-  tool:
-    kind: http
-    url: "{{ api_url }}/process"
-  timeout:
-    duration: 300s
-    on_timeout:
-      step: timeout_handler  # Alternative path if step exceeds duration
-  next:
-    - step: normal_continuation
-```
+1. **Implement `case_mode: inclusive`** in case evaluator
+   - Evaluate all conditions, collect matching `then:` blocks
+   - Execute `then:` tasks sequentially
+   - Stop on `next:` task (break behavior)
+   - Execute `else:` only if no matches
 
-### Implementation Requirements
+2. **Implement `eval_mode: on_event`** in step processor
+   - Subscribe to events for execution
+   - Re-evaluate case on each event
+   - Track which conditions have fired
 
-1. **Timer service:** Background process that fires timer events
-2. **Event types:** `timer.fired`, `timer.cancelled`
-3. **State tracking:** Pending timers stored in NATS KV or database
-4. **Trigger integration:** Server listens for timer events to start executions
+3. **Implement task list execution** in `then:` processor
+   - Sequential task execution on same worker
+   - Error handling with break semantics
+   - Named tasks with `tool:` execute tools (any tool kind)
+   - `next:` is the only reserved task (controls transitions)
+
+### Step 3: Orchestrator Changes
+
+1. **Update event routing** for `eval_mode: on_event`
+2. **Track inclusive gateway state** (which conditions fired)
+3. **Support optional step-level `tool:`**
+
+### Step 4: Server API Changes
+
+1. **Extend event schema** for new task types
+2. **Add spec validation endpoints**
+3. **Update context rendering** for new patterns
+
+### Step 5: Testing
+
+1. **Unit tests** for each `spec:` option
+2. **Integration tests** for inclusive gateway patterns
+3. **Petri Net mode tests** with multiple events
+4. **Performance tests** for same-worker task chains
+
+### Step 6: Migration
+
+1. **Update all existing playbooks** to new syntax
+2. **Remove deprecated patterns**
+3. **Update documentation**
 
 ---
 
-## Phase 3: Signal and Message Events
+## Phase 2: Timer Events (Future)
 
-**Priority:** Medium  
-**Status:** Partial (polling via retry)  
-**Gap:** No true wait-for-external-event capability
+**Priority:** High
+**Status:** Not Implemented
+**Depends on:** Phase 1
 
-### Problem Statement
+Timer events enable scheduled workflows and time-based transitions.
 
-Workflows cannot pause and wait for external signals/messages without polling.
-
-### Current Workaround
+### Proposed Syntax
 
 ```yaml
-- step: poll_for_completion
-  tool:
-    kind: http
-    url: "{{ callback_url }}/status"
-  retry:
-    max_attempts: 60
-    delay: 10
-    when: "{{ result.status != 'complete' }}"
-  next:
-    - step: continue
+# Timer start event (cron trigger)
+trigger:
+  timer:
+    spec:
+      timezone: "America/New_York"
+    cron: "0 6 * * *"
+
+# Intermediate timer (delay)
+- step: wait
+  timer:
+    spec:
+      cancellable: true
+    duration: PT2H30M
+  case:
+    - when: "{{ event.name == 'timer.fired' }}"
+      then:
+        - next:
+            next:
+              - step: continue
+
+# Timer boundary (timeout with alternative path)
+- step: long_task
+  tool: { ... }
+  timeout:
+    spec:
+      on_timeout: alternative    # alternative | fail | ignore
+    duration: 300s
+    alternative_step: timeout_handler
 ```
 
-**Limitation:** Wastes resources polling, not event-driven.
+---
 
-### Proposed Enhancement
+## Phase 3: Signal and Message Events (Future)
 
-#### Message Catch Event (Wait for External Message)
+**Priority:** Medium
+**Status:** Not Implemented
+**Depends on:** Phase 1
+
+External event waiting without polling.
+
+### Proposed Syntax
 
 ```yaml
 - step: wait_for_approval
   message:
+    spec:
+      timeout_action: escalate
     name: "approval_received"
     correlation:
       execution_id: "{{ execution_id }}"
       order_id: "{{ workload.order_id }}"
-    timeout: 86400s  # 24 hour timeout
-    on_timeout:
-      step: escalate_approval
-  next:
-    - step: process_approved_order
+    timeout: 86400s
+  case:
+    - when: "{{ event.name == 'message.received' }}"
+      then:
+        - next:
+            next:
+              - step: process_approved
+    - when: "{{ event.name == 'message.timeout' }}"
+      then:
+        - next:
+            next:
+              - step: escalate
 ```
-
-#### Signal Catch Event (Broadcast to Multiple Executions)
-
-```yaml
-- step: wait_for_market_open
-  signal:
-    name: "market_opened"
-    filter:
-      market: "{{ workload.market }}"
-  next:
-    - step: start_trading
-```
-
-#### External API to Send Messages/Signals
-
-```bash
-# Send message to specific execution
-POST /api/message
-{
-  "name": "approval_received",
-  "correlation": {"execution_id": 123, "order_id": "ORD-456"},
-  "payload": {"approved_by": "manager@example.com"}
-}
-
-# Broadcast signal to all waiting executions
-POST /api/signal
-{
-  "name": "market_opened",
-  "filter": {"market": "NYSE"},
-  "payload": {"open_time": "2024-01-15T09:30:00Z"}
-}
-```
-
-### Implementation Requirements
-
-1. **Message queue:** NATS subjects for message/signal delivery
-2. **Correlation:** Match incoming messages to waiting executions
-3. **Wait state:** Steps in "waiting" state don't consume worker resources
-4. **API endpoints:** External systems can send messages/signals
 
 ---
 
-## Phase 4: Human Tasks
+## Phase 4: Human Tasks (Future)
 
-**Priority:** Medium  
-**Status:** Not Implemented  
-**Gap:** No user task construct for human-in-the-loop workflows
+**Priority:** Medium
+**Status:** Not Implemented
+**Depends on:** Phase 1, Phase 3
 
-### Problem Statement
+Human-in-the-loop workflows with task assignment.
 
-Workflows cannot assign tasks to humans and wait for completion.
-
-### Proposed Enhancement
+### Proposed Syntax
 
 ```yaml
 - step: manager_approval
   human_task:
+    spec:
+      escalation_mode: reassign
     title: "Approve Purchase Order"
-    description: "Review and approve PO #{{ workload.po_number }}"
     assignee:
       role: "finance_manager"
-      # Or specific user:
-      # user: "{{ workload.manager_email }}"
     form:
       - field: decision
         type: enum
-        options: [approve, reject, request_changes]
-        required: true
-      - field: comments
-        type: text
-        required: false
-    due_date: "{{ (now() + timedelta(days=2)).isoformat() }}"
+        options: [approve, reject]
+    due_date: "{{ now() + duration('P2D') }}"
     escalation:
       after: 48h
       to_role: "finance_director"
-  next:
-    - when: "{{ result.decision == 'approve' }}"
+  case:
+    - when: "{{ event.name == 'task.completed' }}"
       then:
-        - step: process_order
-    - when: "{{ result.decision == 'reject' }}"
-      then:
-        - step: notify_rejection
-    - when: "{{ result.decision == 'request_changes' }}"
-      then:
-        - step: return_to_requester
+        - next:
+            next:
+              - step: "{{ 'process' if result.decision == 'approve' else 'reject' }}"
 ```
-
-### Implementation Requirements
-
-1. **Task inbox:** UI/API for users to view assigned tasks
-2. **Form rendering:** Dynamic form generation from schema
-3. **Assignment logic:** Role-based or direct user assignment
-4. **Escalation:** Timer-based reassignment
-5. **Audit trail:** Track who completed task and when
 
 ---
 
-## Phase 5: Compensation Handlers (Saga Pattern)
+## Phase 5: Compensation Handlers / Saga (Future)
 
-**Priority:** Medium  
-**Status:** Not Implemented  
-**Gap:** No rollback mechanism for failed multi-step transactions
+**Priority:** Medium
+**Status:** Not Implemented
+**Depends on:** Phase 1
 
-### Problem Statement
+Automatic rollback for failed multi-step transactions.
 
-When a step fails in a multi-step workflow, there's no automatic way to undo previous successful steps.
-
-### Current Workaround
-
-Manual error handling with explicit rollback logic:
-
-```yaml
-- step: process
-  case:
-    - when: "{{ event.name == 'call.error' }}"
-      then:
-        next:
-          - step: manual_rollback_step_1
-```
-
-**Limitation:** Error-prone, doesn't scale with workflow complexity.
-
-### Proposed Enhancement
+### Proposed Syntax
 
 ```yaml
 - step: create_order
   tool:
     kind: postgres
-    query: "INSERT INTO orders ..."
+    command: "INSERT INTO orders ..."
   compensate:
+    spec:
+      idempotent: true
     tool:
       kind: postgres
-      query: "DELETE FROM orders WHERE id = {{ result.order_id }}"
-  next:
-    - step: reserve_inventory
-
-- step: reserve_inventory
-  tool:
-    kind: http
-    method: POST
-    url: "{{ inventory_api }}/reserve"
-  compensate:
-    tool:
-      kind: http
-      method: POST
-      url: "{{ inventory_api }}/release"
-      body:
-        reservation_id: "{{ result.reservation_id }}"
-  next:
-    - step: charge_payment
-
-- step: charge_payment
-  tool:
-    kind: http
-    method: POST
-    url: "{{ payment_api }}/charge"
-  # If this fails, server automatically runs compensate handlers in reverse order:
-  # 1. release inventory
-  # 2. delete order
-  compensate:
-    tool:
-      kind: http
-      method: POST
-      url: "{{ payment_api }}/refund"
-  next:
-    - step: end
+      command: "DELETE FROM orders WHERE id = {{ result.order_id }}"
+  case:
+    - when: "{{ event.name == 'call.done' }}"
+      then:
+        - next:
+            next:
+              - step: reserve_inventory
+    - when: "{{ event.name == 'call.error' }}"
+      then:
+        - next:
+            spec:
+              trigger_compensation: true    # Run all compensations in reverse
+            next:
+              - step: order_failed
 ```
-
-### Implementation Requirements
-
-1. **Compensation stack:** Server tracks completed steps with their compensate actions
-2. **Automatic rollback:** On failure, execute compensations in reverse order
-3. **Compensation state:** Track compensation progress (partial rollback scenarios)
-4. **Idempotency:** Compensations should be idempotent
 
 ---
 
-## Phase 6: Advanced Event Patterns
+## Phase 6: Advanced Event Patterns (Future)
 
-**Priority:** Low  
-**Status:** Partial  
-**Gap:** Limited event-based workflow patterns
+**Priority:** Low
+**Status:** Not Implemented
+**Depends on:** Phase 1, Phase 2, Phase 3
 
-### Proposed Enhancements
+Complex event-driven patterns.
 
-#### Event Sub-Process (Non-Interrupting)
-
-Run parallel handler when event occurs without stopping main flow:
+### Event Sub-Process
 
 ```yaml
 - step: main_processing
   tool: { ... }
   on_event:
+    spec:
+      interrupting: false
     - event: "audit.required"
-      non_interrupting: true
-      handler:
-        - step: log_audit
-          tool: { ... }
-  next:
-    - step: continue
+      then:
+        - log_audit:
+            tool: { kind: audit_logger, ... }
 ```
 
-#### Event-Based Gateway (Wait for First of Multiple Events)
+### Event-Based Gateway
 
 ```yaml
 - step: wait_for_response
-  event_gateway:
-    - message:
-        name: "customer_response"
-        then: handle_response
-    - timer:
-        duration: 24h
-        then: send_reminder
-    - signal:
-        name: "order_cancelled"
-        then: abort_process
+  spec:
+    eval_mode: on_event
+    case_mode: exclusive         # First event wins
+  case:
+    - when: "{{ event.name == 'message.received' }}"
+      then:
+        - next: { next: [{ step: handle_response }] }
+    - when: "{{ event.name == 'timer.fired' }}"
+      then:
+        - next: { next: [{ step: send_reminder }] }
+    - when: "{{ event.name == 'signal.received' and event.data.name == 'cancelled' }}"
+      then:
+        - next: { next: [{ step: abort }] }
 ```
 
 ---
@@ -482,23 +578,14 @@ Run parallel handler when event occurs without stopping main flow:
 
 | Phase | Feature | Impact | Complexity | Priority |
 |-------|---------|--------|------------|----------|
-| 1 | Inclusive Gateway (OR) | High | Medium | **P1** |
+| 1 | Core Architecture (spec, case_mode, eval_mode) | **Critical** | High | **P0** |
 | 2 | Timer Events | High | Medium | **P1** |
 | 3 | Signal/Message Events | Medium | High | **P2** |
 | 4 | Human Tasks | Medium | High | **P2** |
 | 5 | Compensation Handlers | Medium | Medium | **P2** |
 | 6 | Advanced Event Patterns | Low | High | **P3** |
 
----
-
-## Migration Notes
-
-All enhancements should:
-1. **Be backward compatible** - existing playbooks continue to work
-2. **Follow V2 DSL conventions** - consistent syntax with existing constructs
-3. **Leverage NATS infrastructure** - use JetStream/KV for state management
-4. **Emit proper events** - extend event schema for new constructs
-5. **Include comprehensive tests** - add to `tests/fixtures/playbooks/`
+**Note:** Data handling uses existing mechanisms: `vars:` (transient table), `args:` (event context), and tool results.
 
 ---
 
@@ -506,5 +593,6 @@ All enhancements should:
 
 - [BPMN 2.0 Specification](https://www.omg.org/spec/BPMN/2.0/)
 - [Workflow Patterns](http://www.workflowpatterns.com/)
+- [Petri Net Theory](https://en.wikipedia.org/wiki/Petri_net)
 - [NoETL DSL Analysis](./dsl_analysis_and_evaluation.md)
 - [Saga Pattern](https://microservices.io/patterns/data/saga.html)
