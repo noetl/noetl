@@ -329,21 +329,69 @@ kubectl delete deployment nginx
    kind delete cluster       # Delete entire cluster
 ```
 
-## NoETL Unified Platform Deployment
+## NoETL Kind Cluster Deployment
 
-NoETL provides a unified deployment script that sets up a complete development environment with server, workers, and observability in a single Kind cluster.
+NoETL provides multiple methods to deploy to a Kind cluster for local development.
 
-### Quick Start
+### Method 1: Playbook-Based Deployment (Recommended)
+
+Use NoETL automation playbooks for a streamlined development workflow:
+
+```bash
+# Bootstrap complete environment (first time setup)
+noetl run automation/setup/bootstrap.yaml
+
+# Or use the shortcut
+noetl run boot
+
+# After making code changes, rebuild and deploy
+noetl run automation/development/noetl.yaml --set action=redeploy
+
+# Check deployment status
+noetl run automation/development/noetl.yaml --set action=status
+```
+
+**Available Actions:**
+
+| Action | Description |
+|--------|-------------|
+| `build` | Build NoETL Docker image with timestamp tag |
+| `load` | Load Docker image into kind cluster |
+| `deploy` | Deploy NoETL server and workers to Kubernetes |
+| `redeploy` | Full cycle: build → load → deploy (recommended for dev) |
+| `status` | Show NoETL pod and service status |
+
+**Development Workflow:**
+
+```bash
+# Make code changes...
+
+# Rebuild and deploy in one command
+noetl run automation/development/noetl.yaml --set action=redeploy
+
+# Check status
+noetl run automation/development/noetl.yaml --set action=status
+
+# View logs
+kubectl logs -f -n noetl -l app=noetl-server
+kubectl logs -f -n noetl -l app=noetl-worker
+```
+
+For detailed playbook documentation, see [Automation Playbooks](./automation_playbooks.md#noetl-development-deployment).
+
+### Method 2: Unified Platform Script
+
+For a complete development environment with integrated observability:
 
 ```bash
 # Clone NoETL repository
 git clone https://github.com/noetl/noetl.git
 cd noetl
 
-# Deploy unified platform (recommended)
+# Deploy unified platform
 make unified-deploy
 
-# OR: Complete recreation from scratch  
+# OR: Complete recreation from scratch
 make unified-recreate-all
 
 # OR: Direct script usage

@@ -176,30 +176,37 @@ class DSLParser:
         """
         Validate step uses v2 structure.
         Reject old v1 patterns.
+
+        Note: 'tool' is optional when step has 'case' (case-driven execution).
         """
         step_name = step_data.get("step", "<unknown>")
-        
+
         # Check for old 'type' field
         if "type" in step_data:
             raise ValueError(
                 f"Step '{step_name}': 'type' field is not allowed in v2. "
                 "Use 'tool.kind' instead."
             )
-        
-        # Ensure tool exists and has kind
-        if "tool" not in step_data:
-            raise ValueError(f"Step '{step_name}': Missing 'tool' field")
-        
-        tool_data = step_data["tool"]
-        if not isinstance(tool_data, dict):
-            raise ValueError(
-                f"Step '{step_name}': 'tool' must be an object with 'kind' field"
-            )
-        
-        if "kind" not in tool_data:
-            raise ValueError(
-                f"Step '{step_name}': 'tool' must have 'kind' field (e.g., http, postgres, python)"
-            )
+
+        has_case = "case" in step_data
+        has_tool = "tool" in step_data
+
+        # Tool is optional when step has case (case-driven execution)
+        # But if tool is present, it must be valid
+        if has_tool:
+            tool_data = step_data["tool"]
+            if not isinstance(tool_data, dict):
+                raise ValueError(
+                    f"Step '{step_name}': 'tool' must be an object with 'kind' field"
+                )
+
+            if "kind" not in tool_data:
+                raise ValueError(
+                    f"Step '{step_name}': 'tool' must have 'kind' field (e.g., http, postgres, python)"
+                )
+        elif not has_case:
+            # No tool and no case - invalid step
+            raise ValueError(f"Step '{step_name}': Missing 'tool' field (required unless step has 'case')")
         
         # Check for old next patterns
         next_data = step_data.get("next")
@@ -228,24 +235,37 @@ class DSLParser:
     def _validate_case_v2(self, case_data: list, step_name: str):
         """
         Validate case entries have when/then structure.
+
+        Supports two forms:
+        - when: "{{ condition }}" with then: - Standard conditional
+        - else: (no when) - Fallback when no conditions matched in inclusive mode
         """
         if not isinstance(case_data, list):
             raise ValueError(
                 f"Step '{step_name}': 'case' must be a list of when/then entries"
             )
-        
+
         for i, entry in enumerate(case_data):
             if not isinstance(entry, dict):
                 raise ValueError(
                     f"Step '{step_name}': case[{i}] must be an object"
                 )
-            
-            if "when" not in entry:
+
+            has_when = "when" in entry
+            has_then = "then" in entry
+            has_else = "else" in entry
+
+            # Support else: clause (no when required)
+            if has_else and not has_when:
+                # else: clause - then is in 'else' key, not 'then'
+                continue
+
+            if not has_when:
                 raise ValueError(
                     f"Step '{step_name}': case[{i}] missing 'when' field"
                 )
-            
-            if "then" not in entry:
+
+            if not has_then:
                 raise ValueError(
                     f"Step '{step_name}': case[{i}] missing 'then' field"
                 )

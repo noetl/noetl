@@ -5,11 +5,11 @@ metadata:
   path: api_integration/auth0/auth0_login
   description: |
     Authenticate user with Auth0 and create NoETL session.
-    
+
     Input:
       - auth0_token: Auth0 ID token (JWT)
       - client_ip: Client IP (optional, defaults to 0.0.0.0)
-    
+
     Output:
       - session_token: NoETL session token
       - user_id: Internal user ID
@@ -22,7 +22,7 @@ workload:
   client_ip: "0.0.0.0"
   auth0_domain: "mestumre-development.us.auth0.com"
   db_credential: pg_auth
-  callback_subject: ""  # Set by gateway for async response
+  callback_subject: ""
   request_id: ""
 
 workflow:
@@ -30,13 +30,9 @@ workflow:
     desc: Begin Auth0 login
     tool:
       kind: python
-      auth: {}
       libs:
         json: json
-      args: {}
       code: |
-        # Debug: log what we received
-        print(f"DEBUG: Full context keys: {list(context.keys())}")
         print(f"DEBUG: workload = {json.dumps(context.get('workload', {}), indent=2)}")
         result = {
             "status": "initialized",
@@ -46,49 +42,29 @@ workflow:
     case:
       - when: "{{ event.name == 'call.done' }}"
         then:
-          next:
-            - step: validate_token
+          - next:
+              next:
+                - step: validate_token
 
   - step: validate_token
-    desc: Decode Auth0 ID token (JWT) and send error callback if needed
+    desc: Decode Auth0 ID token (JWT)
     tool:
       kind: python
       libs:
         base64: base64
         json: json
-        nats: nats
-        asyncio: asyncio
-        os: os
       code: |
-        # Decode the ID token (JWT format: header.payload.signature)
         token = context.get('workload', {}).get('auth0_token', '')
-        callback_subject = context.get('workload', {}).get('callback_subject', '')
-        request_id = context.get('workload', {}).get('request_id', '')
-        nats_url = os.environ.get('NATS_URL', 'nats://noetl:noetl@nats.nats.svc.cluster.local:4222')
-
-        # Debug info
-        debug_info = {
-            "nats_url": nats_url,
-            "callback_subject": callback_subject,
-            "request_id": request_id,
-            "token_length": len(token) if token else 0
-        }
-
         try:
-            # Split JWT and get payload (middle part)
             parts = token.split('.')
             if len(parts) != 3:
                 raise ValueError("Invalid JWT format")
-
-            # Decode base64 payload (add padding if needed)
             payload = parts[1]
             padding = 4 - (len(payload) % 4)
             if padding != 4:
                 payload += '=' * padding
-
             decoded_bytes = base64.urlsafe_b64decode(payload)
             decoded = json.loads(decoded_bytes)
-
             result = {
                 "sub": decoded.get("sub"),
                 "email": decoded.get("email"),
@@ -96,67 +72,37 @@ workflow:
                 "email_verified": decoded.get("email_verified", False)
             }
         except Exception as e:
-            error_msg = str(e)
-            result = {
-                "error": error_msg,
-                "callback_subject": callback_subject,
-                "callback_attempted": False,
-                "debug": debug_info
-            }
-
-            # If callback subject is set, send error callback directly
-            if callback_subject:
-                # Use a mutable container to capture callback result
-                callback_status = {"sent": False, "error": None, "connected": False}
-
-                async def send_callback():
-                    try:
-                        # Parse NATS URL for auth
-                        from urllib.parse import urlparse
-                        parsed = urlparse(nats_url)
-                        host = parsed.hostname or 'localhost'
-                        port = parsed.port or 4222
-                        server_addr = f"nats://{host}:{port}"
-
-                        callback_status["server_addr"] = server_addr
-                        callback_status["has_auth"] = bool(parsed.username)
-
-                        if parsed.username:
-                            nc = await nats.connect(
-                                server_addr,
-                                user=parsed.username,
-                                password=parsed.password or ''
-                            )
-                        else:
-                            nc = await nats.connect(server_addr)
-
-                        callback_status["connected"] = True
-
-                        callback_data = {
-                            "request_id": request_id,
-                            "status": "error",
-                            "error": error_msg,
-                            "message": "Token validation failed"
-                        }
-                        await nc.publish(callback_subject, json.dumps(callback_data).encode())
-                        await nc.flush()
-                        await nc.close()
-                        callback_status["sent"] = True
-                    except Exception as cb_err:
-                        callback_status["error"] = str(cb_err)
-
-                try:
-                    asyncio.run(send_callback())
-                    result["callback_attempted"] = True
-                    result["callback_status"] = callback_status
-                except Exception as run_err:
-                    result["callback_error"] = str(run_err)
-                    result["callback_status"] = callback_status
+            result = {"error": str(e)}
+    spec:
+      case_mode: inclusive
     case:
+      # On error with callback_subject, send error callback
+      - when: "{{ event.name == 'call.done' and result.error is defined and workload.callback_subject }}"
+        then:
+          - send_error_callback:
+              tool:
+                kind: gateway
+                action: callback
+                data:
+                  request_id: "{{ workload.request_id }}"
+                  status: "error"
+                  error: "{{ result.error }}"
+                  message: "Token validation failed"
+          - next:
+              next:
+                - step: end
+      # On error without callback, just end
+      - when: "{{ event.name == 'call.done' and result.error is defined }}"
+        then:
+          - next:
+              next:
+                - step: end
+      # On success, proceed to upsert_user
       - when: "{{ event.name == 'call.done' and result.sub is defined }}"
         then:
-          next:
-            - step: upsert_user
+          - next:
+              next:
+                - step: upsert_user
 
   - step: upsert_user
     desc: Create or update user
@@ -166,7 +112,7 @@ workflow:
       command: |
         INSERT INTO auth.users (auth0_id, email, display_name, last_login_at)
         VALUES ('{{ validate_token.sub }}', '{{ validate_token.email }}', '{{ validate_token.name }}', NOW())
-        ON CONFLICT (auth0_id) 
+        ON CONFLICT (auth0_id)
         DO UPDATE SET
           email = EXCLUDED.email,
           display_name = EXCLUDED.display_name,
@@ -175,8 +121,9 @@ workflow:
     case:
       - when: "{{ event.name == 'call.done' and result.command_0 is defined }}"
         then:
-          next:
-            - step: create_session
+          - next:
+              next:
+                - step: create_session
 
   - step: create_session
     desc: Create session
@@ -202,64 +149,51 @@ workflow:
     case:
       - when: "{{ event.name == 'call.done' and result.command_0 is defined }}"
         then:
-          next:
-            - step: success
+          - next:
+              next:
+                - step: success
 
   - step: success
-    desc: Return session token
+    desc: Return session token and optionally send callback
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args:
         session_token: "{{ create_session.command_0.rows[0].session_token }}"
         user_id: "{{ create_session.command_0.rows[0].user_id }}"
         expires_at: "{{ create_session.command_0.rows[0].expires_at }}"
         email: "{{ upsert_user.command_0.rows[0].email }}"
       code: |
-        # Arguments injected: session_token, user_id, expires_at, email
         result = {
             "status": "authenticated",
             "session_token": session_token,
-            "user": {
-                "user_id": user_id,
-                "email": email
-            },
+            "user": {"user_id": user_id, "email": email},
             "expires_at": str(expires_at)
         }
+    spec:
+      case_mode: inclusive
     case:
-      - when: "{{ event.name == 'call.done' and callback_subject }}"
+      # If callback_subject is set, send callback to gateway (same worker)
+      - when: "{{ event.name == 'call.done' and workload.callback_subject }}"
         then:
-          next:
-            - step: callback
+          - send_callback:
+              tool:
+                kind: gateway
+                action: callback
+                data:
+                  status: "{{ result.status }}"
+                  session_token: "{{ result.session_token }}"
+                  user: "{{ result.user }}"
+                  expires_at: "{{ result.expires_at }}"
+      # Always transition to end (next: acts as break)
       - when: "{{ event.name == 'call.done' }}"
         then:
-          next:
-            - step: end
-
-  - step: callback
-    desc: Send result to gateway
-    tool:
-      kind: gateway
-      action: callback
-      step: success
-      data:
-        status: "{{ success.data.result.status }}"
-        session_token: "{{ success.data.result.session_token }}"
-        user: "{{ success.data.result.user }}"
-        expires_at: "{{ success.data.result.expires_at }}"
-    case:
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          next:
-            - step: end
+          - next:
+              next:
+                - step: end
 
   - step: end
     desc: Complete
     tool:
       kind: python
-      auth: {}
-      libs: {}
-      args: {}
       code: |
         result = {"status": "complete"}

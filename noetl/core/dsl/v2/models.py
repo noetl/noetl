@@ -254,9 +254,45 @@ class CaseEntry(BaseModel):
     """
     Conditional behavior rule.
     Evaluated against event context with Jinja2.
+
+    Supports two forms:
+    - when: "{{ condition }}" with then: - Standard conditional
+    - else: (no when) - Fallback when no conditions matched in inclusive mode
     """
-    when: str = Field(..., description="Jinja2 condition expression")
-    then: dict[str, Any] | list[dict[str, Any]] = Field(..., description="Actions to execute when condition is true")
+    when: Optional[str] = Field(None, description="Jinja2 condition expression (optional for else clause)")
+    then: Optional[dict[str, Any] | list[dict[str, Any]]] = Field(None, description="Actions to execute when condition is true")
+
+    class Config:
+        extra = "allow"  # Allow 'else' as alternative to 'then'
+
+
+# ============================================================================
+# Step Spec Model - Step-level behavior configuration
+# ============================================================================
+
+class StepSpec(BaseModel):
+    """
+    Step-level behavior configuration.
+
+    Controls how a step evaluates case conditions:
+    - case_mode: exclusive (default, first match wins) or inclusive (all matches execute)
+    - eval_mode: on_entry (default, once) or on_event (re-evaluate on every event)
+    - timeout: step execution timeout
+    - on_error: error handling behavior
+    """
+    case_mode: Literal["exclusive", "inclusive"] = Field(
+        default="exclusive",
+        description="Case evaluation mode: exclusive (XOR, first match) or inclusive (OR, all matches)"
+    )
+    eval_mode: Literal["on_entry", "on_event"] = Field(
+        default="on_entry",
+        description="Case evaluation timing: on_entry (once) or on_event (every event)"
+    )
+    timeout: Optional[str] = Field(None, description="Step timeout (e.g., '30s', '5m')")
+    on_error: Optional[Literal["fail", "continue", "retry"]] = Field(
+        None,
+        description="Error handling: fail (default), continue, or retry"
+    )
 
 
 # ============================================================================
@@ -266,10 +302,11 @@ class CaseEntry(BaseModel):
 class Step(BaseModel):
     """
     Workflow step with event-driven control flow.
-    
+
     Step-level attributes:
     - step: name (identifier)
     - desc: description
+    - spec: step behavior configuration (case_mode, eval_mode, etc.)
     - args: input arguments (from previous steps)
     - loop: iteration config
     - tool: execution config (tool.kind pattern)
@@ -278,13 +315,14 @@ class Step(BaseModel):
     """
     step: str = Field(..., description="Step name (unique identifier)")
     desc: Optional[str] = Field(None, description="Step description")
+    spec: Optional[StepSpec] = Field(None, description="Step behavior configuration")
     args: Optional[dict[str, Any]] = Field(None, description="Input arguments for this step")
     vars: Optional[dict[str, Any]] = Field(None, description="Variables to extract from step result")
     loop: Optional[Loop] = Field(None, description="Loop configuration")
-    tool: ToolSpec = Field(..., description="Tool configuration with tool.kind")
+    tool: Optional[ToolSpec] = Field(None, description="Tool configuration with tool.kind (optional when case-driven)")
     case: Optional[list[CaseEntry]] = Field(None, description="Event-driven conditional rules")
     next: Optional[str | list[str] | list[dict[str, Any]]] = Field(
-        None, 
+        None,
         description="Structural default next step(s) - unconditional"
     )
     

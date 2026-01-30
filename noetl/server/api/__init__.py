@@ -19,9 +19,6 @@ from . import credential, catalog, database, keychain
 # Query/monitoring APIs
 from . import execution, vars, dashboard, system, runtime
 
-# Run API (playbook execution for sub-playbooks)
-from . import run
-
 # Context API (server-side template rendering)
 from . import context
 
@@ -47,9 +44,6 @@ router.include_router(dashboard.router)
 router.include_router(system.router)
 router.include_router(runtime.router)
 
-# Run API (playbook execution for sub-playbooks)
-router.include_router(run.router)
-
 # Context API (server-side template rendering)
 router.include_router(context.router)
 
@@ -58,5 +52,5 @@ __all__ = [
     "v2",
     "catalog", "credential", "database", "keychain",
     "execution", "vars", "dashboard", "system", "runtime",
-    "run", "context"
+    "context"
 ]

@@ -850,66 +850,168 @@ class ControlFlowEngine:
         step_def: Step,
         event: Event
     ) -> list[Command]:
-        """Process case rules for a given event and return matching commands."""
+        """
+        Process case rules for a given event and return matching commands.
+
+        Supports two case evaluation modes via step.spec.case_mode:
+        - exclusive (default): XOR-split, first matching when: wins
+        - inclusive: OR-split, ALL matching when: conditions execute their then: blocks
+
+        In inclusive mode:
+        - All matching conditions execute their then: blocks sequentially
+        - next: in any then: block acts as a break - stops evaluation and transitions
+        - else: only executes if zero when: conditions matched
+        """
         commands = []
         context = state.get_render_context(event)
-        
+
+        # Get case_mode from step spec (default: exclusive)
+        case_mode = "exclusive"
+        if step_def.spec and step_def.spec.case_mode:
+            case_mode = step_def.spec.case_mode
+
         if step_def.case:
-            logger.info(f"[CASE-EVAL] Step {event.step} has {len(step_def.case)} case rules, evaluating for event {event.name}")
+            logger.info(f"[CASE-EVAL] Step {event.step} has {len(step_def.case)} case rules, mode={case_mode}, evaluating for event {event.name}")
+
+            any_matched = False
+            break_evaluation = False
+
             for idx, case_entry in enumerate(step_def.case):
+                if break_evaluation:
+                    break
+
+                # Handle else: clause (no when: condition)
+                if not case_entry.when or case_entry.when == "else":
+                    # else: only fires when no conditions matched (at the end)
+                    if not any_matched:
+                        logger.info(f"[CASE-ELSE] Step {event.step}: executing else clause")
+                        new_commands, has_next = await self._process_then_actions_with_break(
+                            case_entry.then,
+                            state,
+                            event
+                        )
+                        commands.extend(new_commands)
+                        if has_next:
+                            break_evaluation = True
+                    continue
+
                 # Evaluate condition
-                logger.info(f"[CASE-EVAL] Evaluating case {idx}: {case_entry.when}")
+                logger.debug(f"[CASE-EVAL] Evaluating case {idx}: {case_entry.when}")
                 if self._evaluate_condition(case_entry.when, context):
                     logger.info(f"[CASE-MATCH] Step {event.step}, event {event.name}: matched case {idx}: {case_entry.when}")
-                    
+                    any_matched = True
+
                     # Process then actions
-                    new_commands = await self._process_then_actions(
+                    new_commands, has_next = await self._process_then_actions_with_break(
                         case_entry.then,
                         state,
                         event
                     )
                     commands.extend(new_commands)
                     logger.info(f"[CASE-MATCH] Generated {len(new_commands)} commands from case rule")
-                    
-                    # First match wins - don't evaluate remaining cases
-                    break
+
+                    # In exclusive mode: first match wins, stop evaluation
+                    # In inclusive mode: next: acts as break, otherwise continue
+                    if case_mode == "exclusive":
+                        break
+                    elif has_next:
+                        # next: in inclusive mode acts as break
+                        logger.info(f"[CASE-BREAK] Inclusive mode: next: in case {idx} triggered break")
+                        break_evaluation = True
                 else:
                     logger.debug(f"[CASE-EVAL] Case {idx} did not match: {case_entry.when}")
-        
+
         return commands
+
+    async def _process_then_actions_with_break(
+        self,
+        then_block: dict | list,
+        state: ExecutionState,
+        event: Event
+    ) -> tuple[list[Command], bool]:
+        """
+        Process then actions and return (commands, has_next).
+
+        Returns True for has_next if a next: action was encountered,
+        which signals that evaluation should break in inclusive mode.
+        """
+        commands = await self._process_then_actions(then_block, state, event)
+
+        # Check if any action was a next: transition
+        actions = then_block if isinstance(then_block, list) else [then_block]
+        has_next = any(
+            isinstance(action, dict) and "next" in action
+            for action in actions
+        )
+
+        return commands, has_next
     
     async def _process_then_actions(
-        self, 
+        self,
         then_block: dict | list,
         state: ExecutionState,
         event: Event
     ) -> list[Command]:
-        """Process actions in a then block."""
+        """
+        Process actions in a then block.
+
+        Supports:
+        - Reserved action types: next, set, result, fail, collect, retry, sink
+        - Named tasks with tool: { task_name: { tool: { kind: ... } } }
+        """
         commands: list[Command] = []
-        
+
+        # Reserved action keys that are not named tasks
+        reserved_actions = {"next", "set", "result", "fail", "collect", "retry", "sink"}
+
         # Normalize to list
         actions = then_block if isinstance(then_block, list) else [then_block]
-        
+
         context = state.get_render_context(event)
         max_pages_env = os.getenv("NOETL_PAGINATION_MAX_PAGES", "100")
         try:
             max_pages = max(1, int(max_pages_env))
         except ValueError:
             max_pages = 100
-        
+
         for action in actions:
             if not isinstance(action, dict):
                 continue
 
             handled_pagination_retry = False
-            
-            # Handle different action types
+
+            # Check for named tasks with tool: inside
+            # Format: { task_name: { tool: { kind: ... } } }
+            for task_name, task_config in action.items():
+                if task_name in reserved_actions:
+                    continue  # Will be handled by specific handlers below
+                if isinstance(task_config, dict) and "tool" in task_config:
+                    # This is a named task - create a command for it
+                    tool_spec = task_config["tool"]
+                    if isinstance(tool_spec, dict) and "kind" in tool_spec:
+                        logger.info(f"[THEN-TASK] Processing named task '{task_name}' with tool kind '{tool_spec.get('kind')}'")
+                        command = await self._create_inline_command(
+                            state, event.step, task_name, tool_spec, context
+                        )
+                        if command:
+                            commands.append(command)
+
+            # Handle different reserved action types
             if "next" in action:
                 # Transition to next step(s)
-                next_items = action["next"]
-                if not isinstance(next_items, list):
-                    next_items = [next_items]
-                
+                # Support both old format: { next: "step" } or { next: ["step1", "step2"] }
+                # And new format: { next: { next: [{ step: "step" }] } }
+                next_value = action["next"]
+
+                # Check for new nested format: { next: { next: [...] } }
+                if isinstance(next_value, dict) and "next" in next_value:
+                    next_items = next_value["next"]
+                    if not isinstance(next_items, list):
+                        next_items = [next_items]
+                else:
+                    # Old format
+                    next_items = next_value if isinstance(next_value, list) else [next_value]
+
                 for next_item in next_items:
                     if isinstance(next_item, str):
                         # Simple step name
@@ -1190,6 +1292,68 @@ class ControlFlowEngine:
         
         return commands
     
+    async def _create_inline_command(
+        self,
+        state: ExecutionState,
+        step_name: str,
+        task_name: str,
+        tool_spec: dict[str, Any],
+        context: dict[str, Any]
+    ) -> Optional[Command]:
+        """
+        Create a command for an inline tool execution from a then: block.
+
+        This handles named tasks in then: blocks like:
+        then:
+          - send_callback:
+              tool:
+                kind: gateway
+                action: callback
+                data:
+                  status: "{{ result.status }}"
+
+        Args:
+            state: Current execution state
+            step_name: The step this task belongs to
+            task_name: Name of the task (e.g., "send_callback")
+            tool_spec: Tool specification dict with kind and other config
+            context: Render context for Jinja2 templates
+
+        Returns:
+            Command object or None if tool kind is missing
+        """
+        tool_kind = tool_spec.get("kind")
+        if not tool_kind:
+            logger.warning(f"[INLINE-TASK] Task '{task_name}' missing tool kind")
+            return None
+
+        # Extract tool config (everything except 'kind')
+        tool_config = {k: v for k, v in tool_spec.items() if k != "kind"}
+
+        # Render Jinja2 templates in tool config
+        from noetl.core.dsl.render import render_template as recursive_render
+        rendered_tool_config = recursive_render(self.jinja_env, tool_config, context)
+
+        # Create command for inline task
+        # Use step_name as the step, task_name in metadata for tracking
+        command = Command(
+            execution_id=state.execution_id,
+            step=f"{step_name}:{task_name}",  # Composite step name to track task
+            tool=ToolCall(
+                kind=tool_kind,
+                config=rendered_tool_config
+            ),
+            args={},
+            render_context=context,
+            case=None,  # Inline tasks don't have their own case blocks
+            attempt=1,
+            priority=0,
+            metadata={"inline_task": True, "task_name": task_name, "parent_step": step_name}
+        )
+
+        logger.info(f"[INLINE-TASK] Created command for task '{task_name}' (kind={tool_kind})")
+        return command
+
     async def _create_command_for_step(
         self,
         state: ExecutionState,
