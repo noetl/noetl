@@ -27,19 +27,17 @@ workflow:
     desc: Begin validation
     tool:
       kind: python
-      auth: {}
-      libs: {}
-      args: {}
       code: |
         result = {"status": "initialized"}
     case:
-      - when: "{{ event.name == 'step.exit' }}"
+      - when: "{{ event.name == 'call.done' }}"
         then:
-          next:
-            - step: lookup_session
+          - next:
+              next:
+                - step: lookup_session
 
   - step: lookup_session
-    desc: Lookup session
+    desc: Lookup and validate session
     tool:
       kind: postgres
       auth: "{{ workload.db_credential }}"
@@ -61,15 +59,34 @@ workflow:
         FROM auth.sessions s
         JOIN auth.users u ON s.user_id = u.user_id
         WHERE s.session_token = '{{ workload.session_token }}';
+    next:
+      - step: check_and_route
+
+  - step: check_and_route
+    desc: Check session validity and route
+    tool:
+      kind: python
+      libs:
+        json: json
+      args:
+        rows_json: "{{ lookup_session.command_0.rows | tojson }}"
+      code: |
+        rows = json.loads(rows_json) if isinstance(rows_json, str) else rows_json
+        if rows and len(rows) > 0 and rows[0].get('session_valid'):
+            result = {"valid": True, "session": rows[0], "route": "update_activity"}
+        else:
+            result = {"valid": False, "route": "validation_failed"}
     case:
-      - when: "{{ event.name == 'step.exit' and response is defined and (response | length) > 0 and response[0].session_valid }}"
+      - when: "{{ event.name == 'call.done' and result.route == 'update_activity' }}"
         then:
-          next:
-            - step: update_activity
-      - when: "{{ event.name == 'step.exit' }}"
+          - next:
+              next:
+                - step: update_activity
+      - when: "{{ event.name == 'call.done' }}"
         then:
-          next:
-            - step: validation_failed
+          - next:
+              next:
+                - step: validation_failed
 
   - step: update_activity
     desc: Update last activity
@@ -79,12 +96,9 @@ workflow:
       command: |
         UPDATE auth.sessions
         SET last_activity_at = NOW()
-        WHERE session_id = {{ lookup_session[0].session_id }};
-    case:
-      - when: "{{ event.name == 'step.exit' }}"
-        then:
-          next:
-            - step: get_roles
+        WHERE session_id = {{ check_and_route.session.session_id }};
+    next:
+      - step: get_roles
 
   - step: get_roles
     desc: Get user roles
@@ -95,106 +109,83 @@ workflow:
         SELECT r.role_name
         FROM auth.user_roles ur
         JOIN auth.roles r ON ur.role_id = r.role_id
-        WHERE ur.user_id = {{ lookup_session[0].user_id }}
+        WHERE ur.user_id = {{ check_and_route.session.user_id }}
           AND (ur.expires_at IS NULL OR ur.expires_at > NOW());
-    case:
-      - when: "{{ event.name == 'step.exit' }}"
-        then:
-          next:
-            - step: success
+    next:
+      - step: success
 
   - step: success
     desc: Return valid session
     tool:
       kind: python
-      auth: {}
-      libs: {}
+      libs:
+        json: json
       args:
-        user_id: "{{ lookup_session[0].user_id }}"
-        email: "{{ lookup_session[0].email }}"
-        display_name: "{{ lookup_session[0].display_name }}"
-        roles: "{{ get_roles }}"
+        session_json: "{{ check_and_route.session | tojson }}"
+        roles_json: "{{ get_roles.command_0.rows | tojson }}"
       code: |
-        # Arguments injected: user_id, email, display_name, roles
+        session = json.loads(session_json) if isinstance(session_json, str) else session_json
+        roles = json.loads(roles_json) if isinstance(roles_json, str) else roles_json
+
         result = {
             "valid": True,
             "user": {
-                "user_id": user_id,
-                "email": email,
-                "display_name": display_name,
+                "user_id": session.get("user_id") if session else None,
+                "email": session.get("email") if session else None,
+                "display_name": session.get("display_name") if session else None,
                 "roles": [r["role_name"] for r in roles] if roles else []
             },
             "message": "Session is valid"
         }
+    spec:
+      case_mode: inclusive
     case:
-      - when: "{{ event.name == 'step.exit' and workload.callback_subject }}"
+      - when: "{{ event.name == 'call.done' and workload.callback_subject }}"
         then:
-          next:
-            - step: callback_success
-      - when: "{{ event.name == 'step.exit' }}"
+          - send_callback:
+              tool:
+                kind: gateway
+                action: callback
+                data:
+                  valid: true
+                  user: "{{ result.user }}"
+                  message: "{{ result.message }}"
+      - when: "{{ event.name == 'call.done' }}"
         then:
-          next:
-            - step: end
+          - next:
+              next:
+                - step: end
 
   - step: validation_failed
     desc: Return invalid
     tool:
       kind: python
-      auth: {}
-      libs: {}
-      args: {}
       code: |
         result = {
             "valid": False,
             "message": "Session not found or expired"
         }
+    spec:
+      case_mode: inclusive
     case:
-      - when: "{{ event.name == 'step.exit' and workload.callback_subject }}"
+      - when: "{{ event.name == 'call.done' and workload.callback_subject }}"
         then:
-          next:
-            - step: callback_failed
-      - when: "{{ event.name == 'step.exit' }}"
+          - send_callback:
+              tool:
+                kind: gateway
+                action: callback
+                data:
+                  valid: false
+                  message: "{{ result.message }}"
+      - when: "{{ event.name == 'call.done' }}"
         then:
-          next:
-            - step: end
-
-  - step: callback_success
-    desc: Send valid result to gateway
-    tool:
-      kind: gateway
-      action: callback
-      step: success
-      data:
-        valid: true
-        user: "{{ success.user }}"
-        message: "{{ success.message }}"
-    case:
-      - when: "{{ event.name == 'step.exit' }}"
-        then:
-          next:
-            - step: end
-
-  - step: callback_failed
-    desc: Send invalid result to gateway
-    tool:
-      kind: gateway
-      action: callback
-      step: validation_failed
-      data:
-        valid: false
-        message: "{{ validation_failed.message }}"
-    case:
-      - when: "{{ event.name == 'step.exit' }}"
-        then:
-          next:
-            - step: end
+          - next:
+              next:
+                - step: end
 
   - step: end
     desc: Complete
     tool:
       kind: python
-      auth: {}
-      libs: {}
-      args: {}
       code: |
         result = {"status": "complete"}

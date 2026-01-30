@@ -522,13 +522,15 @@ async def handle_event(req: EventRequest) -> EventResponse:
         
         # Trigger orchestrator for workflow progression
         if req.name == "command.completed" and req.step.lower() != "end":
-            from .run.orchestrator import evaluate_execution
             try:
+                from .run.orchestrator import evaluate_execution
                 await evaluate_execution(
                     execution_id=str(req.execution_id),
                     trigger_event_type="command.completed",
                     trigger_event_id=str(evt_id)
                 )
+            except ImportError:
+                logger.debug("Orchestrator module not available, skipping for command.completed")
             except Exception as e:
                 logger.warning(f"Orchestrator error: {e}")
 

@@ -1,0 +1,125 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: docker_cleanup
+  path: deployment/docker_cleanup
+  description: |
+    Clean up Docker resources to free disk space.
+
+    Steps:
+    1. Show current disk usage
+    2. Remove unused containers
+    3. Remove unused images
+    4. Remove build cache
+    5. Show freed space
+
+    Use with caution - this removes unused Docker resources.
+  tags:
+    - deployment
+    - docker
+    - cleanup
+
+workload:
+  # Set to "true" to also prune volumes (dangerous - can delete data)
+  prune_volumes: "false"
+  # Set to "true" to remove all unused images, not just dangling ones
+  all_images: "true"
+
+workflow:
+  - step: start
+    desc: Begin Docker cleanup
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "=========================================="
+          echo " Docker Cleanup"
+          echo "=========================================="
+          echo ""
+          echo "Current disk usage:"
+          docker system df
+          echo ""
+    next:
+      - step: prune_containers
+
+  - step: prune_containers
+    desc: Remove stopped containers
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "Removing stopped containers..."
+          docker container prune -f
+          echo ""
+    next:
+      - step: prune_images
+
+  - step: prune_images
+    desc: Remove unused images
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "Removing unused images..."
+          if [ "{{ workload.all_images }}" = "true" ]; then
+            echo "Removing all unused images (not just dangling)"
+            docker image prune -a -f
+          else
+            echo "Removing dangling images only"
+            docker image prune -f
+          fi
+          echo ""
+    next:
+      - step: prune_build_cache
+
+  - step: prune_build_cache
+    desc: Remove build cache
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "Removing build cache..."
+          docker builder prune -a -f
+          echo ""
+    next:
+      - step: prune_volumes_optional
+
+  - step: prune_volumes_optional
+    desc: Optionally remove unused volumes
+    tool:
+      kind: shell
+      cmds:
+        - |
+          if [ "{{ workload.prune_volumes }}" = "true" ]; then
+            echo "WARNING: Removing unused volumes..."
+            docker volume prune -f
+          else
+            echo "Skipping volume pruning (set prune_volumes=true to enable)"
+          fi
+          echo ""
+    next:
+      - step: summary
+
+  - step: summary
+    desc: Show cleanup results
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "=========================================="
+          echo " Cleanup Complete"
+          echo "=========================================="
+          echo ""
+          echo "Disk usage after cleanup:"
+          docker system df
+          echo ""
+    next:
+      - step: end
+
+  - step: end
+    desc: Complete
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "Docker cleanup playbook completed"

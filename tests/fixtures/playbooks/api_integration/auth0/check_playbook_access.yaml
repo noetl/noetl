@@ -30,16 +30,14 @@ workflow:
     desc: Begin access check
     tool:
       kind: python
-      auth: {}
-      libs: {}
-      args: {}
       code: |
         result = {"status": "initialized"}
     case:
-      - when: "{{ event.name == 'step.exit' }}"
+      - when: "{{ event.name == 'call.done' }}"
         then:
-          next:
-            - step: get_user_from_session
+          - next:
+              next:
+                - step: get_user_from_session
 
   - step: get_user_from_session
     desc: Get user from session
@@ -55,14 +53,16 @@ workflow:
           AND s.expires_at > NOW()
           AND u.is_active = true;
     case:
-      - when: "{{ event.name == 'step.exit' and response is defined and (response | length) > 0 }}"
+      - when: "{{ event.name == 'call.done' and result.command_0 is defined and result.command_0.rows | length > 0 }}"
         then:
-          next:
-            - step: check_permission
-      - when: "{{ event.name == 'step.exit' }}"
+          - next:
+              next:
+                - step: check_permission
+      - when: "{{ event.name == 'call.done' }}"
         then:
-          next:
-            - step: access_denied
+          - next:
+              next:
+                - step: access_denied
 
   - step: check_permission
     desc: Check permissions
@@ -75,7 +75,7 @@ workflow:
         FROM auth.user_roles ur
         JOIN auth.roles r ON ur.role_id = r.role_id
         JOIN auth.playbook_permissions pp ON r.role_id = pp.role_id
-        WHERE ur.user_id = {{ get_user_from_session[0].user_id }}
+        WHERE ur.user_id = {{ get_user_from_session.command_0.rows[0].user_id }}
           AND (ur.expires_at IS NULL OR ur.expires_at > NOW())
           AND (
             pp.playbook_path = '{{ workload.playbook_path }}'
@@ -88,109 +88,88 @@ workflow:
             OR ('{{ workload.action }}' = 'modify' AND pp.can_modify = true)
           );
     case:
-      - when: "{{ event.name == 'step.exit' and response is defined and response[0].has_permission }}"
+      - when: "{{ event.name == 'call.done' and result.command_0 is defined and result.command_0.rows | length > 0 and result.command_0.rows[0].has_permission }}"
         then:
-          next:
-            - step: access_granted
-      - when: "{{ event.name == 'step.exit' }}"
+          - next:
+              next:
+                - step: access_granted
+      - when: "{{ event.name == 'call.done' }}"
         then:
-          next:
-            - step: access_denied
+          - next:
+              next:
+                - step: access_denied
 
   - step: access_granted
     desc: Return allowed
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args:
         playbook_path: "{{ workload.playbook_path }}"
         action: "{{ workload.action }}"
       code: |
-        # Arguments injected: playbook_path, action
         result = {
             "allowed": True,
             "playbook_path": playbook_path,
             "action": action,
             "message": f"Access granted to {action} playbook"
         }
+    spec:
+      case_mode: inclusive
     case:
-      - when: "{{ event.name == 'step.exit' and workload.callback_subject }}"
+      - when: "{{ event.name == 'call.done' and workload.callback_subject }}"
         then:
-          next:
-            - step: callback_granted
-      - when: "{{ event.name == 'step.exit' }}"
+          - send_callback:
+              tool:
+                kind: gateway
+                action: callback
+                data:
+                  allowed: true
+                  playbook_path: "{{ result.playbook_path }}"
+                  action: "{{ result.action }}"
+                  message: "{{ result.message }}"
+      - when: "{{ event.name == 'call.done' }}"
         then:
-          next:
-            - step: end
+          - next:
+              next:
+                - step: end
 
   - step: access_denied
     desc: Return denied
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args:
         playbook_path: "{{ workload.playbook_path }}"
         action: "{{ workload.action }}"
       code: |
-        # Arguments injected: playbook_path, action
         result = {
             "allowed": False,
             "playbook_path": playbook_path,
             "action": action,
             "message": "Access denied"
         }
+    spec:
+      case_mode: inclusive
     case:
-      - when: "{{ event.name == 'step.exit' and workload.callback_subject }}"
+      - when: "{{ event.name == 'call.done' and workload.callback_subject }}"
         then:
-          next:
-            - step: callback_denied
-      - when: "{{ event.name == 'step.exit' }}"
+          - send_callback:
+              tool:
+                kind: gateway
+                action: callback
+                data:
+                  allowed: false
+                  playbook_path: "{{ result.playbook_path }}"
+                  action: "{{ result.action }}"
+                  message: "{{ result.message }}"
+      - when: "{{ event.name == 'call.done' }}"
         then:
-          next:
-            - step: end
-
-  - step: callback_granted
-    desc: Send granted result to gateway
-    tool:
-      kind: gateway
-      action: callback
-      step: access_granted
-      data:
-        allowed: true
-        playbook_path: "{{ access_granted.playbook_path }}"
-        action: "{{ access_granted.action }}"
-        message: "{{ access_granted.message }}"
-    case:
-      - when: "{{ event.name == 'step.exit' }}"
-        then:
-          next:
-            - step: end
-
-  - step: callback_denied
-    desc: Send denied result to gateway
-    tool:
-      kind: gateway
-      action: callback
-      step: access_denied
-      data:
-        allowed: false
-        playbook_path: "{{ access_denied.playbook_path }}"
-        action: "{{ access_denied.action }}"
-        message: "{{ access_denied.message }}"
-    case:
-      - when: "{{ event.name == 'step.exit' }}"
-        then:
-          next:
-            - step: end
+          - next:
+              next:
+                - step: end
 
   - step: end
     desc: Complete
     tool:
       kind: python
-      auth: {}
-      libs: {}
-      args: {}
       code: |
         result = {"status": "complete"}

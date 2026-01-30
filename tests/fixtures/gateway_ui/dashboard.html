@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>NoETL Gateway - Dashboard</title>
+  <script src="/env.js"></script>
   <script src="/config.js"></script>
   <script src="/auth.js"></script>
   <style>
@@ -1552,7 +1553,8 @@ workflow:
 
   <script>
     // Configuration - use DASHBOARD_API to avoid conflict with auth.js API_BASE
-    const DASHBOARD_API = window.GATEWAY_CONFIG?.gatewayUrl || 'https://gateway.mestumre.dev';
+    // Uses window.ENV from env.js for environment-specific configuration
+    const DASHBOARD_API = (window.ENV && window.ENV.gatewayUrl) || window.GATEWAY_CONFIG?.gatewayUrl || 'http://localhost:8080';
     const PROXY_BASE = `${DASHBOARD_API}/noetl`;
 
     // State

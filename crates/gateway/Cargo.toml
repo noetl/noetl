@@ -47,3 +47,7 @@ tower-http = { version = "0.6", features = ["cors"] }
 async-nats = "0.38"
 futures = "0.3"
 url = "2"
+
+# Config file parsing
+toml = "0.8"
+serde_yaml = "0.9"

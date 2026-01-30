@@ -12,6 +12,7 @@ use std::sync::Arc;
 use tokio::time::{timeout, Duration};
 
 use crate::callbacks::CallbackManager;
+use crate::config::AuthPlaybooksConfig;
 use crate::noetl_client::NoetlClient;
 
 /// Combined state for auth handlers
@@ -19,6 +20,8 @@ use crate::noetl_client::NoetlClient;
 pub struct AuthState {
     pub noetl: Arc<NoetlClient>,
     pub callbacks: Arc<CallbackManager>,
+    /// Configurable playbook paths for authentication
+    pub playbook_config: AuthPlaybooksConfig,
 }
 
 /// Authentication error responses
@@ -142,8 +145,11 @@ pub async fn login(
         "request_id": request_id.clone(),
     });
 
+    let playbook_path = &state.playbook_config.login;
+    tracing::debug!("Using login playbook: {}", playbook_path);
+
     let result = state.noetl
-        .execute_playbook("api_integration/auth0/auth0_login", variables)
+        .execute_playbook(playbook_path, variables)
         .await
         .map_err(|e| {
             // Cancel callback on error
@@ -155,8 +161,9 @@ pub async fn login(
 
     tracing::info!("Auth login execution_id: {}, request_id: {}", result.execution_id, request_id);
 
-    // Wait for callback with 60 second timeout
-    let callback_result = timeout(Duration::from_secs(60), rx)
+    // Wait for callback with configurable timeout
+    let timeout_secs = state.playbook_config.timeout_secs;
+    let callback_result = timeout(Duration::from_secs(timeout_secs), rx)
         .await
         .map_err(|_| {
             let callbacks = state.callbacks.clone();
@@ -245,8 +252,11 @@ pub async fn validate_session(
         "request_id": request_id.clone(),
     });
 
+    let playbook_path = &state.playbook_config.validate_session;
+    tracing::debug!("Using validate_session playbook: {}", playbook_path);
+
     let result = state.noetl
-        .execute_playbook("api_integration/auth0/auth0_validate_session", variables)
+        .execute_playbook(playbook_path, variables)
         .await
         .map_err(|e| {
             let callbacks = state.callbacks.clone();
@@ -257,8 +267,9 @@ pub async fn validate_session(
 
     tracing::info!("Auth validate_session execution_id: {}, request_id: {}", result.execution_id, request_id);
 
-    // Wait for callback with 60 second timeout
-    let callback_result = timeout(Duration::from_secs(60), rx)
+    // Wait for callback with configurable timeout
+    let timeout_secs = state.playbook_config.timeout_secs;
+    let callback_result = timeout(Duration::from_secs(timeout_secs), rx)
         .await
         .map_err(|_| {
             let callbacks = state.callbacks.clone();
@@ -343,8 +354,11 @@ pub async fn check_access(
         "request_id": request_id.clone(),
     });
 
+    let playbook_path = &state.playbook_config.check_access;
+    tracing::debug!("Using check_access playbook: {}", playbook_path);
+
     let result = state.noetl
-        .execute_playbook("api_integration/auth0/check_playbook_access", variables)
+        .execute_playbook(playbook_path, variables)
         .await
         .map_err(|e| {
             let callbacks = state.callbacks.clone();
@@ -355,8 +369,9 @@ pub async fn check_access(
 
     tracing::info!("Auth check_access execution_id: {}, request_id: {}", result.execution_id, request_id);
 
-    // Wait for callback with 60 second timeout
-    let callback_result = timeout(Duration::from_secs(60), rx)
+    // Wait for callback with configurable timeout
+    let timeout_secs = state.playbook_config.timeout_secs;
+    let callback_result = timeout(Duration::from_secs(timeout_secs), rx)
         .await
         .map_err(|_| {
             let callbacks = state.callbacks.clone();

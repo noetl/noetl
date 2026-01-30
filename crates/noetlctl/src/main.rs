@@ -70,7 +70,7 @@ enum Commands {
     ///     noetl exec my-playbook --runtime distributed             # catalog path
     ///     noetl exec ./foo.yaml --set key=value --verbose          # with variables
     ///     noetl exec pbk_01J... -r distributed                     # by db ID
-    #[command(verbatim_doc_comment)]
+    #[command(verbatim_doc_comment, alias = "run")]
     Exec {
         /// Playbook reference: file path, catalog://name@version, db ID, or catalog path
         #[arg(value_name = "REF")]
@@ -116,9 +116,9 @@ enum Commands {
         #[arg(short, long)]
         json: bool,
     },
-    /// Alias for 'exec' - execute a playbook
-    #[command(alias = "run", hide = true)]
-    Run {
+    /// Legacy run command (deprecated, use 'exec')
+    #[command(name = "run-legacy", hide = true)]
+    RunLegacy {
         /// Playbook reference: file path, catalog://name@version, db ID, or catalog path
         #[arg(value_name = "REF")]
         reference: Option<String>,
@@ -1327,7 +1327,7 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        Some(Commands::Run {
+        Some(Commands::RunLegacy {
             reference,
             runtime,
             args,

@@ -33,18 +33,18 @@ workflow:
       libs:
         json: json
       code: |
-        print(f"DEBUG: workload = {json.dumps(context.get('workload', {}), indent=2)}")
+        print(f"DEBUG: auth0_token present = {bool(context.get('auth0_token'))}")
+        print(f"DEBUG: callback_subject = {context.get('callback_subject', '')}")
         result = {
             "status": "initialized",
-            "auth0_token_present": bool(context.get('workload', {}).get('auth0_token')),
-            "client_ip_present": bool(context.get('workload', {}).get('client_ip'))
+            "auth0_token_present": bool(context.get('auth0_token')),
+            "client_ip_present": bool(context.get('client_ip'))
         }
     case:
       - when: "{{ event.name == 'call.done' }}"
         then:
           - next:
-              next:
-                - step: validate_token
+              - step: validate_token
 
   - step: validate_token
     desc: Decode Auth0 ID token (JWT)
@@ -54,7 +54,7 @@ workflow:
         base64: base64
         json: json
       code: |
-        token = context.get('workload', {}).get('auth0_token', '')
+        token = context.get('auth0_token', '')
         try:
             parts = token.split('.')
             if len(parts) != 3:
@@ -73,42 +73,56 @@ workflow:
             }
         except Exception as e:
             result = {"error": str(e)}
-    spec:
-      case_mode: inclusive
     case:
-      # On error with callback_subject, send error callback
-      - when: "{{ event.name == 'call.done' and result.error is defined and workload.callback_subject }}"
+      # On call.error (Python exception) with callback_subject, send error callback
+      - when: "{{ event.name == 'call.error' and callback_subject }}"
         then:
-          - send_error_callback:
+          - sink:
               tool:
                 kind: gateway
                 action: callback
                 data:
-                  request_id: "{{ workload.request_id }}"
+                  request_id: "{{ request_id }}"
+                  status: "error"
+                  error: "{{ event.error | default('Token validation failed') }}"
+                  message: "Token validation failed"
+          - next:
+              - step: end
+      # On call.error without callback, just end
+      - when: "{{ event.name == 'call.error' }}"
+        then:
+          - next:
+              - step: end
+      # On error result with callback_subject, send error callback
+      - when: "{{ event.name == 'call.done' and result.error is defined and callback_subject }}"
+        then:
+          - sink:
+              tool:
+                kind: gateway
+                action: callback
+                data:
+                  request_id: "{{ request_id }}"
                   status: "error"
                   error: "{{ result.error }}"
                   message: "Token validation failed"
           - next:
-              next:
-                - step: end
-      # On error without callback, just end
+              - step: end
+      # On error result without callback, just end
       - when: "{{ event.name == 'call.done' and result.error is defined }}"
         then:
           - next:
-              next:
-                - step: end
+              - step: end
       # On success, proceed to upsert_user
       - when: "{{ event.name == 'call.done' and result.sub is defined }}"
         then:
           - next:
-              next:
-                - step: upsert_user
+              - step: upsert_user
 
   - step: upsert_user
     desc: Create or update user
     tool:
       kind: postgres
-      auth: "{{ workload.db_credential }}"
+      auth: "{{ db_credential }}"
       command: |
         INSERT INTO auth.users (auth0_id, email, display_name, last_login_at)
         VALUES ('{{ validate_token.sub }}', '{{ validate_token.email }}', '{{ validate_token.name }}', NOW())
@@ -122,14 +136,13 @@ workflow:
       - when: "{{ event.name == 'call.done' and result.command_0 is defined }}"
         then:
           - next:
-              next:
-                - step: create_session
+              - step: create_session
 
   - step: create_session
     desc: Create session
     tool:
       kind: postgres
-      auth: "{{ workload.db_credential }}"
+      auth: "{{ db_credential }}"
       command: |
         INSERT INTO auth.sessions (
           user_id,
@@ -141,20 +154,19 @@ workflow:
         VALUES (
           {{ upsert_user.command_0.rows[0].user_id }},
           replace(gen_random_uuid()::text, '-', ''),
-          '{{ workload.auth0_token }}',
+          '{{ auth0_token }}',
           NOW() + INTERVAL '24 hours',
-          '{{ workload.client_ip }}'::inet
+          '{{ client_ip }}'::inet
         )
         RETURNING session_token, user_id, expires_at;
     case:
       - when: "{{ event.name == 'call.done' and result.command_0 is defined }}"
         then:
           - next:
-              next:
-                - step: success
+              - step: success
 
   - step: success
-    desc: Return session token and optionally send callback
+    desc: Return session token and send callback
     tool:
       kind: python
       args:
@@ -169,27 +181,27 @@ workflow:
             "user": {"user_id": user_id, "email": email},
             "expires_at": str(expires_at)
         }
-    spec:
-      case_mode: inclusive
     case:
-      # If callback_subject is set, send callback to gateway (same worker)
-      - when: "{{ event.name == 'call.done' and workload.callback_subject }}"
+      # If callback_subject is set, send callback to gateway
+      - when: "{{ event.name == 'call.done' and callback_subject }}"
         then:
-          - send_callback:
+          - sink:
               tool:
                 kind: gateway
                 action: callback
                 data:
+                  request_id: "{{ request_id }}"
                   status: "{{ result.status }}"
                   session_token: "{{ result.session_token }}"
                   user: "{{ result.user }}"
                   expires_at: "{{ result.expires_at }}"
-      # Always transition to end (next: acts as break)
+          - next:
+              - step: end
+      # Always transition to end
       - when: "{{ event.name == 'call.done' }}"
         then:
           - next:
-              next:
-                - step: end
+              - step: end
 
   - step: end
     desc: Complete

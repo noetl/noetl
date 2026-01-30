@@ -1,10 +1,38 @@
 // Authentication utilities for Gateway UI
+//
+// NOTE: This file requires env.js to be loaded first.
+// The gateway URL is configured via window.ENV.gatewayUrl
 
-// For local testing, point to the gateway URL
-// const API_BASE = window.location.origin;
-const API_BASE = 'https://gateway.mestumre.dev';
-const AUTH_VALIDATE_URL = `${API_BASE}/api/auth/validate`;
-const AUTH_CHECK_ACCESS_URL = `${API_BASE}/api/auth/check-access`;
+// Get API base from environment configuration (set by env.js)
+function getApiBase() {
+  if (window.ENV && window.ENV.gatewayUrl) {
+    return window.ENV.gatewayUrl;
+  }
+  // Fallback for direct usage without env.js
+  console.warn('[auth.js] ENV not loaded, using fallback localhost:8080');
+  return 'http://localhost:8080';
+}
+
+// Lazy-initialized API URLs (allows env.js to load first)
+let _apiBase = null;
+let _authValidateUrl = null;
+let _authCheckAccessUrl = null;
+
+function getAuthValidateUrl() {
+  if (!_authValidateUrl) {
+    _apiBase = getApiBase();
+    _authValidateUrl = `${_apiBase}/api/auth/validate`;
+  }
+  return _authValidateUrl;
+}
+
+function getAuthCheckAccessUrl() {
+  if (!_authCheckAccessUrl) {
+    _apiBase = getApiBase();
+    _authCheckAccessUrl = `${_apiBase}/api/auth/check-access`;
+  }
+  return _authCheckAccessUrl;
+}
 
 // Check authentication on page load
 // Skip auto-check on login page to prevent redirect loops
@@ -92,7 +120,7 @@ function getUserInfo() {
  */
 async function validateSession(token) {
   try {
-    const response = await fetch(AUTH_VALIDATE_URL, {
+    const response = await fetch(getAuthValidateUrl(), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -133,7 +161,7 @@ async function checkPlaybookAccess(playbookPath, permissionType = 'execute') {
   }
 
   try {
-    const response = await fetch(AUTH_CHECK_ACCESS_URL, {
+    const response = await fetch(getAuthCheckAccessUrl(), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -210,7 +238,7 @@ async function authenticatedGraphQL(query, variables) {
     throw new Error('Not authenticated');
   }
 
-  const response = await fetch(`${API_BASE}/graphql`, {
+  const response = await fetch(`${getApiBase()}/graphql`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
