@@ -22,6 +22,9 @@ from . import execution, vars, dashboard, system, runtime
 # Run API (playbook execution for sub-playbooks)
 from . import run
 
+# Context API (server-side template rendering)
+from . import context
+
 router = APIRouter()
 
 @router.get("/health", response_class=JSONResponse)
@@ -47,10 +50,13 @@ router.include_router(runtime.router)
 # Run API (playbook execution for sub-playbooks)
 router.include_router(run.router)
 
+# Context API (server-side template rendering)
+router.include_router(context.router)
+
 __all__ = [
     "router",
     "v2",
     "catalog", "credential", "database", "keychain",
     "execution", "vars", "dashboard", "system", "runtime",
-    "run"
+    "run", "context"
 ]

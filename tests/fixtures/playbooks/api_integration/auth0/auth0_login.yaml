@@ -244,10 +244,10 @@ workflow:
       action: callback
       step: success
       data:
-        status: "{{ success.status }}"
-        session_token: "{{ success.session_token }}"
-        user: "{{ success.user }}"
-        expires_at: "{{ success.expires_at }}"
+        status: "{{ success.data.result.status }}"
+        session_token: "{{ success.data.result.session_token }}"
+        user: "{{ success.data.result.user }}"
+        expires_at: "{{ success.data.result.expires_at }}"
     case:
       - when: "{{ event.name == 'call.done' }}"
         then:

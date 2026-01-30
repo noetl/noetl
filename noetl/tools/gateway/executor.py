@@ -46,6 +46,55 @@ async def _publish_callback(subject: str, payload: Dict[str, Any]) -> bool:
         return False
 
 
+async def _render_data_server_side(
+    raw_data: Dict[str, Any],
+    execution_id: str,
+    server_url: str,
+    jinja_env: Environment,
+    context: Dict[str, Any]
+) -> Dict[str, Any]:
+    """
+    Render data templates using server-side context.
+
+    The server has access to all completed step results in the database,
+    which may not be available in the worker's local context.
+    Falls back to local rendering if server-side rendering fails.
+    """
+    import httpx
+
+    if not execution_id:
+        logger.warning("GATEWAY._RENDER: No execution_id, falling back to local rendering")
+        return render_template(jinja_env, raw_data, context)
+
+    try:
+        # Call server's /api/context/render endpoint
+        render_url = f"{server_url.rstrip('/')}/api/context/render"
+        payload = {
+            "execution_id": execution_id,
+            "template": raw_data,
+            "extra_context": {"execution_id": execution_id}
+        }
+
+        logger.info(f"GATEWAY._RENDER: Calling {render_url} for execution {execution_id}")
+        logger.info(f"GATEWAY._RENDER: Raw data template: {json.dumps(raw_data, default=str)}")
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(render_url, json=payload)
+            response.raise_for_status()
+            result = response.json()
+
+            rendered = result.get("rendered", raw_data)
+            context_keys = result.get("context_keys", [])
+            logger.info(f"GATEWAY._RENDER: Server rendered successfully, context_keys={context_keys}")
+            logger.info(f"GATEWAY._RENDER: Rendered data: {json.dumps(rendered, default=str)}")
+
+            return rendered
+
+    except Exception as e:
+        logger.warning(f"GATEWAY._RENDER: Server-side rendering failed ({e}), falling back to local rendering")
+        return render_template(jinja_env, raw_data, context)
+
+
 async def execute_gateway_task(
     task_config: Dict[str, Any],
     context: Dict[str, Any],
@@ -139,11 +188,15 @@ async def _execute_callback(
 
     # Get request ID for correlation
     request_id = workload.get('request_id', '')
-    execution_id = job.get('execution_id', '')
+    execution_id = context.get('execution_id', '') or job.get('execution_id', '')
 
-    # Render the data to send
+    # Render the data to send using server-side context
+    # The local context may not have step results like {{ success.status }}
+    # Server-side rendering fetches all completed step results from the database
     raw_data = task_config.get('data', {})
-    data = render_template(jinja_env, raw_data, context)
+    server_url = context.get('server_url', 'http://noetl.noetl.svc.cluster.local:8082')
+
+    data = await _render_data_server_side(raw_data, execution_id, server_url, jinja_env, context)
 
     # Get step name for tracking
     step_name = task_config.get('step', context.get('current_step', 'unknown'))

@@ -168,14 +168,47 @@ async def build_rendering_context(
                 if isinstance(v, dict) and "data" in v:
                     # Create a dict-like object that allows both step.data and step.field access
                     class ResultWrapper(dict):
-                        """Wrapper that allows accessing both the full result dict and the data field."""
+                        """Wrapper that allows accessing both the full result dict and the data field.
+
+                        Supports multiple access patterns:
+                        - {{ step.data.field }}  - explicit data access
+                        - {{ step.field }}       - direct field access (proxied to data)
+                        - {{ step.status }}      - explicit status access
+                        """
 
                         def __init__(self, result_dict):
                             super().__init__(result_dict)
-                            self.data = result_dict.get("data")
+                            self._data = result_dict.get("data") or {}
                             # Also expose other common fields
-                            self.status = result_dict.get("status")
-                            self.message = result_dict.get("message")
+                            self._status = result_dict.get("status")
+                            self._message = result_dict.get("message")
+                            self._kind = result_dict.get("kind")
+
+                        @property
+                        def data(self):
+                            return self._data
+
+                        @property
+                        def status(self):
+                            return self._status
+
+                        @property
+                        def message(self):
+                            return self._message
+
+                        @property
+                        def kind(self):
+                            return self._kind
+
+                        def __getattr__(self, name):
+                            """Proxy attribute access to data field for flat access patterns."""
+                            # Don't proxy special names or already-defined attributes
+                            if name.startswith('_') or name in ('data', 'status', 'message', 'kind'):
+                                raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
+                            # Try to get from _data (the flattened result)
+                            if isinstance(self._data, dict) and name in self._data:
+                                return self._data[name]
+                            raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
 
                     base_ctx[k] = ResultWrapper(v)
                 else:
@@ -447,9 +480,16 @@ def render_template_object(
         
         # Render the template (everything except extracted blocks and preserved fields)
         try:
+            # DEBUG: Log what we're about to render
+            logger.critical(f"RENDER_DEBUG: About to render template={template}")
+            for k, v in context.items():
+                if k in ['success', 'validate_token']:
+                    logger.critical(f"RENDER_DEBUG: context[{k}]={type(v).__name__} | v={v}")
+
             out = render_template(
                 env, template, context, rules=None, strict_keys=False
             )
+            logger.critical(f"RENDER_DEBUG: After render_template, out={out}")
             if not isinstance(out, dict):
                 out = {"rendered": out}
         except Exception as e:
@@ -550,6 +590,14 @@ async def render_context(
 
     # Merge template work context if present
     render_ctx = merge_template_work_context(template, render_ctx)
+
+    # DEBUG: Log context for key step results
+    for key in ['success', 'validate_token', 'upsert_user', 'create_session']:
+        if key in render_ctx:
+            val = render_ctx[key]
+            logger.critical(f"RENDER_CONTEXT_DEBUG: {key}={type(val).__name__} | keys={list(val.keys()) if hasattr(val, 'keys') else 'N/A'}")
+            if hasattr(val, '_data'):
+                logger.critical(f"RENDER_CONTEXT_DEBUG: {key}._data={val._data}")
 
     # Render template
     rendered = render_template_object(template, render_ctx, strict)
