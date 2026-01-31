@@ -66,14 +66,13 @@ workflow:
             echo "OK kubectl: $(kubectl version --client --short 2>/dev/null || echo 'installed')"
           fi
           
-          # Check task (required)
-          if ! command -v task &> /dev/null; then
-            echo "FAIL task not found"
-            MISSING="$MISSING task"
+          # Check helm (optional but recommended for some deployments)
+          if ! command -v helm &> /dev/null; then
+            echo "WARN helm not found (optional)"
           else
-            echo "OK task: $(task --version)"
+            echo "OK helm: $(helm version --short)"
           fi
-          
+
           # Check Python (optional but recommended)
           if ! command -v python3 &> /dev/null; then
             echo "WARN python3 not found (optional)"
@@ -105,7 +104,7 @@ workflow:
             echo "  noetl run automation/development/tooling_linux.yaml --set action=install-devtools"
             echo ""
             echo "  # Manual installation:"
-            echo "  macOS: brew install docker kind kubectl go-task"
+            echo "  macOS: brew install docker kind kubectl helm"
             echo "  Linux: See https://noetl.dev/docs/installation"
             exit 1
           else
@@ -372,12 +371,12 @@ workflow:
           - step: deploy_noetl
   
   - step: deploy_gateway
-    desc: Deploy NoETL Gateway API
+    desc: Build and deploy NoETL Gateway API
     tool:
       kind: playbook
       path: ../infrastructure/gateway.yaml
       args:
-        action: deploy
+        action: deploy-all
     next:
       - step: deploy_noetl
   

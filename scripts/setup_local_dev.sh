@@ -102,5 +102,5 @@ echo "  export NOETL_ENABLE_UI=false  # Disable UI if not needed"
 echo "  export NOETL_DB_URL=...       # Database connection"
 echo
 echo "For Docker/K8s development:"
-echo "  task bring-all                # Complete K8s setup"
-echo "  task docker-build-noetl       # Build container images"
+echo "  noetl run automation/boot.yaml                    # Complete K8s setup"
+echo "  noetl run automation/development/docker.yaml      # Build container images"

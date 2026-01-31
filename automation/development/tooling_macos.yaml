@@ -140,7 +140,6 @@ workflow:
             echo "       -> Install Docker Desktop from https://www.docker.com/products/docker-desktop/"
             fail=1
           fi
-          if command -v task >/dev/null 2>&1; then echo "[OK] task available"; else echo "[INFO] task not installed (install with: brew install go-task)"; fi
           if command -v noetl >/dev/null 2>&1; then
             echo "[OK] noetl CLI: $(noetl --version 2>/dev/null | head -n1 || echo present)"
           else
@@ -204,7 +203,6 @@ workflow:
             echo "[MISSING] docker not found in PATH"
             fail=1
           fi
-          if command -v task >/dev/null 2>&1; then echo "[OK] task available"; else echo "[INFO] task not installed"; fi
           if command -v noetl >/dev/null 2>&1; then
             echo "[OK] noetl CLI: $(noetl --version 2>/dev/null | head -n1 || echo present)"
           else
@@ -416,13 +414,6 @@ workflow:
             echo "[OK] psql: $(psql --version || true)"
           fi
 
-          # Install go-task
-          if command -v task >/dev/null 2>&1; then
-            echo "[SKIP] task already installed: $(task --version || true)"
-          else
-            brew install go-task
-            echo "[OK] task: $(task --version || true)"
-          fi
           '
     next:
       - step: end

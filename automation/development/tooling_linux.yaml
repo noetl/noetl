@@ -130,7 +130,6 @@ workflow:
             echo "[MISSING] docker not found in PATH"
             fail=1
           fi
-          if command -v task >/dev/null 2>&1; then echo "[OK] task available"; else echo "[INFO] task not installed (you are likely running this via task already)"; fi
           if command -v noetl >/dev/null 2>&1; then
             echo "[OK] noetl CLI: $(noetl --version 2>/dev/null | head -n1 || echo present)"
           else
@@ -188,7 +187,6 @@ workflow:
             echo "[MISSING] docker not found in PATH"
             fail=1
           fi
-          if command -v task >/dev/null 2>&1; then echo "[OK] task available"; else echo "[INFO] task not installed (you are likely running this via task already)"; fi
           if command -v noetl >/dev/null 2>&1; then
             echo "[OK] noetl CLI: $(noetl --version 2>/dev/null | head -n1 || echo present)"
           else
