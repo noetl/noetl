@@ -114,6 +114,8 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/auth/login", post(auth::login))
         .route("/api/auth/validate", post(auth::validate_session))
         .route("/api/auth/check-access", post(auth::check_access))
+        // Internal callback endpoint for workers to deliver results via HTTP
+        .route("/api/internal/callback", post(auth::internal_callback))
         .with_state(auth_state.clone());
 
     // Protected GraphQL routes (auth required)
@@ -149,6 +151,7 @@ async fn main() -> anyhow::Result<()> {
     let addr = SocketAddr::from(([0, 0, 0, 0], config.server.port));
     tracing::info!(%addr, noetl_base = %config.noetl.base_url, "starting gateway server http://localhost:{}", config.server.port);
     tracing::info!("Auth endpoints: POST /api/auth/login, POST /api/auth/validate, POST /api/auth/check-access");
+    tracing::info!("Internal endpoint: POST /api/internal/callback (for worker callbacks)");
     tracing::info!("Protected GraphQL: POST /graphql (requires authentication)");
     tracing::info!("Protected Proxy: /noetl/* -> NoETL /api/* (requires authentication)");
 

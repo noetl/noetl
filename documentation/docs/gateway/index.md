@@ -19,18 +19,41 @@ For development documentation, local setup, and code details, see the [Gateway C
 │   Browser   │────▶│  Cloudflare │────▶│   Gateway   │────▶│   NoETL     │
 │             │     │   (Proxy)   │     │ (GKE/K8s)   │     │   Server    │
 └─────────────┘     └─────────────┘     └─────────────┘     └─────────────┘
-       │                                       │
-       │                                       ▼
-       │                              ┌─────────────┐
-       └─────────────────────────────▶│    Auth0    │
-              (Authentication)        │  (Identity) │
-                                      └─────────────┘
+       │                                    │    │                │
+       │                                    ▼    │                ▼
+       │                           ┌────────────┐│         ┌─────────────┐
+       │                           │  NATS K/V  ││         │  PostgreSQL │
+       │                           │ (sessions) ││         │   (auth)    │
+       └───────────────────────────┴────────────┘│         └─────────────┘
+              (Authentication)                   │
+                                        ┌────────┘
+                                        ▼
+                               ┌─────────────┐
+                               │    Auth0    │
+                               │  (Identity) │
+                               └─────────────┘
 ```
+
+### Session Caching with NATS K/V
+
+The Gateway uses NATS K/V as a fast session cache to avoid calling NoETL playbooks for every authenticated request:
+
+```
+Gateway Request → Check NATS K/V → Cache Hit? → Use cached session (sub-ms)
+                                 → Cache Miss? → Call playbook → Refresh cache
+```
+
+**Benefits:**
+- Sub-millisecond session lookups from NATS K/V
+- Reduced load on NoETL server and PostgreSQL
+- PostgreSQL remains source of truth for session data
+- Automatic cache refresh via playbooks
 
 ## Key Features
 
 - **Auth0 Integration**: OAuth2/OIDC authentication via Auth0 Universal Login
-- **Session Management**: Session tokens managed via NoETL playbooks
+- **Session Caching**: Fast session lookups via NATS K/V cache
+- **Session Management**: Session tokens managed via NoETL playbooks (PostgreSQL source of truth)
 - **GraphQL Proxy**: Authenticated access to NoETL's GraphQL API
 - **CORS Support**: Configurable cross-origin resource sharing
 - **Stateless Design**: No direct database connections

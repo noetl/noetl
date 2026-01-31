@@ -30,8 +30,7 @@ workflow:
       - when: "{{ event.name == 'call.done' }}"
         then:
           - next:
-              next:
-                - step: provision_schema
+              - step: provision_schema
 
   - step: provision_schema
     desc: Execute SQL to create auth schema and tables
@@ -183,8 +182,7 @@ workflow:
       - when: "{{ event.name == 'call.done' and result.command_0 is defined }}"
         then:
           - next:
-              next:
-                - step: verify_schema
+              - step: verify_schema
 
   - step: verify_schema
     desc: Verify auth schema was created successfully
@@ -200,8 +198,7 @@ workflow:
       - when: "{{ event.name == 'call.done' and result.command_0 is defined }}"
         then:
           - next:
-              next:
-                - step: success
+              - step: success
 
   - step: success
     desc: Schema provisioned successfully
@@ -219,8 +216,7 @@ workflow:
       - when: "{{ event.name == 'call.done' }}"
         then:
           - next:
-              next:
-                - step: end
+              - step: end
 
   - step: end
     desc: Complete provisioning workflow

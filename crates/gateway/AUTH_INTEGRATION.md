@@ -19,6 +19,10 @@ This document describes the complete Auth0 authentication integration between th
 ┌──────────────────────────────────────────────────────────────────┐
 │                  Gateway (Rust - Port 8090)                       │
 │  ┌────────────────────────────────────────────────────────────┐  │
+│  │  Session Cache (NATS K/V):                                 │  │
+│  │    1. Check NATS K/V for cached session (fast path)       │  │
+│  │    2. Cache miss → Call NoETL playbook (slow path)        │  │
+│  │                                                            │  │
 │  │  Public Routes:                                            │  │
 │  │    POST /api/auth/login        → NoETL auth0_login        │  │
 │  │    POST /api/auth/validate     → NoETL auth0_validate     │  │
@@ -33,35 +37,85 @@ This document describes the complete Auth0 authentication integration between th
 │  └────────────────────────────────────────────────────────────┘  │
 └─────────────────────────┬────────────────────────────────────────┘
                           │
-                          ▼
-┌──────────────────────────────────────────────────────────────────┐
-│              NoETL Server (Python - Port 8082/8083)               │
-│  ┌────────────────────────────────────────────────────────────┐  │
-│  │  Auth0 Playbooks:                                          │  │
-│  │    api_integration/auth0/auth0_login                       │  │
-│  │    api_integration/auth0/auth0_validate_session            │  │
-│  │    api_integration/auth0/check_playbook_access             │  │
-│  │                                                            │  │
-│  │  Business Playbooks:                                        │  │
-│  │    api_integration/amadeus_ai_api (flight search)          │  │
-│  │    ... (other playbooks)                                    │  │
-│  └────────────────────────────────────────────────────────────┘  │
-└─────────────────────────┬────────────────────────────────────────┘
-                          │
-                          ▼
-┌──────────────────────────────────────────────────────────────────┐
-│                   PostgreSQL Database                             │
-│  ┌────────────────────────────────────────────────────────────┐  │
-│  │  auth schema:                                              │  │
-│  │    - users (Auth0 user profiles)                           │  │
-│  │    - sessions (session tokens and expiration)              │  │
-│  │    - roles (admin, developer, analyst, viewer)             │  │
-│  │    - permissions (execute, view, edit, delete)             │  │
-│  │    - playbook_permissions (path patterns + role mapping)   │  │
-│  │    - audit_log (authentication events)                     │  │
-│  └────────────────────────────────────────────────────────────┘  │
-└──────────────────────────────────────────────────────────────────┘
+            ┌─────────────┴─────────────┐
+            ▼                           ▼
+┌───────────────────────┐   ┌──────────────────────────────────────┐
+│  NATS K/V (sessions)  │   │  NoETL Server (Python - Port 8082)   │
+│  ┌─────────────────┐  │   │  ┌────────────────────────────────┐  │
+│  │ Fast session    │  │   │  │  Auth0 Playbooks:              │  │
+│  │ cache lookups   │  │   │  │    auth0_login                 │  │
+│  │ (sub-ms)        │  │   │  │    auth0_validate_session      │  │
+│  └─────────────────┘  │   │  │    check_playbook_access       │  │
+└───────────────────────┘   │  │                                │  │
+                            │  │  Playbooks update NATS K/V     │  │
+                            │  │  after Postgres operations     │  │
+                            │  └────────────────────────────────┘  │
+                            └─────────────────────┬────────────────┘
+                                                  │
+                                                  ▼
+                            ┌──────────────────────────────────────┐
+                            │         PostgreSQL Database          │
+                            │  ┌────────────────────────────────┐  │
+                            │  │  auth schema (source of truth):│  │
+                            │  │    - users (Auth0 profiles)    │  │
+                            │  │    - sessions (tokens, expiry) │  │
+                            │  │    - roles, permissions        │  │
+                            │  │    - audit_log                 │  │
+                            │  └────────────────────────────────┘  │
+                            └──────────────────────────────────────┘
 ```
+
+## Session Caching with NATS K/V
+
+The Gateway uses NATS K/V as a fast session cache to avoid calling NoETL playbooks for every authenticated request.
+
+### Cache Flow
+
+**Login Request:**
+1. Gateway receives Auth0 token from UI
+2. Gateway calls `auth0_login` playbook via NoETL
+3. Playbook validates token, creates user/session in Postgres
+4. Playbook caches session in NATS K/V bucket (`sessions`)
+5. Gateway receives callback with session details
+
+**Subsequent Requests:**
+1. Gateway checks NATS K/V for session (sub-millisecond lookup)
+2. If found and valid → use cached session data (fast path)
+3. If not found (cache miss) → call `auth0_validate_session` playbook
+4. Playbook validates from Postgres (source of truth)
+5. Playbook refreshes NATS K/V cache
+6. Gateway receives callback
+
+### NATS K/V Session Data
+
+```json
+{
+  "session_token": "abc123...",
+  "user_id": 42,
+  "email": "user@example.com",
+  "display_name": "User Name",
+  "expires_at": "2026-01-15T10:00:00Z",
+  "is_active": true
+}
+```
+
+### Configuration
+
+```bash
+# NATS connection
+export NATS_URL=nats://nats.nats.svc.cluster.local:4222
+export NATS_SESSION_BUCKET=sessions
+
+# For Kind cluster (NodePort)
+export NATS_URL=nats://localhost:30422
+```
+
+### Benefits
+
+- **Performance**: Sub-millisecond session lookups from NATS K/V
+- **Scalability**: Reduced load on NoETL server and PostgreSQL
+- **Reliability**: Postgres remains source of truth
+- **Simplicity**: Automatic cache refresh via playbooks
 
 ## Components
 
@@ -414,14 +468,16 @@ Content-Type: application/json
 
 ## Next Steps
 
-1. **Integrate Auth0 SDK**: Use Auth0 JavaScript SDK for proper OAuth flow
-2. **Add Refresh Tokens**: Implement token refresh before expiration
-3. **Role Management UI**: Build admin interface for role/permission management
-4. **Multi-Tenant Support**: Extend schema for organization-based access
-5. **SSO Integration**: Add SAML/OAuth provider support
-6. **Audit Dashboard**: Visualize authentication events and access patterns
-7. **Rate Limiting**: Add protection against brute force attacks
-8. **Session Management**: Add "active sessions" view and revocation
+1. **Implement NATS K/V Cache in Gateway**: Add Rust code to check NATS K/V before calling playbooks
+2. **Session TTL**: Configure NATS K/V bucket with automatic TTL for cache expiration
+3. **Cache Invalidation**: Add logout handling to delete session from NATS K/V
+4. **Integrate Auth0 SDK**: Use Auth0 JavaScript SDK for proper OAuth flow
+5. **Add Refresh Tokens**: Implement token refresh before expiration
+6. **Role Management UI**: Build admin interface for role/permission management
+7. **Multi-Tenant Support**: Extend schema for organization-based access
+8. **SSO Integration**: Add SAML/OAuth provider support
+9. **Audit Dashboard**: Visualize authentication events and access patterns
+10. **Rate Limiting**: Add protection against brute force attacks
 
 ## Files Summary
 

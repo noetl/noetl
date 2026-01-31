@@ -21,9 +21,11 @@ workload:
   session_token: "{{ session_token }}"
   playbook_path: "{{ playbook_path }}"
   action: "{{ action | default('execute') }}"
-  db_credential: pg_k8s
-  callback_subject: ""  # Set by gateway for async response
+  db_credential: pg_auth
+  callback_subject: ""  # Legacy - kept for compatibility
   request_id: ""
+  # Gateway URL for HTTP callbacks (use K8s service name in cluster)
+  gateway_url: "http://gateway.gateway.svc.cluster.local:8090"
 
 workflow:
   - step: start
@@ -31,21 +33,23 @@ workflow:
     tool:
       kind: python
       code: |
+        print(f"DEBUG: request_id = {context.get('request_id', '')}")
         result = {"status": "initialized"}
     case:
       - when: "{{ event.name == 'call.done' }}"
         then:
           - next:
-              next:
-                - step: get_user_from_session
+              - step: get_user_from_session
 
   - step: get_user_from_session
     desc: Get user from session
+    spec:
+      case_mode: exclusive  # First matching case wins
     tool:
       kind: postgres
       auth: "{{ workload.db_credential }}"
       command: |
-        SELECT s.user_id, u.email
+        SELECT s.user_id, u.email, u.display_name
         FROM auth.sessions s
         JOIN auth.users u ON s.user_id = u.user_id
         WHERE s.session_token = '{{ workload.session_token }}'
@@ -56,16 +60,16 @@ workflow:
       - when: "{{ event.name == 'call.done' and result.command_0 is defined and result.command_0.rows | length > 0 }}"
         then:
           - next:
-              next:
-                - step: check_permission
+              - step: check_permission
       - when: "{{ event.name == 'call.done' }}"
         then:
           - next:
-              next:
-                - step: access_denied
+              - step: access_denied
 
   - step: check_permission
     desc: Check permissions
+    spec:
+      case_mode: exclusive  # First matching case wins
     tool:
       kind: postgres
       auth: "{{ workload.db_credential }}"
@@ -91,50 +95,66 @@ workflow:
       - when: "{{ event.name == 'call.done' and result.command_0 is defined and result.command_0.rows | length > 0 and result.command_0.rows[0].has_permission }}"
         then:
           - next:
-              next:
-                - step: access_granted
+              - step: access_granted
       - when: "{{ event.name == 'call.done' }}"
         then:
           - next:
-              next:
-                - step: access_denied
+              - step: access_denied
 
   - step: access_granted
     desc: Return allowed
+    spec:
+      case_mode: exclusive  # First matching case wins
     tool:
       kind: python
       args:
         playbook_path: "{{ workload.playbook_path }}"
         action: "{{ workload.action }}"
+        user_id: "{{ get_user_from_session.command_0.rows[0].user_id }}"
+        email: "{{ get_user_from_session.command_0.rows[0].email }}"
+        display_name: "{{ get_user_from_session.command_0.rows[0].display_name }}"
       code: |
         result = {
             "allowed": True,
             "playbook_path": playbook_path,
             "action": action,
+            "user": {"user_id": user_id, "email": email, "display_name": display_name},
             "message": f"Access granted to {action} playbook"
         }
-    spec:
-      case_mode: inclusive
     case:
-      - when: "{{ event.name == 'call.done' and workload.callback_subject }}"
+      # If request_id is set, send callback to gateway via HTTP
+      - when: "{{ event.name == 'call.done' and request_id }}"
         then:
-          - send_callback:
+          - sink:
               tool:
-                kind: gateway
-                action: callback
+                kind: http
+                method: POST
+                url: "{{ gateway_url }}/api/internal/callback"
+                headers:
+                  Content-Type: application/json
                 data:
-                  allowed: true
-                  playbook_path: "{{ result.playbook_path }}"
-                  action: "{{ result.action }}"
-                  message: "{{ result.message }}"
+                  request_id: "{{ request_id }}"
+                  status: "success"
+                  data:
+                    allowed: true
+                    playbook_path: "{{ result.playbook_path }}"
+                    permission_type: "{{ result.action }}"
+                    user:
+                      user_id: "{{ get_user_from_session.command_0.rows[0].user_id }}"
+                      email: "{{ get_user_from_session.command_0.rows[0].email }}"
+                      display_name: "{{ get_user_from_session.command_0.rows[0].display_name }}"
+                    message: "{{ result.message }}"
+          - next:
+              - step: end
       - when: "{{ event.name == 'call.done' }}"
         then:
           - next:
-              next:
-                - step: end
+              - step: end
 
   - step: access_denied
     desc: Return denied
+    spec:
+      case_mode: exclusive  # First matching case wins
     tool:
       kind: python
       args:
@@ -147,25 +167,31 @@ workflow:
             "action": action,
             "message": "Access denied"
         }
-    spec:
-      case_mode: inclusive
     case:
-      - when: "{{ event.name == 'call.done' and workload.callback_subject }}"
+      # If request_id is set, send callback to gateway via HTTP
+      - when: "{{ event.name == 'call.done' and request_id }}"
         then:
-          - send_callback:
+          - sink:
               tool:
-                kind: gateway
-                action: callback
+                kind: http
+                method: POST
+                url: "{{ gateway_url }}/api/internal/callback"
+                headers:
+                  Content-Type: application/json
                 data:
-                  allowed: false
-                  playbook_path: "{{ result.playbook_path }}"
-                  action: "{{ result.action }}"
-                  message: "{{ result.message }}"
+                  request_id: "{{ request_id }}"
+                  status: "success"
+                  data:
+                    allowed: false
+                    playbook_path: "{{ result.playbook_path }}"
+                    permission_type: "{{ result.action }}"
+                    message: "{{ result.message }}"
+          - next:
+              - step: end
       - when: "{{ event.name == 'call.done' }}"
         then:
           - next:
-              next:
-                - step: end
+              - step: end
 
   - step: end
     desc: Complete

@@ -962,7 +962,9 @@ class ControlFlowEngine:
         commands: list[Command] = []
 
         # Reserved action keys that are not named tasks
-        reserved_actions = {"next", "set", "result", "fail", "collect", "retry", "sink"}
+        # NOTE: "sink" is no longer reserved - it's now a named task like any other
+        # This allows `sink:` to be processed as a named task with `tool:` inside
+        reserved_actions = {"next", "set", "result", "fail", "collect", "retry"}
 
         # Normalize to list
         actions = then_block if isinstance(then_block, list) else [then_block]
@@ -1280,16 +1282,9 @@ class ControlFlowEngine:
                         f"(attempt {command.attempt}/{max_attempts})"
                     )
 
-            # Sink action can co-exist with next/retry, so handle separately
-            if "sink" in action:
-                # WORKER-SIDE EXECUTION: Sinks are now executed immediately by the worker
-                # after tool execution via _execute_case_sinks() method.
-                # The case blocks are passed to the worker in the command context.
-                # No need to create separate sink commands here - the worker handles it inline.
-                logger.info(f"[CASE-SINK] Sink action detected in case block - will be executed by worker immediately")
-                # Skip sink command creation - worker handles this
-                pass
-        
+            # NOTE: "sink" is no longer a reserved action - it's processed as a named task
+            # with `tool:` inside by the code above (lines 985-997)
+
         return commands
     
     async def _create_inline_command(
@@ -1489,7 +1484,17 @@ class ControlFlowEngine:
             # Convert Pydantic models to dicts for serialization
             case_blocks = [case_entry.model_dump() for case_entry in step.case]
             logger.info(f"[CASE] Including {len(case_blocks)} case blocks in command for step '{step.step}'")
-        
+
+        # Extract step spec for case evaluation behavior
+        command_spec = None
+        if step.spec:
+            from noetl.core.dsl.v2.models import CommandSpec
+            command_spec = CommandSpec(
+                case_mode=step.spec.case_mode,
+                eval_mode=step.spec.eval_mode
+            )
+            logger.info(f"[SPEC] Step '{step.step}' has spec: case_mode={step.spec.case_mode}, eval_mode={step.spec.eval_mode}")
+
         command = Command(
             execution_id=state.execution_id,
             step=step.step,
@@ -1500,6 +1505,7 @@ class ControlFlowEngine:
             args=rendered_args,  # Rendered step input arguments
             render_context=context,  # Pass full context for plugin template rendering
             case=case_blocks,  # Pass case blocks to worker for immediate execution
+            spec=command_spec,  # Pass step behavior spec for case evaluation
             attempt=1,
             priority=0
         )
@@ -1630,8 +1636,11 @@ class ControlFlowEngine:
         
         # Process case rules ONCE and store results
         # This allows us to detect retries before deciding whether to aggregate results
+        # IMPORTANT: Only process on call.done/call.error to avoid duplicate command generation
+        # step.exit should NOT trigger case evaluation because the worker already emits call.done
+        # which triggers case evaluation and generates transition commands
         case_commands = []
-        if event.name in ("step.exit", "call.done", "call.error"):
+        if event.name in ("call.done", "call.error"):
             case_commands = await self._process_case_rules(state, step_def, event)
             
         # Identify retry commands from server rules
@@ -1743,9 +1752,14 @@ class ControlFlowEngine:
         
         # Add case commands we already generated to the final list
         commands.extend(case_commands)
-        
-        # If server rules didn't match but worker reported a case action, process it now
-        if not commands and worker_case_action:
+
+        # DISABLED: Worker case action processing
+        # The server now evaluates all cases on call.done events, so we don't need
+        # to process worker case actions. This prevents duplicate command generation.
+        # The worker can still execute sinks directly, but routing (next/retry) is
+        # handled by the server on call.done.
+        should_process_worker_action = False  # Disabled to prevent duplicate commands
+        if should_process_worker_action:
             action_type = worker_case_action.get("type")
             # Worker sends "steps" for next actions, "config" for retry
             action_config = worker_case_action.get("config") or worker_case_action.get("steps", {})

@@ -6,24 +6,45 @@ metadata:
   description: |
     Authenticate user with Auth0 and create NoETL session.
 
+    Flow:
+      1. Validates Auth0 JWT token
+      2. Creates/updates user in Postgres (auth.users)
+      3. Creates session in Postgres (auth.sessions)
+      4. Caches session in NATS K/V for fast gateway lookups
+      5. Sends callback to gateway with session details
+
+    Gateway Integration:
+      - Gateway calls this playbook when user authenticates via Auth0
+      - After completion, gateway can fetch session directly from NATS K/V
+      - NATS K/V acts as session cache; Postgres is source of truth
+
     Input:
       - auth0_token: Auth0 ID token (JWT)
       - client_ip: Client IP (optional, defaults to 0.0.0.0)
+      - request_id: Gateway request ID for callback
 
-    Output:
+    Output (via callback):
       - session_token: NoETL session token
-      - user_id: Internal user ID
+      - user: User details (user_id, email, display_name)
+      - expires_at: Session expiration timestamp
   tags:
     - auth0
     - authentication
+    - nats
+    - gateway
 
 workload:
   auth0_token: ""
   client_ip: "0.0.0.0"
   auth0_domain: "mestumre-development.us.auth0.com"
   db_credential: pg_auth
+  nats_credential: nats_credential
+  # NATS K/V bucket for session cache
+  session_bucket: sessions
   callback_subject: ""
   request_id: ""
+  # Gateway URL for HTTP callbacks (use K8s service name in cluster)
+  gateway_url: "http://gateway.gateway.svc.cluster.local:8090"
 
 workflow:
   - step: start
@@ -35,6 +56,8 @@ workflow:
       code: |
         print(f"DEBUG: auth0_token present = {bool(context.get('auth0_token'))}")
         print(f"DEBUG: callback_subject = {context.get('callback_subject', '')}")
+        print(f"DEBUG: request_id = {context.get('request_id', '')}")
+        print(f"DEBUG: gateway_url = {context.get('gateway_url', '')}")
         result = {
             "status": "initialized",
             "auth0_token_present": bool(context.get('auth0_token')),
@@ -48,6 +71,8 @@ workflow:
 
   - step: validate_token
     desc: Decode Auth0 ID token (JWT)
+    spec:
+      case_mode: exclusive  # First matching case wins (important for error vs success)
     tool:
       kind: python
       libs:
@@ -74,18 +99,22 @@ workflow:
         except Exception as e:
             result = {"error": str(e)}
     case:
-      # On call.error (Python exception) with callback_subject, send error callback
-      - when: "{{ event.name == 'call.error' and callback_subject }}"
+      # On call.error (Python exception) with request_id, send error callback via HTTP
+      - when: "{{ event.name == 'call.error' and request_id }}"
         then:
           - sink:
               tool:
-                kind: gateway
-                action: callback
+                kind: http
+                method: POST
+                url: "{{ gateway_url }}/api/internal/callback"
+                headers:
+                  Content-Type: application/json
                 data:
                   request_id: "{{ request_id }}"
                   status: "error"
-                  error: "{{ event.error | default('Token validation failed') }}"
-                  message: "Token validation failed"
+                  data:
+                    error: "{{ event.error | default('Token validation failed') }}"
+                    message: "Token validation failed"
           - next:
               - step: end
       # On call.error without callback, just end
@@ -93,18 +122,22 @@ workflow:
         then:
           - next:
               - step: end
-      # On error result with callback_subject, send error callback
-      - when: "{{ event.name == 'call.done' and result.error is defined and callback_subject }}"
+      # On error result with request_id, send error callback via HTTP
+      - when: "{{ event.name == 'call.done' and result.error is defined and request_id }}"
         then:
           - sink:
               tool:
-                kind: gateway
-                action: callback
+                kind: http
+                method: POST
+                url: "{{ gateway_url }}/api/internal/callback"
+                headers:
+                  Content-Type: application/json
                 data:
                   request_id: "{{ request_id }}"
                   status: "error"
-                  error: "{{ result.error }}"
-                  message: "Token validation failed"
+                  data:
+                    error: "{{ result.error }}"
+                    message: "Token validation failed"
           - next:
               - step: end
       # On error result without callback, just end
@@ -139,7 +172,7 @@ workflow:
               - step: create_session
 
   - step: create_session
-    desc: Create session
+    desc: Create session in Postgres
     tool:
       kind: postgres
       auth: "{{ db_credential }}"
@@ -163,10 +196,38 @@ workflow:
       - when: "{{ event.name == 'call.done' and result.command_0 is defined }}"
         then:
           - next:
+              - step: cache_session
+
+  - step: cache_session
+    desc: Cache session in NATS K/V for fast gateway lookups
+    tool:
+      kind: nats
+      auth: "{{ nats_credential }}"
+      operation: kv_put
+      bucket: "{{ session_bucket }}"
+      key: "{{ create_session.command_0.rows[0].session_token }}"
+      value:
+        session_token: "{{ create_session.command_0.rows[0].session_token }}"
+        user_id: "{{ create_session.command_0.rows[0].user_id }}"
+        email: "{{ upsert_user.command_0.rows[0].email }}"
+        display_name: "{{ upsert_user.command_0.rows[0].display_name }}"
+        expires_at: "{{ create_session.command_0.rows[0].expires_at }}"
+        is_active: true
+    case:
+      - when: "{{ event.name == 'call.done' }}"
+        then:
+          - next:
+              - step: success
+      # If NATS cache fails, still proceed to success (Postgres is source of truth)
+      - when: "{{ event.name == 'call.error' }}"
+        then:
+          - next:
               - step: success
 
   - step: success
     desc: Return session token and send callback
+    spec:
+      case_mode: exclusive  # First matching case wins (callback vs no-callback)
     tool:
       kind: python
       args:
@@ -174,27 +235,36 @@ workflow:
         user_id: "{{ create_session.command_0.rows[0].user_id }}"
         expires_at: "{{ create_session.command_0.rows[0].expires_at }}"
         email: "{{ upsert_user.command_0.rows[0].email }}"
+        display_name: "{{ upsert_user.command_0.rows[0].display_name }}"
       code: |
         result = {
             "status": "authenticated",
             "session_token": session_token,
-            "user": {"user_id": user_id, "email": email},
+            "user": {"user_id": user_id, "email": email, "display_name": display_name},
             "expires_at": str(expires_at)
         }
     case:
-      # If callback_subject is set, send callback to gateway
-      - when: "{{ event.name == 'call.done' and callback_subject }}"
+      # If request_id is set, send callback to gateway via HTTP
+      - when: "{{ event.name == 'call.done' and request_id }}"
         then:
           - sink:
               tool:
-                kind: gateway
-                action: callback
+                kind: http
+                method: POST
+                url: "{{ gateway_url }}/api/internal/callback"
+                headers:
+                  Content-Type: application/json
                 data:
                   request_id: "{{ request_id }}"
-                  status: "{{ result.status }}"
-                  session_token: "{{ result.session_token }}"
-                  user: "{{ result.user }}"
-                  expires_at: "{{ result.expires_at }}"
+                  status: "success"
+                  data:
+                    status: "{{ result.status }}"
+                    session_token: "{{ result.session_token }}"
+                    user:
+                      user_id: "{{ upsert_user.command_0.rows[0].user_id }}"
+                      email: "{{ upsert_user.command_0.rows[0].email }}"
+                      display_name: "{{ upsert_user.command_0.rows[0].display_name }}"
+                    expires_at: "{{ result.expires_at }}"
           - next:
               - step: end
       # Always transition to end

@@ -151,7 +151,75 @@ Standard username/password authentication for local PostgreSQL:
 
 ---
 
-### 5. Interactive Brokers OAuth
+### 5. NATS JetStream
+
+**File**: `nats_credential.json` (based on `nats_credential.json.template`)
+
+NATS credential for K/V Store, Object Store, and JetStream messaging. Used by Auth0 playbooks for gateway session management.
+
+```json
+{
+  "name": "nats_credential",
+  "type": "nats",
+  "description": "NATS JetStream credential for K/V Store session management",
+  "tags": ["nats", "jetstream", "kv", "sessions", "auth0"],
+  "data": {
+    "nats_url": "nats://nats.nats.svc.cluster.local:4222",
+    "nats_user": "noetl",
+    "nats_password": "noetl"
+  }
+}
+```
+
+**Connection Parameters**:
+
+| Parameter | Description |
+|-----------|-------------|
+| `nats_url` | NATS server URL (e.g., `nats://localhost:4222`) |
+| `nats_user` | NATS username (optional if no auth) |
+| `nats_password` | NATS password (optional if no auth) |
+| `nats_token` | Alternative: token-based auth |
+| `tls_cert` | TLS client certificate path (optional) |
+| `tls_key` | TLS client key path (optional) |
+| `tls_ca` | TLS CA certificate path (optional) |
+
+**Usage in Playbooks**:
+
+```yaml
+- step: store_session
+  tool:
+    kind: nats
+    auth: nats_credential
+    operation: kv_put
+    bucket: sessions
+    key: "{{ session_id }}"
+    value:
+      user_id: "{{ user_id }}"
+      expires_at: "{{ expires_at }}"
+```
+
+**Supported Operations**:
+- K/V Store: `kv_get`, `kv_put`, `kv_delete`, `kv_keys`, `kv_purge`
+- Object Store: `object_get`, `object_put`, `object_delete`, `object_list`, `object_info`
+- JetStream: `js_publish`, `js_get_msg`, `js_stream_info`
+
+**Kind Cluster Setup**:
+
+NATS is deployed in the `nats` namespace with NodePort access:
+- Internal: `nats://nats.nats.svc.cluster.local:4222`
+- External (NodePort): `nats://localhost:30422`
+- Monitoring: `http://localhost:30822`
+
+**Register credential**:
+```bash
+curl -X POST http://localhost:8083/api/credentials \
+  -H 'Content-Type: application/json' \
+  --data-binary @tests/fixtures/credentials/nats_credential.json
+```
+
+---
+
+### 6. Interactive Brokers OAuth
 
 **File**: `ib_oauth.json.example`
 
@@ -200,7 +268,7 @@ PostgreSQL connection template for local development.
 
 ---
 
-### 3. Interactive Brokers OAuth 2.0 (JWT-Based Client Assertion)
+### 7. Interactive Brokers OAuth 2.0 (JWT-Based Client Assertion)
 
 **File**: `ib_oauth.json` (based on `ib_oauth.json.example`)
 

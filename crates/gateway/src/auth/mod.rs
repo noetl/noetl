@@ -55,8 +55,9 @@ pub struct LoginRequest {
     pub auth0_token: String,
     /// Auth0 refresh token (optional)
     pub auth0_refresh_token: Option<String>,
-    /// Auth0 domain (e.g., "your-tenant.auth0.com")
-    pub auth0_domain: String,
+    /// Auth0 domain (e.g., "your-tenant.auth0.com") - optional, defaults to configured domain
+    #[serde(default)]
+    pub auth0_domain: Option<String>,
     /// Session duration in hours (default: 8)
     #[serde(default = "default_session_duration")]
     pub session_duration_hours: i32,
@@ -126,7 +127,9 @@ pub async fn login(
     State(state): State<Arc<AuthState>>,
     Json(req): Json<LoginRequest>,
 ) -> Result<Json<LoginResponse>, AuthError> {
-    tracing::info!("Auth login request for domain: {}", req.auth0_domain);
+    // Use provided domain or fall back to default
+    let auth0_domain = req.auth0_domain.unwrap_or_else(|| "mestumre-development.us.auth0.com".to_string());
+    tracing::info!("Auth login request for domain: {}", auth0_domain);
 
     // Register callback to receive result via NATS
     let (request_id, nats_subject, rx) = state.callbacks.register().await;
@@ -137,7 +140,7 @@ pub async fn login(
     let variables = serde_json::json!({
         "auth0_token": req.auth0_token,
         "auth0_refresh_token": req.auth0_refresh_token.unwrap_or_default(),
-        "auth0_domain": req.auth0_domain,
+        "auth0_domain": auth0_domain,
         "session_duration_hours": req.session_duration_hours,
         "client_ip": req.client_ip.unwrap_or_else(|| "0.0.0.0".to_string()),
         "client_user_agent": req.client_user_agent.unwrap_or_else(|| "unknown".to_string()),
@@ -203,11 +206,16 @@ pub async fn login(
         .ok_or_else(|| AuthError::InternalError("Invalid email".to_string()))?
         .to_string();
 
+    // user_id can be either a number or string (from Jinja2 templates)
+    let user_id = user_obj
+        .get("user_id")
+        .and_then(|v| {
+            v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse::<i64>().ok()))
+        })
+        .ok_or_else(|| AuthError::InternalError("Invalid user_id".to_string()))? as i32;
+
     let user = UserInfo {
-        user_id: user_obj
-            .get("user_id")
-            .and_then(|v| v.as_i64())
-            .ok_or_else(|| AuthError::InternalError("Invalid user_id".to_string()))? as i32,
+        user_id,
         email: email.clone(),
         // Use display_name if present, otherwise fall back to email
         display_name: user_obj
@@ -280,8 +288,10 @@ pub async fn validate_session(
         .map_err(|_| AuthError::InternalError("Callback channel closed".to_string()))?;
 
     let output = callback_result.data;
+    tracing::info!("validate_session callback output: {:?}", output);
 
     let valid = output.get("valid").and_then(|v| v.as_bool()).unwrap_or(false);
+    tracing::info!("validate_session valid={}, valid_field={:?}", valid, output.get("valid"));
 
     if !valid {
         return Ok(Json(ValidateSessionResponse {
@@ -419,4 +429,88 @@ pub async fn check_access(
         permission_type: req.permission_type,
         message,
     }))
+}
+
+/// Internal callback request body - matches CallbackResult structure
+#[derive(Debug, Deserialize)]
+pub struct InternalCallbackRequest {
+    pub request_id: String,
+    #[serde(default)]
+    pub execution_id: Option<String>,
+    #[serde(default)]
+    pub step: Option<String>,
+    #[serde(default = "default_callback_status")]
+    pub status: String,
+    #[serde(default)]
+    pub data: serde_json::Value,
+}
+
+fn default_callback_status() -> String {
+    "success".to_string()
+}
+
+/// Internal callback response
+#[derive(Debug, Serialize)]
+pub struct InternalCallbackResponse {
+    pub delivered: bool,
+    pub message: String,
+}
+
+/// Internal callback endpoint - allows workers to deliver results via HTTP
+/// This is an alternative to NATS-based callbacks for simpler deployments.
+///
+/// Endpoint: POST /api/internal/callback
+///
+/// Workers can call this using the standard http tool:
+/// ```yaml
+/// - sink:
+///     tool:
+///       kind: http
+///       method: POST
+///       url: "http://gateway:8090/api/internal/callback"
+///       headers:
+///         Content-Type: application/json
+///       body:
+///         request_id: "{{ request_id }}"
+///         status: "{{ result.status }}"
+///         data:
+///           session_token: "{{ result.session_token }}"
+///           user: ...
+/// ```
+pub async fn internal_callback(
+    State(state): State<Arc<AuthState>>,
+    Json(req): Json<InternalCallbackRequest>,
+) -> Json<InternalCallbackResponse> {
+    tracing::info!(
+        "Internal callback received: request_id={}, status={}, step={:?}, data={:?}",
+        req.request_id,
+        req.status,
+        req.step,
+        req.data
+    );
+
+    // Convert to CallbackResult and deliver
+    let callback_result = crate::callbacks::CallbackResult {
+        request_id: req.request_id.clone(),
+        execution_id: req.execution_id,
+        step: req.step,
+        status: req.status,
+        data: req.data,
+    };
+
+    let delivered = state.callbacks.deliver(callback_result).await;
+
+    if delivered {
+        tracing::info!("Callback delivered for request_id={}", req.request_id);
+        Json(InternalCallbackResponse {
+            delivered: true,
+            message: "Callback delivered successfully".to_string(),
+        })
+    } else {
+        tracing::warn!("No pending request for callback request_id={}", req.request_id);
+        Json(InternalCallbackResponse {
+            delivered: false,
+            message: "No pending request found for this request_id".to_string(),
+        })
+    }
 }

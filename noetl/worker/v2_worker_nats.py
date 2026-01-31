@@ -24,6 +24,26 @@ from noetl.core.logging_context import LoggingContext
 from noetl.core.logger import setup_logger
 logger = setup_logger(__name__, include_location=True)
 
+# Pre-import tool executors at module level to avoid 5s cold-start delay
+# These were previously imported inside _execute_tool() causing slow first execution
+from noetl.tools import http, postgres, duckdb, python
+from noetl.tools.http import execute_http_task
+from noetl.tools.postgres import execute_postgres_task
+from noetl.tools.duckdb import execute_duckdb_task
+from noetl.tools.snowflake import execute_snowflake_task
+from noetl.tools.gcs import execute_gcs_task
+from noetl.tools.transfer import execute_transfer_action
+from noetl.tools.transfer.snowflake_transfer import execute_snowflake_transfer_action
+from noetl.tools.script import execute_script_task
+from noetl.core.secrets import execute_secrets_task
+from noetl.core.storage import execute_sink_task
+from noetl.core.workflow.workbook import execute_workbook_task
+from noetl.core.workflow.playbook import execute_playbook_task
+from noetl.tools.python import execute_python_task_async
+from jinja2 import Environment, BaseLoader
+from noetl.worker.keychain_resolver import populate_keychain_context
+from noetl.worker.case_evaluator import CaseEvaluator, build_eval_context
+
 
 # Module-level template cache for worker - avoids compiling same templates repeatedly
 class _WorkerTemplateCache:
@@ -642,7 +662,12 @@ class V2Worker:
                     condition_result = template.render(eval_context)
                     
                     # Parse boolean result (Jinja2 returns string)
-                    matches = condition_result.strip().lower() in ['true', '1', 'yes']
+                    # Jinja2's `and` operator returns the actual value, not "True/False"
+                    # e.g., {{ cond1 and some_string }} returns the string if truthy
+                    # So we evaluate truthiness: non-empty strings that aren't falsy values
+                    result_stripped = condition_result.strip()
+                    result_lower = result_stripped.lower()
+                    matches = bool(result_stripped) and result_lower not in ['false', '0', 'no', 'none', '']
                     
                     logger.info(f"[CASE-EVAL] Case {idx} condition: {when_condition[:100]}... = {matches}")
                     
@@ -932,7 +957,12 @@ class V2Worker:
                     condition_result = template.render(eval_context)
                     
                     # Parse boolean result (Jinja2 returns string)
-                    matches = condition_result.strip().lower() in ['true', '1', 'yes']
+                    # Jinja2's `and` operator returns the actual value, not "True/False"
+                    # e.g., {{ cond1 and some_string }} returns the string if truthy
+                    # So we evaluate truthiness: non-empty strings that aren't falsy values
+                    result_stripped = condition_result.strip()
+                    result_lower = result_stripped.lower()
+                    matches = bool(result_stripped) and result_lower not in ['false', '0', 'no', 'none', '']
                     
                     logger.info(f"[CASE-EVAL] Case {idx} condition: {when_condition[:100]}... = {matches}")
                     
@@ -1023,15 +1053,23 @@ class V2Worker:
         event_name: str = "call.done"
     ):
         """
-        Execute sinks from case blocks immediately after tool execution.
-        
-        Evaluates case conditions against response and executes matching sinks.
-        Reports sink execution back to server via events.
+        DEPRECATED: This function is no longer used.
+
+        Sink execution is now handled by the server through inline task commands.
+        Named tasks in then: blocks (like sink: {tool: ...}) are processed by the
+        server's _process_then_actions and executed as separate commands.
+
+        This function is kept as a no-op for compatibility with existing call sites.
         """
+        # DISABLED: Sink execution is now handled by the server through inline task commands
+        # See: engine.py _process_then_actions (lines 985-997) where named tasks are processed
+        logger.debug(f"[SINK] _execute_case_sinks called but disabled - sinks handled by server")
+        return
+
         import asyncio
         from jinja2 import Environment
         from noetl.tools.postgres import execute_postgres_task
-        
+
         # Check if case_blocks provided
         if not case_blocks or not isinstance(case_blocks, list):
             return
@@ -1103,13 +1141,17 @@ class V2Worker:
                 template = _template_cache.get_or_compile(when_condition)
                 result = template.render(eval_context)
                 # Result should be a boolean or string that evaluates to boolean
+                # Jinja2's `and` operator returns the actual value, not "True/False"
+                # e.g., {{ cond1 and some_string }} returns the string if truthy
                 if isinstance(result, bool):
                     condition_met = result
                 elif isinstance(result, str):
-                    condition_met = result.lower() in ('true', '1', 'yes')
+                    result_stripped = result.strip()
+                    result_lower = result_stripped.lower()
+                    condition_met = bool(result_stripped) and result_lower not in ('false', '0', 'no', 'none', '')
                 else:
                     condition_met = bool(result)
-                
+
                 logger.info(f"[SINK] Condition result: {result} -> {condition_met}")
                 
                 if not condition_met:
@@ -1273,6 +1315,15 @@ class V2Worker:
         args = context.get("args", {})
         render_context = context.get("render_context", {})  # Full render context from engine
         case_blocks = context.get("case")  # Case blocks from server for immediate execution
+        spec = context.get("spec")  # Step behavior spec (case_mode, eval_mode)
+
+        # Extract case evaluation settings from spec
+        case_mode = "exclusive"  # Default: first match wins (XOR-split)
+        eval_mode = "on_entry"   # Default: evaluate once
+        if spec:
+            case_mode = spec.get("case_mode", "exclusive")
+            eval_mode = spec.get("eval_mode", "on_entry")
+            logger.info(f"[SPEC] Step '{step}' has spec: case_mode={case_mode}, eval_mode={eval_mode}")
         
         # CRITICAL: Merge tool_config.args with top-level args
         # In V2 DSL, step args are often defined within the tool block
@@ -1356,24 +1407,66 @@ class V2Worker:
             
             # HYBRID CASE EVALUATION: Worker-side evaluation with both event and data context
             # Evaluate case blocks for BOTH success (call.done) and error (call.error) scenarios
+            # Uses CaseEvaluator with proper exclusive/inclusive mode support
             case_action = None
             if case_blocks:
-                logger.info(f"[CASE-CHECK] Evaluating case blocks for {step} | has_error={tool_error is not None}")
-                
+                logger.info(f"[CASE-CHECK] Evaluating case blocks for {step} | mode={case_mode} | has_error={tool_error is not None}")
+
                 # Build evaluation context based on success or error
                 eval_event_name = "call.error" if tool_error else "call.done"
                 eval_response = error_response if tool_error else response
-                
-                case_action = await self._evaluate_case_blocks_with_event(
-                    case_blocks,
-                    eval_response,
-                    render_context,
-                    server_url,
-                    execution_id,
-                    step,
+
+                # Build evaluation context with all necessary data
+                eval_context = build_eval_context(
+                    render_context=render_context,
+                    response=eval_response,
+                    step=step,
                     event_name=eval_event_name,
                     error=tool_error
                 )
+
+                # Create evaluator with step's case_mode (default: exclusive)
+                evaluator = CaseEvaluator(case_mode=case_mode, eval_mode=eval_mode)
+                eval_result = evaluator.evaluate(case_blocks, eval_context, eval_event_name)
+
+                # Process sink actions (execute immediately)
+                for action in eval_result.actions:
+                    if action.type == "sink":
+                        logger.info(f"[CASE-SINK] Executing sink from case {action.case_index}")
+                        await self._execute_case_sinks(
+                            [case_blocks[action.case_index]],
+                            eval_response,
+                            render_context,
+                            server_url,
+                            execution_id,
+                            step,
+                            event_name="call.done"
+                        )
+
+                # Convert routing action to legacy format for compatibility
+                if eval_result.routing_action:
+                    ra = eval_result.routing_action
+                    if ra.type == "next":
+                        case_action = {
+                            'type': 'next',
+                            'steps': ra.config.get('steps', []),
+                            'case_index': ra.case_index,
+                            'triggered_by': ra.triggered_by
+                        }
+                    elif ra.type == "retry":
+                        case_action = {
+                            'type': 'retry',
+                            'config': ra.config,
+                            'case_index': ra.case_index,
+                            'triggered_by': ra.triggered_by
+                        }
+                    elif ra.type == "set":
+                        case_action = {
+                            'type': 'set',
+                            'config': ra.config,
+                            'case_index': ra.case_index,
+                            'triggered_by': ra.triggered_by
+                        }
                 
                 # If case action resulted in routing (next/retry), report and handle
                 if case_action and case_action.get('type') in ['next', 'retry']:
@@ -1659,33 +1752,7 @@ class V2Worker:
             render_context: Full render context with workload, step results, etc.
             case_blocks: Optional case blocks for sink-driven result references
         """
-        import time
-        t_imports_start = time.perf_counter()
-        # Import tool executors
-        from noetl.tools import (
-            http,
-            postgres,
-            duckdb,
-            python,
-        )
-        from noetl.tools.http import execute_http_task
-        from noetl.tools.postgres import execute_postgres_task
-        from noetl.tools.duckdb import execute_duckdb_task
-        from noetl.tools.snowflake import execute_snowflake_task
-        from noetl.tools.gcs import execute_gcs_task
-        from noetl.tools.transfer import execute_transfer_action
-        from noetl.tools.transfer.snowflake_transfer import execute_snowflake_transfer_action
-        from noetl.tools.script import execute_script_task
-        from noetl.core.secrets import execute_secrets_task
-        from noetl.core.storage import execute_sink_task
-        from noetl.core.workflow.workbook import execute_workbook_task
-        from noetl.core.workflow.playbook import execute_playbook_task
-        # Import async version of Python executor
-        from noetl.tools.python import execute_python_task_async
-        from jinja2 import Environment, BaseLoader
-        from noetl.worker.keychain_resolver import populate_keychain_context
-        t_imports_end = time.perf_counter()
-        logger.info(f"[PERF] _execute_tool imports took {t_imports_end - t_imports_start:.4f}s")
+        # Tool executors are pre-imported at module level for fast execution
         
         # Use render_context from engine (includes workload, step results, execution_id, etc.)
         # This allows plugins to render Jinja2 templates with full state

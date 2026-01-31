@@ -414,6 +414,24 @@ class ToolCall(BaseModel):
     config: dict[str, Any] = Field(default_factory=dict, description="Tool-specific configuration")
 
 
+class CommandSpec(BaseModel):
+    """
+    Command-level behavior configuration (passed from step.spec).
+
+    Controls case evaluation semantics in the worker:
+    - case_mode: exclusive (first match wins) or inclusive (all matches fire)
+    - eval_mode: on_entry (once) or on_event (re-evaluate per event)
+    """
+    case_mode: Literal["exclusive", "inclusive"] = Field(
+        default="exclusive",
+        description="Case evaluation mode: exclusive (XOR, first match) or inclusive (OR, all matches)"
+    )
+    eval_mode: Literal["on_entry", "on_event"] = Field(
+        default="on_entry",
+        description="Case evaluation timing: on_entry (once) or on_event (every event)"
+    )
+
+
 class Command(BaseModel):
     """
     Command to be executed by worker.
@@ -425,6 +443,7 @@ class Command(BaseModel):
     args: Optional[dict[str, Any]] = Field(None, description="Step input arguments")
     render_context: dict[str, Any] = Field(default_factory=dict, description="Full render context for Jinja2 templates (workload, step results, vars)")
     case: Optional[list[dict[str, Any]]] = Field(None, description="Case blocks for immediate worker-side conditional execution (sinks, vars, etc.)")
+    spec: Optional[CommandSpec] = Field(None, description="Step behavior configuration (case_mode, eval_mode)")
     attempt: int = Field(default=1, description="Attempt number for retries")
     priority: int = Field(default=0, description="Command priority (higher = more urgent)")
     backoff: Optional[float] = Field(None, description="Retry backoff delay in seconds")
@@ -442,6 +461,7 @@ class Command(BaseModel):
             "tool_config": self.tool.config,
             "args": self.args or {},
             "case": self.case,  # Include case blocks for worker-side execution
+            "spec": self.spec.model_dump() if self.spec else None,  # Include step behavior spec
             "attempt": self.attempt,
             "priority": self.priority,
             "backoff": self.backoff,

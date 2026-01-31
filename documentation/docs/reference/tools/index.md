@@ -20,6 +20,7 @@ NoETL provides a set of action tools that execute specific tasks within workflow
 | [Container](/docs/reference/tools/container) | Run scripts in Kubernetes | Complex workloads, custom environments |
 | [GCS](/docs/reference/tools/gcs) | Upload files to Google Cloud Storage | File storage, data export |
 | [DuckLake](/docs/reference/tools/ducklake) | Lakehouse queries | Unified analytics |
+| [NATS](/docs/reference/tools/nats) | JetStream, K/V Store, Object Store | State management, caching, messaging |
 
 ## Tool Selection Guide
 
@@ -34,6 +35,10 @@ NoETL provides a set of action tools that execute specific tasks within workflow
 - **Snowflake**: Data warehouse queries, analytics at scale
 - **DuckDB**: Local analytics, cloud storage queries, cross-source joins
 - **DuckLake**: Lakehouse architecture, unified data access
+
+### State & Messaging
+
+- **NATS**: K/V Store for sessions/cache, Object Store for files, JetStream for events
 
 ### Code Execution
 

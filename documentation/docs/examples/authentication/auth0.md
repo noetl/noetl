@@ -16,16 +16,35 @@ Complete OAuth playbooks are available in the repository:
 
 ## Overview
 
-The Auth0 integration implements OAuth Implicit Flow for browser-based authentication:
+The Auth0 integration implements OAuth Implicit Flow for browser-based authentication with NATS K/V session caching for fast lookups:
+
+### Authentication Flow
+
 1. User clicks "Sign In with Auth0"
 2. Auth0 redirects back with JWT token
-3. NoETL playbook validates token and creates session
-4. Session token stored for subsequent API calls
+3. NoETL `auth0_login` playbook validates token
+4. Playbook creates user/session in PostgreSQL (source of truth)
+5. Playbook caches session in NATS K/V (`sessions` bucket)
+6. Session token returned for subsequent API calls
+
+### Session Validation (Subsequent Requests)
+
+```
+Gateway Request → Check NATS K/V → Cache Hit? → Use cached session (sub-ms)
+                                 → Cache Miss? → Call playbook → Refresh cache
+```
+
+**Benefits:**
+- Sub-millisecond session lookups from NATS K/V
+- Reduced load on NoETL server and PostgreSQL
+- PostgreSQL remains source of truth
+- Automatic cache refresh via playbooks
 
 ## Prerequisites
 
 - Auth0 application configured
-- PostgreSQL database
+- PostgreSQL database with auth schema
+- NATS server with JetStream enabled
 - NoETL server running
 
 ## Database Schema
@@ -358,8 +377,35 @@ curl -X POST http://localhost:8082/api/execute \
   }'
 ```
 
+## NATS K/V Session Cache
+
+The auth0 playbooks cache sessions in NATS K/V for fast gateway lookups:
+
+```json
+{
+  "session_token": "abc123...",
+  "user_id": 42,
+  "email": "user@example.com",
+  "display_name": "User Name",
+  "expires_at": "2026-01-15T10:00:00Z",
+  "is_active": true
+}
+```
+
+### Required Credentials
+
+1. **PostgreSQL** (`pg_auth`): Source of truth for user/session data
+2. **NATS** (`nats_credential`): K/V store for session caching
+
+```bash
+# Register NATS credential
+noetl register credential -f tests/fixtures/credentials/nats_credential.json
+```
+
 ## See Also
 
+- [Gateway Authentication](/docs/gateway/auth0-setup) - Complete gateway setup
+- [NATS Tool](/docs/reference/tools/nats) - K/V, Object Store, JetStream operations
 - [Authentication Reference](/docs/reference/auth_and_keychain_reference)
 - [PostgreSQL Tool](/docs/reference/tools/postgres)
 - [Python Tool](/docs/reference/tools/python)

@@ -30,7 +30,33 @@ For deployment and operations documentation, see:
 - Direct database queries
 - Business logic or data processing
 - Static file serving (UI served separately from `tests/fixtures/gateway_ui/`)
-- Session storage (delegated to NoETL server)
+
+## Session Caching with NATS K/V
+
+The Gateway uses NATS K/V as a fast session cache for authentication:
+
+```
+Gateway Request → Check NATS K/V → Cache Hit? → Use cached session
+                                 → Cache Miss? → Call auth playbook → Refresh cache
+```
+
+**Architecture:**
+- **NATS K/V** (`sessions` bucket): Fast session cache (sub-millisecond lookups)
+- **PostgreSQL** (`auth` schema): Source of truth for session data
+- **NoETL Playbooks**: Handle authentication logic and cache refresh
+
+**Benefits:**
+- Sub-millisecond session lookups from NATS K/V
+- Reduced load on NoETL server and PostgreSQL
+- Automatic cache refresh on validation playbook calls
+
+**Configuration:**
+```bash
+export NATS_URL=nats://nats.nats.svc.cluster.local:4222
+export NATS_SESSION_BUCKET=sessions
+```
+
+See [AUTH_INTEGRATION.md](AUTH_INTEGRATION.md) for complete setup.
 
 ## API Endpoints
 

@@ -128,6 +128,30 @@ The UI communicates with these Gateway endpoints:
 - `POST /api/auth/check-access` - Permission checking
 - `POST /graphql` - Protected GraphQL endpoint (requires authentication)
 
+### Session Caching with NATS K/V
+
+The Gateway uses NATS K/V as a fast session cache to avoid calling NoETL playbooks for every request:
+
+```
+┌─────────┐     ┌─────────┐     ┌──────────────┐     ┌──────────┐
+│   UI    │────▶│ Gateway │────▶│ NATS K/V     │     │ NoETL    │
+└─────────┘     └────┬────┘     │ (sessions)   │     │ Server   │
+                     │          └──────────────┘     └──────────┘
+                     │                 │                   │
+                     │  1. Check cache │                   │
+                     │◀────────────────│                   │
+                     │                                     │
+                     │  2. Cache miss? Call playbook       │
+                     │─────────────────────────────────────▶
+```
+
+**Flow:**
+1. **Login:** Gateway calls `auth0_login` playbook → creates session in Postgres + NATS K/V cache
+2. **Subsequent requests:** Gateway checks NATS K/V directly (sub-millisecond)
+3. **Cache miss:** Gateway calls `auth0_validate_session` → refreshes NATS K/V cache
+
+This provides fast session lookups while keeping Postgres as the source of truth.
+
 ## Testing Flow
 
 ### Local Development

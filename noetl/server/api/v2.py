@@ -193,13 +193,14 @@ async def execute(req: ExecuteRequest) -> ExecuteResponse:
                     cmd_id = f"{execution_id}:{cmd.step}:{await get_snowflake_id()}"
                     evt_id = await get_snowflake_id()
                     
-                # Build context for command execution (passes execution parameters, not results)
-                context = {
-                    "tool_config": cmd.tool.config,
-                    "args": cmd.args or {},
-                    "render_context": cmd.render_context,
-                    "case": cmd.case,
-                }
+                    # Build context for command execution (passes execution parameters, not results)
+                    context = {
+                        "tool_config": cmd.tool.config,
+                        "args": cmd.args or {},
+                        "render_context": cmd.render_context,
+                        "case": cmd.case,
+                        "spec": cmd.spec.model_dump() if cmd.spec else None,  # Case evaluation behavior
+                    }
                 meta = {
                     "command_id": cmd_id,
                     "step": cmd.step,
@@ -340,24 +341,35 @@ async def handle_event(req: EventRequest) -> EventResponse:
             "command.failed", "step.enter"
         }
         
-        # For command.claimed, check if command is already claimed
+        # For command.claimed, use fully atomic claiming with advisory lock + insert in same transaction
         if req.name == "command.claimed":
             command_id = req.payload.get("command_id") or (req.meta or {}).get("command_id")
             if command_id:
+                evt_id = await get_snowflake_id()
                 async with get_pool_connection() as conn:
-                    # Use a transaction with locking to prevent race conditions
                     async with conn.cursor(row_factory=dict_row) as cur:
-                        # Check if this command was already claimed by another worker
-                        # Use FOR UPDATE to lock the relevant rows if possible, or just be strict
+                        # Use advisory lock on command_id hash to prevent race conditions
+                        # pg_try_advisory_xact_lock returns true if lock acquired, false if already locked
                         await cur.execute("""
-                            SELECT worker_id, meta FROM noetl.event 
-                            WHERE execution_id = %s 
+                            SELECT pg_try_advisory_xact_lock(hashtext(%s)::bigint) as lock_acquired
+                        """, (command_id,))
+                        lock_result = await cur.fetchone()
+
+                        if not lock_result or not lock_result.get('lock_acquired'):
+                            # Another transaction has the lock - command is being claimed
+                            logger.warning(f"[CLAIM-REJECT] Command {command_id} lock held by another worker, rejecting claim from {req.worker_id}")
+                            raise HTTPException(409, f"Command already being claimed by another worker")
+
+                        # Lock acquired - now check if already claimed
+                        await cur.execute("""
+                            SELECT worker_id, meta FROM noetl.event
+                            WHERE execution_id = %s
                               AND event_type = 'command.claimed'
                               AND (meta->>'command_id' = %s OR (result->'data'->>'command_id' = %s))
                             LIMIT 1
                         """, (int(req.execution_id), command_id, command_id))
                         existing = await cur.fetchone()
-                        
+
                         if existing:
                             existing_worker = existing.get('worker_id') or (existing.get('meta') or {}).get('worker_id')
                             if existing_worker and existing_worker != req.worker_id:
@@ -367,12 +379,40 @@ async def handle_event(req: EventRequest) -> EventResponse:
                             else:
                                 # Already claimed by SAME worker - idempotent success
                                 logger.info(f"[CLAIM-IDEMPOTENT] Command {command_id} already claimed by SAME worker {req.worker_id}, returning success")
-                                # Return a fake success response to avoid duplicate insertion if we want, 
-                                # but for now let's just let it proceed if it's the same worker
-                                # Actually, if we proceed, we'll insert a DUPLICATE claimed event.
-                                # Let's return early if it's the same worker.
                                 return EventResponse(status="ok", event_id=0, commands_generated=0)
-        
+
+                        # Not claimed yet - insert the claim event within the same transaction (while lock is held)
+                        await cur.execute(
+                            "SELECT catalog_id FROM noetl.event WHERE execution_id = %s LIMIT 1",
+                            (int(req.execution_id),)
+                        )
+                        row = await cur.fetchone()
+                        catalog_id = row['catalog_id'] if row else None
+
+                        meta_obj = dict(req.meta or {})
+                        meta_obj["actionable"] = req.actionable
+                        meta_obj["informative"] = req.informative
+                        meta_obj["command_id"] = command_id
+                        if req.worker_id:
+                            meta_obj["worker_id"] = req.worker_id
+
+                        result_obj = {"kind": "data", "data": req.payload}
+
+                        await cur.execute("""
+                            INSERT INTO noetl.event (
+                                event_id, execution_id, catalog_id, event_type,
+                                node_id, node_name, status, result, meta, worker_id, created_at
+                            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        """, (
+                            evt_id, int(req.execution_id), catalog_id, req.name,
+                            req.step, req.step, "RUNNING",
+                            Json(result_obj), Json(meta_obj), req.worker_id, datetime.now(timezone.utc)
+                        ))
+                        await conn.commit()
+
+                        logger.info(f"[CLAIM-SUCCESS] Command {command_id} claimed by worker {req.worker_id}")
+                        return EventResponse(status="ok", event_id=evt_id, commands_generated=0)
+
         # Build result based on kind
         if req.result_kind == "ref" and req.result_uri:
             result_obj = {
@@ -470,6 +510,7 @@ async def handle_event(req: EventRequest) -> EventResponse:
                         "args": cmd.args or {},
                         "render_context": cmd.render_context,
                         "case": cmd.case,
+                        "spec": cmd.spec.model_dump() if cmd.spec else None,  # Case evaluation behavior
                     }
                     meta = {
                         "command_id": cmd_id,
