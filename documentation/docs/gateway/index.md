@@ -60,14 +60,30 @@ Gateway Request → Check NATS K/V → Cache Hit? → Use cached session (sub-ms
 
 ## API Endpoints
 
+### Public Endpoints
+
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/health` | GET | Health check |
-| `/graphql` | POST | Execute playbooks (authenticated) |
-| `/graphql` | GET | GraphiQL playground |
 | `/api/auth/login` | POST | Auth0 token login |
 | `/api/auth/validate` | POST | Validate session |
 | `/api/auth/check-access` | POST | Check playbook permissions |
+
+### Protected Endpoints (Require Authentication)
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/graphql` | POST | Execute playbooks via GraphQL |
+| `/graphql` | GET | GraphiQL playground |
+| `/noetl/{path}` | GET/POST/PUT/DELETE/PATCH | Proxy to NoETL server API |
+
+### Real-time Callbacks (SSE)
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/events` | GET | SSE connection for real-time playbook results |
+| `/api/internal/callback/async` | POST | Worker callback for async results |
+| `/api/internal/progress` | POST | Worker progress updates |
 
 ## Documentation
 
@@ -76,6 +92,8 @@ Gateway Request → Check NATS K/V → Cache Hit? → Use cached session (sub-ms
 | [Deployment Guide](./deployment-guide) | Building, deploying to GKE, static IP setup |
 | [Helm Reference](./helm-reference) | Complete Helm chart configuration |
 | [Auth0 Setup](./auth0-setup) | Auth0 application and integration |
+| [Auth Integration](./auth-integration) | Auth playbooks and session management |
+| [Async Callbacks](./async-callbacks) | SSE/WebSocket real-time playbook results |
 | [Cloudflare Setup](./cloudflare-setup) | DNS, SSL, caching configuration |
 | [API Usage Guide](./api-usage) | How to authenticate and call playbooks |
 

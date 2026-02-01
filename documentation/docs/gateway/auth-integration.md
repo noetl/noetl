@@ -1,3 +1,9 @@
+---
+sidebar_position: 5
+title: Auth Integration
+description: Auth0 authentication flow and session management
+---
+
 # Gateway Auth0 Integration - Complete Setup
 
 This document describes the complete Auth0 authentication integration between the NoETL Gateway (Rust) and NoETL server playbooks.

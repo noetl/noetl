@@ -1,3 +1,9 @@
+---
+sidebar_position: 6
+title: Async Callbacks
+description: Real-time playbook results via SSE and WebSocket
+---
+
 # Gateway Async Callback Architecture
 
 This document describes the asynchronous callback system for the NoETL Gateway, enabling real-time playbook result delivery to UI clients via SSE (Server-Sent Events) and WebSocket transports.
@@ -627,6 +633,58 @@ class NoetlClient {
   }
 }
 ```
+
+---
+
+## Kind Development Deployment
+
+This section describes the Kind Kubernetes cluster setup for local development.
+
+> **Commands Reference:** See [dev-commands.md](../development/dev-commands.md) for all kubectl/docker commands.
+
+### Cluster Architecture
+
+The Kind cluster runs with the following namespaces:
+
+- **gateway**: Rust gateway service and nginx-based UI serving static files from ConfigMap
+- **noetl**: Python NoETL server and worker pods (3 replicas)
+- **postgres**: PostgreSQL database
+- **nats**: NATS messaging for pub/sub and K/V storage
+
+### Port Mappings
+
+| Service      | Host Port | Purpose                              |
+|--------------|-----------|--------------------------------------|
+| Gateway API  | 8090      | Authentication, GraphQL, NoETL proxy |
+| Gateway UI   | 8080      | Static UI served by nginx            |
+| NoETL API    | 8082      | Direct NoETL server access           |
+
+### Development Workflows
+
+**Python Code (Hot-Reload)**
+
+Uses ConfigMap-based file mounting to override Python files inside containers without Docker rebuilds. Requires one-time deployment patching to add volume mounts. After editing local files: update ConfigMap, then restart deployments.
+
+**Gateway UI**
+
+UI files stored in `gateway-ui-files` ConfigMap, served by nginx. Update ConfigMap and restart nginx deployment.
+
+**Gateway (Rust)**
+
+Requires Docker image rebuild, load into Kind with `kind load docker-image`, then restart deployment.
+
+**Playbooks**
+
+Register via NoETL catalog API (`POST /api/catalog/register`). Creates new version; executions use latest by default.
+
+### Event Status Logic
+
+Events stored with status determined by event name:
+- Contains `error` or `failed` → `FAILED`
+- Contains `done`, `exit`, or `completed` → `COMPLETED`
+- Otherwise → `RUNNING`
+
+Execution status computed from aggregates: all steps completed = `COMPLETED`, any failed = `FAILED`.
 
 ---
 

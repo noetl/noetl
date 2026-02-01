@@ -266,13 +266,32 @@ resources:
 
 ### Environment Variables
 
+#### Server Configuration
+
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `ROUTER_PORT` | Port the gateway listens on | `8090` |
 | `NOETL_BASE_URL` | NoETL server URL | `http://noetl.noetl.svc.cluster.local:8082` |
 | `RUST_LOG` | Log level configuration | `info,gateway=debug` |
 | `CORS_ALLOWED_ORIGINS` | Comma-separated list of allowed origins | `http://localhost:8080` |
-| `NATS_URL` | NATS server URL for real-time updates | `nats://nats:4222` |
+
+#### NATS Configuration
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `NATS_URL` | NATS server URL | `nats://nats:4222` |
+| `NATS_SESSION_BUCKET` | NATS K/V bucket for session cache | `sessions` |
+| `NATS_SESSION_CACHE_TTL_SECS` | Session cache TTL in seconds | `3600` |
+| `NATS_REQUEST_BUCKET` | NATS K/V bucket for async requests | `requests` |
+| `NATS_REQUEST_TTL_SECS` | Async request TTL in seconds | `1800` |
+| `NATS_CALLBACK_SUBJECT_PREFIX` | NATS subject prefix for callbacks | `gateway.callback` |
+
+#### Transport Configuration
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `GATEWAY_HEARTBEAT_INTERVAL_SECS` | SSE heartbeat interval | `30` |
+| `GATEWAY_CONNECTION_TIMEOUT_SECS` | SSE connection timeout | `300` |
 
 ## Cloudflare Setup
 

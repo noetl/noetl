@@ -153,6 +153,7 @@ workflow:
     auth: {}
     libs:
       json: json
+      re: re
     args:
       openai_response: '{{ translate_query_to_amadeus.data }}'
     code: |
@@ -164,7 +165,7 @@ workflow:
               }
           else:
               content = openai_response['choices'][0]['message']['content'].strip()
-              
+
               # Handle markdown code blocks if present
               if content.startswith('```json'):
                   lines = content.split('\n')
@@ -178,10 +179,14 @@ workflow:
                       elif in_json_block:
                           json_lines.append(line)
                   content = '\n'.join(json_lines)
-              
+
+              # Strip JavaScript-style comments (// ...) that GPT sometimes adds
+              # This handles both inline and full-line comments
+              content = re.sub(r'//[^\n]*', '', content)
+
               # Parse JSON
               parsed = json.loads(content)
-              
+
               result = {
                   "status": "success",
                   "endpoint": parsed.get('endpoint'),

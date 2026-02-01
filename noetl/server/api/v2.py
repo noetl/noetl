@@ -451,8 +451,14 @@ async def handle_event(req: EventRequest) -> EventResponse:
                 if req.worker_id:
                     meta_obj["worker_id"] = req.worker_id
                 
-                # Determine status: "completed" handles command.completed events
-                status = "COMPLETED" if "done" in req.name or "exit" in req.name or "completed" in req.name else "RUNNING"
+                # Determine status based on event name
+                # "error"/"failed" -> FAILED, "done"/"exit"/"completed" -> COMPLETED, else -> RUNNING
+                if "error" in req.name or "failed" in req.name:
+                    status = "FAILED"
+                elif "done" in req.name or "exit" in req.name or "completed" in req.name:
+                    status = "COMPLETED"
+                else:
+                    status = "RUNNING"
 
                 await cur.execute("""
                     INSERT INTO noetl.event (
