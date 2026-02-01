@@ -125,7 +125,7 @@ workflow:
       # If request_id is set, send callback to gateway via HTTP
       - when: "{{ event.name == 'call.done' and request_id }}"
         then:
-          - sink:
+          - send_callback:
               tool:
                 kind: http
                 method: POST
@@ -171,7 +171,7 @@ workflow:
       # If request_id is set, send callback to gateway via HTTP
       - when: "{{ event.name == 'call.done' and request_id }}"
         then:
-          - sink:
+          - send_callback:
               tool:
                 kind: http
                 method: POST

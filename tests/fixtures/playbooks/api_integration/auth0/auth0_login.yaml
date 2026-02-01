@@ -102,7 +102,7 @@ workflow:
       # On call.error (Python exception) with request_id, send error callback via HTTP
       - when: "{{ event.name == 'call.error' and request_id }}"
         then:
-          - sink:
+          - send_callback:
               tool:
                 kind: http
                 method: POST
@@ -125,7 +125,7 @@ workflow:
       # On error result with request_id, send error callback via HTTP
       - when: "{{ event.name == 'call.done' and result.error is defined and request_id }}"
         then:
-          - sink:
+          - send_callback:
               tool:
                 kind: http
                 method: POST
@@ -247,7 +247,7 @@ workflow:
       # If request_id is set, send callback to gateway via HTTP
       - when: "{{ event.name == 'call.done' and request_id }}"
         then:
-          - sink:
+          - send_callback:
               tool:
                 kind: http
                 method: POST

@@ -965,14 +965,13 @@ class ControlFlowEngine:
         Process actions in a then block.
 
         Supports:
-        - Reserved action types: next, set, result, fail, collect, retry, sink
-        - Named tasks with tool: { task_name: { tool: { kind: ... } } }
+        - Reserved action types: next, set, result, fail, collect, retry
+        - Inline tasks with tool: { task_name: { tool: { kind: ... } } }
         """
         commands: list[Command] = []
 
         # Reserved action keys that are not named tasks
-        # NOTE: "sink" is no longer reserved - it's now a named task like any other
-        # This allows `sink:` to be processed as a named task with `tool:` inside
+        # Any key not in this set that contains a tool: is treated as an inline task
         reserved_actions = {"next", "set", "result", "fail", "collect", "retry"}
 
         # Normalize to list
@@ -1291,8 +1290,7 @@ class ControlFlowEngine:
                         f"(attempt {command.attempt}/{max_attempts})"
                     )
 
-            # NOTE: "sink" is no longer a reserved action - it's processed as a named task
-            # with `tool:` inside by the code above (lines 985-997)
+            # NOTE: Inline tasks (with tool: inside) are processed by the code above
 
         return commands
     
@@ -1616,15 +1614,62 @@ class ControlFlowEngine:
             logger.error("Event missing step name")
             return commands
         
-        # Handle synthetic steps (like sink commands)
-        # These are created dynamically and don't exist in the workflow
-        # They execute and emit events, but don't need orchestration
-        if event.step.endswith('_sink') or event.step.endswith('.sink'):
-            logger.debug(f"Synthetic sink step: {event.step} - persisting event without orchestration")
+        # Handle inline tasks (dynamically created from case then blocks)
+        # These have format "parent_step:task_name" (e.g., "success:send_callback")
+        # and don't exist as workflow steps. They execute and emit events, but don't need orchestration
+        is_inline_task = ':' in event.step and state.get_step(event.step) is None
+        if is_inline_task:
+            logger.debug(f"Inline task: {event.step} - persisting event without orchestration")
             # Persist the event but don't generate commands (no orchestration needed)
             # Skip if already persisted by API caller
             if not already_persisted:
                 await self._persist_event(event, state)
+            # CRITICAL: Mark synthetic step as completed when step.exit received
+            # This ensures issued_steps - completed_steps doesn't block workflow completion
+            if event.name == "step.exit":
+                state.completed_steps.add(event.step)
+                logger.debug(f"Marked inline task {event.step} as completed")
+
+                # Check if all issued steps are now completed (workflow might be done)
+                pending_steps = state.issued_steps - state.completed_steps
+                if not pending_steps and not state.completed:
+                    # All steps completed - emit workflow/playbook completion events
+                    state.completed = True
+                    from noetl.core.dsl.v2.models import LifecycleEventPayload
+
+                    workflow_completion_event = Event(
+                        execution_id=event.execution_id,
+                        step="workflow",
+                        name="workflow.completed",
+                        payload=LifecycleEventPayload(
+                            status="completed",
+                            final_step=event.step,
+                            result=event.payload.get("result"),
+                            error=None
+                        ).model_dump(),
+                        timestamp=datetime.now(timezone.utc),
+                        parent_event_id=state.last_event_id
+                    )
+                    await self._persist_event(workflow_completion_event, state)
+                    logger.info(f"Workflow completed (after inline task): execution_id={event.execution_id}")
+
+                    playbook_completion_event = Event(
+                        execution_id=event.execution_id,
+                        step=state.playbook.metadata.get("path", "playbook"),
+                        name="playbook.completed",
+                        payload=LifecycleEventPayload(
+                            status="completed",
+                            final_step=event.step,
+                            result=event.payload.get("result"),
+                            error=None
+                        ).model_dump(),
+                        timestamp=datetime.now(timezone.utc),
+                        parent_event_id=state.last_event_id
+                    )
+                    await self._persist_event(playbook_completion_event, state)
+                    logger.info(f"Playbook completed (after inline task): execution_id={event.execution_id}")
+
+                    await self.state_store.save_state(state)
             return commands
         
         step_def = state.get_step(event.step)
@@ -1640,13 +1685,18 @@ class ControlFlowEngine:
         worker_case_action = event.payload.get("case_action")
         has_worker_retry = worker_case_action and worker_case_action.get("type") == "retry"
         
-        # CRITICAL: Store call.done response in state BEFORE processing case rules
+        # CRITICAL: Store call.done/call.error response in state BEFORE processing case rules
         # This ensures the result is available in render context for subsequent steps
         # Worker sends response directly as payload (not wrapped in "response" key)
         if event.name == "call.done":
             response_data = event.payload.get("response", event.payload)
             state.mark_step_completed(event.step, response_data)
             logger.debug(f"[CALL.DONE] Stored response for step {event.step} in state BEFORE case evaluation")
+        elif event.name == "call.error":
+            # Mark step as completed even on error - it finished executing (with failure)
+            error_data = event.payload.get("error", event.payload)
+            state.completed_steps.add(event.step)
+            logger.debug(f"[CALL.ERROR] Marked step {event.step} as completed (with error)")
 
         # Get render context AFTER storing call.done response
         context = state.get_render_context(event)
@@ -1768,7 +1818,7 @@ class ControlFlowEngine:
         # DISABLED: Worker case action processing
         # The server now evaluates all cases on call.done events, so we don't need
         # to process worker case actions. This prevents duplicate command generation.
-        # The worker can still execute sinks directly, but routing (next/retry) is
+        # The worker can still execute inline tasks directly, but routing (next/retry) is
         # handled by the server on call.done.
         should_process_worker_action = False  # Disabled to prevent duplicate commands
         if should_process_worker_action:
@@ -1814,7 +1864,7 @@ class ControlFlowEngine:
         
         # Check if step has completed loop - emit loop.done event
         # Check on step.exit regardless of whether case generated commands
-        # (case may have matched call.done and generated sink/next commands)
+        # (case may have matched call.done and generated inline task/next commands)
         logger.info(f"[LOOP-DEBUG] Checking step.exit: step={event.step}, event.name={event.name}, has_loop={step_def.loop is not None}")
         if step_def.loop and event.name == "step.exit":
             logger.info(f"[LOOP-DEBUG] Entering loop completion check for {event.step}")
@@ -2026,7 +2076,7 @@ class ControlFlowEngine:
         is_failed_with_no_handler = has_error and not commands
         
         # EFFECTIVE TERMINAL: Step has routing but no commands were generated
-        # (e.g. all case rules only had sinks, or structural next was skipped)
+        # (e.g. all case rules only had inline tasks, or structural next was skipped)
         is_effective_terminal = step_def and not commands and not state.completed
 
         # Check for pending commands using multiple methods:
