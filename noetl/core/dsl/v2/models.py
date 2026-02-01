@@ -178,6 +178,7 @@ class ToolSpec(BaseModel):
         "snowflake_transfer",
         "gcs",
         "gateway",
+        "nats",
     ] = Field(
         ..., description="Tool type"
     )

@@ -15,7 +15,6 @@ from .python import handle_python_storage
 from .duckdb import handle_duckdb_storage
 from .http import handle_http_storage
 from .gcs import handle_gcs_storage
-from noetl.tools.gateway.executor import execute_gateway_task
 
 logger = setup_logger(__name__, include_location=True)
 
@@ -308,13 +307,6 @@ def execute_sink_task(
             auth_config, credential_ref, spec,
             task_with, context, jinja_env, log_event_callback
         )
-
-    elif kind == 'gateway':
-        logger.info(f"SINK.EXECUTOR: Delegating to gateway handler")
-        import asyncio
-        return asyncio.run(execute_gateway_task(
-            tool_config, context, jinja_env, task_with or {}, log_event_callback
-        ))
 
     else:
         raise ValueError(f"Unsupported sink tool type: {kind}")

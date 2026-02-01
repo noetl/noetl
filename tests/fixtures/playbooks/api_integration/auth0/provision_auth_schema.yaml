@@ -27,10 +27,9 @@ workflow:
       code: |
         result = {"status": "initialized"}
     case:
-      - when: "{{ event.name == 'call.done' }}"
+      - when: "{{ event.name == 'step.exit' }}"
         then:
-          - next:
-              - step: provision_schema
+          - step: provision_schema
 
   - step: provision_schema
     desc: Execute SQL to create auth schema and tables
@@ -179,10 +178,9 @@ workflow:
 
         SELECT 'Auth schema provisioned successfully' as result;
     case:
-      - when: "{{ event.name == 'call.done' and result.command_0 is defined }}"
+      - when: "{{ event.name == 'step.exit' }}"
         then:
-          - next:
-              - step: verify_schema
+          - step: verify_schema
 
   - step: verify_schema
     desc: Verify auth schema was created successfully
@@ -195,10 +193,9 @@ workflow:
           (SELECT COUNT(*) FROM auth.roles) as role_count,
           (SELECT COUNT(*) FROM auth.permissions) as permission_count;
     case:
-      - when: "{{ event.name == 'call.done' and result.command_0 is defined }}"
+      - when: "{{ event.name == 'step.exit' }}"
         then:
-          - next:
-              - step: success
+          - step: success
 
   - step: success
     desc: Schema provisioned successfully
@@ -213,10 +210,9 @@ workflow:
             "details": verification
         }
     case:
-      - when: "{{ event.name == 'call.done' }}"
+      - when: "{{ event.name == 'step.exit' }}"
         then:
-          - next:
-              - step: end
+          - step: end
 
   - step: end
     desc: Complete provisioning workflow

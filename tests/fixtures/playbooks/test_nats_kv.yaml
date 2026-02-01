@@ -1,0 +1,64 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: test_nats_kv
+  path: test_nats_kv
+  description: Test NATS K/V Store operations
+  tags:
+    - test
+    - nats
+
+workload:
+  nats_credential: nats_credential
+  bucket: sessions
+  test_key: test_session_123
+  test_value:
+    session_token: test_session_123
+    user_id: 1
+    email: test@example.com
+    display_name: Test User
+    expires_at: "2026-01-31T23:59:59Z"
+    is_active: true
+
+workflow:
+  - step: start
+    desc: Begin NATS K/V test
+    tool:
+      kind: python
+      code: |
+        result = {"status": "initialized"}
+
+  - step: kv_put
+    desc: Put a test value in NATS K/V
+    tool:
+      kind: nats
+      auth: "{{ workload.nats_credential }}"
+      operation: kv_put
+      bucket: "{{ workload.bucket }}"
+      key: "{{ workload.test_key }}"
+      value: "{{ workload.test_value }}"
+
+  - step: kv_get
+    desc: Get the value back from NATS K/V
+    tool:
+      kind: nats
+      auth: "{{ workload.nats_credential }}"
+      operation: kv_get
+      bucket: "{{ workload.bucket }}"
+      key: "{{ workload.test_key }}"
+
+  - step: kv_delete
+    desc: Delete the test value
+    tool:
+      kind: nats
+      auth: "{{ workload.nats_credential }}"
+      operation: kv_delete
+      bucket: "{{ workload.bucket }}"
+      key: "{{ workload.test_key }}"
+
+  - step: end
+    desc: Test complete
+    tool:
+      kind: python
+      code: |
+        result = {"status": "complete", "message": "NATS K/V operations tested successfully"}

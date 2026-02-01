@@ -418,7 +418,16 @@ class ExecutionState:
             context["error"] = event.payload["error"]
         if "result" in event.payload:
             context["result"] = event.payload["result"]
-        
+        else:
+            # CRITICAL FIX: For call.done events, the worker sends the tool response
+            # directly as the payload (not wrapped in a "result" key). Make the entire
+            # payload available as "result" so case conditions like
+            # {{ result.sub is defined }} work correctly.
+            if event.name == "call.done" and event.payload:
+                context["result"] = event.payload
+                context["response"] = event.payload
+                logger.debug(f"[RENDER_CTX] Set result/response from call.done payload for {event.step}")
+
         return context
 
 
@@ -1631,9 +1640,17 @@ class ControlFlowEngine:
         worker_case_action = event.payload.get("case_action")
         has_worker_retry = worker_case_action and worker_case_action.get("type") == "retry"
         
-        # Get render context EARLY for case evaluation
+        # CRITICAL: Store call.done response in state BEFORE processing case rules
+        # This ensures the result is available in render context for subsequent steps
+        # Worker sends response directly as payload (not wrapped in "response" key)
+        if event.name == "call.done":
+            response_data = event.payload.get("response", event.payload)
+            state.mark_step_completed(event.step, response_data)
+            logger.debug(f"[CALL.DONE] Stored response for step {event.step} in state BEFORE case evaluation")
+
+        # Get render context AFTER storing call.done response
         context = state.get_render_context(event)
-        
+
         # Process case rules ONCE and store results
         # This allows us to detect retries before deciding whether to aggregate results
         # IMPORTANT: Only process on call.done/call.error to avoid duplicate command generation
@@ -1742,13 +1759,8 @@ class ControlFlowEngine:
                 state.mark_step_completed(event.step, event.payload["result"])
                 logger.debug(f"Stored result for step {event.step} in state")
         
-        # CRITICAL: For call.done events, temporarily add response to state
-        # This allows subsequent steps to access the result before step.exit
-        if event.name == "call.done" and "response" in event.payload:
-            state.mark_step_completed(event.step, event.payload["response"])
-            logger.debug(f"Temporarily stored call.done response for step {event.step} in state")
-        
-        # Note: Render context was already retrieved EARLY above
+        # Note: call.done response was stored earlier (before case evaluation) to ensure
+        # it's available in render_context when creating commands for subsequent steps
         
         # Add case commands we already generated to the final list
         commands.extend(case_commands)
