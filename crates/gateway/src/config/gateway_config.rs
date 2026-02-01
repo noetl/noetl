@@ -61,6 +61,10 @@ pub struct NatsConfig {
     pub updates_subject_prefix: String,
     /// Subject prefix for callbacks (default: "noetl.callbacks")
     pub callback_subject_prefix: String,
+    /// K/V bucket name for session cache (default: "sessions")
+    pub session_bucket: String,
+    /// Session cache TTL in seconds (default: 300 = 5 minutes)
+    pub session_cache_ttl_secs: u64,
 }
 
 /// CORS configuration
@@ -128,6 +132,8 @@ impl Default for NatsConfig {
             password: None,
             updates_subject_prefix: "playbooks.executions.".to_string(),
             callback_subject_prefix: "noetl.callbacks".to_string(),
+            session_bucket: "sessions".to_string(),
+            session_cache_ttl_secs: 300, // 5 minutes
         }
     }
 }
@@ -240,6 +246,14 @@ impl GatewayConfig {
         }
         if let Ok(val) = std::env::var("NATS_CALLBACK_SUBJECT_PREFIX") {
             self.nats.callback_subject_prefix = val;
+        }
+        if let Ok(val) = std::env::var("NATS_SESSION_BUCKET") {
+            self.nats.session_bucket = val;
+        }
+        if let Ok(val) = std::env::var("NATS_SESSION_CACHE_TTL_SECS") {
+            if let Ok(secs) = val.parse() {
+                self.nats.session_cache_ttl_secs = secs;
+            }
         }
 
         // CORS config

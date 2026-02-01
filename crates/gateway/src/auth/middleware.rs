@@ -50,6 +50,22 @@ pub async fn auth_middleware(
         return Ok(next.run(request).await);
     }
 
+    // Check session cache first for fast validation
+    if let Some(cached) = state.session_cache.get(token).await {
+        tracing::debug!("Middleware: session cache HIT for user={}", cached.email);
+        let user_context = UserContext {
+            user_id: cached.user_id,
+            email: cached.email,
+            display_name: cached.display_name,
+            session_token: token.to_string(),
+        };
+        request.extensions_mut().insert(user_context);
+        return Ok(next.run(request).await);
+    }
+
+    // Cache miss - validate via playbook
+    tracing::debug!("Middleware: session cache MISS, calling playbook");
+
     // Register callback to receive result
     let (request_id, callback_subject, rx) = state.callbacks.register().await;
 
@@ -95,6 +111,8 @@ pub async fn auth_middleware(
 
     if !valid {
         tracing::warn!("Invalid or expired session token");
+        // Invalidate any stale cache entry
+        let _ = state.session_cache.invalidate(token).await;
         return Err((StatusCode::UNAUTHORIZED, "Invalid or expired session").into_response());
     }
 
@@ -123,6 +141,25 @@ pub async fn auth_middleware(
             .to_string(),
         session_token: token.to_string(),
     };
+
+    // Cache the validated session for future requests
+    let expires_at = output
+        .get("expires_at")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    let cached_session = crate::session_cache::CachedSession {
+        session_token: token.to_string(),
+        user_id: user_context.user_id,
+        email: user_context.email.clone(),
+        display_name: user_context.display_name.clone(),
+        expires_at,
+        is_active: true,
+    };
+    if let Err(e) = state.session_cache.put(&cached_session).await {
+        tracing::warn!("Failed to cache session: {}", e);
+    }
 
     tracing::info!("Authenticated user: {} ({})", user_context.email, user_context.user_id);
 

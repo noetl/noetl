@@ -33,28 +33,36 @@ For deployment and operations documentation, see:
 
 ## Session Caching with NATS K/V
 
-The Gateway uses NATS K/V as a fast session cache for authentication:
+The Gateway uses NATS JetStream K/V as a fast session cache for authentication:
 
 ```
-Gateway Request → Check NATS K/V → Cache Hit? → Use cached session
-                                 → Cache Miss? → Call auth playbook → Refresh cache
+Login           → Call playbook → Cache session in NATS K/V
+Validate/Auth   → Check NATS K/V → Cache Hit? → Return immediately (no playbook)
+                                 → Cache Miss? → Call playbook → Cache result
 ```
 
 **Architecture:**
-- **NATS K/V** (`sessions` bucket): Fast session cache (sub-millisecond lookups)
+- **NATS K/V** (`sessions` bucket): Fast session cache (sub-millisecond lookups, 5 min TTL)
 - **PostgreSQL** (`auth` schema): Source of truth for session data
-- **NoETL Playbooks**: Handle authentication logic and cache refresh
+- **NoETL Playbooks**: Handle authentication logic on cache miss
 
 **Benefits:**
 - Sub-millisecond session lookups from NATS K/V
 - Reduced load on NoETL server and PostgreSQL
-- Automatic cache refresh on validation playbook calls
+- Graceful degradation if NATS K/V is unavailable
+- Automatic cache expiration via TTL
 
 **Configuration:**
 ```bash
-export NATS_URL=nats://nats.nats.svc.cluster.local:4222
-export NATS_SESSION_BUCKET=sessions
+# NATS connection with JetStream credentials
+export NATS_URL=nats://noetl:noetl@nats.nats.svc.cluster.local:4222
+export NATS_SESSION_BUCKET=sessions           # K/V bucket name (default: sessions)
+export NATS_SESSION_CACHE_TTL_SECS=300        # TTL in seconds (default: 300 = 5 min)
 ```
+
+**NATS Server Requirements:**
+- JetStream enabled
+- Account-based auth with `jetstream: enabled` for the connecting user
 
 See [AUTH_INTEGRATION.md](AUTH_INTEGRATION.md) for complete setup.
 
@@ -101,10 +109,16 @@ Configuration
 -------------
 The service is configured via environment variables:
 
+**Server:**
 - `ROUTER_PORT` (default: 8090) — HTTP server port
 - `NOETL_BASE_URL` (default: http://localhost:8082) — NoETL REST API base URL
-- `NATS_URL` (default: nats://127.0.0.1:4222) — Optional in Phase 1; used in Phase 2 for subscriptions
-- `NATS_UPDATES_SUBJECT_PREFIX` (default: playbooks.executions.) — Optional in Phase 1; Phase 2 subject will be `${prefix}{executionId}.events`
+
+**NATS (Callbacks & Session Cache):**
+- `NATS_URL` (default: nats://127.0.0.1:4222) — NATS server URL with credentials (e.g., `nats://user:pass@host:port`)
+- `NATS_CALLBACK_SUBJECT_PREFIX` (default: noetl.callbacks) — Subject prefix for playbook callbacks
+- `NATS_SESSION_BUCKET` (default: sessions) — K/V bucket name for session cache
+- `NATS_SESSION_CACHE_TTL_SECS` (default: 300) — Session cache TTL in seconds (5 minutes)
+- `NATS_UPDATES_SUBJECT_PREFIX` (default: playbooks.executions.) — Subject prefix for execution updates
 
 Assumptions and TODO
 --------------------

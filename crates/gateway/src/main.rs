@@ -26,6 +26,7 @@ mod graphql;
 mod noetl_client;
 mod proxy;
 mod result_ext;
+mod session_cache;
 
 use crate::callbacks::CallbackManager;
 use crate::config::GatewayConfig;
@@ -33,6 +34,7 @@ use crate::graphql::schema::{AppSchema, MutationRoot, QueryRoot};
 use crate::noetl_client::NoetlClient;
 use crate::proxy::ProxyState;
 use crate::result_ext::ResultExt;
+use crate::session_cache::SessionCache;
 
 #[ctor::ctor]
 fn init() {
@@ -72,11 +74,33 @@ async fn main() -> anyhow::Result<()> {
         .await
         .log("Failed to start NATS callback listener")?;
 
-    // Combined auth state with configurable playbook paths
+    // Initialize session cache using NATS K/V (optional - degrades gracefully)
+    let session_cache = Arc::new(SessionCache::new(
+        config.nats.session_bucket.clone(),
+        config.nats.session_cache_ttl_secs,
+    ));
+    let cache_enabled = session_cache
+        .connect(&config.nats.url)
+        .await
+        .unwrap_or(false);
+    if cache_enabled {
+        tracing::info!(
+            "Session cache enabled: bucket={}, ttl={}s",
+            config.nats.session_bucket,
+            config.nats.session_cache_ttl_secs
+        );
+    } else {
+        tracing::warn!(
+            "Session cache disabled (NATS K/V unavailable) - all validations will use playbooks"
+        );
+    }
+
+    // Combined auth state with configurable playbook paths and session cache
     let auth_state = Arc::new(auth::AuthState {
         noetl: noetl_arc.clone(),
         callbacks: callback_manager.clone(),
         playbook_config: config.auth_playbooks.clone(),
+        session_cache: session_cache.clone(),
     });
 
     // Proxy state for forwarding requests to NoETL

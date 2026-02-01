@@ -67,7 +67,7 @@ This document describes the complete Auth0 authentication integration between th
 
 ## Session Caching with NATS K/V
 
-The Gateway uses NATS K/V as a fast session cache to avoid calling NoETL playbooks for every authenticated request.
+The Gateway uses NATS JetStream K/V as a fast session cache to avoid calling NoETL playbooks for every authenticated request.
 
 ### Cache Flow
 
@@ -75,16 +75,20 @@ The Gateway uses NATS K/V as a fast session cache to avoid calling NoETL playboo
 1. Gateway receives Auth0 token from UI
 2. Gateway calls `auth0_login` playbook via NoETL
 3. Playbook validates token, creates user/session in Postgres
-4. Playbook caches session in NATS K/V bucket (`sessions`)
-5. Gateway receives callback with session details
+4. Gateway receives callback with session details
+5. **Gateway caches session in NATS K/V** (bucket: `sessions`, TTL: 5 min)
 
-**Subsequent Requests:**
-1. Gateway checks NATS K/V for session (sub-millisecond lookup)
-2. If found and valid → use cached session data (fast path)
+**Subsequent Requests (Middleware & Validate):**
+1. **Gateway checks NATS K/V for session** (sub-millisecond lookup)
+2. If found and valid → use cached session data (fast path, no playbook call)
 3. If not found (cache miss) → call `auth0_validate_session` playbook
 4. Playbook validates from Postgres (source of truth)
-5. Playbook refreshes NATS K/V cache
-6. Gateway receives callback
+5. Gateway receives callback and **caches result in NATS K/V**
+
+**Session Invalidation:**
+- Invalid sessions are removed from cache
+- Cache entries auto-expire via NATS K/V TTL (default: 5 minutes)
+- Postgres remains source of truth
 
 ### NATS K/V Session Data
 
@@ -101,21 +105,44 @@ The Gateway uses NATS K/V as a fast session cache to avoid calling NoETL playboo
 
 ### Configuration
 
+**Environment Variables:**
 ```bash
-# NATS connection
-export NATS_URL=nats://nats.nats.svc.cluster.local:4222
-export NATS_SESSION_BUCKET=sessions
+# NATS connection (with credentials for JetStream K/V access)
+export NATS_URL=nats://noetl:noetl@nats.nats.svc.cluster.local:4222
+
+# Session cache settings
+export NATS_SESSION_BUCKET=sessions        # K/V bucket name (default: sessions)
+export NATS_SESSION_CACHE_TTL_SECS=300     # Cache TTL in seconds (default: 300 = 5 min)
 
 # For Kind cluster (NodePort)
-export NATS_URL=nats://localhost:30422
+export NATS_URL=nats://noetl:noetl@localhost:30422
 ```
+
+**NATS Server Configuration (accounts-based):**
+```conf
+accounts {
+  NOETL {
+    jetstream: enabled
+    users: [
+      { user: noetl, password: noetl }
+    ]
+  }
+}
+```
+
+### Graceful Degradation
+
+If NATS K/V is unavailable (connection fails, permissions issue), the gateway:
+- Logs a warning: `Session cache disabled (NATS K/V unavailable)`
+- Continues to work using playbooks for all validations
+- No downtime or errors for users
 
 ### Benefits
 
 - **Performance**: Sub-millisecond session lookups from NATS K/V
 - **Scalability**: Reduced load on NoETL server and PostgreSQL
-- **Reliability**: Postgres remains source of truth
-- **Simplicity**: Automatic cache refresh via playbooks
+- **Reliability**: Postgres remains source of truth, graceful degradation
+- **Simplicity**: Gateway handles caching automatically after login/validation
 
 ## Components
 
@@ -468,9 +495,9 @@ Content-Type: application/json
 
 ## Next Steps
 
-1. **Implement NATS K/V Cache in Gateway**: Add Rust code to check NATS K/V before calling playbooks
-2. **Session TTL**: Configure NATS K/V bucket with automatic TTL for cache expiration
-3. **Cache Invalidation**: Add logout handling to delete session from NATS K/V
+1. ~~**Implement NATS K/V Cache in Gateway**~~: ✅ Implemented - Gateway checks NATS K/V before calling playbooks
+2. ~~**Session TTL**~~: ✅ Implemented - NATS K/V bucket configured with automatic TTL (default: 5 min)
+3. ~~**Cache Invalidation**~~: ✅ Implemented - Invalid sessions removed from cache automatically
 4. **Integrate Auth0 SDK**: Use Auth0 JavaScript SDK for proper OAuth flow
 5. **Add Refresh Tokens**: Implement token refresh before expiration
 6. **Role Management UI**: Build admin interface for role/permission management
@@ -482,10 +509,12 @@ Content-Type: application/json
 ## Files Summary
 
 **Gateway Rust:**
-- `src/auth/mod.rs` (343 lines)
-- `src/auth/middleware.rs` (138 lines)
-- `src/auth/types.rs` (10 lines)
-- `src/main.rs` (updated)
+- `src/auth/mod.rs` - Auth endpoints with cache-first validation
+- `src/auth/middleware.rs` - Session validation middleware with cache support
+- `src/auth/types.rs` - User context types
+- `src/session_cache.rs` - NATS JetStream K/V session cache module
+- `src/config/gateway_config.rs` - Configuration with session cache settings
+- `src/main.rs` - Gateway startup with session cache initialization
 
 **Gateway UI:**
 - `static/login.html` (446 lines)

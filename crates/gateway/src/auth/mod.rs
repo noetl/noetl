@@ -14,6 +14,7 @@ use tokio::time::{timeout, Duration};
 use crate::callbacks::CallbackManager;
 use crate::config::AuthPlaybooksConfig;
 use crate::noetl_client::NoetlClient;
+use crate::session_cache::SessionCache;
 
 /// Combined state for auth handlers
 #[derive(Clone)]
@@ -22,6 +23,8 @@ pub struct AuthState {
     pub callbacks: Arc<CallbackManager>,
     /// Configurable playbook paths for authentication
     pub playbook_config: AuthPlaybooksConfig,
+    /// Session cache backed by NATS K/V
+    pub session_cache: Arc<SessionCache>,
 }
 
 /// Authentication error responses
@@ -233,6 +236,19 @@ pub async fn login(
 
     tracing::info!("Auth login successful for user: {}", user.email);
 
+    // Cache the session for fast validation on subsequent requests
+    let cached_session = crate::session_cache::CachedSession {
+        session_token: session_token.clone(),
+        user_id: user.user_id,
+        email: user.email.clone(),
+        display_name: user.display_name.clone(),
+        expires_at: expires_at.clone(),
+        is_active: true,
+    };
+    if let Err(e) = state.session_cache.put(&cached_session).await {
+        tracing::warn!("Failed to cache session after login: {}", e);
+    }
+
     Ok(Json(LoginResponse {
         status: "authenticated".to_string(),
         session_token,
@@ -243,11 +259,30 @@ pub async fn login(
 }
 
 /// Validate session endpoint - checks if session token is valid
+/// Uses cache-first strategy: checks NATS K/V cache before triggering playbook
 pub async fn validate_session(
     State(state): State<Arc<AuthState>>,
     Json(req): Json<ValidateSessionRequest>,
 ) -> Result<Json<ValidateSessionResponse>, AuthError> {
     tracing::info!("Auth validate_session request");
+
+    // Check session cache first
+    if let Some(cached) = state.session_cache.get(&req.session_token).await {
+        tracing::info!("Session validated from cache: user={}", cached.email);
+        return Ok(Json(ValidateSessionResponse {
+            valid: true,
+            user: Some(UserInfo {
+                user_id: cached.user_id,
+                email: cached.email,
+                display_name: cached.display_name,
+            }),
+            expires_at: Some(cached.expires_at),
+            message: "Session is valid (cached)".to_string(),
+        }));
+    }
+
+    // Cache miss - validate via playbook
+    tracing::info!("Session cache miss, calling validate_session playbook");
 
     // Register callback to receive result via NATS
     let (request_id, nats_subject, rx) = state.callbacks.register().await;
@@ -294,6 +329,8 @@ pub async fn validate_session(
     tracing::info!("validate_session valid={}, valid_field={:?}", valid, output.get("valid"));
 
     if !valid {
+        // Invalidate any stale cache entry
+        let _ = state.session_cache.invalidate(&req.session_token).await;
         return Ok(Json(ValidateSessionResponse {
             valid: false,
             user: None,
@@ -325,6 +362,21 @@ pub async fn validate_session(
         .get("expires_at")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
+
+    // Cache the validated session
+    if let Some(ref user_info) = user {
+        let cached_session = crate::session_cache::CachedSession {
+            session_token: req.session_token.clone(),
+            user_id: user_info.user_id,
+            email: user_info.email.clone(),
+            display_name: user_info.display_name.clone(),
+            expires_at: expires_at.clone().unwrap_or_default(),
+            is_active: true,
+        };
+        if let Err(e) = state.session_cache.put(&cached_session).await {
+            tracing::warn!("Failed to cache session: {}", e);
+        }
+    }
 
     tracing::info!("Auth validate_session valid: {}", valid);
 
