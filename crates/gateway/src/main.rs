@@ -22,19 +22,25 @@ use tracing_subscriber::EnvFilter;
 mod auth;
 mod callbacks;
 mod config;
+mod connection_hub;
 mod graphql;
 mod noetl_client;
 mod proxy;
+mod request_store;
 mod result_ext;
 mod session_cache;
+mod sse;
 
 use crate::callbacks::CallbackManager;
 use crate::config::GatewayConfig;
+use crate::connection_hub::ConnectionHub;
 use crate::graphql::schema::{AppSchema, MutationRoot, QueryRoot};
 use crate::noetl_client::NoetlClient;
 use crate::proxy::ProxyState;
+use crate::request_store::RequestStore;
 use crate::result_ext::ResultExt;
 use crate::session_cache::SessionCache;
+use crate::sse::SseState;
 
 #[ctor::ctor]
 fn init() {
@@ -95,6 +101,38 @@ async fn main() -> anyhow::Result<()> {
         );
     }
 
+    // Initialize connection hub for SSE/WebSocket connections
+    let connection_hub = Arc::new(ConnectionHub::new());
+
+    // Initialize request store for pending playbook callbacks (optional - degrades gracefully)
+    let request_store = Arc::new(RequestStore::new(
+        config.nats.request_bucket.clone(),
+        config.nats.request_ttl_secs,
+    ));
+    let request_store_enabled = request_store
+        .connect(&config.nats.url)
+        .await
+        .unwrap_or(false);
+    if request_store_enabled {
+        tracing::info!(
+            "Request store enabled: bucket={}, ttl={}s",
+            config.nats.request_bucket,
+            config.nats.request_ttl_secs
+        );
+    } else {
+        tracing::warn!(
+            "Request store disabled (NATS K/V unavailable) - async callbacks will not work"
+        );
+    }
+
+    // SSE state for real-time callbacks
+    let sse_state = Arc::new(SseState {
+        connection_hub: connection_hub.clone(),
+        request_store: request_store.clone(),
+        session_cache: session_cache.clone(),
+        heartbeat_interval_secs: config.transport.heartbeat_interval_secs,
+    });
+
     // Combined auth state with configurable playbook paths and session cache
     let auth_state = Arc::new(auth::AuthState {
         noetl: noetl_arc.clone(),
@@ -106,9 +144,14 @@ async fn main() -> anyhow::Result<()> {
     // Proxy state for forwarding requests to NoETL
     let proxy_state = Arc::new(ProxyState::new(config.noetl.base_url.clone()));
 
+    // Wrap config in Arc for sharing with GraphQL context
+    let config_arc = Arc::new(config.clone());
+
     let schema: AppSchema = Schema::build(QueryRoot, MutationRoot, async_graphql::EmptySubscription)
         .data(noetl_arc.clone())
         .data(proxy_state.clone())
+        .data(request_store.clone())
+        .data(config_arc.clone())
         .finish();
 
     // CORS configuration
@@ -142,6 +185,13 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/internal/callback", post(auth::internal_callback))
         .with_state(auth_state.clone());
 
+    // SSE routes for real-time callbacks (auth via query param)
+    let sse_routes = Router::new()
+        .route("/events", get(sse::sse_handler))
+        .route("/api/internal/callback/async", post(sse::callback_handler))
+        .route("/api/internal/progress", post(sse::progress_handler))
+        .with_state(sse_state.clone());
+
     // Protected GraphQL routes (auth required)
     let graphql_routes = Router::new()
         .route("/graphql", get(graphiql).post_service(GraphQL::new(schema.clone())))
@@ -168,6 +218,7 @@ async fn main() -> anyhow::Result<()> {
     // Main gateway app
     let app = Router::new()
         .merge(public_routes)
+        .merge(sse_routes)
         .merge(graphql_routes)
         .merge(proxy_routes)
         .layer(cors);
@@ -176,6 +227,8 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!(%addr, noetl_base = %config.noetl.base_url, "starting gateway server http://localhost:{}", config.server.port);
     tracing::info!("Auth endpoints: POST /api/auth/login, POST /api/auth/validate, POST /api/auth/check-access");
     tracing::info!("Internal endpoint: POST /api/internal/callback (for worker callbacks)");
+    tracing::info!("SSE endpoint: GET /events?session_token=xxx (real-time callbacks)");
+    tracing::info!("Async callback: POST /api/internal/callback/async (for async playbook results)");
     tracing::info!("Protected GraphQL: POST /graphql (requires authentication)");
     tracing::info!("Protected Proxy: /noetl/* -> NoETL /api/* (requires authentication)");
 

@@ -13,6 +13,9 @@ workload:
   amadeus_key_path: projects/1014428265962/secrets/api-key-test-api-amadeus-com/versions/1
   amadeus_secret_path: projects/1014428265962/secrets/api-secret-test-api-amadeus-com/versions/1
   query: I want a one-way flight from SFO to JFK on March 15, 2026 for 1 adult
+  # Async callback support (injected by gateway when client_id is provided)
+  request_id: "{{ request_id | default('') }}"
+  gateway_url: "{{ gateway_url | default('http://gateway.gateway.svc.cluster.local:8090') }}"
 
 keychain:
   - name: openai_token
@@ -293,14 +296,62 @@ workflow:
         $json${{ {"query": workload.query, "natural_language_result": (translate_amadeus_response.data.choices[0].message.content if translate_amadeus_response.data and translate_amadeus_response.data.choices else 'No response generated') | b64encode, "execution_id": job.uuid, "is_base64_encoded": true} | tojson }}$json$::jsonb
       );
   next:
-  - step: end
+  - step: prepare_result
+
+- step: prepare_result
+  desc: Prepare final result for callback
+  tool:
+    kind: python
+    args:
+      query: "{{ workload.query }}"
+      nl_result: "{{ translate_amadeus_response.data.choices[0].message.content if translate_amadeus_response.data and translate_amadeus_response.data.choices else 'No response generated' }}"
+      execution_id: "{{ job.uuid }}"
+    code: |
+      result = {
+          "status": "COMPLETED",
+          "textOutput": nl_result,
+          "query": query,
+          "executionId": execution_id
+      }
+  case:
+    # If request_id is set, send callback to gateway
+    - when: "{{ event.name == 'call.done' and workload.request_id }}"
+      then:
+        - next:
+            - step: send_callback
+    - when: "{{ event.name == 'call.done' }}"
+      then:
+        - next:
+            - step: end
+
+- step: send_callback
+  desc: Send result to gateway via HTTP callback
+  tool:
+    kind: http
+    method: POST
+    endpoint: "{{ workload.gateway_url }}/api/internal/callback/async"
+    headers:
+      Content-Type: application/json
+    payload:
+      request_id: "{{ workload.request_id }}"
+      execution_id: "{{ job.uuid }}"
+      status: "{{ prepare_result.status }}"
+      data:
+        textOutput: "{{ prepare_result.textOutput }}"
+        query: "{{ prepare_result.query }}"
+        executionId: "{{ prepare_result.executionId }}"
+  case:
+    - when: "{{ event.name == 'call.done' or event.name == 'call.error' }}"
+      then:
+        - next:
+            - step: end
 
 - step: end
   desc: End of workflow
   tool:
     kind: python
-    auth: {}
-    libs: {}
-    args: {}
+    args:
+      status: "{{ prepare_result.status | default('COMPLETED') }}"
+      text_output: "{{ prepare_result.textOutput | default('Workflow completed') }}"
     code: |
-      result = {"status": "completed", "message": "Amadeus AI API workflow completed successfully"}
+      result = {"status": status, "textOutput": text_output}

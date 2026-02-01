@@ -118,6 +118,34 @@ body {
   transform: translateY(-1px);
 }
 
+/* Connection Status Indicator */
+.status-indicator {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  display: inline-block;
+  transition: background-color 0.3s ease;
+}
+
+.status-connected {
+  background: #48bb78;
+  box-shadow: 0 0 8px rgba(72, 187, 120, 0.6);
+}
+
+.status-disconnected {
+  background: #f6ad55;
+  animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
 /* Chat Container */
 .chat-container {
   flex: 1;

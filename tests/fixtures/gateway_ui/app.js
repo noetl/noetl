@@ -9,12 +9,36 @@ const sendButton = document.getElementById('sendButton');
 
 // State
 let isProcessing = false;
+let sseReady = false;
 
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
   chatForm.addEventListener('submit', handleSubmit);
   chatInput.addEventListener('input', handleInputChange);
+
+  // Listen for SSE connection
+  window.addEventListener('sse-connected', (event) => {
+    console.log('[app.js] SSE connected with clientId:', event.detail.clientId.substring(0, 8) + '...');
+    sseReady = true;
+    updateConnectionStatus(true);
+  });
+
+  // Listen for playbook progress updates
+  window.addEventListener('playbook-progress', (event) => {
+    const { message, step, progress } = event.detail;
+    console.log('[app.js] Progress:', message || step, progress);
+    // Could update typing indicator with progress message
+  });
 });
+
+// Update connection status indicator (optional UI enhancement)
+function updateConnectionStatus(connected) {
+  const statusEl = document.getElementById('connectionStatus');
+  if (statusEl) {
+    statusEl.className = connected ? 'status-connected' : 'status-disconnected';
+    statusEl.title = connected ? 'Real-time updates enabled' : 'Connecting...';
+  }
+}
 
 // Handle form submission
 async function handleSubmit(e) {
@@ -22,6 +46,12 @@ async function handleSubmit(e) {
 
   const query = chatInput.value.trim();
   if (!query || isProcessing) return;
+
+  // Check SSE connection
+  if (!isSSEConnected()) {
+    addErrorMessage('Real-time connection not established. Please wait or refresh the page.');
+    return;
+  }
 
   // Check playbook access before execution
   const hasAccess = await checkPlaybookAccess(PLAYBOOK_NAME, 'execute');
@@ -49,8 +79,8 @@ async function handleSubmit(e) {
   setProcessing(true);
 
   try {
-    // Execute GraphQL mutation with authentication
-    const result = await executePlaybook(query);
+    // Execute playbook with async callback via SSE
+    const result = await executePlaybookAsync(PLAYBOOK_NAME, { query: query });
 
     // Remove typing indicator
     typingIndicator.remove();
@@ -64,12 +94,14 @@ async function handleSubmit(e) {
   } catch (error) {
     console.error('Error executing playbook:', error);
     typingIndicator.remove();
-    
+
     if (error.message === 'Session expired' || error.message === 'Not authenticated') {
       addErrorMessage('Your session has expired. Redirecting to login...');
       setTimeout(() => {
         redirectToLogin();
       }, 2000);
+    } else if (error.message.includes('timed out')) {
+      addErrorMessage('The request took too long. Please try again.');
     } else {
       addErrorMessage(error.message || 'Failed to process your request. Please try again.');
     }
@@ -78,8 +110,8 @@ async function handleSubmit(e) {
   }
 }
 
-// Execute GraphQL mutation with authentication
-async function executePlaybook(query) {
+// Legacy executePlaybook function (kept for fallback if SSE not available)
+async function executePlaybookFallback(query) {
   const mutation = `
         mutation ExecuteAmadeus($name: String!, $vars: JSON) {
             executePlaybook(name: $name, variables: $vars) {

@@ -23,6 +23,8 @@ pub struct GatewayConfig {
     pub cors: CorsConfig,
     /// Authentication playbook paths
     pub auth_playbooks: AuthPlaybooksConfig,
+    /// Transport configuration (SSE/WebSocket)
+    pub transport: TransportConfig,
 }
 
 /// Server configuration
@@ -65,6 +67,24 @@ pub struct NatsConfig {
     pub session_bucket: String,
     /// Session cache TTL in seconds (default: 300 = 5 minutes)
     pub session_cache_ttl_secs: u64,
+    /// K/V bucket name for pending requests (default: "requests")
+    pub request_bucket: String,
+    /// Request TTL in seconds (default: 1800 = 30 minutes)
+    pub request_ttl_secs: u64,
+}
+
+/// Transport configuration for SSE/WebSocket
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TransportConfig {
+    /// Enable SSE transport (default: true)
+    pub sse_enabled: bool,
+    /// Enable WebSocket transport (default: false, Phase 2)
+    pub ws_enabled: bool,
+    /// Heartbeat interval in seconds (default: 30)
+    pub heartbeat_interval_secs: u64,
+    /// Connection idle timeout in seconds (default: 300)
+    pub connection_timeout_secs: u64,
 }
 
 /// CORS configuration
@@ -101,6 +121,7 @@ impl Default for GatewayConfig {
             nats: NatsConfig::default(),
             cors: CorsConfig::default(),
             auth_playbooks: AuthPlaybooksConfig::default(),
+            transport: TransportConfig::default(),
         }
     }
 }
@@ -134,6 +155,19 @@ impl Default for NatsConfig {
             callback_subject_prefix: "noetl.callbacks".to_string(),
             session_bucket: "sessions".to_string(),
             session_cache_ttl_secs: 300, // 5 minutes
+            request_bucket: "requests".to_string(),
+            request_ttl_secs: 1800, // 30 minutes
+        }
+    }
+}
+
+impl Default for TransportConfig {
+    fn default() -> Self {
+        Self {
+            sse_enabled: true,
+            ws_enabled: false, // Phase 2
+            heartbeat_interval_secs: 30,
+            connection_timeout_secs: 300, // 5 minutes
         }
     }
 }
@@ -253,6 +287,32 @@ impl GatewayConfig {
         if let Ok(val) = std::env::var("NATS_SESSION_CACHE_TTL_SECS") {
             if let Ok(secs) = val.parse() {
                 self.nats.session_cache_ttl_secs = secs;
+            }
+        }
+        if let Ok(val) = std::env::var("NATS_REQUEST_BUCKET") {
+            self.nats.request_bucket = val;
+        }
+        if let Ok(val) = std::env::var("NATS_REQUEST_TTL_SECS") {
+            if let Ok(secs) = val.parse() {
+                self.nats.request_ttl_secs = secs;
+            }
+        }
+
+        // Transport config
+        if let Ok(val) = std::env::var("GATEWAY_SSE_ENABLED") {
+            self.transport.sse_enabled = val.parse().unwrap_or(true);
+        }
+        if let Ok(val) = std::env::var("GATEWAY_WS_ENABLED") {
+            self.transport.ws_enabled = val.parse().unwrap_or(false);
+        }
+        if let Ok(val) = std::env::var("GATEWAY_HEARTBEAT_INTERVAL_SECS") {
+            if let Ok(secs) = val.parse() {
+                self.transport.heartbeat_interval_secs = secs;
+            }
+        }
+        if let Ok(val) = std::env::var("GATEWAY_CONNECTION_TIMEOUT_SECS") {
+            if let Ok(secs) = val.parse() {
+                self.transport.connection_timeout_secs = secs;
             }
         }
 

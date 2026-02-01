@@ -408,10 +408,11 @@ pub async fn check_access(
 
     // Call NoETL check_playbook_access playbook with callback info
     // The gateway tool abstracts NATS - playbooks just see callback_subject
+    // Note: playbook expects "action" not "permission_type"
     let variables = serde_json::json!({
         "session_token": req.session_token,
         "playbook_path": req.playbook_path,
-        "permission_type": req.permission_type,
+        "action": req.permission_type,
         "callback_subject": nats_subject,
         "request_id": request_id.clone(),
     });

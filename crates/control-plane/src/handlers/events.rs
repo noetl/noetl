@@ -160,7 +160,8 @@ pub async fn handle_event(
     let meta_obj = sanitize_sensitive_data(&meta_obj);
 
     // Determine status based on event name
-    let status = if request.name.contains("done") || request.name.contains("exit") {
+    // "command.completed" indicates step finished successfully
+    let status = if request.name.contains("done") || request.name.contains("exit") || request.name.contains("completed") {
         "COMPLETED"
     } else if request.name.contains("error") || request.name.contains("failed") {
         "FAILED"

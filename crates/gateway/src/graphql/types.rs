@@ -7,12 +7,20 @@ use async_graphql::{InputObject, Json, SimpleObject, ID};
 /// Result of executing a playbook.
 #[derive(SimpleObject, Clone, Debug)]
 pub struct ExecuteResult {
-    /// New execution ID.
+    /// Execution ID (alias for GraphQL compatibility).
+    pub id: String,
+    /// Execution ID (snowflake).
     pub execution_id: String,
+    /// Request ID for async callback tracking.
+    #[graphql(name = "requestId")]
+    pub request_id: Option<String>,
     /// Playbook name/path.
     pub name: Option<String>,
     /// Initial status.
     pub status: Option<String>,
+    /// Text output from playbook (populated when available).
+    #[graphql(name = "textOutput")]
+    pub text_output: Option<String>,
 }
 
 // ============================================================================
