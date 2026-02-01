@@ -4,7 +4,10 @@ metadata:
   name: amadeus_ai_api
   path: api_integration/amadeus_ai_api
   description: Complete Amadeus AI travel API integration with OpenAI translation
-  version: "2.0"
+  version: "3.1"
+  labels:
+    feature: result_storage
+    category: api_integration
 
 workload:
   pg_auth: pg_k8s
@@ -94,19 +97,19 @@ workflow:
       - role: system
         content: |
           You are a translator that converts natural-language travel queries into Amadeus API endpoints and parameters.
-          
+
           When given a request, follow these steps:
           1. Understand what the user wants: flight search, hotel offers, airport search, etc.
           2. Map the details (origin, destination, dates, passengers, etc.) to the correct REST API endpoint and parameters.
           3. Return ONLY a JSON object with two properties:
              - "endpoint": The Amadeus API endpoint (e.g., "/v2/shopping/flight-offers")
              - "params": An object containing all query parameters
-          
+
           4. Use real values from user input, and apply correct formatting (e.g., ISO dates).
           5. If values are ambiguous or missing, make reasonable assumptions.
           6. If the user provides a travel date without a year, assume they mean 2025.
           7. Always limit the number of returned results to 3 where applicable.
-          
+
           Example:
           User: "I want a one-way flight from SFO to JFK on September 15, 2025 for 1 adult."
           Response:
@@ -123,6 +126,18 @@ workflow:
       - role: user
         content: '{{ workload.query }}'
       temperature: 0.1
+    # Output configuration inside tool block (new pattern)
+    output:
+      store:
+        kind: auto
+        ttl: "30m"
+      select:
+        - path: "$.choices[0].message.content"
+          as: raw_content
+        - path: "$.usage.total_tokens"
+          as: tokens_used
+      inline_max_bytes: 4096
+      scope: execution
   next:
   - step: store_openai_query_event
 
@@ -209,6 +224,19 @@ workflow:
     params: '{{ parse_openai_response.params }}'
     headers:
       Authorization: "Bearer {{ keychain.amadeus_token.access_token }}"
+    # Output configuration inside tool block (new pattern)
+    output:
+      store:
+        kind: auto
+        ttl: "30m"
+        compression: gzip
+      select:
+        - path: "$.meta.count"
+          as: result_count
+        - path: "$.dictionaries"
+          as: dictionaries
+      inline_max_bytes: 8192
+      scope: execution
   case:
     # Retry on 5xx server errors (call.error payload carries response.data.status_code)
     - when: "{{ event.name == 'call.error' and response is defined and response.data is defined and response.data.status_code in [500, 502, 503] }}"
@@ -254,7 +282,7 @@ workflow:
       - role: system
         content: |
           You are a helpful assistant that reads raw JSON responses from the Amadeus API and summarizes them into clear, human-readable language.
-          
+
           Your task is to:
           1. Read and understand the JSON response structure (e.g. flights, hotels, etc.).
           2. Identify key information relevant to the user (e.g. origin/destination, dates, price, airline, stops, hotel name, stars, location, price).
@@ -265,6 +293,18 @@ workflow:
       - role: user
         content: '{{ execute_amadeus_query.data | tojson }}'
       temperature: 0.3
+    # Output configuration inside tool block (new pattern)
+    output:
+      store:
+        kind: auto
+        ttl: "30m"
+      select:
+        - path: "$.choices[0].message.content"
+          as: natural_language_result
+        - path: "$.usage.total_tokens"
+          as: tokens_used
+      inline_max_bytes: 4096
+      scope: execution
   next:
   - step: store_openai_response_event
 
@@ -298,7 +338,7 @@ workflow:
       VALUES (
         '{{ job.uuid }}',
         'amadeus_api',
-        $json${{ {"query": workload.query, "natural_language_result": (translate_amadeus_response.data.choices[0].message.content if translate_amadeus_response.data and translate_amadeus_response.data.choices else 'No response generated') | b64encode, "execution_id": job.uuid, "is_base64_encoded": true} | tojson }}$json$::jsonb
+        $json${{ {"query": workload.query, "natural_language_result": (translate_amadeus_response.natural_language_result | default('No response generated')) | b64encode, "execution_id": job.uuid, "is_base64_encoded": true, "result_count": execute_amadeus_query.result_count | default(0)} | tojson }}$json$::jsonb
       );
   next:
   - step: prepare_result
@@ -309,14 +349,22 @@ workflow:
     kind: python
     args:
       query: "{{ workload.query }}"
-      nl_result: "{{ translate_amadeus_response.data.choices[0].message.content if translate_amadeus_response.data and translate_amadeus_response.data.choices else 'No response generated' }}"
+      # Use extracted field from output.select (no TempRef resolution needed)
+      nl_result: "{{ translate_amadeus_response.natural_language_result | default('No response generated') }}"
       execution_id: "{{ job.uuid }}"
+      # Include token usage from extracted fields
+      openai_tokens: "{{ translate_query_to_amadeus.tokens_used | default(0) + translate_amadeus_response.tokens_used | default(0) }}"
+      amadeus_results: "{{ execute_amadeus_query.result_count | default(0) }}"
     code: |
       result = {
           "status": "COMPLETED",
           "textOutput": nl_result,
           "query": query,
-          "executionId": execution_id
+          "executionId": execution_id,
+          "meta": {
+              "totalTokensUsed": openai_tokens,
+              "amadeusResultCount": amadeus_results
+          }
       }
   case:
     # If request_id is set, send callback to gateway

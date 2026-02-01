@@ -116,7 +116,16 @@ workflow:
           export PGPORT={{ workload.pg_port }}
           export PGUSER="{{ workload.pg_user }}"
           export PGDATABASE="{{ workload.pg_database }}"
-          
+
           echo "Applying schema DDL from noetl/database/ddl/postgres/schema_ddl.sql..."
           psql -v ON_ERROR_STOP=1 -f noetl/database/ddl/postgres/schema_ddl.sql
-          echo "✓ NoETL schema rebuild complete."
+    next:
+      - step: complete
+
+  - step: complete
+    desc: Schema rebuild complete
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "✓ NoETL schema rebuild complete (including Result Storage tables)."

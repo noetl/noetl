@@ -158,7 +158,7 @@ class Event(BaseModel):
 class ToolSpec(BaseModel):
     """
     Tool configuration with tool.kind pattern.
-    All execution-specific fields live under tool.
+    All execution-specific fields live under tool, including output configuration.
     """
     kind: Literal[
         "http",
@@ -179,15 +179,21 @@ class ToolSpec(BaseModel):
         "gcs",
         "gateway",
         "nats",
+        "shell",
     ] = Field(
         ..., description="Tool type"
     )
+    # Output configuration at tool level (forward reference)
+    output: Optional["ToolOutput"] = Field(
+        default=None,
+        description="Result storage and accumulation configuration"
+    )
     # Tool-specific fields stored as flexible dict
     # Each kind validated in engine based on requirements
-    
+
     class Config:
         extra = "allow"  # Allow additional fields for tool-specific config
-    
+
     def model_post_init(self, __context):
         """Capture all extra fields as tool config."""
         # Store all non-kind fields for tool execution
@@ -297,6 +303,131 @@ class StepSpec(BaseModel):
 
 
 # ============================================================================
+# Tool Output Models - Result storage configuration at tool level
+# ============================================================================
+
+class OutputStore(BaseModel):
+    """
+    Storage configuration for tool output.
+
+    Controls where and how tool results are stored externally.
+    """
+    kind: Literal["auto", "memory", "kv", "object", "s3", "gcs", "db", "duckdb", "eventlog"] = Field(
+        default="auto", description="Storage tier (auto selects based on size)"
+    )
+    driver: Optional[str] = Field(
+        default=None, description="Specific driver (e.g., minio for s3)"
+    )
+    bucket: Optional[str] = Field(default=None, description="Bucket name for object/s3/gcs")
+    prefix: Optional[str] = Field(default=None, description="Key prefix for storage")
+    ttl: Optional[str] = Field(
+        default=None, description="TTL duration (e.g., '2h', '30m', '1d', '1y', 'forever')"
+    )
+    compression: Literal["none", "gzip", "lz4"] = Field(
+        default="none", description="Compression for stored data"
+    )
+    credential: Optional[str] = Field(
+        default=None, description="Keychain credential name for storage access"
+    )
+
+
+class OutputSelect(BaseModel):
+    """
+    Field selection for output templating.
+
+    Extracts specific fields from large results for efficient access
+    without resolving the full result reference.
+    """
+    path: str = Field(..., description="JSONPath to extract (e.g., $.data.next)")
+    as_: str = Field(..., alias="as", description="Variable name to assign extracted value")
+
+    class Config:
+        populate_by_name = True
+
+
+class OutputAccumulate(BaseModel):
+    """
+    Accumulation configuration for pagination/retry loops.
+
+    Automatically accumulates successful results across retries or pagination
+    iterations without explicit storage steps.
+
+    Example:
+        accumulate:
+          enabled: true
+          strategy: concat
+          merge_path: "$.data"
+          manifest_as: all_pages
+    """
+    enabled: bool = Field(default=False, description="Enable result accumulation")
+    strategy: Literal["append", "replace", "merge", "concat"] = Field(
+        default="append", description="How to combine results: append (list), merge (deep), concat (flatten arrays)"
+    )
+    merge_path: Optional[str] = Field(
+        default=None, description="JSONPath for nested array extraction in concat strategy"
+    )
+    manifest_as: Optional[str] = Field(
+        default=None, description="Variable name for accumulated results (default: 'accumulated')"
+    )
+    on_success: bool = Field(default=True, description="Accumulate successful results")
+    on_error: bool = Field(default=False, description="Accumulate error responses")
+    max_items: Optional[int] = Field(default=None, description="Maximum items to accumulate")
+
+
+class ToolOutput(BaseModel):
+    """
+    Tool-level output configuration.
+
+    Controls how tool results are stored and made available to subsequent steps.
+    Lives inside the tool: block, not at step level.
+
+    Example:
+        tool:
+          kind: http
+          endpoint: https://api.example.com/data
+          output:
+            store:
+              kind: auto
+              ttl: "1h"
+            select:
+              - path: "$.pagination.next"
+                as: next_cursor
+            accumulate:
+              enabled: true
+              strategy: concat
+    """
+    store: Optional[OutputStore] = Field(
+        default=None, description="Storage tier configuration"
+    )
+    select: Optional[list[OutputSelect]] = Field(
+        default=None, description="Fields to extract for templating (without resolving full ref)"
+    )
+    accumulate: Optional[OutputAccumulate] = Field(
+        default=None, description="Accumulation config for pagination/retry"
+    )
+    inline_max_bytes: int = Field(
+        default=65536, description="Max bytes to store inline in event log (64KB default)"
+    )
+    preview_max_bytes: int = Field(
+        default=1024, description="Max bytes for preview (1KB default)"
+    )
+    scope: Literal["step", "execution", "workflow", "permanent"] = Field(
+        default="execution", description="Lifecycle scope for stored data"
+    )
+    as_: Optional[str] = Field(
+        default=None, alias="as", description="Custom name for this result (for tool chains)"
+    )
+
+    class Config:
+        populate_by_name = True
+
+
+# Legacy alias for backwards compatibility
+StepOutput = ToolOutput
+OutputPublish = OutputAccumulate  # Renamed concept
+
+
+# ============================================================================
 # Step Model - Workflow node
 # ============================================================================
 
@@ -310,17 +441,24 @@ class Step(BaseModel):
     - spec: step behavior configuration (case_mode, eval_mode, etc.)
     - args: input arguments (from previous steps)
     - loop: iteration config
-    - tool: execution config (tool.kind pattern)
+    - tool: execution config (tool.kind pattern) - includes output config
     - case: event-driven conditional rules
     - next: structural default next step(s)
+
+    Note: Output configuration should be placed inside tool: block.
+    Step-level output is deprecated but supported for backwards compatibility.
     """
     step: str = Field(..., description="Step name (unique identifier)")
     desc: Optional[str] = Field(None, description="Step description")
     spec: Optional[StepSpec] = Field(None, description="Step behavior configuration")
     args: Optional[dict[str, Any]] = Field(None, description="Input arguments for this step")
     vars: Optional[dict[str, Any]] = Field(None, description="Variables to extract from step result")
+    output: Optional[ToolOutput] = Field(
+        None,
+        description="DEPRECATED: Use tool.output instead. Step-level output for backwards compatibility."
+    )
     loop: Optional[Loop] = Field(None, description="Loop configuration")
-    tool: Optional[ToolSpec] = Field(None, description="Tool configuration with tool.kind (optional when case-driven)")
+    tool: Optional[ToolSpec] = Field(None, description="Tool configuration with tool.kind and output")
     case: Optional[list[CaseEntry]] = Field(None, description="Event-driven conditional rules")
     next: Optional[str | list[str] | list[dict[str, Any]]] = Field(
         None,

@@ -22,6 +22,12 @@ from . import execution, vars, dashboard, system, runtime
 # Context API (server-side template rendering)
 from . import context
 
+# Result storage API (preferred naming)
+from . import result
+
+# TempRef storage API (legacy, for backwards compatibility)
+from . import temp
+
 router = APIRouter()
 
 @router.get("/health", response_class=JSONResponse)
@@ -47,10 +53,16 @@ router.include_router(runtime.router)
 # Context API (server-side template rendering)
 router.include_router(context.router)
 
+# Result storage API (preferred naming)
+router.include_router(result.router)
+
+# TempRef storage API (legacy, for backwards compatibility)
+router.include_router(temp.router)
+
 __all__ = [
     "router",
     "v2",
     "catalog", "credential", "database", "keychain",
     "execution", "vars", "dashboard", "system", "runtime",
-    "context"
+    "context", "result", "temp"
 ]
