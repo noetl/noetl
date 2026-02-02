@@ -107,7 +107,7 @@ CREATE TABLE IF NOT EXISTS auth.user_roles (
 
 CREATE INDEX idx_user_roles_user ON auth.user_roles(user_id);
 CREATE INDEX idx_user_roles_role ON auth.user_roles(role_id);
-CREATE INDEX idx_user_roles_active ON auth.user_roles(user_id) WHERE expires_at IS NULL OR expires_at > NOW();
+CREATE INDEX idx_user_roles_active ON auth.user_roles(user_id, expires_at) WHERE expires_at IS NULL;
 
 COMMENT ON TABLE auth.user_roles IS 'User role assignments';
 COMMENT ON COLUMN auth.user_roles.expires_at IS 'Role expiration timestamp (NULL = no expiration)';
@@ -137,7 +137,7 @@ CREATE TABLE IF NOT EXISTS auth.playbook_permissions (
     deny_pattern VARCHAR(500),  -- Explicit deny pattern (takes precedence)
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW(),
-    CONSTRAINT playbook_path_format CHECK (playbook_path ~ '^[a-z0-9/_-]+$')
+    CONSTRAINT playbook_path_format CHECK (playbook_path ~ '^[a-z0-9/_*-]+$')
 );
 
 CREATE INDEX idx_playbook_perms_role ON auth.playbook_permissions(role_id);

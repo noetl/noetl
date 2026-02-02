@@ -344,7 +344,6 @@
 
           try {
             // Call Gateway's auth login endpoint with the Auth0 tokens
-            console.log('DEBUG: Calling Gateway auth/login with id_token at:', getAuthLoginUrl());
             const response = await fetch(getAuthLoginUrl(), {
               method: 'POST',
               headers: {'Content-Type': 'application/json'},
@@ -356,7 +355,6 @@
 
             if (response.ok) {
               const data = await response.json();
-              console.log('DEBUG: Gateway login response:', data);
 
               if (data.session_token) {
                 // Store session token and user info
@@ -395,7 +393,6 @@
       const token = localStorage.getItem('session_token');
       const userInfo = localStorage.getItem('user_info');
       if (token && userInfo) {
-        console.log('Token and user_info found, redirecting to dashboard (soft auth mode)');
         window.location.href = '/dashboard.html';
         return;
       } else if (token && !userInfo) {
@@ -406,7 +403,6 @@
         } else {
           // Token is invalid, clear it
           localStorage.removeItem('session_token');
-          console.log('Invalid session token cleared (no user_info cached)');
         }
         return;
       }
