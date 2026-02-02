@@ -22,16 +22,17 @@ async def get_execution_status(execution_id: int) -> str:
     Returns:
         - "completed": playbook finished successfully
         - "failed": playbook failed with error
+        - "cancelled": playbook was cancelled by user
         - "running": execution in progress (or interrupted)
     """
     async with get_pool_connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
-            # Check for completion/failure events
+            # Check for terminal events (completion, failure, cancellation)
             await cur.execute("""
                 SELECT event_type, status
                 FROM noetl.event
                 WHERE execution_id = %s
-                  AND event_type IN ('playbook.completed', 'playbook.failed')
+                  AND event_type IN ('playbook.completed', 'playbook.failed', 'execution.cancelled')
                 ORDER BY created_at DESC
                 LIMIT 1
             """, (execution_id,))
@@ -42,53 +43,53 @@ async def get_execution_status(execution_id: int) -> str:
                     return "completed"
                 if row['event_type'] == 'playbook.failed':
                     return "failed"
+                if row['event_type'] == 'execution.cancelled':
+                    return "cancelled"
 
-            # Check if there are any FAILED status events
+            # Check if there are any FAILED or CANCELLED status events
             await cur.execute("""
-                SELECT 1
+                SELECT status
                 FROM noetl.event
                 WHERE execution_id = %s
-                  AND status = 'FAILED'
+                  AND status IN ('FAILED', 'CANCELLED')
+                ORDER BY created_at DESC
                 LIMIT 1
             """, (execution_id,))
 
-            if await cur.fetchone():
-                return "failed"
+            row = await cur.fetchone()
+            if row:
+                if row['status'] == 'FAILED':
+                    return "failed"
+                if row['status'] == 'CANCELLED':
+                    return "cancelled"
 
             # Otherwise, it's running (or interrupted)
             return "running"
 
 
-async def get_last_execution_per_playbook() -> List[Dict[str, Any]]:
+async def get_last_execution() -> Optional[Dict[str, Any]]:
     """
-    Get the most recent execution for each unique playbook (path).
+    Get the most recent execution overall (across all playbooks).
 
-    Returns list of {execution_id, path, catalog_id, created_at}
+    Returns the single most recent execution, or None if no executions found.
+    Returns: {execution_id, path, catalog_id, created_at}
     """
     async with get_pool_connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
             await cur.execute("""
-                WITH latest_executions AS (
-                    SELECT
-                        execution_id,
-                        catalog_id,
-                        created_at,
-                        ROW_NUMBER() OVER (PARTITION BY catalog_id ORDER BY created_at DESC) as rn
-                    FROM noetl.event
-                    WHERE event_type = 'playbook.initialized'
-                )
                 SELECT
-                    le.execution_id,
+                    e.execution_id,
                     c.path,
-                    le.catalog_id,
-                    le.created_at
-                FROM latest_executions le
-                JOIN noetl.catalog c ON c.catalog_id = le.catalog_id
-                WHERE le.rn = 1
-                ORDER BY le.created_at DESC
+                    e.catalog_id,
+                    e.created_at
+                FROM noetl.event e
+                JOIN noetl.catalog c ON c.catalog_id = e.catalog_id
+                WHERE e.event_type = 'playbook.initialized'
+                ORDER BY e.created_at DESC
+                LIMIT 1
             """)
 
-            return await cur.fetchall()
+            return await cur.fetchone()
 
 
 async def resume_execution(execution_id: int, path: str, catalog_id: int) -> bool:
@@ -136,46 +137,39 @@ async def resume_interrupted_executions():
     Check for interrupted executions and automatically resume them.
 
     This is called on server startup to recover from pod restarts.
-    Only resumes the LAST execution of each playbook if it's in 'running' state.
+    Only checks the most recent execution overall - if it's in 'running' state,
+    restarts it.
     """
     try:
         logger.info("[AUTO-RESUME] Checking for interrupted executions...")
 
-        # Get last execution for each playbook
-        executions = await get_last_execution_per_playbook()
+        # Get the most recent execution
+        last_execution = await get_last_execution()
 
-        if not executions:
+        if not last_execution:
             logger.info("[AUTO-RESUME] No executions found")
             return
 
-        logger.info(f"[AUTO-RESUME] Found {len(executions)} unique playbooks with executions")
+        execution_id = last_execution['execution_id']
+        path = last_execution['path']
+        catalog_id = last_execution['catalog_id']
 
-        resumed_count = 0
-        skipped_count = 0
+        # Check execution status
+        status = await get_execution_status(execution_id)
 
-        for exec_info in executions:
-            execution_id = exec_info['execution_id']
-            path = exec_info['path']
+        logger.info(f"[AUTO-RESUME] Last execution {execution_id} ({path}): status={status}")
 
-            # Check execution status
-            status = await get_execution_status(execution_id)
-
-            logger.debug(f"[AUTO-RESUME] Execution {execution_id} ({path}): status={status}")
-
-            if status == "running":
-                # This execution was interrupted - restart it
-                catalog_id = exec_info['catalog_id']
-                success = await resume_execution(execution_id, path, catalog_id)
-                if success:
-                    resumed_count += 1
-                else:
-                    skipped_count += 1
+        if status == "running":
+            # This execution was interrupted - restart it
+            logger.info(f"[AUTO-RESUME] Restarting interrupted execution {execution_id}")
+            success = await resume_execution(execution_id, path, catalog_id)
+            if success:
+                logger.info("[AUTO-RESUME] Successfully restarted interrupted playbook")
             else:
-                # Already completed or failed - skip
-                logger.debug(f"[AUTO-RESUME] Skipping execution {execution_id} ({path}): {status}")
-                skipped_count += 1
-
-        logger.info(f"[AUTO-RESUME] Completed: {resumed_count} resumed, {skipped_count} skipped")
+                logger.warning("[AUTO-RESUME] Failed to restart interrupted playbook")
+        else:
+            # Already completed or failed - nothing to do
+            logger.info(f"[AUTO-RESUME] Last execution already {status}, no action needed")
 
     except Exception as e:
         logger.error(f"[AUTO-RESUME] Critical error during auto-resume: {e}", exc_info=True)
