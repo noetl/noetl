@@ -1,39 +1,24 @@
 apiVersion: noetl.io/v2
 kind: Playbook
 metadata:
-  name: auth0_login
-  path: api_integration/auth0/auth0_login
+  name: auth0_login_optimized
+  path: api_integration/auth0/auth0_login_optimized
   description: |
-    Authenticate user with Auth0 and create NoETL session.
+    OPTIMIZED Auth0 login - reduced from 7 steps to 3 steps for faster execution.
 
-    OPTIMIZED: Reduced from 7 steps to 4 steps for faster execution (~1s vs ~3s).
-    Uses CTE for combined user upsert + session creation in single DB round-trip.
-    Uses inline task lists to execute callback without extra step.
+    Uses inline task lists to execute multiple actions on the same worker,
+    reducing server-worker round trips from ~30 HTTP calls to ~12.
 
     Flow:
       1. validate_token: Decode JWT
-      2. create_user_session: Upsert user + create session (combined CTE)
-      3. cache_and_callback: Cache session + send callback (inline tasks)
-      4. end: Complete
+      2. create_user_session: Upsert user + create session (combined postgres)
+      3. complete: Cache session + send callback (inline tasks)
 
-    Gateway Integration:
-      - Gateway calls this playbook when user authenticates via Auth0
-      - After completion, gateway can fetch session directly from NATS K/V
-      - NATS K/V acts as session cache; Postgres is source of truth
-
-    Input:
-      - auth0_token: Auth0 ID token (JWT)
-      - client_ip: Client IP (optional, defaults to 0.0.0.0)
-      - request_id: Gateway request ID for callback
-
-    Output (via callback):
-      - session_token: NoETL session token
-      - user: User details (user_id, email, display_name)
-      - expires_at: Session expiration timestamp
+    Expected execution time: ~1 second (down from ~3 seconds)
   tags:
     - auth0
     - authentication
-    - nats
+    - optimized
     - gateway
 
 workload:
@@ -43,7 +28,6 @@ workload:
   db_credential: pg_auth
   nats_credential: nats_credential
   session_bucket: sessions
-  callback_subject: ""
   request_id: ""
   gateway_url: "http://gateway.gateway.svc.cluster.local:8090"
 
@@ -92,7 +76,7 @@ workflow:
         except Exception as e:
             result = {"error": str(e)}
     case:
-      # Error with callback - send error and end (inline task)
+      # Error with callback - send error and end (inline tasks)
       - when: "{{ (event.name == 'call.error' or (event.name == 'call.done' and result.error is defined)) and request_id }}"
         then:
           - send_error_callback:
@@ -121,12 +105,13 @@ workflow:
           - next:
               - step: create_user_session
 
-  # Step 2: Combined upsert user + create session (single postgres CTE)
+  # Step 2: Combined upsert user + create session (single postgres connection)
   - step: create_user_session
     desc: Upsert user and create session in single transaction
     tool:
       kind: postgres
       auth: "{{ db_credential }}"
+      # Multiple commands in single connection - uses CTEs for efficiency
       command: |
         WITH upserted_user AS (
           INSERT INTO auth.users (auth0_id, email, display_name, last_login_at)
@@ -156,7 +141,7 @@ workflow:
       - when: "{{ event.name == 'call.done' and result.command_0 is defined }}"
         then:
           - next:
-              - step: cache_and_callback
+              - step: complete
       # On error with callback
       - when: "{{ event.name == 'call.error' and request_id }}"
         then:
@@ -175,15 +160,10 @@ workflow:
                     message: "Failed to create session"
           - next:
               - step: end
-      # On error without callback
-      - when: "{{ event.name == 'call.error' }}"
-        then:
-          - next:
-              - step: end
 
-  # Step 3: Cache session in NATS and send callback
-  - step: cache_and_callback
-    desc: Cache session in NATS K/V and send callback to gateway
+  # Step 3: Cache session and send callback (inline tasks - no separate steps)
+  - step: complete
+    desc: Cache session in NATS and send callback
     spec:
       case_mode: exclusive
     tool:
@@ -251,7 +231,7 @@ workflow:
                     expires_at: "{{ create_user_session.command_0.rows[0].expires_at }}"
           - next:
               - step: end
-      # NATS failed without callback - still end successfully
+      # NATS failed without callback
       - when: "{{ event.name == 'call.error' }}"
         then:
           - next:

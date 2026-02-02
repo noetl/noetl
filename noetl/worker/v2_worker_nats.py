@@ -377,15 +377,18 @@ class V2Worker:
     async def _handle_command_notification(self, notification: dict):
         """
         Handle command notification from NATS (Event-Driven).
-        
+
         Notification contains: {execution_id, event_id, command_id, step, server_url}
-        
+
         Event-driven flow:
         1. Check if command already claimed
         2. Attempt atomic claim via command.claimed event
         3. If claim succeeds, fetch command details and execute
         4. If claim fails, another worker got it - silently skip
         """
+        import time
+        t_total_start = time.perf_counter()
+
         with LoggingContext(logger, notification=notification, execution_id = notification.get("execution_id")):
             try:
                 execution_id = notification["execution_id"]
@@ -393,24 +396,31 @@ class V2Worker:
                 command_id = notification["command_id"]
                 step = notification["step"]
                 server_url = notification["server_url"]
-                
+
                 logger.info(f"[EVENT] Worker {self.worker_id} received notification: exec={execution_id}, command={command_id}, step={step}")
-                
+
                 # Check if execution has been cancelled before claiming
+                t_cancel_check1_start = time.perf_counter()
                 if await self._check_execution_cancelled(server_url, execution_id):
                     logger.info(f"[CANCEL] Execution {execution_id} cancelled - skipping command {command_id}")
                     return
-                
+                t_cancel_check1_end = time.perf_counter()
+                logger.info(f"[PERF] cancel_check_1 took {(t_cancel_check1_end - t_cancel_check1_start)*1000:.1f}ms")
+
                 # Attempt to claim the command atomically
+                t_claim_start = time.perf_counter()
                 claimed = await self._claim_command(server_url, execution_id, command_id)
-                
+                t_claim_end = time.perf_counter()
+                logger.info(f"[PERF] claim_command took {(t_claim_end - t_claim_start)*1000:.1f}ms")
+
                 if not claimed:
                     logger.info(f"[EVENT] Command {command_id} already claimed by another worker - skipping")
                     return
-                
+
                 logger.info(f"[EVENT] Worker {self.worker_id} claimed command {command_id}")
-                
+
                 # Check again after claiming (in case cancellation happened during claim)
+                t_cancel_check2_start = time.perf_counter()
                 if await self._check_execution_cancelled(server_url, execution_id):
                     logger.info(f"[CANCEL] Execution {execution_id} cancelled after claim - aborting command {command_id}")
                     await self._emit_event(
@@ -419,21 +429,29 @@ class V2Worker:
                         actionable=False, informative=True
                     )
                     return
-                
+                t_cancel_check2_end = time.perf_counter()
+                logger.info(f"[PERF] cancel_check_2 took {(t_cancel_check2_end - t_cancel_check2_start)*1000:.1f}ms")
+
                 # Fetch command details from command.issued event
+                t_fetch_start = time.perf_counter()
                 command = await self._fetch_command_details(server_url, event_id)
-                
+                t_fetch_end = time.perf_counter()
+                logger.info(f"[PERF] fetch_command_details took {(t_fetch_end - t_fetch_start)*1000:.1f}ms")
+
                 if not command:
                     logger.error(f"[EVENT] Failed to fetch command details for event_id={event_id}")
                     await self._emit_command_failed(server_url, execution_id, command_id, step, "Failed to fetch command details")
                     return
-                
+
                 # Execute the command
-                import time
                 t_command_start = time.perf_counter()
                 await self._execute_command(command, server_url, command_id)
                 t_command_end = time.perf_counter()
-                logger.info(f"[PERF] _execute_command for {step} took {t_command_end - t_command_start:.4f}s")
+                logger.info(f"[PERF] _execute_command for {step} took {(t_command_end - t_command_start)*1000:.1f}ms")
+
+                # Total time
+                t_total_end = time.perf_counter()
+                logger.info(f"[PERF] TOTAL command handling for {step} took {(t_total_end - t_total_start)*1000:.1f}ms")
                 
             except Exception as e:
                 logger.exception(f"Error handling command notification: {e}")
@@ -1344,7 +1362,10 @@ class V2Worker:
             render_context["execution_id"] = execution_id
         
         try:
+            import time
+
             # Emit command.started event (for event-driven tracking)
+            t_events_start = time.perf_counter()
             if command_id:
                 await self._emit_event(
                     server_url,
@@ -1353,7 +1374,7 @@ class V2Worker:
                     "command.started",
                     {"command_id": command_id, "worker_id": self.worker_id}
                 )
-            
+
             # Emit step.enter event
             await self._emit_event(
                 server_url,
@@ -1362,13 +1383,14 @@ class V2Worker:
                 "step.enter",
                 {"status": "started"}
             )
-            
+            t_events_end = time.perf_counter()
+            logger.info(f"[PERF] emit_initial_events (command.started + step.enter) took {(t_events_end - t_events_start)*1000:.1f}ms")
+
             # Execute tool
-            import time
             t_tool_start = time.perf_counter()
             response = await self._execute_tool(tool_kind, tool_config, args, step, render_context, case_blocks=case_blocks)
             t_tool_end = time.perf_counter()
-            logger.info(f"[PERF] Tool execution for {step} took {t_tool_end - t_tool_start:.4f}s")
+            logger.info(f"[PERF] Tool execution for {step} took {(t_tool_end - t_tool_start)*1000:.1f}ms")
             
             # Note: _internal_data will be cleaned up later (after case sink execution)
             # We keep it in response temporarily so sinks can access the full data
@@ -2505,35 +2527,41 @@ class V2Worker:
         if correlation:
             event_data["correlation"] = correlation
         
+        import time
+        t_emit_start = time.perf_counter()
+
         from noetl.core.config import get_worker_settings
         worker_settings = get_worker_settings()
-        
+
         max_retries = 3
-        base_delay = 0.5
-        
+        base_delay = 0.05  # Fast retry: 50ms instead of 500ms
+
         for attempt in range(max_retries):
             try:
+                t_http_start = time.perf_counter()
                 logger.info(f"[HTTP] POST {event_url} - Event: {name} for {step} (execution {execution_id}) - Attempt {attempt + 1}/{max_retries}")
-                
+
                 response = await self._http_client.post(
                     event_url,
                     json=event_data,
                     timeout=worker_settings.http_event_timeout
                 )
                 response.raise_for_status()
-                
-                logger.info(f"[HTTP] Event {name} sent successfully - Status: {response.status_code}")
+
+                t_http_end = time.perf_counter()
+                logger.info(f"[PERF] emit_event({name}) HTTP took {(t_http_end - t_http_start)*1000:.1f}ms - Status: {response.status_code}")
                 return  # Success - exit retry loop
-                
+
             except Exception as e:
                 is_last_attempt = (attempt == max_retries - 1)
-                
+
                 if is_last_attempt:
-                    logger.error(f"[HTTP] Failed to emit event {name} after {max_retries} attempts: {e}", exc_info=True)
+                    t_emit_end = time.perf_counter()
+                    logger.error(f"[HTTP] Failed to emit event {name} after {max_retries} attempts ({(t_emit_end - t_emit_start)*1000:.1f}ms total): {e}", exc_info=True)
                     raise RuntimeError(f"Event emission failed after {max_retries} retries: {e}") from e
                 else:
-                    delay = base_delay * (2 ** attempt)  # Exponential backoff
-                    logger.warning(f"[HTTP] Event {name} emission failed (attempt {attempt + 1}/{max_retries}): {e}. Retrying in {delay}s...")
+                    delay = base_delay * (2 ** attempt)  # Fast exponential backoff: 50ms, 100ms, 200ms
+                    logger.warning(f"[HTTP] Event {name} emission failed (attempt {attempt + 1}/{max_retries}): {e}. Retrying in {delay*1000:.0f}ms...")
                     await asyncio.sleep(delay)
 
 

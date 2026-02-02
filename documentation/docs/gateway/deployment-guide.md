@@ -511,6 +511,71 @@ kubectl rollout restart deployment/gateway -n gateway
 kubectl rollout status deployment/gateway -n gateway
 ```
 
+## Gateway UI Management
+
+The Gateway UI is served via Kubernetes ConfigMaps. When you modify files in `tests/fixtures/gateway_ui/`, you need to update the deployed ConfigMap.
+
+### Update UI Files
+
+After modifying any UI files (HTML, JS, CSS):
+
+```bash
+# Update UI ConfigMap and restart deployment
+noetl run automation/infrastructure/gateway-ui.yaml --set action=update
+```
+
+This command:
+1. Regenerates the ConfigMap from `tests/fixtures/gateway_ui/`
+2. Applies the updated ConfigMap to Kubernetes
+3. Restarts the gateway-ui deployment
+4. Waits for rollout to complete
+
+### Manual Update
+
+```bash
+# Regenerate ConfigMap
+./ci/manifests/gateway/regenerate-ui-configmap.sh
+
+# Apply to Kubernetes
+kubectl apply -f ci/manifests/gateway/configmap-ui-files.yaml
+
+# Restart deployment to pick up changes
+kubectl rollout restart deployment/gateway-ui -n gateway
+kubectl rollout status deployment/gateway-ui -n gateway --timeout=30s
+```
+
+### Check UI Status
+
+```bash
+noetl run automation/infrastructure/gateway-ui.yaml --set action=status
+```
+
+### View UI Logs
+
+```bash
+noetl run automation/infrastructure/gateway-ui.yaml --set action=logs
+```
+
+### Browser Cache
+
+After updating the UI, you may need to hard-refresh your browser:
+- **Mac**: Cmd+Shift+R
+- **Windows/Linux**: Ctrl+Shift+R
+
+Or clear browser cache completely to ensure you're seeing the latest version.
+
+### UI File Locations
+
+| File | Purpose |
+|------|---------|
+| `tests/fixtures/gateway_ui/index.html` | Cybx AI Chat interface |
+| `tests/fixtures/gateway_ui/dashboard.html` | Admin dashboard (users, playbooks, executions) |
+| `tests/fixtures/gateway_ui/login.html` | Auth0 login page |
+| `tests/fixtures/gateway_ui/auth.js` | Authentication utilities |
+| `tests/fixtures/gateway_ui/config.js` | Auth0 configuration |
+| `tests/fixtures/gateway_ui/app.js` | Chat application logic |
+| `tests/fixtures/gateway_ui/styles.css` | Shared styles |
+
 ## Next Steps
 
 Once the gateway is deployed and working:

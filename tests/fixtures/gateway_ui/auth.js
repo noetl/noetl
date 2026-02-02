@@ -483,11 +483,43 @@ function registerPendingCallback(requestId, resolve, reject, timeout = 120000) {
 }
 
 /**
+ * Wait for SSE connection to be established
+ * @param {number} timeout - Maximum time to wait in ms (default: 10000)
+ * @returns {Promise<boolean>} - Resolves to true when connected
+ */
+async function waitForSSEConnection(timeout = 10000) {
+  if (isSSEConnected()) {
+    return true;
+  }
+
+  return new Promise((resolve, reject) => {
+    const timeoutId = setTimeout(() => {
+      window.removeEventListener('sse-connected', handler);
+      reject(new Error('SSE connection timeout. Please refresh the page.'));
+    }, timeout);
+
+    const handler = () => {
+      clearTimeout(timeoutId);
+      resolve(true);
+    };
+
+    window.addEventListener('sse-connected', handler, { once: true });
+
+    // If SSE hasn't started connecting, try to connect
+    if (!_eventSource) {
+      connectSSE();
+    }
+  });
+}
+
+/**
  * Execute playbook with async callback via SSE
  */
 async function executePlaybookAsync(playbookName, variables = {}) {
+  // Wait for SSE connection if not already connected
   if (!isSSEConnected()) {
-    throw new Error('SSE not connected. Please wait for connection or refresh the page.');
+    console.log('[SSE] Waiting for connection before executing playbook...');
+    await waitForSSEConnection();
   }
 
   const mutation = `
