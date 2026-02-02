@@ -38,6 +38,95 @@ This document describes the asynchronous callback system for the NoETL Gateway, 
 
 ---
 
+## Quick Start: UI → Playbook → Callback Flow
+
+This is the recommended pattern for UI components that execute playbooks and need results:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  1. UI calls executePlaybookAsync(playbookPath, variables)                  │
+│     └── Uses GraphQL mutation with clientId from SSE connection             │
+│                                                                             │
+│  2. Gateway receives request                                                │
+│     ├── Generates request_id (UUID)                                         │
+│     ├── Injects request_id and gateway_url into playbook payload            │
+│     ├── Stores PendingRequest in NATS K/V (request_id → client_id mapping)  │
+│     └── Forwards to NoETL server for execution                              │
+│                                                                             │
+│  3. NoETL worker executes playbook                                          │
+│     └── Playbook receives request_id and gateway_url in workload            │
+│                                                                             │
+│  4. Playbook sends HTTP callback when complete                              │
+│     └── POST {gateway_url}/api/internal/callback/async                      │
+│         Body: { request_id, status: "COMPLETED", data: {...} }              │
+│                                                                             │
+│  5. Gateway routes callback to client                                       │
+│     ├── Looks up request_id → finds client_id                               │
+│     ├── Sends JSON-RPC notification via SSE to client                       │
+│     └── Removes request from store                                          │
+│                                                                             │
+│  6. UI Promise resolves with result data                                    │
+│     └── executePlaybookAsync() returns the callback data                    │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Example: Dashboard User Management
+
+**UI Code (dashboard.html):**
+```javascript
+// Execute playbook and wait for callback via SSE
+const data = await executePlaybookAsync('api_integration/auth0/user_management', {
+  action: 'list_users'
+});
+// data contains: { success: true, users: [...], count: N }
+```
+
+**Playbook (user_management.yaml):**
+```yaml
+workload:
+  request_id: ""        # Injected by gateway
+  gateway_url: "http://gateway.gateway.svc.cluster.local:8090"  # Injected by gateway
+  action: "list_users"
+
+workflow:
+  - step: query_users
+    tool:
+      kind: postgres
+      command: "SELECT * FROM auth.users..."
+
+  - step: send_callback
+    spec:
+      case_mode: exclusive
+    tool:
+      kind: python
+      code: |
+        result = {"success": True, "users": context['query_users']['rows']}
+    case:
+      - when: "{{ event.name == 'call.done' and workload.request_id }}"
+        then:
+          - send_callback:
+              tool:
+                kind: http
+                method: POST
+                url: "{{ workload.gateway_url }}/api/internal/callback/async"
+                headers:
+                  Content-Type: application/json
+                data:
+                  request_id: "{{ workload.request_id }}"
+                  status: "COMPLETED"
+                  data: "{{ send_callback }}"
+          - next:
+              - step: end
+```
+
+**Key Points:**
+- Gateway automatically injects `request_id` and `gateway_url` when `clientId` is passed to GraphQL
+- Playbook checks `workload.request_id` before sending callback (supports both async and sync execution)
+- Callback endpoint is `/api/internal/callback/async` (routes via SSE to specific client)
+- UI uses `executePlaybookAsync()` from `auth.js` which handles the SSE promise resolution
+
+---
+
 ## Architecture Overview
 
 ```
