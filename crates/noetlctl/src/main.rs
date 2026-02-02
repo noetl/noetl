@@ -931,6 +931,8 @@ enum RefType {
 struct ExecContext {
     ref_type: RefType,
     version: Option<String>,
+    /// Target inferred when reference is treated as target for noetl.yaml
+    inferred_target: Option<String>,
 }
 
 /// Parse execution reference into type and metadata
@@ -946,6 +948,7 @@ fn parse_exec_reference(reference: &str, version_override: Option<&str>) -> Resu
         return Ok(ExecContext {
             ref_type: RefType::Catalog { name, version: version.clone() },
             version,
+            inferred_target: None,
         });
     }
     
@@ -955,6 +958,7 @@ fn parse_exec_reference(reference: &str, version_override: Option<&str>) -> Resu
         return Ok(ExecContext {
             ref_type: RefType::DatabaseId(reference.to_string()),
             version: version_override.map(|s| s.to_string()),
+            inferred_target: None,
         });
     }
     
@@ -970,6 +974,7 @@ fn parse_exec_reference(reference: &str, version_override: Option<&str>) -> Resu
             return Ok(ExecContext {
                 ref_type: RefType::File(path),
                 version: None,
+                inferred_target: None,
             });
         }
     }
@@ -988,6 +993,15 @@ fn parse_exec_reference(reference: &str, version_override: Option<&str>) -> Resu
         if yml_path.exists() && yml_path.is_file() {
             return Some(yml_path);
         }
+        // Try automation/ prefix as fallback
+        let auto_yaml = PathBuf::from(format!("automation/{}.yaml", base));
+        if auto_yaml.exists() && auto_yaml.is_file() {
+            return Some(auto_yaml);
+        }
+        let auto_yml = PathBuf::from(format!("automation/{}.yml", base));
+        if auto_yml.exists() && auto_yml.is_file() {
+            return Some(auto_yml);
+        }
         None
     };
     
@@ -995,13 +1009,25 @@ fn parse_exec_reference(reference: &str, version_override: Option<&str>) -> Resu
         return Ok(ExecContext {
             ref_type: RefType::File(file_path),
             version: None,
+            inferred_target: None,
         });
     }
     
-    // Pattern 4: Catalog path (no file found, assume it's a catalog reference)
+    // Pattern 5: Check for noetl.yaml in current directory - treat reference as target
+    let noetl_yaml = PathBuf::from("noetl.yaml");
+    if noetl_yaml.exists() && noetl_yaml.is_file() {
+        return Ok(ExecContext {
+            ref_type: RefType::File(noetl_yaml),
+            version: None,
+            inferred_target: Some(reference.to_string()),
+        });
+    }
+    
+    // Pattern 6: Catalog path (no file found, assume it's a catalog reference)
     Ok(ExecContext {
         ref_type: RefType::CatalogPath(reference.to_string()),
         version: version_override.map(|s| s.to_string()),
+        inferred_target: None,
     })
 }
 
@@ -1248,6 +1274,8 @@ async fn main() -> Result<()> {
                 }
                 if let Some(t) = &target {
                     println!("  Target: {}", t);
+                } else if let Some(t) = &exec_ctx.inferred_target {
+                    println!("  Target: {} (inferred from noetl.yaml)", t);
                 }
             }
             
@@ -1281,10 +1309,13 @@ async fn main() -> Result<()> {
                         }
                     };
                     
+                    // Use CLI target if provided, otherwise use inferred target (from noetl.yaml pattern)
+                    let effective_target = target.or(exec_ctx.inferred_target.clone());
+                    
                     let runner = playbook_runner::PlaybookRunner::new(playbook_path)
                         .with_variables(vars)
                         .with_verbose(verbose)
-                        .with_target(target);
+                        .with_target(effective_target);
                     
                     runner.run()?;
                 }

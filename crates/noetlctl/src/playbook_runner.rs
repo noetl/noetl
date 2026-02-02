@@ -503,6 +503,9 @@ impl PlaybookRunner {
         // Handle case conditions (evaluate before next)
         let mut case_matched = false;
         if let Some(cases) = &step.case {
+            if self.verbose {
+                println!("   Evaluating {} case conditions...", cases.len());
+            }
             for case in cases {
                 let (condition_result, condition_display) = match &case.when {
                     WhenCondition::Rhai { rhai } => {
@@ -516,6 +519,10 @@ impl PlaybookRunner {
                         (result, when.clone())
                     }
                 };
+
+                if self.verbose && !condition_result {
+                    println!("   ✗ {}", condition_display);
+                }
 
                 if condition_result {
                     case_matched = true;
@@ -583,26 +590,64 @@ impl PlaybookRunner {
 
     fn evaluate_condition(&self, condition: &str, context: &ExecutionContext) -> Result<bool> {
         // Simple condition evaluation
-        // Supports: {{ var }} == "value", {{ var }} != "value", {{ var }} (truthy check)
-        let rendered = self.render_template(condition, context)?;
+        // Supports: {{ var == "value" }}, {{ var != "value" }}, {{ var }} (truthy check)
+        
+        // Extract content from {{ ... }} if present
+        let expression = if condition.trim().starts_with("{{") && condition.trim().ends_with("}}") {
+            condition.trim()
+                .strip_prefix("{{").unwrap()
+                .strip_suffix("}}").unwrap()
+                .trim()
+        } else {
+            condition.trim()
+        };
+        
+        // Replace variables within the expression
+        let mut rendered = expression.to_string();
+        for (key, value) in &context.variables {
+            // Replace variable references like workload.action with their values
+            rendered = rendered.replace(key, value);
+        }
+        
+        // Helper to strip quotes from a value
+        fn strip_quotes(s: &str) -> String {
+            let s = s.trim();
+            if (s.starts_with('"') && s.ends_with('"')) || 
+               (s.starts_with('\'') && s.ends_with('\'')) {
+                s[1..s.len()-1].to_string()
+            } else {
+                s.to_string()
+            }
+        }
 
         // Check for comparison operators
         if rendered.contains("==") {
             let parts: Vec<&str> = rendered.split("==").map(|s| s.trim()).collect();
             if parts.len() == 2 {
-                return Ok(parts[0] == parts[1]);
+                return Ok(strip_quotes(parts[0]) == strip_quotes(parts[1]));
             }
         }
 
         if rendered.contains("!=") {
             let parts: Vec<&str> = rendered.split("!=").map(|s| s.trim()).collect();
             if parts.len() == 2 {
-                return Ok(parts[0] != parts[1]);
+                return Ok(strip_quotes(parts[0]) != strip_quotes(parts[1]));
+            }
+        }
+        
+        // Check for 'in' operator (e.g., "'value' in var" or "var in list")
+        if rendered.contains(" in ") {
+            let parts: Vec<&str> = rendered.split(" in ").map(|s| s.trim()).collect();
+            if parts.len() == 2 {
+                let needle = strip_quotes(parts[0]);
+                let haystack = strip_quotes(parts[1]);
+                return Ok(haystack.contains(&needle));
             }
         }
 
         // Truthy check - not empty, not "false", not "0"
-        Ok(!rendered.is_empty() && rendered != "false" && rendered != "0")
+        let value = strip_quotes(&rendered);
+        Ok(!value.is_empty() && value != "false" && value != "0")
     }
     
     /// Evaluate a Rhai expression as a boolean condition
