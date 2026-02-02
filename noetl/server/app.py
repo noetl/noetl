@@ -132,6 +132,15 @@ def _create_app(settings: Settings, enable_ui: Optional[bool] = None) -> FastAPI
             register_server_directly()
 
             # --------------------------------------------------
+            # Auto-resume interrupted executions
+            # --------------------------------------------------
+            from noetl.server.auto_resume import resume_interrupted_executions
+            try:
+                await resume_interrupted_executions()
+            except Exception as e:
+                logger.error(f"Auto-resume failed (non-fatal): {e}", exc_info=True)
+
+            # --------------------------------------------------
             # Background runtime sweeper / server heartbeat
             # --------------------------------------------------
             stop_event = asyncio.Event()
