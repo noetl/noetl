@@ -872,11 +872,43 @@ data:
     }
 
     /**
+     * Wait for SSE connection to be established
+     * @param {number} timeout - Maximum time to wait in ms (default: 10000)
+     * @returns {Promise<boolean>} - Resolves to true when connected
+     */
+    async function waitForSSEConnection(timeout = 10000) {
+      if (isSSEConnected()) {
+        return true;
+      }
+
+      return new Promise((resolve, reject) => {
+        const timeoutId = setTimeout(() => {
+          window.removeEventListener('sse-connected', handler);
+          reject(new Error('SSE connection timeout. Please refresh the page.'));
+        }, timeout);
+
+        const handler = () => {
+          clearTimeout(timeoutId);
+          resolve(true);
+        };
+
+        window.addEventListener('sse-connected', handler, { once: true });
+
+        // If SSE hasn't started connecting, try to connect
+        if (!_eventSource) {
+          connectSSE();
+        }
+      });
+    }
+
+    /**
      * Execute playbook with async callback via SSE
      */
     async function executePlaybookAsync(playbookName, variables = {}) {
+      // Wait for SSE connection if not already connected
       if (!isSSEConnected()) {
-        throw new Error('SSE not connected. Please wait for connection or refresh the page.');
+        console.log('[SSE] Waiting for connection before executing playbook...');
+        await waitForSSEConnection();
       }
 
       const mutation = `
@@ -3310,23 +3342,24 @@ data:
         let users = [];
         let roles = [];
 
+        // User Management Playbook path
+        const USER_MGMT_PLAYBOOK = 'api_integration/auth0/user_management';
+
+        // Helper: Execute playbook with SSE callback (uses auth.js executePlaybookAsync)
+        async function executeUserMgmtPlaybook(action, extraPayload = {}) {
+          const payload = { action, ...extraPayload };
+          // Uses executePlaybookAsync from auth.js which handles SSE callbacks
+          const result = await executePlaybookAsync(USER_MGMT_PLAYBOOK, payload);
+          return result.data || result;
+        }
+
         async function loadUsers() {
           const tbody = document.getElementById('usersTableBody');
 
           try {
-            // Query users from auth schema via NoETL query endpoint
-            const usersQuery = `
-              SELECT u.user_id, u.email, u.display_name, u.last_login_at, u.is_active,
-                     COALESCE(string_agg(r.role_name, ', '), '') as roles
-              FROM auth.users u
-              LEFT JOIN auth.user_roles ur ON u.user_id = ur.user_id
-              LEFT JOIN auth.roles r ON ur.role_id = r.role_id
-              GROUP BY u.user_id, u.email, u.display_name, u.last_login_at, u.is_active
-              ORDER BY u.user_id
-            `;
-
-            const result = await apiRequest('POST', '/query', { query: usersQuery });
-            users = result.result || [];
+            // Call user_management playbook with list_users action via SSE callback
+            const data = await executeUserMgmtPlaybook('list_users');
+            users = data.users || [];
 
             if (users.length === 0) {
               tbody.innerHTML = `
@@ -3343,20 +3376,25 @@ data:
               return;
             }
 
-            tbody.innerHTML = users.map(user => `
-              <tr>
-                <td>${user.user_id}</td>
-                <td><strong>${escapeHtml(user.email)}</strong></td>
-                <td>${escapeHtml(user.display_name || '-')}</td>
-                <td>${formatUserRoles(user.roles)}</td>
-                <td>${user.last_login_at ? formatDate(user.last_login_at) : 'Never'}</td>
-                <td>
-                  <button class="btn btn-sm btn-primary" onclick="openEditUserRolesModal(${user.user_id}, '${escapeHtml(user.email)}', '${escapeHtml(user.roles || '')}')">
-                    Edit Roles
-                  </button>
-                </td>
-              </tr>
-            `).join('');
+            tbody.innerHTML = users.map(user => {
+              // roles is an array of {role_id, role_name} objects
+              const userRoles = Array.isArray(user.roles) ? user.roles : [];
+              const roleNames = userRoles.map(r => r.role_name);
+              return `
+                <tr>
+                  <td>${user.user_id}</td>
+                  <td><strong>${escapeHtml(user.email)}</strong></td>
+                  <td>${escapeHtml(user.display_name || '-')}</td>
+                  <td>${formatUserRoles(userRoles)}</td>
+                  <td>${user.last_login_at ? formatDate(user.last_login_at) : 'Never'}</td>
+                  <td>
+                    <button class="btn btn-sm btn-primary" onclick='openEditUserRolesModal(${user.user_id}, "${escapeHtml(user.email)}", ${JSON.stringify(roleNames)})'>
+                      Edit Roles
+                    </button>
+                  </td>
+                </tr>
+              `;
+            }).join('');
 
             // Also load available roles
             await loadRoles();
@@ -3378,9 +3416,9 @@ data:
 
         async function loadRoles() {
           try {
-            const rolesQuery = `SELECT role_id, role_name, description FROM auth.roles ORDER BY role_id`;
-            const result = await apiRequest('POST', '/query', { query: rolesQuery });
-            roles = result.result || [];
+            // Call user_management playbook with list_roles action via SSE callback
+            const data = await executeUserMgmtPlaybook('list_roles');
+            roles = data.roles || [];
 
             const container = document.getElementById('rolesList');
             if (roles.length > 0) {
@@ -3396,21 +3434,22 @@ data:
           }
         }
 
-        function formatUserRoles(rolesStr) {
-          if (!rolesStr) return '<span class="text-muted">No roles</span>';
-          return rolesStr.split(', ').map(role =>
-            `<span class="role-badge ${role}">${role}</span>`
+        function formatUserRoles(rolesArray) {
+          if (!rolesArray || rolesArray.length === 0) return '<span class="text-muted">No roles</span>';
+          return rolesArray.map(role =>
+            `<span class="role-badge ${role.role_name}">${role.role_name}</span>`
           ).join('');
         }
 
-        function openEditUserRolesModal(userId, email, currentRoles) {
-          const currentRoleList = currentRoles ? currentRoles.split(', ').filter(r => r) : [];
+        function openEditUserRolesModal(userId, email, currentRoleNames) {
+          // currentRoleNames is an array of role names
+          const currentRoleList = Array.isArray(currentRoleNames) ? currentRoleNames : [];
 
           const roleCheckboxes = roles.map(role => `
             <label class="checkbox-label">
-              <input type="checkbox" name="userRole" value="${role.role_id}"
+              <input type="checkbox" name="userRole" value="${escapeHtml(role.role_name)}"
                      ${currentRoleList.includes(role.role_name) ? 'checked' : ''}>
-              <span class="role-badge ${role.role_name}">${role.role_name}</span>
+              <span class="role-badge ${role.role_name}">${escapeHtml(role.role_name)}</span>
               - ${escapeHtml(role.description || '')}
             </label>
           `).join('');
@@ -3451,23 +3490,21 @@ data:
 
         async function saveUserRoles(userId) {
           const checkboxes = document.querySelectorAll('input[name="userRole"]:checked');
-          const selectedRoleIds = Array.from(checkboxes).map(cb => parseInt(cb.value));
+          const selectedRoleNames = Array.from(checkboxes).map(cb => cb.value);
 
           try {
-            // Delete existing roles
-            await apiRequest('POST', '/query', {
-              query: `DELETE FROM auth.user_roles WHERE user_id = ${userId}`
+            // Call user_management playbook with update_user_roles action via SSE callback
+            const data = await executeUserMgmtPlaybook('update_user_roles', {
+              user_id: userId,
+              role_names: selectedRoleNames
             });
 
-            // Insert new roles
-            if (selectedRoleIds.length > 0) {
-              const insertValues = selectedRoleIds.map(roleId => `(${userId}, ${roleId})`).join(', ');
-              await apiRequest('POST', '/query', {
-                query: `INSERT INTO auth.user_roles (user_id, role_id) VALUES ${insertValues}`
-              });
+            if (data.success) {
+              showToast('success', 'Roles Updated', data.message || 'User roles have been updated successfully.');
+            } else {
+              showToast('error', 'Failed to Update Roles', data.error || 'Unknown error');
             }
 
-            showToast('success', 'Roles Updated', 'User roles have been updated successfully.');
             closeModal('editUserRolesModal');
             loadUsers();
           } catch (error) {
@@ -3908,83 +3945,709 @@ data:
       // Auto-log on load
       window.ENV.log();
     })();
-  index.html: |-
+  index.html: |
     <!DOCTYPE html>
     <html lang="en">
-
     <head>
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
       <title>Cybx AI Flight Assistant</title>
-      <link rel="stylesheet" href="/styles.css">
+      <script src="/env.js"></script>
+      <script src="/config.js"></script>
+      <script src="/auth.js"></script>
+      <style>
+        :root {
+          --primary: #667eea;
+          --primary-dark: #5a67d8;
+          --secondary: #764ba2;
+          --success: #48bb78;
+          --warning: #ed8936;
+          --danger: #e53e3e;
+          --info: #38b2ac;
+          --dark: #1a202c;
+          --gray-100: #f7fafc;
+          --gray-200: #edf2f7;
+          --gray-300: #e2e8f0;
+          --gray-400: #cbd5e0;
+          --gray-500: #a0aec0;
+          --gray-600: #718096;
+          --gray-700: #4a5568;
+          --gray-800: #2d3748;
+          --sidebar-width: 260px;
+          --header-height: 64px;
+        }
+
+        * {
+          margin: 0;
+          padding: 0;
+          box-sizing: border-box;
+        }
+
+        body {
+          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+          background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+          color: var(--gray-800);
+          min-height: 100vh;
+        }
+
+        /* Layout */
+        .app-layout {
+          display: flex;
+          min-height: 100vh;
+        }
+
+        /* Sidebar */
+        .sidebar {
+          width: var(--sidebar-width);
+          background: var(--dark);
+          color: white;
+          position: fixed;
+          top: 0;
+          left: 0;
+          height: 100vh;
+          display: flex;
+          flex-direction: column;
+          z-index: 100;
+          transition: transform 0.3s ease;
+        }
+
+        .sidebar-header {
+          padding: 1.5rem;
+          display: flex;
+          align-items: center;
+          gap: 1rem;
+          border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+
+        .sidebar-logo {
+          width: 40px;
+          height: 40px;
+          background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+          border-radius: 10px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+
+        .sidebar-logo svg {
+          width: 24px;
+          height: 24px;
+          stroke: white;
+        }
+
+        .sidebar-title {
+          font-size: 1.25rem;
+          font-weight: 700;
+        }
+
+        .sidebar-nav {
+          flex: 1;
+          padding: 1rem 0;
+          overflow-y: auto;
+        }
+
+        .nav-section {
+          padding: 0.5rem 1rem;
+          font-size: 0.7rem;
+          font-weight: 600;
+          text-transform: uppercase;
+          letter-spacing: 0.1em;
+          color: var(--gray-500);
+          margin-top: 1rem;
+        }
+
+        .nav-item {
+          display: flex;
+          align-items: center;
+          gap: 0.75rem;
+          padding: 0.75rem 1.5rem;
+          color: var(--gray-400);
+          text-decoration: none;
+          cursor: pointer;
+          transition: all 0.2s;
+          border-left: 3px solid transparent;
+        }
+
+        .nav-item:hover {
+          background: rgba(255,255,255,0.05);
+          color: white;
+        }
+
+        .nav-item.active {
+          background: rgba(102, 126, 234, 0.15);
+          color: var(--primary);
+          border-left-color: var(--primary);
+        }
+
+        .nav-item svg {
+          width: 20px;
+          height: 20px;
+        }
+
+        .nav-item .badge {
+          margin-left: auto;
+          background: var(--primary);
+          color: white;
+          font-size: 0.7rem;
+          padding: 0.2rem 0.5rem;
+          border-radius: 10px;
+          font-weight: 600;
+        }
+
+        .sidebar-footer {
+          padding: 1rem 1.5rem;
+          border-top: 1px solid rgba(255,255,255,0.1);
+        }
+
+        .user-profile {
+          display: flex;
+          align-items: center;
+          gap: 0.75rem;
+        }
+
+        .user-avatar {
+          width: 36px;
+          height: 36px;
+          background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+          border-radius: 50%;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-weight: 600;
+          font-size: 0.9rem;
+        }
+
+        .user-info {
+          flex: 1;
+          min-width: 0;
+        }
+
+        .user-name {
+          font-size: 0.9rem;
+          font-weight: 600;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+
+        .user-email {
+          font-size: 0.75rem;
+          color: var(--gray-500);
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+
+        .btn-logout {
+          background: none;
+          border: none;
+          color: var(--gray-500);
+          cursor: pointer;
+          padding: 0.5rem;
+          border-radius: 6px;
+          transition: all 0.2s;
+        }
+
+        .btn-logout:hover {
+          background: rgba(229, 62, 62, 0.2);
+          color: var(--danger);
+        }
+
+        /* Main Content */
+        .main-content {
+          flex: 1;
+          margin-left: var(--sidebar-width);
+          min-height: 100vh;
+          display: flex;
+          flex-direction: column;
+        }
+
+        /* Chat Container */
+        .chat-wrapper {
+          flex: 1;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          padding: 2rem;
+        }
+
+        .chat-container {
+          width: 100%;
+          max-width: 900px;
+          background: white;
+          border-radius: 24px;
+          box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+          display: flex;
+          flex-direction: column;
+          overflow: hidden;
+        }
+
+        .chat-header {
+          background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+          padding: 1.5rem 2rem;
+          color: white;
+        }
+
+        .header-content {
+          display: flex;
+          align-items: center;
+          gap: 1rem;
+        }
+
+        .avatar {
+          width: 48px;
+          height: 48px;
+          background: rgba(255, 255, 255, 0.2);
+          border-radius: 12px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+
+        .avatar svg {
+          width: 28px;
+          height: 28px;
+          stroke: white;
+        }
+
+        .header-info h1 {
+          font-size: 1.5rem;
+          font-weight: 700;
+          margin-bottom: 0.25rem;
+        }
+
+        .header-info p {
+          font-size: 0.9rem;
+          opacity: 0.9;
+        }
+
+        .status-indicator {
+          width: 10px;
+          height: 10px;
+          border-radius: 50%;
+          margin-left: auto;
+        }
+
+        .status-connected {
+          background: #48bb78;
+          box-shadow: 0 0 8px #48bb78;
+        }
+
+        .status-disconnected {
+          background: #ed8936;
+          animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.5; }
+        }
+
+        /* Chat Messages */
+        .chat-messages {
+          flex: 1;
+          padding: 1.5rem;
+          overflow-y: auto;
+          min-height: 400px;
+          max-height: 500px;
+          background: var(--gray-100);
+        }
+
+        .welcome-message {
+          text-align: center;
+          padding: 2rem;
+        }
+
+        .welcome-icon {
+          font-size: 4rem;
+          margin-bottom: 1rem;
+        }
+
+        .welcome-message h2 {
+          font-size: 1.5rem;
+          color: var(--dark);
+          margin-bottom: 0.5rem;
+        }
+
+        .welcome-message p {
+          color: var(--gray-600);
+          margin-bottom: 1.5rem;
+        }
+
+        .suggestions {
+          display: flex;
+          flex-direction: column;
+          gap: 0.75rem;
+          max-width: 400px;
+          margin: 0 auto;
+        }
+
+        .suggestion-chip {
+          background: white;
+          border: 1px solid var(--gray-300);
+          border-radius: 12px;
+          padding: 1rem;
+          font-size: 0.9rem;
+          color: var(--gray-700);
+          cursor: pointer;
+          transition: all 0.2s;
+        }
+
+        .suggestion-chip:hover {
+          border-color: var(--primary);
+          background: rgba(102, 126, 234, 0.05);
+          color: var(--primary);
+        }
+
+        .message {
+          display: flex;
+          gap: 0.75rem;
+          margin-bottom: 1rem;
+        }
+
+        .message.user {
+          flex-direction: row-reverse;
+        }
+
+        .message-avatar {
+          width: 36px;
+          height: 36px;
+          border-radius: 50%;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 0.9rem;
+          flex-shrink: 0;
+        }
+
+        .message.assistant .message-avatar {
+          background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+          color: white;
+        }
+
+        .message.user .message-avatar {
+          background: var(--gray-200);
+          color: var(--gray-600);
+        }
+
+        .message-content {
+          max-width: 70%;
+          padding: 0.875rem 1rem;
+          border-radius: 16px;
+          font-size: 0.95rem;
+          line-height: 1.5;
+        }
+
+        .message.assistant .message-content {
+          background: white;
+          color: var(--gray-800);
+          border-bottom-left-radius: 4px;
+        }
+
+        .message.user .message-content {
+          background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+          color: white;
+          border-bottom-right-radius: 4px;
+        }
+
+        /* Chat Input */
+        .chat-input-container {
+          padding: 1rem 1.5rem;
+          background: white;
+          border-top: 1px solid var(--gray-200);
+        }
+
+        .chat-form {
+          display: flex;
+          gap: 0.75rem;
+        }
+
+        .chat-input {
+          flex: 1;
+          padding: 0.875rem 1.25rem;
+          border: 2px solid var(--gray-200);
+          border-radius: 12px;
+          font-size: 1rem;
+          outline: none;
+          transition: border-color 0.2s;
+        }
+
+        .chat-input:focus {
+          border-color: var(--primary);
+        }
+
+        .send-button {
+          width: 48px;
+          height: 48px;
+          background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+          border: none;
+          border-radius: 12px;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          transition: transform 0.2s, opacity 0.2s;
+        }
+
+        .send-button:hover {
+          transform: scale(1.05);
+        }
+
+        .send-button:disabled {
+          opacity: 0.5;
+          cursor: not-allowed;
+          transform: none;
+        }
+
+        .send-button svg {
+          width: 20px;
+          height: 20px;
+          stroke: white;
+        }
+
+        /* Loading indicator */
+        .typing-indicator {
+          display: flex;
+          gap: 4px;
+          padding: 0.5rem;
+        }
+
+        .typing-indicator span {
+          width: 8px;
+          height: 8px;
+          background: var(--gray-400);
+          border-radius: 50%;
+          animation: bounce 1.4s infinite ease-in-out;
+        }
+
+        .typing-indicator span:nth-child(1) { animation-delay: -0.32s; }
+        .typing-indicator span:nth-child(2) { animation-delay: -0.16s; }
+
+        @keyframes bounce {
+          0%, 80%, 100% { transform: scale(0); }
+          40% { transform: scale(1); }
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+          .sidebar {
+            transform: translateX(-100%);
+          }
+
+          .sidebar.open {
+            transform: translateX(0);
+          }
+
+          .main-content {
+            margin-left: 0;
+          }
+
+          .chat-wrapper {
+            padding: 1rem;
+          }
+
+          .message-content {
+            max-width: 85%;
+          }
+        }
+      </style>
     </head>
 
     <body>
-      <div class="container">
-        <div class="chat-header">
-          <div class="header-content">
-            <div class="avatar">
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                stroke-linecap="round" stroke-linejoin="round">
-                <path
-                  d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z">
-                </path>
+      <div class="app-layout">
+        <!-- Sidebar -->
+        <aside class="sidebar" id="sidebar">
+          <div class="sidebar-header">
+            <div class="sidebar-logo">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
                 <polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
                 <line x1="12" y1="22.08" x2="12" y2="12"></line>
               </svg>
             </div>
-            <div class="header-info">
-              <h1>Cybx AI</h1>
-              <p>Your intelligent flight search assistant</p>
-            </div>
-            <div class="user-menu">
-              <span id="connectionStatus" class="status-indicator status-disconnected" title="Connecting..."></span>
-              <span id="userDisplay" class="user-name"></span>
-              <button id="logoutBtn" class="logout-btn">Logout</button>
-            </div>
+            <span class="sidebar-title">NoETL</span>
           </div>
-        </div>
 
-        <div class="chat-container" id="chatContainer">
-          <div class="welcome-message">
-            <div class="welcome-icon">✈️</div>
-            <h2>Welcome to Cybx AI</h2>
-            <p>I can help you find flights. Try asking something like:</p>
-            <div class="suggestions">
-              <button class="suggestion-chip"
-                onclick="sendSuggestion('I want a one-way flight from SFO to JFK on March 15, 2026 for 1 adult')">
-                Find flights from SFO to JFK
-              </button>
-              <button class="suggestion-chip"
-                onclick="sendSuggestion('Show me flights from LAX to Miami next week for 2 passengers')">
-                LAX to Miami for 2 people
-              </button>
-              <button class="suggestion-chip"
-                onclick="sendSuggestion('I need a round trip from New York to London in April')">
-                Round trip NY to London
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <div class="chat-input-container">
-          <form id="chatForm" class="chat-form">
-            <input type="text" id="chatInput" class="chat-input"
-              placeholder="Ask about flights, e.g., 'I want to fly from SFO to JFK tomorrow'" autocomplete="off" />
-            <button type="submit" class="send-button" id="sendButton">
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                stroke-linecap="round" stroke-linejoin="round">
-                <line x1="22" y1="2" x2="11" y2="13"></line>
-                <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+          <nav class="sidebar-nav">
+            <div class="nav-section">Main</div>
+            <a class="nav-item" href="/dashboard.html">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="3" y="3" width="7" height="7"></rect>
+                <rect x="14" y="3" width="7" height="7"></rect>
+                <rect x="14" y="14" width="7" height="7"></rect>
+                <rect x="3" y="14" width="7" height="7"></rect>
               </svg>
-            </button>
-          </form>
-        </div>
+              Dashboard
+            </a>
+
+            <div class="nav-section">Workflows</div>
+            <a class="nav-item active" href="/index.html">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+              </svg>
+              Cybx AI Chat
+            </a>
+            <a class="nav-item" href="/dashboard.html#playbooks">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                <polyline points="14 2 14 8 20 8"></polyline>
+                <line x1="16" y1="13" x2="8" y2="13"></line>
+                <line x1="16" y1="17" x2="8" y2="17"></line>
+                <polyline points="10 9 9 9 8 9"></polyline>
+              </svg>
+              Playbooks
+            </a>
+            <a class="nav-item" href="/dashboard.html#executions">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polygon points="5 3 19 12 5 21 5 3"></polygon>
+              </svg>
+              Executions
+            </a>
+
+            <div class="nav-section">Management</div>
+            <a class="nav-item" href="/dashboard.html#users">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                <circle cx="9" cy="7" r="4"></circle>
+                <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+                <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+              </svg>
+              Users
+            </a>
+            <a class="nav-item" href="/dashboard.html#credentials">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+              </svg>
+              Credentials
+            </a>
+            <a class="nav-item" href="/dashboard.html#settings">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="3"></circle>
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+              </svg>
+              Settings
+            </a>
+          </nav>
+
+          <div class="sidebar-footer">
+            <div class="user-profile">
+              <div class="user-avatar" id="userAvatar">U</div>
+              <div class="user-info">
+                <div class="user-name" id="userName">User</div>
+                <div class="user-email" id="userEmail">user@example.com</div>
+              </div>
+              <button class="btn-logout" onclick="logout()" title="Logout">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+                  <polyline points="16 17 21 12 16 7"></polyline>
+                  <line x1="21" y1="12" x2="9" y2="12"></line>
+                </svg>
+              </button>
+            </div>
+          </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+          <div class="chat-wrapper">
+            <div class="chat-container">
+              <div class="chat-header">
+                <div class="header-content">
+                  <div class="avatar">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                      stroke-linecap="round" stroke-linejoin="round">
+                      <path
+                        d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z">
+                      </path>
+                      <polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
+                      <line x1="12" y1="22.08" x2="12" y2="12"></line>
+                    </svg>
+                  </div>
+                  <div class="header-info">
+                    <h1>Cybx AI</h1>
+                    <p>Your intelligent flight search assistant</p>
+                  </div>
+                  <span id="connectionStatus" class="status-indicator status-disconnected" title="Connecting..."></span>
+                </div>
+              </div>
+
+              <div class="chat-messages" id="chatContainer">
+                <div class="welcome-message">
+                  <div class="welcome-icon">✈️</div>
+                  <h2>Welcome to Cybx AI</h2>
+                  <p>I can help you find flights. Try asking something like:</p>
+                  <div class="suggestions">
+                    <button class="suggestion-chip"
+                      onclick="sendSuggestion('I want a one-way flight from SFO to JFK on March 15, 2026 for 1 adult')">
+                      Find flights from SFO to JFK
+                    </button>
+                    <button class="suggestion-chip"
+                      onclick="sendSuggestion('Show me flights from LAX to Miami next week for 2 passengers')">
+                      LAX to Miami for 2 people
+                    </button>
+                    <button class="suggestion-chip"
+                      onclick="sendSuggestion('I need a round trip from New York to London in April')">
+                      Round trip NY to London
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div class="chat-input-container">
+                <form id="chatForm" class="chat-form">
+                  <input type="text" id="chatInput" class="chat-input"
+                    placeholder="Ask about flights, e.g., 'I want to fly from SFO to JFK tomorrow'" autocomplete="off" />
+                  <button type="submit" class="send-button" id="sendButton">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                      stroke-linecap="round" stroke-linejoin="round">
+                      <line x1="22" y1="2" x2="11" y2="13"></line>
+                      <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                    </svg>
+                  </button>
+                </form>
+              </div>
+            </div>
+          </div>
+        </main>
       </div>
 
-      <script src="/env.js"></script>
-      <script src="/auth.js"></script>
       <script src="/app.js"></script>
+      <script>
+        // Initialize user info in sidebar
+        document.addEventListener('DOMContentLoaded', async () => {
+          try {
+            const session = await validateSession();
+            if (session && session.user) {
+              const email = session.user.email || 'user@example.com';
+              const name = session.user.display_name || email.split('@')[0];
+
+              document.getElementById('userName').textContent = name;
+              document.getElementById('userEmail').textContent = email;
+              document.getElementById('userAvatar').textContent = name.charAt(0).toUpperCase();
+            }
+          } catch (e) {
+            console.error('Failed to load user info:', e);
+          }
+        });
+
+        // Update connection status indicator when SSE connects
+        window.addEventListener('sse-connected', () => {
+          const statusEl = document.getElementById('connectionStatus');
+          if (statusEl) {
+            statusEl.classList.remove('status-disconnected');
+            statusEl.classList.add('status-connected');
+            statusEl.title = 'Connected';
+          }
+        });
+
+        function logout() {
+          localStorage.removeItem('session_token');
+          localStorage.removeItem('user');
+          window.location.href = '/login.html';
+        }
+      </script>
     </body>
 
     </html>
