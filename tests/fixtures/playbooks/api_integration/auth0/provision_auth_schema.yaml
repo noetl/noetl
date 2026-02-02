@@ -17,7 +17,7 @@ metadata:
     - provisioning
 
 workload:
-  db_credential: pg_k8s
+  db_credential: pg_auth
 
 workflow:
   - step: start
@@ -27,9 +27,10 @@ workflow:
       code: |
         result = {"status": "initialized"}
     case:
-      - when: "{{ event.name == 'step.exit' }}"
+      - when: "{{ event.name == 'call.done' }}"
         then:
-          - step: provision_schema
+          - next:
+              - step: provision_schema
 
   - step: provision_schema
     desc: Execute SQL to create auth schema and tables
@@ -178,9 +179,10 @@ workflow:
 
         SELECT 'Auth schema provisioned successfully' as result;
     case:
-      - when: "{{ event.name == 'step.exit' }}"
+      - when: "{{ event.name == 'call.done' }}"
         then:
-          - step: verify_schema
+          - next:
+              - step: verify_schema
 
   - step: verify_schema
     desc: Verify auth schema was created successfully
@@ -193,9 +195,10 @@ workflow:
           (SELECT COUNT(*) FROM auth.roles) as role_count,
           (SELECT COUNT(*) FROM auth.permissions) as permission_count;
     case:
-      - when: "{{ event.name == 'step.exit' }}"
+      - when: "{{ event.name == 'call.done' }}"
         then:
-          - step: success
+          - next:
+              - step: success
 
   - step: success
     desc: Schema provisioned successfully
@@ -210,9 +213,10 @@ workflow:
             "details": verification
         }
     case:
-      - when: "{{ event.name == 'step.exit' }}"
+      - when: "{{ event.name == 'call.done' }}"
         then:
-          - step: end
+          - next:
+              - step: end
 
   - step: end
     desc: Complete provisioning workflow

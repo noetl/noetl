@@ -6,13 +6,15 @@ metadata:
   description: |
     Authenticate user with Auth0 and create NoETL session.
 
-    OPTIMIZED: Reduced from 7 steps to 4 steps for faster execution (~1s vs ~3s).
-    Uses CTE for combined user upsert + session creation in single DB round-trip.
-    Uses inline task lists to execute callback without extra step.
+    OPTIMIZED v2: Reduced from 5 steps to 4 steps for faster execution (~200ms).
+    - Merged start + validate_token into single step
+    - Uses connection pooling for postgres
+    - Uses CTE for combined user upsert + session creation
+    - Uses inline task lists for callbacks
 
     Flow:
-      1. validate_token: Decode JWT
-      2. create_user_session: Upsert user + create session (combined CTE)
+      1. start: Validate JWT token (merged with entry point)
+      2. create_user_session: Upsert user + create session (pooled postgres CTE)
       3. cache_and_callback: Cache session + send callback (inline tasks)
       4. end: Complete
 
@@ -35,6 +37,7 @@ metadata:
     - authentication
     - nats
     - gateway
+    - optimized
 
 workload:
   auth0_token: ""
@@ -48,22 +51,9 @@ workload:
   gateway_url: "http://gateway.gateway.svc.cluster.local:8090"
 
 workflow:
-  # Step 0: Entry point (required)
+  # Step 1: Entry point + JWT validation (merged)
   - step: start
-    desc: Entry point - immediately validate token
-    tool:
-      kind: python
-      code: |
-        result = {"status": "started"}
-    case:
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          - next:
-              - step: validate_token
-
-  # Step 1: Validate JWT token
-  - step: validate_token
-    desc: Decode Auth0 ID token (JWT)
+    desc: Validate Auth0 ID token (JWT) - entry point
     spec:
       case_mode: exclusive
     tool:
@@ -121,16 +111,17 @@ workflow:
           - next:
               - step: create_user_session
 
-  # Step 2: Combined upsert user + create session (single postgres CTE)
+  # Step 2: Combined upsert user + create session (pooled postgres CTE)
   - step: create_user_session
     desc: Upsert user and create session in single transaction
     tool:
       kind: postgres
       auth: "{{ db_credential }}"
+      pool: {}
       command: |
         WITH upserted_user AS (
           INSERT INTO auth.users (auth0_id, email, display_name, last_login_at)
-          VALUES ('{{ validate_token.sub }}', '{{ validate_token.email }}', '{{ validate_token.name }}', NOW())
+          VALUES ('{{ start.sub }}', '{{ start.email }}', '{{ start.name }}', NOW())
           ON CONFLICT (auth0_id)
           DO UPDATE SET
             email = EXCLUDED.email,

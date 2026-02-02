@@ -41,7 +41,7 @@ async def get_or_create_plugin_pool(
         pool_name: str = "postgres_plugin",
         min_size: int = 2,
         max_size: int = 20,
-        timeout: float = None,  # None = default 10s, -1 = disable timeout (infinite wait)
+        timeout: float = 30.0,  # Default 30s timeout for connection acquisition
         max_waiting: int = 50,
         max_lifetime: float = 3600.0,  # 1 hour (for long analytical workloads)
         max_idle: float = 300.0,  # 5 minutes
@@ -69,6 +69,10 @@ async def get_or_create_plugin_pool(
     Raises:
         Exception: If pool creation fails
     """
+    # Ensure timeout is never None (psycopg_pool requires numeric timeout)
+    if timeout is None:
+        timeout = 30.0
+
     # Create a hash key from connection string + pool name
     # This allows different pools for same credentials with different names
     pool_key = _create_pool_key(connection_string + "||" + pool_name)

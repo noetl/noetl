@@ -349,8 +349,8 @@ workflow:
     kind: python
     args:
       query: "{{ workload.query }}"
-      # Use extracted field from output.select (no TempRef resolution needed)
-      nl_result: "{{ translate_amadeus_response.natural_language_result | default('No response generated') }}"
+      # Use the full path to OpenAI response content (output.select extraction not working as expected)
+      nl_result: "{{ translate_amadeus_response.data.choices[0].message.content | default('No response generated') }}"
       execution_id: "{{ job.uuid }}"
       # Include token usage from extracted fields
       openai_tokens: "{{ translate_query_to_amadeus.tokens_used | default(0) + translate_amadeus_response.tokens_used | default(0) }}"
