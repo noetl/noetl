@@ -207,21 +207,83 @@ python3 -m http.server 8080
 
 ### Step 1: Provision Auth Schema
 
-```bash
-# Register admin credential
-noetl register credential --file tests/fixtures/credentials/pg_k8s.json
+The auth schema is **automatically provisioned** during bootstrap when deploying from scratch:
 
-# Register and execute provisioning playbook
-noetl register playbook --file tests/fixtures/playbooks/api_integration/auth0/provision_auth_schema.yaml
-noetl run playbook api_integration/auth0/provision_auth_schema
+```bash
+# Full bootstrap (includes auth schema provisioning)
+noetl run boot
 ```
 
-**What this does:**
-- Creates `auth` schema
-- Creates tables: users, roles, permissions, sessions, audit_log, etc.
-- Seeds 4 system roles: admin, developer, analyst, viewer
-- Seeds 12+ permissions with role mappings
-- Creates `auth_user` database role
+To provision manually or check status:
+
+```bash
+# Provision auth schema (if not using bootstrap)
+noetl run automation/setup/provision_auth.yaml
+
+# Check auth schema status
+noetl run automation/setup/provision_auth.yaml --set action=status
+
+# Reset auth schema (WARNING: deletes all user data)
+noetl run automation/setup/provision_auth.yaml --set action=reset
+```
+
+**What this creates:**
+
+| Table | Description |
+|-------|-------------|
+| `auth.users` | User accounts from Auth0 (email, display_name, profile) |
+| `auth.roles` | Role definitions (admin, developer, analyst, viewer) |
+| `auth.permissions` | Granular permissions (playbook:execute, catalog:view, etc.) |
+| `auth.user_roles` | User-to-role mapping with expiration support |
+| `auth.role_permissions` | Role-to-permission mapping |
+| `auth.playbook_permissions` | Playbook-level access control with glob patterns |
+| `auth.sessions` | Active user sessions with Auth0 tokens |
+| `auth.audit_log` | Authentication and authorization event trail |
+
+**Default Roles:**
+
+| Role | Description | Permissions |
+|------|-------------|-------------|
+| `admin` | Full system access | All permissions, all playbooks |
+| `developer` | Create and manage playbooks | Execute, view, create, modify playbooks (except system/*) |
+| `analyst` | Execute and view results | Execute and view data/* playbooks |
+| `viewer` | Read-only access | View playbooks and execution history |
+
+### Step 1b: Grant Admin Role to First User
+
+After the first user logs in via Auth0, grant them admin access:
+
+```bash
+# Using the provision_auth playbook (recommended)
+noetl run automation/setup/provision_auth.yaml \
+  --set action=grant_admin \
+  --set email=your-email@example.com
+
+# Or using kubectl directly
+kubectl exec -n postgres deploy/postgres -- psql -U demo -d demo_noetl -c \
+  "INSERT INTO auth.user_roles (user_id, role_id)
+   SELECT u.user_id, r.role_id
+   FROM auth.users u, auth.roles r
+   WHERE u.email = 'your-email@example.com' AND r.role_name = 'admin'
+   ON CONFLICT DO NOTHING;"
+```
+
+**Note**: The user must have logged in via Auth0 first to create their account in `auth.users`.
+
+### User Management from Dashboard
+
+Once logged in as admin, you can manage users from the dashboard:
+
+1. Navigate to http://localhost:8080/dashboard.html
+2. Click **Users** in the sidebar
+3. View all users and their roles
+4. Click **Edit Roles** to assign/remove roles
+
+The dashboard uses the `user_management` playbook which supports:
+- `list_users` - Get all users with roles
+- `list_roles` - Get available roles
+- `update_user_roles` - Modify user role assignments
+- `get_user` - Get single user details
 
 ### Step 2: Update auth_user Credential
 

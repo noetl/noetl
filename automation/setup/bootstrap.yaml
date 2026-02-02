@@ -331,17 +331,27 @@ workflow:
           echo ""
           echo "Waiting for dependencies to be ready..."
           sleep 10
-          
+
           echo "Waiting for PostgreSQL..."
           kubectl wait --for=condition=ready pod -l app=postgres -n postgres --timeout=90s
-          
+
           echo "Waiting for NATS (mandatory)..."
           kubectl wait --for=condition=ready pod -l app=nats -n nats --timeout=120s || echo "ERROR: NATS failed to start - NoETL requires NATS"
-          
+
           echo "Waiting for Qdrant..."
           kubectl wait --for=condition=ready pod -l app=qdrant -n qdrant --timeout=90s || true
-          
-          echo "✓ Dependencies ready. Proceeding with NoETL deployment..."
+
+          echo "Dependencies ready. Proceeding..."
+    next:
+      - step: provision_auth_schema
+
+  - step: provision_auth_schema
+    desc: Provision Gateway auth schema (users, roles, permissions)
+    tool:
+      kind: playbook
+      path: ./provision_auth.yaml
+      args:
+        action: provision
     next:
       - step: deploy_test_server
   
@@ -468,6 +478,7 @@ workflow:
           echo "Environment Status:"
           echo "  Kind cluster: noetl"
           echo "  PostgreSQL: deployed"
+          echo "  Auth Schema: provisioned (users, roles, permissions)"
           echo "  NoETL server: deployed"
           echo "  NoETL workers: deployed"
           echo "  Gateway: deployed (Rust API)"
@@ -499,8 +510,16 @@ workflow:
           echo "  3. Test execution:"
           echo "     noetl execute catalog/test/hello_world"
           echo ""
-          echo "  4. Check status:"
+          echo "  4. First user login (via Auth0 at http://localhost:8080):"
+          echo "     - User will be created in auth.users table"
+          echo "     - Grant admin role to first user:"
+          echo "       kubectl exec -n postgres deploy/postgres -- psql -U demo -d demo_noetl -c \\"
+          echo "         \"INSERT INTO auth.user_roles (user_id, role_id) \\"
+          echo "          SELECT 1, role_id FROM auth.roles WHERE role_name = 'admin';\""
+          echo ""
+          echo "  5. Check status:"
           echo "     kubectl get pods -n noetl"
+          echo "     noetl run automation/setup/provision_auth.yaml --set action=status"
           echo ""
           echo "To destroy:"
           echo "  noetl run automation/main.yaml destroy"

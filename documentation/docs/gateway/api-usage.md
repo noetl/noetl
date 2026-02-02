@@ -1,5 +1,5 @@
 ---
-sidebar_position: 6
+sidebar_position: 8
 title: API Usage Guide
 description: How to authenticate and call playbooks via the NoETL Gateway API
 ---

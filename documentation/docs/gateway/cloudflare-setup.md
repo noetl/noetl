@@ -1,5 +1,5 @@
 ---
-sidebar_position: 5
+sidebar_position: 7
 title: Cloudflare Setup
 description: DNS, SSL, and CDN configuration with Cloudflare
 ---

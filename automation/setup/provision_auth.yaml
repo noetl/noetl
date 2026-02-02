@@ -1,0 +1,349 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: provision_auth
+  path: automation/setup/provision_auth
+  description: |
+    Provision auth schema for Gateway Auth0 integration.
+    Creates database schema, tables, roles, and default permissions.
+
+    Should be run after PostgreSQL is deployed and before Gateway is used.
+
+    Actions:
+      - provision: Create auth schema and tables (default)
+      - reset: Drop and recreate auth schema
+      - status: Check if auth schema exists
+      - grant_admin: Grant admin role to user (requires email parameter)
+executor:
+  profile: local
+  version: noetl-runtime/1
+
+workload:
+  action: "provision"
+  postgres_namespace: "postgres"
+  postgres_deployment: "postgres"
+  postgres_user: "demo"
+  postgres_db: "demo_noetl"
+  sql_script: "tests/fixtures/playbooks/api_integration/auth0/sql/provision_auth_schema.sql"
+  # For grant_admin action: email of user to grant admin role
+  email: ""
+  # Optional: Create initial admin user on first login
+  auto_admin_email: ""
+
+workflow:
+  - step: start
+    desc: Begin auth provisioning
+    tool:
+      kind: shell
+      cmds:
+        - echo "Auth provisioning - action:{{ workload.action }}"
+    case:
+      - when: "{{ workload.action == 'status' }}"
+        then:
+          - next:
+              - step: check_status
+      - when: "{{ workload.action == 'reset' }}"
+        then:
+          - next:
+              - step: drop_schema
+      - when: "{{ workload.action == 'grant_admin' }}"
+        then:
+          - next:
+              - step: grant_admin_role
+      - when: "{{ workload.action == 'provision' }}"
+        then:
+          - next:
+              - step: check_postgres_ready
+
+  - step: check_postgres_ready
+    desc: Verify PostgreSQL is running and accessible
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "Checking PostgreSQL availability..."
+          kubectl wait --for=condition=ready pod -l app=postgres -n {{ workload.postgres_namespace }} --timeout=60s
+          kubectl exec -n {{ workload.postgres_namespace }} deploy/{{ workload.postgres_deployment }} -- \
+            pg_isready -h localhost -p 5432 -U {{ workload.postgres_user }}
+          echo "OK PostgreSQL is ready"
+    next:
+      - step: check_schema_exists
+
+  - step: check_schema_exists
+    desc: Check if auth schema already exists
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "Checking if auth schema exists..."
+          SCHEMA_EXISTS=$(kubectl exec -n {{ workload.postgres_namespace }} deploy/{{ workload.postgres_deployment }} -- \
+            psql -U {{ workload.postgres_user }} -d {{ workload.postgres_db }} -tAc \
+            "SELECT EXISTS(SELECT 1 FROM information_schema.schemata WHERE schema_name = 'auth');" 2>/dev/null || echo "f")
+
+          if [ "$SCHEMA_EXISTS" = "t" ]; then
+            echo "AUTH_SCHEMA_EXISTS=true"
+          else
+            echo "AUTH_SCHEMA_EXISTS=false"
+          fi
+    case:
+      - when: "{{ 'AUTH_SCHEMA_EXISTS=true' in check_schema_exists.stdout }}"
+        then:
+          - next:
+              - step: schema_already_exists
+      - when: "true"
+        then:
+          - next:
+              - step: run_provision_script
+
+  - step: schema_already_exists
+    desc: Auth schema already provisioned
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "OK Auth schema already exists"
+          echo ""
+          echo "Current status:"
+          kubectl exec -n {{ workload.postgres_namespace }} deploy/{{ workload.postgres_deployment }} -- \
+            psql -U {{ workload.postgres_user }} -d {{ workload.postgres_db }} -c \
+            "SELECT 'Users' as entity, COUNT(*) as count FROM auth.users
+             UNION ALL
+             SELECT 'Roles', COUNT(*) FROM auth.roles
+             UNION ALL
+             SELECT 'Sessions', COUNT(*) FROM auth.sessions;"
+          echo ""
+          echo "To reset auth schema:"
+          echo "  noetl run automation/setup/provision_auth.yaml --set action=reset"
+    next:
+      - step: end
+
+  - step: run_provision_script
+    desc: Run auth schema provisioning SQL script
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "Provisioning auth schema..."
+          if [ ! -f "{{ workload.sql_script }}" ]; then
+            echo "ERROR: SQL script not found: {{ workload.sql_script }}"
+            exit 1
+          fi
+
+          # Copy SQL script to pod and execute
+          kubectl cp "{{ workload.sql_script }}" \
+            {{ workload.postgres_namespace }}/$(kubectl get pod -n {{ workload.postgres_namespace }} -l app=postgres -o jsonpath='{.items[0].metadata.name}'):/tmp/provision_auth.sql
+
+          kubectl exec -n {{ workload.postgres_namespace }} deploy/{{ workload.postgres_deployment }} -- \
+            psql -U {{ workload.postgres_user }} -d {{ workload.postgres_db }} -f /tmp/provision_auth.sql
+
+          echo ""
+          echo "OK Auth schema provisioned successfully"
+    next:
+      - step: configure_auto_admin
+
+  - step: configure_auto_admin
+    desc: Configure auto-admin email if specified
+    tool:
+      kind: shell
+      cmds:
+        - |
+          AUTO_ADMIN="{{ workload.auto_admin_email }}"
+          if [ -n "$AUTO_ADMIN" ] && [ "$AUTO_ADMIN" != "" ]; then
+            echo "Configuring auto-admin for: $AUTO_ADMIN"
+            # This creates a trigger to auto-grant admin role to first matching user
+            kubectl exec -n {{ workload.postgres_namespace }} deploy/{{ workload.postgres_deployment }} -- \
+              psql -U {{ workload.postgres_user }} -d {{ workload.postgres_db }} -c "
+                -- Create or update auto_admin_emails setting
+                INSERT INTO auth.settings (key, value) VALUES ('auto_admin_emails', '\"$AUTO_ADMIN\"')
+                ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
+              " 2>/dev/null || echo "Note: settings table not available, skipping auto-admin config"
+          else
+            echo "No auto-admin email configured (use --set auto_admin_email=user@example.com)"
+          fi
+    next:
+      - step: verify_provisioning
+
+  - step: verify_provisioning
+    desc: Verify auth schema was created correctly
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Verifying auth schema..."
+          kubectl exec -n {{ workload.postgres_namespace }} deploy/{{ workload.postgres_deployment }} -- \
+            psql -U {{ workload.postgres_user }} -d {{ workload.postgres_db }} -c "
+              SELECT table_name,
+                     (SELECT COUNT(*) FROM auth.\" || table_name || \") as row_count
+              FROM information_schema.tables
+              WHERE table_schema = 'auth'
+              ORDER BY table_name;
+            " 2>/dev/null || echo "Tables created (row count query failed)"
+
+          echo ""
+          echo "Default roles:"
+          kubectl exec -n {{ workload.postgres_namespace }} deploy/{{ workload.postgres_deployment }} -- \
+            psql -U {{ workload.postgres_user }} -d {{ workload.postgres_db }} -c \
+            "SELECT role_name, description FROM auth.roles ORDER BY role_id;"
+
+          echo ""
+          echo "OK Auth schema verification complete"
+    next:
+      - step: summary
+
+  - step: drop_schema
+    desc: Drop existing auth schema (reset action)
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "WARNING: Dropping auth schema - all user data will be lost!"
+          echo ""
+          kubectl exec -n {{ workload.postgres_namespace }} deploy/{{ workload.postgres_deployment }} -- \
+            psql -U {{ workload.postgres_user }} -d {{ workload.postgres_db }} -c \
+            "DROP SCHEMA IF EXISTS auth CASCADE;"
+          echo "OK Auth schema dropped"
+    next:
+      - step: run_provision_script
+
+  - step: check_status
+    desc: Check auth schema status
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "Auth Schema Status"
+          echo "=================="
+
+          SCHEMA_EXISTS=$(kubectl exec -n {{ workload.postgres_namespace }} deploy/{{ workload.postgres_deployment }} -- \
+            psql -U {{ workload.postgres_user }} -d {{ workload.postgres_db }} -tAc \
+            "SELECT EXISTS(SELECT 1 FROM information_schema.schemata WHERE schema_name = 'auth');" 2>/dev/null || echo "f")
+
+          if [ "$SCHEMA_EXISTS" = "t" ]; then
+            echo "Status: PROVISIONED"
+            echo ""
+            echo "Tables:"
+            kubectl exec -n {{ workload.postgres_namespace }} deploy/{{ workload.postgres_deployment }} -- \
+              psql -U {{ workload.postgres_user }} -d {{ workload.postgres_db }} -c \
+              "SELECT table_name FROM information_schema.tables WHERE table_schema = 'auth' ORDER BY table_name;"
+
+            echo "Statistics:"
+            kubectl exec -n {{ workload.postgres_namespace }} deploy/{{ workload.postgres_deployment }} -- \
+              psql -U {{ workload.postgres_user }} -d {{ workload.postgres_db }} -c \
+              "SELECT 'Users' as entity, COUNT(*) as count FROM auth.users
+               UNION ALL SELECT 'Roles', COUNT(*) FROM auth.roles
+               UNION ALL SELECT 'Active Sessions', COUNT(*) FROM auth.sessions WHERE is_active = true;"
+          else
+            echo "Status: NOT PROVISIONED"
+            echo ""
+            echo "To provision:"
+            echo "  noetl run automation/setup/provision_auth.yaml"
+          fi
+    next:
+      - step: end
+
+  - step: summary
+    desc: Show provisioning summary
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "=========================================="
+          echo "Auth Schema Provisioning Complete"
+          echo "=========================================="
+          echo ""
+          echo "Created:"
+          echo "  - auth.users (user accounts from Auth0)"
+          echo "  - auth.roles (admin, developer, analyst, viewer)"
+          echo "  - auth.permissions (granular permissions)"
+          echo "  - auth.user_roles (user-role mapping)"
+          echo "  - auth.role_permissions (role-permission mapping)"
+          echo "  - auth.playbook_permissions (playbook access control)"
+          echo "  - auth.sessions (active user sessions)"
+          echo "  - auth.audit_log (authentication events)"
+          echo ""
+          echo "Next Steps:"
+          echo "  1. Deploy Gateway:"
+          echo "     noetl run automation/infrastructure/gateway.yaml --set action=deploy-all"
+          echo ""
+          echo "  2. First user login via Auth0 will create user record"
+          echo ""
+          echo "  3. Grant admin role to user:"
+          echo "     kubectl exec -n postgres deploy/postgres -- psql -U demo -d demo_noetl -c \\"
+          echo "       \"INSERT INTO auth.user_roles (user_id, role_id) \\"
+          echo "        SELECT u.user_id, r.role_id FROM auth.users u, auth.roles r \\"
+          echo "        WHERE u.email = 'admin@example.com' AND r.role_name = 'admin';\""
+          echo ""
+          echo "  Or use the dashboard User Management page to assign roles."
+          echo ""
+    next:
+      - step: end
+
+  - step: grant_admin_role
+    desc: Grant admin role to specified user
+    tool:
+      kind: shell
+      cmds:
+        - |
+          EMAIL="{{ workload.email }}"
+          if [ -z "$EMAIL" ] || [ "$EMAIL" = "" ]; then
+            echo "ERROR: email parameter is required for grant_admin action"
+            echo ""
+            echo "Usage:"
+            echo "  noetl run automation/setup/provision_auth.yaml --set action=grant_admin --set email=user@example.com"
+            exit 1
+          fi
+
+          echo "Granting admin role to: $EMAIL"
+          echo ""
+
+          # Check if user exists
+          USER_EXISTS=$(kubectl exec -n {{ workload.postgres_namespace }} deploy/{{ workload.postgres_deployment }} -- \
+            psql -U {{ workload.postgres_user }} -d {{ workload.postgres_db }} -tAc \
+            "SELECT user_id FROM auth.users WHERE email = '$EMAIL';" 2>/dev/null)
+
+          if [ -z "$USER_EXISTS" ]; then
+            echo "ERROR: User not found: $EMAIL"
+            echo ""
+            echo "The user must log in via Auth0 first to create their account."
+            echo ""
+            echo "Existing users:"
+            kubectl exec -n {{ workload.postgres_namespace }} deploy/{{ workload.postgres_deployment }} -- \
+              psql -U {{ workload.postgres_user }} -d {{ workload.postgres_db }} -c \
+              "SELECT user_id, email, created_at FROM auth.users ORDER BY user_id;"
+            exit 1
+          fi
+
+          echo "Found user_id: $USER_EXISTS"
+
+          # Grant admin role
+          kubectl exec -n {{ workload.postgres_namespace }} deploy/{{ workload.postgres_deployment }} -- \
+            psql -U {{ workload.postgres_user }} -d {{ workload.postgres_db }} -c \
+            "INSERT INTO auth.user_roles (user_id, role_id)
+             SELECT u.user_id, r.role_id
+             FROM auth.users u, auth.roles r
+             WHERE u.email = '$EMAIL' AND r.role_name = 'admin'
+             ON CONFLICT (user_id, role_id) DO NOTHING;"
+
+          echo ""
+          echo "OK Admin role granted to $EMAIL"
+          echo ""
+          echo "Current roles for user:"
+          kubectl exec -n {{ workload.postgres_namespace }} deploy/{{ workload.postgres_deployment }} -- \
+            psql -U {{ workload.postgres_user }} -d {{ workload.postgres_db }} -c \
+            "SELECT r.role_name, ur.granted_at
+             FROM auth.user_roles ur
+             JOIN auth.roles r ON ur.role_id = r.role_id
+             JOIN auth.users u ON ur.user_id = u.user_id
+             WHERE u.email = '$EMAIL'
+             ORDER BY r.role_name;"
+    next:
+      - step: end
+
+  - step: end
+    desc: Provisioning complete
+    tool:
+      kind: shell
+      cmds:
+        - echo "Done."
