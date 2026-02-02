@@ -61,9 +61,6 @@ from noetl.core.storage.gc import (
     default_gc,
 )
 
-# Deprecated sink function (for backwards compatibility)
-from noetl.core.storage.deprecated import execute_sink_task
-
 # Aliases for new naming
 ResultStore = TempStore
 default_result_store = default_store
@@ -97,6 +94,4 @@ __all__ = [
     'TempGarbageCollector',
     'ResultGarbageCollector',
     'default_gc',
-    # Deprecated (will log error if used)
-    'execute_sink_task',
 ]

@@ -185,12 +185,8 @@ workflow:
     case:
       - when: "{{ event.name == 'call.done' }}"
         then:
-          sink:
-            tool:
-              kind: event_log
-              data: "{{ response }}"
-          next:
-            - step: test_flat_postgres_save
+          - next:
+              - step: test_flat_postgres_save
 
   # Test 1: Flat structure postgres save
   - step: test_flat_postgres_save
@@ -214,20 +210,26 @@ workflow:
     case:
       - when: "{{ event.name == 'call.done' }}"
         then:
-          sink:
-            tool:
-              kind: postgres
-              auth: "{{ workload.pg_auth }}"
-              table: simple_test_flat
-              mode: insert
-              args:
-                test_id: "{{ execution_id }}"
-                test_name: "Test Employee Flat"
-                test_value: 55000
-                storage_type: "flat_structure"
-                test_execution: "{{ execution_id }}"
-          next:
-            - step: test_nested_postgres_save
+          - save_flat:
+              tool:
+                kind: postgres
+                auth: "{{ workload.pg_auth }}"
+                command: |
+                  INSERT INTO simple_test_flat (test_id, test_name, test_value, storage_type, test_execution)
+                  VALUES (
+                    '{{ execution_id }}',
+                    'Test Employee Flat',
+                    55000,
+                    'flat_structure',
+                    '{{ execution_id }}'
+                  )
+                  ON CONFLICT (test_id) DO UPDATE SET
+                    test_name = EXCLUDED.test_name,
+                    test_value = EXCLUDED.test_value,
+                    storage_type = EXCLUDED.storage_type,
+                    test_execution = EXCLUDED.test_execution;
+          - next:
+              - step: test_nested_postgres_save
 
   # Test 2: Nested structure postgres save with upsert
   - step: test_nested_postgres_save
@@ -251,21 +253,26 @@ workflow:
     case:
       - when: "{{ event.name == 'call.done' }}"
         then:
-          sink:
-            tool:
-              kind: postgres
-              auth: "{{ workload.pg_auth }}"
-              table: simple_test_nested
-              mode: upsert
-              key: test_id
-              args:
-                test_id: "{{ execution_id }}_nested"
-                test_name: "Test Employee Nested"
-                test_data: '{"value": 58000, "type": "nested_structure", "meta": {"test_phase": "save_test"}}'
-                storage_type: "nested_structure"
-                test_execution: "{{ execution_id }}"
-          next:
-            - step: test_postgres_statement_save
+          - save_nested:
+              tool:
+                kind: postgres
+                auth: "{{ workload.pg_auth }}"
+                command: |
+                  INSERT INTO simple_test_nested (test_id, test_name, test_data, storage_type, test_execution)
+                  VALUES (
+                    '{{ execution_id }}_nested',
+                    'Test Employee Nested',
+                    '{"value": 58000, "type": "nested_structure", "meta": {"test_phase": "save_test"}}'::jsonb,
+                    'nested_structure',
+                    '{{ execution_id }}'
+                  )
+                  ON CONFLICT (test_id) DO UPDATE SET
+                    test_name = EXCLUDED.test_name,
+                    test_data = EXCLUDED.test_data,
+                    storage_type = EXCLUDED.storage_type,
+                    test_execution = EXCLUDED.test_execution;
+          - next:
+              - step: test_postgres_statement_save
 
   # Test 3: Postgres with custom SQL statement
   - step: test_postgres_statement_save
@@ -288,20 +295,20 @@ workflow:
     case:
       - when: "{{ event.name == 'call.done' }}"
         then:
-          - sink:
+          - save_summary:
               tool:
                 kind: postgres
                 auth: "{{ workload.pg_auth }}"
-                statement: |
+                command: |
                   INSERT INTO test_summary (summary_type, total_records, avg_value, test_execution, created_at)
-                  SELECT 
-                    '{{ response.summary_type }}' as summary_type,
+                  SELECT
+                    '{{ response.data.summary_type }}' as summary_type,
                     COUNT(*) as total_records,
                     AVG(test_value) as avg_value,
-                    '{{ response.execution_id }}' as test_execution,
+                    '{{ response.data.execution_id }}' as test_execution,
                     NOW() as created_at
-                  FROM simple_test_flat 
-                  WHERE test_execution = '{{ response.execution_id }}'
+                  FROM simple_test_flat
+                  WHERE test_execution = '{{ response.data.execution_id }}'
           - next:
               - step: test_python_save
 
@@ -327,36 +334,8 @@ workflow:
     case:
       - when: "{{ event.name == 'call.done' }}"
         then:
-          sink:
-            tool:
-              kind: python
-              auth: {}
-              libs:
-                json: json
-                os: os
-              args:
-                data: "{{ response }}"
-              code: |
-                # Custom python storage logic
-                result = {
-                    "storage_type": "python",
-                    "processed_data": data,
-                    "file_output": f"/tmp/noetl_test_{data.get('execution_id', 'unknown')}.json"
-                }
-                
-                # Simulate file writing
-                try:
-                    with open(result["file_output"], "w") as f:
-                        json.dump(data, f, indent=2)
-                    result["file_written"] = True
-                except Exception as e:
-                    result["file_written"] = False
-                    result["error"] = str(e)
-                
-                print(f"Python storage completed: {json.dumps(result, indent=2)}")
-                result = {"status": "success", "data": result}
-          next:
-            - step: test_duckdb_save
+          - next:
+              - step: test_duckdb_save
 
   # Test 5: DuckDB storage with analytics
   - step: test_duckdb_save
@@ -379,32 +358,32 @@ workflow:
     case:
       - when: "{{ event.name == 'call.done' }}"
         then:
-          sink:
-            tool:
-              kind: duckdb
-              commands: |
-                -- Create analytics table
-                CREATE OR REPLACE TABLE test_analytics AS
-                SELECT 
-                  'duckdb_analytics' as analysis_type,
-                  '{{ response.analysis_type }}' as specific_analysis,
-                  COUNT(*) as record_count,
-                  '{{ execution_id }}' as test_execution,
-                  NOW() as analysis_timestamp;
-                  
+          - save_analytics:
+              tool:
+                kind: duckdb
+                commands: |
+                  -- Create analytics table
+                  CREATE OR REPLACE TABLE test_analytics AS
+                  SELECT
+                    'duckdb_analytics' as analysis_type,
+                    '{{ response.data.analysis_type }}' as specific_analysis,
+                    COUNT(*) as record_count,
+                    '{{ execution_id }}' as test_execution,
+                    NOW() as analysis_timestamp;
+
                   -- Insert analysis results
-                  INSERT INTO test_analytics 
-                  SELECT 
+                  INSERT INTO test_analytics
+                  SELECT
                     'summary_stats' as analysis_type,
                     'execution_summary' as specific_analysis,
                     1 as record_count,
                     '{{ execution_id }}' as test_execution,
                     NOW() as analysis_timestamp;
-                  
+
                   -- Return results
                   SELECT * FROM test_analytics WHERE test_execution = '{{ execution_id }}';
-          next:
-            - step: test_http_save
+          - next:
+              - step: test_http_save
 
   # Test 6: HTTP storage (webhook/API call)
   - step: test_http_save
@@ -427,34 +406,8 @@ workflow:
     case:
       - when: "{{ event.name == 'call.done' }}"
         then:
-          sink:
-            tool:
-              kind: http
-              endpoint: "https://httpbin.org/post"
-              method: POST
-              headers:
-                Content-Type: "application/json"
-                X-Test-Suite: "noetl-save-storage"
-                X-Execution-ID: "{{ execution_id }}"
-              payload:
-                webhook_type: "{{ response.webhook_type }}"
-                test_type: "{{ response.test_type }}"
-                execution_id: "{{ execution_id }}"
-                test_completion: true
-                storage_tests_completed:
-                  - event_log
-                  - postgres_flat
-                  - postgres_nested
-                  - postgres_statement
-                  - python
-                  - duckdb
-                  - http
-                execution_summary:
-                  execution_id: "{{ execution_id }}"
-                  total_steps: 7
-                  test_status: "success"
-          next:
-            - step: test_completion
+          - next:
+              - step: test_completion
 
   # Final step: Test completion summary
   - step: test_completion
@@ -492,12 +445,8 @@ workflow:
     case:
       - when: "{{ event.name == 'call.done' }}"
         then:
-          sink:
-            tool:
-              kind: event_log
-              data: "{{ response }}"
-          next:
-            - step: end
+          - next:
+              - step: end
 
   # End step
   - step: end

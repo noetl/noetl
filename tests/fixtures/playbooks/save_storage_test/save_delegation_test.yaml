@@ -73,15 +73,11 @@ workflow:
     case:
       - when: "{{ event.name == 'call.done' }}"
         then:
-          sink:
-            tool:
-              kind: event_log
-              data: "{{ response }}"
-          next:
-            - step: postgres_test
+          - next:
+              - step: postgres_test
 
   # Test 2: Postgres storage delegation
-  - step: postgres_test  
+  - step: postgres_test
     desc: "Test postgres storage delegation"
     tool:
       kind: python
@@ -90,27 +86,34 @@ workflow:
       args: {}
       code: |
         result = {
-            "test": "postgres_storage", 
+            "test": "postgres_storage",
             "message": "Postgres storage delegation working",
             "value": 123
         }
-    
+
     case:
       - when: "{{ event.name == 'call.done' }}"
         then:
-          sink:
-            tool:
-              kind: postgres
-              auth: "{{ workload.pg_auth }}"
-              table: simple_test_flat
-              args:
-                test_id: "delegation_test"
-                test_name: "{{ response.test }}"
-                test_value: "{{ response.value }}"
-                storage_type: "delegation"
-                test_execution: "{{ execution_id }}"
-          next:
-            - step: duckdb_test
+          - save_postgres:
+              tool:
+                kind: postgres
+                auth: "{{ workload.pg_auth }}"
+                command: |
+                  INSERT INTO simple_test_flat (test_id, test_name, test_value, storage_type, test_execution)
+                  VALUES (
+                    'delegation_test',
+                    '{{ response.test }}',
+                    {{ response.value }},
+                    'delegation',
+                    '{{ execution_id }}'
+                  )
+                  ON CONFLICT (test_id) DO UPDATE SET
+                    test_name = EXCLUDED.test_name,
+                    test_value = EXCLUDED.test_value,
+                    storage_type = EXCLUDED.storage_type,
+                    test_execution = EXCLUDED.test_execution;
+          - next:
+              - step: duckdb_test
 
   # Test 3: DuckDB storage delegation
   - step: duckdb_test
@@ -125,21 +128,21 @@ workflow:
             "test": "duckdb_storage",
             "message": "DuckDB storage delegation working"
         }
-    
+
     case:
       - when: "{{ event.name == 'call.done' }}"
         then:
-          sink:
-            tool:
-              kind: duckdb
-              commands: |
-                CREATE OR REPLACE TABLE test_duckdb AS 
-                SELECT 'delegation_test' as test_type, 'duckdb_working' as status;
-                SELECT * FROM test_duckdb;
-          next:
-            - step: http_test
+          - save_duckdb:
+              tool:
+                kind: duckdb
+                commands: |
+                  CREATE OR REPLACE TABLE test_duckdb AS
+                  SELECT 'delegation_test' as test_type, 'duckdb_working' as status;
+                  SELECT * FROM test_duckdb;
+          - next:
+              - step: http_test
 
-  # Test 4: HTTP storage delegation  
+  # Test 4: HTTP storage delegation
   - step: http_test
     desc: "Test http storage delegation"
     tool:
@@ -152,17 +155,29 @@ workflow:
             "test": "http_storage",
             "message": "HTTP storage delegation working"
         }
-    
+
     case:
       - when: "{{ event.name == 'call.done' }}"
         then:
-          sink:
-            tool:
-              kind: http
-              endpoint: "https://httpbin.org/post"
-              method: POST
-              headers:
-                Content-Type: "application/json"
-              payload:
-                test: "{{ response.test }}"
-                message: "{{ response.message }}"
+          - send_webhook:
+              tool:
+                kind: http
+                method: POST
+                url: "https://httpbin.org/post"
+                headers:
+                  Content-Type: "application/json"
+                body:
+                  test: "{{ response.test }}"
+                  message: "{{ response.message }}"
+          - next:
+              - step: end
+
+  - step: end
+    desc: "Complete delegation test"
+    tool:
+      kind: python
+      auth: {}
+      libs: {}
+      args: {}
+      code: |
+        result = {"status": "complete"}

@@ -192,29 +192,29 @@ workflow:
 
       result = summary
   case:
-    # Save summary to sink
-    - when: "{{ event.name == 'step.exit' }}"
+    # Save summary to database
+    - when: "{{ event.name == 'call.done' }}"
       then:
-        sink:
-          tool:
-            kind: postgres
-            auth: pg_local
-            command: |
-              INSERT INTO weather_monitoring_summary (
-                execution_id,
-                total_cities,
-                alerts_triggered,
-                summary_data,
-                created_at
-              ) VALUES (
-                '{{ execution_id }}',
-                {{ result.total_cities_monitored }},
-                {{ result.alerts_triggered }},
-                $json${{ result | tojson }}$json$::jsonb,
-                NOW()
-              );
-        next:
-          - step: end
+        - save_summary:
+            tool:
+              kind: postgres
+              auth: pg_local
+              command: |
+                INSERT INTO weather_monitoring_summary (
+                  execution_id,
+                  total_cities,
+                  alerts_triggered,
+                  summary_data,
+                  created_at
+                ) VALUES (
+                  '{{ execution_id }}',
+                  {{ response.total_cities_monitored }},
+                  {{ response.alerts_triggered }},
+                  $json${{ response | tojson }}$json$::jsonb,
+                  NOW()
+                );
+        - next:
+            - step: end
 
 - step: end
   desc: End of weather monitoring workflow

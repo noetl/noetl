@@ -425,7 +425,7 @@ def render_template_object(
         # Extract blocks that should not be rendered server-side:
         # 1. For iterator steps (OLD format): the nested 'task' block (contains {{ item }} templates)
         # 2. For loop steps (NEW format): the 'loop' block (contains {{ item }} templates)
-        # 3. For all steps: the 'sink' block (contains {{ result }} templates)
+        # 3. For all steps: the 'sink' block (deprecated - kept for backwards compatibility)
         task_block = None
         loop_block = None
         sink_block = None

@@ -79,18 +79,15 @@ workflow:
       loop_results: "{{ vars.loop_results }}"
     case:
       # Test CALL action - invoke a helper step
-      - when: "{{ result.count > 0 }}"
+      - when: "{{ event.name == 'call.done' and response.count > 0 }}"
         then:
           - call:
               step: "helper"
               args:
-                message: "Aggregate completed with {{ result.count }} items"
-                data: "{{ result }}"
-          # Test SINK action - persist to database
-          - sink:
-              backend: "postgres"
-              table: "noetl.test_results"
-              from: "{{ result }}"
+                message: "Aggregate completed with {{ response.count }} items"
+                data: "{{ response }}"
+          - next:
+              - step: test_secrets
     next:
       - step: test_secrets
 

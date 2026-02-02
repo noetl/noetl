@@ -85,13 +85,13 @@ workflow:
         execution_context: "{{ execution_id }}"
     
     case:
-      - when: "{{ event.name == 'call.done' }}"
+      - when: "{{ event.name == 'call.done' and response is defined }}"
         then:
-          - sink:
+          - save_profile:
               tool:
                 kind: postgres
                 auth: "{{ workload.pg_auth }}"
-                statement: |
+                command: |
                   INSERT INTO public.user_profile_results (id, execution_id, user_name, profile_score, score_category)
                   VALUES (
                     '{{ execution_id }}:{{ user.name }}',
@@ -105,6 +105,9 @@ workflow:
                     profile_score = EXCLUDED.profile_score,
                     score_category = EXCLUDED.score_category,
                     processed_at = now();
+
+      - when: "{{ event.name == 'loop.done' }}"
+        then:
           - next:
               - step: validate_results
 

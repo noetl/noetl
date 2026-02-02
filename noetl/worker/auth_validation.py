@@ -15,7 +15,6 @@ logger = setup_logger(__name__, include_location=True)
 PLUGIN_AUTH_ARITY = {
     "postgres": "single",
     "http": "single",
-    "sink": "single",
     "duckdb": "multi",
 }
 
@@ -306,14 +305,6 @@ def validate_step_auth(step: Dict[str, Any]) -> List[str]:
 
     auth_config = step.get("auth")
 
-    # Handle nested auth (e.g., in sink.tool.auth)
-    if auth_config is None and step_type == "sink":
-        sink_config = step.get("sink", {})
-        if isinstance(sink_config, dict):
-            tool_config = sink_config.get("tool", {})
-            if isinstance(tool_config, dict):
-                auth_config = tool_config.get("auth")
-
     # Handle nested auth in task (for iterator steps)
     task = step.get("task")
     if isinstance(task, dict):
@@ -333,21 +324,6 @@ def validate_step_auth(step: Dict[str, Any]) -> List[str]:
                 errors.extend(
                     validate_auth_for_plugin(task_type, task_auth, task_context)
                 )
-
-            # Check nested sink auth
-            if task_type != "sink":
-                task_sink = task.get("sink", {})
-                if isinstance(task_sink, dict):
-                    task_tool = task_sink.get("tool", {})
-                    if isinstance(task_tool, dict):
-                        task_sink_auth = task_tool.get("auth")
-                        if task_sink_auth is not None:
-                            sink_context = f"step '{step_name}' task sink"
-                            errors.extend(
-                                validate_auth_for_plugin(
-                                    "sink", task_sink_auth, sink_context
-                                )
-                            )
 
     # Validate step-level auth
     if auth_config is not None:

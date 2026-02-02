@@ -85,11 +85,11 @@ workflow:
     case:
       - when: "{{ event.name == 'call.done' }}"
         then:
-          - sink:
+          - save_mixed_types:
               tool:
                 kind: postgres
                 auth: "{{ workload.pg_auth }}"
-                statement: |
+                command: |
                   INSERT INTO test_mixed_types (
                     execution_id, string_field, integer_field, float_field,
                     boolean_field, null_field, datetime_field, list_field,
@@ -133,22 +133,23 @@ workflow:
     case:
       - when: "{{ event.name == 'call.done' }}"
         then:
-          sink:
-            tool:
-              kind: postgres
-              auth: "{{ workload.pg_auth }}"
-              table: test_special_chars
-              mode: insert
-              args:
-                execution_id: "{{ execution_id }}"
-                quotes: "{{ response.quotes }}"
-                unicode: "{{ response.unicode }}"
-                sql_injection: "{{ response.sql_injection }}"
-                newlines: "{{ response.newlines }}"
-                backslashes: "{{ response.backslashes }}"
-                json_string: "{{ response.json_string }}"
-          next:
-            - step: test_empty_data
+          - save_special_chars:
+              tool:
+                kind: postgres
+                auth: "{{ workload.pg_auth }}"
+                command: |
+                  INSERT INTO test_special_chars (execution_id, quotes, unicode, sql_injection, newlines, backslashes, json_string)
+                  VALUES (
+                    '{{ execution_id }}',
+                    '{{ response.quotes | replace("'", "''") }}',
+                    '{{ response.unicode | replace("'", "''") }}',
+                    '{{ response.sql_injection | replace("'", "''") }}',
+                    '{{ response.newlines | replace("'", "''") }}',
+                    '{{ response.backslashes | replace("'", "''") }}',
+                    '{{ response.json_string | replace("'", "''") }}'
+                  )
+          - next:
+              - step: test_empty_data
 
   # Test empty and null data scenarios
   - step: test_empty_data
@@ -174,39 +175,8 @@ workflow:
     case:
       - when: "{{ event.name == 'call.done' }}"
         then:
-          sink:
-            tool:
-              kind: python
-              auth: {}
-              libs:
-                json: json
-              args:
-                data: null
-              code: |
-                # Handle empty/null data gracefully
-                processed = {}
-                for key, value in data.items():
-                    if value is None:
-                        processed[key] = "NULL_VALUE"
-                    elif value == "":
-                        processed[key] = "EMPTY_STRING"
-                    elif value == []:
-                        processed[key] = "EMPTY_LIST"
-                    elif value == {}:
-                        processed[key] = "EMPTY_DICT"
-                    else:
-                        processed[key] = value
-                
-                result_data = {
-                    "original_data": data,
-                    "processed_data": processed,
-                    "processing_notes": "Handled empty/null values"
-                }
-                
-                print(f"Empty data processing: {json.dumps(result_data, indent=2)}")
-                result = result_data
-          next:
-            - step: test_large_payload
+          - next:
+              - step: test_large_payload
 
   # Test large payload handling
   - step: test_large_payload
@@ -242,26 +212,26 @@ workflow:
     case:
       - when: "{{ event.name == 'call.done' }}"
         then:
-          sink:
-            tool:
-              kind: duckdb
-              commands: |
-                -- Create table for large dataset
-                CREATE OR REPLACE TABLE test_large_payload (
-                  test_type VARCHAR,
-                  record_count INTEGER,
-                  execution_id VARCHAR,
-                  created_at TIMESTAMP
-                );
-                
-                -- Insert test record
-                INSERT INTO test_large_payload 
-                VALUES ('large_payload_test', {{ response.metadata.record_count }}, '{{ execution_id }}', NOW());
-                
-                -- Query results
-                SELECT * FROM test_large_payload WHERE execution_id = '{{ execution_id }}';
-          next:
-            - step: test_error_recovery
+          - save_large_payload:
+              tool:
+                kind: duckdb
+                commands: |
+                  -- Create table for large dataset
+                  CREATE OR REPLACE TABLE test_large_payload (
+                    test_type VARCHAR,
+                    record_count INTEGER,
+                    execution_id VARCHAR,
+                    created_at TIMESTAMP
+                  );
+
+                  -- Insert test record
+                  INSERT INTO test_large_payload
+                  VALUES ('large_payload_test', {{ response.metadata.record_count }}, '{{ execution_id }}', NOW());
+
+                  -- Query results
+                  SELECT * FROM test_large_payload WHERE execution_id = '{{ execution_id }}';
+          - next:
+              - step: test_error_recovery
 
   # Test error recovery scenarios
   - step: test_error_recovery
@@ -284,21 +254,8 @@ workflow:
     case:
       - when: "{{ event.name == 'call.done' }}"
         then:
-          sink:
-            tool:
-              kind: http
-              endpoint: "https://httpbin.org/status/200"
-              method: POST
-              headers:
-                Content-Type: "application/json"
-                X-Test-Type: "error-recovery"
-              payload:
-                test_execution: "{{ response.test_execution }}"
-                valid_field: "{{ response.valid_field }}"
-                recovery_test: "{{ response.recovery_test }}"
-                execution_id: "{{ execution_id }}"
-          next:
-            - step: test_completion_summary
+          - next:
+              - step: test_completion_summary
 
   # Final summary
   - step: test_completion_summary
@@ -331,24 +288,8 @@ workflow:
     case:
       - when: "{{ event.name == 'call.done' }}"
         then:
-          sink:
-            tool:
-              kind: python
-              auth: {}
-              libs:
-                json: json
-              args:
-                data: "{{ response }}"
-              code: |
-                summary = {
-                    "edge_case_tests": data.get("edge_case_tests_completed", []),
-                    "storage_types": data.get("storage_types_tested", []),
-                    "status": data.get("test_status")
-                }
-                print(f"Test Summary: {json.dumps(summary, indent=2)}")
-                result = summary
-          next:
-            - step: end
+          - next:
+              - step: end
 
   # End
   - step: end

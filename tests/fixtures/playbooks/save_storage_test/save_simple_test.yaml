@@ -81,16 +81,12 @@ workflow:
     case:
       - when: "{{ event.name == 'call.done' }}"
         then:
-          - sink:
-              tool:
-                kind: event_log
-                data: "{{ response }}"
           - next:
               - step: postgres_flat_test
 
   # Test 2: Postgres flat structure
   - step: postgres_flat_test
-    desc: "Test postgres sink with flat structure"
+    desc: "Test postgres save with flat structure"
     tool:
       kind: python
       auth: {}
@@ -98,26 +94,26 @@ workflow:
       args: {}
       code: |
         result = {
-            "status": "success", 
+            "status": "success",
             "data": {
                 "record_id": 100,
                 "description": "Postgres flat structure test",
                 "source_step": "postgres_flat_test"
             }
         }
-    
+
     case:
       - when: "{{ event.name == 'call.done' }}"
         then:
-          - sink:
+          - save_flat:
               tool:
                 kind: postgres
                 auth: "{{ workload.pg_auth }}"
-                statement: |
+                command: |
                   INSERT INTO simple_test_flat (test_id, test_name, test_value, storage_type, test_execution)
                   VALUES (
-                    '{{ response.record_id }}',
-                    '{{ response.description }}',
+                    '{{ response.data.record_id }}',
+                    '{{ response.data.description }}',
                     42,
                     'flat',
                     '{{ execution_id }}'
@@ -147,21 +143,21 @@ workflow:
             "nested_indicator": True,
             "test_type": "nested_structure"
         }
-        
+
         result = {
             "test_type": "nested_structure",
             "nested_id": 200,
             "test_data_json": json.dumps(test_data)
         }
-    
+
     case:
       - when: "{{ event.name == 'call.done' }}"
         then:
-          - sink:
+          - save_nested:
               tool:
                 kind: postgres
                 auth: "{{ workload.pg_auth }}"
-                statement: |
+                command: |
                   INSERT INTO simple_test_nested (test_id, test_name, test_data, storage_type, test_execution)
                   VALUES (
                     '{{ response.nested_id }}',

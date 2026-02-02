@@ -36,7 +36,6 @@ from noetl.tools.transfer import execute_transfer_action
 from noetl.tools.transfer.snowflake_transfer import execute_snowflake_transfer_action
 from noetl.tools.script import execute_script_task
 from noetl.core.secrets import execute_secrets_task
-from noetl.core.storage import execute_sink_task
 from noetl.core.workflow.workbook import execute_workbook_task
 from noetl.core.workflow.playbook import execute_playbook_task
 from noetl.tools.python import execute_python_task_async
@@ -595,13 +594,13 @@ class V2Worker:
     ) -> dict | None:
         """
         Enhanced case evaluation with explicit event context.
-        
+
         Evaluates case conditions against:
         - Event context (event.name == 'call.done' or 'call.error')
         - Data context (response.status_code, result.field, error, etc.)
-        
+
         This allows case blocks to handle both success and error scenarios:
-        
+
         case:
           - when: "{{ event.name == 'call.error' and response.status_code == 429 }}"
             then:
@@ -609,8 +608,9 @@ class V2Worker:
                 delay: "{{ response.headers.get('Retry-After', 60) }}"
           - when: "{{ event.name == 'call.done' }}"
             then:
-              sink: ...
-        
+              next:
+                - step: process_data
+
         Args:
             case_blocks: List of case conditions
             response: Tool response/result
@@ -620,9 +620,9 @@ class V2Worker:
             step: Step name
             event_name: Event name ('call.done' or 'call.error')
             error: Optional error message for call.error events
-            
+
         Returns:
-            Action dict {type: 'next'|'retry'|'sink', details: {...}} or None
+            Action dict {type: 'next'|'retry', details: {...}} or None
         """
         from jinja2 import Environment
         
@@ -699,7 +699,7 @@ class V2Worker:
                     # Normalize then_block to list of action dicts
                     # then_block can be: dict, list of dicts, or list with 'next' key
                     if isinstance(then_block, dict):
-                        # Single dict - could be {next: [...]} or {sink: ...} etc
+                        # Single dict - could be {next: [...]} or named task etc
                         if 'next' in then_block:
                             # Special case: {next: [...]} format
                             then_action_list = [then_block]
@@ -710,21 +710,19 @@ class V2Worker:
                         then_action_list = then_block
                     else:
                         then_action_list = []
-                    
-                    # Process actions in order: sink, then routing (retry/next)
-                    has_sink = False
+
+                    # Process actions: routing (retry/next/set)
+                    # Note: named inline tasks are now handled by server
                     has_retry = False
                     has_next = False
                     retry_config = None
                     next_steps = None
                     set_config = None
-                    
+
                     for action in then_action_list:
                         if not isinstance(action, dict):
                             continue
-                        
-                        if 'sink' in action:
-                            has_sink = True
+
                         if 'retry' in action:
                             has_retry = True
                             # Get raw retry config (may contain Jinja2 templates)
@@ -763,20 +761,7 @@ class V2Worker:
                             next_steps = action['next']
                         if 'set' in action:
                             set_config = action['set']
-                    
-                    # Execute sink first if present (semantic order: sink → retry/next)
-                    if has_sink:
-                        logger.info(f"[CASE-EVAL] Case {idx} has sink action - executing via _execute_case_sinks")
-                        await self._execute_case_sinks(
-                            [case],
-                            response,
-                            render_context,
-                            server_url,
-                            execution_id,
-                            step,
-                            event_name="call.done"
-                        )
-                    
+
                     # Handle retry locally in the worker (don't send to server)
                     if has_retry:
                         logger.info(f"[CASE-EVAL] Case {idx} triggered retry - returning retry action for local handling")
@@ -804,11 +789,7 @@ class V2Worker:
                             'case_index': idx,
                             'triggered_by': event_name
                         }
-                    
-                    # Sink executed but no routing action - continue normal flow
-                    if has_sink:
-                        return None
-                    
+
                     # Successfully evaluated - break retry loop
                     break
                     
@@ -852,14 +833,14 @@ class V2Worker:
     ) -> dict | None:
         """
         Hybrid case evaluation: Worker-side evaluation with both event and data context.
-        
+
         Evaluates case conditions against:
         - Event context (event.name, event.type, etc.)
         - Data context (response.status_code, result.field, error, etc.)
-        
-        Returns action to take: {type: 'next'|'retry'|'sink', details: {...}}
-        If no case matches or only sink actions, returns None.
-        
+
+        Returns action to take: {type: 'next'|'retry', details: {...}}
+        If no case matches, returns None.
+
         NOTE: This is a backward-compatible wrapper. New code should use
         _evaluate_case_blocks_with_event for explicit event context.
         """
@@ -919,13 +900,13 @@ class V2Worker:
     ) -> dict | None:
         """
         Hybrid case evaluation: Worker-side evaluation with both event and data context.
-        
+
         Evaluates case conditions against:
         - Event context (event.name, event.type, etc.)
         - Data context (response.status_code, result.field, error, etc.)
-        
-        Returns action to take: {type: 'next'|'retry'|'sink', details: {...}}
-        If no case matches or only sink actions, returns None.
+
+        Returns action to take: {type: 'next'|'retry', details: {...}}
+        If no case matches, returns None.
         """
         from jinja2 import Environment
         
@@ -1012,22 +993,6 @@ class V2Worker:
                             'case_index': idx
                         }
                     
-                    # Check for sink action (handled separately)
-                    if 'sink' in then_actions:
-                        logger.info(f"[CASE-EVAL] Case {idx} has sink action - will execute via _execute_case_sinks")
-                        # Execute sink immediately
-                        await self._execute_case_sinks(
-                            [case],
-                            response,
-                            render_context,
-                            server_url,
-                            execution_id,
-                            step,
-                            event_name=event_name
-                        )
-                        # Return None to continue normal flow (sink doesn't affect routing)
-                        return None
-                    
                     # Successfully evaluated - break retry loop
                     break
                     
@@ -1059,265 +1024,6 @@ class V2Worker:
         # No matching case with routing action
         logger.info(f"[CASE-EVAL] No matching case with routing action found")
         return None
-    
-    async def _execute_case_sinks(
-        self,
-        case_blocks: list,
-        response: Any,
-        render_context: dict,
-        server_url: str,
-        execution_id: int,
-        step: str,
-        event_name: str = "call.done"
-    ):
-        """
-        DEPRECATED: This function is no longer used.
-
-        Sink execution is now handled by the server through inline task commands.
-        Named tasks in then: blocks (like sink: {tool: ...}) are processed by the
-        server's _process_then_actions and executed as separate commands.
-
-        This function is kept as a no-op for compatibility with existing call sites.
-        """
-        # DISABLED: Sink execution is now handled by the server through inline task commands
-        # See: engine.py _process_then_actions (lines 985-997) where named tasks are processed
-        logger.debug(f"[SINK] _execute_case_sinks called but disabled - sinks handled by server")
-        return
-
-        import asyncio
-        from jinja2 import Environment
-        from noetl.tools.postgres import execute_postgres_task
-
-        # Check if case_blocks provided
-        if not case_blocks or not isinstance(case_blocks, list):
-            return
-        
-        logger.info(f"[SINK] Checking {len(case_blocks)} case blocks for sinks")
-        
-        # Create Jinja environment for condition evaluation
-        jinja_env = Environment()
-        
-        # Build evaluation context with response
-        # Support both call.done and step.exit event names in conditions
-        # The engine uses step.exit for post-step sinks, so we provide both
-        
-        # Extract result from response for template access
-        # Keep response structure intact so templates can access result.data
-        # (HTTP responses are {id, status, data: [...]})
-        
-        eval_context = {
-            **render_context,
-            'response': response,
-            'result': response,  # Keep full response structure for {{ result.data }} access
-            'this': response,    # Add this for {{ this }} (full response)
-            'event': {'name': event_name},
-            'error': response.get('error') if isinstance(response, dict) else None
-        }
-        
-        # Check each case block
-        for idx, case in enumerate(case_blocks):
-            if not isinstance(case, dict):
-                continue
-                
-            when_condition = case.get('when')
-            then_block = case.get('then')
-            
-            if not when_condition or not then_block:
-                continue
-            
-            # Normalize then_block to list format (supports both dict and list)
-            then_actions = then_block if isinstance(then_block, list) else [then_block]
-            
-            # Look for sink in any of the then actions
-            sink_config = None
-            collect_config = None
-            retry_config = None
-            
-            for action in then_actions:
-                if not isinstance(action, dict):
-                    continue
-                if 'sink' in action:
-                    sink_config = action['sink']
-                if 'collect' in action:
-                    collect_config = action['collect']
-                if 'retry' in action:
-                    retry_config = action['retry']
-            
-            # Skip if no sink to execute (we only care about sinks here)
-            if not sink_config:
-                continue
-            
-            logger.info(f"[SINK] Case block {idx} has sink, evaluating condition: {when_condition}")
-            logger.info(f"[SINK] eval_context keys: {list(eval_context.keys())}")
-            logger.info(f"[SINK] event.name: {eval_context.get('event', {}).get('name', 'NOT_FOUND')}")
-            logger.info(f"[SINK] response defined: {'response' in eval_context}, response: {eval_context.get('response', 'NOT_FOUND')}")
-            
-            # Evaluate condition
-            try:
-                # when_condition is already a Jinja2 template (e.g., "{{ event.name == 'step.exit' }}")
-                # so render it directly without wrapping it again - use cached template for performance
-                template = _template_cache.get_or_compile(when_condition)
-                result = template.render(eval_context)
-                # Result should be a boolean or string that evaluates to boolean
-                # Jinja2's `and` operator returns the actual value, not "True/False"
-                # e.g., {{ cond1 and some_string }} returns the string if truthy
-                if isinstance(result, bool):
-                    condition_met = result
-                elif isinstance(result, str):
-                    result_stripped = result.strip()
-                    result_lower = result_stripped.lower()
-                    condition_met = bool(result_stripped) and result_lower not in ('false', '0', 'no', 'none', '')
-                else:
-                    condition_met = bool(result)
-
-                logger.info(f"[SINK] Condition result: {result} -> {condition_met}")
-                
-                if not condition_met:
-                    continue
-                
-                # Condition met - execute in semantic order: collect → sink → retry
-                # Note: collect and retry are handled by server/engine, we only execute sink
-                
-                logger.info(f"[SINK] Executing sink for case {idx}")
-                
-                # Extract sink type for events
-                sink_tool = sink_config.get('tool', {})
-                if isinstance(sink_tool, str):
-                    sink_kind = sink_tool
-                    sink_table = None
-                else:
-                    sink_kind = sink_tool.get('kind', 'unknown')
-                    sink_table = sink_tool.get('table')
-                
-                # Emit sink.start event
-                await self._emit_event(
-                    server_url,
-                    execution_id,
-                    f"{step}.sink",
-                    "sink.start",
-                    {
-                        "case_index": idx,
-                        "sink_type": sink_kind,
-                        "sink_table": sink_table
-                    },
-                    actionable=False,
-                    informative=True
-                )
-                
-                # Use the centralized sink executor instead of postgres-only handling
-                from noetl.core.storage import execute_sink_task
-                
-                # Build sink task config for execute_sink_task
-                # The sink config is already structured under 'tool:' key
-                sink_task_config = {
-                    'sink': sink_config  # Pass the entire sink configuration
-                }
-                
-                logger.info(f"[SINK] Delegating to execute_sink_task with config: {sink_task_config}")
-                logger.info(f"[SINK] Context keys: {list(eval_context.keys()) if isinstance(eval_context, dict) else type(eval_context)}")
-                logger.info(f"[SINK] Workload in context: {'workload' in eval_context}")
-                
-                # Execute sink via centralized executor (supports all tool types)
-                loop = asyncio.get_running_loop()
-                sink_result = await loop.run_in_executor(
-                    None,
-                    lambda: execute_sink_task(
-                        sink_task_config,
-                        eval_context,
-                        jinja_env,
-                        None  # task_with - not needed for case sinks
-                    )
-                )
-                
-                logger.info(f"[SINK] Sink executed successfully: {sink_result}")
-                
-                # Extract summary from sink result
-                sink_summary = self._extract_sink_summary(sink_result, sink_kind, sink_table)
-                
-                # Emit sink.done event with summary
-                await self._emit_event(
-                    server_url,
-                    execution_id,
-                    f"{step}.sink",
-                    "sink.done",
-                    {
-                        "case_index": idx,
-                        "sink_type": sink_kind,
-                        "summary": sink_summary,
-                        "has_collect": collect_config is not None,
-                        "has_retry": retry_config is not None
-                    },
-                    actionable=False,
-                    informative=True
-                )
-                    
-            except Exception as e:
-                logger.error(f"[SINK] Error executing sink for case {idx}: {e}", exc_info=True)
-                
-                # Emit sink.error event
-                await self._emit_event(
-                    server_url,
-                    execution_id,
-                    f"{step}.sink",
-                    "sink.error",
-                    {
-                        "case_index": idx,
-                        "sink_type": sink_config.get('tool', {}).get('kind', 'unknown') if isinstance(sink_config.get('tool'), dict) else sink_config.get('tool', 'unknown'),
-                        "error": str(e)
-                    },
-                    actionable=False,
-                    informative=True
-                )
-    
-    def _extract_sink_summary(
-        self,
-        sink_result: dict,
-        sink_kind: str,
-        sink_table: Optional[str] = None
-    ) -> dict:
-        """
-        Extract summary information from sink result.
-        
-        Args:
-            sink_result: Result from execute_sink_task
-            sink_kind: Sink type (postgres, duckdb, http, etc.)
-            sink_table: Optional table name
-            
-        Returns:
-            Dictionary with summary information
-        """
-        summary = {
-            "sink_type": sink_kind,
-            "table": sink_table,
-            "status": sink_result.get('status', 'unknown')
-        }
-        
-        # Extract rows_affected from result data
-        if isinstance(sink_result, dict):
-            result_data = sink_result.get('data', {})
-            result_meta = sink_result.get('meta', {})
-            
-            # Try to extract row count from various places
-            if isinstance(result_data, dict):
-                # Check for saved/rows_affected in data
-                summary['rows_affected'] = (
-                    result_data.get('rows_affected') or
-                    result_data.get('saved') or
-                    result_data.get('row_count') or
-                    result_meta.get('rows_affected', 0)
-                )
-                
-                # Extract execution time if available
-                if 'execution_time' in result_data:
-                    summary['execution_time'] = result_data['execution_time']
-                elif 'elapsed' in result_data:
-                    summary['execution_time'] = result_data['elapsed']
-            
-            # Add any additional metadata
-            if isinstance(result_meta, dict):
-                summary['tool_info'] = result_meta.get('tool_info', {})
-        
-        return summary
     
     async def _execute_command(self, command: dict, server_url: str, command_id: str = None):
         """Execute a command and emit events."""
@@ -1392,8 +1098,7 @@ class V2Worker:
             t_tool_end = time.perf_counter()
             logger.info(f"[PERF] Tool execution for {step} took {(t_tool_end - t_tool_start)*1000:.1f}ms")
             
-            # Note: _internal_data will be cleaned up later (after case sink execution)
-            # We keep it in response temporarily so sinks can access the full data
+            # Note: _internal_data will be cleaned up before emitting final events
             
             # CRITICAL: Log case blocks at INFO level for debugging
             logger.info(f"[CASE-CHECK] After tool execution for step: {step} | case_blocks present: {case_blocks is not None} | type: {type(case_blocks)}")
@@ -1450,20 +1155,6 @@ class V2Worker:
                 # Create evaluator with step's case_mode (default: exclusive)
                 evaluator = CaseEvaluator(case_mode=case_mode, eval_mode=eval_mode)
                 eval_result = evaluator.evaluate(case_blocks, eval_context, eval_event_name)
-
-                # Process sink actions (execute immediately)
-                for action in eval_result.actions:
-                    if action.type == "sink":
-                        logger.info(f"[CASE-SINK] Executing sink from case {action.case_index}")
-                        await self._execute_case_sinks(
-                            [case_blocks[action.case_index]],
-                            eval_response,
-                            render_context,
-                            server_url,
-                            execution_id,
-                            step,
-                            event_name="call.done"
-                        )
 
                 # Convert routing action to legacy format for compatibility
                 if eval_result.routing_action:
@@ -1625,22 +1316,22 @@ class V2Worker:
             
             # Tool succeeded - emit success events with error recovery
             try:
-                # Clean up _internal_data and data before emitting events (sink-driven pattern)
+                # Clean up _internal_data and data before emitting events
                 # This prevents large payloads from being stored in events/NATS
                 if isinstance(response, dict):
                     response_data = response.get('data', {})
                     if isinstance(response_data, dict):
-                        # Remove _internal_data (actual response for sink execution)
+                        # Remove _internal_data (full response data)
                         internal_data = response_data.pop('_internal_data', None)
                         # Also remove 'data' field which is a duplicate for backwards compat
                         response_data.pop('data', None)
-                        
+
                         if internal_data:
                             logger.info(
-                                f"[SINK-DRIVEN] Removed _internal_data and data before event emission | "
+                                f"[CLEANUP] Removed _internal_data and data before event emission | "
                                 f"payload_size_reduction: ~{len(str(internal_data))} bytes"
                             )
-                            logger.info(f"[SINK-DRIVEN] Response now contains only reference: {response_data.get('data_reference', {})}")
+                            logger.info(f"[CLEANUP] Response now contains only reference: {response_data.get('data_reference', {})}")
                 
                 # Emit call.done event - ACTIONABLE so server evaluates routing
                 await self._emit_event(
@@ -1772,7 +1463,7 @@ class V2Worker:
             args: Tool arguments
             step: Step name
             render_context: Full render context with workload, step results, etc.
-            case_blocks: Optional case blocks for sink-driven result references
+            case_blocks: Optional case blocks for result references
         """
         # Tool executors are pre-imported at module level for fast execution
         
@@ -1858,7 +1549,7 @@ class V2Worker:
             
         elif tool_kind == "http":
             # Check if retry config has pagination/success-driven repeats (next_call or collect)
-            # If so, use execute_with_retry which handles per-iteration sinks
+            # If so, use execute_with_retry which handles per-iteration retries
             retry_config = config.get('retry') if isinstance(config, dict) else None
             has_pagination_retry = False
             if isinstance(retry_config, list):
@@ -1870,12 +1561,12 @@ class V2Worker:
                         if isinstance(then_block, dict) and (has_next_call or has_collect):
                             has_pagination_retry = True
                             break
-            
+
             logger.debug(f"HTTP TOOL: config_keys={list(config.keys()) if isinstance(config, dict) else 'not dict'} | retry={retry_config is not None} | policies={len(retry_config) if isinstance(retry_config, list) else 0} | has_pagination={has_pagination_retry}")
-            
+
             if has_pagination_retry:
-                logger.info("HTTP tool using execute_with_retry for pagination sink support")
-                # Use retry-aware executor which handles per-iteration sinks
+                logger.info("HTTP tool using execute_with_retry for pagination support")
+                # Use retry-aware executor which handles per-iteration retries
                 from noetl.core.runtime.retry import execute_with_retry
                 
                 # Create executor function that wraps async execute_http_task
@@ -1895,7 +1586,7 @@ class V2Worker:
                             )
                             return future.result()
                 
-                # Execute with retry handler (supports per-iteration sinks)
+                # Execute with retry handler (supports pagination)
                 result = execute_with_retry(
                     http_executor,
                     task_config,
@@ -1918,29 +1609,8 @@ class V2Worker:
                 # - Auth resolution and credential caching
                 # - Template rendering
                 # - Response processing
-                
-                # Extract sink_config from case_blocks if present
-                sink_config = None
-                if case_blocks and isinstance(case_blocks, list):
-                    for case in case_blocks:
-                        if not isinstance(case, dict):
-                            continue
-                        then_block = case.get('then')
-                        if not then_block:
-                            continue
-                        # Normalize then_block to list
-                        then_actions = then_block if isinstance(then_block, list) else [then_block]
-                        # Look for sink in any then action
-                        for action in then_actions:
-                            if isinstance(action, dict) and 'sink' in action:
-                                sink_config = action['sink']
-                                logger.info(f"[SINK-DRIVEN] Extracted sink config from case blocks: {sink_config.get('tool', {}).get('kind')}")
-                                break
-                        if sink_config:
-                            break
-                
                 task_with = args  # Plugin uses 'task_with' for rendered params
-                result = await execute_http_task(task_config, context, jinja_env, task_with, sink_config=sink_config)
+                result = await execute_http_task(task_config, context, jinja_env, task_with)
                 # Check if plugin returned error status
                 if isinstance(result, dict) and result.get('status') == 'error':
                     # Keep error response intact (worker needs status field to detect error)
@@ -2050,20 +1720,7 @@ class V2Worker:
                 # Keep error response intact (worker needs status field to detect error)
                 return result
             return result.get('data', result) if isinstance(result, dict) else result
-            
-        elif tool_kind == "sink":
-            # Use plugin's execute_sink_task (sync function - run in executor)
-            loop = asyncio.get_running_loop()
-            result = await loop.run_in_executor(
-                None,
-                lambda: execute_sink_task(task_config, context, jinja_env)
-            )
-            # Check if plugin returned error status
-            if isinstance(result, dict) and result.get('status') == 'error':
-                # Keep error response intact (worker needs status field to detect error)
-                return result
-            return result.get('data', result) if isinstance(result, dict) else result
-            
+
         elif tool_kind == "workbook":
             # Call async execute_workbook_task directly (don't use executor for async functions)
             result = await execute_workbook_task(task_config, context, jinja_env, args)
@@ -2383,83 +2040,7 @@ class V2Worker:
             return {"value": value}
         else:
             raise NotImplementedError(f"Secret provider '{provider}' not implemented")
-    
-    async def _execute_sink(self, config: dict, args: dict) -> Any:
-        """Persist data to storage backend."""
-        backend = config.get("backend", "postgres")
-        table = config.get("table")
-        data = config.get("data")
-        connection = config.get("connection")
-        
-        if not table:
-            raise ValueError("Sink execution requires 'table' in config")
-        if not data:
-            raise ValueError("Sink execution requires 'data' in config")
-        
-        if backend == "postgres":
-            # Use postgres plugin to insert data
-            from noetl.core.common import get_pgdb_connection
-            import psycopg
-            
-            conn_params = get_pgdb_connection()
-            async with await psycopg.AsyncConnection.connect(**conn_params) as conn:
-                async with conn.cursor() as cur:
-                    # Normalize data to list of dicts
-                    rows = data if isinstance(data, list) else [data]
-                    
-                    if not rows:
-                        return {"status": "ok", "rows_inserted": 0}
-                    
-                    # Get column names from first row
-                    columns = list(rows[0].keys())
-                    placeholders = ", ".join(["%s"] * len(columns))
-                    columns_str = ", ".join(columns)
-                    
-                    # Build INSERT statement
-                    query = f"INSERT INTO {table} ({columns_str}) VALUES ({placeholders})"
-                    
-                    # Execute for each row
-                    for row in rows:
-                        values = [row.get(col) for col in columns]
-                        await cur.execute(query, values)
-                    
-                    return {"status": "ok", "rows_inserted": len(rows)}
-        
-        elif backend == "duckdb":
-            # Use duckdb to insert data
-            import duckdb
-            
-            # Create connection
-            db_path = config.get("database", ":memory:")
-            conn = duckdb.connect(db_path)
-            
-            try:
-                # Normalize data
-                rows = data if isinstance(data, list) else [data]
-                
-                if not rows:
-                    return {"status": "ok", "rows_inserted": 0}
-                
-                # Get column names
-                columns = list(rows[0].keys())
-                placeholders = ", ".join(["?"] * len(columns))
-                columns_str = ", ".join(columns)
-                
-                # Build INSERT statement
-                query = f"INSERT INTO {table} ({columns_str}) VALUES ({placeholders})"
-                
-                # Execute for each row
-                for row in rows:
-                    values = [row.get(col) for col in columns]
-                    conn.execute(query, values)
-                
-                return {"status": "ok", "rows_inserted": len(rows)}
-            finally:
-                conn.close()
-        
-        else:
-            raise NotImplementedError(f"Sink backend '{backend}' not implemented")
-    
+
     async def _execute_container(self, config: dict, args: dict) -> Any:
         """Execute code in a container (Kubernetes Job)."""
         raise NotImplementedError(

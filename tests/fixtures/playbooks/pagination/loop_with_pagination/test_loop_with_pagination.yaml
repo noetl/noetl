@@ -62,49 +62,47 @@ workflow:
         page: 1
         pageSize: "{{ endpoint.page_size }}"
     case:
-      - when: "{{ event.name == 'call.done' and response.data.paging.hasMore == true }}"
+      - when: "{{ event.name == 'call.done' and response.get('data', {}).get('paging', {}).get('hasMore') == true }}"
         then:
-          - sink:
+          - save_page:
               tool:
                 kind: postgres
-                auth:
-                  type: postgres
-                  credential: pg_k8s
-                table: pagination_test_results
-                mode: insert
-                data:
-                  execution_id: "{{ execution_id }}"
-                  endpoint_name: "{{ endpoint.name }}"
-                  iteration_index: "{{ loop.index }}"
-                  page_number: "{{ response.data.paging.page }}"
-                  items: "{{ response.data.data | tojson }}"
-                  items_count: "{{ response.data.data | length }}"
-                  has_more: "{{ response.data.paging.hasMore }}"
+                auth: pg_k8s
+                command: |
+                  INSERT INTO pagination_test_results (execution_id, endpoint_name, iteration_index, page_number, items, items_count, has_more)
+                  VALUES (
+                    {{ execution_id }},
+                    '{{ endpoint.name }}',
+                    {{ loop.index }},
+                    {{ response.data.paging.page }},
+                    '{{ response.data.data | tojson | replace("'", "''") }}'::jsonb,
+                    {{ response.data.data | length }},
+                    {{ response.data.paging.hasMore | lower }}
+                  );
           - retry:
               max_attempts: 10
               args:
                 params:
                   page: "{{ response.data.paging.page + 1 }}"
                   pageSize: "{{ endpoint.page_size }}"
-      
-      - when: "{{ event.name == 'call.done' and response.data.paging.hasMore != true }}"
+
+      - when: "{{ event.name == 'call.done' and response.get('data', {}).get('paging', {}).get('hasMore') != true }}"
         then:
-          - sink:
+          - save_final_page:
               tool:
                 kind: postgres
-                auth:
-                  type: postgres
-                  credential: pg_k8s
-                table: pagination_test_results
-                mode: insert
-                data:
-                  execution_id: "{{ execution_id }}"
-                  endpoint_name: "{{ endpoint.name }}"
-                  iteration_index: "{{ loop.index }}"
-                  page_number: "{{ response.data.paging.page }}"
-                  items: "{{ response.data.data | tojson }}"
-                  items_count: "{{ response.data.data | length }}"
-                  has_more: "{{ response.data.paging.hasMore }}"
+                auth: pg_k8s
+                command: |
+                  INSERT INTO pagination_test_results (execution_id, endpoint_name, iteration_index, page_number, items, items_count, has_more)
+                  VALUES (
+                    {{ execution_id }},
+                    '{{ endpoint.name }}',
+                    {{ loop.index }},
+                    {{ response.data.paging.page }},
+                    '{{ response.data.data | tojson | replace("'", "''") }}'::jsonb,
+                    {{ response.data.data | length }},
+                    {{ response.data.paging.hasMore | lower }}
+                  );
 
       - when: "{{ event.name == 'loop.done' }}"
         then:

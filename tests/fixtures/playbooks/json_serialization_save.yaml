@@ -68,11 +68,11 @@ workflow:
     case:
       - when: "{{ event.name == 'call.done' }}"
         then:
-          - sink:
+          - save_json:
               tool:
                 kind: postgres
                 auth: "{{ workload.pg_auth }}"
-                statement: >
+                command: |
                   INSERT INTO public.json_bug_test (id, payload)
                   VALUES (1, '{{ response.data | tojson | replace("'", "''") }}'::jsonb)
           - next:
