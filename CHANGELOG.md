@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.7.5](https://github.com/noetl/noetl/compare/v2.7.4...v2.7.5) (2026-02-02)
+
+### Bug Fixes
+
+* enhance execution status checks to include cancellation and improve auto-resume logic ([996248c](https://github.com/noetl/noetl/commit/996248cba6984d98ca640d884bc8e93d60c6249b))
+
 ## [2.7.4](https://github.com/noetl/noetl/compare/v2.7.3...v2.7.4) (2026-02-02)
 
 ### Bug Fixes
