@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.7.4](https://github.com/noetl/noetl/compare/v2.7.3...v2.7.4) (2026-02-02)
+
+### Bug Fixes
+
+* add auto-resume logic on restarts for noetl server ([5afcedf](https://github.com/noetl/noetl/commit/5afcedf3b7fc4b174a39c2b85ed19e04836f94b6))
+
 ## [2.7.3](https://github.com/noetl/noetl/compare/v2.7.2...v2.7.3) (2026-01-28)
 
 ### Bug Fixes
