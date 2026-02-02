@@ -66,7 +66,7 @@ workflow:
         result JSONB,
         created_at TIMESTAMP DEFAULT NOW()
       );
-      
+
       -- Create events table
       CREATE TABLE IF NOT EXISTS amadeus_ai_events (
         id SERIAL PRIMARY KEY,
