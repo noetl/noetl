@@ -267,6 +267,7 @@ impl Default for CmdsList {
 enum NextStep {
     Simple { step: String },
     Conditional { when: Option<String>, then: Vec<NextStep> },
+    NextAction { next: Vec<NextStep> },  // Support { next: [{ step: "..." }] } format
 }
 
 #[derive(Debug, Deserialize)]
@@ -569,6 +570,10 @@ impl PlaybookRunner {
                             self.execute_next_steps(playbook, then, context)?;
                         }
                     }
+                }
+                NextStep::NextAction { next } => {
+                    // Handle { next: [{ step: "..." }] } format
+                    self.execute_next_steps(playbook, next, context)?;
                 }
             }
         }

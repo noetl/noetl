@@ -14,9 +14,11 @@ workflow:
     args: {}
     code: |
       result = {"status": "initialized"}
-  
-  next:
-  - step: set_var
+  case:
+    - when: "{{ event.name == 'call.done' }}"
+      then:
+        - next:
+            - step: set_var
 
 - step: set_var
   desc: Set a test variable
@@ -32,20 +34,21 @@ workflow:
       logger.info(f"DEBUG: NOETL_WORKER_MODE = {os.getenv('NOETL_WORKER_MODE')}")
       logger.info(f"DEBUG: SERVER_API_URL = {os.getenv('SERVER_API_URL')}")
       logger.info(f"DEBUG: context keys = {list(context.keys())}")
-      
+
       # Return value that will be stored via vars block
       result = {
         "status": "success",
         "test_counter": 42,
         "message": "Variable set successfully"
       }
-  
   vars:
     test_counter: "{{ result.test_counter }}"
     set_message: "{{ result.message }}"
-  
-  next:
-  - step: get_var
+  case:
+    - when: "{{ event.name == 'call.done' }}"
+      then:
+        - next:
+            - step: get_var
 
 - step: get_var
   desc: Get the variable back
@@ -60,19 +63,21 @@ workflow:
       # Access variable via args (passed from vars context)
       counter = counter_value
       message = previous_message
-      
+
       print(f"Retrieved test_counter: {counter}")
       print(f"Message: {message}")
-      
+
       result = {
         "status": "success",
         "value": counter,
         "message": message,
         "verification": counter == 42
       }
-  
-  next:
-  - step: end
+  case:
+    - when: "{{ event.name == 'call.done' }}"
+      then:
+        - next:
+            - step: end
 
 - step: end
   desc: Test complete

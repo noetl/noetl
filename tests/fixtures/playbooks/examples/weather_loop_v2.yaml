@@ -31,7 +31,7 @@ workbook:
         # Evaluate weather data
         temp = city.get("temperature", 0)
         alert = temp > threshold
-        
+
         result = {
             "city": city["name"],
             "temperature": temp,
@@ -49,7 +49,11 @@ workflow:
     args: {}
     code: |
       result = {"status": "initialized", "timestamp": "2025-12-10T00:00:00Z"}
-  next: city_loop
+  case:
+    - when: "{{ event.name == 'call.done' }}"
+      then:
+        - next:
+            - step: city_loop
 
 - step: city_loop
   desc: Loop over cities and fetch weather data
@@ -73,7 +77,7 @@ workflow:
           ctx:
             weather_results: []
             alerts: []
-    
+
     # Retry on network errors
     - when: >-
         {{ event.name == 'step.exit'
@@ -84,7 +88,7 @@ workflow:
           max_attempts: 3
           backoff_multiplier: 1.5
           initial_delay: 1.0
-    
+
     # Process successful response
     - when: >-
         {{ event.name == 'step.exit'
@@ -99,7 +103,7 @@ workflow:
               name: "{{ city.name }}"
               temperature: "{{ response.data.current_weather.temperature }}"
               windspeed: "{{ response.data.current_weather.windspeed }}"
-        
+
         # Check if temperature exceeds threshold
         next:
           - step: evaluate_weather
@@ -129,7 +133,7 @@ workflow:
           - step: send_alert
             args:
               alert_data: "{{ result }}"
-    
+
     # If no alert, just collect to results
     - when: >-
         {{ event.name == 'step.exit'
@@ -177,7 +181,7 @@ workflow:
     code: |
       total_cities = len(weather_results) + len(alerts)
       alert_count = len(alerts)
-      
+
       summary = {
           "total_cities_monitored": total_cities,
           "alerts_triggered": alert_count,
@@ -185,7 +189,7 @@ workflow:
           "weather_data": weather_results,
           "alerts": alerts
       }
-      
+
       result = summary
   case:
     # Save summary to sink
@@ -197,10 +201,10 @@ workflow:
             auth: pg_local
             command: |
               INSERT INTO weather_monitoring_summary (
-                execution_id, 
-                total_cities, 
-                alerts_triggered, 
-                summary_data, 
+                execution_id,
+                total_cities,
+                alerts_triggered,
+                summary_data,
                 created_at
               ) VALUES (
                 '{{ execution_id }}',

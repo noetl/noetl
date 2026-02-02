@@ -14,8 +14,11 @@ workflow:
     args: {}
     code: |
       result = {"status": "started"}
-  next:
-  - step: step1
+  case:
+    - when: "{{ event.name == 'call.done' }}"
+      then:
+        - next:
+            - step: step1
 
 - step: step1
   desc: Execute step1 - NO next field, should implicitly route to end

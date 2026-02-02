@@ -8,10 +8,10 @@ metadata:
 workload:
   # Test run ID (use execution_id from this playbook)
   test_run_id: "{{ execution_id }}"
-  
+
   # Credentials
   pg_auth: pg_k8s  # K8s cluster postgres credential
-  
+
   # Skip playbooks with known issues
   skip_playbooks:
     - test/transient  # datetime serialization issue in TransientVars (internal API test)
@@ -41,8 +41,11 @@ workflow:
       args: {}
       code: |
         result = {"status": "initialized"}
-    next:
-      - step: create_test_schema
+    case:
+      - when: "{{ event.name == 'call.done' }}"
+        then:
+          - next:
+              - step: create_test_schema
 
   # === SCHEMA SETUP ===
   - step: create_test_schema
@@ -55,8 +58,11 @@ workflow:
       retry:
         max_attempts: 2
         retry_on: ["timeout"]
-    next:
-      - step: tests/fixtures/playbooks/hello_world
+    case:
+      - when: "{{ event.name == 'call.done' }}"
+        then:
+          - next:
+              - step: tests/fixtures/playbooks/hello_world
 
   # === BASIC TESTS ===
   - step: tests/fixtures/playbooks/hello_world
@@ -66,9 +72,12 @@ workflow:
       retry:
         max_attempts: 2
         retry_on: ["timeout"]
-    next:
-      - step: tests/control-flow/start_with_action
-  
+    case:
+      - when: "{{ event.name == 'call.done' }}"
+        then:
+          - next:
+              - step: tests/control-flow/start_with_action
+
   - step: tests/control-flow/start_with_action
     tool:
       kind: playbook
@@ -76,9 +85,12 @@ workflow:
       retry:
         max_attempts: 2
         retry_on: ["timeout"]
-    next:
-      - step: tests/control-flow/end_with_action
-  
+    case:
+      - when: "{{ event.name == 'call.done' }}"
+        then:
+          - next:
+              - step: tests/control-flow/end_with_action
+
   - step: tests/control-flow/end_with_action
     tool:
       kind: playbook
@@ -86,9 +98,12 @@ workflow:
       retry:
         max_attempts: 2
         retry_on: ["timeout"]
-    next:
-      - step: test/vars_simple
-  
+    case:
+      - when: "{{ event.name == 'call.done' }}"
+        then:
+          - next:
+              - step: test/vars_simple
+
   # === VARIABLE TESTS ===
   - step: test/vars_simple
     tool:
@@ -97,11 +112,14 @@ workflow:
       retry:
         max_attempts: 2
         retry_on: ["timeout"]
-    next:
-      - step: vars_test/test_vars_block
-  
+    case:
+      - when: "{{ event.name == 'call.done' }}"
+        then:
+          - next:
+              - step: vars_test/test_vars_block
+
   # SKIPPED: test/transient - asyncio not defined error
-  
+
   - step: vars_test/test_vars_block
     tool:
       kind: playbook
@@ -109,9 +127,12 @@ workflow:
       retry:
         max_attempts: 2
         retry_on: ["timeout"]
-    next:
-      - step: vars_test/test_vars_template_access
-  
+    case:
+      - when: "{{ event.name == 'call.done' }}"
+        then:
+          - next:
+              - step: vars_test/test_vars_template_access
+
   - step: vars_test/test_vars_template_access
     tool:
       kind: playbook
@@ -119,9 +140,12 @@ workflow:
       retry:
         max_attempts: 2
         retry_on: ["timeout"]
-    next:
-      - step: /vars_test/api_test
-  
+    case:
+      - when: "{{ event.name == 'call.done' }}"
+        then:
+          - next:
+              - step: /vars_test/api_test
+
   - step: /vars_test/api_test
     tool:
       kind: playbook
@@ -129,8 +153,11 @@ workflow:
       retry:
         max_attempts: 2
         retry_on: ["timeout"]
-    next:
-      - step: test/cache_simple
+    case:
+      - when: "{{ event.name == 'call.done' }}"
+        then:
+          - next:
+              - step: test/cache_simple
 
   # SKIPPED: test/transient - datetime serialization issue
 
@@ -142,8 +169,11 @@ workflow:
       retry:
         max_attempts: 2
         retry_on: ["timeout"]
-    next:
-      - step: tests/fixtures/playbooks/control_flow_workbook
+    case:
+      - when: "{{ event.name == 'call.done' }}"
+        then:
+          - next:
+              - step: tests/fixtures/playbooks/control_flow_workbook
 
   # === CONTROL FLOW TESTS ===
   - step: tests/fixtures/playbooks/control_flow_workbook
@@ -153,8 +183,11 @@ workflow:
       retry:
         max_attempts: 2
         retry_on: ["timeout"]
-    next:
-      - step: control_flow/weather_control_flow
+    case:
+      - when: "{{ event.name == 'call.done' }}"
+        then:
+          - next:
+              - step: control_flow/weather_control_flow
 
   - step: control_flow/weather_control_flow
     tool:
@@ -163,8 +196,11 @@ workflow:
       retry:
         max_attempts: 2
         retry_on: ["timeout"]
-    next:
-      - step: tests/fixtures/playbooks/playbook_composition/playbook_composition
+    case:
+      - when: "{{ event.name == 'call.done' }}"
+        then:
+          - next:
+              - step: tests/fixtures/playbooks/playbook_composition/playbook_composition
 
   # === COMPOSITION TESTS ===
   - step: tests/fixtures/playbooks/playbook_composition/playbook_composition
@@ -174,9 +210,12 @@ workflow:
       retry:
         max_attempts: 2
         retry_on: ["timeout"]
-    next:
-      - step: tests/fixtures/playbooks/playbook_composition/user_profile_scorer
-  
+    case:
+      - when: "{{ event.name == 'call.done' }}"
+        then:
+          - next:
+              - step: tests/fixtures/playbooks/playbook_composition/user_profile_scorer
+
   - step: tests/fixtures/playbooks/playbook_composition/user_profile_scorer
     tool:
       kind: playbook
@@ -184,8 +223,11 @@ workflow:
       retry:
         max_attempts: 2
         retry_on: ["timeout"]
-    next:
-      - step: tests/iterator_save_test
+    case:
+      - when: "{{ event.name == 'call.done' }}"
+        then:
+          - next:
+              - step: tests/iterator_save_test
 
   # === ITERATOR TESTS ===
   - step: tests/iterator_save_test
@@ -195,8 +237,11 @@ workflow:
       retry:
         max_attempts: 2
         retry_on: ["timeout"]
-    next:
-      - step: tests/fixtures/playbooks/json_serialization_save
+    case:
+      - when: "{{ event.name == 'call.done' }}"
+        then:
+          - next:
+              - step: tests/fixtures/playbooks/json_serialization_save
 
   # === SERIALIZATION TESTS ===
   - step: tests/fixtures/playbooks/json_serialization_save
@@ -206,8 +251,11 @@ workflow:
       retry:
         max_attempts: 2
         retry_on: ["timeout"]
-    next:
-      - step: tests/pagination/basic
+    case:
+      - when: "{{ event.name == 'call.done' }}"
+        then:
+          - next:
+              - step: tests/pagination/basic
 
   # === PAGINATION TESTS ===
   - step: tests/pagination/basic
@@ -217,9 +265,12 @@ workflow:
       retry:
         max_attempts: 2
         retry_on: ["timeout"]
-    next:
-      - step: tests/pagination/cursor
-  
+    case:
+      - when: "{{ event.name == 'call.done' }}"
+        then:
+          - next:
+              - step: tests/pagination/cursor
+
   - step: tests/pagination/cursor
     tool:
       kind: playbook
@@ -227,9 +278,12 @@ workflow:
       retry:
         max_attempts: 2
         retry_on: ["timeout"]
-    next:
-      - step: tests/pagination/offset
-  
+    case:
+      - when: "{{ event.name == 'call.done' }}"
+        then:
+          - next:
+              - step: tests/pagination/offset
+
   - step: tests/pagination/offset
     tool:
       kind: playbook
@@ -237,9 +291,12 @@ workflow:
       retry:
         max_attempts: 2
         retry_on: ["timeout"]
-    next:
-      - step: tests/pagination/max_iterations
-  
+    case:
+      - when: "{{ event.name == 'call.done' }}"
+        then:
+          - next:
+              - step: tests/pagination/max_iterations
+
   - step: tests/pagination/max_iterations
     tool:
       kind: playbook
@@ -247,9 +304,12 @@ workflow:
       retry:
         max_attempts: 2
         retry_on: ["timeout"]
-    next:
-      - step: tests/pagination/retry
-  
+    case:
+      - when: "{{ event.name == 'call.done' }}"
+        then:
+          - next:
+              - step: tests/pagination/retry
+
   - step: tests/pagination/retry
     tool:
       kind: playbook
@@ -257,9 +317,12 @@ workflow:
       retry:
         max_attempts: 2
         retry_on: ["timeout"]
-    next:
-      - step: tests/pagination/loop_with_pagination
-  
+    case:
+      - when: "{{ event.name == 'call.done' }}"
+        then:
+          - next:
+              - step: tests/pagination/loop_with_pagination
+
   - step: tests/pagination/loop_with_pagination
     tool:
       kind: playbook
@@ -267,8 +330,11 @@ workflow:
       retry:
         max_attempts: 2
         retry_on: ["timeout"]
-    next:
-      - step: tests/retry/simple_config
+    case:
+      - when: "{{ event.name == 'call.done' }}"
+        then:
+          - next:
+              - step: tests/retry/simple_config
 
   # === RETRY TESTS ===
   - step: tests/retry/simple_config
@@ -278,9 +344,12 @@ workflow:
       retry:
         max_attempts: 2
         retry_on: ["timeout"]
-    next:
-      - step: tests/retry/python_exception
-  
+    case:
+      - when: "{{ event.name == 'call.done' }}"
+        then:
+          - next:
+              - step: tests/retry/python_exception
+
   - step: tests/retry/python_exception
     tool:
       kind: playbook
@@ -288,9 +357,12 @@ workflow:
       retry:
         max_attempts: 2
         retry_on: ["timeout"]
-    next:
-      - step: tests/retry/http_status_code
-  
+    case:
+      - when: "{{ event.name == 'call.done' }}"
+        then:
+          - next:
+              - step: tests/retry/http_status_code
+
   - step: tests/retry/http_status_code
     tool:
       kind: playbook
@@ -298,9 +370,12 @@ workflow:
       retry:
         max_attempts: 2
         retry_on: ["timeout"]
-    next:
-      - step: tests/retry/http_stop_condition
-  
+    case:
+      - when: "{{ event.name == 'call.done' }}"
+        then:
+          - next:
+              - step: tests/retry/http_stop_condition
+
   - step: tests/retry/http_stop_condition
     tool:
       kind: playbook
@@ -308,9 +383,12 @@ workflow:
       retry:
         max_attempts: 2
         retry_on: ["timeout"]
-    next:
-      - step: tests/retry/postgres_connection
-  
+    case:
+      - when: "{{ event.name == 'call.done' }}"
+        then:
+          - next:
+              - step: tests/retry/postgres_connection
+
   - step: tests/retry/postgres_connection
     tool:
       kind: playbook
@@ -318,9 +396,12 @@ workflow:
       retry:
         max_attempts: 2
         retry_on: ["timeout"]
-    next:
-      - step: tests/retry/duckdb_query
-  
+    case:
+      - when: "{{ event.name == 'call.done' }}"
+        then:
+          - next:
+              - step: tests/retry/duckdb_query
+
   - step: tests/retry/duckdb_query
     tool:
       kind: playbook
@@ -328,8 +409,11 @@ workflow:
       retry:
         max_attempts: 2
         retry_on: ["timeout"]
-    next:
-      - step: tests/fixtures/playbooks/save_storage_test/create_tables
+    case:
+      - when: "{{ event.name == 'call.done' }}"
+        then:
+          - next:
+              - step: tests/fixtures/playbooks/save_storage_test/create_tables
 
   # === SAVE STORAGE TESTS ===
   - step: tests/fixtures/playbooks/save_storage_test/create_tables
@@ -339,9 +423,12 @@ workflow:
       retry:
         max_attempts: 2
         retry_on: ["timeout"]
-    next:
-      - step: tests/fixtures/playbooks/save_storage_test/save_simple_test
-  
+    case:
+      - when: "{{ event.name == 'call.done' }}"
+        then:
+          - next:
+              - step: tests/fixtures/playbooks/save_storage_test/save_simple_test
+
   - step: tests/fixtures/playbooks/save_storage_test/save_simple_test
     tool:
       kind: playbook
@@ -349,9 +436,12 @@ workflow:
       retry:
         max_attempts: 2
         retry_on: ["timeout"]
-    next:
-      - step: tests/fixtures/playbooks/save_storage_test/save_delegation_test
-  
+    case:
+      - when: "{{ event.name == 'call.done' }}"
+        then:
+          - next:
+              - step: tests/fixtures/playbooks/save_storage_test/save_delegation_test
+
   - step: tests/fixtures/playbooks/save_storage_test/save_delegation_test
     tool:
       kind: playbook
@@ -359,9 +449,12 @@ workflow:
       retry:
         max_attempts: 2
         retry_on: ["timeout"]
-    next:
-      - step: tests/fixtures/playbooks/save_storage_test/save_edge_cases
-  
+    case:
+      - when: "{{ event.name == 'call.done' }}"
+        then:
+          - next:
+              - step: tests/fixtures/playbooks/save_storage_test/save_edge_cases
+
   - step: tests/fixtures/playbooks/save_storage_test/save_edge_cases
     tool:
       kind: playbook
@@ -369,9 +462,12 @@ workflow:
       retry:
         max_attempts: 2
         retry_on: ["timeout"]
-    next:
-      - step: tests/fixtures/playbooks/save_storage_test/save_all_storage_types
-  
+    case:
+      - when: "{{ event.name == 'call.done' }}"
+        then:
+          - next:
+              - step: tests/fixtures/playbooks/save_storage_test/save_all_storage_types
+
   - step: tests/fixtures/playbooks/save_storage_test/save_all_storage_types
     tool:
       kind: playbook
@@ -379,12 +475,15 @@ workflow:
       retry:
         max_attempts: 2
         retry_on: ["timeout"]
-    next:
-      - step: tests/script_execution/python_gcs
+    case:
+      - when: "{{ event.name == 'call.done' }}"
+        then:
+          - next:
+              - step: tests/script_execution/python_gcs
 
   # === SCRIPT EXECUTION TESTS ===
   # SKIPPED: python_file - relative path issue
-  
+
   - step: tests/script_execution/python_gcs
     tool:
       kind: playbook
@@ -392,9 +491,12 @@ workflow:
       retry:
         max_attempts: 2
         retry_on: ["timeout"]
-    next:
-      - step: tests/script_execution/python_http
-  
+    case:
+      - when: "{{ event.name == 'call.done' }}"
+        then:
+          - next:
+              - step: tests/script_execution/python_http
+
   - step: tests/script_execution/python_http
     tool:
       kind: playbook
@@ -402,9 +504,12 @@ workflow:
       retry:
         max_attempts: 2
         retry_on: ["timeout"]
-    next:
-      - step: tests/fixtures/playbooks/data_transfer/http_to_postgres_simple
-  
+    case:
+      - when: "{{ event.name == 'call.done' }}"
+        then:
+          - next:
+              - step: tests/fixtures/playbooks/data_transfer/http_to_postgres_simple
+
   # SKIPPED: postgres_file - relative path issue
   # SKIPPED: postgres_s3 - missing S3 credentials
 
@@ -416,9 +521,12 @@ workflow:
       retry:
         max_attempts: 2
         retry_on: ["timeout"]
-    next:
-      - step: tests/fixtures/playbooks/data_transfer/http_to_postgres_direct
-  
+    case:
+      - when: "{{ event.name == 'call.done' }}"
+        then:
+          - next:
+              - step: tests/fixtures/playbooks/data_transfer/http_to_postgres_direct
+
   - step: tests/fixtures/playbooks/data_transfer/http_to_postgres_direct
     tool:
       kind: playbook
@@ -426,9 +534,12 @@ workflow:
       retry:
         max_attempts: 2
         retry_on: ["timeout"]
-    next:
-      - step: tests/fixtures/playbooks/data_transfer/http_to_postgres_transfer
-  
+    case:
+      - when: "{{ event.name == 'call.done' }}"
+        then:
+          - next:
+              - step: tests/fixtures/playbooks/data_transfer/http_to_postgres_transfer
+
   - step: tests/fixtures/playbooks/data_transfer/http_to_postgres_transfer
     tool:
       kind: playbook
@@ -436,9 +547,12 @@ workflow:
       retry:
         max_attempts: 2
         retry_on: ["timeout"]
-    next:
-      - step: examples/data_transfer/http_to_postgres_iterator
-  
+    case:
+      - when: "{{ event.name == 'call.done' }}"
+        then:
+          - next:
+              - step: examples/data_transfer/http_to_postgres_iterator
+
   - step: examples/data_transfer/http_to_postgres_iterator
     tool:
       kind: playbook
@@ -446,9 +560,12 @@ workflow:
       retry:
         max_attempts: 2
         retry_on: ["timeout"]
-    next:
-      - step: tests/fixtures/playbooks/data_transfer/http_iterator_save_postgres
-  
+    case:
+      - when: "{{ event.name == 'call.done' }}"
+        then:
+          - next:
+              - step: tests/fixtures/playbooks/data_transfer/http_iterator_save_postgres
+
   - step: tests/fixtures/playbooks/data_transfer/http_iterator_save_postgres
     tool:
       kind: playbook
@@ -456,9 +573,12 @@ workflow:
       retry:
         max_attempts: 2
         retry_on: ["timeout"]
-    next:
-      - step: tests/fixtures/playbooks/data_transfer/postgres_jsonb_test
-  
+    case:
+      - when: "{{ event.name == 'call.done' }}"
+        then:
+          - next:
+              - step: tests/fixtures/playbooks/data_transfer/postgres_jsonb_test
+
   - step: tests/fixtures/playbooks/data_transfer/postgres_jsonb_test
     tool:
       kind: playbook
@@ -466,9 +586,12 @@ workflow:
       retry:
         max_attempts: 2
         retry_on: ["timeout"]
-    next:
-      - step: tests/fixtures/playbooks/data_transfer/http_to_databases
-  
+    case:
+      - when: "{{ event.name == 'call.done' }}"
+        then:
+          - next:
+              - step: tests/fixtures/playbooks/data_transfer/http_to_databases
+
   - step: tests/fixtures/playbooks/data_transfer/http_to_databases
     tool:
       kind: playbook
@@ -476,9 +599,12 @@ workflow:
       retry:
         max_attempts: 2
         retry_on: ["timeout"]
-    next:
-      - step: tests/fixtures/playbooks/data_transfer/snowflake_postgres
-  
+    case:
+      - when: "{{ event.name == 'call.done' }}"
+        then:
+          - next:
+              - step: tests/fixtures/playbooks/data_transfer/snowflake_postgres
+
   - step: tests/fixtures/playbooks/data_transfer/snowflake_postgres
     tool:
       kind: playbook
@@ -486,9 +612,12 @@ workflow:
       retry:
         max_attempts: 2
         retry_on: ["timeout"]
-    next:
-      - step: tests/fixtures/playbooks/python_psycopg/http_to_postgres_bulk_python
-  
+    case:
+      - when: "{{ event.name == 'call.done' }}"
+        then:
+          - next:
+              - step: tests/fixtures/playbooks/python_psycopg/http_to_postgres_bulk_python
+
   - step: tests/fixtures/playbooks/python_psycopg/http_to_postgres_bulk_python
     tool:
       kind: playbook
@@ -496,9 +625,12 @@ workflow:
       retry:
         max_attempts: 2
         retry_on: ["timeout"]
-    next:
-      - step: tests/fixtures/playbooks/duckdb_gcs_workload_identity/workload_identity
-  
+    case:
+      - when: "{{ event.name == 'call.done' }}"
+        then:
+          - next:
+              - step: tests/fixtures/playbooks/duckdb_gcs_workload_identity/workload_identity
+
   # SKIPPED: tests/fixtures/playbooks/container_postgres_init - Container script handling issue
 
   # === INFRASTRUCTURE TESTS ===
@@ -509,9 +641,12 @@ workflow:
       retry:
         max_attempts: 2
         retry_on: ["timeout"]
-    next:
-      - step: tests/fixtures/playbooks/oauth/google_gcs
-  
+    case:
+      - when: "{{ event.name == 'call.done' }}"
+        then:
+          - next:
+              - step: tests/fixtures/playbooks/oauth/google_gcs
+
   - step: tests/fixtures/playbooks/oauth/google_gcs
     tool:
       kind: playbook
@@ -519,9 +654,12 @@ workflow:
       retry:
         max_attempts: 2
         retry_on: ["timeout"]
-    next:
-      - step: tests/fixtures/playbooks/oauth/google_secret_manager
-  
+    case:
+      - when: "{{ event.name == 'call.done' }}"
+        then:
+          - next:
+              - step: tests/fixtures/playbooks/oauth/google_secret_manager
+
   - step: tests/fixtures/playbooks/oauth/google_secret_manager
     tool:
       kind: playbook
@@ -529,9 +667,12 @@ workflow:
       retry:
         max_attempts: 2
         retry_on: ["timeout"]
-    next:
-      - step: api_integration/github_metrics
-  
+    case:
+      - when: "{{ event.name == 'call.done' }}"
+        then:
+          - next:
+              - step: api_integration/github_metrics
+
   - step: api_integration/github_metrics
     tool:
       kind: playbook
@@ -539,9 +680,12 @@ workflow:
       retry:
         max_attempts: 2
         retry_on: ["timeout"]
-    next:
-      - step: api_integration/amadeus_ai_api
-  
+    case:
+      - when: "{{ event.name == 'call.done' }}"
+        then:
+          - next:
+              - step: api_integration/amadeus_ai_api
+
   - step: api_integration/amadeus_ai_api
     tool:
       kind: playbook
@@ -549,9 +693,12 @@ workflow:
       retry:
         max_attempts: 2
         retry_on: ["timeout"]
-    next:
-      - step: data_processing/wikipedia_processing
-  
+    case:
+      - when: "{{ event.name == 'call.done' }}"
+        then:
+          - next:
+              - step: data_processing/wikipedia_processing
+
   - step: data_processing/wikipedia_processing
     tool:
       kind: playbook
@@ -559,9 +706,12 @@ workflow:
       retry:
         max_attempts: 2
         retry_on: ["timeout"]
-    next:
-      - step: batch_execution/multi_playbook_batch
-  
+    case:
+      - when: "{{ event.name == 'call.done' }}"
+        then:
+          - next:
+              - step: batch_execution/multi_playbook_batch
+
   - step: batch_execution/multi_playbook_batch
     tool:
       kind: playbook
@@ -569,9 +719,12 @@ workflow:
       retry:
         max_attempts: 2
         retry_on: ["timeout"]
-    next:
-      - step: tests/fixtures/playbooks/broken_sql
-  
+    case:
+      - when: "{{ event.name == 'call.done' }}"
+        then:
+          - next:
+              - step: tests/fixtures/playbooks/broken_sql
+
   # SKIPPED: tests/fixtures/playbooks/interactive_brokers/gateway_test - IB Gateway not running
 
   # === ERROR HANDLING TESTS ===
@@ -582,9 +735,12 @@ workflow:
       retry:
         max_attempts: 2
         retry_on: ["timeout"]
-    next:
-      - step: tests/fixtures/playbooks/broken_playbooks/should_error_tool_is_required
-  
+    case:
+      - when: "{{ event.name == 'call.done' }}"
+        then:
+          - next:
+              - step: tests/fixtures/playbooks/broken_playbooks/should_error_tool_is_required
+
   - step: tests/fixtures/playbooks/broken_playbooks/should_error_tool_is_required
     tool:
       kind: playbook
@@ -592,8 +748,11 @@ workflow:
       retry:
         max_attempts: 2
         retry_on: ["timeout"]
-    next:
-      - step: generate_summary
+    case:
+      - when: "{{ event.name == 'call.done' }}"
+        then:
+          - next:
+              - step: generate_summary
 
   # === GENERATE SUMMARY ===
   - step: generate_summary
@@ -605,18 +764,18 @@ workflow:
         -- Count child executions by status
         -- UNKNOWN tests are counted as skipped to satisfy constraint: total = passed + failed + skipped
         WITH child_executions AS (
-          SELECT 
+          SELECT
             execution_id,
             node_name,
-            CASE 
+            CASE
               WHEN EXISTS (
-                SELECT 1 FROM noetl.event e2 
-                WHERE e2.execution_id = e.execution_id 
+                SELECT 1 FROM noetl.event e2
+                WHERE e2.execution_id = e.execution_id
                 AND e2.event_type = 'playbook_completed'
               ) THEN 'COMPLETED'
               WHEN EXISTS (
-                SELECT 1 FROM noetl.event e2 
-                WHERE e2.execution_id = e.execution_id 
+                SELECT 1 FROM noetl.event e2
+                WHERE e2.execution_id = e.execution_id
                 AND e2.event_type = 'playbook_failed'
               ) THEN 'FAILED'
               ELSE 'UNKNOWN'
@@ -633,7 +792,7 @@ workflow:
           skipped_tests,
           success_rate
         )
-        SELECT 
+        SELECT
           {{ execution_id }},
           COUNT(*) as total_tests,
           COUNT(*) FILTER (WHERE final_status = 'COMPLETED') as passed_tests,
@@ -642,8 +801,11 @@ workflow:
           ROUND(100.0 * COUNT(*) FILTER (WHERE final_status = 'COMPLETED') / NULLIF(COUNT(*), 0), 2) as success_rate
         FROM child_executions
         RETURNING *;
-    next:
-      - step: end
+    case:
+      - when: "{{ event.name == 'call.done' }}"
+        then:
+          - next:
+              - step: end
 
   # === END ===
   - step: end
