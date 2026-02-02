@@ -231,9 +231,13 @@ class ExecutionState:
         
         # Loop state tracking
         self.loop_state: dict[str, dict[str, Any]] = {}  # step_name -> {collection, index, item, mode}
-        
+
         # Pagination state tracking for collect+retry pattern
         self.pagination_state: dict[str, dict[str, Any]] = {}  # step_name -> {collected_data: [], iteration_count: int}
+
+        # Deferred next actions tracking for inline tasks
+        # When inline tasks are in a then block with next actions, the next is deferred until inline tasks complete
+        self.pending_next_actions: dict[str, dict[str, Any]] = {}  # inline_task_step -> {next_actions, inline_tasks, context_event_step}
         
         # Initialize workload variables
         if playbook.workload:
@@ -425,7 +429,11 @@ class ExecutionState:
             # {{ result.sub is defined }} work correctly.
             if event.name == "call.done" and event.payload:
                 context["result"] = event.payload
-                context["response"] = event.payload
+                # Only set response if not already extracted from "response" key
+                # Worker may send {"response": actual_response} where actual_response
+                # was already extracted at line 413
+                if "response" not in context:
+                    context["response"] = event.payload
                 logger.debug(f"[RENDER_CTX] Set result/response from call.done payload for {event.step}")
 
         return context
@@ -967,8 +975,14 @@ class ControlFlowEngine:
         Supports:
         - Reserved action types: next, set, result, fail, collect, retry
         - Inline tasks with tool: { task_name: { tool: { kind: ... } } }
+
+        IMPORTANT: Actions are processed sequentially. If inline tasks are present,
+        the 'next' action is deferred until all inline tasks complete. This prevents
+        race conditions where the next step runs before inline tasks finish.
         """
         commands: list[Command] = []
+        inline_task_commands: list[Command] = []
+        deferred_next_actions: list[dict] = []
 
         # Reserved action keys that are not named tasks
         # Any key not in this set that contains a tool: is treated as an inline task
@@ -984,6 +998,7 @@ class ControlFlowEngine:
         except ValueError:
             max_pages = 100
 
+        # First pass: collect inline tasks and identify next actions
         for action in actions:
             if not isinstance(action, dict):
                 continue
@@ -1004,7 +1019,49 @@ class ControlFlowEngine:
                             state, event.step, task_name, tool_spec, context
                         )
                         if command:
-                            commands.append(command)
+                            inline_task_commands.append(command)
+
+            # Collect next actions for potential deferral
+            if "next" in action:
+                deferred_next_actions.append(action)
+
+        # If there are inline tasks, defer next actions until they complete
+        if inline_task_commands:
+            # Store the deferred next actions in state, keyed by the inline task step names
+            inline_task_step_names = [cmd.step for cmd in inline_task_commands]
+            if deferred_next_actions:
+                # Store pending next actions for each inline task
+                # The last inline task to complete will trigger the next actions
+                for inline_step in inline_task_step_names:
+                    if not hasattr(state, 'pending_next_actions'):
+                        state.pending_next_actions = {}
+                    state.pending_next_actions[inline_step] = {
+                        'next_actions': deferred_next_actions,
+                        'inline_tasks': set(inline_task_step_names),
+                        'context_event_step': event.step
+                    }
+                logger.info(f"[THEN-TASK] Deferred {len(deferred_next_actions)} next action(s) until inline tasks complete: {inline_task_step_names}")
+
+            # Return only inline task commands (next actions are deferred)
+            commands.extend(inline_task_commands)
+
+            # Still process non-next reserved actions (set, result, fail, collect)
+            for action in actions:
+                if not isinstance(action, dict):
+                    continue
+                # Process set, result, fail, collect immediately (they don't depend on inline tasks)
+                await self._process_immediate_actions(action, state, context, event, commands)
+
+            return commands
+
+        # No inline tasks - process all actions normally including next
+        commands.extend(inline_task_commands)
+
+        for action in actions:
+            if not isinstance(action, dict):
+                continue
+
+            handled_pagination_retry = False
 
             # Handle different reserved action types
             if "next" in action:
@@ -1293,7 +1350,151 @@ class ControlFlowEngine:
             # NOTE: Inline tasks (with tool: inside) are processed by the code above
 
         return commands
-    
+
+    async def _process_immediate_actions(
+        self,
+        action: dict,
+        state: "ExecutionState",
+        context: dict[str, Any],
+        event: Event,
+        commands: list[Command]
+    ) -> None:
+        """
+        Process immediate (non-deferred) actions like set, result, fail, collect.
+        These actions don't depend on inline task completion and can run immediately.
+        """
+        if "set" in action:
+            # Set variables
+            set_data = action["set"]
+            for key, value in set_data.items():
+                if isinstance(value, str) and "{{" in value:
+                    state.variables[key] = self._render_template(value, context)
+                else:
+                    state.variables[key] = value
+
+        elif "result" in action:
+            # Set step result
+            result_spec = action["result"]
+            if isinstance(result_spec, dict) and "from" in result_spec:
+                from_key = result_spec["from"]
+                if from_key in state.variables:
+                    state.mark_step_completed(event.step, state.variables[from_key])
+            else:
+                state.mark_step_completed(event.step, result_spec)
+
+        elif "fail" in action:
+            # Mark execution as failed
+            state.failed = True
+            logger.info(f"Execution {state.execution_id} marked as failed")
+
+    async def _process_deferred_next_actions(
+        self,
+        state: "ExecutionState",
+        completed_inline_task: str,
+        event: Event
+    ) -> list[Command]:
+        """
+        Process deferred next actions when an inline task completes.
+
+        This is called when an inline task's step.exit event is received.
+        It checks if all inline tasks in the group have completed, and if so,
+        processes the deferred next actions.
+
+        Args:
+            state: Current execution state
+            completed_inline_task: The step name of the completed inline task
+            event: The step.exit event for the completed inline task
+
+        Returns:
+            List of commands for the next steps, or empty if not all inline tasks are done
+        """
+        commands: list[Command] = []
+
+        if not hasattr(state, 'pending_next_actions'):
+            return commands
+
+        pending = state.pending_next_actions.get(completed_inline_task)
+        if not pending:
+            return commands
+
+        inline_tasks = pending['inline_tasks']
+        next_actions = pending['next_actions']
+        context_event_step = pending['context_event_step']
+
+        # Check if all inline tasks in this group have completed
+        all_completed = all(task in state.completed_steps for task in inline_tasks)
+
+        if not all_completed:
+            logger.debug(f"[DEFERRED-NEXT] Not all inline tasks completed yet. Waiting for: {inline_tasks - state.completed_steps}")
+            return commands
+
+        logger.info(f"[DEFERRED-NEXT] All inline tasks completed, processing {len(next_actions)} deferred next action(s)")
+
+        # Get context from the original step that triggered the inline tasks
+        # Create a synthetic event for context
+        context_event = Event(
+            execution_id=event.execution_id,
+            step=context_event_step,
+            name="call.done",
+            payload=event.payload,
+            timestamp=event.timestamp
+        )
+        context = state.get_render_context(context_event)
+
+        # Process each deferred next action
+        for action in next_actions:
+            if "next" not in action:
+                continue
+
+            next_value = action["next"]
+
+            # Check for new nested format: { next: { next: [...] } }
+            if isinstance(next_value, dict) and "next" in next_value:
+                next_items = next_value["next"]
+                if not isinstance(next_items, list):
+                    next_items = [next_items]
+            else:
+                # Old format
+                next_items = next_value if isinstance(next_value, list) else [next_value]
+
+            for next_item in next_items:
+                if isinstance(next_item, str):
+                    target_step = next_item
+                    args = {}
+                elif isinstance(next_item, dict):
+                    target_step = next_item.get("step")
+                    args = next_item.get("args", {})
+
+                    # Render args
+                    rendered_args = {}
+                    for key, value in args.items():
+                        if isinstance(value, str) and "{{" in value:
+                            rendered_args[key] = self._render_template(value, context)
+                        else:
+                            rendered_args[key] = value
+                    args = rendered_args
+                else:
+                    continue
+
+                # Get target step definition
+                step_def = state.get_step(target_step)
+                if not step_def:
+                    logger.error(f"[DEFERRED-NEXT] Target step not found: {target_step}")
+                    continue
+
+                # Create command for target step
+                command = await self._create_command_for_step(state, step_def, args)
+                if command:
+                    commands.append(command)
+                    logger.info(f"[DEFERRED-NEXT] Created command for step: {target_step}")
+
+        # Clean up pending actions for all inline tasks in this group
+        for task in inline_tasks:
+            if task in state.pending_next_actions:
+                del state.pending_next_actions[task]
+
+        return commands
+
     async def _create_inline_command(
         self,
         state: ExecutionState,
@@ -1629,6 +1830,20 @@ class ControlFlowEngine:
             if event.name == "step.exit":
                 state.completed_steps.add(event.step)
                 logger.debug(f"Marked inline task {event.step} as completed")
+
+                # Process any deferred next actions that were waiting for this inline task
+                deferred_commands = await self._process_deferred_next_actions(state, event.step, event)
+                if deferred_commands:
+                    commands.extend(deferred_commands)
+                    # CRITICAL: Add deferred command steps to issued_steps for pending tracking
+                    # This is needed because we return early and bypass the normal issued_steps update
+                    for cmd in deferred_commands:
+                        state.issued_steps.add(cmd.step)
+                        logger.info(f"[ISSUED] Added deferred {cmd.step} to issued_steps for execution {state.execution_id}")
+                    logger.info(f"[INLINE-TASK] Processed deferred next actions, generated {len(deferred_commands)} command(s)")
+                    # Save state after processing deferred actions
+                    await self.state_store.save_state(state)
+                    return commands
 
                 # Check if all issued steps are now completed (workflow might be done)
                 pending_steps = state.issued_steps - state.completed_steps
@@ -2081,7 +2296,7 @@ class ControlFlowEngine:
 
         # Check for pending commands using multiple methods:
         # 1. In-memory state tracking (issued_steps vs completed_steps)
-        # 2. Database query as backup
+        # 2. Database query as backup (only if in-memory state is uncertain)
         # This prevents premature completion when case blocks trigger on call.done but step.exit has no matching case
         has_pending_commands = False
 
@@ -2093,8 +2308,10 @@ class ControlFlowEngine:
         if issued_not_completed:
             has_pending_commands = True
             logger.info(f"[COMPLETION] Execution {event.execution_id} has {len(issued_not_completed)} pending commands in memory: {issued_not_completed}")
-        else:
-            # Fall back to database query
+        elif not hasattr(state, 'issued_steps') or not state.issued_steps:
+            # Only fall back to database query if in-memory state might be stale (e.g., after restart)
+            # IMPORTANT: Use step.exit instead of command.completed because command.completed is emitted
+            # AFTER step.exit, so terminal step's command.completed won't exist when this check runs
             async with get_pool_connection() as conn:
                 async with conn.cursor(row_factory=dict_row) as cur:
                     await cur.execute(
@@ -2109,7 +2326,7 @@ class ControlFlowEngine:
                             SELECT node_name
                             FROM noetl.event
                             WHERE execution_id = %(execution_id)s
-                              AND event_type = 'command.completed'
+                              AND event_type = 'step.exit'
                         ) AS pending
                         """,
                         {"execution_id": int(event.execution_id)},
@@ -2119,6 +2336,8 @@ class ControlFlowEngine:
                     has_pending_commands = pending_count > 0
                     if has_pending_commands:
                         logger.info(f"[COMPLETION] Execution {event.execution_id} has {pending_count} pending commands in DB")
+        # If in-memory state shows no pending AND issued_steps is populated, trust it
+        # (DB check would cause false positives due to command.completed timing)
 
         if event.name == "step.exit" and not commands and not has_pending_commands and (is_terminal_step or is_failed_with_no_handler or is_effective_terminal) and not state.completed:
             # No more commands to execute - workflow and playbook are complete (or failed)

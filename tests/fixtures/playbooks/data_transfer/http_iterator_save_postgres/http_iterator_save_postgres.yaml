@@ -28,8 +28,11 @@ workflow:
       args: {}
       code: |
         result = {"status": "initialized"}
-    next:
-      - step: create_table
+    case:
+      - when: "{{ event.name == 'call.done' }}"
+        then:
+          - next:
+              - step: create_table
 
   - step: create_table
     desc: Create table for HTTP iterator results
@@ -51,8 +54,11 @@ workflow:
         -- Clean up any previous test data for this execution
         DELETE FROM public.http_iterator_save_test
         WHERE execution_id = '{{ execution_id }}';
-    next:
-      - step: fetch_weather_data
+    case:
+      - when: "{{ event.name == 'call.done' }}"
+        then:
+          - next:
+              - step: fetch_weather_data
 
   - step: fetch_weather_data
     desc: Fetch weather data for multiple cities using iterator with HTTP and save
@@ -71,28 +77,34 @@ workflow:
       iterator: city
       mode: sequential
     case:
-      - when: "{{ event.name in ['step.exit', 'call.done'] and response is defined and response.metadata.status_code == 200 and response.data is defined }}"
+      - when: "{{ event.name == 'call.done' and response is defined and response.get('status_code') == 200 and response.get('data') is defined }}"
         then:
-          sink:
-            tool:
-              kind: postgres
-              auth: "{{ workload.pg_auth }}"
-              table: public.http_iterator_save_test
-              mode: upsert
-              key: id
-              args:
-                id: "{{ execution_id }}:{{ city.name }}"
-                execution_id: "{{ execution_id }}"
-                city_name: "{{ city.name }}"
-                temperature: "{{ response.data.current.temperature_2m | float }}"
-                latitude: "{{ city.lat | float }}"
-                longitude: "{{ city.lon | float }}"
-                http_status: "{{ response.metadata.status_code | int }}"
-      - when: "{{ event.name == 'step.exit' and (response is not defined or response.metadata.status_code != 200) }}"
+          - save_weather:
+              tool:
+                kind: postgres
+                auth: "{{ workload.pg_auth }}"
+                command: |
+                  INSERT INTO public.http_iterator_save_test (id, execution_id, city_name, temperature, latitude, longitude, http_status)
+                  VALUES (
+                    '{{ execution_id }}:{{ city.name }}',
+                    '{{ execution_id }}',
+                    '{{ city.name }}',
+                    {{ response.get('data', {}).get('current', {}).get('temperature_2m', 0) }},
+                    {{ city.lat }},
+                    {{ city.lon }},
+                    {{ response.get('status_code', 0) }}
+                  )
+                  ON CONFLICT (id) DO UPDATE SET
+                    temperature = EXCLUDED.temperature,
+                    http_status = EXCLUDED.http_status,
+                    created_at = NOW();
+      - when: "{{ event.name == 'call.done' and (response is not defined or response.get('status_code') != 200) }}"
         then:
-          log: "fetch_weather_data skipped for {{ city.name }}: status={{ response.metadata.status_code if response is defined else 'n/a' }}"
-    next:
-      - step: verify_results
+          - log: "fetch_weather_data skipped for {{ city.name }}: status={{ response.get('status_code', 'n/a') if response is defined else 'n/a' }}"
+      - when: "{{ event.name == 'loop.done' }}"
+        then:
+          - next:
+              - step: verify_results
 
   - step: verify_results
     desc: Verify all records were saved
@@ -108,10 +120,13 @@ workflow:
           MAX(created_at) as last_insert
         FROM public.http_iterator_save_test
         WHERE execution_id = '{{ execution_id }}';
-    vars:
-      verify_results: "{{ result }}"
-    next:
-      - step: show_details
+    case:
+      - when: "{{ event.name == 'call.done' }}"
+        then:
+          - set:
+              verify_results: "{{ response }}"
+          - next:
+              - step: show_details
 
   - step: show_details
     desc: Show detailed results
@@ -129,8 +144,11 @@ workflow:
         FROM public.http_iterator_save_test
         WHERE execution_id = '{{ execution_id }}'
         ORDER BY city_name;
-    next:
-      - step: validate_data
+    case:
+      - when: "{{ event.name == 'call.done' }}"
+        then:
+          - next:
+              - step: validate_data
 
   - step: validate_data
     desc: Validate that all cities have data
@@ -169,12 +187,15 @@ workflow:
             },
             'message': f'Validation {"passed" if all_valid else "FAILED"}: {total_records} records saved for {unique_cities} cities'
         }
-        
+
         # Raise exception on validation failure so execution reports FAILED
         if not all_valid:
             raise ValueError(f"Validation FAILED: {total_records} records saved for {unique_cities} cities (expected {expected_cities})")
-    next:
-      - step: end
+    case:
+      - when: "{{ event.name == 'call.done' }}"
+        then:
+          - next:
+              - step: end
 
   - step: end
     desc: Test completed

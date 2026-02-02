@@ -166,7 +166,13 @@ def render_template(env: Environment, template: Any, context: Dict, rules: Dict 
                             return self._data[key]
                         except Exception as e:
                             raise KeyError(key) from e
-                    
+
+                    def get(self, key, default=None):
+                        """Support dict-like .get() method for Jinja2 templates."""
+                        if isinstance(self._data, dict):
+                            return self._data.get(key, default)
+                        return default
+
                     def __str__(self):
                         """Return JSON string representation when TaskResultProxy is rendered directly in Jinja2"""
                         import json
