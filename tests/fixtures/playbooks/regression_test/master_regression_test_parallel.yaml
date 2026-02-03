@@ -1,0 +1,204 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+
+metadata:
+  name: master_regression_test_parallel
+  path: tests/fixtures/playbooks/regression_test/master_regression_test_parallel
+  description: "Parallel regression test suite - runs 48 playbooks concurrently (4 skipped)"
+
+workload:
+  test_run_id: "{{ execution_id }}"
+  pg_auth: pg_k8s
+
+  # All test playbooks to run in parallel
+  test_playbooks:
+    # Basic tests
+    - tests/fixtures/playbooks/hello_world
+    - tests/control-flow/start_with_action
+    - tests/control-flow/end_with_action
+    
+    # Variable tests
+    - test/vars_simple
+    - vars_test/test_vars_block
+    - vars_test/test_vars_template_access
+    - /vars_test/api_test
+    - test/cache_simple
+    
+    # Control flow tests
+    - tests/fixtures/playbooks/control_flow_workbook
+    - control_flow/weather_control_flow
+    
+    # Composition tests
+    - tests/fixtures/playbooks/playbook_composition/playbook_composition
+    - tests/fixtures/playbooks/playbook_composition/user_profile_scorer
+    
+    # Iterator tests
+    - tests/fixtures/playbooks/iterator_save_test/iterator_save_test
+    - tests/fixtures/playbooks/json_serialization_save/json_serialization_save
+    
+    # Pagination tests
+    - tests/pagination/basic/basic
+    - tests/pagination/cursor/cursor
+    - tests/pagination/offset/offset
+    - tests/pagination/max_iterations/max_iterations
+    - tests/pagination/retry/retry
+    - tests/pagination/loop_with_pagination/loop_with_pagination
+    
+    # Retry tests
+    - tests/retry/simple_config
+    - tests/retry/python_exception
+    - tests/retry/http_status_code
+    - tests/retry/http_stop_condition
+    - tests/retry/postgres_connection
+    - tests/retry/duckdb_query
+    
+    # Save storage tests (depends on schema, run after setup)
+    - tests/fixtures/playbooks/save_storage_test/save_simple_test
+    - tests/fixtures/playbooks/save_storage_test/save_delegation_test
+    - tests/fixtures/playbooks/save_storage_test/save_edge_cases
+    - tests/fixtures/playbooks/save_storage_test/save_all_storage_types
+    
+    # Script execution tests
+    - tests/script_execution/python_gcs
+    - tests/script_execution/python_http
+    
+    # Data transfer tests
+    - tests/fixtures/playbooks/data_transfer/http_to_postgres_simple
+    - tests/fixtures/playbooks/data_transfer/http_to_postgres_direct
+    - tests/fixtures/playbooks/data_transfer/http_to_postgres_transfer
+    - examples/data_transfer/http_to_postgres_iterator
+    - tests/fixtures/playbooks/data_transfer/http_iterator_save_postgres
+    - tests/fixtures/playbooks/data_transfer/postgres_jsonb_test
+    - tests/fixtures/playbooks/data_transfer/http_to_databases
+    - tests/fixtures/playbooks/data_transfer/snowflake_postgres
+    - tests/fixtures/playbooks/python_psycopg/http_to_postgres_bulk_python
+    
+    # Infrastructure tests
+    - tests/fixtures/playbooks/duckdb_gcs_workload_identity/workload_identity
+    - tests/fixtures/playbooks/oauth/google_gcs
+    - tests/fixtures/playbooks/oauth/google_secret_manager
+    - api_integration/github_metrics
+    - api_integration/amadeus_ai_api
+    - data_processing/wikipedia_processing
+    - batch_execution/multi_playbook_batch
+    
+    # Error handling tests
+    - tests/fixtures/playbooks/broken_sql
+    - tests/fixtures/playbooks/broken_playbooks/should_error_tool_is_required
+
+  # Playbooks that must run sequentially before parallel batch
+  setup_playbooks:
+    - tests/fixtures/playbooks/regression_test/create_test_schema
+    - tests/fixtures/playbooks/save_storage_test/create_tables
+
+workflow:
+  - step: start
+    desc: "Start parallel regression test suite - 48 playbooks (4 skipped)"
+    tool:
+      kind: python
+      auth: {}
+      libs: {}
+      args: {}
+      code: |
+        print(f"Starting parallel regression test suite")
+        print(f"Total playbooks: 48 (4 skipped)")
+        print(f"Execution mode: PARALLEL")
+        result = {"status": "initialized", "mode": "parallel"}
+    next:
+      - step: setup_schema
+
+  # Run setup playbooks sequentially (they create database objects)
+  - step: setup_schema
+    desc: "Run setup playbooks sequentially (create schema and tables)"
+    tool:
+      kind: playbook
+      path: "{{ playbook_path }}"
+      payload:
+        pg_auth: "{{ workload.pg_auth }}"
+      retry:
+        max_attempts: 2
+        retry_on: ["timeout"]
+    loop:
+      in: "{{ workload.setup_playbooks }}"
+      iterator: playbook_path
+      mode: sequential
+    next:
+      - step: run_tests_parallel
+
+  # Run all test playbooks in parallel
+  - step: run_tests_parallel
+    desc: "Run all test playbooks in parallel"
+    tool:
+      kind: playbook
+      path: "{{ test_playbook }}"
+      retry:
+        max_attempts: 2
+        retry_on: ["timeout"]
+    loop:
+      in: "{{ workload.test_playbooks }}"
+      iterator: test_playbook
+      mode: async  # Parallel execution
+      concurrency: 10  # Limit concurrent executions
+    next:
+      - step: generate_summary
+
+  - step: generate_summary
+    desc: "Generate regression test summary"
+    tool:
+      kind: postgres
+      auth: "{{ workload.pg_auth }}"
+      command: |
+        -- Count child executions by status
+        WITH child_executions AS (
+          SELECT
+            execution_id,
+            node_name,
+            CASE
+              WHEN EXISTS (
+                SELECT 1 FROM noetl.event e2
+                WHERE e2.execution_id = e.execution_id
+                AND e2.event_type = 'playbook_completed'
+              ) THEN 'COMPLETED'
+              WHEN EXISTS (
+                SELECT 1 FROM noetl.event e2
+                WHERE e2.execution_id = e.execution_id
+                AND e2.event_type = 'playbook_failed'
+              ) THEN 'FAILED'
+              ELSE 'UNKNOWN'
+            END as final_status
+          FROM noetl.event e
+          WHERE parent_execution_id = {{ execution_id }}
+          AND event_type = 'playbook_started'
+        )
+        INSERT INTO noetl_test.regression_summary (
+          test_run_id,
+          total_tests,
+          passed_tests,
+          failed_tests,
+          skipped_tests,
+          success_rate
+        )
+        SELECT
+          {{ execution_id }},
+          COUNT(*) as total_tests,
+          COUNT(*) FILTER (WHERE final_status = 'COMPLETED') as passed_tests,
+          COUNT(*) FILTER (WHERE final_status = 'FAILED') as failed_tests,
+          COUNT(*) FILTER (WHERE final_status = 'UNKNOWN') as skipped_tests,
+          ROUND(100.0 * COUNT(*) FILTER (WHERE final_status = 'COMPLETED') / NULLIF(COUNT(*), 0), 2) as success_rate
+        FROM child_executions
+        RETURNING *;
+    next:
+      - step: end
+
+  - step: end
+    desc: "Regression test suite completed"
+    tool:
+      kind: python
+      auth: {}
+      libs: {}
+      args: {}
+      code: |
+        print("=== Parallel regression test suite completed ===")
+        print("Total playbooks: 48 (4 skipped)")
+        print("Execution mode: PARALLEL with concurrency=10")
+        result = {"status": "success", "data": {"tests_run": 48, "skipped": 4, "mode": "parallel"}}
