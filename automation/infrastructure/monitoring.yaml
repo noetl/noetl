@@ -17,107 +17,83 @@ workflow:
       kind: shell
       cmds:
         - echo "VictoriaMetrics Monitoring Automation - Action '{{ workload.action }}'"
-    next:
-      - when: "{{ workload.action }} == deploy"
+    case:
+      - when: "{{ workload.action == 'deploy' }}"
         then:
           - step: deploy_monitoring
-        args: {}
-      - when: "{{ workload.action }} == undeploy"
+      - when: "{{ workload.action == 'undeploy' }}"
         then:
           - step: undeploy_monitoring
-        args: {}
-      - when: "{{ workload.action }} == status"
+      - when: "{{ workload.action == 'status' }}"
         then:
           - step: check_status
-        args: {}
-      - when: "{{ workload.action }} == grafana-creds"
+      - when: "{{ workload.action == 'grafana-creds' }}"
         then:
           - step: get_grafana_creds
-        args: {}
-      - when: "{{ workload.action }} == add-helm-repos"
+      - when: "{{ workload.action == 'add-helm-repos' }}"
         then:
           - step: add_helm_repos
-        args: {}
-      - when: "{{ workload.action }} == add-vector-helm-repo"
+      - when: "{{ workload.action == 'add-vector-helm-repo' }}"
         then:
           - step: add_vector_helm_repo
-        args: {}
-      - when: "{{ workload.action }} == add-victoriametrics-helm-repo"
+      - when: "{{ workload.action == 'add-victoriametrics-helm-repo' }}"
         then:
           - step: add_victoriametrics_helm_repo
-        args: {}
-      - when: "{{ workload.action }} == add-metrics-server-helm-repo"
+      - when: "{{ workload.action == 'add-metrics-server-helm-repo' }}"
         then:
           - step: add_metrics_server_helm_repo
-        args: {}
-      - when: "{{ workload.action }} == deploy-metrics-server"
+      - when: "{{ workload.action == 'deploy-metrics-server' }}"
         then:
           - step: deploy_metrics_server
-        args: {}
-      - when: "{{ workload.action }} == remove-metrics-server"
+      - when: "{{ workload.action == 'remove-metrics-server' }}"
         then:
           - step: remove_metrics_server
-        args: {}
-      - when: "{{ workload.action }} == deploy-vmstack-operator"
+      - when: "{{ workload.action == 'deploy-vmstack-operator' }}"
         then:
           - step: deploy_vmstack_operator
-        args: {}
-      - when: "{{ workload.action }} == remove-vmstack-operator"
+      - when: "{{ workload.action == 'remove-vmstack-operator' }}"
         then:
           - step: remove_vmstack_operator
-        args: {}
-      - when: "{{ workload.action }} == deploy-vmstack"
+      - when: "{{ workload.action == 'deploy-vmstack' }}"
         then:
           - step: deploy_vmstack
-        args: {}
-      - when: "{{ workload.action }} == remove-vmstack"
+      - when: "{{ workload.action == 'remove-vmstack' }}"
         then:
           - step: remove_vmstack
-        args: {}
-      - when: "{{ workload.action }} == deploy-stack"
+      - when: "{{ workload.action == 'deploy-stack' }}"
         then:
           - step: deploy_stack
-        args: {}
-      - when: "{{ workload.action }} == deploy-dashboards"
+      - when: "{{ workload.action == 'deploy-dashboards' }}"
         then:
           - step: deploy_dashboards
-        args: {}
-      - when: "{{ workload.action }} == remove-dashboards"
+      - when: "{{ workload.action == 'remove-dashboards' }}"
         then:
           - step: remove_dashboards
-        args: {}
-      - when: "{{ workload.action }} == deploy-exporter"
+      - when: "{{ workload.action == 'deploy-exporter' }}"
         then:
           - step: deploy_exporter
-        args: {}
-      - when: "{{ workload.action }} == remove-exporter"
+      - when: "{{ workload.action == 'remove-exporter' }}"
         then:
           - step: remove_exporter
-        args: {}
-      - when: "{{ workload.action }} == deploy-noetl-scrape"
+      - when: "{{ workload.action == 'deploy-noetl-scrape' }}"
         then:
           - step: deploy_noetl_scrape
-        args: {}
-      - when: "{{ workload.action }} == remove-noetl-scrape"
+      - when: "{{ workload.action == 'remove-noetl-scrape' }}"
         then:
           - step: remove_noetl_scrape
-        args: {}
-      - when: "{{ workload.action }} == deploy-vector"
+      - when: "{{ workload.action == 'deploy-vector' }}"
         then:
           - step: deploy_vector
-        args: {}
-      - when: "{{ workload.action }} == remove-vector"
+      - when: "{{ workload.action == 'remove-vector' }}"
         then:
           - step: remove_vector
-        args: {}
-      - when: "{{ workload.action }} == deploy-vmlogs"
+      - when: "{{ workload.action == 'deploy-vmlogs' }}"
         then:
           - step: deploy_vmlogs
-        args: {}
-      - when: "{{ workload.action }} == remove-vmlogs"
+      - when: "{{ workload.action == 'remove-vmlogs' }}"
         then:
           - step: remove_vmlogs
-        args: {}
+    next:
       - step: show_help
 
   - step: deploy_monitoring

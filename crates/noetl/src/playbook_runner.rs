@@ -514,8 +514,9 @@ impl PlaybookRunner {
                         (result, format!("rhai: {}...", &rhai.chars().take(40).collect::<String>()))
                     }
                     WhenCondition::Simple { when } => {
-                        // Simple template condition
-                        let result = self.evaluate_condition(when, context)?;
+                        // Render template first, then evaluate condition
+                        let rendered_condition = self.render_template(when, context)?;
+                        let result = self.evaluate_condition(&rendered_condition, context)?;
                         (result, when.clone())
                     }
                 };

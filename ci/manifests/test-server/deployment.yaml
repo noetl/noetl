@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
       - name: api
-        image: local/test-server:latest
+        image: local/paginated-api:latest
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 5555

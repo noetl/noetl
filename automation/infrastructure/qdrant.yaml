@@ -17,39 +17,32 @@ workflow:
       kind: shell
       cmds:
         - echo "Qdrant Automation - Action '{{ workload.action }}'"
-    next:
-      - when: "{{ workload.action }} == deploy"
+    case:
+      - when: "{{ workload.action == 'deploy' }}"
         then:
           - step: deploy_qdrant
-        args: {}
-      - when: "{{ workload.action }} == undeploy"
+      - when: "{{ workload.action == 'undeploy' }}"
         then:
           - step: undeploy_qdrant
-        args: {}
-      - when: "{{ workload.action }} == status"
+      - when: "{{ workload.action == 'status' }}"
         then:
           - step: check_status
-        args: {}
-      - when: "{{ workload.action }} == logs"
+      - when: "{{ workload.action == 'logs' }}"
         then:
           - step: show_logs
-        args: {}
-      - when: "{{ workload.action }} == health"
+      - when: "{{ workload.action == 'health' }}"
         then:
           - step: check_health
-        args: {}
-      - when: "{{ workload.action }} == test"
+      - when: "{{ workload.action == 'test' }}"
         then:
           - step: test_qdrant
-        args: {}
-      - when: "{{ workload.action }} == collections"
+      - when: "{{ workload.action == 'collections' }}"
         then:
           - step: list_collections
-        args: {}
-      - when: "{{ workload.action }} == restart"
+      - when: "{{ workload.action == 'restart' }}"
         then:
           - step: restart_qdrant
-        args: {}
+    next:
       - step: show_help
 
   - step: deploy_qdrant
