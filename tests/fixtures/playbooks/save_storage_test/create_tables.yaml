@@ -13,69 +13,41 @@ workflow:
     desc: Start table creation
     tool:
       kind: python
-      auth: {}
-      libs: {}
-      args: {}
       code: |
         result = {"status": "initialized"}
-    
-    case:
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          next:
-            - step: create_flat_table
-        
-  - step: create_flat_table
-    desc: Create flat test table with pool configuration (shared across steps)
+    next:
+      - step: create_all_tables
+
+  - step: create_all_tables
+    desc: Create all test tables in single operation
     tool:
       kind: postgres
       auth: "{{ workload.pg_auth }}"
       pool:
-        name: test_shared_pool  # Shared pool - reused by all steps with same name
-        timeout: 60  # 60 seconds for connection acquisition
-        max_size: 10  # maximum 10 connections
-        min_size: 2   # keep 2 connections alive
-      query: |
+        name: test_shared_pool
+        timeout: 60
+        max_size: 10
+        min_size: 2
+      command: |
+        -- Create flat test table
         CREATE TABLE IF NOT EXISTS simple_test_flat (
           test_id VARCHAR(255) PRIMARY KEY,
           test_name VARCHAR(255),
           test_value INTEGER,
           storage_type VARCHAR(255),
           test_execution VARCHAR(255)
-        )
-    
-    case:
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          next:
-            - step: create_nested_table
-        
-  - step: create_nested_table  
-    desc: Create nested test table
-    tool:
-      kind: postgres
-      auth: "{{ workload.pg_auth }}"
-      query: |
+        );
+
+        -- Create nested test table
         CREATE TABLE IF NOT EXISTS simple_test_nested (
           test_id VARCHAR(255) PRIMARY KEY,
           test_name VARCHAR(255),
           test_data JSONB,
           storage_type VARCHAR(255),
           test_execution VARCHAR(255)
-        )
-    
-    case:
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          next:
-            - step: create_summary_table
-        
-  - step: create_summary_table
-    desc: Create test summary table
-    tool:
-      kind: postgres
-      auth: "{{ workload.pg_auth }}"
-      query: |
+        );
+
+        -- Create summary table
         CREATE TABLE IF NOT EXISTS test_summary (
           id SERIAL PRIMARY KEY,
           summary_type VARCHAR(255),
@@ -83,20 +55,13 @@ workflow:
           avg_value DECIMAL(10,2),
           test_execution VARCHAR(255),
           created_at TIMESTAMP DEFAULT NOW()
-        )
-    
-    case:
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          next:
-            - step: end
-        
+        );
+    next:
+      - step: end
+
   - step: end
     desc: Table creation completed
     tool:
       kind: python
-      auth: {}
-      libs: {}
-      args: {}
       code: |
-        result = {"status": "complete"}
+        result = {"status": "completed"}

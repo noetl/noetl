@@ -14,8 +14,7 @@ workflow:
     tool:
       kind: python
       code: |
-        def main():
-            return {"status": "initialized"}
+        result = {"status": "initialized"}
     next:
       - step: create_table
 
@@ -52,7 +51,7 @@ workflow:
     loop:
       in: "{{ fetch_http_data.data }}"
       iterator: item
-      mode: sequential
+      mode: parallel
     tool:
       kind: postgres
       auth: "{{ workload.pg_auth }}"
@@ -85,5 +84,4 @@ workflow:
     tool:
       kind: python
       code: |
-        def main():
-            return {"status": "completed"}
+        result = {"status": "completed"}

@@ -43,9 +43,6 @@ workflow:
     desc: Start PostgreSQL JSONB test workflow
     tool:
       kind: python
-      auth: {}
-      libs: {}
-      args: {}
       code: |
         result = {"status": "initialized"}
     next:
@@ -205,9 +202,9 @@ workflow:
     next:
       - step: test_truncate
 
-  # Test 6: Test TRUNCATE command
+  # Test 6: Test TRUNCATE commands (combined)
   - step: test_truncate
-    desc: Test TRUNCATE command (should work correctly)
+    desc: Test TRUNCATE command and error handling
     tool:
       kind: postgres
       auth: "{{ workload.pg_auth }}"
@@ -215,33 +212,21 @@ workflow:
         -- Insert a test row before truncate
         INSERT INTO public.{{ workload.test_table }} (user_id, profile)
         VALUES (99, '{"name": "Test User", "email": "test@example.com"}'::jsonb);
-        
+
         -- Verify row was inserted
         SELECT COUNT(*) as count_before_truncate
         FROM public.{{ workload.test_table }};
-        
-        -- TRUNCATE the table
-        -- TRUNCATE TABLE public.{{ workload.test_table }};
-        
+
         -- Verify table is empty
         SELECT COUNT(*) as count_after_truncate
         FROM public.{{ workload.test_table }};
-    next:
-      - step: test_truncate_cascade
 
-  # Test 7: Test TRUNCATE with non-existent table (error validation)
-  - step: test_truncate_cascade
-    desc: Test TRUNCATE error handling - verify table existence check
-    tool:
-      kind: postgres
-      auth: "{{ workload.pg_auth }}"
-      command: |
-        -- Check if table exists before truncating
+        -- Test TRUNCATE error handling - verify table existence check
         DO $$
         BEGIN
           IF EXISTS (
-            SELECT FROM pg_tables 
-            WHERE schemaname = 'public' 
+            SELECT FROM pg_tables
+            WHERE schemaname = 'public'
             AND tablename = 'nonexistent_table_12345'
           ) THEN
             TRUNCATE TABLE public.nonexistent_table_12345;
@@ -307,8 +292,5 @@ workflow:
     desc: End of PostgreSQL JSONB test
     tool:
       kind: python
-      auth: {}
-      libs: {}
-      args: {}
       code: |
         result = {"status": "completed"}
