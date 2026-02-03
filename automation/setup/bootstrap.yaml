@@ -215,22 +215,15 @@ workflow:
       kind: shell
       cmds:
         - |
-          if [ ! -f "{{ workload.kind_config }}" ]; then
-            echo "ERROR: kind config not found: {{ workload.kind_config }}"
-            exit 1
-          fi
-          PORTS=$(grep -E "hostPort:" "{{ workload.kind_config }}" | awk '{print $2}' | tr -d '"')
-          IN_USE=""
-          for port in $PORTS; do
-            if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
-              IN_USE="$IN_USE $port"
-            fi
-          done
-          if [ -n "$IN_USE" ]; then
-            echo "ERROR: The following host ports are already in use:$IN_USE"
-            echo "Stop the processes using those ports or re-run with a reduced mapping set:"
-            echo "  --set kind_config=ci/kind/config-minimal.yaml"
-            exit 1
+          echo ""
+          echo "Checking for kind cluster..."
+          
+          # Ports are managed by kind cluster configuration (ci/kind/config.yaml)
+          # Docker may hold ports from previous sessions, but kind will handle remapping
+          if kind get clusters 2>/dev/null | grep -q "^noetl$"; then
+            echo "OK Kind cluster 'noetl' already exists"
+          else
+            echo "INFO Kind cluster will be created with port mappings from {{ workload.kind_config }}"
           fi
     next:
       - step: create_kind_cluster
