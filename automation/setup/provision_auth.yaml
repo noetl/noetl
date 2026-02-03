@@ -189,6 +189,29 @@ workflow:
           echo ""
           echo "OK Auth schema verification complete"
     next:
+      - step: grant_default_playbook_permissions
+
+  - step: grant_default_playbook_permissions
+    desc: Grant wildcard playbook permissions to admin and developer roles
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Granting default playbook permissions..."
+          kubectl exec -n {{ workload.postgres_namespace }} deploy/{{ workload.postgres_deployment }} -- \
+            psql -U {{ workload.postgres_user }} -d {{ workload.postgres_db }} -c "
+              INSERT INTO auth.playbook_permissions (role_id, allow_pattern, can_execute, can_view, can_modify)
+              SELECT role_id, '%', true, true, true
+              FROM auth.roles
+              WHERE role_name IN ('admin', 'developer')
+              ON CONFLICT DO NOTHING;
+            " 2>/dev/null || echo "Note: Could not set default playbook permissions"
+          
+          echo "✓ Admin and developer roles granted wildcard playbook permissions"
+          echo "  Pattern: % (all playbooks)"
+          echo "  Permissions: execute, view, modify"
+    next:
       - step: summary
 
   - step: drop_schema
@@ -262,6 +285,10 @@ workflow:
           echo "  - auth.playbook_permissions (playbook access control)"
           echo "  - auth.sessions (active user sessions)"
           echo "  - auth.audit_log (authentication events)"
+          echo ""
+          echo "Default Permissions:"
+          echo "  - admin and developer roles: wildcard access (%) to all playbooks"
+          echo "  - Permissions: execute, view, modify"
           echo ""
           echo "Next Steps:"
           echo "  1. Deploy Gateway:"
