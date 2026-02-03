@@ -17,39 +17,32 @@ workflow:
       kind: shell
       cmds:
         - echo "Pagination Server Automation - Action '{{ workload.action }}'"
-    next:
-      - when: "{{ workload.action }} == build"
+    case:
+      - when: "{{ workload.action == 'build' }}"
         then:
           - step: build_image
-        args: {}
-      - when: "{{ workload.action }} == load"
+      - when: "{{ workload.action == 'load' }}"
         then:
           - step: load_image
-        args: {}
-      - when: "{{ workload.action }} == deploy"
+      - when: "{{ workload.action == 'deploy' }}"
         then:
           - step: deploy_server
-        args: {}
-      - when: "{{ workload.action }} == full"
+      - when: "{{ workload.action == 'full' }}"
         then:
           - step: build_image
-        args: {}
-      - when: "{{ workload.action }} == status"
+      - when: "{{ workload.action == 'status' }}"
         then:
           - step: check_status
-        args: {}
-      - when: "{{ workload.action }} == logs"
+      - when: "{{ workload.action == 'logs' }}"
         then:
           - step: show_logs
-        args: {}
-      - when: "{{ workload.action }} == test"
+      - when: "{{ workload.action == 'test' }}"
         then:
           - step: test_endpoints
-        args: {}
-      - when: "{{ workload.action }} == undeploy"
+      - when: "{{ workload.action == 'undeploy' }}"
         then:
           - step: undeploy_server
-        args: {}
+    next:
       - step: show_help
 
   # Direct step aliases for positional argument support
@@ -106,7 +99,7 @@ workflow:
           docker tag local/test-server:$IMAGE_TAG local/test-server:latest
           echo "Built test-server:$IMAGE_TAG"
     case:
-      - when: "{{ workload.action }} == full"
+      - when: "{{ workload.action == 'full' }}"
         then:
           - step: load_image
     next:
@@ -122,7 +115,7 @@ workflow:
           echo "Loading pagination server image to kind cluster..."
           kind load docker-image local/test-server:latest --name noetl
     case:
-      - when: "{{ workload.action }} == full"
+      - when: "{{ workload.action == 'full' }}"
         then:
           - step: deploy_server
     next:
@@ -143,7 +136,7 @@ workflow:
           kubectl wait --for=condition=ready pod -l app=paginated-api -n test-server --timeout=60s || true
           kubectl get pods -n test-server
     case:
-      - when: "{{ workload.action }} == full"
+      - when: "{{ workload.action == 'full' }}"
         then:
           - step: check_status
     next:
