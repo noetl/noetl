@@ -278,6 +278,8 @@ async def get_command(event_id: int):
     """
     Get command details from command.issued event.
     Workers call this to fetch command config after NATS notification.
+
+    DEPRECATED: Use POST /commands/{event_id}/claim instead for atomic claim+fetch.
     """
     try:
         async with get_pool_connection() as conn:
@@ -288,13 +290,13 @@ async def get_command(event_id: int):
                     WHERE event_id = %s AND event_type = 'command.issued'
                 """, (event_id,))
                 row = await cur.fetchone()
-                
+
                 if not row:
                     raise HTTPException(404, f"command.issued event not found: {event_id}")
-                
+
                 # Context already contains command execution parameters
                 context = row['context'] or {}
-                
+
                 return {
                     "execution_id": row['execution_id'],
                     "node_id": row['step'],
@@ -307,6 +309,146 @@ async def get_command(event_id: int):
         raise
     except Exception as e:
         logger.error(f"get_command failed: {e}", exc_info=True)
+        raise HTTPException(500, str(e))
+
+
+class ClaimRequest(BaseModel):
+    """Request to claim a command."""
+    worker_id: str
+
+
+class ClaimResponse(BaseModel):
+    """Response for successful claim with command details."""
+    status: str
+    event_id: int
+    execution_id: int
+    node_id: str
+    node_name: str
+    action: str  # tool_kind
+    context: dict[str, Any]
+    meta: dict[str, Any]
+
+
+@router.post("/commands/{event_id}/claim", response_model=ClaimResponse)
+async def claim_command(event_id: int, req: ClaimRequest):
+    """
+    Atomically claim a command and return its details.
+
+    Combines claim + fetch into single operation:
+    1. Acquires advisory lock on command_id
+    2. Checks if already claimed
+    3. If not claimed, inserts command.claimed event
+    4. Returns command details from command.issued event
+
+    Returns 409 Conflict if already claimed by another worker.
+    Returns 404 if command.issued event not found.
+    """
+    try:
+        async with get_pool_connection() as conn:
+            async with conn.cursor(row_factory=dict_row) as cur:
+                # First, fetch command.issued event to get command details
+                await cur.execute("""
+                    SELECT execution_id, catalog_id, node_name as step, node_type as tool_kind,
+                           context, meta
+                    FROM noetl.event
+                    WHERE event_id = %s AND event_type = 'command.issued'
+                """, (event_id,))
+                cmd_row = await cur.fetchone()
+
+                if not cmd_row:
+                    raise HTTPException(404, f"command.issued event not found: {event_id}")
+
+                execution_id = cmd_row['execution_id']
+                catalog_id = cmd_row['catalog_id']
+                step = cmd_row['step']
+                tool_kind = cmd_row['tool_kind']
+                context = cmd_row['context'] or {}
+                meta = cmd_row['meta'] or {}
+                command_id = meta.get('command_id', f"{execution_id}:{step}:{event_id}")
+
+                # Check if execution is cancelled FIRST (before claiming)
+                await cur.execute("""
+                    SELECT 1 FROM noetl.event
+                    WHERE execution_id = %s AND event_type = 'execution.cancelled'
+                    LIMIT 1
+                """, (execution_id,))
+                if await cur.fetchone():
+                    raise HTTPException(409, "Execution has been cancelled")
+
+                # Acquire advisory lock on command_id hash
+                await cur.execute("""
+                    SELECT pg_try_advisory_xact_lock(hashtext(%s)::bigint) as lock_acquired
+                """, (command_id,))
+                lock_result = await cur.fetchone()
+
+                if not lock_result or not lock_result.get('lock_acquired'):
+                    raise HTTPException(409, "Command is being claimed by another worker")
+
+                # Check if already claimed
+                await cur.execute("""
+                    SELECT worker_id, meta FROM noetl.event
+                    WHERE execution_id = %s
+                      AND event_type = 'command.claimed'
+                      AND (meta->>'command_id' = %s OR (result->'data'->>'command_id' = %s))
+                    LIMIT 1
+                """, (execution_id, command_id, command_id))
+                existing = await cur.fetchone()
+
+                if existing:
+                    existing_worker = existing.get('worker_id') or (existing.get('meta') or {}).get('worker_id')
+                    if existing_worker and existing_worker != req.worker_id:
+                        raise HTTPException(409, f"Command already claimed by {existing_worker}")
+                    # Already claimed by same worker - idempotent, return command details
+                    return ClaimResponse(
+                        status="ok",
+                        event_id=event_id,
+                        execution_id=execution_id,
+                        node_id=step,
+                        node_name=step,
+                        action=tool_kind,
+                        context=context,
+                        meta=meta
+                    )
+
+                # Not claimed yet - insert claim event
+                claim_evt_id = await get_snowflake_id()
+                claim_meta = {
+                    "command_id": command_id,
+                    "worker_id": req.worker_id,
+                    "actionable": False,
+                    "informative": True,
+                }
+                result_obj = {"kind": "data", "data": {"command_id": command_id}}
+
+                await cur.execute("""
+                    INSERT INTO noetl.event (
+                        event_id, execution_id, catalog_id, event_type,
+                        node_id, node_name, status, result, meta, worker_id, created_at
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """, (
+                    claim_evt_id, execution_id, catalog_id, "command.claimed",
+                    step, step, "RUNNING",
+                    Json(result_obj), Json(claim_meta), req.worker_id, datetime.now(timezone.utc)
+                ))
+                await conn.commit()
+
+                logger.info(f"[CLAIM] Command {command_id} claimed by {req.worker_id} (event_id={claim_evt_id})")
+
+                return ClaimResponse(
+                    status="ok",
+                    event_id=event_id,
+                    execution_id=execution_id,
+                    node_id=step,
+                    node_name=step,
+                    action=tool_kind,
+                    context=context,
+                    meta=meta
+                )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"claim_command failed: {e}", exc_info=True)
         raise HTTPException(500, str(e))
 
 

@@ -379,16 +379,15 @@ class V2Worker:
 
         Notification contains: {execution_id, event_id, command_id, step, server_url}
 
-        Event-driven flow:
-        1. Check if command already claimed
-        2. Attempt atomic claim via command.claimed event
-        3. If claim succeeds, fetch command details and execute
-        4. If claim fails, another worker got it - silently skip
+        Optimized flow using single /api/commands/{event_id}/claim endpoint:
+        1. Call claim endpoint (atomically claims + fetches + checks cancellation)
+        2. If claim succeeds, execute command
+        3. If claim fails (409), another worker got it - silently skip
         """
         import time
         t_total_start = time.perf_counter()
 
-        with LoggingContext(logger, notification=notification, execution_id = notification.get("execution_id")):
+        with LoggingContext(logger, notification=notification, execution_id=notification.get("execution_id")):
             try:
                 execution_id = notification["execution_id"]
                 event_id = notification["event_id"]
@@ -398,49 +397,17 @@ class V2Worker:
 
                 logger.info(f"[EVENT] Worker {self.worker_id} received notification: exec={execution_id}, command={command_id}, step={step}")
 
-                # Check if execution has been cancelled before claiming
-                t_cancel_check1_start = time.perf_counter()
-                if await self._check_execution_cancelled(server_url, execution_id):
-                    logger.info(f"[CANCEL] Execution {execution_id} cancelled - skipping command {command_id}")
-                    return
-                t_cancel_check1_end = time.perf_counter()
-                logger.info(f"[PERF] cancel_check_1 took {(t_cancel_check1_end - t_cancel_check1_start)*1000:.1f}ms")
-
-                # Attempt to claim the command atomically
+                # Single atomic call: claim + cancel check + fetch command details
                 t_claim_start = time.perf_counter()
-                claimed = await self._claim_command(server_url, execution_id, command_id)
+                command = await self._claim_and_fetch_command(server_url, event_id)
                 t_claim_end = time.perf_counter()
-                logger.info(f"[PERF] claim_command took {(t_claim_end - t_claim_start)*1000:.1f}ms")
+                logger.info(f"[PERF] claim_and_fetch took {(t_claim_end - t_claim_start)*1000:.1f}ms")
 
-                if not claimed:
-                    logger.info(f"[EVENT] Command {command_id} already claimed by another worker - skipping")
+                if command is None:
+                    # Already claimed by another worker or cancelled - skip silently
                     return
 
                 logger.info(f"[EVENT] Worker {self.worker_id} claimed command {command_id}")
-
-                # Check again after claiming (in case cancellation happened during claim)
-                t_cancel_check2_start = time.perf_counter()
-                if await self._check_execution_cancelled(server_url, execution_id):
-                    logger.info(f"[CANCEL] Execution {execution_id} cancelled after claim - aborting command {command_id}")
-                    await self._emit_event(
-                        server_url, execution_id, step, "command.cancelled",
-                        {"command_id": command_id, "reason": "Execution cancelled"},
-                        actionable=False, informative=True
-                    )
-                    return
-                t_cancel_check2_end = time.perf_counter()
-                logger.info(f"[PERF] cancel_check_2 took {(t_cancel_check2_end - t_cancel_check2_start)*1000:.1f}ms")
-
-                # Fetch command details from command.issued event
-                t_fetch_start = time.perf_counter()
-                command = await self._fetch_command_details(server_url, event_id)
-                t_fetch_end = time.perf_counter()
-                logger.info(f"[PERF] fetch_command_details took {(t_fetch_end - t_fetch_start)*1000:.1f}ms")
-
-                if not command:
-                    logger.error(f"[EVENT] Failed to fetch command details for event_id={event_id}")
-                    await self._emit_command_failed(server_url, execution_id, command_id, step, "Failed to fetch command details")
-                    return
 
                 # Execute the command
                 t_command_start = time.perf_counter()
@@ -451,16 +418,63 @@ class V2Worker:
                 # Total time
                 t_total_end = time.perf_counter()
                 logger.info(f"[PERF] TOTAL command handling for {step} took {(t_total_end - t_total_start)*1000:.1f}ms")
-                
+
             except Exception as e:
                 logger.exception(f"Error handling command notification: {e}")
     
+    async def _claim_and_fetch_command(self, server_url: str, event_id: int) -> Optional[dict]:
+        """
+        Atomically claim a command and fetch its details in a single call.
+
+        Uses POST /api/commands/{event_id}/claim which:
+        1. Checks if execution is cancelled
+        2. Acquires advisory lock
+        3. Checks if already claimed
+        4. Inserts command.claimed event
+        5. Returns command details
+
+        Returns command dict if claim successful, None if already claimed/cancelled.
+        """
+        try:
+            response = await self._http_client.post(
+                f"{server_url.rstrip('/')}/api/commands/{event_id}/claim",
+                json={"worker_id": self.worker_id}
+            )
+
+            if response.status_code == 200:
+                data = response.json()
+                logger.info(f"[CLAIM] Successfully claimed command for event_id={event_id}")
+                return {
+                    "execution_id": data["execution_id"],
+                    "node_id": data["node_id"],
+                    "node_name": data["node_name"],
+                    "action": data["action"],
+                    "context": data["context"],
+                    "meta": data["meta"]
+                }
+            elif response.status_code == 409:
+                # Already claimed or cancelled - expected in multi-worker setup
+                logger.info(f"[CLAIM] Command for event_id={event_id} already claimed or cancelled, skipping")
+                return None
+            elif response.status_code == 404:
+                logger.error(f"[CLAIM] Command not found for event_id={event_id}")
+                return None
+            else:
+                logger.warning(f"[CLAIM] Failed to claim command event_id={event_id}: {response.status_code} - {response.text}")
+                return None
+
+        except Exception as e:
+            logger.error(f"[CLAIM] Error claiming command event_id={event_id}: {e}")
+            return None
+
     async def _claim_command(self, server_url: str, execution_id: int, command_id: str) -> bool:
         """
+        DEPRECATED: Use _claim_and_fetch_command instead.
+
         Atomically claim a command by emitting command.claimed event.
-        
+
         Server checks if command is already claimed - returns 409 Conflict if so.
-        
+
         Returns True if this worker successfully claimed the command.
         """
         try:
@@ -481,7 +495,7 @@ class V2Worker:
                     "worker_id": self.worker_id
                 }
             )
-            
+
             if response.status_code == 200:
                 logger.info(f"[EVENT] Successfully claimed command {command_id}")
                 return True
@@ -492,7 +506,7 @@ class V2Worker:
             else:
                 logger.warning(f"[EVENT] Failed to claim command {command_id}: {response.status_code}")
                 return False
-                
+
         except Exception as e:
             logger.error(f"[EVENT] Error claiming command {command_id}: {e}")
             return False
