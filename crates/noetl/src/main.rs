@@ -299,6 +299,26 @@ enum Commands {
         #[command(subcommand)]
         command: K8sCommand,
     },
+    /// Clean up stuck executions
+    /// Examples:
+    ///     noetl cleanup
+    ///     noetl cleanup --older-than-minutes 10
+    ///     noetl cleanup --dry-run
+    ///     noetl cleanup --older-than-minutes 5 --dry-run --json
+    #[command(verbatim_doc_comment)]
+    Cleanup {
+        /// Minimum age in minutes for executions to be cancelled (default: 5)
+        #[arg(long, default_value = "5")]
+        older_than_minutes: u32,
+
+        /// Dry-run mode: show what would be cancelled without actually cancelling
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Emit only the JSON response
+        #[arg(short, long)]
+        json: bool,
+    },
     /// Infrastructure as Playbook (IaP) - manage cloud infrastructure using playbooks
     /// 
     /// IaP provides Terraform-like infrastructure management using NoETL playbooks.
@@ -1548,6 +1568,9 @@ async fn main() -> Result<()> {
                 k8s_reset(no_cache, platform).await?;
             }
         },
+        Some(Commands::Cleanup { older_than_minutes, dry_run, json }) => {
+            cleanup_stuck_executions(&client, &base_url, older_than_minutes, dry_run, json).await?;
+        },
         Some(Commands::Iap { command }) => {
             handle_iap_command(command).await?;
         }
@@ -2021,6 +2044,83 @@ async fn cancel_execution(
         eprintln!("Failed to cancel execution: {} - {}", status, text);
         std::process::exit(1);
     }
+    Ok(())
+}
+
+async fn cleanup_stuck_executions(
+    client: &Client,
+    base_url: &str,
+    older_than_minutes: u32,
+    dry_run: bool,
+    json_only: bool,
+) -> Result<()> {
+    let url = format!("{}/api/executions/cleanup", base_url);
+    
+    // Build request body
+    let body = serde_json::json!({
+        "older_than_minutes": older_than_minutes,
+        "dry_run": dry_run
+    });
+    
+    let response = client
+        .post(&url)
+        .json(&body)
+        .send()
+        .await
+        .context("Failed to send cleanup request")?;
+
+    if response.status().is_success() {
+        let result: serde_json::Value = response.json().await?;
+        
+        if json_only {
+            println!("{}", serde_json::to_string(&result)?);
+        } else {
+            let cancelled_count = result.get("cancelled_count").and_then(|v| v.as_u64()).unwrap_or(0);
+            let message = result.get("message").and_then(|v| v.as_str()).unwrap_or("");
+            let execution_ids = result
+                .get("execution_ids")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_i64())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            
+            println!("\n\x1b[36m{}\x1b[0m", "=".repeat(60));
+            if dry_run {
+                println!("\x1b[36m[DRY RUN]\x1b[0m Cleanup Stuck Executions");
+            } else {
+                println!("Cleanup Stuck Executions");
+            }
+            println!("\x1b[36m{}\x1b[0m", "=".repeat(60));
+            println!("Older than:    {} minutes", older_than_minutes);
+            println!("Found:         {} stuck execution(s)", cancelled_count);
+            
+            if !message.is_empty() {
+                println!("\n{}", message);
+            }
+            
+            if !execution_ids.is_empty() {
+                println!("\nExecution IDs:");
+                for exec_id in execution_ids {
+                    println!("  - {}", exec_id);
+                }
+            }
+            
+            if dry_run && cancelled_count > 0 {
+                println!("\n\x1b[33mNote:\x1b[0m Run without --dry-run to actually cancel these executions");
+            }
+            
+            println!("\x1b[36m{}\x1b[0m\n", "=".repeat(60));
+        }
+    } else {
+        let status = response.status();
+        let text = response.text().await?;
+        eprintln!("Failed to cleanup stuck executions: {} - {}", status, text);
+        std::process::exit(1);
+    }
+    
     Ok(())
 }
 

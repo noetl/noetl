@@ -57,3 +57,25 @@ class CancelExecutionResponse(BaseModel):
         description="List of all execution IDs that were cancelled (including children)"
     )
     message: str = Field(..., description="Human-readable status message")
+
+
+class CleanupStuckExecutionsRequest(BaseModel):
+    """Request schema for cleaning up stuck executions."""
+    
+    older_than_minutes: int = Field(
+        default=5,
+        ge=1,
+        description="Cancel executions older than this many minutes without terminal event"
+    )
+    dry_run: bool = Field(
+        default=False,
+        description="If True, only report what would be cancelled without making changes"
+    )
+
+
+class CleanupStuckExecutionsResponse(BaseModel):
+    """Response schema for stuck execution cleanup."""
+    
+    cancelled_count: int = Field(..., description="Number of executions marked as cancelled")
+    execution_ids: List[str] = Field(..., description="List of execution IDs that were cancelled")
+    message: str = Field(..., description="Human-readable status message")
