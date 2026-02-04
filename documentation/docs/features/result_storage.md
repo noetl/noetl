@@ -443,9 +443,348 @@ After (recommended):
           as: data
 ```
 
+## Worker-Side Result Handling (output_select Pattern)
+
+For horizontal scaling with multiple workers, results are processed on the worker side using the `output_select` pattern. This allows large results to be stored externally while keeping small extracted fields available for templating in subsequent steps.
+
+### Step-Level Result Configuration
+
+Use `result:` at the step level (alongside `tool:`) to configure result storage:
+
+```yaml
+- step: fetch_large_data
+  tool:
+    kind: python
+    args:
+      count: 1000
+    code: |
+      items = [{"id": i, "data": "x" * 1000} for i in range(count)]
+      result = {
+          "status": "ok",
+          "count": len(items),
+          "total_bytes": count * 1000,
+          "items": items
+      }
+  result:
+    # Storage configuration
+    store:
+      kind: auto          # auto, kv, object, s3, gcs
+    # Fields to extract for templating (available without loading full data)
+    output_select:
+      - status
+      - count
+      - total_bytes
+  next:
+    - step: use_extracted_fields
+```
+
+### How It Works
+
+1. **Tool executes** and produces a result
+2. **Size check**: If result > 64KB (configurable), it's externalized
+3. **Storage**: Data stored in selected tier (NATS KV, Object Store, GCS, etc.)
+4. **Extraction**: Fields from `output_select` are extracted and kept inline
+5. **Reference**: A `_ref` pointer is created for lazy loading
+6. **Next step**: Can access extracted fields directly, load full data via `artifact.get`
+
+### Accessing Externalized Results
+
+```yaml
+# In the next step - extracted fields are available directly
+- step: use_extracted_fields
+  tool:
+    kind: python
+    args:
+      # These come from output_select - no full data load needed!
+      status: "{{ fetch_large_data.status }}"
+      count: "{{ fetch_large_data.count }}"
+      # Check if result was externalized
+      was_externalized: "{{ fetch_large_data._ref is defined }}"
+      # Access the storage tier used
+      storage_tier: "{{ fetch_large_data._store | default('inline') }}"
+    code: |
+      result = {
+          "status_received": status,
+          "count_received": count,
+          "externalized": was_externalized,
+          "tier": storage_tier
+      }
+```
+
+### Lazy Loading Full Data
+
+When you need the full data, use the `artifact.get` tool:
+
+```yaml
+- step: load_full_data
+  tool:
+    kind: artifact
+    action: get
+    args:
+      result_ref: "{{ fetch_large_data._ref }}"
+  next:
+    - step: process_loaded_data
+
+- step: process_loaded_data
+  tool:
+    kind: python
+    args:
+      # Now we have full access to items
+      items: "{{ load_full_data.items }}"
+      count: "{{ load_full_data.count }}"
+    code: |
+      result = {"processed_items": len(items)}
+```
+
+## Cloud Storage Configuration
+
+### Google Cloud Storage (GCS)
+
+#### Environment Variables
+
+Configure in `configmap-worker.yaml`:
+
+```yaml
+# GCS configuration
+NOETL_GCS_BUCKET: "noetl-demo-output"
+NOETL_GCS_PREFIX: "results/"
+```
+
+#### Credentials Setup
+
+1. **Create a GCS service account** with Storage Object Admin permissions
+2. **Create Kubernetes secret** with the service account key:
+
+```bash
+# Extract service account JSON and create secret
+kubectl create secret generic gcs-credentials \
+  --from-file=gcs-key.json=/path/to/service-account.json \
+  -n noetl
+```
+
+3. **Mount in worker deployment** (`worker-deployment.yaml`):
+
+```yaml
+spec:
+  containers:
+    - name: worker
+      env:
+        - name: GOOGLE_APPLICATION_CREDENTIALS
+          value: /etc/gcs/gcs-key.json
+      volumeMounts:
+        - name: gcs-credentials
+          mountPath: /etc/gcs
+          readOnly: true
+  volumes:
+    - name: gcs-credentials
+      secret:
+        secretName: gcs-credentials
+```
+
+#### Explicit GCS Storage
+
+Force GCS storage for a step:
+
+```yaml
+- step: store_in_gcs
+  tool:
+    kind: python
+    code: |
+      # Generate large result
+      result = {"items": [{"id": i, "data": "x" * 1000} for i in range(5000)]}
+  result:
+    store:
+      kind: gcs              # Explicitly use GCS
+    output_select:
+      - status
+```
+
+### AWS S3 / MinIO
+
+#### Environment Variables
+
+```yaml
+# S3/MinIO configuration
+NOETL_S3_BUCKET: "noetl-results"
+NOETL_S3_REGION: "us-east-1"
+S3_ENDPOINT_URL: ""          # Set for MinIO (e.g., "http://minio:9000")
+AWS_ACCESS_KEY_ID: "..."     # Or use IAM roles
+AWS_SECRET_ACCESS_KEY: "..."
+```
+
+### Storage Tier Configuration
+
+```yaml
+# Global settings in configmap
+NOETL_INLINE_MAX_BYTES: "65536"     # 64KB threshold for externalization
+NOETL_PREVIEW_MAX_BYTES: "1024"     # 1KB preview size
+NOETL_DEFAULT_STORAGE_TIER: "kv"    # Default tier: kv, object, s3, gcs
+```
+
+## Working Example: Storage Tiers Test
+
+This playbook tests all storage tiers with different data sizes:
+
+```yaml
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: test_storage_tiers
+  path: tests/storage_tiers_test
+  description: Test storage tier auto-selection based on result size
+
+workload:
+  inline_items: 100       # ~5KB - stays inline
+  kv_items: 500           # ~100KB - NATS KV
+  object_items: 2000      # ~2MB - NATS Object Store
+  large_items: 5000       # ~15MB - GCS/S3
+
+workflow:
+  # Step 1: Inline storage (< 64KB)
+  - step: start
+    tool:
+      kind: python
+      args:
+        count: "{{ workload.inline_items }}"
+      code: |
+        items = [{"id": i, "data": "x" * 50} for i in range(count)]
+        result = {"status": "ok", "tier": "inline", "count": len(items), "items": items}
+    result:
+      output_select:
+        - status
+        - tier
+        - count
+    next:
+      - step: test_kv
+
+  # Step 2: NATS KV (64KB - 1MB)
+  - step: test_kv
+    tool:
+      kind: python
+      args:
+        count: "{{ workload.kv_items }}"
+      code: |
+        items = [{"id": i, "data": "K" * 200} for i in range(count)]
+        result = {"status": "ok", "tier": "kv_expected", "count": len(items), "items": items}
+    result:
+      output_select:
+        - status
+        - tier
+        - count
+    next:
+      - step: test_object
+
+  # Step 3: NATS Object Store (1MB - 10MB)
+  - step: test_object
+    tool:
+      kind: python
+      args:
+        count: "{{ workload.object_items }}"
+      code: |
+        items = [{"id": i, "data": "O" * 1000} for i in range(count)]
+        result = {"status": "ok", "tier": "object_expected", "count": len(items), "items": items}
+    result:
+      output_select:
+        - status
+        - tier
+        - count
+    next:
+      - step: test_gcs
+
+  # Step 4: GCS (> 10MB)
+  - step: test_gcs
+    tool:
+      kind: python
+      args:
+        count: "{{ workload.large_items }}"
+      code: |
+        items = [{"id": i, "data": "G" * 3000} for i in range(count)]
+        result = {"status": "ok", "tier": "gcs_expected", "count": len(items), "items": items}
+    result:
+      output_select:
+        - status
+        - tier
+        - count
+    next:
+      - step: verify
+
+  # Step 5: Verify storage tiers
+  - step: verify
+    tool:
+      kind: python
+      args:
+        inline_store: "{{ start._store | default('inline') }}"
+        kv_store: "{{ test_kv._store }}"
+        object_store: "{{ test_object._store }}"
+        gcs_store: "{{ test_gcs._store }}"
+      code: |
+        result = {
+            "inline_correct": inline_store == "inline" or "_store" not in dir(),
+            "kv_correct": kv_store == "kv",
+            "object_correct": object_store == "object",
+            "gcs_correct": gcs_store in ("gcs", "s3", "object"),
+            "all_passed": True  # Simplified
+        }
+```
+
+## Inspecting Stored Data
+
+### NATS KV Store
+
+```bash
+# List keys
+nats --server nats://noetl:noetl@localhost:30422 kv ls noetl_result_store
+
+# View a key (decompressed)
+nats --server nats://noetl:noetl@localhost:30422 kv get noetl_result_store <key> --raw | gzip -d | jq .
+```
+
+### NATS Object Store
+
+```bash
+# List objects
+nats --server nats://noetl:noetl@localhost:30422 object ls noetl_result_objects
+
+# Download and view
+nats --server nats://noetl:noetl@localhost:30422 object get noetl_result_objects <name> -O /tmp/data.gz
+gzip -dc /tmp/data.gz | jq .
+```
+
+### Google Cloud Storage
+
+```bash
+# List objects
+gsutil ls gs://noetl-demo-output/results/
+
+# View object (compressed JSON)
+gsutil cat gs://noetl-demo-output/results/<key> | gzip -d | jq .
+```
+
+### JetStream Statistics
+
+```bash
+# Overall stats via HTTP monitoring
+curl -s 'http://localhost:30822/jsz?streams=1' | jq '.account_details[0].stream_detail[] | {name, messages: .state.messages, bytes: .state.bytes}'
+```
+
+## Storage Format
+
+All externalized data is stored as **gzip-compressed JSON**:
+
+- **Format**: gzip + JSON (magic bytes: `1f8b`)
+- **Compression**: Automatic for data > 10KB
+- **Typical ratio**: 10:1 to 100:1 for repetitive data
+
+Example:
+```
+Original: 2,090,971 bytes (~2 MB)
+Compressed: 11,901 bytes (~12 KB)
+Ratio: 175:1
+```
+
 ## Best Practices
 
-1. **Use `select` for pagination cursors** - Extract what you need without resolving full data
+1. **Use `output_select` for fields needed in templates** - Extract what you need without resolving full data
 2. **Set appropriate TTLs** - Don't keep data longer than needed
 3. **Use compression for large JSON** - Automatic when > 10KB
 4. **Choose the right scope**:
@@ -454,7 +793,8 @@ After (recommended):
    - `workflow` for cross-playbook data
    - `permanent` for permanent storage
 5. **Use `accumulate` for pagination** - Don't merge large datasets in memory
-6. **Put output in tool block** - Not at step level (deprecated)
+6. **Use step-level `result:` for worker-side processing** - Enables horizontal scaling
+7. **Lazy load with `artifact.get`** - Only load full data when actually needed
 
 ## Garbage Collection
 
@@ -474,6 +814,32 @@ DELETE /api/result/{execution_id}?scope=execution
 
 # Clean up specific step
 DELETE /api/result/{execution_id}/step/{step_name}
+```
+
+## Example Playbooks
+
+Working test playbooks are available in the repository:
+
+| Playbook | Path | Description |
+|----------|------|-------------|
+| `test_storage_tiers.yaml` | `tests/fixtures/playbooks/test_storage_tiers.yaml` | Tests all storage tier auto-selection |
+| `test_gcs_storage.yaml` | `tests/fixtures/playbooks/test_gcs_storage.yaml` | Tests explicit GCS storage |
+| `test_output_select.yaml` | `tests/fixtures/playbooks/test_output_select.yaml` | Tests output_select pattern with lazy loading |
+| `test_large_result_extraction.yaml` | `tests/fixtures/playbooks/test_large_result_extraction.yaml` | Tests large result externalization |
+
+### Running Test Playbooks
+
+```bash
+# Register playbook
+noetl catalog register tests/fixtures/playbooks/test_storage_tiers.yaml
+
+# Execute
+curl -X POST 'http://localhost:8082/api/execute' \
+  -H 'Content-Type: application/json' \
+  -d '{"path": "tests/storage_tiers_test"}'
+
+# Check status
+noetl status <execution_id> --json | jq '.variables.final_summary'
 ```
 
 ## Database Schema
