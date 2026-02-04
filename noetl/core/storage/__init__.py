@@ -45,7 +45,7 @@ from noetl.core.storage.router import (
     default_router,
 )
 
-from noetl.core.storage.temp_store import (
+from noetl.core.storage.result_store import (
     TempStore,
     default_store,
 )
@@ -59,6 +59,24 @@ from noetl.core.storage.scope_tracker import (
 from noetl.core.storage.gc import (
     TempGarbageCollector,
     default_gc,
+)
+
+from noetl.core.storage.backends import (
+    StorageBackend,
+    MemoryBackend,
+    NATSKVBackend,
+    NATSObjectBackend,
+    S3Backend,
+    GCSBackend,
+    get_backend,
+)
+
+from noetl.core.storage.extractor import (
+    extract_output_select,
+    estimate_size,
+    should_externalize,
+    create_preview,
+    DEFAULT_EXTRACT_FIELDS,
 )
 
 # Aliases for new naming
@@ -94,4 +112,18 @@ __all__ = [
     'TempGarbageCollector',
     'ResultGarbageCollector',
     'default_gc',
+    # Backends
+    'StorageBackend',
+    'MemoryBackend',
+    'NATSKVBackend',
+    'NATSObjectBackend',
+    'S3Backend',
+    'GCSBackend',
+    'get_backend',
+    # Extractor
+    'extract_output_select',
+    'estimate_size',
+    'should_externalize',
+    'create_preview',
+    'DEFAULT_EXTRACT_FIELDS',
 ]

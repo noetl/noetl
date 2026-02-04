@@ -383,13 +383,12 @@ async def execute_python_task_async(
                         logger.warning(f"PYTHON.EXECUTE_PYTHON_TASK: Unsupported config for '{alias}': {module_path}")
                 
                 # Validate all modules exist before execution
-                # Skip validation if NOETL_SKIP_LIB_VALIDATION=true or if in QEMU (slow)
+                # Skip validation if NOETL_SKIP_LIB_VALIDATION=true (for performance)
                 if os.getenv("NOETL_SKIP_LIB_VALIDATION") != "true":
                     missing_modules = []
                     for module_name in modules_to_validate:
                         # Check top-level module first (e.g., 'google' for 'google.cloud.storage')
                         top_level = module_name.split('.')[0]
-                        # importlib.util.find_spec can be very slow in QEMU environments
                         spec = importlib.util.find_spec(top_level)
                         if spec is None:
                             missing_modules.append(module_name)

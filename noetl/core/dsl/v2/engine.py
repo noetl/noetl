@@ -269,13 +269,42 @@ class ExecutionState:
         self.current_step = step_name
     
     def mark_step_completed(self, step_name: str, result: Any = None):
-        """Mark step as completed and store result in memory and transient."""
+        """Mark step as completed and store result in memory and transient.
+
+        If result contains _ref (externalized via ResultRef pattern), the extracted
+        output_select fields are stored directly for template access:
+        - {{ step_name.status }} accesses extracted field
+        - {{ step_name._ref }} accesses the ResultRef for lazy loading
+        """
         self.completed_steps.add(step_name)
         if result is not None:
             self.step_results[step_name] = result
             self.variables[step_name] = result
+
+            # Log if result was externalized
+            if isinstance(result, dict) and "_ref" in result:
+                logger.info(
+                    f"[STATE] Step {step_name}: externalized result stored | "
+                    f"extracted_fields={[k for k in result.keys() if not k.startswith('_')]}"
+                )
             # Also persist to transient for rendering in subsequent steps
             # This is done async in the engine after calling mark_step_completed
+
+    def get_step_result_ref(self, step_name: str) -> Optional[dict]:
+        """Get ResultRef for a step's externalized result, if any.
+
+        Returns the _ref dict if step result was externalized, None otherwise.
+        Used for lazy loading of large results via artifact.get.
+        """
+        result = self.step_results.get(step_name)
+        if isinstance(result, dict) and "_ref" in result:
+            return result.get("_ref")
+        return None
+
+    def is_result_externalized(self, step_name: str) -> bool:
+        """Check if a step's result was externalized to remote storage."""
+        result = self.step_results.get(step_name)
+        return isinstance(result, dict) and "_ref" in result
     
     def is_step_completed(self, step_name: str) -> bool:
         """Check if step is completed."""

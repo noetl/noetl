@@ -130,7 +130,6 @@ config:
     NOETL_DISABLE_METRICS: "true"
     NOETL_VICTORIALOGS_URL: ""
     NOETL_LOG_FORMAT: "json"
-    POLARS_SKIP_CPU_CHECK: "1"
     NATS_URL: "nats://noetl:noetl@nats.nats.svc.cluster.local:4222"
     NATS_USER: "noetl"
     NATS_PASSWORD: "noetl"
@@ -138,7 +137,10 @@ config:
     NATS_CONSUMER: "noetl_worker_pool"
     NATS_SUBJECT: "noetl.commands"
     NOETL_KEYCHAIN_REFRESH_THRESHOLD: "900"
-    NOETL_SKIP_LIB_VALIDATION: "true"
+    # Result Storage Configuration
+    NOETL_INLINE_MAX_BYTES: "65536"
+    NOETL_PREVIEW_MAX_BYTES: "1024"
+    NOETL_DEFAULT_STORAGE_TIER: "kv"
   workerPool:
     RUST_LOG: "info,worker_pool=debug,noetl_tools=debug"
     WORKER_POOL_NAME: "worker-rust-pool"

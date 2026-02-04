@@ -25,7 +25,7 @@ Usage:
 import asyncio
 from typing import Optional
 
-from noetl.core.storage.temp_store import TempStore, default_store
+from noetl.core.storage.result_store import TempStore, default_store
 from noetl.core.storage.scope_tracker import ScopeTracker, default_tracker
 from noetl.core.logger import setup_logger
 

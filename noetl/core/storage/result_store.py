@@ -196,6 +196,11 @@ class TempStore:
         temp_ref = await self._lookup_ref(ref_str)
 
         if not temp_ref:
+            # Ref not in local cache - try direct fetch from storage
+            # This is needed for distributed workers that don't share cache
+            data = await self._fetch_direct(ref_str)
+            if data is not None:
+                return data
             raise KeyError(f"TempRef not found: {ref_str}")
 
         # Check expiration
@@ -346,67 +351,145 @@ class TempStore:
         # TODO: Query projection table
         return None
 
+    async def _fetch_direct(self, ref_str: str) -> Optional[Any]:
+        """
+        Fetch data directly from storage without cached metadata.
+
+        This is used when a worker doesn't have the TempRef cached
+        (e.g., artifact.get on a different worker than the one that stored the data).
+
+        Tries storage tiers in order: KV -> Object -> Memory (local)
+        """
+        if not ref_str.startswith("noetl://"):
+            return None
+
+        # Convert ref URI to storage key
+        # noetl://execution/{exec_id}/result/{step}/{id} -> execution_{exec_id}_result_{step}_{id}
+        # Must match TempRef.to_key() which uses underscores
+        key = ref_str.replace("noetl://", "").replace("/", "_")
+
+        logger.debug(f"TEMP: Direct fetch attempt for key: {key}")
+
+        # Try NATS KV first (default tier)
+        try:
+            from noetl.core.storage.backends import NATSKVBackend
+            if not hasattr(self, '_kv_backend'):
+                self._kv_backend = NATSKVBackend()
+            data_bytes = await self._kv_backend.get(key)
+
+            # Decompress if gzipped
+            if data_bytes and len(data_bytes) >= 2 and data_bytes[:2] == b'\x1f\x8b':
+                data_bytes = gzip.decompress(data_bytes)
+
+            logger.debug(f"TEMP: Direct fetch from KV successful: {ref_str}")
+            return json.loads(data_bytes.decode('utf-8'))
+        except KeyError:
+            logger.debug(f"TEMP: Key not found in KV: {key}")
+        except Exception as e:
+            logger.debug(f"TEMP: KV fetch failed: {e}")
+
+        # Try NATS Object Store
+        try:
+            from noetl.core.storage.backends import NATSObjectBackend
+            if not hasattr(self, '_object_backend'):
+                self._object_backend = NATSObjectBackend()
+            data_bytes = await self._object_backend.get(key)
+
+            # Decompress if gzipped
+            if data_bytes and len(data_bytes) >= 2 and data_bytes[:2] == b'\x1f\x8b':
+                data_bytes = gzip.decompress(data_bytes)
+
+            logger.debug(f"TEMP: Direct fetch from Object Store successful: {ref_str}")
+            return json.loads(data_bytes.decode('utf-8'))
+        except KeyError:
+            logger.debug(f"TEMP: Object not found: {key}")
+        except Exception as e:
+            logger.debug(f"TEMP: Object Store fetch failed: {e}")
+
+        # Try local memory as last resort
+        if ref_str in self._memory_cache:
+            data_bytes = self._memory_cache[ref_str]
+            if data_bytes[:2] == b'\x1f\x8b':
+                data_bytes = gzip.decompress(data_bytes)
+            return json.loads(data_bytes.decode('utf-8'))
+
+        return None
+
     async def _store_data(self, temp_ref: TempRef, data_bytes: bytes) -> str:
         """Store data in the appropriate backend."""
         store = temp_ref.store
+        key = temp_ref.to_key()
 
         if store == StoreTier.MEMORY:
             self._memory_cache[temp_ref.ref] = data_bytes
             return f"memory://{temp_ref.ref}"
 
         elif store == StoreTier.KV:
-            nats = await self._get_nats()
-            if nats:
-                key = temp_ref.to_key()
-                bucket = "noetl_temp_refs"
-                try:
-                    await nats.set_loop_state(
-                        execution_id=temp_ref.ref.split("/")[2],
-                        step_name=key,
-                        state={"data": data_bytes.decode('latin-1')},  # Store as string
-                        event_id=key
-                    )
-                    return f"kv://{bucket}/{key}"
-                except Exception as e:
-                    logger.warning(f"TEMP: KV store failed, falling back to memory: {e}")
-                    self._memory_cache[temp_ref.ref] = data_bytes
-                    temp_ref.store = StoreTier.MEMORY
-                    return f"memory://{temp_ref.ref}"
-            else:
-                # Fallback to memory
+            try:
+                from noetl.core.storage.backends import NATSKVBackend
+                if not hasattr(self, '_kv_backend'):
+                    self._kv_backend = NATSKVBackend()
+                uri = await self._kv_backend.put(key, data_bytes)
+                return uri
+            except Exception as e:
+                logger.warning(f"TEMP: KV store failed, falling back to memory: {e}")
                 self._memory_cache[temp_ref.ref] = data_bytes
                 temp_ref.store = StoreTier.MEMORY
                 return f"memory://{temp_ref.ref}"
 
         elif store == StoreTier.OBJECT:
-            # TODO: Implement NATS Object Store
-            logger.warning("TEMP: Object store not implemented, using memory")
-            self._memory_cache[temp_ref.ref] = data_bytes
-            temp_ref.store = StoreTier.MEMORY
-            return f"memory://{temp_ref.ref}"
+            try:
+                from noetl.core.storage.backends import NATSObjectBackend
+                if not hasattr(self, '_object_backend'):
+                    self._object_backend = NATSObjectBackend()
+                uri = await self._object_backend.put(key, data_bytes)
+                return uri
+            except Exception as e:
+                logger.warning(f"TEMP: Object store failed, falling back to KV: {e}")
+                # Fallback to KV
+                return await self._store_data_fallback(temp_ref, data_bytes, StoreTier.KV)
 
-        elif store in (StoreTier.S3, StoreTier.GCS):
-            # TODO: Implement cloud storage
-            logger.warning(f"TEMP: {store.value} not implemented, using memory")
-            self._memory_cache[temp_ref.ref] = data_bytes
-            temp_ref.store = StoreTier.MEMORY
-            return f"memory://{temp_ref.ref}"
+        elif store == StoreTier.S3:
+            try:
+                from noetl.core.storage.backends import S3Backend
+                if not hasattr(self, '_s3_backend'):
+                    self._s3_backend = S3Backend()
+                uri = await self._s3_backend.put(key, data_bytes)
+                return uri
+            except Exception as e:
+                logger.warning(f"TEMP: S3 store failed, falling back to Object: {e}")
+                return await self._store_data_fallback(temp_ref, data_bytes, StoreTier.OBJECT)
+
+        elif store == StoreTier.GCS:
+            try:
+                from noetl.core.storage.backends import GCSBackend
+                if not hasattr(self, '_gcs_backend'):
+                    self._gcs_backend = GCSBackend()
+                uri = await self._gcs_backend.put(key, data_bytes)
+                return uri
+            except Exception as e:
+                logger.warning(f"TEMP: GCS store failed, falling back to Object: {e}")
+                return await self._store_data_fallback(temp_ref, data_bytes, StoreTier.OBJECT)
 
         elif store == StoreTier.DB:
-            # TODO: Implement PostgreSQL storage
-            logger.warning("TEMP: DB store not implemented, using memory")
-            self._memory_cache[temp_ref.ref] = data_bytes
-            temp_ref.store = StoreTier.MEMORY
-            return f"memory://{temp_ref.ref}"
+            # DB storage not implemented yet, use NATS KV
+            logger.warning("TEMP: DB store not implemented, using KV")
+            return await self._store_data_fallback(temp_ref, data_bytes, StoreTier.KV)
 
         else:
             # Default to memory
             self._memory_cache[temp_ref.ref] = data_bytes
             return f"memory://{temp_ref.ref}"
 
+    async def _store_data_fallback(self, temp_ref: TempRef, data_bytes: bytes, fallback_tier: StoreTier) -> str:
+        """Store data using a fallback tier."""
+        temp_ref.store = fallback_tier
+        return await self._store_data(temp_ref, data_bytes)
+
     async def _retrieve_data(self, temp_ref: TempRef) -> Any:
         """Retrieve data from storage backend."""
         store = temp_ref.store
+        key = temp_ref.to_key()
 
         if store == StoreTier.MEMORY:
             data_bytes = self._memory_cache.get(temp_ref.ref)
@@ -414,29 +497,51 @@ class TempStore:
                 raise KeyError(f"TempRef not found in memory: {temp_ref.ref}")
 
         elif store == StoreTier.KV:
-            nats = await self._get_nats()
-            if nats:
-                key = temp_ref.to_key()
-                try:
-                    state = await nats.get_loop_state(
-                        execution_id=temp_ref.ref.split("/")[2],
-                        step_name=key,
-                        event_id=key
-                    )
-                    if state and "data" in state:
-                        data_bytes = state["data"].encode('latin-1')
-                    else:
-                        raise KeyError(f"TempRef not found in KV: {temp_ref.ref}")
-                except Exception as e:
-                    raise KeyError(f"Failed to retrieve from KV: {e}")
-            else:
-                # Try memory fallback
-                data_bytes = self._memory_cache.get(temp_ref.ref)
-                if data_bytes is None:
-                    raise KeyError(f"TempRef not found: {temp_ref.ref}")
+            try:
+                from noetl.core.storage.backends import NATSKVBackend
+                if not hasattr(self, '_kv_backend'):
+                    self._kv_backend = NATSKVBackend()
+                data_bytes = await self._kv_backend.get(key)
+            except KeyError:
+                raise
+            except Exception as e:
+                raise KeyError(f"Failed to retrieve from KV: {e}")
+
+        elif store == StoreTier.OBJECT:
+            try:
+                from noetl.core.storage.backends import NATSObjectBackend
+                if not hasattr(self, '_object_backend'):
+                    self._object_backend = NATSObjectBackend()
+                data_bytes = await self._object_backend.get(key)
+            except KeyError:
+                raise
+            except Exception as e:
+                raise KeyError(f"Failed to retrieve from Object Store: {e}")
+
+        elif store == StoreTier.S3:
+            try:
+                from noetl.core.storage.backends import S3Backend
+                if not hasattr(self, '_s3_backend'):
+                    self._s3_backend = S3Backend()
+                data_bytes = await self._s3_backend.get(key)
+            except KeyError:
+                raise
+            except Exception as e:
+                raise KeyError(f"Failed to retrieve from S3: {e}")
+
+        elif store == StoreTier.GCS:
+            try:
+                from noetl.core.storage.backends import GCSBackend
+                if not hasattr(self, '_gcs_backend'):
+                    self._gcs_backend = GCSBackend()
+                data_bytes = await self._gcs_backend.get(key)
+            except KeyError:
+                raise
+            except Exception as e:
+                raise KeyError(f"Failed to retrieve from GCS: {e}")
 
         else:
-            # Try memory as fallback for unimplemented stores
+            # Try memory as fallback for other stores
             data_bytes = self._memory_cache.get(temp_ref.ref)
             if data_bytes is None:
                 raise KeyError(f"TempRef not found: {temp_ref.ref}")

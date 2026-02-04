@@ -80,41 +80,54 @@ def execute_artifact_get(
 ) -> Dict[str, Any]:
     """
     Load externalized result from artifact storage.
-    
+
     Resolves result_ref or uri to actual storage location and loads data.
-    
+    Supports multiple storage backends:
+    - noetl:// - NATS-based storage (KV or Object Store)
+    - nats-kv:// - NATS KV store
+    - nats-obj:// - NATS Object Store
+    - s3:// - AWS S3
+    - gs:// - Google Cloud Storage
+    - file:// - Local filesystem
+    - eventlog:// - Event log (database)
+
     Args:
         task_config: Task configuration with uri or result_ref
         context: Execution context
         jinja_env: Jinja2 environment
         task_with: Additional parameters
         log_event_callback: Event logging callback
-        
+
     Returns:
         Dict with loaded result data
     """
     task_id = task_config.get('task_id', 'artifact_get')
-    
+
     # Get URI - either directly or via result_ref lookup
     uri = task_config.get('uri') or task_with.get('uri')
     result_ref = task_config.get('result_ref') or task_with.get('result_ref')
     credential_name = task_config.get('credential') or task_with.get('credential')
-    
-    # If result_ref provided, look up in result_index
-    if result_ref and not uri:
+
+    # Handle ResultRef dict (from {{ step_name._ref }})
+    if isinstance(result_ref, dict) and result_ref.get('kind') in ('result_ref', 'temp_ref'):
+        uri = result_ref.get('ref')
+        logger.debug(f"ARTIFACT GET: Resolved ResultRef dict to uri: {uri}")
+
+    # If result_ref is string, look up in result_index
+    if result_ref and not uri and isinstance(result_ref, str):
         uri = _lookup_result_ref(result_ref, context)
         if not uri:
             raise ValueError(f"Result reference not found: {result_ref}")
-    
+
     if not uri:
         raise ValueError("artifact.get requires 'uri' or 'result_ref' parameter")
-    
+
     logger.info(f"ARTIFACT GET: Loading from {uri}")
-    
+
     # Parse URI to determine storage backend
     parsed = urlparse(uri)
     scheme = parsed.scheme
-    
+
     if scheme in ('artifact', 'file', ''):
         # Local filesystem
         return _load_from_filesystem(uri, task_config)
@@ -127,6 +140,15 @@ def execute_artifact_get(
     elif scheme == 'eventlog':
         # Event log (stored in database)
         return _load_from_eventlog(uri, context)
+    elif scheme == 'noetl':
+        # NATS-based storage via ResultStore
+        return _load_from_result_store(uri, context)
+    elif scheme == 'nats-kv':
+        # NATS KV store
+        return _load_from_nats_kv(uri, context)
+    elif scheme == 'nats-obj':
+        # NATS Object Store
+        return _load_from_nats_object(uri, context)
     else:
         raise ValueError(f"Unsupported artifact scheme: {scheme}")
 
@@ -598,11 +620,11 @@ def _store_to_gcs(uri: str, data: Any, compress: bool, credential_name: Optional
 def _fetch_credential(credential_name: str, context: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """Fetch credential from NoETL server."""
     import httpx
-    
+
     server_url = context.get('server_url', os.environ.get('NOETL_SERVER_URL', 'http://localhost:8082'))
     catalog_id = context.get('catalog_id')
     execution_id = context.get('execution_id')
-    
+
     try:
         with httpx.Client(timeout=30) as client:
             response = client.get(
@@ -617,3 +639,136 @@ def _fetch_credential(credential_name: str, context: Dict[str, Any]) -> Optional
     except Exception as e:
         logger.error(f"Error fetching credential: {e}")
         return None
+
+
+def _load_from_result_store(uri: str, context: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Load result from ResultStore (NATS-based distributed storage).
+
+    URI format: noetl://execution/<exec_id>/result/<step>/<id>
+    """
+    import asyncio
+
+    try:
+        from noetl.core.storage import default_store
+
+        logger.debug(f"Loading artifact from ResultStore: {uri}")
+
+        # Run async get in sync context - always use asyncio.run() for thread safety
+        # This creates a new event loop for the thread
+        data = asyncio.run(default_store.get(uri))
+
+        return {
+            "status": "success",
+            "data": data,
+            "uri": uri,
+            "source": "result_store"
+        }
+
+    except KeyError as e:
+        raise ValueError(f"Result not found in store: {uri}") from e
+    except Exception as e:
+        logger.error(f"Error loading from ResultStore: {e}")
+        raise
+
+
+def _load_from_nats_kv(uri: str, context: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Load result from NATS KV store.
+
+    URI format: nats-kv://<bucket>/<key>
+    """
+    import asyncio
+
+    try:
+        from noetl.core.storage.backends import NATSKVBackend
+
+        # Parse URI
+        # nats-kv://bucket/key
+        if not uri.startswith('nats-kv://'):
+            raise ValueError(f"Invalid NATS KV URI: {uri}")
+
+        parts = uri[10:].split('/', 1)
+        bucket = parts[0]
+        key = parts[1] if len(parts) > 1 else ''
+
+        if not key:
+            raise ValueError(f"Invalid NATS KV URI (missing key): {uri}")
+
+        logger.debug(f"Loading artifact from NATS KV: bucket={bucket}, key={key}")
+
+        backend = NATSKVBackend(bucket_name=bucket)
+
+        # Run async get in sync context - always use asyncio.run() for thread safety
+        data_bytes = asyncio.run(backend.get(key))
+
+        # Decompress if gzipped
+        if data_bytes[:2] == b'\x1f\x8b':
+            data_bytes = gzip.decompress(data_bytes)
+
+        # Parse JSON
+        data = json.loads(data_bytes.decode('utf-8'))
+
+        return {
+            "status": "success",
+            "data": data,
+            "uri": uri,
+            "source": "nats_kv"
+        }
+
+    except KeyError as e:
+        raise ValueError(f"Key not found in NATS KV: {uri}") from e
+    except Exception as e:
+        logger.error(f"Error loading from NATS KV: {e}")
+        raise
+
+
+def _load_from_nats_object(uri: str, context: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Load result from NATS Object Store.
+
+    URI format: nats-obj://<bucket>/<object_name>
+    """
+    import asyncio
+
+    try:
+        from noetl.core.storage.backends import NATSObjectBackend
+
+        # Parse URI
+        # nats-obj://bucket/object_name
+        if not uri.startswith('nats-obj://'):
+            raise ValueError(f"Invalid NATS Object Store URI: {uri}")
+
+        parts = uri[11:].split('/', 1)
+        bucket = parts[0]
+        obj_name = parts[1] if len(parts) > 1 else ''
+
+        if not obj_name:
+            raise ValueError(f"Invalid NATS Object Store URI (missing object name): {uri}")
+
+        logger.debug(f"Loading artifact from NATS Object Store: bucket={bucket}, object={obj_name}")
+
+        backend = NATSObjectBackend(bucket_name=bucket)
+
+        # Run async get in sync context - always use asyncio.run() for thread safety
+        data_bytes = asyncio.run(backend.get(obj_name))
+
+        # Decompress if gzipped
+        if data_bytes[:2] == b'\x1f\x8b':
+            data_bytes = gzip.decompress(data_bytes)
+
+        # Parse JSON
+        data = json.loads(data_bytes.decode('utf-8'))
+
+        return {
+            "status": "success",
+            "data": data,
+            "uri": uri,
+            "source": "nats_object"
+        }
+
+    except KeyError as e:
+        raise ValueError(f"Object not found in NATS Object Store: {uri}") from e
+    except Exception as e:
+        logger.error(f"Error loading from NATS Object Store: {e}")
+        raise

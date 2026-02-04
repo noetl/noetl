@@ -180,6 +180,7 @@ class ToolSpec(BaseModel):
         "gateway",
         "nats",
         "shell",
+        "artifact",
     ] = Field(
         ..., description="Tool type"
     )

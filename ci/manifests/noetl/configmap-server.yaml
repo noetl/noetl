@@ -52,3 +52,10 @@ data:
   NOETL_SCHEMA: "noetl"
   NOETL_DB_STARTUP_TIMEOUT: "180"
   NOETL_DB_RETRY_INTERVAL: "5"
+  # Result Storage Configuration (output_select pattern)
+  # Threshold for inline vs external storage (64KB default)
+  NOETL_INLINE_MAX_BYTES: "65536"
+  # Preview size for large results
+  NOETL_PREVIEW_MAX_BYTES: "1024"
+  # Default storage tier: kv, object, s3, gcs
+  NOETL_DEFAULT_STORAGE_TIER: "kv"

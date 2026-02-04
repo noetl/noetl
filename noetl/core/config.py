@@ -183,6 +183,20 @@ class Settings(BaseModel):
     # Keychain configuration
     keychain_refresh_threshold: int = Field(default=900, alias="NOETL_KEYCHAIN_REFRESH_THRESHOLD")  # seconds (15min default, prevents expiration during long loops)
 
+    # Result Storage configuration (output_select pattern)
+    # Threshold for inline vs external storage (64KB default)
+    inline_max_bytes: int = Field(default=65536, alias="NOETL_INLINE_MAX_BYTES")
+    # Preview size for large results (1KB default)
+    preview_max_bytes: int = Field(default=1024, alias="NOETL_PREVIEW_MAX_BYTES")
+    # Default storage tier for large results: kv, object, s3, gcs
+    default_storage_tier: str = Field(default="kv", alias="NOETL_DEFAULT_STORAGE_TIER")
+    # S3 configuration for result storage
+    s3_endpoint_url: Optional[str] = Field(default=None, alias="S3_ENDPOINT_URL")
+    s3_bucket: str = Field(default="noetl-results", alias="NOETL_S3_BUCKET")
+    s3_region: str = Field(default="us-east-1", alias="NOETL_S3_REGION")
+    # GCS configuration for result storage
+    gcs_bucket: str = Field(default="noetl-results", alias="NOETL_GCS_BUCKET")
+
     # Server identity and base URL
     server_url: str = Field(..., alias="NOETL_SERVER_URL")
     server_name: Optional[str] = Field(None, alias="NOETL_SERVER_NAME")

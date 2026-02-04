@@ -42,6 +42,7 @@ from noetl.tools.python import execute_python_task_async
 from jinja2 import Environment, BaseLoader
 from noetl.worker.keychain_resolver import populate_keychain_context
 from noetl.worker.case_evaluator import CaseEvaluator, build_eval_context
+from noetl.worker.result_handler import ResultHandler, is_result_ref
 
 
 # Module-level template cache for worker - avoids compiling same templates repeatedly
@@ -1111,7 +1112,43 @@ class V2Worker:
             response = await self._execute_tool(tool_kind, tool_config, args, step, render_context, case_blocks=case_blocks)
             t_tool_end = time.perf_counter()
             logger.info(f"[PERF] Tool execution for {step} took {(t_tool_end - t_tool_start)*1000:.1f}ms")
-            
+
+            # Process result through ResultHandler for large result externalization
+            # This implements output_select pattern: large results stored externally,
+            # small extracted fields available in render_context for templating
+            # Skip for artifact.get since it's meant to provide full data inline for next step
+            t_result_start = time.perf_counter()
+            skip_result_processing = tool_kind == "artifact" and tool_config.get("action") == "get"
+            if skip_result_processing:
+                logger.debug(f"[RESULT] Step {step}: skipping result processing (artifact.get)")
+                response_for_events = response
+            else:
+                try:
+                    result_handler = ResultHandler(execution_id=execution_id)
+                    # Get output config from tool_config if present
+                    output_config = tool_config.get("result", {})
+                    processed_response = await result_handler.process_result(
+                        step_name=step,
+                        result=response,
+                        output_config=output_config
+                    )
+                    # If result was externalized, use processed version
+                    if is_result_ref(processed_response):
+                        logger.info(
+                            f"[RESULT] Step {step}: externalized large result | "
+                            f"store={processed_response.get('_store', 'unknown')} | "
+                            f"size={processed_response.get('_size_bytes', 0)}b"
+                        )
+                        # Keep original response for case evaluation, but mark for external storage
+                        response_for_events = processed_response
+                    else:
+                        response_for_events = response
+                except Exception as result_err:
+                    logger.warning(f"[RESULT] Failed to process result for {step}: {result_err}")
+                    response_for_events = response
+            t_result_end = time.perf_counter()
+            logger.debug(f"[PERF] Result processing for {step} took {(t_result_end - t_result_start)*1000:.1f}ms")
+
             # Note: _internal_data will be cleaned up before emitting final events
             
             # CRITICAL: Log case blocks at INFO level for debugging
@@ -1348,27 +1385,29 @@ class V2Worker:
                             logger.info(f"[CLEANUP] Response now contains only reference: {response_data.get('data_reference', {})}")
                 
                 # Emit call.done event - ACTIONABLE so server evaluates routing
+                # Use response_for_events which may have externalized large results
                 await self._emit_event(
                     server_url,
                     execution_id,
                     step,
                     "call.done",
-                    {"response": response},
+                    {"response": response_for_events},
                     actionable=True,  # Server should evaluate next/case routing
                     informative=True
                 )
-                
-                # Emit step.exit event
+
+                # Emit step.exit event with processed result
+                # If result was externalized, this contains _ref + output_select fields
                 await self._emit_event(
                     server_url,
                     execution_id,
                     step,
                     "step.exit",
-                    {"result": response, "status": "completed"},
+                    {"result": response_for_events, "status": "completed"},
                     actionable=True,  # Server evaluates routing
                     informative=True
                 )
-                
+
                 # Emit command.completed event (for event-driven tracking)
                 if command_id:
                     await self._emit_event(
@@ -1379,7 +1418,7 @@ class V2Worker:
                         {
                             "command_id": command_id,
                             "worker_id": self.worker_id,
-                            "result": response
+                            "result": response_for_events
                         },
                         actionable=False,  # Informational only
                         informative=True
@@ -1782,6 +1821,26 @@ class V2Worker:
             task_with = {**config, **args}
             result = await execute_nats_task(task_config, context, jinja_env, task_with)
             # Check if plugin returned error status
+            if isinstance(result, dict) and result.get('status') == 'error':
+                return result
+            return result.get('data', result) if isinstance(result, dict) else result
+
+        elif tool_kind == "artifact":
+            # Artifact tool for loading/storing externalized results
+            from noetl.tools.artifact.executor import execute_artifact_get, execute_artifact_put
+            task_with = {**config, **args}
+            action = config.get('action', 'get')
+            loop = asyncio.get_running_loop()
+            if action == 'get':
+                result = await loop.run_in_executor(
+                    None, execute_artifact_get, task_config, context, jinja_env, task_with, None
+                )
+            elif action == 'put':
+                result = await loop.run_in_executor(
+                    None, execute_artifact_put, task_config, context, jinja_env, task_with, None
+                )
+            else:
+                raise ValueError(f"Unknown artifact action: {action}")
             if isinstance(result, dict) and result.get('status') == 'error':
                 return result
             return result.get('data', result) if isinstance(result, dict) else result
