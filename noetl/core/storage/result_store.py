@@ -406,6 +406,26 @@ class TempStore:
         except Exception as e:
             logger.debug(f"TEMP: Object Store fetch failed: {e}")
 
+        # Try GCS if configured
+        import os
+        if os.getenv("NOETL_GCS_BUCKET"):
+            try:
+                from noetl.core.storage.backends import GCSBackend
+                if not hasattr(self, '_gcs_backend'):
+                    self._gcs_backend = GCSBackend()
+                data_bytes = await self._gcs_backend.get(key)
+
+                # Decompress if gzipped
+                if data_bytes and len(data_bytes) >= 2 and data_bytes[:2] == b'\x1f\x8b':
+                    data_bytes = gzip.decompress(data_bytes)
+
+                logger.debug(f"TEMP: Direct fetch from GCS successful: {ref_str}")
+                return json.loads(data_bytes.decode('utf-8'))
+            except KeyError:
+                logger.debug(f"TEMP: GCS object not found: {key}")
+            except Exception as e:
+                logger.debug(f"TEMP: GCS fetch failed: {e}")
+
         # Try local memory as last resort
         if ref_str in self._memory_cache:
             data_bytes = self._memory_cache[ref_str]

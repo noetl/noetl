@@ -1,0 +1,287 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: test_storage_tiers
+  path: tests/storage_tiers_test
+  description: |
+    Test all storage tier auto-selection based on result size.
+
+    Storage Tiers:
+    - Inline: < 64KB (no externalization)
+    - NATS KV: 64KB - 1MB
+    - NATS Object Store: 1MB - 10MB
+    - S3/GCS: > 10MB (fallback to Object Store if not configured)
+
+workload:
+  # Tier 1: Inline (under 64KB threshold)
+  inline_items: 100
+  inline_item_size: 50  # ~5KB total
+
+  # Tier 2: NATS KV (64KB - 1MB)
+  kv_items: 500
+  kv_item_size: 200  # ~100KB total
+
+  # Tier 3: NATS Object Store (1MB - 10MB)
+  object_items: 2000
+  object_item_size: 1000  # ~2MB total
+
+  # Tier 4: Large (>10MB - uses S3/GCS or falls back to Object)
+  large_items: 5000
+  large_item_size: 3000  # ~15MB total
+
+workflow:
+  # ============================================================
+  # Step 1: Test inline storage (< 64KB - no externalization)
+  # ============================================================
+  - step: start
+    tool:
+      kind: python
+      args:
+        count: "{{ workload.inline_items }}"
+        size: "{{ workload.inline_item_size }}"
+      code: |
+        items = [{"id": i, "data": "x" * size} for i in range(count)]
+        result = {
+            "status": "ok",
+            "tier": "inline",
+            "count": len(items),
+            "total_bytes": count * size,
+            "items": items
+        }
+    result:
+      output_select:
+        - status
+        - tier
+        - count
+        - total_bytes
+    next:
+      - step: test_nats_kv
+
+  # ============================================================
+  # Step 2: Test NATS KV storage (64KB - 1MB)
+  # ============================================================
+  - step: test_nats_kv
+    tool:
+      kind: python
+      args:
+        count: "{{ workload.kv_items }}"
+        size: "{{ workload.kv_item_size }}"
+      code: |
+        items = [{"id": i, "data": "K" * size, "active": True} for i in range(count)]
+        result = {
+            "status": "ok",
+            "tier": "kv_expected",
+            "count": len(items),
+            "total_bytes": count * size,
+            "items": items
+        }
+    result:
+      output_select:
+        - status
+        - tier
+        - count
+        - total_bytes
+    next:
+      - step: test_nats_object
+
+  # ============================================================
+  # Step 3: Test NATS Object Store (1MB - 10MB)
+  # ============================================================
+  - step: test_nats_object
+    tool:
+      kind: python
+      args:
+        count: "{{ workload.object_items }}"
+        size: "{{ workload.object_item_size }}"
+      code: |
+        items = [{"id": i, "data": "O" * size, "active": True} for i in range(count)]
+        result = {
+            "status": "ok",
+            "tier": "object_expected",
+            "count": len(items),
+            "total_bytes": count * size,
+            "items": items
+        }
+    result:
+      output_select:
+        - status
+        - tier
+        - count
+        - total_bytes
+    next:
+      - step: test_large_storage
+
+  # ============================================================
+  # Step 4: Test large storage (>10MB - S3/GCS or Object fallback)
+  # ============================================================
+  - step: test_large_storage
+    tool:
+      kind: python
+      args:
+        count: "{{ workload.large_items }}"
+        size: "{{ workload.large_item_size }}"
+      code: |
+        items = [{"id": i, "data": "L" * size, "active": True} for i in range(count)]
+        result = {
+            "status": "ok",
+            "tier": "s3_or_object_expected",
+            "count": len(items),
+            "total_bytes": count * size,
+            "items": items
+        }
+    result:
+      output_select:
+        - status
+        - tier
+        - count
+        - total_bytes
+    next:
+      - step: verify_storage_tiers
+
+  # ============================================================
+  # Step 5: Verify each tier was used correctly
+  # ============================================================
+  - step: verify_storage_tiers
+    tool:
+      kind: python
+      args:
+        # Inline step - should NOT have _ref (stored inline)
+        inline_has_ref: "{{ start._ref is defined }}"
+        inline_status: "{{ start.status }}"
+        inline_bytes: "{{ start.total_bytes }}"
+
+        # KV step - should have _ref with store=kv
+        kv_has_ref: "{{ test_nats_kv._ref is defined }}"
+        kv_store: "{{ test_nats_kv._store | default('none') }}"
+        kv_status: "{{ test_nats_kv.status }}"
+        kv_bytes: "{{ test_nats_kv.total_bytes }}"
+
+        # Object step - should have _ref with store=object
+        object_has_ref: "{{ test_nats_object._ref is defined }}"
+        object_store: "{{ test_nats_object._store | default('none') }}"
+        object_status: "{{ test_nats_object.status }}"
+        object_bytes: "{{ test_nats_object.total_bytes }}"
+
+        # Large step - should have _ref with store=s3 or object (fallback)
+        large_has_ref: "{{ test_large_storage._ref is defined }}"
+        large_store: "{{ test_large_storage._store | default('none') }}"
+        large_status: "{{ test_large_storage.status }}"
+        large_bytes: "{{ test_large_storage.total_bytes }}"
+      code: |
+        results = {
+            "inline": {
+                "externalized": inline_has_ref,
+                "expected_externalized": False,  # Under 64KB threshold
+                "status": inline_status,
+                "bytes": inline_bytes,
+                "correct": not inline_has_ref  # Should NOT be externalized
+            },
+            "nats_kv": {
+                "externalized": kv_has_ref,
+                "store": kv_store,
+                "expected_store": "kv",
+                "status": kv_status,
+                "bytes": kv_bytes,
+                "correct": kv_has_ref and kv_store == "kv"
+            },
+            "nats_object": {
+                "externalized": object_has_ref,
+                "store": object_store,
+                "expected_store": "object",
+                "status": object_status,
+                "bytes": object_bytes,
+                "correct": object_has_ref and object_store == "object"
+            },
+            "large_storage": {
+                "externalized": large_has_ref,
+                "store": large_store,
+                "expected_store": "s3 or object (fallback)",
+                "status": large_status,
+                "bytes": large_bytes,
+                "correct": large_has_ref and large_store in ("s3", "object", "gcs")
+            }
+        }
+
+        all_correct = all(r["correct"] for r in results.values())
+
+        result = {
+            "test_result": "PASSED" if all_correct else "FAILED",
+            "all_tiers_correct": all_correct,
+            "tier_results": results,
+            "summary": {
+                "inline_correct": results["inline"]["correct"],
+                "kv_correct": results["nats_kv"]["correct"],
+                "object_correct": results["nats_object"]["correct"],
+                "large_correct": results["large_storage"]["correct"]
+            }
+        }
+    next:
+      - step: load_kv_data
+
+  # ============================================================
+  # Step 6: Test lazy loading from each externalized tier
+  # ============================================================
+  - step: load_kv_data
+    tool:
+      kind: artifact
+      action: get
+      args:
+        result_ref: "{{ test_nats_kv._ref }}"
+    next:
+      - step: load_object_data
+
+  - step: load_object_data
+    tool:
+      kind: artifact
+      action: get
+      args:
+        result_ref: "{{ test_nats_object._ref }}"
+    next:
+      - step: load_large_data
+
+  - step: load_large_data
+    tool:
+      kind: artifact
+      action: get
+      args:
+        result_ref: "{{ test_large_storage._ref }}"
+    next:
+      - step: final_summary
+
+  # ============================================================
+  # Step 7: Final summary with load verification
+  # ============================================================
+  - step: final_summary
+    tool:
+      kind: python
+      args:
+        tier_results: "{{ verify_storage_tiers.tier_results }}"
+        kv_loaded_count: "{{ load_kv_data.count | default(0) }}"
+        object_loaded_count: "{{ load_object_data.count | default(0) }}"
+        large_loaded_count: "{{ load_large_data.count | default(0) }}"
+      code: |
+        load_results = {
+            "kv_loaded": kv_loaded_count == 500,
+            "kv_count": kv_loaded_count,
+            "object_loaded": object_loaded_count == 2000,
+            "object_count": object_loaded_count,
+            "large_loaded": large_loaded_count == 5000,
+            "large_count": large_loaded_count
+        }
+
+        all_loaded = all([
+            load_results["kv_loaded"],
+            load_results["object_loaded"],
+            load_results["large_loaded"]
+        ])
+
+        all_tiers_correct = all(r["correct"] for r in tier_results.values())
+
+        result = {
+            "test_result": "PASSED" if (all_loaded and all_tiers_correct) else "FAILED",
+            "storage_tier_selection": "PASSED" if all_tiers_correct else "FAILED",
+            "lazy_loading": "PASSED" if all_loaded else "FAILED",
+            "tier_details": tier_results,
+            "load_details": load_results,
+            "message": "All storage tiers working correctly" if (all_loaded and all_tiers_correct) else "Some tests failed"
+        }

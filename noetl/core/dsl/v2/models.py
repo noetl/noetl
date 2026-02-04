@@ -458,6 +458,10 @@ class Step(BaseModel):
         None,
         description="DEPRECATED: Use tool.output instead. Step-level output for backwards compatibility."
     )
+    result: Optional[dict[str, Any]] = Field(
+        None,
+        description="Result storage config (output_select, store). Passed to worker for ResultHandler."
+    )
     loop: Optional[Loop] = Field(None, description="Loop configuration")
     tool: Optional[ToolSpec] = Field(None, description="Tool configuration with tool.kind and output")
     case: Optional[list[CaseEntry]] = Field(None, description="Event-driven conditional rules")

@@ -144,6 +144,7 @@ class ResultHandler:
         # Determine storage tier
         store_config = output_config.get("store", {})
         tier = self._select_tier(size_bytes, store_config)
+        logger.debug(f"[RESULT] Step {step_name}: store_config={store_config}, selected_tier={tier.value}")
 
         # Store result
         try:
@@ -199,8 +200,13 @@ class ResultHandler:
             return StoreTier.KV
         elif size_bytes < 10 * 1024 * 1024:  # < 10MB -> NATS Object
             return StoreTier.OBJECT
-        else:  # >= 10MB -> Cloud storage
-            return self.default_tier if self.default_tier in (StoreTier.S3, StoreTier.GCS) else StoreTier.S3
+        else:  # >= 10MB -> Cloud storage (prefer GCS if configured, else S3)
+            if self.default_tier in (StoreTier.S3, StoreTier.GCS):
+                return self.default_tier
+            # Check if GCS is configured
+            if os.getenv("NOETL_GCS_BUCKET"):
+                return StoreTier.GCS
+            return StoreTier.S3
 
     async def resolve_ref(self, ref: Any) -> Any:
         """

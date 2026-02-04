@@ -41,5 +41,6 @@ data:
   # S3_ENDPOINT_URL: ""
   NOETL_S3_BUCKET: "noetl-results"
   NOETL_S3_REGION: "us-east-1"
-  # GCS configuration (optional)
-  NOETL_GCS_BUCKET: "noetl-results"
+  # GCS configuration
+  NOETL_GCS_BUCKET: "noetl-demo-output"
+  NOETL_GCS_PREFIX: "results/"

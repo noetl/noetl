@@ -1679,6 +1679,11 @@ class ControlFlowEngine:
         # Build tool config - extract all fields from ToolSpec
         tool_dict = step.tool.model_dump()
         tool_config = {k: v for k, v in tool_dict.items() if k != "kind"}
+
+        # Merge step-level result config (for output_select pattern)
+        # This allows playbooks to use step-level result: with output_select and store
+        if step.result:
+            tool_config["result"] = step.result
         
         # Build args separately - for step inputs
         step_args = {}

@@ -428,12 +428,12 @@ class GCSBackend(StorageBackend):
 
     def __init__(
         self,
-        bucket: str = "noetl-results",
-        prefix: str = "results/",
+        bucket: Optional[str] = None,
+        prefix: Optional[str] = None,
         credentials_json: Optional[str] = None,
     ):
-        self._bucket_name = bucket
-        self._prefix = prefix
+        self._bucket_name = bucket or os.getenv("NOETL_GCS_BUCKET", "noetl-results")
+        self._prefix = prefix or os.getenv("NOETL_GCS_PREFIX", "results/")
         self._credentials_json = credentials_json or os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
         self._client = None
         self._bucket = None
