@@ -1579,7 +1579,11 @@ class V2Worker:
         # Plugins use different field names than V2 DSL
         # For workbook tool, preserve 'name' field from config (it's the workbook action name)
         # For other tools, add 'name' as step name for logging
-        task_config = {**config, "args": args}
+        task_config = {**config}
+        # Merge args: config["args"] (from pipeline tool spec) + args parameter
+        # This preserves tool args from pipeline while allowing parameter override
+        config_args = config.get("args", {})
+        task_config["args"] = {**config_args, **args} if config_args or args else {}
         if "name" not in config:
             task_config["name"] = step
         
@@ -1844,6 +1848,49 @@ class V2Worker:
             if isinstance(result, dict) and result.get('status') == 'error':
                 return result
             return result.get('data', result) if isinstance(result, dict) else result
+
+        elif tool_kind == "pipeline":
+            # Pipeline execution - run tasks sequentially with error handling
+            from noetl.worker.pipeline_executor import PipelineExecutor
+
+            # Create pipeline executor with tool execution callback
+            async def execute_pipeline_tool(kind: str, config: dict, ctx: dict) -> Any:
+                """Execute a single tool within the pipeline."""
+                return await self._execute_tool(kind, config, {}, step, ctx)
+
+            def render_template_str(template: str, ctx: dict) -> str:
+                """Render a single Jinja2 template string."""
+                try:
+                    return jinja_env.from_string(template).render(**ctx)
+                except Exception as e:
+                    logger.warning(f"[PIPELINE] Template render error: {e}")
+                    return template
+
+            def render_dict_templates(data: dict, ctx: dict) -> dict:
+                """Recursively render templates in a dict."""
+                from noetl.core.dsl.render import render_template as recursive_render
+                return recursive_render(jinja_env, data, ctx)
+
+            executor = PipelineExecutor(
+                tool_executor=execute_pipeline_tool,
+                render_template=render_template_str,
+                render_dict=render_dict_templates,
+            )
+
+            # Execute the pipeline
+            pipeline_result = await executor.execute(
+                pipeline=task_config,
+                base_context=context,
+            )
+
+            # Return pipeline result
+            return pipeline_result
+
+        elif tool_kind == "noop":
+            # No-operation tool - used for case-driven steps that don't need tool execution
+            # Returns empty result, step logic is driven by case conditions
+            logger.debug(f"[NOOP] Step '{step}' - no-op execution")
+            return {"status": "noop", "step": step}
 
         else:
             raise NotImplementedError(f"Tool kind '{tool_kind}' not implemented")

@@ -1002,6 +1002,7 @@ class ControlFlowEngine:
         Process actions in a then block.
 
         Supports:
+        - Pipeline blocks: pipe: [...] with catch: and finally:
         - Reserved action types: next, set, result, fail, collect, retry
         - Inline tasks with tool: { task_name: { tool: { kind: ... } } }
 
@@ -1015,12 +1016,39 @@ class ControlFlowEngine:
 
         # Reserved action keys that are not named tasks
         # Any key not in this set that contains a tool: is treated as an inline task
-        reserved_actions = {"next", "set", "result", "fail", "collect", "retry"}
+        reserved_actions = {"next", "set", "vars", "result", "fail", "collect", "retry", "pipe", "catch", "finally"}
 
         # Normalize to list
         actions = then_block if isinstance(then_block, list) else [then_block]
 
         context = state.get_render_context(event)
+
+        # Check for pipeline block (pipe: with optional catch: and finally:)
+        # Pipeline blocks are executed as atomic units by a single worker
+        from noetl.worker.pipeline_executor import is_pipeline_block, extract_pipeline_block
+
+        pipeline_block = None
+        for action in actions:
+            if isinstance(action, dict) and "pipe" in action:
+                pipeline_block = action
+                break
+
+        if pipeline_block:
+            # Create a single command for the entire pipeline
+            logger.info(f"[PIPELINE] Processing pipeline block for step {event.step}")
+            command = await self._create_pipeline_command(
+                state, event.step, pipeline_block, context
+            )
+            if command:
+                commands.append(command)
+
+            # Process any non-pipeline actions (set, result, fail before pipeline)
+            for action in actions:
+                if not isinstance(action, dict) or "pipe" in action:
+                    continue
+                await self._process_immediate_actions(action, state, context, event, commands)
+
+            return commands
         max_pages_env = os.getenv("NOETL_PAGINATION_MAX_PAGES", "100")
         try:
             max_pages = max(1, int(max_pages_env))
@@ -1401,7 +1429,16 @@ class ControlFlowEngine:
                 else:
                     state.variables[key] = value
 
-        elif "result" in action:
+        if "vars" in action:
+            # Set variables (alias for 'set')
+            vars_data = action["vars"]
+            for key, value in vars_data.items():
+                if isinstance(value, str) and "{{" in value:
+                    state.variables[key] = self._render_template(value, context)
+                else:
+                    state.variables[key] = value
+
+        if "result" in action:
             # Set step result
             result_spec = action["result"]
             if isinstance(result_spec, dict) and "from" in result_spec:
@@ -1584,6 +1621,73 @@ class ControlFlowEngine:
         )
 
         logger.info(f"[INLINE-TASK] Created command for task '{task_name}' (kind={tool_kind})")
+        return command
+
+    async def _create_pipeline_command(
+        self,
+        state: ExecutionState,
+        step_name: str,
+        pipeline_block: dict[str, Any],
+        context: dict[str, Any]
+    ) -> Optional[Command]:
+        """
+        Create a command for a pipeline block execution.
+
+        Pipeline blocks are executed as atomic units by a single worker.
+        The worker handles task sequencing, error handling, and control flow locally.
+
+        Args:
+            state: Current execution state
+            step_name: The step this pipeline belongs to
+            pipeline_block: Pipeline definition:
+                {
+                    "pipe": [...tasks...],
+                    "catch": {"cond": [...]},
+                    "finally": [...]
+                }
+            context: Render context for Jinja2 templates
+
+        Returns:
+            Command object for the pipeline
+        """
+        pipe_tasks = pipeline_block.get("pipe", [])
+        if not pipe_tasks:
+            logger.warning(f"[PIPELINE] Empty pipeline for step {step_name}")
+            return None
+
+        # Get task names for logging
+        task_names = []
+        for task in pipe_tasks:
+            if isinstance(task, dict):
+                task_names.extend(task.keys())
+
+        logger.info(f"[PIPELINE] Creating command for step {step_name} with tasks: {task_names}")
+
+        # Create command with special "pipeline" tool kind
+        # The worker will recognize this and use PipelineExecutor
+        command = Command(
+            execution_id=state.execution_id,
+            step=f"{step_name}:pipeline",  # Mark as pipeline
+            tool=ToolCall(
+                kind="pipeline",  # Special kind for pipeline execution
+                config={
+                    "pipe": pipe_tasks,
+                    "catch": pipeline_block.get("catch", {}),
+                    "finally": pipeline_block.get("finally", []),
+                }
+            ),
+            args={},
+            render_context=context,
+            case=None,  # Pipeline has its own catch block
+            attempt=1,
+            priority=0,
+            metadata={
+                "pipeline": True,
+                "parent_step": step_name,
+                "task_names": task_names,
+            }
+        )
+
         return command
 
     async def _create_command_for_step(
@@ -1852,7 +1956,9 @@ class ControlFlowEngine:
         # Handle inline tasks (dynamically created from case then blocks)
         # These have format "parent_step:task_name" (e.g., "success:send_callback")
         # and don't exist as workflow steps. They execute and emit events, but don't need orchestration
-        is_inline_task = ':' in event.step and state.get_step(event.step) is None
+        # EXCEPTION: Pipeline steps (e.g., "step:pipeline") are NOT inline tasks - they need special handling
+        is_pipeline_step = event.step.endswith(":pipeline")
+        is_inline_task = ':' in event.step and state.get_step(event.step) is None and not is_pipeline_step
         if is_inline_task:
             logger.debug(f"Inline task: {event.step} - persisting event without orchestration")
             # Persist the event but don't generate commands (no orchestration needed)
@@ -1920,7 +2026,29 @@ class ControlFlowEngine:
 
                     await self.state_store.save_state(state)
             return commands
-        
+
+        # Handle pipeline completion events
+        # Pipeline steps have suffix :pipeline (e.g., run_pipeline:pipeline)
+        if event.step.endswith(":pipeline") and event.name == "call.done":
+            parent_step = event.step.rsplit(":", 1)[0]
+            response_data = event.payload.get("response", event.payload)
+
+            # Store pipeline result under the parent step name
+            state.mark_step_completed(parent_step, response_data)
+            logger.info(f"[PIPELINE] Stored pipeline result for parent step '{parent_step}'")
+
+            # Process finally block from pipeline result
+            finally_block = response_data.get("finally", [])
+            if finally_block:
+                logger.info(f"[PIPELINE] Processing finally block: {finally_block}")
+                pipeline_commands = await self._process_then_actions(
+                    finally_block, state, event
+                )
+                commands.extend(pipeline_commands)
+                logger.info(f"[PIPELINE] Generated {len(pipeline_commands)} commands from finally block")
+
+            return commands
+
         step_def = state.get_step(event.step)
         if not step_def:
             logger.error(f"Step not found: {event.step}")

@@ -144,7 +144,12 @@ impl ConditionEvaluator {
             // Evaluate the when condition
             if self.evaluate_condition(&entry.when, context)? {
                 // Find the next step from the then actions
-                for action in &entry.then {
+                // then can be a list or a single object
+                let actions: Vec<&serde_json::Value> = match &entry.then {
+                    serde_json::Value::Array(arr) => arr.iter().collect(),
+                    obj => vec![obj],
+                };
+                for action in actions {
                     if let Some(next_obj) = action.get("next") {
                         if let Some(next_step) = next_obj.get("step").and_then(|v| v.as_str()) {
                             let args = next_obj.get("args").cloned();

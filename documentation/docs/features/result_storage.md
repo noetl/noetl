@@ -447,6 +447,8 @@ After (recommended):
 
 For horizontal scaling with multiple workers, results are processed on the worker side using the `output_select` pattern. This allows large results to be stored externally while keeping small extracted fields available for templating in subsequent steps.
 
+> **Note**: This pattern is the foundation of the [Rendering Optimization Architecture](#rendering-optimization-architecture), which ensures full result data never flows through the server's render context.
+
 ### Step-Level Result Configuration
 
 Use `result:` at the step level (alongside `tool:`) to configure result storage:
@@ -781,6 +783,186 @@ Original: 2,090,971 bytes (~2 MB)
 Compressed: 11,901 bytes (~12 KB)
 Ratio: 175:1
 ```
+
+## Rendering Optimization Architecture
+
+The system is designed to avoid heavy server load during template rendering by ensuring full result data never enters the render context.
+
+### The Problem with Traditional Rendering
+
+Without optimization, each template render would need to load full result data:
+
+```
+Step produces 2MB result
+    ↓
+Worker sends 2MB to server
+    ↓
+Server stores 2MB in step_results
+    ↓
+Each render loads 2MB into context
+    ↓
+Memory bloat + slow rendering
+```
+
+### Optimized Data Flow
+
+With the externalization pattern, only small metadata flows through the system:
+
+```
+Tool produces 2MB result
+    ↓
+Worker: ResultHandler detects size > 64KB
+    ↓
+Worker: Stores full data in GCS/NATS Object Store
+    ↓
+Worker: Extracts small fields (status, count, etc.)
+    ↓
+Worker sends ~200 bytes to server: {_ref, _store, status, count}
+    ↓
+Server stores only metadata in step_results
+    ↓
+Render context has only lightweight data
+    ↓
+Fast rendering, no memory bloat
+```
+
+### Implementation Details
+
+#### 1. Worker-Side Result Processing
+
+The worker processes results through `ResultHandler` before sending events:
+
+```python
+# In v2_worker_nats.py
+result_handler = ResultHandler(execution_id=execution_id)
+processed_response = await result_handler.process_result(
+    step_name=step,
+    result=response,
+    output_config=tool_config.get("result", {})
+)
+
+# If externalized, only metadata is sent
+if is_result_ref(processed_response):
+    response_for_events = processed_response  # {_ref, _store, status, count}
+else:
+    response_for_events = response  # Small result, sent inline
+```
+
+#### 2. Events Contain Only Metadata
+
+Events sent to the server use the processed (externalized) version:
+
+```python
+# call.done event - only metadata
+await self._emit_event(..., "call.done", {"response": response_for_events})
+
+# step.exit event - only metadata
+await self._emit_event(..., "step.exit", {"result": response_for_events})
+```
+
+#### 3. Engine Stores Lightweight Data
+
+The engine receives and stores only the externalized version:
+
+```python
+# In engine.py
+response_data = event.payload.get("response", event.payload)
+state.step_results[step_name] = response_data  # Only {_ref, _store, status, count}
+```
+
+#### 4. Render Context Is Lightweight
+
+When building render context, only small metadata is included:
+
+```python
+# In engine.py
+context = {
+    "workload": self.variables,
+    "vars": self.variables,
+    **self.step_results,  # Only lightweight metadata, not full data
+}
+```
+
+### Template Access Patterns
+
+| Access Pattern | Data Source | Memory Load | Speed |
+|---------------|-------------|-------------|-------|
+| `{{ step.status }}` | Extracted field | ~50 bytes | Instant |
+| `{{ step.count }}` | Extracted field | ~10 bytes | Instant |
+| `{{ step._ref }}` | Metadata | ~200 bytes | Instant |
+| `{{ step._store }}` | Metadata | ~10 bytes | Instant |
+| `{{ step._preview }}` | Truncated sample | ~1KB | Instant |
+| `{{ step.items }}` | **Not available** | N/A | Use `artifact.get` |
+
+### When Full Data Is Needed
+
+For steps that need access to full externalized data, use the `artifact.get` tool:
+
+```yaml
+# Step 1: Produces large result (externalized automatically)
+- step: fetch_data
+  tool:
+    kind: python
+    code: |
+      result = {"items": [{"id": i} for i in range(100000)]}
+  result:
+    output_select:
+      - status
+  next:
+    - step: process_metadata
+
+# Step 2: Works with extracted fields only (no full data load)
+- step: process_metadata
+  tool:
+    kind: python
+    args:
+      status: "{{ fetch_data.status }}"    # Available instantly
+      ref: "{{ fetch_data._ref }}"          # Pointer to full data
+    code: |
+      result = {"status_received": status, "has_ref": ref is not None}
+  next:
+    - step: load_full_data
+
+# Step 3: Explicitly load full data when needed
+- step: load_full_data
+  tool:
+    kind: artifact
+    action: get
+    args:
+      result_ref: "{{ fetch_data._ref }}"
+  next:
+    - step: process_items
+
+# Step 4: Now has access to full data
+- step: process_items
+  tool:
+    kind: python
+    args:
+      items: "{{ load_full_data.items }}"  # Full data available
+    code: |
+      result = {"processed": len(items)}
+```
+
+### Performance Benefits
+
+| Metric | Without Optimization | With Optimization |
+|--------|---------------------|-------------------|
+| Event payload size | 2MB+ per step | ~200 bytes |
+| Memory per execution | O(n × result_size) | O(n × metadata_size) |
+| Render context build | Load all results | Reference only |
+| Template evaluation | Slow (large dicts) | Fast (small dicts) |
+| Horizontal scaling | Limited by memory | Scales linearly |
+
+### Thresholds and Configuration
+
+```yaml
+# In configmap-worker.yaml
+NOETL_INLINE_MAX_BYTES: "65536"     # 64KB - externalize if larger
+NOETL_PREVIEW_MAX_BYTES: "1024"     # 1KB preview for UI
+```
+
+Results smaller than `INLINE_MAX_BYTES` are passed inline (no externalization).
+Results larger are externalized with only extracted fields kept inline.
 
 ## Best Practices
 

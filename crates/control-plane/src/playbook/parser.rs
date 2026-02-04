@@ -119,14 +119,21 @@ fn validate_next_refs(
 }
 
 /// Validate case/then references.
+/// then_block can be a list of actions or a single action dict.
 fn validate_case_refs(
-    then_actions: &[serde_json::Value],
+    then_block: &serde_json::Value,
     valid_steps: &std::collections::HashSet<&str>,
     current_step: &str,
     when_condition: &str,
     case_index: usize,
 ) -> AppResult<()> {
-    for action in then_actions {
+    // Normalize then to a list of actions
+    let actions: Vec<&serde_json::Value> = match then_block {
+        serde_json::Value::Array(arr) => arr.iter().collect(),
+        obj => vec![obj],
+    };
+
+    for action in actions {
         if let Some(next_obj) = action.get("next") {
             if let Some(step_name) = next_obj.get("step").and_then(|s| s.as_str()) {
                 if !valid_steps.contains(step_name) {

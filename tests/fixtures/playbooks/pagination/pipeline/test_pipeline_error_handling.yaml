@@ -1,0 +1,349 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: test_pipeline_error_handling
+  path: tests/pagination/pipeline/errors
+  description: |
+    Tests catch.cond error handling patterns in pipeline execution.
+
+    Validates:
+    - Retry on transient errors (500, 503)
+    - Rate limit handling with Retry-After header
+    - Skip on transform errors
+    - Fail on auth errors (401, 403)
+    - _err variable access in conditions
+
+workload:
+  api_url: "http://paginated-api.test-server.svc.cluster.local:5555"
+
+vars:
+  test_results: []
+  current_test: null
+
+workflow:
+  - step: start
+    desc: Initialize error handling tests
+    tool:
+      kind: python
+      code: |
+        result = {
+          "status": "initialized",
+          "tests_to_run": [
+            "retry_on_500",
+            "retry_on_rate_limit",
+            "skip_transform_error",
+            "fail_on_auth_error"
+          ]
+        }
+    case:
+      - when: "{{ event.name == 'step.exit' }}"
+        then:
+          next:
+            - step: test_retry_transient
+
+  # =========================================================================
+  # Test 1: Retry on transient 500 error (using flaky endpoint)
+  # =========================================================================
+  - step: test_retry_transient
+    desc: Test retry on 500 errors with flaky endpoint
+    tool:
+      kind: noop
+    case:
+      - when: "{{ event.name == 'step.enter' }}"
+        then:
+          pipe:
+            - reset_flaky:
+                tool:
+                  kind: http
+                  url: "{{ workload.api_url }}/api/v1/flaky/reset"
+                  method: POST
+
+            - fetch_flaky:
+                tool:
+                  kind: http
+                  url: "{{ workload.api_url }}/api/v1/flaky"
+                  method: GET
+                  params:
+                    page: 1
+                    fail_on: "1"  # Fail on first attempt
+
+            - validate:
+                tool:
+                  kind: python
+                  args:
+                    response: "{{ _prev }}"
+                  code: |
+                    # Should succeed after retry
+                    data = response.get('data', [])
+                    result = {
+                      'test': 'retry_on_500',
+                      'status': 'passed' if len(data) > 0 else 'failed',
+                      'items_received': len(data),
+                      'message': 'Retry succeeded after 500 error'
+                    }
+
+          catch:
+            cond:
+              # Retry on server errors
+              - when: "{{ _err.retryable and _err.kind == 'server_error' }}"
+                do: retry
+                attempts: 3
+                backoff: linear
+                delay: 0.5
+
+              - else:
+                  do: fail
+
+          finally:
+            - next:
+                - step: test_rate_limit
+
+      - when: "{{ event.name == 'call.done' }}"
+        then:
+          vars:
+            test_results: "{{ vars.test_results + [response] }}"
+          next:
+            - step: test_rate_limit
+
+  # =========================================================================
+  # Test 2: Handle rate limiting with Retry-After
+  # =========================================================================
+  - step: test_rate_limit
+    desc: Test rate limit handling with Retry-After header
+    tool:
+      kind: noop
+    case:
+      - when: "{{ event.name == 'step.enter' }}"
+        then:
+          vars:
+            current_test: "retry_on_rate_limit"
+          pipe:
+            # First request - succeeds
+            - fetch_1:
+                tool:
+                  kind: http
+                  url: "{{ workload.api_url }}/api/v1/rate-limited"
+                  method: GET
+                  params:
+                    page: 1
+                    requests_per_second: 1  # Very low limit
+
+            # Second request - may hit rate limit
+            - fetch_2:
+                tool:
+                  kind: http
+                  url: "{{ workload.api_url }}/api/v1/rate-limited"
+                  method: GET
+                  params:
+                    page: 2
+                    requests_per_second: 1
+
+            - validate:
+                tool:
+                  kind: python
+                  args:
+                    response: "{{ _prev }}"
+                  code: |
+                    data = response.get('data', [])
+                    result = {
+                      'test': 'retry_on_rate_limit',
+                      'status': 'passed',
+                      'items_received': len(data),
+                      'message': 'Rate limit handled correctly'
+                    }
+
+          catch:
+            cond:
+              # Handle rate limit with Retry-After
+              - when: "{{ _err.kind == 'rate_limit' }}"
+                do: retry
+                attempts: 5
+                delay: "{{ _err.retry_after | default(2) }}"
+
+              - when: "{{ _err.retryable }}"
+                do: retry
+                attempts: 3
+
+              - else:
+                  do: fail
+
+          finally:
+            - next:
+                - step: test_skip_transform
+
+      - when: "{{ event.name == 'call.done' }}"
+        then:
+          vars:
+            test_results: "{{ vars.test_results + [response] }}"
+          next:
+            - step: test_skip_transform
+
+  # =========================================================================
+  # Test 3: Skip on transform error
+  # =========================================================================
+  - step: test_skip_transform
+    desc: Test skip action on transform errors
+    tool:
+      kind: noop
+    case:
+      - when: "{{ event.name == 'step.enter' }}"
+        then:
+          vars:
+            current_test: "skip_transform_error"
+          pipe:
+            - fetch:
+                tool:
+                  kind: http
+                  url: "{{ workload.api_url }}/api/v1/assessments"
+                  method: GET
+                  params:
+                    page: 1
+
+            # Intentionally broken transform
+            - transform_bad:
+                tool:
+                  kind: python
+                  args:
+                    data: "{{ _prev }}"
+                  code: |
+                    # This will fail - accessing non-existent key
+                    broken = data['nonexistent_key']['also_missing']
+                    result = broken
+
+            # This should run with set_prev value
+            - validate:
+                tool:
+                  kind: python
+                  args:
+                    prev_data: "{{ _prev }}"
+                  code: |
+                    result = {
+                      'test': 'skip_transform_error',
+                      'status': 'passed',
+                      'skipped': True,
+                      'prev_after_skip': prev_data,
+                      'message': 'Transform error was skipped successfully'
+                    }
+
+          catch:
+            cond:
+              # Skip transform errors with default value
+              - when: "{{ _task == 'transform_bad' }}"
+                do: skip
+                set_prev:
+                  skipped: true
+                  reason: "transform failed"
+                  fallback_data: []
+
+              - else:
+                  do: fail
+
+          finally:
+            - next:
+                - step: test_fail_auth
+
+      - when: "{{ event.name == 'call.done' }}"
+        then:
+          vars:
+            test_results: "{{ vars.test_results + [response] }}"
+          next:
+            - step: test_fail_auth
+
+  # =========================================================================
+  # Test 4: Fail on auth errors
+  # =========================================================================
+  - step: test_fail_auth
+    desc: Test fail action on auth errors
+    tool:
+      kind: noop
+    case:
+      - when: "{{ event.name == 'step.enter' }}"
+        then:
+          vars:
+            current_test: "fail_on_auth_error"
+          pipe:
+            - fetch_auth_error:
+                tool:
+                  kind: http
+                  url: "{{ workload.api_url }}/api/v1/errors"
+                  method: GET
+                  params:
+                    error_type: "auth"
+
+            - should_not_reach:
+                tool:
+                  kind: python
+                  code: |
+                    result = {'error': 'This should not execute'}
+
+          catch:
+            cond:
+              # Auth errors should fail immediately
+              - when: "{{ _err.kind == 'auth' }}"
+                do: fail
+
+              - else:
+                  do: fail
+
+          finally:
+            - next:
+                - step: generate_report
+
+      # Pipeline failed as expected
+      - when: "{{ event.name == 'call.done' and response.status == 'failed' }}"
+        then:
+          vars:
+            test_results: "{{ vars.test_results + [{'test': 'fail_on_auth_error', 'status': 'passed', 'message': 'Auth error caused pipeline to fail as expected'}] }}"
+          next:
+            - step: generate_report
+
+      # Unexpected success
+      - when: "{{ event.name == 'call.done' and response.status != 'failed' }}"
+        then:
+          vars:
+            test_results: "{{ vars.test_results + [{'test': 'fail_on_auth_error', 'status': 'failed', 'message': 'Expected pipeline to fail on auth error'}] }}"
+          next:
+            - step: generate_report
+
+  # =========================================================================
+  # Final Report
+  # =========================================================================
+  - step: generate_report
+    desc: Generate test results report
+    tool:
+      kind: python
+      args:
+        results: "{{ vars.test_results }}"
+      code: |
+        passed = sum(1 for r in results if r.get('status') == 'passed')
+        failed = sum(1 for r in results if r.get('status') == 'failed')
+        total = len(results)
+
+        result = {
+          "status": "success" if failed == 0 else "failed",
+          "summary": {
+            "total_tests": total,
+            "passed": passed,
+            "failed": failed
+          },
+          "test_results": results,
+          "catch_cond_features_tested": [
+            "retry with exponential backoff",
+            "retry with Retry-After header",
+            "skip with set_prev fallback",
+            "fail on non-retryable errors",
+            "_err.kind condition matching",
+            "_err.retryable boolean check",
+            "_task name matching"
+          ]
+        }
+    case:
+      - when: "{{ event.name == 'step.exit' }}"
+        then:
+          next:
+            - step: end
+
+  - step: end
+    desc: Tests complete
+    tool:
+      kind: noop

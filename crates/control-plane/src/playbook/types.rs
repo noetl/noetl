@@ -143,7 +143,8 @@ pub struct CaseEntry {
     pub when: String,
 
     /// Actions to execute when condition is true.
-    pub then: Vec<serde_json::Value>,
+    /// Can be a list of actions or a single action dict (backwards compatible).
+    pub then: serde_json::Value,
 }
 
 /// Next step specification - can be string, list of strings, or list of targets.

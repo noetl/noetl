@@ -181,6 +181,8 @@ class ToolSpec(BaseModel):
         "nats",
         "shell",
         "artifact",
+        "noop",      # No-operation tool for case-driven steps
+        "pipeline",  # Pipeline execution tool
     ] = Field(
         ..., description="Tool type"
     )
@@ -252,6 +254,204 @@ class ThenBlock(BaseModel):
             return cls(raw_actions=data)
         else:
             return cls(raw_actions=[data])
+
+
+# ============================================================================
+# Pipeline Models - Clojure-style threading with error handling
+# ============================================================================
+
+class PipelineControlAction(BaseModel):
+    """
+    Control action for pipeline error handling.
+
+    Actions:
+    - retry: Retry current task (or from a named task)
+    - skip: Skip to next task, optionally set _prev
+    - jump: Jump to a named task in the pipeline
+    - fail: End step with error
+    - continue: Continue to next task (implicit on success)
+    """
+    do: Literal["retry", "skip", "jump", "fail", "continue"] = Field(
+        ..., description="Control action type"
+    )
+    # For retry
+    task: Optional[str] = Field(
+        None, description="Task to retry (default: current failed task)"
+    )
+    from_: Optional[str] = Field(
+        None, alias="from", description="Restart pipeline from this task"
+    )
+    attempts: Optional[int] = Field(
+        None, description="Max retry attempts"
+    )
+    backoff: Optional[Literal["none", "linear", "exponential"]] = Field(
+        None, description="Backoff strategy"
+    )
+    delay: Optional[float] = Field(
+        None, description="Initial delay in seconds"
+    )
+    # For skip
+    set_prev: Optional[Any] = Field(
+        None, description="Value to set as _prev when skipping"
+    )
+    # For jump
+    to: Optional[str] = Field(
+        None, description="Task to jump to"
+    )
+
+    class Config:
+        populate_by_name = True
+
+
+class CatchCondition(BaseModel):
+    """
+    Single catch condition in a pipeline's catch block.
+
+    Pattern matching on _task, _err, _attempt to decide control flow.
+
+    Example:
+        - when: "{{ _task == 'fetch' and _err.retryable }}"
+          do: retry
+          attempts: 3
+          backoff: exponential
+    """
+    when: Optional[str] = Field(
+        None, description="Jinja2 condition (None for else/default)"
+    )
+    do: Literal["retry", "skip", "jump", "fail", "continue"] = Field(
+        ..., description="Control action"
+    )
+    # Retry options
+    task: Optional[str] = Field(None, description="Task to retry")
+    from_: Optional[str] = Field(None, alias="from", description="Restart from task")
+    attempts: Optional[int] = Field(None, description="Max attempts")
+    backoff: Optional[Literal["none", "linear", "exponential"]] = Field(None)
+    delay: Optional[float] = Field(None, description="Initial delay seconds")
+    # Skip options
+    set_prev: Optional[Any] = Field(None, description="Value for _prev on skip")
+    # Jump options
+    to: Optional[str] = Field(None, description="Target task for jump")
+
+    class Config:
+        populate_by_name = True
+        extra = "allow"  # Allow 'else' shorthand
+
+
+class CatchBlock(BaseModel):
+    """
+    Pipeline error handling block with cond-style matching.
+
+    Evaluated only when a task fails. First matching condition wins.
+
+    Example:
+        catch:
+          cond:
+            - when: "{{ _task == 'fetch' and _err.retryable }}"
+              do: retry
+              attempts: 3
+            - when: "{{ _task == 'transform' }}"
+              do: skip
+            - else:
+                do: fail
+    """
+    cond: list[CatchCondition | dict[str, Any]] = Field(
+        default_factory=list,
+        description="List of condition/action pairs (first match wins)"
+    )
+
+
+class PipelineTask(BaseModel):
+    """
+    Named task in a pipeline.
+
+    Each task has:
+    - name: identifier for _task matching and jump targets
+    - tool: tool configuration
+    - optional per-task catch override
+
+    Example:
+        - fetch:
+            tool: {kind: http, url: "..."}
+        - transform:
+            tool: {kind: python, code: "..."}
+    """
+    name: str = Field(..., description="Task name (used as _task)")
+    tool: dict[str, Any] = Field(..., description="Tool configuration")
+    catch: Optional[CatchBlock] = Field(
+        None, description="Per-task catch override (optional)"
+    )
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "PipelineTask":
+        """Parse a task from dict like {task_name: {tool: {...}}}."""
+        if len(data) != 1:
+            raise ValueError(f"Pipeline task must have exactly one key (task name): {data}")
+        name = list(data.keys())[0]
+        config = data[name]
+        if not isinstance(config, dict) or "tool" not in config:
+            raise ValueError(f"Pipeline task '{name}' must have 'tool' config: {config}")
+        return cls(
+            name=name,
+            tool=config["tool"],
+            catch=CatchBlock(**config["catch"]) if "catch" in config else None
+        )
+
+
+class PipelineBlock(BaseModel):
+    """
+    Pipeline execution block with Clojure-style threading and error handling.
+
+    Structure:
+    - pipe: ordered list of named tasks (data threads via _prev)
+    - catch: centralized error handling (cond-style matching)
+    - finally: actions to run after successful completion
+
+    Runtime variables:
+    - _task: name of current/failed task
+    - _prev: result of last successful task (threading)
+    - _err: structured error payload {kind, retryable, code, message, source}
+    - _attempt: retry attempt count for current task
+
+    Example:
+        pipe:
+          - fetch: {tool: {kind: http, url: "..."}}
+          - transform: {tool: {kind: python, args: {data: "{{ _prev }}"}}}
+          - store: {tool: {kind: postgres, data: "{{ _prev }}"}}
+
+        catch:
+          cond:
+            - when: "{{ _task == 'fetch' and _err.retryable }}"
+              do: retry
+              attempts: 5
+            - when: "{{ _task == 'transform' and _err.kind == 'schema' }}"
+              do: skip
+            - else:
+                do: fail
+
+        finally:
+          - collect: {strategy: append, path: data, into: pages}
+          - next: [{step: continue_pagination}]
+    """
+    pipe: list[dict[str, Any]] = Field(
+        ..., description="Ordered list of named tasks"
+    )
+    catch: Optional[CatchBlock] = Field(
+        None, description="Error handling block"
+    )
+    finally_: Optional[list[dict[str, Any]]] = Field(
+        None, alias="finally", description="Actions after successful pipeline"
+    )
+
+    class Config:
+        populate_by_name = True
+
+    def get_tasks(self) -> list[PipelineTask]:
+        """Parse pipe list into PipelineTask objects."""
+        return [PipelineTask.from_dict(t) for t in self.pipe]
+
+    def get_task_names(self) -> list[str]:
+        """Get ordered list of task names."""
+        return [list(t.keys())[0] for t in self.pipe]
 
 
 # ============================================================================

@@ -137,11 +137,21 @@ struct Step {
     vars: Option<HashMap<String, String>>,
 }
 
+/// Then block can be either a list of actions or a single action dict.
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum ThenBlock {
+    /// Single action object (backwards compatible)
+    Single(serde_yaml::Value),
+    /// List of action objects
+    List(Vec<NextStep>),
+}
+
 #[derive(Debug, Deserialize)]
 struct CaseCondition {
     #[serde(flatten)]
     when: WhenCondition,
-    then: Vec<NextStep>,
+    then: ThenBlock,
     #[serde(rename = "else")]
     else_steps: Option<Vec<NextStep>>,
 }
@@ -532,7 +542,30 @@ impl PlaybookRunner {
                     }
 
                     // Execute then steps (potentially in parallel if multiple)
-                    self.execute_next_steps(playbook, &case.then, context)?;
+                    // Handle both list and single-object formats for then block
+                    match &case.then {
+                        ThenBlock::List(steps) => {
+                            self.execute_next_steps(playbook, steps, context)?;
+                        }
+                        ThenBlock::Single(value) => {
+                            // For single object format, try to extract next steps
+                            // This handles the dict format: then: { next: ... }
+                            if let Some(next_val) = value.get("next") {
+                                if let Ok(steps) = serde_yaml::from_value::<Vec<NextStep>>(next_val.clone()) {
+                                    self.execute_next_steps(playbook, &steps, context)?;
+                                } else if let Ok(step) = serde_yaml::from_value::<NextStep>(next_val.clone()) {
+                                    self.execute_next_steps(playbook, &[step], context)?;
+                                }
+                            }
+                            // Handle pipe: blocks - pass to distributed executor
+                            // For local CLI, we skip pipeline execution (requires distributed runtime)
+                            if value.get("pipe").is_some() {
+                                if self.verbose {
+                                    println!("   ⚠ Pipeline blocks require distributed runtime, skipping");
+                                }
+                            }
+                        }
+                    }
                     break;
                 } else if let Some(else_steps) = &case.else_steps {
                     if self.verbose {
