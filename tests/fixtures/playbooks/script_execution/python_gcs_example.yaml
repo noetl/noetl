@@ -5,8 +5,8 @@ metadata:
   path: tests/script_execution/python_gcs
 
 workload:
-  gcs_script_uri: gs://noetl-demo-19700101/scripts/hello_world.py  # Full GCS URI
-  gcp_credential: google_oauth  # Credential registered in NoETL
+  gcs_script_uri: gs://noetl-demo-19700101/scripts/hello_world.py
+  gcp_credential: google_oauth
   greeting_name: GCS-Loaded
 
 workflow:
@@ -19,31 +19,23 @@ workflow:
       args: {}
       code: |
         result = {"status": "initialized"}
-    
-    case:
-      - when: "{{ event.name == 'step.exit' }}"
-        then:
-          next:
-            - step: run_python_from_gcs
+    next:
+      - step: run_python_from_gcs
 
   - step: run_python_from_gcs
     desc: Execute Python script from Google Cloud Storage using full URI
     tool:
       kind: python
       script:
-        uri: "{{ workload.gcs_script_uri }}"  # Full gs://bucket/path URI
+        uri: "{{ workload.gcs_script_uri }}"
         source:
           type: gcs
           auth: "{{ workload.gcp_credential }}"
       args:
         name: "{{ workload.greeting_name }}"
         count: 2
-    
-    case:
-      - when: "{{ event.name == 'step.exit' and response is defined }}"
-        then:
-          next:
-            - step: verify_result
+    next:
+      - step: verify_result
 
   - step: verify_result
     desc: Verify GCS-loaded script executed correctly
@@ -57,19 +49,15 @@ workflow:
         assert result['status'] == 'success', f"Expected success, got {result['status']}"
         assert result['total_greetings'] == 2, f"Expected 2 greetings, got {result['total_greetings']}"
         assert len(result['messages']) == 2, f"Expected 2 messages, got {len(result['messages'])}"
-        
+
         result = {
             "status": "verified",
             "source_type": "gcs",
             "checks_passed": 3,
             "result": result
         }
-    
-    case:
-      - when: "{{ event.name == 'step.exit' and response is defined }}"
-        then:
-          next:
-            - step: end
+    next:
+      - step: end
 
   - step: end
     desc: End workflow

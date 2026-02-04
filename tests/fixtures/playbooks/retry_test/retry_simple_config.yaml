@@ -8,7 +8,7 @@ metadata:
 workload:
   api_url: http://paginated-api.test-server.svc.cluster.local:5555
   fail_on_page: "1"
-  
+
 workflow:
   - step: start
     desc: Fetch URL and retry on 5xx status codes
@@ -19,13 +19,9 @@ workflow:
       args: {}
       code: |
         result = {"status": "initialized"}
-    
-    case:
-      - when: "{{ event.name == 'step.exit' }}"
-        then:
-          next:
-            - step: boolean_retry
-  
+    next:
+      - step: boolean_retry
+
   - step: boolean_retry
     desc: Simple on_error retry with defaults
     tool:
@@ -35,19 +31,18 @@ workflow:
       params:
         page: 1
         fail_on: "{{ workload.fail_on_page }}"
-    
     case:
       - when: "{{ event.name == 'call.error' and error.status in [500, 502, 503] }}"
         then:
-          retry:
-            max_attempts: 3
-            initial_delay: 0.5
-      
-      - when: "{{ event.name == 'step.exit' and response is defined }}"
+          - retry:
+              max_attempts: 3
+              initial_delay: 0.5
+
+      - when: "{{ event.name == 'call.done' and response is defined }}"
         then:
-          next:
-            - step: integer_retry
-        
+          - next:
+              - step: integer_retry
+
   - step: integer_retry
     desc: Retry with custom max attempts
     tool:
@@ -57,19 +52,18 @@ workflow:
       params:
         page: 1
         fail_on: "{{ workload.fail_on_page }}"
-    
     case:
       - when: "{{ event.name == 'call.error' and error.status in [500, 502, 503] }}"
         then:
-          retry:
-            max_attempts: 5
-            initial_delay: 0.5
-      
-      - when: "{{ event.name == 'step.exit' and response is defined }}"
+          - retry:
+              max_attempts: 5
+              initial_delay: 0.5
+
+      - when: "{{ event.name == 'call.done' and response is defined }}"
         then:
-          next:
-            - step: full_config_retry
-      
+          - next:
+              - step: full_config_retry
+
   - step: full_config_retry
     desc: Full configuration retry with backoff
     tool:
@@ -79,21 +73,20 @@ workflow:
       params:
         page: 1
         fail_on: "{{ workload.fail_on_page }}"
-    
     case:
       - when: "{{ event.name == 'call.error' and error.status in [500, 502, 503] }}"
         then:
-          retry:
-            max_attempts: 3
-            initial_delay: 0.5
-            backoff_multiplier: 2.0
-            max_delay: 10.0
-      
-      - when: "{{ event.name == 'step.exit' and response is defined }}"
+          - retry:
+              max_attempts: 3
+              initial_delay: 0.5
+              backoff_multiplier: 2.0
+              max_delay: 10.0
+
+      - when: "{{ event.name == 'call.done' and response is defined }}"
         then:
-          next:
-            - step: end
-        
+          - next:
+              - step: end
+
   - step: end
     desc: End workflow
     tool:

@@ -18,12 +18,8 @@ workflow:
       args: {}
       code: |
         result = {"status": "initialized"}
-
-    case:
-      - when: "{{ event.name == 'step.exit' }}"
-        then:
-          next:
-            - step: fetch_with_retry
+    next:
+      - step: fetch_with_retry
 
   - step: fetch_with_retry
     desc: Pagination with automatic retry on page 2
@@ -33,35 +29,34 @@ workflow:
       method: GET
       params:
         page: 1
-        fail_on: "2" # Fail on page 2 first attempt
-
+        fail_on: "2"
     case:
       - when: "{{ event.name == 'call.error' and error.status in [500, 502, 503] }}"
         then:
-          retry:
-            max_attempts: 3
-            backoff_multiplier: 2.0
-            initial_delay: 0.5
+          - retry:
+              max_attempts: 3
+              backoff_multiplier: 2.0
+              initial_delay: 0.5
 
-      - when: "{{ event.name == 'call.done' and response is defined and response.paging.hasMore == true }}"
+      - when: "{{ event.name == 'call.done' and response is defined and response.data.paging.hasMore == true }}"
         then:
-          collect:
-            strategy: append
-            path: data
-            into: pages
-          retry:
-            max_attempts: 10
-            params:
-              page: "{{ (response.paging.page | int) + 1 }}"
+          - collect:
+              strategy: append
+              path: data.data
+              into: pages
+          - retry:
+              max_attempts: 10
+              params:
+                page: "{{ (response.data.paging.page | int) + 1 }}"
 
-      - when: "{{ event.name == 'call.done' and response is defined and response.paging.hasMore != true }}"
+      - when: "{{ event.name == 'call.done' and response is defined and response.data.paging.hasMore != true }}"
         then:
-          collect:
-            strategy: append
-            path: data
-            into: pages
-          next:
-            - step: validate_results
+          - collect:
+              strategy: append
+              path: data.data
+              into: pages
+          - next:
+              - step: validate_results
 
   - step: validate_results
     desc: Validate retry succeeded
@@ -96,12 +91,8 @@ workflow:
             'total_items': len(data),
             'retry_worked': len(data) == 35
         }
-
-    case:
-      - when: "{{ event.name == 'step.exit' and response is defined }}"
-        then:
-          next:
-            - step: end
+    next:
+      - step: end
 
   - step: end
     desc: Workflow complete

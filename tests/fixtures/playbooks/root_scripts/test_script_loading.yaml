@@ -19,12 +19,8 @@ workflow:
           type: inline
           code: "{{ workload.test_code }}"
       args: {}
-    
-    case:
-      - when: "{{ event.name == 'step.exit' }}"
-        then:
-          next:
-            - step: end
+    next:
+      - step: end
 
   - step: end
     desc: End workflow

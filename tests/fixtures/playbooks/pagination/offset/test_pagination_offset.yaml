@@ -18,12 +18,8 @@ workflow:
       args: {}
       code: |
         result = {"status": "initialized"}
-
-    case:
-      - when: "{{ event.name == 'step.exit' }}"
-        then:
-          next:
-            - step: fetch_all_users
+    next:
+      - step: fetch_all_users
 
   - step: fetch_all_users
     desc: Offset-based pagination with automatic continuation
@@ -34,28 +30,27 @@ workflow:
       params:
         offset: 0
         limit: 10
-
     case:
-      - when: "{{ event.name == 'call.done' and response is defined and response.has_more == true }}"
+      - when: "{{ event.name == 'call.done' and response is defined and response.data.has_more == true }}"
         then:
-          collect:
-            strategy: append
-            path: users
-            into: pages
-          retry:
-            max_attempts: 10
-            params:
-              offset: "{{ (response.offset | int) + (response.limit | int) }}"
-              limit: "{{ response.limit }}"
+          - collect:
+              strategy: append
+              path: data.users
+              into: pages
+          - retry:
+              max_attempts: 10
+              params:
+                offset: "{{ (response.data.offset | int) + (response.data.limit | int) }}"
+                limit: "{{ response.data.limit }}"
 
-      - when: "{{ event.name == 'call.done' and response is defined and response.has_more != true }}"
+      - when: "{{ event.name == 'call.done' and response is defined and response.data.has_more != true }}"
         then:
-          collect:
-            strategy: append
-            path: users
-            into: pages
-          next:
-            - step: validate_results
+          - collect:
+              strategy: append
+              path: data.users
+              into: pages
+          - next:
+              - step: validate_results
 
   - step: validate_results
     desc: Validate merged results
@@ -92,12 +87,8 @@ workflow:
             'status': 'success',
             'total_users': len(data)
         }
-
-    case:
-      - when: "{{ event.name == 'step.exit' and response is defined }}"
-        then:
-          next:
-            - step: end
+    next:
+      - step: end
 
   - step: end
     desc: Workflow complete
@@ -107,5 +98,4 @@ workflow:
       libs: {}
       args: {}
       code: |
-        # Direct execution
-            result = {"status": "complete"}
+        result = {"status": "complete"}

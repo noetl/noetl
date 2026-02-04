@@ -11,11 +11,6 @@ metadata:
     feature: transient
     phase: 2
 
-# Test scenario:
-# 1. Set multiple variables using TransientVars
-# 2. Use {{ vars.var_name }} in subsequent step data
-# 3. Verify template rendering works with vars namespace
-
 workload:
   greeting: "Hello"
 
@@ -29,12 +24,8 @@ workflow:
       args: {}
       code: |
         result = {"status": "initialized"}
-    
-    case:
-      - when: "{{ event.name == 'step.exit' }}"
-        then:
-          next:
-            - step: set_variables
+    next:
+      - step: set_variables
 
   - step: set_variables
     desc: Set multiple test variables via vars block
@@ -57,12 +48,8 @@ workflow:
       counter: "{{ result.counter }}"
       message: "{{ result.message }}"
       config: "{{ result.config }}"
-    
-    case:
-      - when: "{{ event.name == 'step.exit' and response is defined }}"
-        then:
-          next:
-            - step: use_vars_in_template
+    next:
+      - step: use_vars_in_template
 
   - step: use_vars_in_template
     desc: Use {{ vars.var_name }} in step data
@@ -76,7 +63,7 @@ workflow:
         timeout: "{{ vars.config.timeout }}"
         full_greeting: "{{ workload.greeting }}, {{ vars.message }}"
       code: |
-        # This step receives data using {{ vars.* }} templates          
+        # This step receives data using {{ vars.* }} templates
         result = {
             "status": "success",
             "received_counter": counter,
@@ -84,12 +71,8 @@ workflow:
             "received_timeout": timeout,
             "full_greeting": full_greeting
         }
-    
-    case:
-      - when: "{{ event.name == 'step.exit' and response is defined }}"
-        then:
-          next:
-            - step: verify_results
+    next:
+      - step: verify_results
 
   - step: verify_results
     desc: Verify template values were rendered correctly
@@ -103,20 +86,20 @@ workflow:
         prev_result = context.get('use_vars_in_template', {})
         if isinstance(prev_result, dict) and 'data' in prev_result:
             prev_result = prev_result['data']
-        
+
         # Verify values
         counter = prev_result.get("received_counter")
         message = prev_result.get("received_message")
         timeout = prev_result.get("received_timeout")
         greeting = prev_result.get("full_greeting")
-        
+
         success = (
             counter == 42 and
             message == "Template access works!" and
             timeout == 30 and
             greeting == "Hello, Template access works!"
         )
-        
+
         result = {
             "status": "success" if success else "failed",
             "verification": {
@@ -132,12 +115,8 @@ workflow:
                 "greeting": greeting
             }
         }
-    
-    case:
-      - when: "{{ event.name == 'step.exit' and response is defined }}"
-        then:
-          next:
-            - step: end
+    next:
+      - step: end
 
   - step: end
     desc: End workflow

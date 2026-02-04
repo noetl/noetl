@@ -5,7 +5,7 @@ metadata:
   path: tests/pagination/loop_with_pagination/loop_with_pagination
   description: |
     Test loop with HTTP pagination using sink-driven architecture.
-    
+
     This playbook demonstrates:
     1. HTTP tool for API calls (no Python requests library)
     2. Sink to Postgres for data storage (each page saved immediately)
@@ -41,12 +41,8 @@ workflow:
         );
         DELETE FROM pagination_test_results WHERE execution_id = {{ execution_id }};
         SELECT 'Table ready' as status;
-
-    case:
-      - when: "{{ event.name == 'step.exit' }}"
-        then:
-          next:
-            - step: fetch_all_endpoints
+    next:
+      - step: fetch_all_endpoints
 
   - step: fetch_all_endpoints
     desc: Loop over endpoints with HTTP pagination - persist data to Postgres with sink
@@ -62,7 +58,7 @@ workflow:
         page: 1
         pageSize: "{{ endpoint.page_size }}"
     case:
-      - when: "{{ event.name == 'call.done' and response.get('data', {}).get('paging', {}).get('hasMore') == true }}"
+      - when: "{{ event.name == 'call.done' and response.data.paging.hasMore == true }}"
         then:
           - save_page:
               tool:
@@ -86,7 +82,7 @@ workflow:
                   page: "{{ response.data.paging.page + 1 }}"
                   pageSize: "{{ endpoint.page_size }}"
 
-      - when: "{{ event.name == 'call.done' and response.get('data', {}).get('paging', {}).get('hasMore') != true }}"
+      - when: "{{ event.name == 'call.done' and response.data.paging.hasMore != true }}"
         then:
           - save_final_page:
               tool:
@@ -106,8 +102,8 @@ workflow:
 
       - when: "{{ event.name == 'loop.done' }}"
         then:
-          next:
-            - step: validate_results
+          - next:
+              - step: validate_results
 
   - step: validate_results
     desc: Validate loop + pagination results from Postgres table
@@ -117,7 +113,7 @@ workflow:
         type: postgres
         credential: pg_k8s
       query: |
-        SELECT 
+        SELECT
           endpoint_name,
           iteration_index,
           MIN(id) as min_id,
@@ -147,26 +143,26 @@ workflow:
         Each pagination request created a separate row in the table.
         Result contains only metadata: table_name, id_range, counts.
         """
-        
+
         print(f"DB results type: {type(db_results)}")
         print(f"DB results: {db_results}")
-        
+
         # db_results should be aggregated summary per iteration
         assert isinstance(db_results, list), f"Expected list of rows, got {type(db_results)}"
         assert len(db_results) > 0, "Expected at least one row in results"
-        
+
         validation = {
             'total_iterations': len(db_results),
             'endpoints_tested': [],
             'total_items_fetched': 0,
             'storage_references': []
         }
-        
+
         # Validate each iteration's aggregated data
         expected_iterations = len(workload['endpoints'])
         assert len(db_results) == expected_iterations, \
             f"Expected {expected_iterations} rows, got {len(db_results)}"
-        
+
         for row in db_results:
             endpoint_name = row['endpoint_name']
             iteration_index = row['iteration_index']
@@ -175,13 +171,13 @@ workflow:
             min_id = row['min_id']
             max_id = row['max_id']
             table_name = row['table_name']
-            
+
             print(f"\n=== Iteration {iteration_index} ===")
             print(f"Endpoint: {endpoint_name}")
             print(f"Pages stored: {page_count}")
             print(f"Total items: {total_items}")
             print(f"Storage: {table_name} (IDs {min_id}-{max_id})")
-            
+
             validation['endpoints_tested'].append({
                 'endpoint': endpoint_name,
                 'items_count': total_items,
@@ -193,7 +189,7 @@ workflow:
                 'count': total_items
             })
             validation['total_items_fetched'] += total_items
-        
+
         # Each iteration should have all 35 items across multiple pages
         expected_counts = [35]  # 2 pages: 30 + 5 items
         for idx, endpoint_result in enumerate(validation['endpoints_tested']):
@@ -205,19 +201,15 @@ workflow:
                 f"Expected {expected} items for {endpoint_name}, got {items_count}"
             assert pages_count == 2, \
                 f"Expected 2 pages for {endpoint_name}, got {pages_count}"
-        
+
         validation['status'] = 'success'
         validation['message'] = \
             f"Successfully validated {len(db_results)} endpoints with " \
             f"{validation['total_items_fetched']} total items stored across multiple pages in Postgres"
-        
-        result = validation
 
-    case:
-      - when: "{{ event.name == 'step.exit' }}"
-        then:
-          next:
-            - step: end
+        result = validation
+    next:
+      - step: end
 
   - step: cleanup
     desc: Clean up test data from Postgres

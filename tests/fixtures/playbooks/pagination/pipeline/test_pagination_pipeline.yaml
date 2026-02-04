@@ -36,11 +36,8 @@ workflow:
           "status": "initialized",
           "message": "Starting pagination pipeline test"
         }
-    case:
-      - when: "{{ event.name == 'step.exit' }}"
-        then:
-          next:
-            - step: create_test_table
+    next:
+      - step: create_test_table
 
   - step: create_test_table
     desc: Create test table for storing fetched data
@@ -58,11 +55,8 @@ workflow:
           page_number INTEGER,
           batch_id VARCHAR(36)
         );
-    case:
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          next:
-            - step: fetch_transform_store
+    next:
+      - step: fetch_transform_store
 
   - step: fetch_transform_store
     desc: |
@@ -71,160 +65,137 @@ workflow:
     tool:
       kind: noop
     case:
-      - when: "{{ event.name == 'step.enter' }}"
-        then:
-          pipe:
-            # Task 1: Fetch current page from API
-            - fetch:
-                tool:
-                  kind: http
-                  url: "{{ workload.api_url }}/api/v1/assessments"
-                  method: GET
-                  params:
-                    page: "{{ vars.current_page }}"
-                    pageSize: "{{ vars.page_size }}"
-
-            # Task 2: Transform the fetched data
-            # _prev contains the HTTP response from fetch
-            - transform:
-                tool:
-                  kind: python
-                  args:
-                    page_data: "{{ _prev }}"
-                    page_num: "{{ vars.current_page }}"
-                    execution_id: "{{ execution_id }}"
-                  code: |
-                    import json
-                    from datetime import datetime
-
-                    # Extract data from HTTP response
-                    items = page_data.get('data', [])
-                    paging = page_data.get('paging', {})
-
-                    # Transform each item
-                    transformed = []
-                    for item in items:
-                        transformed.append({
-                            'assessment_id': item['id'],
-                            'assessment_name': item['name'].upper(),  # Transform: uppercase
-                            'score': item['score'] * 10,  # Transform: scale score
-                            'page_number': page_num,
-                            'batch_id': execution_id[:8]
-                        })
-
-                    result = {
-                        'items': transformed,
-                        'count': len(transformed),
-                        'has_more': paging.get('hasMore', False),
-                        'current_page': paging.get('page', page_num),
-                        'total': paging.get('total', 0)
-                    }
-
-            # Task 3: Store transformed data to PostgreSQL
-            # _prev contains the transformed result from transform task
-            - store:
-                tool:
-                  kind: python
-                  args:
-                    data: "{{ _prev }}"
-                    db_host: "{{ workload.db_host }}"
-                    db_port: "{{ workload.db_port }}"
-                    db_name: "{{ workload.db_name }}"
-                    db_user: "{{ workload.db_user }}"
-                    db_password: "{{ workload.db_password }}"
-                  libs:
-                    - psycopg2-binary
-                  code: |
-                    import psycopg2
-
-                    conn = psycopg2.connect(
-                        host=db_host,
-                        port=db_port,
-                        dbname=db_name,
-                        user=db_user,
-                        password=db_password
-                    )
-
-                    cursor = conn.cursor()
-
-                    inserted = 0
-                    for item in data['items']:
-                        cursor.execute('''
-                            INSERT INTO pagination_test_results
-                            (assessment_id, assessment_name, score, page_number, batch_id)
-                            VALUES (%s, %s, %s, %s, %s)
-                        ''', (
-                            item['assessment_id'],
-                            item['assessment_name'],
-                            item['score'],
-                            item['page_number'],
-                            item['batch_id']
-                        ))
-                        inserted += 1
-
-                    conn.commit()
-                    cursor.close()
-                    conn.close()
-
-                    result = {
-                        'stored': inserted,
-                        'has_more': data['has_more'],
-                        'current_page': data['current_page'],
-                        'total': data['total']
-                    }
-
-          # Centralized error handling
-          catch:
-            cond:
-              # Retry fetch on transient errors (network, 5xx)
-              - when: "{{ _task == 'fetch' and _err.retryable }}"
-                do: retry
-                attempts: 5
-                backoff: exponential
-                delay: 1.0
-
-              # Retry fetch on rate limiting with Retry-After header
-              - when: "{{ _task == 'fetch' and _err.kind == 'rate_limit' }}"
-                do: retry
-                attempts: 10
-                delay: "{{ _err.retry_after | default(5) }}"
-
-              # Skip transform errors, continue with empty result
-              - when: "{{ _task == 'transform' }}"
-                do: skip
-                set_prev:
-                  items: []
-                  count: 0
-                  has_more: false
-
-              # Retry store on database errors (deadlock, connection)
-              - when: "{{ _task == 'store' and _err.retryable }}"
-                do: retry
-                attempts: 3
-                backoff: linear
-                delay: 2.0
-
-              # Fail on auth errors - no point retrying
-              - when: "{{ _err.kind == 'auth' }}"
-                do: fail
-
-              # Default: fail the pipeline
-              - else:
-                  do: fail
-
-          # Continue to pagination check after pipeline success
-          finally:
-            - next:
-                - step: check_pagination
-
-      # Handle pipeline completion event
       - when: "{{ event.name == 'call.done' }}"
         then:
-          # Update vars with pipeline result
-          vars:
-            total_fetched: "{{ (vars.total_fetched | int) + (response.stored | default(0) | int) }}"
-          next:
-            - step: check_pagination
+          - pipe:
+              - fetch:
+                  tool:
+                    kind: http
+                    url: "{{ workload.api_url }}/api/v1/assessments"
+                    method: GET
+                    params:
+                      page: "{{ vars.current_page }}"
+                      pageSize: "{{ vars.page_size }}"
+
+              - transform:
+                  tool:
+                    kind: python
+                    args:
+                      http_response: "{{ _prev }}"
+                      page_num: "{{ vars.current_page }}"
+                      execution_id: "{{ execution_id }}"
+                    code: |
+                      import json
+                      from datetime import datetime
+
+                      response_body = http_response.get('data', {})
+                      items = response_body.get('data', [])
+                      paging = response_body.get('paging', {})
+
+                      transformed = []
+                      for item in items:
+                          transformed.append({
+                              'assessment_id': item['id'],
+                              'assessment_name': item['name'].upper(),
+                              'score': item['score'] * 10,
+                              'page_number': page_num,
+                              'batch_id': execution_id[:8]
+                          })
+
+                      result = {
+                          'items': transformed,
+                          'count': len(transformed),
+                          'has_more': paging.get('hasMore', False),
+                          'current_page': paging.get('page', page_num),
+                          'total': paging.get('total', 0)
+                      }
+
+              - store:
+                  tool:
+                    kind: python
+                    args:
+                      data: "{{ _prev }}"
+                      db_host: "{{ workload.db_host }}"
+                      db_port: "{{ workload.db_port }}"
+                      db_name: "{{ workload.db_name }}"
+                      db_user: "{{ workload.db_user }}"
+                      db_password: "{{ workload.db_password }}"
+                    libs:
+                      - psycopg2-binary
+                    code: |
+                      import psycopg2
+
+                      conn = psycopg2.connect(
+                          host=db_host,
+                          port=db_port,
+                          dbname=db_name,
+                          user=db_user,
+                          password=db_password
+                      )
+
+                      cursor = conn.cursor()
+
+                      inserted = 0
+                      for item in data['items']:
+                          cursor.execute('''
+                              INSERT INTO pagination_test_results
+                              (assessment_id, assessment_name, score, page_number, batch_id)
+                              VALUES (%s, %s, %s, %s, %s)
+                          ''', (
+                              item['assessment_id'],
+                              item['assessment_name'],
+                              item['score'],
+                              item['page_number'],
+                              item['batch_id']
+                          ))
+                          inserted += 1
+
+                      conn.commit()
+                      cursor.close()
+                      conn.close()
+
+                      result = {
+                          'stored': inserted,
+                          'has_more': data['has_more'],
+                          'current_page': data['current_page'],
+                          'total': data['total']
+                      }
+
+            catch:
+              cond:
+                - when: "{{ _task == 'fetch' and _err.retryable }}"
+                  do: retry
+                  attempts: 5
+                  backoff: exponential
+                  delay: 1.0
+
+                - when: "{{ _task == 'fetch' and _err.kind == 'rate_limit' }}"
+                  do: retry
+                  attempts: 10
+                  delay: "{{ _err.retry_after | default(5) }}"
+
+                - when: "{{ _task == 'transform' }}"
+                  do: skip
+                  set_prev:
+                    items: []
+                    count: 0
+                    has_more: false
+
+                - when: "{{ _task == 'store' and _err.retryable }}"
+                  do: retry
+                  attempts: 3
+                  backoff: linear
+                  delay: 2.0
+
+                - when: "{{ _err.kind == 'auth' }}"
+                  do: fail
+
+                - else:
+                    do: fail
+
+            finally:
+              - next:
+                  - step: check_pagination
 
   - step: check_pagination
     desc: Check if more pages to fetch
@@ -244,21 +215,19 @@ workflow:
           "action": "continue" if has_more else "complete"
         }
     case:
-      # More pages to fetch - increment page and loop back
       - when: "{{ event.name == 'call.done' and response.has_more == true }}"
         then:
-          vars:
-            current_page: "{{ (vars.current_page | int) + 1 }}"
-          next:
-            - step: fetch_transform_store
+          - vars:
+              current_page: "{{ (vars.current_page | int) + 1 }}"
+          - next:
+              - step: fetch_transform_store
 
-      # All pages fetched - validate results
       - when: "{{ event.name == 'call.done' and response.has_more != true }}"
         then:
-          vars:
-            all_pages_done: true
-          next:
-            - step: validate_results
+          - vars:
+              all_pages_done: true
+          - next:
+              - step: validate_results
 
   - step: validate_results
     desc: Validate all data was fetched and stored correctly
@@ -273,11 +242,8 @@ workflow:
           MAX(assessment_id) as max_id,
           AVG(score) as avg_score
         FROM pagination_test_results
-    case:
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          next:
-            - step: final_report
+    next:
+      - step: final_report
 
   - step: final_report
     desc: Generate final test report
@@ -288,7 +254,6 @@ workflow:
         pages_processed: "{{ vars.current_page }}"
         total_fetched: "{{ vars.total_fetched }}"
       code: |
-        # Extract validation results
         if isinstance(validation, list) and len(validation) > 0:
             stats = validation[0]
         else:
@@ -300,7 +265,6 @@ workflow:
         max_id = stats.get('max_id', 0)
         avg_score = stats.get('avg_score', 0)
 
-        # Expected: 35 items (from mock API)
         expected_items = 35
         success = total_records == expected_items
 
@@ -324,11 +288,8 @@ workflow:
 
         if not success:
             result["error"] = f"Expected {expected_items} records, got {total_records}"
-    case:
-      - when: "{{ event.name == 'step.exit' }}"
-        then:
-          next:
-            - step: end
+    next:
+      - step: end
 
   - step: end
     desc: Test complete

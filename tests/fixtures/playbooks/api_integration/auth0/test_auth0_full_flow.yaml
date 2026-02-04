@@ -6,12 +6,12 @@ metadata:
   description: |
     End-to-end test of Auth0 authentication flow.
     Gets token from Auth0, validates it, creates session.
-    
+
     Input:
       - username: Auth0 user email (default: kadyapam@gmail.com)
       - password: Auth0 user password
       - auth0_credential: Credential name for Auth0 client secret
-    
+
     Output:
       - session_token: NoETL session token
       - user_id: Internal user ID
@@ -39,11 +39,8 @@ workflow:
       args: {}
       code: |
         result = {"status": "starting", "test": "auth0_full_flow"}
-    case:
-      - when: "{{ event.name == 'step.exit' }}"
-        then:
-          next:
-            - step: get_auth0_token
+    next:
+      - step: get_auth0_token
 
   - step: get_auth0_token
     desc: Get Auth0 access token
@@ -57,14 +54,14 @@ workflow:
         client_id: "{{ workload.client_id }}"
         auth0_credential: "{{ workload.auth0_credential }}"
     case:
-      - when: "{{ event.name == 'step.exit' and get_auth0_token.status == 'success' }}"
+      - when: "{{ event.name == 'call.done' and get_auth0_token.status == 'success' }}"
         then:
-          next:
-            - step: login_with_token
-      - when: "{{ event.name == 'step.exit' and get_auth0_token.status == 'error' }}"
+          - next:
+              - step: login_with_token
+      - when: "{{ event.name == 'call.done' and get_auth0_token.status == 'error' }}"
         then:
-          next:
-            - step: auth_error
+          - next:
+              - step: auth_error
 
   - step: login_with_token
     desc: Create NoETL session with Auth0 token
@@ -75,14 +72,14 @@ workflow:
         auth0_token: "{{ get_auth0_token.access_token }}"
         client_ip: "127.0.0.1"
     case:
-      - when: "{{ event.name == 'step.exit' and login_with_token.status == 'authenticated' }}"
+      - when: "{{ event.name == 'call.done' and login_with_token.status == 'authenticated' }}"
         then:
-          next:
-            - step: test_success
-      - when: "{{ event.name == 'step.exit' and login_with_token.status != 'authenticated' }}"
+          - next:
+              - step: test_success
+      - when: "{{ event.name == 'call.done' and login_with_token.status != 'authenticated' }}"
         then:
-          next:
-            - step: login_error
+          - next:
+              - step: login_error
 
   - step: test_success
     desc: Return successful test result
@@ -107,11 +104,8 @@ workflow:
             },
             "expires_at": expires_at
         }
-    case:
-      - when: "{{ event.name == 'step.exit' }}"
-        then:
-          next:
-            - step: end
+    next:
+      - step: end
 
   - step: auth_error
     desc: Auth0 token acquisition failed
@@ -128,11 +122,8 @@ workflow:
             "stage": "auth0_token",
             "error": error
         }
-    case:
-      - when: "{{ event.name == 'step.exit' }}"
-        then:
-          next:
-            - step: end
+    next:
+      - step: end
 
   - step: login_error
     desc: NoETL login failed
@@ -149,11 +140,8 @@ workflow:
             "stage": "noetl_login",
             "error": error
         }
-    case:
-      - when: "{{ event.name == 'step.exit' }}"
-        then:
-          next:
-            - step: end
+    next:
+      - step: end
 
   - step: end
     desc: Complete

@@ -7,7 +7,7 @@ metadata:
 
 workload:
   test_url: https://httpbin.org/get
-  
+
 workflow:
   - step: start
     desc: Fetch URL and stop retrying when status is 200
@@ -15,20 +15,19 @@ workflow:
       kind: http
       method: GET
       url: "{{ workload.test_url }}"
-    
     case:
       - when: "{{ event.name == 'call.error' }}"
         then:
-          retry:
-            max_attempts: 3
-            initial_delay: 0.5
-            backoff_multiplier: 1.5
-      
-      - when: "{{ event.name == 'step.exit' and response is defined }}"
+          - retry:
+              max_attempts: 3
+              initial_delay: 0.5
+              backoff_multiplier: 1.5
+
+      - when: "{{ event.name == 'call.done' and response is defined }}"
         then:
-          next:
-            - step: end
-        
+          - next:
+              - step: end
+
   - step: end
     desc: End workflow
     tool:

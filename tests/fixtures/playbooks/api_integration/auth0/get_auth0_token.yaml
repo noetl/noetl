@@ -6,14 +6,14 @@ metadata:
   description: |
     Get Auth0 access token using Resource Owner Password Grant.
     Retrieves Auth0 client secret from NoETL credential table.
-    
+
     Input:
       - username: Auth0 user email
       - password: Auth0 user password
       - auth0_domain: Auth0 tenant domain (default: mestumre-development.us.auth0.com)
       - client_id: Auth0 application client ID (default: Jqop7YoaiZalLHdBRo5ScNQ1RJhbhbDN)
       - auth0_credential: Credential key for Auth0 client secret (default: auth0_client)
-    
+
     Output:
       - access_token: Auth0 access token
       - token_type: Token type (Bearer)
@@ -29,10 +29,6 @@ workload:
   auth0_domain: "{{ auth0_domain | default('mestumre-development.us.auth0.com') }}"
   client_id: "{{ client_id | default('Jqop7YoaiZalLHdBRo5ScNQ1RJhbhbDN') }}"
   auth0_credential: "{{ auth0_credential | default('auth0_client') }}"
-  # API Audience options:
-  # - https://DOMAIN/me/ - My Account API (user authentication, default)
-  # - https://DOMAIN/api/v2/ - Management API (admin operations)
-  # - omit for just OpenID/OAuth scopes
   audience: "{{ audience | default('https://' + auth0_domain | default('mestumre-development.us.auth0.com') + '/me/') }}"
 
 keychain:
@@ -51,11 +47,8 @@ workflow:
       args: {}
       code: |
         result = {"status": "initialized"}
-    case:
-      - when: "{{ event.name == 'step.exit' }}"
-        then:
-          next:
-            - step: get_token
+    next:
+      - step: get_token
 
   - step: get_token
     desc: Get access token from Auth0
@@ -74,14 +67,14 @@ workflow:
         client_secret: "{{ keychain.auth0_credentials.client_secret }}"
         scope: "openid profile email"
     case:
-      - when: "{{ event.name == 'step.exit' and response.status == 200 }}"
+      - when: "{{ event.name == 'call.done' and response.status_code == 200 }}"
         then:
-          next:
-            - step: success
-      - when: "{{ event.name == 'step.exit' and response.status != 200 }}"
+          - next:
+              - step: success
+      - when: "{{ event.name == 'call.done' and response.status_code != 200 }}"
         then:
-          next:
-            - step: error
+          - next:
+              - step: error
 
   - step: success
     desc: Return token
@@ -101,11 +94,8 @@ workflow:
             "token_type": token_type,
             "expires_in": expires_in
         }
-    case:
-      - when: "{{ event.name == 'step.exit' }}"
-        then:
-          next:
-            - step: end
+    next:
+      - step: end
 
   - step: error
     desc: Token acquisition failed
@@ -114,7 +104,7 @@ workflow:
       auth: {}
       libs: {}
       args:
-        status: "{{ get_token.status }}"
+        status: "{{ get_token.status_code }}"
         error: "{{ get_token.data }}"
       code: |
         # Arguments injected: status, error
@@ -123,11 +113,8 @@ workflow:
             "http_status": status,
             "error": error
         }
-    case:
-      - when: "{{ event.name == 'step.exit' }}"
-        then:
-          next:
-            - step: end
+    next:
+      - step: end
 
   - step: end
     desc: Complete

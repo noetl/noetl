@@ -31,11 +31,8 @@ workload:
   gateway_url: ""
   # Target operation (required input parameter)
   target: "status"
-  gateway_url: ""
   # Optional override for API base URL
   base_url: ""
-  # Default target if not specified in payload
-  target: status
   # History lookup defaults (Natural Gas futures)
   symbol: NG
   exchange: NYMEX
@@ -82,36 +79,34 @@ workflow:
             "totp_secret": totp_secret,
         }
     case:
-      - when: "{{ event.name == 'step.exit' and workload.target == 'accounts' }}"
+      - when: "{{ event.name == 'call.done' and workload.target == 'accounts' }}"
         then:
-          next:
-            - step: get_accounts
-      - when: "{{ event.name == 'step.exit' and workload.target == 'positions' }}"
+          - next:
+              - step: get_accounts
+      - when: "{{ event.name == 'call.done' and workload.target == 'positions' }}"
         then:
-          next:
-            - step: get_positions
-      - when: "{{ event.name == 'step.exit' and workload.target == 'orders' }}"
+          - next:
+              - step: get_positions
+      - when: "{{ event.name == 'call.done' and workload.target == 'orders' }}"
         then:
-          next:
-            - step: get_orders
-      - when: "{{ event.name == 'step.exit' and workload.target == 'tickle' }}"
+          - next:
+              - step: get_orders
+      - when: "{{ event.name == 'call.done' and workload.target == 'tickle' }}"
         then:
-          next:
-            - step: tickle_session
-      - when: "{{ event.name == 'step.exit' and workload.target == 'totp' }}"
+          - next:
+              - step: tickle_session
+      - when: "{{ event.name == 'call.done' and workload.target == 'totp' }}"
         then:
-          next:
-            - step: generate_totp
-      - when: "{{ event.name == 'step.exit' and workload.target == 'history' }}"
+          - next:
+              - step: generate_totp
+      - when: "{{ event.name == 'call.done' and workload.target == 'history' }}"
         then:
-          next:
-            - step: get_futures
-      - when: "{{ event.name == 'step.exit' and workload.target == 'status' }}"
+          - next:
+              - step: get_futures
+      - when: "{{ event.name == 'call.done' and workload.target == 'status' }}"
         then:
-          next:
-            - step: check_auth_status
-    next:
-      - step: end
+          - next:
+              - step: check_auth_status
 
   # ============================================
   # Authentication Status
@@ -139,7 +134,7 @@ workflow:
       code: |
         data = response.get('data', {})
         status_code = response.get('status_code', 0)
-        
+
         if status_code != 200:
             result = {
                 'status': 'error',
@@ -149,7 +144,7 @@ workflow:
         else:
             authenticated = data.get('authenticated', False)
             connected = data.get('connected', False)
-            
+
             result = {
                 'status': 'ready' if (authenticated and connected) else 'not_authenticated',
                 'authenticated': authenticated,
@@ -182,7 +177,7 @@ workflow:
             totp = pyotp.TOTP(totp_secret)
             code = totp.now()
             remaining = 30 - (int(time.time()) % 30)
-            
+
             result = {
                 'status': 'success',
                 'totp_code': code,
@@ -331,7 +326,7 @@ workflow:
       code: |
         data = response.get('data', [])
         status_code = response.get('status_code', 0)
-        
+
         if status_code != 200:
             result = {
                 'status': 'error',
@@ -400,7 +395,7 @@ workflow:
       code: |
         data = response.get('data', [])
         status_code = response.get('status_code', 0)
-        
+
         if status_code != 200:
             result = {
                 'status': 'error',
@@ -460,7 +455,7 @@ workflow:
       code: |
         data = response.get('data', {})
         orders = data.get('orders', []) if isinstance(data, dict) else []
-        
+
         result = {
             'status': 'success',
             'count': len(orders),

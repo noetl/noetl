@@ -10,253 +10,122 @@ workload:
   initial_value: 100
 
 workflow:
-- step: start
-  desc: Test transient functionality
-  tool:
-    kind: python
-    auth: {}
-    libs: {}
-    args: {}
-    code: |
-      result = {"status": "initialized"}
-  
-  case:
-    - when: "{{ event.name == 'step.exit' }}"
-      then:
-        next:
-          - step: test_set_var
+  - step: start
+    desc: Test transient functionality
+    tool:
+      kind: python
+      auth: {}
+      libs: {}
+      args: {}
+      code: |
+        result = {"status": "initialized"}
+    next:
+      - step: test_set_var
 
-- step: test_set_var
-  desc: Set initial variables using vars block
-  tool:
-    kind: python
-    auth: {}
-    libs: {}
-    args: {}
-    code: |
-      # Return values that will be extracted via vars block
-      result = {
-          "status": "success",
-          "counter": 0,
-          "status_var": "initialized",
-          "config": {"timeout": 30, "retries": 3}
-      }
-  
-  vars:
-    counter: "{{ result.counter }}"
-    status_var: "{{ result.status_var }}"
-    config: "{{ result.config }}"
-  
-  case:
-    - when: "{{ event.name == 'step.exit' and response is defined }}"
-      then:
-        next:
-          - step: test_get_var
+  - step: test_set_var
+    desc: Set initial variables using vars block
+    tool:
+      kind: python
+      auth: {}
+      libs: {}
+      args: {}
+      code: |
+        # Return values that will be extracted via vars block
+        result = {
+            "status": "success",
+            "counter": 0,
+            "status_var": "initialized",
+            "config": {"timeout": 30, "retries": 3}
+        }
+    vars:
+      counter: "{{ result.counter }}"
+      status_var: "{{ result.status_var }}"
+      config: "{{ result.config }}"
+    next:
+      - step: test_get_var
 
-- step: test_get_var
-  desc: Retrieve and verify variables via template args
-  tool:
-    kind: python
-    auth: {}
-    libs: {}
-    args:
-      counter: "{{ vars.counter }}"
-      status_var: "{{ vars.status_var }}"
-      config: "{{ vars.config }}"
-    code: |
-      # Verify variables received via args
-      result = {
-          "status": "success",
-          "data": {
-              "counter": counter,
-              "status_var": status_var,
-              "config": config,
-              "verification": {
-                  "counter_correct": counter == 0,
-                  "status_correct": status_var == "initialized",
-                  "config_correct": config == {"timeout": 30, "retries": 3}
-              }
-          }
-      }
-  
-  case:
-    - when: "{{ event.name == 'step.exit' and response is defined }}"
-      then:
-        next:
-          - step: test_update_var
+  - step: test_get_var
+    desc: Retrieve and verify variables via template args
+    tool:
+      kind: python
+      auth: {}
+      libs: {}
+      args:
+        counter: "{{ vars.counter }}"
+        status_var: "{{ vars.status_var }}"
+        config: "{{ vars.config }}"
+      code: |
+        # Verify variables received via args
+        result = {
+            "status": "success",
+            "data": {
+                "counter": counter,
+                "status_var": status_var,
+                "config": config,
+                "verification": {
+                    "counter_correct": counter == 0,
+                    "status_correct": status_var == "initialized",
+                    "config_correct": config == {"timeout": 30, "retries": 3}
+                }
+            }
+        }
+    next:
+      - step: test_update_var
 
-- step: test_update_var
-  desc: Update variable values
-  tool:
-    kind: python
-    auth: {}
-    libs: {}
-    args: {}
-    code: |
-      # Return updated values
-      result = {
-          "status": "success",
-          "counter": 1,
-          "status_var": "processing"
-      }
-  
-  vars:
-    counter: "{{ result.counter }}"
-    status_var: "{{ result.status_var }}"
-  
-  case:
-    - when: "{{ event.name == 'step.exit' and response is defined }}"
-      then:
-        next:
-          - step: verify_updates
+  - step: test_update_var
+    desc: Update variable values
+    tool:
+      kind: python
+      auth: {}
+      libs: {}
+      args: {}
+      code: |
+        # Return updated values
+        result = {
+            "status": "success",
+            "counter": 1,
+            "status_var": "processing"
+        }
+    vars:
+      counter: "{{ result.counter }}"
+      status_var: "{{ result.status_var }}"
+    next:
+      - step: verify_updates
 
-- step: verify_updates
-  desc: Verify updated values
-  tool:
-    kind: python
-    auth: {}
-    libs: {}
-    args:
-      counter: "{{ vars.counter }}"
-      status_var: "{{ vars.status_var }}"
-      config: "{{ vars.config }}"
-    code: |
-      # Verify updated values
-      result = {
-          "status": "success",
-          "verification": {
-              "counter_updated": counter == 1,
-              "status_updated": status_var == "processing",
-              "config_preserved": config == {"timeout": 30, "retries": 3}
-          },
-          "all_checks_passed": (
-              counter == 1 and 
-              status_var == "processing" and 
-              config == {"timeout": 30, "retries": 3}
-          )
-      }
-  
-  case:
-    - when: "{{ event.name == 'step.exit' and response is defined }}"
-      then:
-        next:
-          - step: end
+  - step: verify_updates
+    desc: Verify updated values
+    tool:
+      kind: python
+      auth: {}
+      libs: {}
+      args:
+        counter: "{{ vars.counter }}"
+        status_var: "{{ vars.status_var }}"
+        config: "{{ vars.config }}"
+      code: |
+        # Verify updated values
+        result = {
+            "status": "success",
+            "verification": {
+                "counter_updated": counter == 1,
+                "status_updated": status_var == "processing",
+                "config_preserved": config == {"timeout": 30, "retries": 3}
+            },
+            "all_checks_passed": (
+                counter == 1 and
+                status_var == "processing" and
+                config == {"timeout": 30, "retries": 3}
+            )
+        }
+    next:
+      - step: end
 
-- step: end
-  desc: End workflow
-  tool:
-    kind: python
-    auth: {}
-    libs: {}
-    args: {}
-    code: |
-      result = {"status": "complete"}
-      
-      result = {
-          "status": "success",
-          "data": {
-              "counter_value": counter["value"],
-              "counter_access_count": counter["access_count"],
-              "status_value": status["value"],
-              "status_access_count": status["access_count"]
-          }
-      }
-  
-  case:
-    - when: "{{ event.name == 'step.exit' and response is defined }}"
-      then:
-        next:
-          - step: test_bulk_set
-
-- step: test_bulk_set
-  desc: Test bulk variable setting
-  tool:
-    kind: python
-    auth: {}
-    libs:
-      TransientVars:
-        from: noetl.worker.transient
-        import: TransientVars
-    args: {}
-    code: |
-      execution_id = int(context.get('execution_id'))
-      
-      # Set multiple variables at once
-      vars_to_set = {
-          "bulk_var_1": "value1",
-          "bulk_var_2": 42,
-          "bulk_var_3": [1, 2, 3],
-          "bulk_var_4": {"nested": "object"}
-          }
-          
-          count = await TransientVars.set_multiple(
-              variables=vars_to_set,
-              execution_id=execution_id,
-              var_type="computed",
-              source_step="test_bulk_set"
-          )
-          
-          # Get all vars with metadata
-          all_with_meta = await TransientVars.get_all_vars_with_metadata(execution_id)
-          
-          return {
-              "status": "success",
-              "data": {
-                  "bulk_set_count": count,
-                  "total_vars": len(all_with_meta),
-                  "var_names": list(all_with_meta.keys())
-              }
-          }
-  
-  case:
-    - when: "{{ event.name == 'step.exit' and response is defined }}"
-      then:
-        next:
-          - step: test_delete_var
-
-- step: test_delete_var
-  desc: Test variable deletion
-  tool:
-    kind: python
-    auth: {}
-    libs:
-      TransientVars:
-        from: noetl.worker.transient
-        import: TransientVars
-    args: {}
-    code: |
-      execution_id = int(context.get('execution_id'))
-      
-      # Delete single variable
-      deleted = await TransientVars.delete_var("bulk_var_1", execution_id)
-      
-      # Verify deletion
-      deleted_var = await TransientVars.get_cached("bulk_var_1", execution_id)
-      
-      # Get remaining vars
-      all_vars = await TransientVars.get_all_vars(execution_id)
-      
-      result = {
-          "status": "success",
-          "data": {
-              "delete_success": deleted,
-              "var_still_exists": deleted_var is not None,
-              "remaining_var_count": len(all_vars)
-          }
-      }
-  
-  case:
-    - when: "{{ event.name == 'step.exit' and response is defined }}"
-      then:
-        next:
-          - step: end
-
-- step: end
-  desc: End workflow - cleanup will happen automatically
-  tool:
-    kind: python
-    auth: {}
-    libs: {}
-    args: {}
-    code: |
-      result = {"status": "complete"}
+  - step: end
+    desc: End workflow
+    tool:
+      kind: python
+      auth: {}
+      libs: {}
+      args: {}
+      code: |
+        result = {"status": "complete"}

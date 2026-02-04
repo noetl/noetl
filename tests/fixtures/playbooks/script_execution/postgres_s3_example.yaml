@@ -5,9 +5,9 @@ metadata:
   path: tests/script_execution/postgres_s3
 
 workload:
-  s3_script_uri: s3://noetl-sql-scripts/migrations/create_test_table.sql  # Full S3 URI
+  s3_script_uri: s3://noetl-sql-scripts/migrations/create_test_table.sql
   s3_region: us-east-1
-  aws_credential: aws_credentials  # Credential registered in NoETL
+  aws_credential: aws_credentials
   pg_auth: pg_local
 
 workflow:
@@ -20,12 +20,8 @@ workflow:
       args: {}
       code: |
         result = {"status": "initialized"}
-    
-    case:
-      - when: "{{ event.name == 'step.exit' }}"
-        then:
-          next:
-            - step: run_postgres_from_s3
+    next:
+      - step: run_postgres_from_s3
 
   - step: run_postgres_from_s3
     desc: Execute SQL script from AWS S3 using full URI
@@ -33,17 +29,13 @@ workflow:
       kind: postgres
       auth: "{{ workload.pg_auth }}"
       script:
-        uri: "{{ workload.s3_script_uri }}"  # Full s3://bucket/path URI
+        uri: "{{ workload.s3_script_uri }}"
         source:
           type: s3
           region: "{{ workload.s3_region }}"
           auth: "{{ workload.aws_credential }}"
-    
-    case:
-      - when: "{{ event.name == 'step.exit' and response is defined }}"
-        then:
-          next:
-            - step: verify_table
+    next:
+      - step: verify_table
 
   - step: verify_table
     desc: Verify table was created from S3 script
@@ -53,12 +45,8 @@ workflow:
       command: |
         SELECT COUNT(*) as record_count, 'from_s3_script' as verification
         FROM public.script_test;
-    
-    case:
-      - when: "{{ event.name == 'step.exit' and response is defined }}"
-        then:
-          next:
-            - step: cleanup
+    next:
+      - step: cleanup
 
   - step: cleanup
     desc: Clean up test table
@@ -67,12 +55,8 @@ workflow:
       auth: "{{ workload.pg_auth }}"
       command: |
         DROP TABLE IF EXISTS public.script_test;
-    
-    case:
-      - when: "{{ event.name == 'step.exit' and response is defined }}"
-        then:
-          next:
-            - step: end
+    next:
+      - step: end
 
   - step: end
     desc: End workflow

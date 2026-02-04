@@ -7,7 +7,7 @@ metadata:
 
 workload:
   greeting: "Hello"
-  
+
 workflow:
   - step: start
     desc: Start execution
@@ -18,12 +18,8 @@ workflow:
       args: {}
       code: |
         result = {"status": "initialized"}
-    
-    case:
-      - when: "{{ event.name == 'step.exit' }}"
-        then:
-          next:
-            - step: fetch_data
+    next:
+      - step: fetch_data
 
   - step: fetch_data
     desc: Simulate fetching data and extract vars
@@ -45,21 +41,20 @@ workflow:
                 "source": "test_db"
             }
         }
-    
     case:
-      - when: "{{ event.name == 'step.exit' and response is defined }}"
+      - when: "{{ event.name == 'call.done' and response is defined }}"
         then:
-          set:
-            - name: first_user_id
-              value: "{{ response.users[0].user_id }}"
-            - name: first_email
-              value: "{{ response.users[0].email }}"
-            - name: user_count
-              value: "{{ response.metadata.count }}"
-            - name: data_source
-              value: "{{ response.metadata.source }}"
-          next:
-            - step: use_extracted_vars
+          - set:
+              - name: first_user_id
+                value: "{{ response.users[0].user_id }}"
+              - name: first_email
+                value: "{{ response.users[0].email }}"
+              - name: user_count
+                value: "{{ response.metadata.count }}"
+              - name: data_source
+                value: "{{ response.metadata.source }}"
+          - next:
+              - step: use_extracted_vars
 
   - step: use_extracted_vars
     desc: Use variables that were extracted by vars block
@@ -86,12 +81,8 @@ workflow:
                 "data_source": data_source
             }
         }
-    
-    case:
-      - when: "{{ event.name == 'step.exit' and response is defined }}"
-        then:
-          next:
-            - step: verify_vars
+    next:
+      - step: verify_vars
 
   - step: verify_vars
     desc: Verify all vars were extracted and used correctly
@@ -112,9 +103,9 @@ workflow:
             "user_count_correct": user_count == 2,
             "data_source_correct": data_source == "test_db"
         }
-        
+
         all_passed = all(checks.values())
-        
+
         result = {
             "status": "success" if all_passed else "failed",
             "checks": checks,
@@ -125,12 +116,8 @@ workflow:
                 "data_source": data_source
             }
         }
-    
-    case:
-      - when: "{{ event.name == 'step.exit' and response is defined }}"
-        then:
-          next:
-            - step: end
+    next:
+      - step: end
 
   - step: end
     desc: End execution

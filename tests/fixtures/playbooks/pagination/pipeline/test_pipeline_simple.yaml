@@ -23,7 +23,6 @@ workflow:
     tool:
       kind: noop
     case:
-      # When the noop tool completes, trigger the pipeline
       - when: "{{ event.name == 'call.done' }}"
         then:
           - pipe:
@@ -42,8 +41,6 @@ workflow:
                     args:
                       http_response: "{{ _prev }}"
                     code: |
-                      # HTTP tool returns {url, data, headers, status_code}
-                      # data contains the actual API response body
                       response_body = http_response.get('data', {})
                       items = response_body.get('data', [])
                       result = {

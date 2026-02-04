@@ -19,12 +19,8 @@ workflow:
       args: {}
       code: |
         result = {"status": "initialized"}
-    
-    case:
-      - when: "{{ event.name == 'step.exit' }}"
-        then:
-          next:
-            - step: run_python_from_file
+    next:
+      - step: run_python_from_file
 
   - step: run_python_from_file
     desc: Execute Python script from local file
@@ -37,12 +33,8 @@ workflow:
       args:
         name: "{{ workload.greeting_name }}"
         count: "{{ workload.greeting_count }}"
-    
-    case:
-      - when: "{{ event.name == 'step.exit' and response is defined }}"
-        then:
-          next:
-            - step: verify_result
+    next:
+      - step: verify_result
 
   - step: verify_result
     desc: Verify script execution result
@@ -57,18 +49,14 @@ workflow:
         assert result['total_greetings'] == 3, f"Expected 3 greetings, got {result['total_greetings']}"
         assert result['script_source'] == 'file', f"Expected file source, got {result['script_source']}"
         assert len(result['messages']) == 3, f"Expected 3 messages, got {len(result['messages'])}"
-        
+
         result = {
             "status": "verified",
             "checks_passed": 4,
             "result": result
         }
-    
-    case:
-      - when: "{{ event.name == 'step.exit' and response is defined }}"
-        then:
-          next:
-            - step: end
+    next:
+      - step: end
 
   - step: end
     desc: End workflow

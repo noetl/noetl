@@ -19,12 +19,8 @@ workflow:
       args: {}
       code: |
         result = {"status": "initialized"}
-    
-    case:
-      - when: "{{ event.name == 'step.exit' }}"
-        then:
-          next:
-            - step: create_initial_vars
+    next:
+      - step: create_initial_vars
 
   - step: create_initial_vars
     desc: Create some variables via vars block
@@ -64,12 +60,8 @@ workflow:
         # In real test, external scripts will call API endpoints
         time.sleep(5)
         result = {"status": "ready_for_api_tests"}
-    
-    case:
-      - when: "{{ event.name == 'step.exit' and response is defined }}"
-        then:
-          next:
-            - step: verify_vars_accessible
+    next:
+      - step: verify_vars_accessible
 
   - step: verify_vars_accessible
     desc: Verify variables are accessible after API operations
@@ -84,7 +76,7 @@ workflow:
       code: |
         # Debug: Show what we received
         print(f"DEBUG: Received user_id={repr(user_id)}, username={repr(username)}, score={repr(score)}")
-        
+
         # Convert to correct types, with validation
         if not user_id or user_id == '':
           raise ValueError(f"user_id is empty or None: {repr(user_id)}")
@@ -92,15 +84,15 @@ workflow:
           raise ValueError(f"username is empty or None: {repr(username)}")
         if not score or score == '':
           raise ValueError(f"score is empty or None: {repr(score)}")
-          
+
         user_id = int(user_id) if isinstance(user_id, str) else user_id
         score = int(score) if isinstance(score, str) else score
-        
+
         # Verify extracted variables are accessible
         assert user_id == 999, f"Expected user_id=999, got {user_id}"
         assert username == "api_tester", f"Expected username=api_tester, got {username}"
         assert score == 85, f"Expected score=85, got {score}"
-        
+
         result = {
           "verification": "passed",
           "vars_loaded": True,
@@ -108,12 +100,8 @@ workflow:
           "username": username,
           "score": score
         }
-    
-    case:
-      - when: "{{ event.name == 'step.exit' and response is defined }}"
-        then:
-          next:
-            - step: end
+    next:
+      - step: end
 
   - step: end
     desc: End workflow

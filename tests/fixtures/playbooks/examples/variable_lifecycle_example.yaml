@@ -6,11 +6,10 @@ metadata:
   description: "Demonstrates BEFORE and AFTER execution variable patterns"
 
 workload:
-  # Global variables - available to ALL steps
   environment: "production"
   api_base_url: "https://api.example.com"
   retry_limit: 3
-  user_id: "{{ payload.user_id }}"  # Can reference CLI payload
+  user_id: "{{ payload.user_id }}"
 
 workflow:
   - step: start
@@ -22,14 +21,9 @@ workflow:
       args: {}
       code: |
         result = {"status": "initialized"}
-    
-    case:
-      - when: "{{ event.name == 'step.exit' }}"
-        then:
-          next:
-            - step: fetch_user_data
+    next:
+      - step: fetch_user_data
 
-  # Example 1: Using workload global variables (BEFORE execution)
   - step: fetch_user_data
     desc: "Fetch user data using global variables"
     tool:
@@ -38,22 +32,19 @@ workflow:
       endpoint: "{{ workload.api_base_url }}/users/{{ workload.user_id }}"
       headers:
         X-Environment: "{{ workload.environment }}"
-    
     case:
-      - when: "{{ event.name == 'step.exit' and response is defined }}"
+      - when: "{{ event.name == 'call.done' and response is defined }}"
         then:
-          set:
-            # Extract variables AFTER execution for reuse
-            - name: user_email
-              value: "{{ response.data.email }}"
-            - name: user_status
-              value: "{{ response.data.status }}"
-            - name: user_created
-              value: "{{ response.data.created_at }}"
-          next:
-            - step: calculate_metrics
+          - set:
+              - name: user_email
+                value: "{{ response.data.email }}"
+              - name: user_status
+                value: "{{ response.data.status }}"
+              - name: user_created
+                value: "{{ response.data.created_at }}"
+          - next:
+              - step: calculate_metrics
 
-  # Example 2: Step args (BEFORE execution) with extracted vars
   - step: calculate_metrics
     desc: "Calculate metrics using args from previous step"
     tool:
@@ -61,7 +52,6 @@ workflow:
       auth: {}
       libs: {}
       args:
-        # BEFORE execution: passed to main()
         email: "{{ vars.user_email }}"
         status: "{{ vars.user_status }}"
         retry_count: "{{ workload.retry_limit }}"
@@ -73,34 +63,30 @@ workflow:
             "score": 100 if status == 'active' else 0
         }
         result = metrics
-    
     case:
-      - when: "{{ event.name == 'step.exit' and response is defined and response.is_active }}"
+      - when: "{{ event.name == 'call.done' and response is defined and response.is_active }}"
         then:
-          set:
-            # Extract AFTER execution
-            - name: email_domain
-              value: "{{ response.email_domain }}"
-            - name: user_score
-              value: "{{ response.score }}"
-          next:
-            - step: active_user_flow
-              args:
-                # Pass args to next step (BEFORE next step execution)
-                domain: "{{ response.email_domain }}"
-                score: "{{ response.score }}"
-      
-      - when: "{{ event.name == 'step.exit' and response is defined and not response.is_active }}"
-        then:
-          set:
-            - name: email_domain
-              value: "{{ response.email_domain }}"
-            - name: user_score
-              value: "{{ response.score }}"
-          next:
-            - step: inactive_user_flow
+          - set:
+              - name: email_domain
+                value: "{{ response.email_domain }}"
+              - name: user_score
+                value: "{{ response.score }}"
+          - next:
+              - step: active_user_flow
+                args:
+                  domain: "{{ response.email_domain }}"
+                  score: "{{ response.score }}"
 
-  # Example 3: Receiving args from next block
+      - when: "{{ event.name == 'call.done' and response is defined and not response.is_active }}"
+        then:
+          - set:
+              - name: email_domain
+                value: "{{ response.email_domain }}"
+              - name: user_score
+                value: "{{ response.score }}"
+          - next:
+              - step: inactive_user_flow
+
   - step: active_user_flow
     desc: "Process active users with received args"
     tool:
@@ -108,8 +94,7 @@ workflow:
       auth: {}
       libs: {}
       args:
-        # BEFORE execution: received from previous step's next block
-        domain: null  # Will be provided by caller
+        domain: null
         score: null
         global_env: "{{ workload.environment }}"
       code: |
@@ -118,12 +103,8 @@ workflow:
             "domain": domain,
             "bonus_score": score + 10
         }
-    
-    case:
-      - when: "{{ event.name == 'step.exit' and response is defined }}"
-        then:
-          next:
-            - step: store_results
+    next:
+      - step: store_results
 
   - step: inactive_user_flow
     desc: "Process inactive users"
@@ -132,7 +113,6 @@ workflow:
       auth: {}
       libs: {}
       args:
-        # Can still access extracted vars
         email: "{{ vars.user_email }}"
         status: "{{ vars.user_status }}"
       code: |
@@ -141,14 +121,9 @@ workflow:
             "status": status,
             "action": "send_reactivation_email"
         }
-    
-    case:
-      - when: "{{ event.name == 'step.exit' and response is defined }}"
-        then:
-          next:
-            - step: store_results
+    next:
+      - step: store_results
 
-  # Example 4: Direct step access (no extraction needed)
   - step: store_results
     desc: "Store results using direct step access"
     tool:
@@ -156,11 +131,9 @@ workflow:
       auth: {}
       libs: {}
       args:
-        # Direct access to previous steps without vars extraction
         user_email: "{{ fetch_user_data.data.email }}"
         user_score: "{{ vars.user_score }}"
         environment: "{{ workload.environment }}"
-        # Access from conditional flow (one will be undefined, handled by code)
         active_result: "{{ active_user_flow.message if active_user_flow else 'N/A' }}"
         inactive_result: "{{ inactive_user_flow.message if inactive_user_flow else 'N/A' }}"
       code: |
@@ -172,12 +145,8 @@ workflow:
             "flow_result": active_result if active_result != 'N/A' else inactive_result
         }
         print(f"Stored results for {user_email} in {environment}")
-    
-    case:
-      - when: "{{ event.name == 'step.exit' and response is defined }}"
-        then:
-          next:
-            - step: end
+    next:
+      - step: end
 
   - step: end
     desc: "Workflow complete"
@@ -188,22 +157,3 @@ workflow:
       args: {}
       code: |
         result = {"status": "complete"}
-
-# Variable Lifecycle Summary (V2):
-#
-# BEFORE Execution (Input):
-#   1. workload: Global variables (lines 9-13)
-#   2. tool.args: at tool level (lines 67-70, 109-114, 137-143)
-#   3. next.args: in next action (lines 85-87)
-#
-# AFTER Execution (Extract):
-#   1. case.then.set: Variable extraction (lines 44-49, 81-88)
-#   2. Direct access: {{ step_name.field }} (lines 139-142)
-#
-# Access Patterns:
-#   - {{ workload.field }} - Global vars
-#   - {{ vars.var_name }} - Extracted vars via set
-#   - {{ step_name.field }} - Direct step access
-#   - {{ response.field }} - Current response (in case block)
-#   - {{ payload.field }} - CLI payload
-#   - {{ execution_id }} - System variable

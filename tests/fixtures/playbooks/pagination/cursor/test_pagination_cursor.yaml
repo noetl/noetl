@@ -18,12 +18,8 @@ workflow:
       args: {}
       code: |
         result = {"status": "initialized"}
-
-    case:
-      - when: "{{ event.name == 'step.exit' }}"
-        then:
-          next:
-            - step: fetch_all_events
+    next:
+      - step: fetch_all_events
 
   - step: fetch_all_events
     desc: Cursor-based pagination with automatic continuation
@@ -33,28 +29,27 @@ workflow:
       method: GET
       params:
         limit: 10
-
     case:
-      - when: "{{ event.name == 'call.done' and response is defined and response.next_cursor is not none and response.next_cursor != '' }}"
+      - when: "{{ event.name == 'call.done' and response is defined and response.data.next_cursor is not none and response.data.next_cursor != '' }}"
         then:
-          collect:
-            strategy: append
-            path: events
-            into: pages
-          retry:
-            max_attempts: 10
-            params:
-              cursor: "{{ response.next_cursor }}"
-              limit: "{{ response.limit }}"
+          - collect:
+              strategy: append
+              path: data.events
+              into: pages
+          - retry:
+              max_attempts: 10
+              params:
+                cursor: "{{ response.data.next_cursor }}"
+                limit: "{{ response.data.limit }}"
 
-      - when: "{{ event.name == 'call.done' and response is defined and (response.next_cursor is none or response.next_cursor == '') }}"
+      - when: "{{ event.name == 'call.done' and response is defined and (response.data.next_cursor is none or response.data.next_cursor == '') }}"
         then:
-          collect:
-            strategy: append
-            path: events
-            into: pages
-          next:
-            - step: validate_results
+          - collect:
+              strategy: append
+              path: data.events
+              into: pages
+          - next:
+              - step: validate_results
 
   - step: validate_results
     desc: Validate merged results
@@ -91,13 +86,8 @@ workflow:
             'status': 'success',
             'total_events': len(data)
         }
-          fetch_all_events: "{{ fetch_all_events }}"
-
-    case:
-      - when: "{{ event.name == 'step.exit' and response is defined }}"
-        then:
-          next:
-            - step: end
+    next:
+      - step: end
 
   - step: end
     desc: Workflow complete

@@ -8,78 +8,66 @@ workload:
   oauth_cred: google_oauth
   openai_secret_path: projects/1014428265962/secrets/openai-api-key/versions/1
 workflow:
-- step: start
-  desc: Start cache test
-  tool:
-    kind: python
-    auth: {}
-    libs: {}
-    args: {}
-    code: |
-      result = {"status": "initialized"}
-  
-  case:
-  - when: "{{ event.name == 'step.exit' }}"
-    then:
-      next:
+  - step: start
+    desc: Start cache test
+    tool:
+      kind: python
+      auth: {}
+      libs: {}
+      args: {}
+      code: |
+        result = {"status": "initialized"}
+    next:
       - step: first_openai_call
 
-- step: first_openai_call
-  desc: First OpenAI API call - should cache the secret
-  tool:
-    kind: http
-    method: POST
-    endpoint: https://api.openai.com/v1/chat/completions
-    auth:
-      openai:
-        type: bearer
-        provider: secret_manager
-        key: '{{ workload.openai_secret_path }}'
-        oauth_credential: '{{ workload.oauth_cred }}'
-    payload:
-      model: gpt-4o-mini
-      messages:
-      - role: user
-        content: "Say 'Hello from first call'"
-      max_tokens: 10
-  
-  case:
-  - when: "{{ event.name == 'step.exit' and response is defined }}"
-    then:
-      next:
+  - step: first_openai_call
+    desc: First OpenAI API call - should cache the secret
+    tool:
+      kind: http
+      method: POST
+      endpoint: https://api.openai.com/v1/chat/completions
+      auth:
+        openai:
+          type: bearer
+          provider: secret_manager
+          key: '{{ workload.openai_secret_path }}'
+          oauth_credential: '{{ workload.oauth_cred }}'
+      payload:
+        model: gpt-4o-mini
+        messages:
+          - role: user
+            content: "Say 'Hello from first call'"
+        max_tokens: 10
+    next:
       - step: second_openai_call
 
-- step: second_openai_call
-  desc: Second OpenAI API call - should use cached secret
-  tool:
-    kind: http
-    method: POST
-    endpoint: https://api.openai.com/v1/chat/completions
-    auth:
-      openai:
-        type: bearer
-        provider: secret_manager
-        key: '{{ workload.openai_secret_path }}'
-        oauth_credential: '{{ workload.oauth_cred }}'
-    payload:
-      model: gpt-4o-mini
-      messages:
-      - role: user
-        content: "Say 'Hello from second call'"
-      max_tokens: 10
-  
-  case:
-  - when: "{{ event.name == 'step.exit' and response is defined }}"
-    then:
-      next:
+  - step: second_openai_call
+    desc: Second OpenAI API call - should use cached secret
+    tool:
+      kind: http
+      method: POST
+      endpoint: https://api.openai.com/v1/chat/completions
+      auth:
+        openai:
+          type: bearer
+          provider: secret_manager
+          key: '{{ workload.openai_secret_path }}'
+          oauth_credential: '{{ workload.oauth_cred }}'
+      payload:
+        model: gpt-4o-mini
+        messages:
+          - role: user
+            content: "Say 'Hello from second call'"
+        max_tokens: 10
+    next:
       - step: end
 
-- step: end
-  desc: End of workflow
-  tool:
-    kind: python
-    auth: {}
-    libs: {}
-    args: {}
-    code: |
-      result = {"status": "complete"}
+  - step: end
+    desc: End of workflow
+    tool:
+      kind: python
+      auth: {}
+      libs: {}
+      args: {}
+      code: |
+        result = {"status": "complete"}

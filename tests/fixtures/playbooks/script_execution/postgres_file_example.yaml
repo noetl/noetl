@@ -18,12 +18,8 @@ workflow:
       args: {}
       code: |
         result = {"status": "initialized"}
-    
-    case:
-      - when: "{{ event.name == 'step.exit' }}"
-        then:
-          next:
-            - step: run_postgres_from_file
+    next:
+      - step: run_postgres_from_file
 
   - step: run_postgres_from_file
     desc: Execute SQL script from local file
@@ -34,12 +30,8 @@ workflow:
         uri: "{{ workload.script_path }}"
         source:
           type: file
-    
-    case:
-      - when: "{{ event.name == 'step.exit' and response is defined }}"
-        then:
-          next:
-            - step: verify_records
+    next:
+      - step: verify_records
 
   - step: verify_records
     desc: Verify table was created and populated
@@ -48,12 +40,8 @@ workflow:
       auth: "{{ workload.pg_auth }}"
       command: |
         SELECT * FROM public.script_test ORDER BY id;
-    
-    case:
-      - when: "{{ event.name == 'step.exit' and response is defined }}"
-        then:
-          next:
-            - step: cleanup
+    next:
+      - step: cleanup
 
   - step: cleanup
     desc: Clean up test table
@@ -62,12 +50,8 @@ workflow:
       auth: "{{ workload.pg_auth }}"
       command: |
         DROP TABLE IF EXISTS public.script_test;
-    
-    case:
-      - when: "{{ event.name == 'step.exit' and response is defined }}"
-        then:
-          next:
-            - step: end
+    next:
+      - step: end
 
   - step: end
     desc: End workflow
