@@ -14,12 +14,14 @@ workload:
   image_name: "noetl"
 
 workflow:
-  - step: start
-    desc: Entry point for NoETL deploy automation
+  - step: route_action
+    desc: Entry point - route based on action parameter
     tool:
       kind: shell
       cmds:
         - echo "NoETL Deploy Automation - Action '{{ workload.action }}'"
+    spec:
+      next_mode: exclusive
     next:
       - step: build_image
         when: "{{ workload.action == 'build' }}"

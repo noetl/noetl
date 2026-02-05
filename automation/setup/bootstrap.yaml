@@ -368,8 +368,8 @@ workflow:
     next:
       - step: deploy_gateway
         when: "{{ workload.deploy_gateway == true }}"
-      - step: deploy_noetl
-  
+      - step: create_noetl_secrets
+
   - step: deploy_gateway
     desc: Build and deploy NoETL Gateway API
     tool:
@@ -378,8 +378,32 @@ workflow:
       args:
         action: deploy-all
     next:
-      - step: deploy_noetl
+      - step: create_noetl_secrets
   
+  - step: create_noetl_secrets
+    desc: Create NoETL namespace and required secrets
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Creating NoETL namespace and secrets..."
+          # Create namespace first
+          kubectl apply -f ci/manifests/noetl/namespace/
+
+          # Create gcs-credentials secret (empty for local development)
+          # This secret is mounted by workers for GCS access but not used in local env
+          if ! kubectl get secret gcs-credentials -n noetl &>/dev/null; then
+            echo "Creating gcs-credentials secret for local development..."
+            kubectl create secret generic gcs-credentials -n noetl \
+              --from-literal=gcs-key.json='{}'
+            echo "OK gcs-credentials secret created"
+          else
+            echo "OK gcs-credentials secret already exists"
+          fi
+    next:
+      - step: deploy_noetl
+
   - step: deploy_noetl
     desc: Deploy NoETL server and workers
     tool:
@@ -388,9 +412,7 @@ workflow:
         - |
           echo ""
           echo "Deploying NoETL..."
-          # Create namespace first
-          kubectl apply -f ci/manifests/noetl/namespace/
-          
+
           # Read the tag from the file created during build
           if [ ! -f .noetl_last_build_tag.txt ]; then
             echo "ERROR: .noetl_last_build_tag.txt not found. Build must have failed."
@@ -399,7 +421,7 @@ workflow:
           IMAGE_TAG=$(cat .noetl_last_build_tag.txt)
           IMAGE="{{ workload.registry }}/{{ workload.image_name }}:$IMAGE_TAG"
           echo "Using image: $IMAGE"
-          
+
           # Apply manifests with image substitution
           for manifest in ci/manifests/noetl/*.yaml; do
             if [ -f "$manifest" ]; then
