@@ -19,9 +19,10 @@ workflow:
   - step: start
     desc: Process numbers with loop
     loop:
+      spec:
+        mode: sequential
       in: "{{ workload.numbers }}"
       iterator: "num"
-      mode: "sequential"
     tool:
       kind: python
       auth: {}
@@ -75,9 +76,10 @@ workflow:
   - step: user_loop
     desc: Process users with loop
     loop:
+      spec:
+        mode: sequential
       in: "{{ workload.users }}"
       iterator: "user"
-      mode: "sequential"
     tool:
       kind: python
       auth: {}

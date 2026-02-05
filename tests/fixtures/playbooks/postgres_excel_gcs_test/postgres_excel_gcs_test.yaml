@@ -65,76 +65,76 @@ workflow:
         COPY (SELECT * FROM pg_db.public.employees ORDER BY emp_id) TO 'gs://{{ workload.gcs_bucket }}/exports/{{ workload.output_filename }}_employees.csv' (FORMAT CSV, HEADER TRUE);
         COPY (SELECT * FROM pg_db.public.products ORDER BY product_id) TO 'gs://{{ workload.gcs_bucket }}/exports/{{ workload.output_filename }}_products.csv' (FORMAT CSV, HEADER TRUE);
         COPY (SELECT * FROM pg_db.public.orders ORDER BY order_id) TO 'gs://{{ workload.gcs_bucket }}/exports/{{ workload.output_filename }}_orders.csv' (FORMAT CSV, HEADER TRUE);
-        
-    case:
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          - create_excel:
-              tool:
-                kind: python
-                auth:
-                  gcs:
-                    service: gcs_service_account
-                    source: credential
-                    tool: service_account
-                    key: "{{ workload.gcs_service_account }}"
-                libs:
-                  pd: pandas
-                  storage:
-                    from: google.cloud
-                    import: storage
-                  io: io
-                  os: os
-                args:
-                  bucket: "{{ workload.gcs_bucket }}"
-                  prefix: "exports/{{ workload.output_filename }}"
-                  output_filename: "{{ workload.output_filename }}"
-                  execution_id: "{{ execution_id }}"
-                code: |
-                  # Pure Python code - no imports, no def main()
-                  # Variables injected: bucket, prefix, output_filename, execution_id
-                  # Libraries imported: pd, storage, io, os
+    next:
+      - step: create_excel
 
-                  csv_files = {
-                    "Employees": f"{prefix}_employees.csv",
-                    "Products": f"{prefix}_products.csv",
-                    "Orders": f"{prefix}_orders.csv",
-                  }
+  - step: create_excel
+    desc: Create Excel file from CSV files
+    tool:
+      kind: python
+      auth:
+        gcs:
+          service: gcs_service_account
+          source: credential
+          tool: service_account
+          key: "{{ workload.gcs_service_account }}"
+      libs:
+        pd: pandas
+        storage:
+          from: google.cloud
+          import: storage
+        io: io
+        os: os
+      args:
+        bucket: "{{ workload.gcs_bucket }}"
+        prefix: "exports/{{ workload.output_filename }}"
+        output_filename: "{{ workload.output_filename }}"
+        execution_id: "{{ execution_id }}"
+      code: |
+        # Pure Python code - no imports, no def main()
+        # Variables injected: bucket, prefix, output_filename, execution_id
+        # Libraries imported: pd, storage, io, os
 
-                  client = storage.Client()
-                  bucket_name = bucket
-                  bucket_obj = client.bucket(bucket_name)
-                  output_path = f"/tmp/{output_filename}_{execution_id}.xlsx"
+        csv_files = {
+          "Employees": f"{prefix}_employees.csv",
+          "Products": f"{prefix}_products.csv",
+          "Orders": f"{prefix}_orders.csv",
+        }
 
-                  sheets_summary = {}
-                  with pd.ExcelWriter(output_path, engine='xlsxwriter') as writer:
-                    for sheet_name, csv_blob_path in csv_files.items():
-                      blob = bucket_obj.blob(csv_blob_path)
-                      csv_text = blob.download_as_text()
-                      df = pd.read_csv(io.StringIO(csv_text))
-                      df.to_excel(writer, sheet_name=sheet_name, index=False)
-                      sheets_summary[sheet_name] = len(df)
+        client = storage.Client()
+        bucket_name = bucket
+        bucket_obj = client.bucket(bucket_name)
+        output_path = f"/tmp/{output_filename}_{execution_id}.xlsx"
 
-                  print(f"Created Excel file: {output_path}")
-                  for sheet_name, row_count in sheets_summary.items():
-                    print(f"  - {sheet_name}: {row_count} rows")
+        sheets_summary = {}
+        with pd.ExcelWriter(output_path, engine='xlsxwriter') as writer:
+          for sheet_name, csv_blob_path in csv_files.items():
+            blob = bucket_obj.blob(csv_blob_path)
+            csv_text = blob.download_as_text()
+            df = pd.read_csv(io.StringIO(csv_text))
+            df.to_excel(writer, sheet_name=sheet_name, index=False)
+            sheets_summary[sheet_name] = len(df)
 
-                  workbook_blob_name = f"exports/{output_filename}.xlsx"
-                  workbook_blob = bucket_obj.blob(workbook_blob_name)
-                  workbook_blob.upload_from_filename(output_path)
+        print(f"Created Excel file: {output_path}")
+        for sheet_name, row_count in sheets_summary.items():
+          print(f"  - {sheet_name}: {row_count} rows")
 
-                  gcs_uri = f"gs://{bucket_obj.name}/{workbook_blob_name}"
-                  print(f"Uploaded to GCS: {gcs_uri}")
+        workbook_blob_name = f"exports/{output_filename}.xlsx"
+        workbook_blob = bucket_obj.blob(workbook_blob_name)
+        workbook_blob.upload_from_filename(output_path)
 
-                  os.remove(output_path)
+        gcs_uri = f"gs://{bucket_obj.name}/{workbook_blob_name}"
+        print(f"Uploaded to GCS: {gcs_uri}")
 
-                  result = {
-                    "gcs_uri": gcs_uri,
-                    "local_path": output_path,
-                    "sheets": sheets_summary
-                  }
-          - next:
-              - step: cleanup
+        os.remove(output_path)
+
+        result = {
+          "gcs_uri": gcs_uri,
+          "local_path": output_path,
+          "sheets": sheets_summary
+        }
+    next:
+      - step: cleanup
 
   - step: cleanup
     desc: Cleanup test tables

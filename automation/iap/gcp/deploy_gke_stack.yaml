@@ -105,19 +105,14 @@ workflow:
       noetlctl_image: "{{ workload.region }}-docker.pkg.dev/{{ workload.project_id }}/{{ workload.repository_id }}/noetlctl"
       gateway_image: "{{ workload.region }}-docker.pkg.dev/{{ workload.project_id }}/{{ workload.repository_id }}/noetl-gateway"
       worker_image: "{{ workload.region }}-docker.pkg.dev/{{ workload.project_id }}/{{ workload.repository_id }}/noetl-worker"
-    case:
-      - when: "{{ workload.action }} == deploy"
-        then:
-          - step: verify_gcloud
-      - when: "{{ workload.action }} == destroy"
-        then:
-          - step: destroy_cluster
-      - when: "{{ workload.action }} == status"
-        then:
-          - step: check_status
-      - when: "true"
-        then:
-          - step: show_help
+    next:
+      - step: verify_gcloud
+        when: "{{ workload.action == 'deploy' }}"
+      - step: destroy_cluster
+        when: "{{ workload.action == 'destroy' }}"
+      - step: check_status
+        when: "{{ workload.action == 'status' }}"
+      - step: show_help
 
   - step: show_help
     desc: Show help
@@ -208,17 +203,11 @@ workflow:
   - step: maybe_create_artifact_registry
     desc: Create Artifact Registry if enabled
     tool:
-      kind: shell
-      cmds:
-        - |
-          echo "Create Artifact Registry: {{ workload.create_artifact_registry }}"
-    case:
-      - when: "{{ workload.create_artifact_registry }} == true"
-        then:
-          - step: create_artifact_registry
-      - when: "true"
-        then:
-          - step: maybe_build_images
+      kind: noop
+    next:
+      - step: create_artifact_registry
+        when: "{{ workload.create_artifact_registry == true }}"
+      - step: maybe_build_images
 
   - step: create_artifact_registry
     desc: Create Artifact Registry repository
@@ -246,17 +235,11 @@ workflow:
   - step: maybe_build_images
     desc: Build container images if enabled
     tool:
-      kind: shell
-      cmds:
-        - |
-          echo "Build Images: {{ workload.build_images }}"
-    case:
-      - when: "{{ workload.build_images }} == true"
-        then:
-          - step: build_images
-      - when: "true"
-        then:
-          - step: maybe_create_cluster
+      kind: noop
+    next:
+      - step: build_images
+        when: "{{ workload.build_images == true }}"
+      - step: maybe_create_cluster
 
   - step: build_images
     desc: Build and push container images to Artifact Registry
@@ -521,17 +504,11 @@ workflow:
   - step: maybe_create_cluster
     desc: Create GKE cluster if enabled
     tool:
-      kind: shell
-      cmds:
-        - |
-          echo "Create Cluster: {{ workload.create_cluster }}"
-    case:
-      - when: "{{ workload.create_cluster }} == true"
-        then:
-          - step: create_gke_cluster
-      - when: "true"
-        then:
-          - step: configure_kubectl
+      kind: noop
+    next:
+      - step: create_gke_cluster
+        when: "{{ workload.create_cluster == true }}"
+      - step: configure_kubectl
 
   - step: create_gke_cluster
     desc: Create GKE Autopilot cluster
@@ -588,17 +565,11 @@ workflow:
   - step: maybe_deploy_postgres
     desc: Deploy PostgreSQL if enabled
     tool:
-      kind: shell
-      cmds:
-        - |
-          echo "Deploy PostgreSQL: {{ workload.deploy_postgres }}"
-    case:
-      - when: "{{ workload.deploy_postgres }} == true"
-        then:
-          - step: deploy_postgres
-      - when: "true"
-        then:
-          - step: maybe_init_schema
+      kind: noop
+    next:
+      - step: deploy_postgres
+        when: "{{ workload.deploy_postgres == true }}"
+      - step: maybe_init_schema
 
   - step: deploy_postgres
     desc: Deploy PostgreSQL via Helm
@@ -625,17 +596,11 @@ workflow:
   - step: maybe_init_schema
     desc: Initialize NoETL schema if enabled (runs even if postgres already exists)
     tool:
-      kind: shell
-      cmds:
-        - |
-          echo "Init NoETL schema: {{ workload.init_noetl_schema }}"
-    case:
-      - when: "{{ workload.init_noetl_schema }} == true"
-        then:
-          - step: init_noetl_schema
-      - when: "true"
-        then:
-          - step: maybe_deploy_nats
+      kind: noop
+    next:
+      - step: init_noetl_schema
+        when: "{{ workload.init_noetl_schema == true }}"
+      - step: maybe_deploy_nats
 
   - step: init_noetl_schema
     desc: Initialize NoETL database schema (handles both local and remote postgres)
@@ -740,17 +705,11 @@ workflow:
   - step: maybe_deploy_nats
     desc: Deploy NATS if enabled
     tool:
-      kind: shell
-      cmds:
-        - |
-          echo "Deploy NATS: {{ workload.deploy_nats }}"
-    case:
-      - when: "{{ workload.deploy_nats }} == true"
-        then:
-          - step: deploy_nats
-      - when: "true"
-        then:
-          - step: maybe_deploy_clickhouse
+      kind: noop
+    next:
+      - step: deploy_nats
+        when: "{{ workload.deploy_nats == true }}"
+      - step: maybe_deploy_clickhouse
 
   - step: deploy_nats
     desc: Deploy NATS JetStream via Helm
@@ -776,17 +735,11 @@ workflow:
   - step: maybe_deploy_clickhouse
     desc: Deploy ClickHouse if enabled
     tool:
-      kind: shell
-      cmds:
-        - |
-          echo "Deploy ClickHouse: {{ workload.deploy_clickhouse }}"
-    case:
-      - when: "{{ workload.deploy_clickhouse }} == true"
-        then:
-          - step: deploy_clickhouse
-      - when: "true"
-        then:
-          - step: maybe_deploy_noetl
+      kind: noop
+    next:
+      - step: deploy_clickhouse
+        when: "{{ workload.deploy_clickhouse == true }}"
+      - step: maybe_deploy_noetl
 
   - step: deploy_clickhouse
     desc: Deploy ClickHouse for observability
@@ -944,17 +897,11 @@ workflow:
   - step: maybe_deploy_noetl
     desc: Deploy NoETL if enabled
     tool:
-      kind: shell
-      cmds:
-        - |
-          echo "Deploy NoETL: {{ workload.deploy_noetl }}"
-    case:
-      - when: "{{ workload.deploy_noetl }} == true"
-        then:
-          - step: deploy_noetl
-      - when: "true"
-        then:
-          - step: maybe_deploy_gateway
+      kind: noop
+    next:
+      - step: deploy_noetl
+        when: "{{ workload.deploy_noetl == true }}"
+      - step: maybe_deploy_gateway
 
   - step: deploy_noetl
     desc: Deploy NoETL server and workers via Helm
@@ -1109,17 +1056,11 @@ workflow:
   - step: maybe_deploy_gateway
     desc: Deploy Gateway if enabled
     tool:
-      kind: shell
-      cmds:
-        - |
-          echo "Deploy Gateway: {{ workload.deploy_gateway }}"
-    case:
-      - when: "{{ workload.deploy_gateway }} == true"
-        then:
-          - step: deploy_gateway
-      - when: "true"
-        then:
-          - step: print_success
+      kind: noop
+    next:
+      - step: deploy_gateway
+        when: "{{ workload.deploy_gateway == true }}"
+      - step: print_success
 
   - step: deploy_gateway
     desc: Deploy NoETL Gateway via Helm (public LoadBalancer or internal ClusterIP)
@@ -1286,3 +1227,5 @@ workflow:
 
   - step: end
     desc: Workflow complete
+    tool:
+      kind: noop

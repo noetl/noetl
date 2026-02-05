@@ -19,11 +19,8 @@ workflow:
       args: {}
       code: |
         result = {"status": "initialized"}
-    case:
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          - next:
-              - step: create_test_results_table
+    next:
+      - step: create_test_results_table
 
   - step: create_test_results_table
     desc: "Create table for storing test execution results"
@@ -62,11 +59,8 @@ workflow:
         COMMENT ON COLUMN noetl_test.regression_results.test_run_id IS 'Unique ID for test run (use execution_id of master test)';
         COMMENT ON COLUMN noetl_test.regression_results.validation_passed IS 'Whether validation rules passed';
         COMMENT ON COLUMN noetl_test.regression_results.test_passed IS 'Overall test pass/fail';
-    case:
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          - next:
-              - step: create_test_summary_table
+    next:
+      - step: create_test_summary_table
 
   - step: create_test_summary_table
     desc: "Create table for test run summaries"
@@ -94,11 +88,8 @@ workflow:
         CREATE INDEX idx_test_summary_timestamp ON noetl_test.regression_summary(test_timestamp);
 
         COMMENT ON TABLE noetl_test.regression_summary IS 'Summary of regression test runs';
-    case:
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          - next:
-              - step: create_expected_results_table
+    next:
+      - step: create_expected_results_table
 
   - step: create_expected_results_table
     desc: "Create table for storing expected results (baseline)"
@@ -125,11 +116,8 @@ workflow:
         CREATE INDEX idx_expected_results_path ON noetl_test.expected_results(playbook_path);
 
         COMMENT ON TABLE noetl_test.expected_results IS 'Expected results baseline for playbooks';
-    case:
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          - next:
-              - step: end
+    next:
+      - step: end
 
   - step: end
     desc: "Schema creation completed"

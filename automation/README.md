@@ -324,14 +324,13 @@ workload:
 workflow:
   - step: start
     desc: Route to action
-    case:
-      - when: "{{ workload.action == 'help' }}"
-        then:
-          - step: show_help
-      - when: "{{ workload.action == 'build' }}"
-        then:
-          - step: do_build
+    tool:
+      kind: noop
     next:
+      - step: show_help
+        when: "{{ workload.action == 'help' }}"
+      - step: do_build
+        when: "{{ workload.action == 'build' }}"
       - step: show_help
 
   - step: show_help

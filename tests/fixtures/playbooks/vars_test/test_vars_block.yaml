@@ -12,119 +12,117 @@ workflow:
   - step: start
     desc: Start execution
     tool:
-      kind: python
-      auth: {}
-      libs: {}
-      args: {}
-      code: |
-        result = {"status": "initialized"}
+      - label:
+          kind: python
+          auth: {}
+          libs: {}
+          args: {}
+          code: |
+            result = {"status": "initialized"}
     next:
       - step: fetch_data
 
   - step: fetch_data
     desc: Simulate fetching data and extract vars
     tool:
-      kind: python
-      auth: {}
-      libs: {}
-      args: {}
-      code: |
-        # Simulate fetching data from a database
-        result = {
-            "status": "success",
-            "users": [
-                {"user_id": 123, "email": "alice@example.com", "name": "Alice"},
-                {"user_id": 456, "email": "bob@example.com", "name": "Bob"}
-            ],
-            "metadata": {
-                "count": 2,
-                "source": "test_db"
+      - label:
+          kind: python
+          auth: {}
+          libs: {}
+          args: {}
+          code: |
+            # Simulate fetching data from a database
+            result = {
+                "status": "success",
+                "users": [
+                    {"user_id": 123, "email": "alice@example.com", "name": "Alice"},
+                    {"user_id": 456, "email": "bob@example.com", "name": "Bob"}
+                ],
+                "metadata": {
+                    "count": 2,
+                    "source": "test_db"
+                }
             }
-        }
-    case:
-      - when: "{{ event.name == 'call.done' and response is defined }}"
-        then:
-          - set:
-              - name: first_user_id
-                value: "{{ response.users[0].user_id }}"
-              - name: first_email
-                value: "{{ response.users[0].email }}"
-              - name: user_count
-                value: "{{ response.metadata.count }}"
-              - name: data_source
-                value: "{{ response.metadata.source }}"
-          - next:
-              - step: use_extracted_vars
+    vars:
+      first_user_id: "{{ response.users[0].user_id }}"
+      first_email: "{{ response.users[0].email }}"
+      user_count: "{{ response.metadata.count }}"
+      data_source: "{{ response.metadata.source }}"
+    next:
+      - step: use_extracted_vars
 
   - step: use_extracted_vars
     desc: Use variables that were extracted by vars block
     tool:
-      kind: python
-      auth: {}
-      libs: {}
-      args:
-        first_user_id: "{{ vars.first_user_id }}"
-        first_email: "{{ vars.first_email }}"
-        user_count: "{{ vars.user_count }}"
-        data_source: "{{ vars.data_source }}"
-      code: |
-        # This step receives vars extracted from previous step
-        result = {
-            "status": "success",
-            "message": f"Processing user {first_user_id} ({first_email})",
-            "total_users": user_count,
-            "source": data_source,
-            "values_received": {
-                "first_user_id": first_user_id,
-                "first_email": first_email,
-                "user_count": user_count,
-                "data_source": data_source
+      - label:
+          kind: python
+          auth: {}
+          libs: {}
+          args:
+            first_user_id: "{{ vars.first_user_id }}"
+            first_email: "{{ vars.first_email }}"
+            user_count: "{{ vars.user_count }}"
+            data_source: "{{ vars.data_source }}"
+          code: |
+            # This step receives vars extracted from previous step
+            result = {
+                "status": "success",
+                "message": f"Processing user {first_user_id} ({first_email})",
+                "total_users": user_count,
+                "source": data_source,
+                "values_received": {
+                    "first_user_id": first_user_id,
+                    "first_email": first_email,
+                    "user_count": user_count,
+                    "data_source": data_source
+                }
             }
-        }
     next:
       - step: verify_vars
 
   - step: verify_vars
     desc: Verify all vars were extracted and used correctly
     tool:
-      kind: python
-      auth: {}
-      libs: {}
-      args:
-        first_user_id: "{{ vars.first_user_id }}"
-        first_email: "{{ vars.first_email }}"
-        user_count: "{{ vars.user_count }}"
-        data_source: "{{ vars.data_source }}"
-      code: |
-        # Verify vars via template args (no direct API access)
-        checks = {
-            "first_user_id_correct": first_user_id == 123,
-            "first_email_correct": first_email == "alice@example.com",
-            "user_count_correct": user_count == 2,
-            "data_source_correct": data_source == "test_db"
-        }
-
-        all_passed = all(checks.values())
-
-        result = {
-            "status": "success" if all_passed else "failed",
-            "checks": checks,
-            "received_values": {
-                "first_user_id": first_user_id,
-                "first_email": first_email,
-                "user_count": user_count,
-                "data_source": data_source
+      - label:
+          kind: python
+          auth: {}
+          libs: {}
+          args:
+            first_user_id: "{{ vars.first_user_id }}"
+            first_email: "{{ vars.first_email }}"
+            user_count: "{{ vars.user_count }}"
+            data_source: "{{ vars.data_source }}"
+          code: |
+            # Verify vars via template args (no direct API access)
+            checks = {
+                "first_user_id_correct": first_user_id == 123,
+                "first_email_correct": first_email == "alice@example.com",
+                "user_count_correct": user_count == 2,
+                "data_source_correct": data_source == "test_db"
             }
-        }
+
+            all_passed = all(checks.values())
+
+            result = {
+                "status": "success" if all_passed else "failed",
+                "checks": checks,
+                "received_values": {
+                    "first_user_id": first_user_id,
+                    "first_email": first_email,
+                    "user_count": user_count,
+                    "data_source": data_source
+                }
+            }
     next:
       - step: end
 
   - step: end
     desc: End execution
     tool:
-      kind: python
-      auth: {}
-      libs: {}
-      args: {}
-      code: |
-        result = {"status": "complete"}
+      - label:
+          kind: python
+          auth: {}
+          libs: {}
+          args: {}
+          code: |
+            result = {"status": "complete"}

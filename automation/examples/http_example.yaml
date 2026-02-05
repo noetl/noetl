@@ -13,6 +13,8 @@ workload:
 workflow:
   - step: start
     desc: "Fetch data from REST API"
+    tool:
+      kind: noop
     next:
       - step: fetch_user
 
@@ -54,3 +56,6 @@ workflow:
       - step: end
 
   - step: end
+    desc: End workflow
+    tool:
+      kind: noop

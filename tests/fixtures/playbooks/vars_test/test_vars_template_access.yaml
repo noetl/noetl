@@ -18,32 +18,34 @@ workflow:
   - step: start
     desc: Start workflow
     tool:
-      kind: python
-      auth: {}
-      libs: {}
-      args: {}
-      code: |
-        result = {"status": "initialized"}
+      - label:
+          kind: python
+          auth: {}
+          libs: {}
+          args: {}
+          code: |
+            result = {"status": "initialized"}
     next:
       - step: set_variables
 
   - step: set_variables
     desc: Set multiple test variables via vars block
     tool:
-      kind: python
-      auth: {}
-      libs: {}
-      args: {}
-      code: |
-        # Return values that will be extracted via vars block
-        result = {
-            "counter": 42,
-            "message": "Template access works!",
-            "config": {
-                "timeout": 30,
-                "retries": 3
+      - label:
+          kind: python
+          auth: {}
+          libs: {}
+          args: {}
+          code: |
+            # Return values that will be extracted via vars block
+            result = {
+                "counter": 42,
+                "message": "Template access works!",
+                "config": {
+                    "timeout": 30,
+                    "retries": 3
+                }
             }
-        }
     vars:
       counter: "{{ result.counter }}"
       message: "{{ result.message }}"
@@ -54,76 +56,79 @@ workflow:
   - step: use_vars_in_template
     desc: Use {{ vars.var_name }} in step data
     tool:
-      kind: python
-      auth: {}
-      libs: {}
-      args:
-        counter: "{{ vars.counter }}"
-        message: "{{ vars.message }}"
-        timeout: "{{ vars.config.timeout }}"
-        full_greeting: "{{ workload.greeting }}, {{ vars.message }}"
-      code: |
-        # This step receives data using {{ vars.* }} templates
-        result = {
-            "status": "success",
-            "received_counter": counter,
-            "received_message": message,
-            "received_timeout": timeout,
-            "full_greeting": full_greeting
-        }
+      - label:
+          kind: python
+          auth: {}
+          libs: {}
+          args:
+            counter: "{{ vars.counter }}"
+            message: "{{ vars.message }}"
+            timeout: "{{ vars.config.timeout }}"
+            full_greeting: "{{ workload.greeting }}, {{ vars.message }}"
+          code: |
+            # This step receives data using {{ vars.* }} templates
+            result = {
+                "status": "success",
+                "received_counter": counter,
+                "received_message": message,
+                "received_timeout": timeout,
+                "full_greeting": full_greeting
+            }
     next:
       - step: verify_results
 
   - step: verify_results
     desc: Verify template values were rendered correctly
     tool:
-      kind: python
-      auth: {}
-      libs: {}
-      args: {}
-      code: |
-        # Get previous step result
-        prev_result = context.get('use_vars_in_template', {})
-        if isinstance(prev_result, dict) and 'data' in prev_result:
-            prev_result = prev_result['data']
+      - label:
+          kind: python
+          auth: {}
+          libs: {}
+          args: {}
+          code: |
+            # Get previous step result
+            prev_result = context.get('use_vars_in_template', {})
+            if isinstance(prev_result, dict) and 'data' in prev_result:
+                prev_result = prev_result['data']
 
-        # Verify values
-        counter = prev_result.get("received_counter")
-        message = prev_result.get("received_message")
-        timeout = prev_result.get("received_timeout")
-        greeting = prev_result.get("full_greeting")
+            # Verify values
+            counter = prev_result.get("received_counter")
+            message = prev_result.get("received_message")
+            timeout = prev_result.get("received_timeout")
+            greeting = prev_result.get("full_greeting")
 
-        success = (
-            counter == 42 and
-            message == "Template access works!" and
-            timeout == 30 and
-            greeting == "Hello, Template access works!"
-        )
+            success = (
+                counter == 42 and
+                message == "Template access works!" and
+                timeout == 30 and
+                greeting == "Hello, Template access works!"
+            )
 
-        result = {
-            "status": "success" if success else "failed",
-            "verification": {
-                "counter_correct": counter == 42,
-                "message_correct": message == "Template access works!",
-                "timeout_correct": timeout == 30,
-                "greeting_correct": greeting == "Hello, Template access works!"
-            },
-            "values": {
-                "counter": counter,
-                "message": message,
-                "timeout": timeout,
-                "greeting": greeting
+            result = {
+                "status": "success" if success else "failed",
+                "verification": {
+                    "counter_correct": counter == 42,
+                    "message_correct": message == "Template access works!",
+                    "timeout_correct": timeout == 30,
+                    "greeting_correct": greeting == "Hello, Template access works!"
+                },
+                "values": {
+                    "counter": counter,
+                    "message": message,
+                    "timeout": timeout,
+                    "greeting": greeting
+                }
             }
-        }
     next:
       - step: end
 
   - step: end
     desc: End workflow
     tool:
-      kind: python
-      auth: {}
-      libs: {}
-      args: {}
-      code: |
-        result = {"status": "complete"}
+      - label:
+          kind: python
+          auth: {}
+          libs: {}
+          args: {}
+          code: |
+            result = {"status": "complete"}

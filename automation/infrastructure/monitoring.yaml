@@ -17,83 +17,57 @@ workflow:
       kind: shell
       cmds:
         - echo "VictoriaMetrics Monitoring Automation - Action '{{ workload.action }}'"
-    case:
-      - when: "{{ workload.action == 'deploy' }}"
-        then:
-          - step: deploy_monitoring
-      - when: "{{ workload.action == 'undeploy' }}"
-        then:
-          - step: undeploy_monitoring
-      - when: "{{ workload.action == 'status' }}"
-        then:
-          - step: check_status
-      - when: "{{ workload.action == 'grafana-creds' }}"
-        then:
-          - step: get_grafana_creds
-      - when: "{{ workload.action == 'add-helm-repos' }}"
-        then:
-          - step: add_helm_repos
-      - when: "{{ workload.action == 'add-vector-helm-repo' }}"
-        then:
-          - step: add_vector_helm_repo
-      - when: "{{ workload.action == 'add-victoriametrics-helm-repo' }}"
-        then:
-          - step: add_victoriametrics_helm_repo
-      - when: "{{ workload.action == 'add-metrics-server-helm-repo' }}"
-        then:
-          - step: add_metrics_server_helm_repo
-      - when: "{{ workload.action == 'deploy-metrics-server' }}"
-        then:
-          - step: deploy_metrics_server
-      - when: "{{ workload.action == 'remove-metrics-server' }}"
-        then:
-          - step: remove_metrics_server
-      - when: "{{ workload.action == 'deploy-vmstack-operator' }}"
-        then:
-          - step: deploy_vmstack_operator
-      - when: "{{ workload.action == 'remove-vmstack-operator' }}"
-        then:
-          - step: remove_vmstack_operator
-      - when: "{{ workload.action == 'deploy-vmstack' }}"
-        then:
-          - step: deploy_vmstack
-      - when: "{{ workload.action == 'remove-vmstack' }}"
-        then:
-          - step: remove_vmstack
-      - when: "{{ workload.action == 'deploy-stack' }}"
-        then:
-          - step: deploy_stack
-      - when: "{{ workload.action == 'deploy-dashboards' }}"
-        then:
-          - step: deploy_dashboards
-      - when: "{{ workload.action == 'remove-dashboards' }}"
-        then:
-          - step: remove_dashboards
-      - when: "{{ workload.action == 'deploy-exporter' }}"
-        then:
-          - step: deploy_exporter
-      - when: "{{ workload.action == 'remove-exporter' }}"
-        then:
-          - step: remove_exporter
-      - when: "{{ workload.action == 'deploy-noetl-scrape' }}"
-        then:
-          - step: deploy_noetl_scrape
-      - when: "{{ workload.action == 'remove-noetl-scrape' }}"
-        then:
-          - step: remove_noetl_scrape
-      - when: "{{ workload.action == 'deploy-vector' }}"
-        then:
-          - step: deploy_vector
-      - when: "{{ workload.action == 'remove-vector' }}"
-        then:
-          - step: remove_vector
-      - when: "{{ workload.action == 'deploy-vmlogs' }}"
-        then:
-          - step: deploy_vmlogs
-      - when: "{{ workload.action == 'remove-vmlogs' }}"
-        then:
-          - step: remove_vmlogs
     next:
+      - step: deploy_monitoring
+        when: "{{ workload.action == 'deploy' }}"
+      - step: undeploy_monitoring
+        when: "{{ workload.action == 'undeploy' }}"
+      - step: check_status
+        when: "{{ workload.action == 'status' }}"
+      - step: get_grafana_creds
+        when: "{{ workload.action == 'grafana-creds' }}"
+      - step: add_helm_repos
+        when: "{{ workload.action == 'add-helm-repos' }}"
+      - step: add_vector_helm_repo
+        when: "{{ workload.action == 'add-vector-helm-repo' }}"
+      - step: add_victoriametrics_helm_repo
+        when: "{{ workload.action == 'add-victoriametrics-helm-repo' }}"
+      - step: add_metrics_server_helm_repo
+        when: "{{ workload.action == 'add-metrics-server-helm-repo' }}"
+      - step: deploy_metrics_server
+        when: "{{ workload.action == 'deploy-metrics-server' }}"
+      - step: remove_metrics_server
+        when: "{{ workload.action == 'remove-metrics-server' }}"
+      - step: deploy_vmstack_operator
+        when: "{{ workload.action == 'deploy-vmstack-operator' }}"
+      - step: remove_vmstack_operator
+        when: "{{ workload.action == 'remove-vmstack-operator' }}"
+      - step: deploy_vmstack
+        when: "{{ workload.action == 'deploy-vmstack' }}"
+      - step: remove_vmstack
+        when: "{{ workload.action == 'remove-vmstack' }}"
+      - step: deploy_stack
+        when: "{{ workload.action == 'deploy-stack' }}"
+      - step: deploy_dashboards
+        when: "{{ workload.action == 'deploy-dashboards' }}"
+      - step: remove_dashboards
+        when: "{{ workload.action == 'remove-dashboards' }}"
+      - step: deploy_exporter
+        when: "{{ workload.action == 'deploy-exporter' }}"
+      - step: remove_exporter
+        when: "{{ workload.action == 'remove-exporter' }}"
+      - step: deploy_noetl_scrape
+        when: "{{ workload.action == 'deploy-noetl-scrape' }}"
+      - step: remove_noetl_scrape
+        when: "{{ workload.action == 'remove-noetl-scrape' }}"
+      - step: deploy_vector
+        when: "{{ workload.action == 'deploy-vector' }}"
+      - step: remove_vector
+        when: "{{ workload.action == 'remove-vector' }}"
+      - step: deploy_vmlogs
+        when: "{{ workload.action == 'deploy-vmlogs' }}"
+      - step: remove_vmlogs
+        when: "{{ workload.action == 'remove-vmlogs' }}"
       - step: show_help
 
   - step: deploy_monitoring
@@ -107,61 +81,61 @@ workflow:
           echo "  - Metrics Server"
           echo "  - VictoriaMetrics Operator"
           echo "  - VictoriaMetrics Stack (Grafana, VMAgent, VMAlert, etc.)"
-          
+
           # Add helm repositories
           helm repo add metrics-server https://kubernetes-sigs.github.io/metrics-server/
           helm repo add vm https://victoriametrics.github.io/helm-charts/
           helm repo add vector https://helm.vector.dev
           helm repo update
-          
+
           # Set kubectl context
           kubectl config use-context kind-noetl
-          
+
           # Deploy Metrics Server
           helm upgrade --install metrics-server metrics-server/metrics-server \
             --values ci/vmstack/mericsserver-values.yaml --version 3.13.0 \
             --namespace metrics-server --create-namespace \
             --timeout 5m \
             --wait --wait-for-jobs
-          
+
           # Deploy VictoriaMetrics Operator
           helm upgrade --install vmoperator vm/victoria-metrics-operator \
             --values ci/vmstack/vmoperator-values.yaml --version 0.54.0 \
             --namespace vmoperator --create-namespace \
             --timeout 5m \
             --wait --wait-for-jobs
-          
+
           # Deploy VictoriaMetrics Stack
           helm upgrade --install vmstack vm/victoria-metrics-k8s-stack \
             --values ci/vmstack/vmstack-values.yaml --version 0.60.1 \
             --namespace vmstack --create-namespace \
             --timeout 5m \
             --wait --wait-for-jobs
-          
+
           # Deploy VictoriaLogs
           helm upgrade --install vmlogs vm/victoria-logs-single \
             --values ci/vmstack/vmlogs-values.yaml --version 0.11.11 \
             --namespace vmlogs --create-namespace \
             --timeout 5m \
             --wait --wait-for-jobs
-          
+
           # Deploy Vector
           helm upgrade --install vector vector/vector \
             --values ci/vmstack/vector-values.yaml --version 0.46.0 \
             --namespace vector --create-namespace \
             --timeout 5m \
             --wait --wait-for-jobs
-          
+
           # Deploy postgres-exporter
           kubectl apply -f ci/manifests/postgres-exporter/namespace/namespace.yaml
           sleep 2
           kubectl apply -f ci/manifests/postgres-exporter
-          
+
           # Deploy NoETL scrape
           kubectl apply -f ci/manifests/noetl-scrape/namespace/namespace.yaml
           sleep 2
           kubectl apply -f ci/manifests/noetl-scrape/
-          
+
           # Deploy dashboards
           kubectl apply -f ci/manifests/grafana-dashboards
     next:
@@ -175,31 +149,31 @@ workflow:
         - |
           echo ""
           echo "Removing VictoriaMetrics monitoring stack..."
-          
+
           # Set kubectl context
           kubectl config use-context kind-noetl
-          
+
           # Remove dashboards
           kubectl delete -f ci/manifests/grafana-dashboards --ignore-not-found=true
-          
+
           # Remove NoETL scrape
           kubectl delete -f ci/manifests/noetl-scrape/ --ignore-not-found=true
-          
+
           # Remove postgres-exporter
           kubectl delete -f ci/manifests/postgres-exporter/ --ignore-not-found=true
-          
+
           # Uninstall Vector
           helm uninstall vector -n vector --ignore-not-found || true
-          
+
           # Uninstall VictoriaLogs
           helm uninstall vmlogs -n vmlogs --ignore-not-found || true
-          
+
           # Uninstall VictoriaMetrics Stack
           helm uninstall vmstack -n vmstack --ignore-not-found || true
-          
+
           # Uninstall VictoriaMetrics Operator
           helm uninstall vmoperator -n vmoperator --ignore-not-found || true
-          
+
           # Uninstall Metrics Server
           helm uninstall metrics-server -n metrics-server --ignore-not-found || true
     next:
@@ -238,10 +212,10 @@ workflow:
           echo ""
           echo "Grafana Admin Credentials:"
           echo "=========================="
-          
+
           # Set kubectl context
           kubectl config use-context kind-noetl
-          
+
           # Get Grafana admin password from secret
           echo "Username: admin"
           echo -n "Password: "
@@ -263,15 +237,15 @@ workflow:
           echo "  - Vector"
           echo "  - VictoriaMetrics"
           echo "  - Metrics Server"
-          
+
           # Add Vector helm repository
           helm repo add vector https://helm.vector.dev
           helm repo update
-          
+
           # Add VictoriaMetrics helm repository
           helm repo add vm https://victoriametrics.github.io/helm-charts/
           helm repo update
-          
+
           # Add Metrics Server helm repository
           helm repo add metrics-server https://kubernetes-sigs.github.io/metrics-server/
           helm repo update
@@ -325,10 +299,10 @@ workflow:
         - |
           echo ""
           echo "Deploying Metrics Server..."
-          
+
           # Set kubectl context
           kubectl config use-context kind-noetl
-          
+
           helm upgrade --install metrics-server metrics-server/metrics-server \
             --values ci/vmstack/mericsserver-values.yaml --version 3.13.0 \
             --namespace metrics-server --create-namespace \
@@ -345,10 +319,10 @@ workflow:
         - |
           echo ""
           echo "Removing Metrics Server..."
-          
+
           # Set kubectl context
           kubectl config use-context kind-noetl
-          
+
           helm uninstall metrics-server -n metrics-server
     next:
       - step: end
@@ -361,10 +335,10 @@ workflow:
         - |
           echo ""
           echo "Deploying VictoriaMetrics operator..."
-          
+
           # Set kubectl context
           kubectl config use-context kind-noetl
-          
+
           helm upgrade --install vmoperator vm/victoria-metrics-operator \
             --values ci/vmstack/vmoperator-values.yaml --version 0.54.0 \
             --namespace vmoperator --create-namespace \
@@ -381,10 +355,10 @@ workflow:
         - |
           echo ""
           echo "Removing VictoriaMetrics operator..."
-          
+
           # Set kubectl context
           kubectl config use-context kind-noetl
-          
+
           helm uninstall vmoperator -n vmoperator
     next:
       - step: end
@@ -397,10 +371,10 @@ workflow:
         - |
           echo ""
           echo "Deploying VictoriaMetrics stack..."
-          
+
           # Set kubectl context
           kubectl config use-context kind-noetl
-          
+
           helm upgrade --install vmstack vm/victoria-metrics-k8s-stack \
             --values ci/vmstack/vmstack-values.yaml --version 0.60.1 \
             --namespace vmstack --create-namespace \
@@ -417,10 +391,10 @@ workflow:
         - |
           echo ""
           echo "Removing VictoriaMetrics stack..."
-          
+
           # Set kubectl context
           kubectl config use-context kind-noetl
-          
+
           helm uninstall vmstack -n vmstack
     next:
       - step: end
@@ -433,61 +407,61 @@ workflow:
         - |
           echo ""
           echo "Deploying VictoriaMetrics monitoring stack..."
-          
+
           # Add helm repositories
           helm repo add metrics-server https://kubernetes-sigs.github.io/metrics-server/
           helm repo add vm https://victoriametrics.github.io/helm-charts/
           helm repo add vector https://helm.vector.dev
           helm repo update
-          
+
           # Set kubectl context
           kubectl config use-context kind-noetl
-          
+
           # Deploy Metrics Server
           helm upgrade --install metrics-server metrics-server/metrics-server \
             --values ci/vmstack/mericsserver-values.yaml --version 3.13.0 \
             --namespace metrics-server --create-namespace \
             --timeout 5m \
             --wait --wait-for-jobs
-          
+
           # Deploy VictoriaMetrics Operator
           helm upgrade --install vmoperator vm/victoria-metrics-operator \
             --values ci/vmstack/vmoperator-values.yaml --version 0.54.0 \
             --namespace vmoperator --create-namespace \
             --timeout 5m \
             --wait --wait-for-jobs
-          
+
           # Deploy VictoriaMetrics Stack
           helm upgrade --install vmstack vm/victoria-metrics-k8s-stack \
             --values ci/vmstack/vmstack-values.yaml --version 0.60.1 \
             --namespace vmstack --create-namespace \
             --timeout 5m \
             --wait --wait-for-jobs
-          
+
           # Deploy VictoriaLogs
           helm upgrade --install vmlogs vm/victoria-logs-single \
             --values ci/vmstack/vmlogs-values.yaml --version 0.11.11 \
             --namespace vmlogs --create-namespace \
             --timeout 5m \
             --wait --wait-for-jobs
-          
+
           # Deploy Vector
           helm upgrade --install vector vector/vector \
             --values ci/vmstack/vector-values.yaml --version 0.46.0 \
             --namespace vector --create-namespace \
             --timeout 5m \
             --wait --wait-for-jobs
-          
+
           # Deploy postgres-exporter
           kubectl apply -f ci/manifests/postgres-exporter/namespace/namespace.yaml
           sleep 2
           kubectl apply -f ci/manifests/postgres-exporter
-          
+
           # Deploy NoETL scrape
           kubectl apply -f ci/manifests/noetl-scrape/namespace/namespace.yaml
           sleep 2
           kubectl apply -f ci/manifests/noetl-scrape/
-          
+
           # Deploy dashboards
           kubectl apply -f ci/manifests/grafana-dashboards
     next:
@@ -501,10 +475,10 @@ workflow:
         - |
           echo ""
           echo "Deploying Grafana dashboards..."
-          
+
           # Set kubectl context
           kubectl config use-context kind-noetl
-          
+
           kubectl apply -f ci/manifests/grafana-dashboards
     next:
       - step: end
@@ -517,10 +491,10 @@ workflow:
         - |
           echo ""
           echo "Removing Grafana dashboards..."
-          
+
           # Set kubectl context
           kubectl config use-context kind-noetl
-          
+
           kubectl delete -f ci/manifests/grafana-dashboards
     next:
       - step: end
@@ -533,10 +507,10 @@ workflow:
         - |
           echo ""
           echo "Deploying postgres-exporter..."
-          
+
           # Set kubectl context
           kubectl config use-context kind-noetl
-          
+
           kubectl apply -f ci/manifests/postgres-exporter/namespace/namespace.yaml
           sleep 2
           kubectl apply -f ci/manifests/postgres-exporter
@@ -551,10 +525,10 @@ workflow:
         - |
           echo ""
           echo "Removing postgres-exporter..."
-          
+
           # Set kubectl context
           kubectl config use-context kind-noetl
-          
+
           kubectl delete -f ci/manifests/postgres-exporter/
     next:
       - step: end
@@ -567,10 +541,10 @@ workflow:
         - |
           echo ""
           echo "Deploying VMServiceScrape for NoETL..."
-          
+
           # Set kubectl context
           kubectl config use-context kind-noetl
-          
+
           kubectl apply -f ci/manifests/noetl-scrape/namespace/namespace.yaml
           sleep 2
           kubectl apply -f ci/manifests/noetl-scrape/
@@ -585,10 +559,10 @@ workflow:
         - |
           echo ""
           echo "Removing VMServiceScrape for NoETL..."
-          
+
           # Set kubectl context
           kubectl config use-context kind-noetl
-          
+
           kubectl delete -f ci/manifests/noetl-scrape/
     next:
       - step: end
@@ -601,10 +575,10 @@ workflow:
         - |
           echo ""
           echo "Deploying Vector..."
-          
+
           # Set kubectl context
           kubectl config use-context kind-noetl
-          
+
           helm upgrade --install vector vector/vector \
             --values ci/vmstack/vector-values.yaml --version 0.46.0 \
             --namespace vector --create-namespace \
@@ -621,10 +595,10 @@ workflow:
         - |
           echo ""
           echo "Removing Vector..."
-          
+
           # Set kubectl context
           kubectl config use-context kind-noetl
-          
+
           helm uninstall vector -n vector
     next:
       - step: end
@@ -637,10 +611,10 @@ workflow:
         - |
           echo ""
           echo "Deploying VictoriaLogs..."
-          
+
           # Set kubectl context
           kubectl config use-context kind-noetl
-          
+
           helm upgrade --install vmlogs vm/victoria-logs-single \
             --values ci/vmstack/vmlogs-values.yaml --version 0.11.11 \
             --namespace vmlogs --create-namespace \
@@ -657,10 +631,10 @@ workflow:
         - |
           echo ""
           echo "Removing VictoriaLogs..."
-          
+
           # Set kubectl context
           kubectl config use-context kind-noetl
-          
+
           helm uninstall vmlogs -n vmlogs
     next:
       - step: end
@@ -729,3 +703,5 @@ workflow:
 
   - step: end
     desc: End workflow
+    tool:
+      kind: noop

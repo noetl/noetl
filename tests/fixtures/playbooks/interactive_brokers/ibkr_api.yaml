@@ -78,35 +78,21 @@ workflow:
           "base_url": base_url,
             "totp_secret": totp_secret,
         }
-    case:
-      - when: "{{ event.name == 'call.done' and workload.target == 'accounts' }}"
-        then:
-          - next:
-              - step: get_accounts
-      - when: "{{ event.name == 'call.done' and workload.target == 'positions' }}"
-        then:
-          - next:
-              - step: get_positions
-      - when: "{{ event.name == 'call.done' and workload.target == 'orders' }}"
-        then:
-          - next:
-              - step: get_orders
-      - when: "{{ event.name == 'call.done' and workload.target == 'tickle' }}"
-        then:
-          - next:
-              - step: tickle_session
-      - when: "{{ event.name == 'call.done' and workload.target == 'totp' }}"
-        then:
-          - next:
-              - step: generate_totp
-      - when: "{{ event.name == 'call.done' and workload.target == 'history' }}"
-        then:
-          - next:
-              - step: get_futures
-      - when: "{{ event.name == 'call.done' and workload.target == 'status' }}"
-        then:
-          - next:
-              - step: check_auth_status
+    next:
+      - step: get_accounts
+        when: "{{ workload.target == 'accounts' }}"
+      - step: get_positions
+        when: "{{ workload.target == 'positions' }}"
+      - step: get_orders
+        when: "{{ workload.target == 'orders' }}"
+      - step: tickle_session
+        when: "{{ workload.target == 'tickle' }}"
+      - step: generate_totp
+        when: "{{ workload.target == 'totp' }}"
+      - step: get_futures
+        when: "{{ workload.target == 'history' }}"
+      - step: check_auth_status
+        when: "{{ workload.target == 'status' }}"
 
   # ============================================
   # Authentication Status

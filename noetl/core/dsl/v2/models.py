@@ -1,11 +1,13 @@
 """
-NoETL DSL v2 Models
+NoETL DSL v2 Models - Canonical Format
 
-Complete redesign with:
-- tool.kind pattern for tool configuration
-- Step-level case/when/then for event-driven control flow  
-- Step-level loop for iteration
-- Event-driven architecture (no backward compatibility)
+Canonical DSL implementation with:
+- tool as ordered pipeline (list of labeled tasks) or single tool shorthand
+- step.when for transition enable guard
+- next[].when for conditional routing
+- loop.spec.mode for iteration mode
+- tool.eval for per-task flow control
+- No case/when/then blocks (removed)
 """
 
 from pydantic import BaseModel, Field, field_validator
@@ -159,6 +161,8 @@ class ToolSpec(BaseModel):
     """
     Tool configuration with tool.kind pattern.
     All execution-specific fields live under tool, including output configuration.
+
+    The eval: field provides tool-level flow control, evaluated after each execution.
     """
     kind: Literal[
         "http",
@@ -181,10 +185,16 @@ class ToolSpec(BaseModel):
         "nats",
         "shell",
         "artifact",
-        "noop",      # No-operation tool for case-driven steps
-        "pipeline",  # Pipeline execution tool
+        "noop",           # No-operation tool for case-driven steps
+        "task_sequence",  # Task sequence execution (replaces pipeline)
+        "rhai",           # Rhai scripting engine for polling/async operations
     ] = Field(
         ..., description="Tool type"
+    )
+    # Flow control: evaluated after tool execution
+    eval: Optional[list[dict[str, Any]]] = Field(
+        default=None,
+        description="Tool-level flow control conditions (EvalCondition list)"
     )
     # Output configuration at tool level (forward reference)
     output: Optional["ToolOutput"] = Field(
@@ -204,297 +214,210 @@ class ToolSpec(BaseModel):
 
 
 # ============================================================================
-# Loop Model - Step-level looping
+# Loop Model - Step-level looping (Canonical format)
 # ============================================================================
 
+class LoopSpec(BaseModel):
+    """
+    Loop runtime specification (canonical format).
+
+    Controls loop execution behavior:
+    - mode: sequential (default) or parallel
+    - max_in_flight: max concurrent iterations in parallel mode
+    """
+    mode: Literal["sequential", "parallel"] = Field(
+        default="sequential",
+        description="Execution mode: sequential (one at a time) or parallel (concurrent)"
+    )
+    max_in_flight: Optional[int] = Field(
+        None,
+        description="Maximum concurrent iterations in parallel mode"
+    )
+
+
 class Loop(BaseModel):
-    """Step-level loop configuration."""
+    """
+    Step-level loop configuration (canonical format).
+
+    Canonical format:
+        loop:
+          spec:
+            mode: parallel
+            max_in_flight: 5
+          in: "{{ workload.items }}"
+          iterator: item
+    """
+    spec: Optional[LoopSpec] = Field(None, description="Loop runtime specification")
     in_: str = Field(..., alias="in", description="Jinja expression for collection to iterate over")
-    iterator: str = Field(..., description="Variable name for each item")
-    mode: Literal["sequential", "parallel", "async"] = Field(default="sequential", description="Execution mode")
-    
+    iterator: str = Field(..., description="Variable name for each item (binds iter.<iterator>)")
+
     class Config:
         populate_by_name = True
 
+    @property
+    def mode(self) -> str:
+        """Get loop mode from spec (for backward compatibility)."""
+        return self.spec.mode if self.spec else "sequential"
+
 
 # ============================================================================
-# Actions - Used inside case.then blocks
+# NextTarget - Simple next target (for backward compatibility)
 # ============================================================================
 
 class NextTarget(BaseModel):
-    """Target for next transition."""
+    """Simple target for next transition (backward compatibility)."""
     step: str = Field(..., description="Target step name")
     args: Optional[dict[str, Any]] = Field(None, description="Arguments to pass to target step")
 
 
-# Action types - keeping as simple dicts for flexibility
-# The engine will validate structure when processing
-
-
 # ============================================================================
-# ThenBlock - Action container for case.then
+# Tool-Level Eval Models - Flow control at task level
 # ============================================================================
 
-class ThenBlock(BaseModel):
+class EvalCondition(BaseModel):
     """
-    Action block inside case.then.
-    Flexible structure to support all action types.
+    Single eval condition for tool-level flow control.
+
+    Evaluated after tool execution using the outcome object.
+    First matching condition wins (or else clause if no expr).
+
+    Default behavior (if tool.eval is omitted):
+    - success → continue
+    - error → fail
+
+    If tool.eval is present and no clause matches, same default applies
+    unless an else clause is provided.
+
+    Variable scoping:
+    - set_vars: Updates step-scoped vars (visible to subsequent tools in same
+      then: list and to later case evaluation within same step)
+    - set_iter: Updates iteration-scoped vars (only in parallel loops, isolated
+      per iteration)
+    - _prev is pipeline-local and only valid during then: list execution
+
+    Example:
+        eval:
+          - expr: "{{ outcome.status == 'error' and outcome.error.retryable == true }}"
+            do: retry
+            attempts: 3
+            backoff: exponential
+            delay: 1.0
+
+          - expr: "{{ outcome.status == 'error' }}"
+            do: fail
+
+          - else:
+              do: continue
+              set_vars:
+                has_more: "{{ outcome.result.data.paging.hasMore }}"
     """
-    # Store raw actions - will be processed by engine
-    raw_actions: list[dict[str, Any]] | dict[str, Any] = Field(..., alias="actions_data")
-    
-    class Config:
-        extra = "allow"
-        populate_by_name = True
-    
-    @classmethod
-    def from_data(cls, data: dict | list):
-        """Create ThenBlock from raw data."""
-        if isinstance(data, list):
-            return cls(raw_actions=data)
-        else:
-            return cls(raw_actions=[data])
-
-
-# ============================================================================
-# Pipeline Models - Clojure-style threading with error handling
-# ============================================================================
-
-class PipelineControlAction(BaseModel):
-    """
-    Control action for pipeline error handling.
-
-    Actions:
-    - retry: Retry current task (or from a named task)
-    - skip: Skip to next task, optionally set _prev
-    - jump: Jump to a named task in the pipeline
-    - fail: End step with error
-    - continue: Continue to next task (implicit on success)
-    """
-    do: Literal["retry", "skip", "jump", "fail", "continue"] = Field(
-        ..., description="Control action type"
+    expr: Optional[str] = Field(
+        None, description="Jinja2 expression (None for else/default clause)"
     )
-    # For retry
-    task: Optional[str] = Field(
-        None, description="Task to retry (default: current failed task)"
+    do: Literal["continue", "retry", "break", "jump", "fail"] = Field(
+        default="continue", description="Control action"
     )
-    from_: Optional[str] = Field(
-        None, alias="from", description="Restart pipeline from this task"
-    )
-    attempts: Optional[int] = Field(
-        None, description="Max retry attempts"
-    )
+    # Retry options
+    attempts: Optional[int] = Field(None, description="Max retry attempts")
     backoff: Optional[Literal["none", "linear", "exponential"]] = Field(
         None, description="Backoff strategy"
     )
-    delay: Optional[float] = Field(
-        None, description="Initial delay in seconds"
+    delay: Optional[float] = Field(None, description="Initial delay in seconds")
+    # Jump option
+    to: Optional[str] = Field(None, description="Target task label for jump action")
+    # Variable setting (step-scoped by default)
+    set_vars: Optional[dict[str, Any]] = Field(
+        None, description="Variables to set in step scope (visible to subsequent tools and case evaluation)"
     )
-    # For skip
-    set_prev: Optional[Any] = Field(
-        None, description="Value to set as _prev when skipping"
-    )
-    # For jump
-    to: Optional[str] = Field(
-        None, description="Task to jump to"
-    )
-
-    class Config:
-        populate_by_name = True
-
-
-class CatchCondition(BaseModel):
-    """
-    Single catch condition in a pipeline's catch block.
-
-    Pattern matching on _task, _err, _attempt to decide control flow.
-
-    Example:
-        - when: "{{ _task == 'fetch' and _err.retryable }}"
-          do: retry
-          attempts: 3
-          backoff: exponential
-    """
-    when: Optional[str] = Field(
-        None, description="Jinja2 condition (None for else/default)"
-    )
-    do: Literal["retry", "skip", "jump", "fail", "continue"] = Field(
-        ..., description="Control action"
-    )
-    # Retry options
-    task: Optional[str] = Field(None, description="Task to retry")
-    from_: Optional[str] = Field(None, alias="from", description="Restart from task")
-    attempts: Optional[int] = Field(None, description="Max attempts")
-    backoff: Optional[Literal["none", "linear", "exponential"]] = Field(None)
-    delay: Optional[float] = Field(None, description="Initial delay seconds")
-    # Skip options
-    set_prev: Optional[Any] = Field(None, description="Value for _prev on skip")
-    # Jump options
-    to: Optional[str] = Field(None, description="Target task for jump")
-
-    class Config:
-        populate_by_name = True
-        extra = "allow"  # Allow 'else' shorthand
-
-
-class CatchBlock(BaseModel):
-    """
-    Pipeline error handling block with cond-style matching.
-
-    Evaluated only when a task fails. First matching condition wins.
-
-    Example:
-        catch:
-          cond:
-            - when: "{{ _task == 'fetch' and _err.retryable }}"
-              do: retry
-              attempts: 3
-            - when: "{{ _task == 'transform' }}"
-              do: skip
-            - else:
-                do: fail
-    """
-    cond: list[CatchCondition | dict[str, Any]] = Field(
-        default_factory=list,
-        description="List of condition/action pairs (first match wins)"
-    )
-
-
-class PipelineTask(BaseModel):
-    """
-    Named task in a pipeline.
-
-    Each task has:
-    - name: identifier for _task matching and jump targets
-    - tool: tool configuration
-    - optional per-task catch override
-
-    Example:
-        - fetch:
-            tool: {kind: http, url: "..."}
-        - transform:
-            tool: {kind: python, code: "..."}
-    """
-    name: str = Field(..., description="Task name (used as _task)")
-    tool: dict[str, Any] = Field(..., description="Tool configuration")
-    catch: Optional[CatchBlock] = Field(
-        None, description="Per-task catch override (optional)"
-    )
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "PipelineTask":
-        """Parse a task from dict like {task_name: {tool: {...}}}."""
-        if len(data) != 1:
-            raise ValueError(f"Pipeline task must have exactly one key (task name): {data}")
-        name = list(data.keys())[0]
-        config = data[name]
-        if not isinstance(config, dict) or "tool" not in config:
-            raise ValueError(f"Pipeline task '{name}' must have 'tool' config: {config}")
-        return cls(
-            name=name,
-            tool=config["tool"],
-            catch=CatchBlock(**config["catch"]) if "catch" in config else None
-        )
-
-
-class PipelineBlock(BaseModel):
-    """
-    Pipeline execution block with Clojure-style threading and error handling.
-
-    Structure:
-    - pipe: ordered list of named tasks (data threads via _prev)
-    - catch: centralized error handling (cond-style matching)
-    - finally: actions to run after successful completion
-
-    Runtime variables:
-    - _task: name of current/failed task
-    - _prev: result of last successful task (threading)
-    - _err: structured error payload {kind, retryable, code, message, source}
-    - _attempt: retry attempt count for current task
-
-    Example:
-        pipe:
-          - fetch: {tool: {kind: http, url: "..."}}
-          - transform: {tool: {kind: python, args: {data: "{{ _prev }}"}}}
-          - store: {tool: {kind: postgres, data: "{{ _prev }}"}}
-
-        catch:
-          cond:
-            - when: "{{ _task == 'fetch' and _err.retryable }}"
-              do: retry
-              attempts: 5
-            - when: "{{ _task == 'transform' and _err.kind == 'schema' }}"
-              do: skip
-            - else:
-                do: fail
-
-        finally:
-          - collect: {strategy: append, path: data, into: pages}
-          - next: [{step: continue_pagination}]
-    """
-    pipe: list[dict[str, Any]] = Field(
-        ..., description="Ordered list of named tasks"
-    )
-    catch: Optional[CatchBlock] = Field(
-        None, description="Error handling block"
-    )
-    finally_: Optional[list[dict[str, Any]]] = Field(
-        None, alias="finally", description="Actions after successful pipeline"
+    # Iteration-scoped variables (for parallel loops)
+    set_iter: Optional[dict[str, Any]] = Field(
+        None, description="Variables to set in iteration scope (isolated per parallel loop iteration)"
     )
 
     class Config:
-        populate_by_name = True
+        extra = "allow"  # Allow 'else' shorthand: - else: {do: continue}
 
-    def get_tasks(self) -> list[PipelineTask]:
-        """Parse pipe list into PipelineTask objects."""
-        return [PipelineTask.from_dict(t) for t in self.pipe]
 
-    def get_task_names(self) -> list[str]:
-        """Get ordered list of task names."""
-        return [list(t.keys())[0] for t in self.pipe]
+class ToolOutcome(BaseModel):
+    """
+    Structured result of tool execution, available in eval expressions as 'outcome'.
+
+    Contains:
+    - status: success or error
+    - result: tool output (if success)
+    - error: structured error info (if error)
+    - meta: execution metadata (attempt, duration_ms)
+    - Tool-specific helpers: http, pg, py
+
+    Example outcome:
+        outcome = {
+            "status": "error",
+            "error": {
+                "kind": "rate_limit",
+                "retryable": True,
+                "code": "HTTP_429",
+                "message": "Rate limit exceeded",
+                "retry_after": 5
+            },
+            "meta": {"attempt": 1, "duration_ms": 150},
+            "http": {"status": 429, "headers": {...}}
+        }
+    """
+    status: Literal["success", "error"] = Field(..., description="Execution status")
+    result: Any = Field(None, description="Tool output (if success)")
+    error: Optional[dict[str, Any]] = Field(
+        None, description="Structured error {kind, retryable, code, message, ...}"
+    )
+    meta: Optional[dict[str, Any]] = Field(
+        None, description="Execution metadata {attempt, duration_ms}"
+    )
+    # Tool-specific helpers
+    http: Optional[dict[str, Any]] = Field(
+        None, description="HTTP-specific info {status, headers}"
+    )
+    pg: Optional[dict[str, Any]] = Field(
+        None, description="PostgreSQL-specific info {code, sqlstate}"
+    )
+    py: Optional[dict[str, Any]] = Field(
+        None, description="Python-specific info {exception, traceback}"
+    )
+
+    class Config:
+        extra = "allow"  # Allow additional tool-specific fields
 
 
 # ============================================================================
-# CaseEntry - Conditional rule with when/then
+# CaseEntry - DEPRECATED (kept for migration tooling only)
 # ============================================================================
 
 class CaseEntry(BaseModel):
     """
-    Conditional behavior rule.
-    Evaluated against event context with Jinja2.
-
-    Supports two forms:
-    - when: "{{ condition }}" with then: - Standard conditional
-    - else: (no when) - Fallback when no conditions matched in inclusive mode
+    DEPRECATED: Use step.when for enable guards and next[].when for routing.
+    Kept only for migration tooling to read old playbooks.
     """
-    when: Optional[str] = Field(None, description="Jinja2 condition expression (optional for else clause)")
-    then: Optional[dict[str, Any] | list[dict[str, Any]]] = Field(None, description="Actions to execute when condition is true")
+    when: Optional[str] = Field(None, description="DEPRECATED")
+    then: Optional[dict[str, Any] | list[dict[str, Any]]] = Field(None, description="DEPRECATED")
 
     class Config:
-        extra = "allow"  # Allow 'else' as alternative to 'then'
+        extra = "allow"
 
 
 # ============================================================================
-# Step Spec Model - Step-level behavior configuration
+# Step Spec Model - Step-level behavior configuration (Canonical format)
 # ============================================================================
 
 class StepSpec(BaseModel):
     """
-    Step-level behavior configuration.
+    Step-level behavior configuration (canonical format).
 
-    Controls how a step evaluates case conditions:
-    - case_mode: exclusive (default, first match wins) or inclusive (all matches execute)
-    - eval_mode: on_entry (default, once) or on_event (re-evaluate on every event)
+    Controls step execution behavior:
+    - next_mode: exclusive (default, first match) or inclusive (all matches fire)
     - timeout: step execution timeout
     - on_error: error handling behavior
     """
-    case_mode: Literal["exclusive", "inclusive"] = Field(
+    next_mode: Literal["exclusive", "inclusive"] = Field(
         default="exclusive",
-        description="Case evaluation mode: exclusive (XOR, first match) or inclusive (OR, all matches)"
-    )
-    eval_mode: Literal["on_entry", "on_event"] = Field(
-        default="on_entry",
-        description="Case evaluation timing: on_entry (once) or on_event (every event)"
+        description="Next evaluation mode: exclusive (first matching next fires) or inclusive (all matching fire)"
     )
     timeout: Optional[str] = Field(None, description="Step timeout (e.g., '30s', '5m')")
     on_error: Optional[Literal["fail", "continue", "retry"]] = Field(
@@ -629,69 +552,166 @@ OutputPublish = OutputAccumulate  # Renamed concept
 
 
 # ============================================================================
-# Step Model - Workflow node
+# Canonical Next Target - Conditional routing (replaces case-based routing)
+# ============================================================================
+
+class CanonicalNextTarget(BaseModel):
+    """
+    Target for next transition with optional conditional routing (canonical format).
+
+    Replaces case-based routing with declarative next[].when conditions.
+
+    Example:
+        next:
+          - step: success_handler
+            when: "{{ outcome.status == 'success' }}"
+            args:
+              data: "{{ outcome.result }}"
+          - step: error_handler
+            when: "{{ outcome.status == 'error' }}"
+    """
+    step: str = Field(..., description="Target step name")
+    spec: Optional[dict[str, Any]] = Field(None, description="Optional edge semantics")
+    when: Optional[str] = Field(None, description="Transition guard expression (Jinja2)")
+    args: Optional[dict[str, Any]] = Field(None, description="Token payload to pass to target step")
+
+
+# ============================================================================
+# Step Model - Workflow node (Canonical format)
 # ============================================================================
 
 class Step(BaseModel):
     """
-    Workflow step with event-driven control flow.
+    Workflow step in canonical format.
 
-    Step-level attributes:
-    - step: name (identifier)
+    Canonical step structure:
+    - step: name (unique identifier)
     - desc: description
-    - spec: step behavior configuration (case_mode, eval_mode, etc.)
-    - args: input arguments (from previous steps)
-    - loop: iteration config
-    - tool: execution config (tool.kind pattern) - includes output config
-    - case: event-driven conditional rules
-    - next: structural default next step(s)
+    - spec: step behavior (next_mode, timeout, on_error)
+    - when: transition enable guard (evaluated by server on input token)
+    - loop: optional loop wrapper with spec.mode
+    - tool: ordered pipeline (list of labeled tasks) OR single tool shorthand
+    - next: outgoing arcs with optional when conditions for routing
 
-    Note: Output configuration should be placed inside tool: block.
-    Step-level output is deprecated but supported for backwards compatibility.
+    Example (pipeline):
+        - step: fetch_transform
+          when: "{{ workload.enabled }}"
+          tool:
+            - fetch:
+                kind: http
+                url: "..."
+                eval:
+                  - expr: "{{ outcome.status == 'error' }}"
+                    do: fail
+            - transform:
+                kind: python
+                args: { data: "{{ _prev }}" }
+          next:
+            - step: success
+              when: "{{ outcome.status == 'success' }}"
+            - step: failure
+              when: "{{ outcome.status == 'error' }}"
+
+    Example (single tool shorthand):
+        - step: simple_fetch
+          tool:
+            kind: http
+            url: "..."
+          next:
+            - step: process
     """
     step: str = Field(..., description="Step name (unique identifier)")
     desc: Optional[str] = Field(None, description="Step description")
-    spec: Optional[StepSpec] = Field(None, description="Step behavior configuration")
+    spec: Optional[StepSpec] = Field(None, description="Step behavior configuration (next_mode, timeout)")
+
+    # Canonical: transition enable guard (replaces case for enable)
+    when: Optional[str] = Field(
+        None,
+        description="Transition enable guard - Jinja2 expression evaluated by server on input token"
+    )
+
     args: Optional[dict[str, Any]] = Field(None, description="Input arguments for this step")
     vars: Optional[dict[str, Any]] = Field(None, description="Variables to extract from step result")
     output: Optional[ToolOutput] = Field(
         None,
-        description="DEPRECATED: Use tool.output instead. Step-level output for backwards compatibility."
+        description="Step-level output configuration (tool.output preferred)"
     )
     result: Optional[dict[str, Any]] = Field(
         None,
         description="Result storage config (output_select, store). Passed to worker for ResultHandler."
     )
-    loop: Optional[Loop] = Field(None, description="Loop configuration")
-    tool: Optional[ToolSpec] = Field(None, description="Tool configuration with tool.kind and output")
-    case: Optional[list[CaseEntry]] = Field(None, description="Event-driven conditional rules")
-    next: Optional[str | list[str] | list[dict[str, Any]]] = Field(
+    loop: Optional[Loop] = Field(None, description="Loop configuration with spec.mode")
+
+    # Canonical: tool is either single ToolSpec (shorthand) or list of labeled tasks (pipeline)
+    tool: Optional[Union[ToolSpec, list[dict[str, Any]]]] = Field(
         None,
-        description="Structural default next step(s) - unconditional"
+        description="Tool pipeline (list of labeled tasks) or single tool shorthand"
     )
-    
+
+    # Canonical: next with optional when conditions for routing
+    next: Optional[Union[str, list[str], list[dict[str, Any]]]] = Field(
+        None,
+        description="Next step(s) with optional when conditions for conditional routing"
+    )
+
     @field_validator("next", mode="before")
     @classmethod
     def normalize_next(cls, v):
-        """Normalize next field - reject old when/then/else patterns."""
+        """Normalize next field - validate canonical format."""
         if v is None:
             return None
-        
-        # If it's a list, check for old patterns
+
+        # String shorthand: next: "step_name"
+        if isinstance(v, str):
+            return v
+
+        # List format
         if isinstance(v, list):
             for item in v:
+                if isinstance(item, str):
+                    continue  # Simple step name
                 if isinstance(item, dict):
-                    # Reject old conditional patterns
-                    if "when" in item or "then" in item or "else" in item:
-                        raise ValueError(
-                            "Conditional 'next' with when/then/else is not allowed. "
-                            "Use case/when/then for conditional transitions."
-                        )
-                    # Allow simple {step: name} format
+                    # Canonical format: {step: name, when: "...", args: {...}}
                     if "step" not in item:
-                        raise ValueError(f"Invalid next entry: {item}. Expected {{step: name}}")
-        
+                        raise ValueError(f"Invalid next entry: {item}. Must have 'step' field")
+                    # Reject old then/else patterns (but allow when - that's canonical!)
+                    if "then" in item or "else" in item:
+                        raise ValueError(
+                            "Invalid next entry: 'then' and 'else' not allowed in next[]. "
+                            "Use next[].when for conditional routing."
+                        )
+
         return v
+
+    @field_validator("tool", mode="before")
+    @classmethod
+    def normalize_tool(cls, v):
+        """Normalize tool field - accept both single and list formats."""
+        if v is None:
+            return None
+
+        # Single tool shorthand: tool: {kind: http, ...}
+        if isinstance(v, dict) and "kind" in v:
+            return v  # Keep as single ToolSpec for shorthand
+
+        # Pipeline format: tool: [- label: {kind: ...}]
+        if isinstance(v, list):
+            # Validate each task has proper structure
+            for i, task in enumerate(v):
+                if not isinstance(task, dict):
+                    raise ValueError(f"tool[{i}] must be an object")
+                if len(task) != 1:
+                    raise ValueError(
+                        f"tool[{i}] must have exactly one key (the task label). Got: {list(task.keys())}"
+                    )
+                label, config = next(iter(task.items()))
+                if not isinstance(config, dict):
+                    raise ValueError(f"tool[{i}].{label} must be an object")
+                if "kind" not in config:
+                    raise ValueError(f"tool[{i}].{label} must have 'kind' field")
+            return v
+
+        raise ValueError("tool must be an object with 'kind' or a list of labeled tasks")
 
 
 # ============================================================================
@@ -706,39 +726,108 @@ class WorkbookTask(BaseModel):
 
 
 # ============================================================================
+# Executor Models - Runtime requirements and workflow control
+# ============================================================================
+
+class ExecutorSpec(BaseModel):
+    """
+    Executor specification for workflow entry and termination control.
+
+    Controls:
+    - entry_step: Override default entry (workflow[0])
+    - final_step: Optional finalization step run after quiescence
+    - no_next_is_error: Treat "no next match" as error (default: false = branch terminates)
+    """
+    entry_step: Optional[str] = Field(
+        None,
+        description="Override entry step (default: workflow[0].step)"
+    )
+    final_step: Optional[str] = Field(
+        None,
+        description="Optional finalization step run after workflow quiescence"
+    )
+    no_next_is_error: Optional[bool] = Field(
+        None,
+        description="Treat 'no matching next arc' as error (default: false = branch terminates)"
+    )
+
+
+class ExecutorRequires(BaseModel):
+    """Executor capability requirements."""
+    tools: Optional[list[str]] = Field(None, description="Required tool kinds")
+    features: Optional[list[str]] = Field(None, description="Required runtime features")
+
+
+class Executor(BaseModel):
+    """
+    Executor configuration - runtime requirements and workflow control.
+
+    Controls:
+    - profile: Runtime profile (local, distributed, auto)
+    - version: Semantic contract version
+    - requires: Capability requirements
+    - spec: Entry/final step configuration
+    """
+    profile: Literal["local", "distributed", "auto"] = Field(
+        default="auto",
+        description="Runtime profile: local, distributed, or auto"
+    )
+    version: str = Field(
+        default="noetl-runtime/1",
+        description="Semantic contract version"
+    )
+    requires: Optional[ExecutorRequires] = Field(
+        None,
+        description="Required capabilities (tools, features)"
+    )
+    spec: Optional[ExecutorSpec] = Field(
+        None,
+        description="Executor spec for entry/final step configuration"
+    )
+
+
+# ============================================================================
 # Playbook Model - Complete workflow definition
 # ============================================================================
 
 class Playbook(BaseModel):
     """
     Complete workflow definition (v2).
-    
+
     Structure:
     - apiVersion: noetl.io/v2
     - kind: Playbook
     - metadata: name, path, labels
+    - executor: runtime configuration (profile, spec with entry_step/final_step)
     - workload: global variables
     - keychain: credential/token definitions (optional)
     - workbook: reusable tasks (optional)
-    - workflow: execution flow (must have 'start' step)
+    - workflow: execution flow (entry determined by executor.spec.entry_step or workflow[0])
+
+    Canonical Entry Selection:
+    1. executor.spec.entry_step if configured
+    2. workflow[0].step (first step in workflow array)
     """
     apiVersion: Literal["noetl.io/v2"] = Field(..., description="API version")
     kind: Literal["Playbook"] = Field(..., description="Resource kind")
     metadata: dict[str, Any] = Field(..., description="Metadata (name, path, labels)")
+    executor: Optional[Executor] = Field(
+        None,
+        description="Executor configuration (profile, version, requires, spec)"
+    )
     workload: Optional[dict[str, Any]] = Field(None, description="Global workflow variables")
     keychain: Optional[list[dict[str, Any]]] = Field(None, description="Keychain definitions for credentials and tokens")
     workbook: Optional[list[WorkbookTask]] = Field(None, description="Reusable tasks")
     workflow: list[Step] = Field(..., description="Workflow steps")
-    
+
     @field_validator("workflow")
     @classmethod
     def validate_workflow(cls, v):
-        """Ensure workflow has a 'start' step."""
-        step_names = [step.step for step in v]
-        if "start" not in step_names:
-            raise ValueError("Workflow must have a step named 'start'")
+        """Validate workflow has at least one step."""
+        if not v:
+            raise ValueError("Workflow must have at least one step")
         return v
-    
+
     @field_validator("metadata")
     @classmethod
     def validate_metadata(cls, v):
@@ -746,6 +835,32 @@ class Playbook(BaseModel):
         if "name" not in v:
             raise ValueError("Metadata must include 'name'")
         return v
+
+    def get_entry_step(self) -> str:
+        """
+        Get the entry step name using canonical rules.
+
+        Priority:
+        1. executor.spec.entry_step if configured
+        2. workflow[0].step (first step in workflow array)
+
+        Returns:
+            Entry step name
+        """
+        if self.executor and self.executor.spec and self.executor.spec.entry_step:
+            return self.executor.spec.entry_step
+        return self.workflow[0].step if self.workflow else "start"
+
+    def get_final_step(self) -> Optional[str]:
+        """
+        Get the optional final step name.
+
+        Returns:
+            Final step name or None if not configured
+        """
+        if self.executor and self.executor.spec:
+            return self.executor.spec.final_step
+        return None
 
 
 # ============================================================================
@@ -762,32 +877,39 @@ class CommandSpec(BaseModel):
     """
     Command-level behavior configuration (passed from step.spec).
 
-    Controls case evaluation semantics in the worker:
-    - case_mode: exclusive (first match wins) or inclusive (all matches fire)
-    - eval_mode: on_entry (once) or on_event (re-evaluate per event)
+    Controls execution semantics:
+    - next_mode: exclusive (first match) or inclusive (all matching next[] fire)
     """
-    case_mode: Literal["exclusive", "inclusive"] = Field(
+    next_mode: Literal["exclusive", "inclusive"] = Field(
         default="exclusive",
-        description="Case evaluation mode: exclusive (XOR, first match) or inclusive (OR, all matches)"
-    )
-    eval_mode: Literal["on_entry", "on_event"] = Field(
-        default="on_entry",
-        description="Case evaluation timing: on_entry (once) or on_event (every event)"
+        description="Next evaluation mode: exclusive (first match) or inclusive (all matches)"
     )
 
 
 class Command(BaseModel):
     """
-    Command to be executed by worker.
+    Command to be executed by worker (canonical format).
     Written to queue table by server after evaluating events.
     """
     execution_id: str = Field(..., description="Execution identifier")
     step: str = Field(..., description="Step name")
     tool: ToolCall = Field(..., description="Tool invocation details")
     args: Optional[dict[str, Any]] = Field(None, description="Step input arguments")
-    render_context: dict[str, Any] = Field(default_factory=dict, description="Full render context for Jinja2 templates (workload, step results, vars)")
-    case: Optional[list[dict[str, Any]]] = Field(None, description="Case blocks for immediate worker-side conditional execution (sinks, vars, etc.)")
-    spec: Optional[CommandSpec] = Field(None, description="Step behavior configuration (case_mode, eval_mode)")
+    render_context: dict[str, Any] = Field(default_factory=dict, description="Full render context for Jinja2 templates")
+
+    # Pipeline: list of labeled tasks when tool is a pipeline
+    pipeline: Optional[list[dict[str, Any]]] = Field(
+        None,
+        description="Pipeline tasks (list of labeled tasks) for task_sequence execution"
+    )
+
+    # Next targets: for conditional routing after step completion
+    next_targets: Optional[list[dict[str, Any]]] = Field(
+        None,
+        description="Next targets with optional when conditions for routing"
+    )
+
+    spec: Optional[CommandSpec] = Field(None, description="Step behavior configuration (next_mode)")
     attempt: int = Field(default=1, description="Attempt number for retries")
     priority: int = Field(default=0, description="Command priority (higher = more urgent)")
     backoff: Optional[float] = Field(None, description="Retry backoff delay in seconds")
@@ -795,7 +917,7 @@ class Command(BaseModel):
     retry_delay: Optional[float] = Field(None, description="Initial retry delay in seconds")
     retry_backoff: Optional[str] = Field(None, description="Retry backoff strategy: linear or exponential")
     metadata: dict[str, Any] = Field(default_factory=dict, description="Additional metadata")
-    
+
     def to_queue_record(self) -> dict[str, Any]:
         """Convert to queue table record format."""
         return {
@@ -804,8 +926,9 @@ class Command(BaseModel):
             "tool_kind": self.tool.kind,
             "tool_config": self.tool.config,
             "args": self.args or {},
-            "case": self.case,  # Include case blocks for worker-side execution
-            "spec": self.spec.model_dump() if self.spec else None,  # Include step behavior spec
+            "pipeline": self.pipeline,
+            "next_targets": self.next_targets,
+            "spec": self.spec.model_dump() if self.spec else None,
             "attempt": self.attempt,
             "priority": self.priority,
             "backoff": self.backoff,

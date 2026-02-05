@@ -99,15 +99,11 @@ workflow:
                         'message': 'Gateway authenticated and ready',
                         'server_info': data.get('serverInfo', {})
                     }
-    case:
-      - when: "{{ response.status == 'success' }}"
-        then:
-          - step: get_accounts
-      - when: "{{ response.status == 'error' }}"
-        then:
-          - step: gateway_error
     next:
       - step: get_accounts
+        when: "{{ parse_auth_status.status == 'success' }}"
+      - step: gateway_error
+        when: "{{ parse_auth_status.status != 'success' }}"
 
   - step: get_accounts
     desc: Get account information

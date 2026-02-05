@@ -11,66 +11,65 @@ workflow:
   - step: start
     desc: Query catalog to get playbook count
     tool:
-      kind: postgres
-      query: "SELECT kind, COUNT(*) as count FROM noetl.catalog GROUP BY kind ORDER BY count DESC"
+      - query_catalog:
+          kind: postgres
+          query: "SELECT kind, COUNT(*) as count FROM noetl.catalog GROUP BY kind ORDER BY count DESC"
     next:
       - step: process
 
   - step: process
     desc: Process query results
     tool:
-      kind: python
-      auth: {}
-      libs: {}
-      args: {}
-      code: |
+      - process_results:
+          kind: python
+          args:
+            query_results: "{{ start }}"
+          code: |
             import json
             print(f"[PROCESS] Processing Postgres query results")
             print(f"[PROCESS] Input data type: {type(input_data).__name__}")
             print(f"[PROCESS] Input data keys: {list(input_data.keys()) if isinstance(input_data, dict) else 'not a dict'}")
-            
+
             # Extract query_results from args
             query_results = input_data.get('query_results', []) if isinstance(input_data, dict) else input_data
-            
+
             if isinstance(query_results, list):
                 print(f"[PROCESS] Found {len(query_results)} catalog entry types")
-                
+
                 total = sum(row.get('count', 0) for row in query_results)
-                
+
                 for row in query_results:
                     kind = row.get('kind', 'unknown')
                     count = row.get('count', 0)
                     print(f"[PROCESS]   {kind}: {count}")
-                
+
                 return {
                     "status": "success",
                     "total_entries": total,
                     "entry_types": query_results
                 }
-            
+
             return {"status": "error", "message": "Invalid query result format", "received": str(query_results)[:200]}
-    args:
-      query_results: "{{ start }}"
     next:
       - step: verify
 
   - step: verify
     desc: Verify data integrity
     tool:
-      kind: python
-      auth: {}
-      libs: {}
-      args: {}
-      code: |
+      - verify_data:
+          kind: python
+          args:
+            process_result: "{{ process }}"
+          code: |
             import json
             print(f"[VERIFY] Input data keys: {list(input_data.keys())}")
             print(f"[VERIFY] Input data types: {[(k, type(v).__name__) for k, v in input_data.items()]}")
-            
+
             # Extract process result
             process_result = input_data.get('process_result', {})
             print(f"[VERIFY] Process result type: {type(process_result).__name__}")
             print(f"[VERIFY] Process result value: {repr(process_result[:200]) if isinstance(process_result, str) else process_result}")
-            
+
             # If it's a string, try to parse it as JSON
             if isinstance(process_result, str):
                 print(f"[VERIFY] Process result is string, trying to parse")
@@ -81,43 +80,39 @@ workflow:
                     # Try eval as fallback (Python dict repr)
                     import ast
                     process_result = ast.literal_eval(process_result)
-            
+
             total = process_result.get('total_entries', 0)
             entry_types = process_result.get('entry_types', [])
-            
+
             print(f"[VERIFY] Verifying {total} total catalog entries")
-            
+
             # Check if we have playbooks
             playbook_count = 0
             for entry in entry_types:
                 if entry.get('kind') == 'Playbook':
                     playbook_count = entry.get('count', 0)
                     break
-            
+
             print(f"[VERIFY] Found {playbook_count} playbooks in catalog")
-            
+
             verification = {
                 "verified": total > 0,
                 "playbook_count": playbook_count,
                 "total_count": total,
                 "status": "passed" if total > 0 else "failed"
             }
-            
+
             print(f"[VERIFY] Verification: {verification['status']}")
             return verification
-    args:
-      process_result: "{{ process }}"
     next:
       - step: end
 
   - step: end
     desc: Complete
     tool:
-      kind: python
-      auth: {}
-      libs: {}
-      args: {}
-      code: |
+      - complete:
+          kind: python
+          code: |
             print("[END] Postgres test completed successfully!")
             print(f"[END] Verification status: {input_data.get('status', 'unknown')}")
             print(f"[END] Total playbooks: {input_data.get('playbook_count', 0)}")

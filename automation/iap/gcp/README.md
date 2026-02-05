@@ -335,14 +335,13 @@ workload:
 
 workflow:
   - step: start
-    case:
-      - when: "{{ workload.action }} == create"
-        then:
-          - step: get_token
-      - when: "{{ workload.action }} == destroy"
-        then:
-          - step: delete_cluster
+    tool:
+      kind: noop
     next:
+      - step: get_token
+        when: "{{ workload.action == 'create' }}"
+      - step: delete_cluster
+        when: "{{ workload.action == 'destroy' }}"
       - step: end
 
   - step: get_token

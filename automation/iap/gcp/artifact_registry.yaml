@@ -52,19 +52,14 @@ workflow:
     vars:
       resource_id: "{{ workload.project_id }}/{{ workload.region }}/{{ workload.repository_id }}"
       state_bucket: "{{ workload.state_bucket if workload.state_bucket else workload.project_id + '-noetl-state' }}"
-    case:
-      - when: "{{ workload.action }} == create"
-        then:
-          - step: check_existing
-      - when: "{{ workload.action }} == destroy"
-        then:
-          - step: delete_repo
-      - when: "{{ workload.action }} == plan"
-        then:
-          - step: plan_changes
-      - when: "true"
-        then:
-          - step: show_help
+    next:
+      - step: check_existing
+        when: "{{ workload.action == 'create' }}"
+      - step: delete_repo
+        when: "{{ workload.action == 'destroy' }}"
+      - step: plan_changes
+        when: "{{ workload.action == 'plan' }}"
+      - step: show_help
 
   - step: show_help
     desc: Show available actions
@@ -104,13 +99,10 @@ workflow:
         source: adc
     vars:
       repo_status: "{{ result.status }}"
-    case:
-      - when: "{{ vars.repo_status }} == 200"
-        then:
-          - step: repo_exists_info
-      - when: "true"
-        then:
-          - step: enable_api
+    next:
+      - step: repo_exists_info
+        when: "{{ vars.repo_status == 200 }}"
+      - step: enable_api
 
   - step: repo_exists_info
     desc: Repository already exists
@@ -152,13 +144,10 @@ workflow:
         }
     vars:
       create_status: "{{ result.status }}"
-    case:
-      - when: "{{ vars.create_status }} == 200"
-        then:
-          - step: save_state
-      - when: "true"
-        then:
-          - step: create_error
+    next:
+      - step: save_state
+        when: "{{ vars.create_status == 200 }}"
+      - step: create_error
 
   - step: create_error
     desc: Handle repository creation error
@@ -183,13 +172,10 @@ workflow:
         source: adc
     vars:
       delete_status: "{{ result.status }}"
-    case:
-      - when: "{{ vars.delete_status }} == 200"
-        then:
-          - step: remove_from_state
-      - when: "true"
-        then:
-          - step: delete_error
+    next:
+      - step: remove_from_state
+        when: "{{ vars.delete_status == 200 }}"
+      - step: delete_error
 
   - step: save_state
     desc: Save repository state to DuckDB
@@ -340,3 +326,5 @@ workflow:
 
   - step: end
     desc: Workflow complete
+    tool:
+      kind: noop

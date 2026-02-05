@@ -17,26 +17,19 @@ workflow:
       kind: shell
       cmds:
         - echo "PostgreSQL Automation - Action '{{ workload.action }}'"
-    case:
-      - when: "{{ workload.action == 'deploy' }}"
-        then:
-          - step: deploy_postgres
-      - when: "{{ workload.action == 'remove' }}"
-        then:
-          - step: remove_postgres
-      - when: "{{ workload.action == 'schema-reset' }}"
-        then:
-          - step: reset_schema
-      - when: "{{ workload.action == 'clear-cache' }}"
-        then:
-          - step: clear_cache
-      - when: "{{ workload.action == 'status' }}"
-        then:
-          - step: check_status
-      - when: "{{ workload.action == 'logs' }}"
-        then:
-          - step: show_logs
     next:
+      - step: deploy_postgres
+        when: "{{ workload.action == 'deploy' }}"
+      - step: remove_postgres
+        when: "{{ workload.action == 'remove' }}"
+      - step: reset_schema
+        when: "{{ workload.action == 'schema-reset' }}"
+      - step: clear_cache
+        when: "{{ workload.action == 'clear-cache' }}"
+      - step: check_status
+        when: "{{ workload.action == 'status' }}"
+      - step: show_logs
+        when: "{{ workload.action == 'logs' }}"
       - step: show_help
 
   - step: deploy_postgres
@@ -186,3 +179,5 @@ workflow:
 
   - step: end
     desc: End workflow
+    tool:
+      kind: noop

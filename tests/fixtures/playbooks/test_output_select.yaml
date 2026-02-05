@@ -20,22 +20,23 @@ workflow:
   # Step 1: Generate large result (must be named 'start')
   - step: start
     tool:
-      kind: python
-      args:
-        count: "{{ workload.item_count }}"
-        size: "{{ workload.item_size }}"
-      code: |
-        # Generate large result that exceeds inline threshold (64KB)
-        items = [
-            {"id": i, "name": f"item_{i}", "data": "x" * size, "status": "active"}
-            for i in range(count)
-        ]
-        result = {
-            "status": "success",
-            "count": len(items),
-            "total_size": sum(len(item["data"]) for item in items),
-            "items": items
-        }
+      - generate_data:
+          kind: python
+          args:
+            count: "{{ workload.item_count }}"
+            size: "{{ workload.item_size }}"
+          code: |
+            # Generate large result that exceeds inline threshold (64KB)
+            items = [
+                {"id": i, "name": f"item_{i}", "data": "x" * size, "status": "active"}
+                for i in range(count)
+            ]
+            result = {
+                "status": "success",
+                "count": len(items),
+                "total_size": sum(len(item["data"]) for item in items),
+                "items": items
+            }
     # Configure result storage
     result:
       # Auto-select storage tier based on size
@@ -52,72 +53,76 @@ workflow:
   # Step 2: Verify extracted fields are available without loading full data
   - step: verify_extracted_fields
     tool:
-      kind: python
-      args:
-        # These come from output_select - no full data load needed
-        status: "{{ start.status }}"
-        count: "{{ start.count }}"
-        total_size: "{{ start.total_size }}"
-        # Check if _ref is present (indicates externalized result)
-        has_ref: "{{ start._ref is defined }}"
-      code: |
-        result = {
-            "verified": True,
-            "status_received": status,
-            "count_received": count,
-            "total_size_received": total_size,
-            "was_externalized": has_ref,
-            "message": f"Verified {count} items with total size {total_size}"
-        }
+      - verify:
+          kind: python
+          args:
+            # These come from output_select - no full data load needed
+            status: "{{ start.status }}"
+            count: "{{ start.count }}"
+            total_size: "{{ start.total_size }}"
+            # Check if _ref is present (indicates externalized result)
+            has_ref: "{{ start._ref is defined }}"
+          code: |
+            result = {
+                "verified": True,
+                "status_received": status,
+                "count_received": count,
+                "total_size_received": total_size,
+                "was_externalized": has_ref,
+                "message": f"Verified {count} items with total size {total_size}"
+            }
     next:
       - step: lazy_load_full_data
 
   # Step 3: Lazy load full data via artifact.get (only when needed)
   - step: lazy_load_full_data
     tool:
-      kind: artifact
-      action: get
-      args:
-        # Access the ResultRef from the externalized result
-        result_ref: "{{ start._ref }}"
+      - load_artifact:
+          kind: artifact
+          action: get
+          args:
+            # Access the ResultRef from the externalized result
+            result_ref: "{{ start._ref }}"
     next:
       - step: process_full_data
 
   # Step 4: Process the full data (now loaded)
   - step: process_full_data
     tool:
-      kind: python
-      args:
-        # Full data is now available from lazy_load step
-        data: "{{ lazy_load_full_data.data }}"
-      code: |
-        if isinstance(data, dict) and "items" in data:
-            items = data["items"]
-            active_count = sum(1 for item in items if item.get("status") == "active")
-            result = {
-                "status": "success",
-                "total_items": len(items),
-                "active_items": active_count,
-                "first_item_id": items[0]["id"] if items else None
-            }
-        else:
-            result = {"status": "error", "message": "Data not in expected format"}
+      - process:
+          kind: python
+          args:
+            # Full data is now available from lazy_load step
+            data: "{{ lazy_load_full_data.data }}"
+          code: |
+            if isinstance(data, dict) and "items" in data:
+                items = data["items"]
+                active_count = sum(1 for item in items if item.get("status") == "active")
+                result = {
+                    "status": "success",
+                    "total_items": len(items),
+                    "active_items": active_count,
+                    "first_item_id": items[0]["id"] if items else None
+                }
+            else:
+                result = {"status": "error", "message": "Data not in expected format"}
     next:
       - step: summary
 
   # Step 5: Final summary
   - step: summary
     tool:
-      kind: python
-      args:
-        extraction_verified: "{{ verify_extracted_fields.verified }}"
-        was_externalized: "{{ verify_extracted_fields.was_externalized }}"
-        full_data_processed: "{{ process_full_data.total_items }}"
-      code: |
-        result = {
-            "test_result": "PASSED" if extraction_verified and was_externalized else "FAILED",
-            "output_select_worked": extraction_verified,
-            "result_was_externalized": was_externalized,
-            "full_data_items_processed": full_data_processed,
-            "message": "output_select pattern verified successfully" if extraction_verified else "Test failed"
-        }
+      - summarize:
+          kind: python
+          args:
+            extraction_verified: "{{ verify_extracted_fields.verified }}"
+            was_externalized: "{{ verify_extracted_fields.was_externalized }}"
+            full_data_processed: "{{ process_full_data.total_items }}"
+          code: |
+            result = {
+                "test_result": "PASSED" if extraction_verified and was_externalized else "FAILED",
+                "output_select_worked": extraction_verified,
+                "result_was_externalized": was_externalized,
+                "full_data_items_processed": full_data_processed,
+                "message": "output_select pattern verified successfully" if extraction_verified else "Test failed"
+            }

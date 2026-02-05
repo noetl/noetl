@@ -21,30 +21,18 @@ workflow:
       cmds:
         - echo "NoETL Deploy Automation - Action '{{ workload.action }}'"
     next:
-      - when: "{{ workload.action }} == build"
-        then:
-          - step: build_image
-        args: {}
-      - when: "{{ workload.action }} == load"
-        then:
-          - step: load_image
-        args: {}
-      - when: "{{ workload.action }} == deploy"
-        then:
-          - step: deploy_noetl
-        args: {}
-      - when: "{{ workload.action }} == redeploy"
-        then:
-          - step: build_image
-        args: {}
-      - when: "{{ workload.action }} == status"
-        then:
-          - step: status
-        args: {}
-      - when: "{{ workload.action }} == help"
-        then:
-          - step: show_help
-        args: {}
+      - step: build_image
+        when: "{{ workload.action == 'build' }}"
+      - step: load_image
+        when: "{{ workload.action == 'load' }}"
+      - step: deploy_noetl
+        when: "{{ workload.action == 'deploy' }}"
+      - step: build_image
+        when: "{{ workload.action == 'redeploy' }}"
+      - step: status
+        when: "{{ workload.action == 'status' }}"
+      - step: show_help
+        when: "{{ workload.action == 'help' }}"
       - step: show_help
 
   - step: build_image
@@ -64,10 +52,8 @@ workflow:
           echo ""
           echo "Build complete: {{ workload.registry }}/{{ workload.image_name }}:$IMAGE_TAG"
     next:
-      - when: "{{ workload.action }} == redeploy"
-        then:
-          - step: load_image
-        args: {}
+      - step: load_image
+        when: "{{ workload.action == 'redeploy' }}"
       - step: end
 
   - step: load_image
@@ -89,10 +75,8 @@ workflow:
           echo ""
           echo "Image loaded successfully"
     next:
-      - when: "{{ workload.action }} == redeploy"
-        then:
-          - step: deploy_noetl
-        args: {}
+      - step: deploy_noetl
+        when: "{{ workload.action == 'redeploy' }}"
       - step: end
 
   - step: deploy_noetl
@@ -178,3 +162,5 @@ workflow:
 
   - step: end
     desc: Done
+    tool:
+      kind: noop

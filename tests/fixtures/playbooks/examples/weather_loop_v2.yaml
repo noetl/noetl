@@ -18,12 +18,14 @@ workload:
   weather_api_url: https://api.open-meteo.com/v1/forecast
   alert_threshold: 30
 
+vars:
+  weather_results: []
+  alerts: []
+
 workbook:
   - name: evaluate_weather_directly
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args:
         city: null
         threshold: null
@@ -36,7 +38,7 @@ workbook:
             "city": city["name"],
             "temperature": temp,
             "alert": alert,
-            "message": f"Temperature {temp}°C {'exceeds' if alert else 'below'} threshold {threshold}°C"
+            "message": f"Temperature {temp}C {'exceeds' if alert else 'below'} threshold {threshold}C"
         }
 
 workflow:
@@ -44,9 +46,6 @@ workflow:
     desc: Start weather monitoring workflow
     tool:
       kind: python
-      auth: {}
-      libs: {}
-      args: {}
       code: |
         result = {"status": "initialized", "timestamp": "2025-12-10T00:00:00Z"}
     next:
@@ -55,146 +54,136 @@ workflow:
   - step: city_loop
     desc: Loop over cities and fetch weather data
     loop:
+      spec:
+        mode: sequential
       in: "{{ workload.cities }}"
       iterator: city
     tool:
-      kind: http
-      method: GET
-      endpoint: "{{ workload.weather_api_url }}"
-      params:
-        latitude: "{{ city.lat }}"
-        longitude: "{{ city.lon }}"
-        current_weather: true
-        temperature_unit: celsius
-    case:
-      # Retry on network errors
-      - when: "{{ event.name == 'call.error' and error is defined and error.status in [500, 502, 503, 504] }}"
-        then:
-          - retry:
-              max_attempts: 3
-              backoff_multiplier: 1.5
-              initial_delay: 1.0
+      - fetch_weather:
+          kind: http
+          method: GET
+          endpoint: "{{ workload.weather_api_url }}"
+          params:
+            latitude: "{{ iter.city.lat }}"
+            longitude: "{{ iter.city.lon }}"
+            current_weather: true
+            temperature_unit: celsius
+          eval:
+            - expr: "{{ outcome.status == 'error' and outcome.http.status in [500, 502, 503, 504] }}"
+              do: retry
+              attempts: 3
+              backoff: exponential
+              delay: 1.0
+            - expr: "{{ outcome.status == 'error' }}"
+              do: fail
+            - else:
+                do: continue
+                set_iter:
+                  current_temp: "{{ outcome.result.current_weather.temperature }}"
+                  city_data:
+                    name: "{{ iter.city.name }}"
+                    temperature: "{{ outcome.result.current_weather.temperature }}"
+                    windspeed: "{{ outcome.result.current_weather.windspeed }}"
 
-      # Process successful response
-      - when: "{{ event.name == 'call.done' and response is defined and response.status_code == 200 }}"
-        then:
-          - set:
-              ctx:
-                current_temp: "{{ response.data.current_weather.temperature }}"
-                city_data:
-                  name: "{{ city.name }}"
-                  temperature: "{{ response.data.current_weather.temperature }}"
-                  windspeed: "{{ response.data.current_weather.windspeed }}"
-          - next:
-              - step: evaluate_weather
-                args:
-                  city: "{{ ctx.city_data }}"
-                  threshold: "{{ workload.alert_threshold }}"
+      - evaluate_and_route:
+          kind: python
+          args:
+            city_data: "{{ iter.city_data }}"
+            threshold: "{{ workload.alert_threshold }}"
+            weather_results: "{{ vars.weather_results }}"
+            alerts: "{{ vars.alerts }}"
+          code: |
+            # Evaluate if alert is needed
+            temp = city_data.get("temperature", 0)
+            alert_triggered = temp > threshold
 
-      # Loop done
-      - when: "{{ event.name == 'loop.done' }}"
-        then:
-          - next:
-              - step: generate_summary
+            if alert_triggered:
+                alerts.append({
+                    "city": city_data["name"],
+                    "temperature": temp,
+                    "alert": True,
+                    "message": f"Temperature {temp}C exceeds threshold {threshold}C"
+                })
+            else:
+                weather_results.append({
+                    "city": city_data["name"],
+                    "temperature": temp,
+                    "alert": False,
+                    "message": f"Temperature {temp}C below threshold {threshold}C"
+                })
 
-  - step: evaluate_weather
-    desc: Evaluate weather data and determine if alert is needed
-    tool:
-      kind: workbook
-      task: evaluate_weather_directly
-      with:
-        city: "{{ args.city }}"
-        threshold: "{{ args.threshold }}"
-    case:
-      # If alert triggered, collect to alerts list and send alert
-      - when: "{{ event.name == 'call.done' and result.alert == true }}"
-        then:
-          - collect:
-              from: result
-              into: alerts
-              mode: append
-          - next:
-              - step: send_alert
-                args:
-                  alert_data: "{{ result }}"
+            result = {
+                "alert_triggered": alert_triggered,
+                "city_data": city_data,
+                "weather_results": weather_results,
+                "alerts": alerts
+            }
+          eval:
+            - else:
+                do: continue
+                set_vars:
+                  weather_results: "{{ outcome.result.weather_results }}"
+                  alerts: "{{ outcome.result.alerts }}"
 
-      # If no alert, just collect to results
-      - when: "{{ event.name == 'call.done' and result.alert == false }}"
-        then:
-          - collect:
-              from: result
-              into: weather_results
-              mode: append
-
-  - step: send_alert
-    desc: Send alert for high temperature
-    tool:
-      kind: python
-      auth: {}
-      libs: {}
-      args:
-        alert_data: "{{ args.alert_data }}"
-      code: |
-        # In production, this would send email/SMS/notification
-        print(f"ALERT: {alert_data['message']}")
-        result = {
-            "alert_sent": True,
-            "city": alert_data["city"],
-            "temperature": alert_data["temperature"]
-        }
+    next:
+      - step: generate_summary
 
   - step: generate_summary
     desc: Generate summary of weather monitoring
     tool:
-      kind: python
-      auth: {}
-      libs: {}
-      args:
-        weather_results: "{{ ctx.weather_results }}"
-        alerts: "{{ ctx.alerts }}"
-      code: |
-        total_cities = len(weather_results) + len(alerts)
-        alert_count = len(alerts)
+      - compute_summary:
+          kind: python
+          args:
+            weather_results: "{{ vars.weather_results }}"
+            alerts: "{{ vars.alerts }}"
+          code: |
+            total_cities = len(weather_results) + len(alerts)
+            alert_count = len(alerts)
 
-        summary = {
-            "total_cities_monitored": total_cities,
-            "alerts_triggered": alert_count,
-            "alert_percentage": (alert_count / total_cities * 100) if total_cities > 0 else 0,
-            "weather_data": weather_results,
-            "alerts": alerts
-        }
+            summary = {
+                "total_cities_monitored": total_cities,
+                "alerts_triggered": alert_count,
+                "alert_percentage": (alert_count / total_cities * 100) if total_cities > 0 else 0,
+                "weather_data": weather_results,
+                "alerts": alerts
+            }
 
-        result = summary
-    case:
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          - save_summary:
-              tool:
-                kind: postgres
-                auth: pg_local
-                command: |
-                  INSERT INTO weather_monitoring_summary (
-                    execution_id,
-                    total_cities,
-                    alerts_triggered,
-                    summary_data,
-                    created_at
-                  ) VALUES (
-                    '{{ execution_id }}',
-                    {{ response.total_cities_monitored }},
-                    {{ response.alerts_triggered }},
-                    $json${{ response | tojson }}$json$::jsonb,
-                    NOW()
-                  );
-          - next:
-              - step: end
+            result = summary
+          eval:
+            - else:
+                do: continue
+                set_ctx:
+                  summary: "{{ outcome.result }}"
+
+      - save_summary:
+          kind: postgres
+          auth: pg_local
+          command: |
+            INSERT INTO weather_monitoring_summary (
+              execution_id,
+              total_cities,
+              alerts_triggered,
+              summary_data,
+              created_at
+            ) VALUES (
+              '{{ execution_id }}',
+              {{ ctx.summary.total_cities_monitored }},
+              {{ ctx.summary.alerts_triggered }},
+              $json${{ ctx.summary | tojson }}$json$::jsonb,
+              NOW()
+            );
+          eval:
+            - expr: "{{ outcome.status == 'error' }}"
+              do: fail
+            - else:
+                do: continue
+
+    next:
+      - step: end
 
   - step: end
     desc: End of weather monitoring workflow
     tool:
       kind: python
-      auth: {}
-      libs: {}
-      args: {}
       code: |
         result = {"status": "completed", "workflow": "weather_monitoring"}

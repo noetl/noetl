@@ -18,11 +18,8 @@ workflow:
       kind: python
       code: |
         result = {"status": "started"}
-    case:
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          - next:
-              - step: grant_permissions
+    next:
+      - step: grant_permissions
 
   - step: grant_permissions
     desc: Grant admin role permissions for all playbooks
@@ -60,11 +57,8 @@ workflow:
         ON CONFLICT (user_id, role_id) DO NOTHING;
 
         SELECT 'Permissions granted successfully' as result;
-    case:
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          - next:
-              - step: end
+    next:
+      - step: end
 
   - step: end
     desc: Complete

@@ -15,25 +15,23 @@ workflow:
       kind: http
       method: GET
       url: "{{ workload.test_url }}"
-    case:
-      - when: "{{ event.name == 'call.error' }}"
-        then:
-          - retry:
-              max_attempts: 3
-              initial_delay: 0.5
-              backoff_multiplier: 1.5
-
-      - when: "{{ event.name == 'call.done' and response is defined }}"
-        then:
-          - next:
-              - step: end
+      eval:
+        - expr: "{{ outcome.http.status in [500, 502, 503] }}"
+          do: retry
+          attempts: 3
+          delay: 0.5
+          backoff: exponential
+        - expr: "{{ outcome.status == 'error' }}"
+          do: fail
+        - else:
+            do: continue
+    next:
+      - step: end
 
   - step: end
     desc: End workflow
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args: {}
       code: |
         result = {"status": "complete"}

@@ -20,18 +20,19 @@ workflow:
   # Generate large result (must start with 'start' step)
   - step: start
     tool:
-      kind: python
-      args:
-        count: "{{ workload.item_count }}"
-        data_size: "{{ workload.item_data_size }}"
-      code: |
-        items = [{"id": i, "data": "A" * data_size, "active": True} for i in range(count)]
-        result = {
-            "status": "ok",
-            "count": len(items),
-            "items": items,
-            "metadata": {"generated_by": "test"}
-        }
+      - generate_data:
+          kind: python
+          args:
+            count: "{{ workload.item_count }}"
+            data_size: "{{ workload.item_data_size }}"
+          code: |
+            items = [{"id": i, "data": "A" * data_size, "active": True} for i in range(count)]
+            result = {
+                "status": "ok",
+                "count": len(items),
+                "items": items,
+                "metadata": {"generated_by": "test"}
+            }
     result:
       output_select:
         - status
@@ -43,18 +44,19 @@ workflow:
   # Verify extraction works
   - step: check_extraction
     tool:
-      kind: python
-      args:
-        status: "{{ start.status }}"
-        count: "{{ start.count }}"
-        has_ref: "{{ start._ref is defined }}"
-        has_preview: "{{ start._preview is defined }}"
-      code: |
-        result = {
-            "extraction_success": status == "ok" and count == 500,
-            "externalized": has_ref,
-            "preview_available": has_preview,
-            "status": status,
-            "count": count,
-            "test_passed": status == "ok" and has_ref
-        }
+      - verify:
+          kind: python
+          args:
+            status: "{{ start.status }}"
+            count: "{{ start.count }}"
+            has_ref: "{{ start._ref is defined }}"
+            has_preview: "{{ start._preview is defined }}"
+          code: |
+            result = {
+                "extraction_success": status == "ok" and count == 500,
+                "externalized": has_ref,
+                "preview_available": has_preview,
+                "status": status,
+                "count": count,
+                "test_passed": status == "ok" and has_ref
+            }

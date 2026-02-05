@@ -20,17 +20,10 @@ workflow:
     desc: Start test
     tool:
       kind: python
-      auth: {}
-      libs: {}
-      args: {}
       code: |
         result = {"status": "initialized"}
-    
-    case:
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          - next:
-              - step: create_table
+    next:
+      - step: create_table
 
   - step: create_table
     desc: Create test table
@@ -45,61 +38,58 @@ workflow:
           item_value INTEGER,
           created_at TIMESTAMPTZ DEFAULT now()
         );
-
-    case:
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          - next:
-              - step: process_items
+    next:
+      - step: process_items
 
   - step: process_items
     desc: Process items with sink
     loop:
+      spec:
+        mode: sequential
       in: "{{ workload.items }}"
       iterator: item
-      mode: sequential
     tool:
-      kind: python
-      auth: {}
-      libs: {}
-      args:
-        item: "{{ item }}"
-      code: |
-        result = {
-            'item_name': item.get('name', 'unknown'),
-            'item_value': item.get('value', 0)
-        }
-    
-    case:
-      - when: "{{ event.name == 'call.done' and response is defined }}"
-        then:
-          - save_item:
-              tool:
-                kind: postgres
-                auth: "{{ workload.pg_auth }}"
-                command: |
-                  INSERT INTO public.iterator_save_test (id, execution_id, item_name, item_value)
-                  VALUES (
-                    '{{ execution_id }}:{{ response.item_name }}',
-                    '{{ execution_id }}',
-                    '{{ response.item_name }}',
-                    {{ response.item_value }}
-                  )
-                  ON CONFLICT (id) DO UPDATE SET
-                    item_value = EXCLUDED.item_value,
-                    created_at = now();
+      - process_item:
+          kind: python
+          args:
+            item: "{{ iter.item }}"
+          code: |
+            result = {
+                'item_name': item.get('name', 'unknown'),
+                'item_value': item.get('value', 0)
+            }
+          eval:
+            - else:
+                do: continue
+                set_iter:
+                  processed_item: "{{ outcome.result }}"
 
-      - when: "{{ event.name == 'loop.done' }}"
-        then:
-          - next:
-              - step: end
-    
+      - save_item:
+          kind: postgres
+          auth: "{{ workload.pg_auth }}"
+          command: |
+            INSERT INTO public.iterator_save_test (id, execution_id, item_name, item_value)
+            VALUES (
+              '{{ execution_id }}:{{ iter.processed_item.item_name }}',
+              '{{ execution_id }}',
+              '{{ iter.processed_item.item_name }}',
+              {{ iter.processed_item.item_value }}
+            )
+            ON CONFLICT (id) DO UPDATE SET
+              item_value = EXCLUDED.item_value,
+              created_at = now();
+          eval:
+            - expr: "{{ outcome.status == 'error' }}"
+              do: fail
+            - else:
+                do: continue
+
+    next:
+      - step: end
+
   - step: end
     desc: End test
     tool:
       kind: python
-      auth: {}
-      libs: {}
-      args: {}
       code: |
         result = {"status": "complete"}

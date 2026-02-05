@@ -100,6 +100,23 @@ pub struct Executor {
     /// Required capabilities
     #[serde(default)]
     pub requires: Option<ExecutorRequires>,
+    /// Executor spec for entry/final step configuration
+    #[serde(default)]
+    pub spec: Option<ExecutorSpec>,
+}
+
+/// Executor spec for workflow entry and termination control
+#[derive(Debug, Deserialize, Default, Clone)]
+pub struct ExecutorSpec {
+    /// Override entry step (default: workflow[0])
+    #[serde(default)]
+    pub entry_step: Option<String>,
+    /// Optional finalization step run after quiescence
+    #[serde(default)]
+    pub final_step: Option<String>,
+    /// Treat "no next match" as error (default: false = branch terminates)
+    #[serde(default)]
+    pub no_next_is_error: Option<bool>,
 }
 
 fn default_profile() -> String { "auto".to_string() }
@@ -127,6 +144,9 @@ struct Metadata {
 struct Step {
     step: String,
     desc: Option<String>,
+    /// Step enablement guard - evaluated before step runs (canonical v2)
+    #[serde(rename = "when")]
+    when_guard: Option<String>,
     tool: Option<Tool>,
     next: Option<Vec<NextStep>>,
     #[serde(rename = "case")]
@@ -135,6 +155,26 @@ struct Step {
     #[allow(dead_code)]
     loop_config: Option<LoopConfig>,
     vars: Option<HashMap<String, String>>,
+    /// Step spec for routing mode
+    #[serde(default)]
+    spec: Option<StepSpec>,
+}
+
+/// Step specification for routing control
+#[derive(Debug, Deserialize, Default, Clone)]
+struct StepSpec {
+    /// Routing mode: exclusive (default, first match) or inclusive (all matches)
+    #[serde(default)]
+    pub next_mode: Option<NextMode>,
+}
+
+/// Next routing mode
+#[derive(Debug, Deserialize, Clone, Default)]
+#[serde(rename_all = "lowercase")]
+enum NextMode {
+    #[default]
+    Exclusive,
+    Inclusive,
 }
 
 /// Then block can be either a list of actions or a single action dict.
@@ -272,12 +312,22 @@ impl Default for CmdsList {
     }
 }
 
+/// Next step definition - supports canonical v2 format
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
 enum NextStep {
-    Simple { step: String },
+    /// Canonical v2 format: { step: "name", when: "condition", args: {...} }
+    Canonical {
+        step: String,
+        #[serde(rename = "when")]
+        when_condition: Option<String>,
+        #[serde(default)]
+        args: Option<HashMap<String, serde_yaml::Value>>,
+    },
+    /// Legacy conditional: { when: "condition", then: [...] }
     Conditional { when: Option<String>, then: Vec<NextStep> },
-    NextAction { next: Vec<NextStep> },  // Support { next: [{ step: "..." }] } format
+    /// Legacy next action: { next: [...] }
+    NextAction { next: Vec<NextStep> },
 }
 
 #[derive(Debug, Deserialize)]
@@ -446,15 +496,56 @@ impl PlaybookRunner {
             context.set_variable(var_key, value.clone());
         }
 
-        // Determine starting step - use target if provided, otherwise "start"
-        let starting_step = self.target.as_deref().unwrap_or("start");
+        // Determine starting step using canonical rules:
+        // 1. Command-line target overrides everything
+        // 2. executor.spec.entry_step if configured
+        // 3. Default: workflow[0].step (first step in workflow array)
+        let starting_step = if let Some(target) = &self.target {
+            target.clone()
+        } else if let Some(executor) = &playbook.executor {
+            if let Some(spec) = &executor.spec {
+                if let Some(entry) = &spec.entry_step {
+                    entry.clone()
+                } else {
+                    // Default to first workflow step
+                    playbook.workflow.first()
+                        .map(|s| s.step.clone())
+                        .unwrap_or_else(|| "start".to_string())
+                }
+            } else {
+                // Default to first workflow step
+                playbook.workflow.first()
+                    .map(|s| s.step.clone())
+                    .unwrap_or_else(|| "start".to_string())
+            }
+        } else {
+            // Default to first workflow step
+            playbook.workflow.first()
+                .map(|s| s.step.clone())
+                .unwrap_or_else(|| "start".to_string())
+        };
 
         if self.target.is_some() {
             println!("🎯 Target: {}", starting_step);
         }
 
-        // Execute workflow starting from the target step
-        self.execute_step(&playbook, starting_step, &mut context)?;
+        // Track final_step for post-quiescence execution
+        let final_step = playbook.executor.as_ref()
+            .and_then(|e| e.spec.as_ref())
+            .and_then(|s| s.final_step.clone());
+
+        // Execute workflow starting from the entry step
+        self.execute_step(&playbook, &starting_step, &mut context)?;
+
+        // Execute final_step if configured and not already executed
+        if let Some(final_step_name) = &final_step {
+            if final_step_name != &starting_step {
+                if self.verbose {
+                    println!("\n📍 Running final step: {}", final_step_name);
+                }
+                self.execute_step(&playbook, final_step_name, &mut context)?;
+            }
+        }
 
         if self.verbose {
             println!("✅ Playbook execution completed successfully");
@@ -471,8 +562,24 @@ impl PlaybookRunner {
             .find(|s| s.step == step_name)
             .context(format!("Step '{}' not found", step_name))?;
 
+        // Terminal "end" step - no-op for backwards compatibility
         if step_name == "end" {
             return Ok(());
+        }
+
+        // Evaluate step.when enablement guard (canonical v2)
+        if let Some(when_guard) = &step.when_guard {
+            // Render template first, then evaluate
+            let rendered_guard = self.render_template(when_guard, context)?;
+            let is_enabled = self.evaluate_condition(&rendered_guard, context)?;
+
+            if !is_enabled {
+                if self.verbose {
+                    println!("\n⏭️  Step '{}' skipped (when guard: {})", step_name, when_guard);
+                }
+                // Step is disabled - do not execute, branch terminates here
+                return Ok(());
+            }
         }
 
         println!("\n🔹 Step: {}", step_name);
@@ -580,43 +687,125 @@ impl PlaybookRunner {
         // Execute next steps only if no case matched or no case defined
         if !case_matched {
             if let Some(next_steps) = &step.next {
-                self.execute_next_steps(playbook, next_steps, context)?;
+                // Get next_mode from step spec (default: exclusive)
+                let next_mode = step.spec.as_ref()
+                    .and_then(|s| s.next_mode.clone())
+                    .unwrap_or(NextMode::Exclusive);
+
+                self.execute_next_steps_with_mode(playbook, next_steps, context, &next_mode)?;
             }
+            // No next section = branch termination (leaf step)
         }
 
         Ok(())
     }
 
+    /// Execute next steps with canonical routing semantics
+    /// next_mode: exclusive (first match) or inclusive (all matches)
     fn execute_next_steps(
         &self,
         playbook: &Playbook,
         next_steps: &[NextStep],
         context: &mut ExecutionContext,
     ) -> Result<()> {
-        // If multiple steps, log parallel execution (though we run sequentially for now)
-        if next_steps.len() > 1 && self.verbose {
-            println!("   ⚡ Executing {} steps in sequence", next_steps.len());
-        }
+        self.execute_next_steps_with_mode(playbook, next_steps, context, &NextMode::Exclusive)
+    }
 
+    /// Execute next steps with specified routing mode
+    fn execute_next_steps_with_mode(
+        &self,
+        playbook: &Playbook,
+        next_steps: &[NextStep],
+        context: &mut ExecutionContext,
+        next_mode: &NextMode,
+    ) -> Result<()> {
+        let mut matched_steps: Vec<String> = Vec::new();
+        let mut matched_args: Vec<Option<HashMap<String, serde_yaml::Value>>> = Vec::new();
+
+        // Evaluate conditions and collect matching steps
         for next in next_steps {
             match next {
-                NextStep::Simple { step } => {
-                    self.execute_step(playbook, step, context)?;
+                NextStep::Canonical { step, when_condition, args } => {
+                    // Canonical v2 format: evaluate when condition if present
+                    let matches = if let Some(condition) = when_condition {
+                        let rendered = self.render_template(condition, context)?;
+                        self.evaluate_condition(&rendered, context)?
+                    } else {
+                        // No when condition = always matches (default arc)
+                        true
+                    };
+
+                    if matches {
+                        if self.verbose {
+                            if let Some(cond) = when_condition {
+                                println!("   ✓ Route matched: {} ({})", step, cond);
+                            } else {
+                                println!("   ✓ Route: {} (default)", step);
+                            }
+                        }
+
+                        matched_steps.push(step.clone());
+                        matched_args.push(args.clone());
+
+                        // In exclusive mode, stop at first match
+                        if matches!(next_mode, NextMode::Exclusive) {
+                            break;
+                        }
+                    } else if self.verbose {
+                        if let Some(cond) = when_condition {
+                            println!("   ✗ Route skipped: {} ({})", step, cond);
+                        }
+                    }
                 }
                 NextStep::Conditional { when, then } => {
-                    // Legacy conditional support
+                    // Legacy conditional format
                     if let Some(condition) = when {
-                        let condition_result = self.evaluate_condition(condition, context)?;
-                        if condition_result {
-                            self.execute_next_steps(playbook, then, context)?;
+                        let rendered = self.render_template(condition, context)?;
+                        if self.evaluate_condition(&rendered, context)? {
+                            self.execute_next_steps_with_mode(playbook, then, context, next_mode)?;
+                            if matches!(next_mode, NextMode::Exclusive) {
+                                return Ok(());
+                            }
                         }
                     }
                 }
                 NextStep::NextAction { next } => {
-                    // Handle { next: [{ step: "..." }] } format
-                    self.execute_next_steps(playbook, next, context)?;
+                    // Legacy { next: [...] } format
+                    self.execute_next_steps_with_mode(playbook, next, context, next_mode)?;
+                    return Ok(());
                 }
             }
+        }
+
+        // Branch termination: no matches = branch ends
+        if matched_steps.is_empty() {
+            if self.verbose && !next_steps.is_empty() {
+                println!("   ⏹️  Branch terminated (no matching routes)");
+            }
+            return Ok(());
+        }
+
+        // Log fan-out in inclusive mode
+        if matches!(next_mode, NextMode::Inclusive) && matched_steps.len() > 1 && self.verbose {
+            println!("   ⚡ Fan-out to {} steps: {:?}", matched_steps.len(), matched_steps);
+        }
+
+        // Execute matched steps
+        for (i, step_name) in matched_steps.iter().enumerate() {
+            // Apply args to context if present
+            if let Some(Some(args)) = matched_args.get(i) {
+                for (key, value) in args {
+                    let value_str = match value {
+                        serde_yaml::Value::String(s) => s.clone(),
+                        serde_yaml::Value::Number(n) => n.to_string(),
+                        serde_yaml::Value::Bool(b) => b.to_string(),
+                        other => serde_yaml::to_string(other)?.trim().to_string(),
+                    };
+                    context.set_variable(format!("args.{}", key), value_str);
+                }
+            }
+
+            self.execute_step(playbook, step_name, context)?;
         }
 
         Ok(())
@@ -1842,5 +2031,205 @@ mod tests {
             .unwrap();
 
         assert_eq!(result, "kind load docker-image noetl:latest --name noetl");
+    }
+
+    #[test]
+    fn test_condition_evaluation_equality() {
+        let context = ExecutionContext::new();
+        let runner = PlaybookRunner::new(PathBuf::from("test.yaml"));
+
+        // Test equality
+        assert!(runner.evaluate_condition("'test' == 'test'", &context).unwrap());
+        assert!(!runner.evaluate_condition("'test' == 'other'", &context).unwrap());
+    }
+
+    #[test]
+    fn test_condition_evaluation_inequality() {
+        let context = ExecutionContext::new();
+        let runner = PlaybookRunner::new(PathBuf::from("test.yaml"));
+
+        // Test inequality
+        assert!(runner.evaluate_condition("'test' != 'other'", &context).unwrap());
+        assert!(!runner.evaluate_condition("'test' != 'test'", &context).unwrap());
+    }
+
+    #[test]
+    fn test_condition_evaluation_with_variables() {
+        let mut context = ExecutionContext::new();
+        context.set_variable("workload.action".to_string(), "build".to_string());
+
+        let runner = PlaybookRunner::new(PathBuf::from("test.yaml"));
+
+        // Test condition with variable substitution
+        assert!(runner.evaluate_condition("{{ workload.action == 'build' }}", &context).unwrap());
+        assert!(!runner.evaluate_condition("{{ workload.action == 'deploy' }}", &context).unwrap());
+    }
+
+    #[test]
+    fn test_condition_evaluation_truthy() {
+        let context = ExecutionContext::new();
+        let runner = PlaybookRunner::new(PathBuf::from("test.yaml"));
+
+        // Test truthy values
+        assert!(runner.evaluate_condition("true", &context).unwrap());
+        assert!(runner.evaluate_condition("1", &context).unwrap());
+        assert!(runner.evaluate_condition("non-empty", &context).unwrap());
+
+        // Test falsy values
+        assert!(!runner.evaluate_condition("false", &context).unwrap());
+        assert!(!runner.evaluate_condition("0", &context).unwrap());
+        assert!(!runner.evaluate_condition("", &context).unwrap());
+    }
+
+    #[test]
+    fn test_next_mode_default() {
+        // NextMode should default to Exclusive
+        let mode = NextMode::default();
+        assert!(matches!(mode, NextMode::Exclusive));
+    }
+
+    #[test]
+    fn test_executor_spec_parsing() {
+        let yaml = r#"
+            entry_step: "custom_start"
+            final_step: "cleanup"
+            no_next_is_error: true
+        "#;
+
+        let spec: ExecutorSpec = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(spec.entry_step, Some("custom_start".to_string()));
+        assert_eq!(spec.final_step, Some("cleanup".to_string()));
+        assert_eq!(spec.no_next_is_error, Some(true));
+    }
+
+    #[test]
+    fn test_step_spec_parsing() {
+        let yaml = r#"
+            next_mode: inclusive
+        "#;
+
+        let spec: StepSpec = serde_yaml::from_str(yaml).unwrap();
+        assert!(matches!(spec.next_mode, Some(NextMode::Inclusive)));
+    }
+
+    #[test]
+    fn test_canonical_next_step_parsing() {
+        let yaml = r#"
+            step: process_data
+            when: "{{ workload.enabled }}"
+        "#;
+
+        let next: NextStep = serde_yaml::from_str(yaml).unwrap();
+        match next {
+            NextStep::Canonical { step, when_condition, .. } => {
+                assert_eq!(step, "process_data");
+                assert_eq!(when_condition, Some("{{ workload.enabled }}".to_string()));
+            }
+            _ => panic!("Expected Canonical variant"),
+        }
+    }
+
+    #[test]
+    fn test_canonical_next_step_with_args() {
+        let yaml = r#"
+            step: transform
+            when: "{{ vars.ready }}"
+            args:
+              source: input.json
+              target: output.json
+        "#;
+
+        let next: NextStep = serde_yaml::from_str(yaml).unwrap();
+        match next {
+            NextStep::Canonical { step, when_condition, args } => {
+                assert_eq!(step, "transform");
+                assert_eq!(when_condition, Some("{{ vars.ready }}".to_string()));
+                assert!(args.is_some());
+                let args = args.unwrap();
+                assert!(args.contains_key("source"));
+                assert!(args.contains_key("target"));
+            }
+            _ => panic!("Expected Canonical variant"),
+        }
+    }
+
+    #[test]
+    fn test_step_with_when_guard_parsing() {
+        let yaml = r#"
+            step: conditional_step
+            when: "{{ workload.enabled == 'true' }}"
+            desc: A step that only runs when enabled
+            tool:
+              kind: shell
+              cmds:
+                - echo "running"
+        "#;
+
+        let step: Step = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(step.step, "conditional_step");
+        assert_eq!(step.when_guard, Some("{{ workload.enabled == 'true' }}".to_string()));
+        assert!(step.desc.is_some());
+    }
+
+    #[test]
+    fn test_playbook_entry_step_resolution() {
+        let yaml = r#"
+            apiVersion: noetl.io/v2
+            kind: Playbook
+            metadata:
+              name: test_entry
+            workflow:
+              - step: first_step
+                desc: First step in workflow
+                tool:
+                  kind: shell
+                  cmds:
+                    - echo "first"
+              - step: second_step
+                desc: Second step
+                tool:
+                  kind: shell
+                  cmds:
+                    - echo "second"
+        "#;
+
+        let playbook: Playbook = serde_yaml::from_str(yaml).unwrap();
+
+        // Default entry should be workflow[0]
+        let entry = playbook.workflow.first().map(|s| s.step.clone());
+        assert_eq!(entry, Some("first_step".to_string()));
+    }
+
+    #[test]
+    fn test_playbook_with_executor_entry_step() {
+        let yaml = r#"
+            apiVersion: noetl.io/v2
+            kind: Playbook
+            metadata:
+              name: test_entry_override
+            executor:
+              profile: local
+              spec:
+                entry_step: custom_entry
+            workflow:
+              - step: first_step
+                tool:
+                  kind: shell
+                  cmds:
+                    - echo "first"
+              - step: custom_entry
+                tool:
+                  kind: shell
+                  cmds:
+                    - echo "custom entry"
+        "#;
+
+        let playbook: Playbook = serde_yaml::from_str(yaml).unwrap();
+
+        // Entry should be from executor.spec.entry_step
+        let entry = playbook.executor.as_ref()
+            .and_then(|e| e.spec.as_ref())
+            .and_then(|s| s.entry_step.clone());
+        assert_eq!(entry, Some("custom_entry".to_string()));
     }
 }

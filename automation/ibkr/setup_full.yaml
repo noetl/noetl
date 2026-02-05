@@ -17,6 +17,8 @@ workload:
 workflow:
   - step: start
     desc: Build and deploy IBKR Client Portal Gateway
+    tool:
+      kind: noop
     next:
       - step: build_image
 
@@ -67,3 +69,5 @@ workflow:
 
   - step: end
     desc: Done
+    tool:
+      kind: noop

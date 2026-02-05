@@ -79,11 +79,8 @@ workflow:
         duration_ms INTEGER,
         details JSONB
       );
-  case:
-    - when: "{{ event.name == 'call.done' }}"
-      then:
-        - next:
-            - step: translate_query_to_amadeus
+  next:
+    - step: translate_query_to_amadeus
 
 - step: translate_query_to_amadeus
   desc: Convert natural language query to Amadeus API endpoint using OpenAI
@@ -139,11 +136,8 @@ workflow:
           as: tokens_used
       inline_max_bytes: 4096
       scope: execution
-  case:
-    - when: "{{ event.name == 'call.done' }}"
-      then:
-        - next:
-            - step: store_openai_query_event
+  next:
+    - step: store_openai_query_event
 
 - step: store_openai_query_event
   desc: Store the OpenAI query translation event in database
@@ -162,11 +156,8 @@ workflow:
         {{ (translate_query_to_amadeus.elapsed * 1000) | round | int if translate_query_to_amadeus.elapsed else 0 }},
         $json${{ {"endpoint": "https://api.openai.com/v1/chat/completions", "method": "POST"} | tojson }}$json$::jsonb
       );
-  case:
-    - when: "{{ event.name == 'call.done' }}"
-      then:
-        - next:
-            - step: parse_openai_response
+  next:
+    - step: parse_openai_response
 
 - step: parse_openai_response
   desc: Parse OpenAI response to extract Amadeus endpoint and parameters
@@ -218,11 +209,8 @@ workflow:
               "status": "error",
               "message": f"Failed to parse OpenAI response: {str(e)}"
           }
-  case:
-    - when: "{{ event.name == 'call.done' }}"
-      then:
-        - next:
-            - step: execute_amadeus_query
+  next:
+    - step: execute_amadeus_query
 
 - step: execute_amadeus_query
   desc: Execute Amadeus API query using REST API
@@ -245,17 +233,18 @@ workflow:
           as: dictionaries
       inline_max_bytes: 8192
       scope: execution
-  case:
-    - when: "{{ event.name == 'call.error' and response is defined and response.data is defined and response.data.status_code in [500, 502, 503] }}"
-      then:
-        retry:
-          max_attempts: 3
-          backoff_multiplier: 2.0
-          initial_delay: 0.5
-    - when: "{{ event.name == 'call.done' }}"
-      then:
-        - next:
-            - step: store_amadeus_query_event
+    eval:
+      - expr: "{{ outcome.error.kind == 'server_error' and outcome.error.status_code in [500, 502, 503] }}"
+        do: retry
+        attempts: 3
+        backoff: exponential
+        delay: 0.5
+      - expr: "{{ outcome.status == 'error' }}"
+        do: continue
+      - else:
+          do: continue
+  next:
+    - step: store_amadeus_query_event
 
 - step: store_amadeus_query_event
   desc: Store the Amadeus API query event in database
@@ -274,11 +263,8 @@ workflow:
         {{ (execute_amadeus_query.elapsed * 1000) | round | int if execute_amadeus_query.elapsed else 0 }},
         $json${{ {"full_endpoint": execute_amadeus_query.url, "method": "GET"} | tojson }}$json$::jsonb
       );
-  case:
-    - when: "{{ event.name == 'call.done' }}"
-      then:
-        - next:
-            - step: translate_amadeus_response
+  next:
+    - step: translate_amadeus_response
 
 - step: translate_amadeus_response
   desc: Convert Amadeus API response to natural language using OpenAI
@@ -316,11 +302,8 @@ workflow:
           as: tokens_used
       inline_max_bytes: 4096
       scope: execution
-  case:
-    - when: "{{ event.name == 'call.done' }}"
-      then:
-        - next:
-            - step: store_openai_response_event
+  next:
+    - step: store_openai_response_event
 
 - step: store_openai_response_event
   desc: Store the OpenAI response translation event in database
@@ -339,11 +322,8 @@ workflow:
         {{ (translate_amadeus_response.elapsed * 1000) | round | int if translate_amadeus_response.elapsed else 0 }},
         $json${{ {"endpoint": "https://api.openai.com/v1/chat/completions", "method": "POST"} | tojson }}$json$::jsonb
       );
-  case:
-    - when: "{{ event.name == 'call.done' }}"
-      then:
-        - next:
-            - step: insert_final_result
+  next:
+    - step: insert_final_result
 
 - step: insert_final_result
   desc: Insert final natural language result into PostgreSQL
@@ -357,11 +337,8 @@ workflow:
         'amadeus_api',
         $json${{ {"query": workload.query, "natural_language_result": (translate_amadeus_response.natural_language_result | default('No response generated')) | b64encode, "execution_id": job.uuid, "is_base64_encoded": true, "result_count": execute_amadeus_query.result_count | default(0)} | tojson }}$json$::jsonb
       );
-  case:
-    - when: "{{ event.name == 'call.done' }}"
-      then:
-        - next:
-            - step: prepare_result
+  next:
+    - step: prepare_result
 
 - step: prepare_result
   desc: Prepare final result for callback
@@ -384,15 +361,11 @@ workflow:
               "amadeusResultCount": amadeus_results
           }
       }
-  case:
-    - when: "{{ event.name == 'call.done' and workload.request_id }}"
-      then:
-        - next:
-            - step: send_callback
-    - when: "{{ event.name == 'call.done' }}"
-      then:
-        - next:
-            - step: end
+  next:
+    - step: send_callback
+      when: "{{ workload.request_id }}"
+    - step: end
+      when: "{{ not workload.request_id }}"
 
 - step: send_callback
   desc: Send result to gateway via HTTP callback
@@ -410,11 +383,8 @@ workflow:
         textOutput: "{{ prepare_result.textOutput }}"
         query: "{{ prepare_result.query }}"
         executionId: "{{ prepare_result.executionId }}"
-  case:
-    - when: "{{ event.name == 'call.done' or event.name == 'call.error' }}"
-      then:
-        - next:
-            - step: end
+  next:
+    - step: end
 
 - step: end
   desc: End of workflow

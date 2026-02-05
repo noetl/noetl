@@ -37,23 +37,14 @@ workflow:
       kind: shell
       cmds:
         - echo "Auth provisioning - action:{{ workload.action }}"
-    case:
-      - when: "{{ workload.action == 'status' }}"
-        then:
-          - next:
-              - step: check_status
-      - when: "{{ workload.action == 'reset' }}"
-        then:
-          - next:
-              - step: drop_schema
-      - when: "{{ workload.action == 'grant_admin' }}"
-        then:
-          - next:
-              - step: grant_admin_role
-      - when: "{{ workload.action == 'provision' }}"
-        then:
-          - next:
-              - step: check_postgres_ready
+    next:
+      - step: check_status
+        when: "{{ workload.action == 'status' }}"
+      - step: drop_schema
+        when: "{{ workload.action == 'reset' }}"
+      - step: grant_admin_role
+        when: "{{ workload.action == 'grant_admin' }}"
+      - step: check_postgres_ready
 
   - step: check_postgres_ready
     desc: Verify PostgreSQL is running and accessible
@@ -85,15 +76,10 @@ workflow:
           else
             echo "AUTH_SCHEMA_EXISTS=false"
           fi
-    case:
-      - when: "{{ 'AUTH_SCHEMA_EXISTS=true' in check_schema_exists.stdout }}"
-        then:
-          - next:
-              - step: schema_already_exists
-      - when: "true"
-        then:
-          - next:
-              - step: run_provision_script
+    next:
+      - step: schema_already_exists
+        when: "{{ 'AUTH_SCHEMA_EXISTS=true' in check_schema_exists.stdout }}"
+      - step: run_provision_script
 
   - step: schema_already_exists
     desc: Auth schema already provisioned
@@ -207,8 +193,8 @@ workflow:
               WHERE role_name IN ('admin', 'developer')
               ON CONFLICT DO NOTHING;
             " 2>/dev/null || echo "Note: Could not set default playbook permissions"
-          
-          echo "✓ Admin and developer roles granted wildcard playbook permissions"
+
+          echo "Admin and developer roles granted wildcard playbook permissions"
           echo "  Pattern: % (all playbooks)"
           echo "  Permissions: execute, view, modify"
     next:
@@ -371,6 +357,4 @@ workflow:
   - step: end
     desc: Provisioning complete
     tool:
-      kind: shell
-      cmds:
-        - echo "Done."
+      kind: noop

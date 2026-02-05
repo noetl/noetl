@@ -90,12 +90,11 @@ workflow:
     vars:
       auth_success: "{{ result.status == 200 }}"
       project_name: "{{ result.body.name | default('unknown') }}"
-    case:
-      - when: "{{ vars.auth_success }}"
-        then:
-          - step: auth_success
-      - else:
-          - step: auth_failed
+    next:
+      - step: auth_success
+        when: "{{ vars.auth_success }}"
+      - step: auth_failed
+        when: "{{ not vars.auth_success }}"
 
   - step: auth_failed
     desc: Authentication failed

@@ -13,17 +13,10 @@ workflow:
     desc: Start workflow
     tool:
       kind: python
-      auth: {}
-      libs: {}
-      args: {}
       code: |
         result = {"status": "initialized"}
-    
-    case:
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          next:
-            - step: create_test_table
+    next:
+      - step: create_test_table
 
   - step: create_test_table
     desc: Create test table with JSONB column
@@ -36,47 +29,49 @@ workflow:
           id INTEGER PRIMARY KEY,
           payload JSONB
         );
-    
-    case:
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          next:
-            - step: save_dict_to_jsonb
+    next:
+      - step: save_dict_to_jsonb
 
   - step: save_dict_to_jsonb
     desc: Save a Python dict to JSONB column (triggers bug)
     tool:
-      kind: python
-      auth: {}
-      libs: {}
-      args:
-        input_data: {}
-      code: |
-        # Return a dict that will be saved to JSONB
-        result = {
-            "data": {
-                "string_field": "test_value",
-                "number_field": 42,
-                "nested_object": {
-                    "key1": "value1",
-                    "key2": "value2"
-                },
-                "array_field": [1, 2, 3, 4, 5]
+      - generate_data:
+          kind: python
+          args:
+            input_data: {}
+          code: |
+            # Return a dict that will be saved to JSONB
+            result = {
+                "data": {
+                    "string_field": "test_value",
+                    "number_field": 42,
+                    "nested_object": {
+                        "key1": "value1",
+                        "key2": "value2"
+                    },
+                    "array_field": [1, 2, 3, 4, 5]
+                }
             }
-        }
-    
-    case:
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          - save_json:
-              tool:
-                kind: postgres
-                auth: "{{ workload.pg_auth }}"
-                command: |
-                  INSERT INTO public.json_bug_test (id, payload)
-                  VALUES (1, '{{ response.data | tojson | replace("'", "''") }}'::jsonb)
-          - next:
-              - step: verify_save
+          eval:
+            - else:
+                do: continue
+                set_vars:
+                  json_data: "{{ outcome.result.data }}"
+
+      - save_json:
+          kind: postgres
+          auth: "{{ workload.pg_auth }}"
+          command: |
+            INSERT INTO public.json_bug_test (id, payload)
+            VALUES (1, '{{ vars.json_data | tojson | replace("'", "''") }}'::jsonb)
+          eval:
+            - expr: "{{ outcome.status == 'error' }}"
+              do: fail
+            - else:
+                do: continue
+
+    next:
+      - step: verify_save
 
   - step: verify_save
     desc: Verify the saved data
@@ -85,19 +80,12 @@ workflow:
       auth: "{{ workload.pg_auth }}"
       command: |
         SELECT id, payload FROM public.json_bug_test WHERE id = 1;
-    
-    case:
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          next:
-            - step: end
+    next:
+      - step: end
 
   - step: end
     desc: Finish workflow
     tool:
       kind: python
-      auth: {}
-      libs: {}
-      args: {}
       code: |
         result = {"status": "complete"}

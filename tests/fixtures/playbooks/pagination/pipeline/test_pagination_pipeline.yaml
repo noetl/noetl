@@ -4,13 +4,13 @@ metadata:
   name: test_pagination_pipeline
   path: tests/pagination/pipeline
   description: |
-    Pipeline pagination test demonstrating Clojure-style threading with error handling.
+    Task sequence pagination test demonstrating tool.eval flow control.
 
-    Uses pipe: block with fetch → transform → store pattern:
+    Uses labeled tasks in tool: pipeline with tool.eval: for per-task flow control:
     - _prev threads data between tasks (like Clojure's ->)
-    - catch.cond provides centralized error handling
-    - Retry, skip, jump, fail control actions
-    - Pagination loop via finally block
+    - tool.eval: provides per-task error handling
+    - Retry, break, fail, continue control actions
+    - outcome object for accessing execution results
 
 workload:
   api_url: "http://paginated-api.test-server.svc.cluster.local:5555"
@@ -28,7 +28,7 @@ vars:
 
 workflow:
   - step: start
-    desc: Initialize pagination pipeline test
+    desc: Initialize pagination test
     tool:
       kind: python
       code: |
@@ -60,153 +60,140 @@ workflow:
 
   - step: fetch_transform_store
     desc: |
-      Pipeline: fetch page → transform data → store to DB
-      Demonstrates _prev threading and catch.cond error handling
+      Task sequence: fetch page -> transform data -> store to DB
+      Demonstrates tool.eval flow control per task
     tool:
-      kind: noop
-    case:
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          - pipe:
-              - fetch:
-                  tool:
-                    kind: http
-                    url: "{{ workload.api_url }}/api/v1/assessments"
-                    method: GET
-                    params:
-                      page: "{{ vars.current_page }}"
-                      pageSize: "{{ vars.page_size }}"
+      - fetch:
+          kind: http
+          url: "{{ workload.api_url }}/api/v1/assessments"
+          method: GET
+          params:
+            page: "{{ vars.current_page }}"
+            pageSize: "{{ vars.page_size }}"
+          eval:
+            - expr: "{{ outcome.error.kind == 'rate_limit' }}"
+              do: retry
+              attempts: 10
+              delay: 5.0
+            - expr: "{{ outcome.error.retryable }}"
+              do: retry
+              attempts: 5
+              backoff: exponential
+              delay: 1.0
+            - expr: "{{ outcome.status == 'error' }}"
+              do: fail
+            - else:
+                do: continue
 
-              - transform:
-                  tool:
-                    kind: python
-                    args:
-                      http_response: "{{ _prev }}"
-                      page_num: "{{ vars.current_page }}"
-                      execution_id: "{{ execution_id }}"
-                    code: |
-                      import json
-                      from datetime import datetime
+      - transform:
+          kind: python
+          args:
+            http_response: "{{ _prev }}"
+            page_num: "{{ vars.current_page }}"
+            execution_id: "{{ execution_id }}"
+          code: |
+            import json
+            from datetime import datetime
 
-                      response_body = http_response.get('data', {})
-                      items = response_body.get('data', [])
-                      paging = response_body.get('paging', {})
+            response_body = http_response.get('data', {})
+            items = response_body.get('data', [])
+            paging = response_body.get('paging', {})
 
-                      transformed = []
-                      for item in items:
-                          transformed.append({
-                              'assessment_id': item['id'],
-                              'assessment_name': item['name'].upper(),
-                              'score': item['score'] * 10,
-                              'page_number': page_num,
-                              'batch_id': execution_id[:8]
-                          })
+            transformed = []
+            for item in items:
+                transformed.append({
+                    'assessment_id': item['id'],
+                    'assessment_name': item['name'].upper(),
+                    'score': item['score'] * 10,
+                    'page_number': page_num,
+                    'batch_id': execution_id[:8]
+                })
 
-                      result = {
-                          'items': transformed,
-                          'count': len(transformed),
-                          'has_more': paging.get('hasMore', False),
-                          'current_page': paging.get('page', page_num),
-                          'total': paging.get('total', 0)
-                      }
+            result = {
+                'items': transformed,
+                'count': len(transformed),
+                'has_more': paging.get('hasMore', False),
+                'current_page': paging.get('page', page_num),
+                'total': paging.get('total', 0)
+            }
+          eval:
+            - expr: "{{ outcome.status == 'error' }}"
+              do: continue
+            - else:
+                do: continue
 
-              - store:
-                  tool:
-                    kind: python
-                    args:
-                      data: "{{ _prev }}"
-                      db_host: "{{ workload.db_host }}"
-                      db_port: "{{ workload.db_port }}"
-                      db_name: "{{ workload.db_name }}"
-                      db_user: "{{ workload.db_user }}"
-                      db_password: "{{ workload.db_password }}"
-                    libs:
-                      - psycopg2-binary
-                    code: |
-                      import psycopg2
+      - store:
+          kind: python
+          args:
+            data: "{{ _prev }}"
+            db_host: "{{ workload.db_host }}"
+            db_port: "{{ workload.db_port }}"
+            db_name: "{{ workload.db_name }}"
+            db_user: "{{ workload.db_user }}"
+            db_password: "{{ workload.db_password }}"
+          libs:
+            - psycopg2-binary
+          code: |
+            import psycopg2
 
-                      conn = psycopg2.connect(
-                          host=db_host,
-                          port=db_port,
-                          dbname=db_name,
-                          user=db_user,
-                          password=db_password
-                      )
+            conn = psycopg2.connect(
+                host=db_host,
+                port=db_port,
+                dbname=db_name,
+                user=db_user,
+                password=db_password
+            )
 
-                      cursor = conn.cursor()
+            cursor = conn.cursor()
 
-                      inserted = 0
-                      for item in data['items']:
-                          cursor.execute('''
-                              INSERT INTO pagination_test_results
-                              (assessment_id, assessment_name, score, page_number, batch_id)
-                              VALUES (%s, %s, %s, %s, %s)
-                          ''', (
-                              item['assessment_id'],
-                              item['assessment_name'],
-                              item['score'],
-                              item['page_number'],
-                              item['batch_id']
-                          ))
-                          inserted += 1
+            inserted = 0
+            for item in data['items']:
+                cursor.execute('''
+                    INSERT INTO pagination_test_results
+                    (assessment_id, assessment_name, score, page_number, batch_id)
+                    VALUES (%s, %s, %s, %s, %s)
+                ''', (
+                    item['assessment_id'],
+                    item['assessment_name'],
+                    item['score'],
+                    item['page_number'],
+                    item['batch_id']
+                ))
+                inserted += 1
 
-                      conn.commit()
-                      cursor.close()
-                      conn.close()
+            conn.commit()
+            cursor.close()
+            conn.close()
 
-                      result = {
-                          'stored': inserted,
-                          'has_more': data['has_more'],
-                          'current_page': data['current_page'],
-                          'total': data['total']
-                      }
-
-            catch:
-              cond:
-                - when: "{{ _task == 'fetch' and _err.retryable }}"
-                  do: retry
-                  attempts: 5
-                  backoff: exponential
-                  delay: 1.0
-
-                - when: "{{ _task == 'fetch' and _err.kind == 'rate_limit' }}"
-                  do: retry
-                  attempts: 10
-                  delay: "{{ _err.retry_after | default(5) }}"
-
-                - when: "{{ _task == 'transform' }}"
-                  do: skip
-                  set_prev:
-                    items: []
-                    count: 0
-                    has_more: false
-
-                - when: "{{ _task == 'store' and _err.retryable }}"
-                  do: retry
-                  attempts: 3
-                  backoff: linear
-                  delay: 2.0
-
-                - when: "{{ _err.kind == 'auth' }}"
-                  do: fail
-
-                - else:
-                    do: fail
-
-            finally:
-              - next:
-                  - step: check_pagination
+            result = {
+                'stored': inserted,
+                'has_more': data['has_more'],
+                'current_page': data['current_page'],
+                'total': data['total']
+            }
+          eval:
+            - expr: "{{ outcome.error.retryable }}"
+              do: retry
+              attempts: 3
+              backoff: linear
+              delay: 2.0
+            - expr: "{{ outcome.status == 'error' }}"
+              do: fail
+            - else:
+                do: continue
+    next:
+      - step: check_pagination
 
   - step: check_pagination
     desc: Check if more pages to fetch
     tool:
       kind: python
       args:
-        result: "{{ fetch_transform_store }}"
+        pipeline_result: "{{ fetch_transform_store }}"
         current_page: "{{ vars.current_page }}"
         total_fetched: "{{ vars.total_fetched }}"
       code: |
-        has_more = result.get('has_more', False) if isinstance(result, dict) else False
+        has_more = pipeline_result.get('has_more', False) if isinstance(pipeline_result, dict) else False
 
         result = {
           "has_more": has_more,
@@ -214,20 +201,13 @@ workflow:
           "total_fetched": total_fetched,
           "action": "continue" if has_more else "complete"
         }
-    case:
-      - when: "{{ event.name == 'call.done' and response.has_more == true }}"
-        then:
-          - vars:
-              current_page: "{{ (vars.current_page | int) + 1 }}"
-          - next:
-              - step: fetch_transform_store
-
-      - when: "{{ event.name == 'call.done' and response.has_more != true }}"
-        then:
-          - vars:
-              all_pages_done: true
-          - next:
-              - step: validate_results
+    vars:
+      current_page: "{{ (vars.current_page | int) + 1 }}"
+    next:
+      - step: fetch_transform_store
+        when: "{{ check_pagination.has_more == true }}"
+      - step: validate_results
+        when: "{{ check_pagination.has_more != true }}"
 
   - step: validate_results
     desc: Validate all data was fetched and stored correctly
@@ -277,12 +257,13 @@ workflow:
             "id_range": f"{min_id} - {max_id}",
             "avg_score": round(float(avg_score), 2) if avg_score else 0
           },
-          "pipeline_features_tested": [
-            "pipe: block with fetch → transform → store",
+          "features_tested": [
+            "Tool pipeline (list of labeled tasks)",
+            "tool.eval: per-task flow control",
             "_prev data threading between tasks",
-            "catch.cond centralized error handling",
+            "outcome object for result/error inspection",
             "Retry with exponential backoff",
-            "Pagination loop via step transitions"
+            "Control actions: continue, retry, fail"
           ]
         }
 

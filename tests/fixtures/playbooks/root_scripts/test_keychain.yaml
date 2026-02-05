@@ -1,4 +1,4 @@
-apiVersion: noetl.io/v1
+apiVersion: noetl.io/v2
 kind: Playbook
 metadata:
   name: keychain_test
@@ -33,7 +33,15 @@ keychain:
 workflow:
   - step: start
     desc: Simple workflow to test keychain
+    tool:
+      kind: python
+      code: |
+        result = {"status": "keychain test started"}
     next:
       - step: end
   - step: end
     desc: End workflow
+    tool:
+      kind: python
+      code: |
+        result = {"status": "keychain test completed"}

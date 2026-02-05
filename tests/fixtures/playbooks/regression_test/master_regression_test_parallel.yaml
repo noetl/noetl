@@ -121,7 +121,8 @@ workflow:
     loop:
       in: "{{ workload.setup_playbooks }}"
       iterator: playbook_path
-      mode: sequential
+      spec:
+        mode: sequential
     next:
       - step: run_tests_parallel
 
@@ -137,8 +138,9 @@ workflow:
     loop:
       in: "{{ workload.test_playbooks }}"
       iterator: test_playbook
-      mode: async  # Parallel execution
-      concurrency: 10  # Limit concurrent executions
+      spec:
+        mode: parallel
+        max_in_flight: 10
     next:
       - step: generate_summary
 

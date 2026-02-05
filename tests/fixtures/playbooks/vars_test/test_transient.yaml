@@ -13,30 +13,32 @@ workflow:
   - step: start
     desc: Test transient functionality
     tool:
-      kind: python
-      auth: {}
-      libs: {}
-      args: {}
-      code: |
-        result = {"status": "initialized"}
+      - label:
+          kind: python
+          auth: {}
+          libs: {}
+          args: {}
+          code: |
+            result = {"status": "initialized"}
     next:
       - step: test_set_var
 
   - step: test_set_var
     desc: Set initial variables using vars block
     tool:
-      kind: python
-      auth: {}
-      libs: {}
-      args: {}
-      code: |
-        # Return values that will be extracted via vars block
-        result = {
-            "status": "success",
-            "counter": 0,
-            "status_var": "initialized",
-            "config": {"timeout": 30, "retries": 3}
-        }
+      - label:
+          kind: python
+          auth: {}
+          libs: {}
+          args: {}
+          code: |
+            # Return values that will be extracted via vars block
+            result = {
+                "status": "success",
+                "counter": 0,
+                "status_var": "initialized",
+                "config": {"timeout": 30, "retries": 3}
+            }
     vars:
       counter: "{{ result.counter }}"
       status_var: "{{ result.status_var }}"
@@ -47,45 +49,47 @@ workflow:
   - step: test_get_var
     desc: Retrieve and verify variables via template args
     tool:
-      kind: python
-      auth: {}
-      libs: {}
-      args:
-        counter: "{{ vars.counter }}"
-        status_var: "{{ vars.status_var }}"
-        config: "{{ vars.config }}"
-      code: |
-        # Verify variables received via args
-        result = {
-            "status": "success",
-            "data": {
-                "counter": counter,
-                "status_var": status_var,
-                "config": config,
-                "verification": {
-                    "counter_correct": counter == 0,
-                    "status_correct": status_var == "initialized",
-                    "config_correct": config == {"timeout": 30, "retries": 3}
+      - label:
+          kind: python
+          auth: {}
+          libs: {}
+          args:
+            counter: "{{ vars.counter }}"
+            status_var: "{{ vars.status_var }}"
+            config: "{{ vars.config }}"
+          code: |
+            # Verify variables received via args
+            result = {
+                "status": "success",
+                "data": {
+                    "counter": counter,
+                    "status_var": status_var,
+                    "config": config,
+                    "verification": {
+                        "counter_correct": counter == 0,
+                        "status_correct": status_var == "initialized",
+                        "config_correct": config == {"timeout": 30, "retries": 3}
+                    }
                 }
             }
-        }
     next:
       - step: test_update_var
 
   - step: test_update_var
     desc: Update variable values
     tool:
-      kind: python
-      auth: {}
-      libs: {}
-      args: {}
-      code: |
-        # Return updated values
-        result = {
-            "status": "success",
-            "counter": 1,
-            "status_var": "processing"
-        }
+      - label:
+          kind: python
+          auth: {}
+          libs: {}
+          args: {}
+          code: |
+            # Return updated values
+            result = {
+                "status": "success",
+                "counter": 1,
+                "status_var": "processing"
+            }
     vars:
       counter: "{{ result.counter }}"
       status_var: "{{ result.status_var }}"
@@ -95,37 +99,39 @@ workflow:
   - step: verify_updates
     desc: Verify updated values
     tool:
-      kind: python
-      auth: {}
-      libs: {}
-      args:
-        counter: "{{ vars.counter }}"
-        status_var: "{{ vars.status_var }}"
-        config: "{{ vars.config }}"
-      code: |
-        # Verify updated values
-        result = {
-            "status": "success",
-            "verification": {
-                "counter_updated": counter == 1,
-                "status_updated": status_var == "processing",
-                "config_preserved": config == {"timeout": 30, "retries": 3}
-            },
-            "all_checks_passed": (
-                counter == 1 and
-                status_var == "processing" and
-                config == {"timeout": 30, "retries": 3}
-            )
-        }
+      - label:
+          kind: python
+          auth: {}
+          libs: {}
+          args:
+            counter: "{{ vars.counter }}"
+            status_var: "{{ vars.status_var }}"
+            config: "{{ vars.config }}"
+          code: |
+            # Verify updated values
+            result = {
+                "status": "success",
+                "verification": {
+                    "counter_updated": counter == 1,
+                    "status_updated": status_var == "processing",
+                    "config_preserved": config == {"timeout": 30, "retries": 3}
+                },
+                "all_checks_passed": (
+                    counter == 1 and
+                    status_var == "processing" and
+                    config == {"timeout": 30, "retries": 3}
+                )
+            }
     next:
       - step: end
 
   - step: end
     desc: End workflow
     tool:
-      kind: python
-      auth: {}
-      libs: {}
-      args: {}
-      code: |
-        result = {"status": "complete"}
+      - label:
+          kind: python
+          auth: {}
+          libs: {}
+          args: {}
+          code: |
+            result = {"status": "complete"}

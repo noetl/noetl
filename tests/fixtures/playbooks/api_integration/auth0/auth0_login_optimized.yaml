@@ -39,17 +39,12 @@ workflow:
       kind: python
       code: |
         result = {"status": "started"}
-    case:
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          - next:
-              - step: validate_token
+    next:
+      - step: validate_token
 
   # Step 1: Validate JWT token
   - step: validate_token
     desc: Decode Auth0 ID token (JWT)
-    spec:
-      case_mode: exclusive
     tool:
       kind: python
       libs:
@@ -75,35 +70,35 @@ workflow:
             }
         except Exception as e:
             result = {"error": str(e)}
-    case:
-      # Error with callback - send error and end (inline tasks)
-      - when: "{{ (event.name == 'call.error' or (event.name == 'call.done' and result.error is defined)) and request_id }}"
-        then:
-          - send_error_callback:
-              tool:
-                kind: http
-                method: POST
-                url: "{{ gateway_url }}/api/internal/callback"
-                headers:
-                  Content-Type: application/json
-                data:
-                  request_id: "{{ request_id }}"
-                  status: "error"
-                  data:
-                    error: "{{ result.error | default(event.error) | default('Token validation failed') }}"
-                    message: "Token validation failed"
-          - next:
-              - step: end
-      # Error without callback - just end
-      - when: "{{ event.name == 'call.error' or (event.name == 'call.done' and result.error is defined) }}"
-        then:
-          - next:
-              - step: end
-      # Success - proceed to create user session
-      - when: "{{ event.name == 'call.done' and result.sub is defined }}"
-        then:
-          - next:
-              - step: create_user_session
+      eval:
+        - expr: "{{ outcome.status == 'error' }}"
+          do: continue
+        - else:
+            do: continue
+    next:
+      - step: send_validation_error_callback
+        when: "{{ (result.error is defined) and request_id }}"
+      - step: end
+        when: "{{ result.error is defined and not request_id }}"
+      - step: create_user_session
+        when: "{{ result.sub is defined }}"
+
+  - step: send_validation_error_callback
+    desc: Send validation error callback to gateway
+    tool:
+      kind: http
+      method: POST
+      url: "{{ gateway_url }}/api/internal/callback"
+      headers:
+        Content-Type: application/json
+      data:
+        request_id: "{{ request_id }}"
+        status: "error"
+        data:
+          error: "{{ validate_token.error | default('Token validation failed') }}"
+          message: "Token validation failed"
+    next:
+      - step: end
 
   # Step 2: Combined upsert user + create session (single postgres connection)
   - step: create_user_session
@@ -137,35 +132,39 @@ workflow:
           expires_at,
           (SELECT email FROM upserted_user) as email,
           (SELECT display_name FROM upserted_user) as display_name;
-    case:
-      - when: "{{ event.name == 'call.done' and result.command_0 is defined }}"
-        then:
-          - next:
-              - step: complete
-      # On error with callback
-      - when: "{{ event.name == 'call.error' and request_id }}"
-        then:
-          - send_error_callback:
-              tool:
-                kind: http
-                method: POST
-                url: "{{ gateway_url }}/api/internal/callback"
-                headers:
-                  Content-Type: application/json
-                data:
-                  request_id: "{{ request_id }}"
-                  status: "error"
-                  data:
-                    error: "{{ event.error | default('Database error') }}"
-                    message: "Failed to create session"
-          - next:
-              - step: end
+      eval:
+        - expr: "{{ outcome.status == 'error' }}"
+          do: continue
+        - else:
+            do: continue
+    next:
+      - step: complete
+        when: "{{ result.command_0 is defined }}"
+      - step: send_db_error_callback
+        when: "{{ result.command_0 is not defined and request_id }}"
+      - step: end
+        when: "{{ result.command_0 is not defined and not request_id }}"
+
+  - step: send_db_error_callback
+    desc: Send database error callback to gateway
+    tool:
+      kind: http
+      method: POST
+      url: "{{ gateway_url }}/api/internal/callback"
+      headers:
+        Content-Type: application/json
+      data:
+        request_id: "{{ request_id }}"
+        status: "error"
+        data:
+          error: "Database error"
+          message: "Failed to create session"
+    next:
+      - step: end
 
   # Step 3: Cache session and send callback (inline tasks - no separate steps)
   - step: complete
     desc: Cache session in NATS and send callback
-    spec:
-      case_mode: exclusive
     tool:
       kind: nats
       auth: "{{ nats_credential }}"
@@ -179,63 +178,38 @@ workflow:
         display_name: "{{ create_user_session.command_0.rows[0].display_name }}"
         expires_at: "{{ create_user_session.command_0.rows[0].expires_at }}"
         is_active: true
-    case:
-      # Success with callback - send callback inline (no extra step)
-      - when: "{{ event.name == 'call.done' and request_id }}"
-        then:
-          - send_success_callback:
-              tool:
-                kind: http
-                method: POST
-                url: "{{ gateway_url }}/api/internal/callback"
-                headers:
-                  Content-Type: application/json
-                data:
-                  request_id: "{{ request_id }}"
-                  status: "success"
-                  data:
-                    status: "authenticated"
-                    session_token: "{{ create_user_session.command_0.rows[0].session_token }}"
-                    user:
-                      user_id: "{{ create_user_session.command_0.rows[0].user_id }}"
-                      email: "{{ create_user_session.command_0.rows[0].email }}"
-                      display_name: "{{ create_user_session.command_0.rows[0].display_name }}"
-                    expires_at: "{{ create_user_session.command_0.rows[0].expires_at }}"
-          - next:
-              - step: end
-      # Success without callback
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          - next:
-              - step: end
-      # NATS cache failed but still send callback (Postgres is source of truth)
-      - when: "{{ event.name == 'call.error' and request_id }}"
-        then:
-          - send_success_callback:
-              tool:
-                kind: http
-                method: POST
-                url: "{{ gateway_url }}/api/internal/callback"
-                headers:
-                  Content-Type: application/json
-                data:
-                  request_id: "{{ request_id }}"
-                  status: "success"
-                  data:
-                    status: "authenticated"
-                    session_token: "{{ create_user_session.command_0.rows[0].session_token }}"
-                    user:
-                      user_id: "{{ create_user_session.command_0.rows[0].user_id }}"
-                      email: "{{ create_user_session.command_0.rows[0].email }}"
-                      display_name: "{{ create_user_session.command_0.rows[0].display_name }}"
-                    expires_at: "{{ create_user_session.command_0.rows[0].expires_at }}"
-          - next:
-              - step: end
-      # NATS failed without callback
-      - when: "{{ event.name == 'call.error' }}"
-        then:
-          - next:
-              - step: end
+      eval:
+        - expr: "{{ outcome.status == 'error' }}"
+          do: continue
+        - else:
+            do: continue
+    next:
+      - step: send_success_callback
+        when: "{{ request_id }}"
+      - step: end
+        when: "{{ not request_id }}"
+
+  - step: send_success_callback
+    desc: Send success callback to gateway
+    tool:
+      kind: http
+      method: POST
+      url: "{{ gateway_url }}/api/internal/callback"
+      headers:
+        Content-Type: application/json
+      data:
+        request_id: "{{ request_id }}"
+        status: "success"
+        data:
+          status: "authenticated"
+          session_token: "{{ create_user_session.command_0.rows[0].session_token }}"
+          user:
+            user_id: "{{ create_user_session.command_0.rows[0].user_id }}"
+            email: "{{ create_user_session.command_0.rows[0].email }}"
+            display_name: "{{ create_user_session.command_0.rows[0].display_name }}"
+          expires_at: "{{ create_user_session.command_0.rows[0].expires_at }}"
+    next:
+      - step: end
 
   - step: end
     desc: Complete

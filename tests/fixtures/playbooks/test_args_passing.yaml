@@ -11,12 +11,10 @@ workflow:
   - step: start
     desc: Start workflow
     tool:
-      kind: python
-      auth: {}
-      libs: {}
-      args: {}
-      code: |
-        result = {"status": "initialized"}
+      - init:
+          kind: python
+          code: |
+            result = {"status": "initialized"}
     next:
       - step: use_vars
         args:
@@ -26,29 +24,28 @@ workflow:
   - step: use_vars
     desc: Test that variables from data block are available
     tool:
-      kind: python
-      auth: {}
-      libs: {}
-      args: {}
-      code: |
-        # These should be available from the data block in next
-        test_var = {{ test_var }}
-        computed = {{ computed }}
-        result = test_var + computed
-        print(f"test_var={test_var}, computed={computed}, result={result}")
-        assert test_var == 100, f"Expected test_var=100, got {test_var}"
-        assert computed == 200, f"Expected computed=200, got {computed}"
-        assert result == 300, f"Expected result=300, got {result}"
-        result = {"status": "success", "result": result}
+      - compute:
+          kind: python
+          args:
+            test_var: "{{ args.test_var }}"
+            computed: "{{ args.computed }}"
+          code: |
+            # These should be available from the args passed via next
+            test_var = input_data.get('test_var', 0)
+            computed = input_data.get('computed', 0)
+            result = test_var + computed
+            print(f"test_var={test_var}, computed={computed}, result={result}")
+            assert test_var == 100, f"Expected test_var=100, got {test_var}"
+            assert computed == 200, f"Expected computed=200, got {computed}"
+            assert result == 300, f"Expected result=300, got {result}"
+            result = {"status": "success", "result": result}
     next:
       - step: end
 
   - step: end
     desc: End workflow
     tool:
-      kind: python
-      auth: {}
-      libs: {}
-      args: {}
-      code: |
-        result = {"status": "complete"}
+      - complete:
+          kind: python
+          code: |
+            result = {"status": "complete"}

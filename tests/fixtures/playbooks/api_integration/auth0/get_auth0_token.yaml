@@ -66,15 +66,11 @@ workflow:
         client_id: "{{ workload.client_id }}"
         client_secret: "{{ keychain.auth0_credentials.client_secret }}"
         scope: "openid profile email"
-    case:
-      - when: "{{ event.name == 'call.done' and response.status_code == 200 }}"
-        then:
-          - next:
-              - step: success
-      - when: "{{ event.name == 'call.done' and response.status_code != 200 }}"
-        then:
-          - next:
-              - step: error
+    next:
+      - step: success
+        when: "{{ response.status_code == 200 }}"
+      - step: error
+        when: "{{ response.status_code != 200 }}"
 
   - step: success
     desc: Return token

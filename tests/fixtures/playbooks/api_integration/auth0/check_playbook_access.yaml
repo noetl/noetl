@@ -35,16 +35,11 @@ workflow:
       code: |
         print(f"DEBUG: request_id = {context.get('request_id', '')}")
         result = {"status": "initialized"}
-    case:
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          - next:
-              - step: get_user_from_session
+    next:
+      - step: get_user_from_session
 
   - step: get_user_from_session
     desc: Get user from session
-    spec:
-      case_mode: exclusive  # First matching case wins
     tool:
       kind: postgres
       auth: "{{ workload.db_credential }}"
@@ -56,20 +51,14 @@ workflow:
           AND s.is_active = true
           AND s.expires_at > NOW()
           AND u.is_active = true;
-    case:
-      - when: "{{ event.name == 'call.done' and result.command_0 is defined and result.command_0.rows | length > 0 }}"
-        then:
-          - next:
-              - step: check_permission
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          - next:
-              - step: access_denied
+    next:
+      - step: check_permission
+        when: "{{ result.command_0 is defined and result.command_0.rows | length > 0 }}"
+      - step: access_denied
+        when: "{{ result.command_0 is not defined or result.command_0.rows | length == 0 }}"
 
   - step: check_permission
     desc: Check permissions
-    spec:
-      case_mode: exclusive  # First matching case wins
     tool:
       kind: postgres
       auth: "{{ workload.db_credential }}"
@@ -91,20 +80,14 @@ workflow:
             OR ('{{ workload.action }}' = 'view' AND pp.can_view = true)
             OR ('{{ workload.action }}' = 'modify' AND pp.can_modify = true)
           );
-    case:
-      - when: "{{ event.name == 'call.done' and result.command_0 is defined and result.command_0.rows | length > 0 and result.command_0.rows[0].has_permission }}"
-        then:
-          - next:
-              - step: access_granted
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          - next:
-              - step: access_denied
+    next:
+      - step: access_granted
+        when: "{{ result.command_0 is defined and result.command_0.rows | length > 0 and result.command_0.rows[0].has_permission }}"
+      - step: access_denied
+        when: "{{ result.command_0 is not defined or result.command_0.rows | length == 0 or not result.command_0.rows[0].has_permission }}"
 
   - step: access_granted
     desc: Return allowed
-    spec:
-      case_mode: exclusive  # First matching case wins
     tool:
       kind: python
       args:
@@ -121,40 +104,37 @@ workflow:
             "user": {"user_id": user_id, "email": email, "display_name": display_name},
             "message": f"Access granted to {action} playbook"
         }
-    case:
-      # If request_id is set, send callback to gateway via HTTP
-      - when: "{{ event.name == 'call.done' and request_id }}"
-        then:
-          - send_callback:
-              tool:
-                kind: http
-                method: POST
-                url: "{{ gateway_url }}/api/internal/callback"
-                headers:
-                  Content-Type: application/json
-                data:
-                  request_id: "{{ request_id }}"
-                  status: "success"
-                  data:
-                    allowed: true
-                    playbook_path: "{{ result.playbook_path }}"
-                    permission_type: "{{ result.action }}"
-                    user:
-                      user_id: "{{ get_user_from_session.command_0.rows[0].user_id }}"
-                      email: "{{ get_user_from_session.command_0.rows[0].email }}"
-                      display_name: "{{ get_user_from_session.command_0.rows[0].display_name }}"
-                    message: "{{ result.message }}"
-          - next:
-              - step: end
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          - next:
-              - step: end
+    next:
+      - step: send_granted_callback
+        when: "{{ request_id }}"
+      - step: end
+        when: "{{ not request_id }}"
+
+  - step: send_granted_callback
+    desc: Send access granted callback to gateway
+    tool:
+      kind: http
+      method: POST
+      url: "{{ gateway_url }}/api/internal/callback"
+      headers:
+        Content-Type: application/json
+      data:
+        request_id: "{{ request_id }}"
+        status: "success"
+        data:
+          allowed: true
+          playbook_path: "{{ access_granted.playbook_path }}"
+          permission_type: "{{ access_granted.action }}"
+          user:
+            user_id: "{{ get_user_from_session.command_0.rows[0].user_id }}"
+            email: "{{ get_user_from_session.command_0.rows[0].email }}"
+            display_name: "{{ get_user_from_session.command_0.rows[0].display_name }}"
+          message: "{{ access_granted.message }}"
+    next:
+      - step: end
 
   - step: access_denied
     desc: Return denied
-    spec:
-      case_mode: exclusive  # First matching case wins
     tool:
       kind: python
       args:
@@ -167,31 +147,30 @@ workflow:
             "action": action,
             "message": "Access denied"
         }
-    case:
-      # If request_id is set, send callback to gateway via HTTP
-      - when: "{{ event.name == 'call.done' and request_id }}"
-        then:
-          - send_callback:
-              tool:
-                kind: http
-                method: POST
-                url: "{{ gateway_url }}/api/internal/callback"
-                headers:
-                  Content-Type: application/json
-                data:
-                  request_id: "{{ request_id }}"
-                  status: "success"
-                  data:
-                    allowed: false
-                    playbook_path: "{{ result.playbook_path }}"
-                    permission_type: "{{ result.action }}"
-                    message: "{{ result.message }}"
-          - next:
-              - step: end
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          - next:
-              - step: end
+    next:
+      - step: send_denied_callback
+        when: "{{ request_id }}"
+      - step: end
+        when: "{{ not request_id }}"
+
+  - step: send_denied_callback
+    desc: Send access denied callback to gateway
+    tool:
+      kind: http
+      method: POST
+      url: "{{ gateway_url }}/api/internal/callback"
+      headers:
+        Content-Type: application/json
+      data:
+        request_id: "{{ request_id }}"
+        status: "success"
+        data:
+          allowed: false
+          playbook_path: "{{ access_denied.playbook_path }}"
+          permission_type: "{{ access_denied.action }}"
+          message: "{{ access_denied.message }}"
+    next:
+      - step: end
 
   - step: end
     desc: Complete

@@ -19,34 +19,20 @@ workflow:
       cmds:
         - echo "Development Tools Setup - Action '{{ workload.action }}'"
     next:
-      - when: "{{ workload.action }} == detect"
-        then:
-          - step: detect_os
-        args: {}
-      - when: "{{ workload.action }} == setup"
-        then:
-          - step: detect_and_setup
-        args: {}
-      - when: "{{ workload.action }} == validate-install"
-        then:
-          - step: detect_and_validate
-        args: {}
-      - when: "{{ workload.action }} == validate-devtools"
-        then:
-          - step: detect_and_validate_devtools
-        args: {}
-      - when: "{{ workload.action }} == install-base"
-        then:
-          - step: detect_and_install_base
-        args: {}
-      - when: "{{ workload.action }} == install-devtools"
-        then:
-          - step: detect_and_install_devtools
-        args: {}
-      - when: "{{ workload.action }} == help"
-        then:
-          - step: show_help
-        args: {}
+      - step: detect_os
+        when: "{{ workload.action == 'detect' }}"
+      - step: detect_and_setup
+        when: "{{ workload.action == 'setup' }}"
+      - step: detect_and_validate
+        when: "{{ workload.action == 'validate-install' }}"
+      - step: detect_and_validate_devtools
+        when: "{{ workload.action == 'validate-devtools' }}"
+      - step: detect_and_install_base
+        when: "{{ workload.action == 'install-base' }}"
+      - step: detect_and_install_devtools
+        when: "{{ workload.action == 'install-devtools' }}"
+      - step: show_help
+        when: "{{ workload.action == 'help' }}"
       - step: show_help
 
   - step: detect_os
@@ -124,22 +110,23 @@ workflow:
           case "$(uname -s)" in
             Darwin)
               echo "[INFO] Detected macOS - using tooling_macos.yaml"
+              echo "OS_TYPE=macos" > /tmp/noetl_os_detect
               ;;
             Linux)
               echo "[INFO] Detected Linux/WSL2 - using tooling_linux.yaml"
+              echo "OS_TYPE=linux" > /tmp/noetl_os_detect
               ;;
             *)
               echo "[ERROR] Unsupported operating system: $(uname -s)"
               exit 1
               ;;
           esac
-    case:
-      - when: "'$(uname -s)' == Darwin"
-        then:
-          - step: run_macos_setup
-      - when: "true"
-        then:
-          - step: run_linux_setup
+      exports:
+        - os_type
+    next:
+      - step: run_macos_setup
+        when: "{{ os_type == 'macos' }}"
+      - step: run_linux_setup
 
   - step: run_macos_setup
     desc: Run macOS setup via tooling_macos.yaml
@@ -173,22 +160,23 @@ workflow:
           case "$(uname -s)" in
             Darwin)
               echo "[INFO] Detected macOS"
+              echo "OS_TYPE=macos" > /tmp/noetl_os_detect
               ;;
             Linux)
               echo "[INFO] Detected Linux/WSL2"
+              echo "OS_TYPE=linux" > /tmp/noetl_os_detect
               ;;
             *)
               echo "[ERROR] Unsupported operating system: $(uname -s)"
               exit 1
               ;;
           esac
-    case:
-      - when: "'$(uname -s)' == Darwin"
-        then:
-          - step: run_macos_validate
-      - when: "true"
-        then:
-          - step: run_linux_validate
+      exports:
+        - os_type
+    next:
+      - step: run_macos_validate
+        when: "{{ os_type == 'macos' }}"
+      - step: run_linux_validate
 
   - step: run_macos_validate
     desc: Run macOS validation via tooling_macos.yaml
@@ -222,22 +210,23 @@ workflow:
           case "$(uname -s)" in
             Darwin)
               echo "[INFO] Detected macOS"
+              echo "OS_TYPE=macos" > /tmp/noetl_os_detect
               ;;
             Linux)
               echo "[INFO] Detected Linux/WSL2"
+              echo "OS_TYPE=linux" > /tmp/noetl_os_detect
               ;;
             *)
               echo "[ERROR] Unsupported operating system"
               exit 1
               ;;
           esac
-    case:
-      - when: "'$(uname -s)' == Darwin"
-        then:
-          - step: run_macos_validate_devtools
-      - when: "true"
-        then:
-          - step: run_linux_validate_devtools
+      exports:
+        - os_type
+    next:
+      - step: run_macos_validate_devtools
+        when: "{{ os_type == 'macos' }}"
+      - step: run_linux_validate_devtools
 
   - step: run_macos_validate_devtools
     desc: Run macOS dev tools validation
@@ -271,22 +260,23 @@ workflow:
           case "$(uname -s)" in
             Darwin)
               echo "[INFO] Detected macOS - will use Homebrew"
+              echo "OS_TYPE=macos" > /tmp/noetl_os_detect
               ;;
             Linux)
               echo "[INFO] Detected Linux/WSL2 - will use apt-get"
+              echo "OS_TYPE=linux" > /tmp/noetl_os_detect
               ;;
             *)
               echo "[ERROR] Unsupported operating system"
               exit 1
               ;;
           esac
-    case:
-      - when: "'$(uname -s)' == Darwin"
-        then:
-          - step: run_macos_install_base
-      - when: "true"
-        then:
-          - step: run_linux_install_base
+      exports:
+        - os_type
+    next:
+      - step: run_macos_install_base
+        when: "{{ os_type == 'macos' }}"
+      - step: run_linux_install_base
 
   - step: run_macos_install_base
     desc: Run macOS base tools installation
@@ -320,22 +310,23 @@ workflow:
           case "$(uname -s)" in
             Darwin)
               echo "[INFO] Detected macOS - will use Homebrew"
+              echo "OS_TYPE=macos" > /tmp/noetl_os_detect
               ;;
             Linux)
               echo "[INFO] Detected Linux/WSL2 - will use apt-get and manual installs"
+              echo "OS_TYPE=linux" > /tmp/noetl_os_detect
               ;;
             *)
               echo "[ERROR] Unsupported operating system"
               exit 1
               ;;
           esac
-    case:
-      - when: "'$(uname -s)' == Darwin"
-        then:
-          - step: run_macos_install_devtools
-      - when: "true"
-        then:
-          - step: run_linux_install_devtools
+      exports:
+        - os_type
+    next:
+      - step: run_macos_install_devtools
+        when: "{{ os_type == 'macos' }}"
+      - step: run_linux_install_devtools
 
   - step: run_macos_install_devtools
     desc: Run macOS dev tools installation
@@ -406,3 +397,5 @@ workflow:
 
   - step: end
     desc: End workflow
+    tool:
+      kind: noop

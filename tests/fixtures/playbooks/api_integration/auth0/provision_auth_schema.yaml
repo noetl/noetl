@@ -5,9 +5,9 @@ metadata:
   path: api_integration/auth0/provision_auth_schema
   description: |
     Provision authentication schema and tables in demo_noetl database.
-    
+
     Creates auth schema with tables: users, roles, permissions, sessions, audit_log, etc.
-    
+
     Prerequisites:
     - PostgreSQL database accessible
     - Admin credentials registered as 'pg_k8s'
@@ -26,11 +26,8 @@ workflow:
       kind: python
       code: |
         result = {"status": "initialized"}
-    case:
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          - next:
-              - step: provision_schema
+    next:
+      - step: provision_schema
 
   - step: provision_schema
     desc: Execute SQL to create auth schema and tables
@@ -178,11 +175,8 @@ workflow:
         ON CONFLICT DO NOTHING;
 
         SELECT 'Auth schema provisioned successfully' as result;
-    case:
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          - next:
-              - step: verify_schema
+    next:
+      - step: verify_schema
 
   - step: verify_schema
     desc: Verify auth schema was created successfully
@@ -194,11 +188,8 @@ workflow:
           (SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'auth') as table_count,
           (SELECT COUNT(*) FROM auth.roles) as role_count,
           (SELECT COUNT(*) FROM auth.permissions) as permission_count;
-    case:
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          - next:
-              - step: success
+    next:
+      - step: success
 
   - step: success
     desc: Schema provisioned successfully
@@ -212,11 +203,8 @@ workflow:
             "message": "Auth schema provisioned successfully",
             "details": verification
         }
-    case:
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          - next:
-              - step: end
+    next:
+      - step: end
 
   - step: end
     desc: Complete provisioning workflow

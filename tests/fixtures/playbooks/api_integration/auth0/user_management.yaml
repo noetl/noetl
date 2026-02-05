@@ -45,31 +45,17 @@ workflow:
       code: |
         action = context['workload'].get('action', 'list_users')
         result = {"action": action}
-    case:
-      - when: "{{ event.name == 'call.done' and workload.action == 'list_users' }}"
-        then:
-          - next:
-              - step: list_users
-
-      - when: "{{ event.name == 'call.done' and workload.action == 'list_roles' }}"
-        then:
-          - next:
-              - step: list_roles
-
-      - when: "{{ event.name == 'call.done' and workload.action == 'update_user_roles' }}"
-        then:
-          - next:
-              - step: delete_user_roles
-
-      - when: "{{ event.name == 'call.done' and workload.action == 'get_user' }}"
-        then:
-          - next:
-              - step: get_user
-
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          - next:
-              - step: error_invalid_action
+    next:
+      - step: list_users
+        when: "{{ workload.action == 'list_users' }}"
+      - step: list_roles
+        when: "{{ workload.action == 'list_roles' }}"
+      - step: delete_user_roles
+        when: "{{ workload.action == 'update_user_roles' }}"
+      - step: get_user
+        when: "{{ workload.action == 'get_user' }}"
+      - step: error_invalid_action
+        when: "{{ workload.action not in ['list_users', 'list_roles', 'update_user_roles', 'get_user'] }}"
 
   # ============================================================================
   # LIST USERS - Get all users with their roles
@@ -104,16 +90,11 @@ workflow:
         GROUP BY u.user_id, u.auth0_id, u.email, u.display_name,
                  u.last_login_at, u.is_active, u.created_at
         ORDER BY u.user_id;
-    case:
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          - next:
-              - step: return_users
+    next:
+      - step: return_users
 
   - step: return_users
     desc: Format and send users list callback
-    spec:
-      case_mode: exclusive
     tool:
       kind: python
       code: |
@@ -124,26 +105,26 @@ workflow:
             "users": rows,
             "count": len(rows)
         }
-    case:
-      - when: "{{ event.name == 'call.done' and workload.request_id }}"
-        then:
-          - send_callback:
-              tool:
-                kind: http
-                method: POST
-                url: "{{ workload.gateway_url }}/api/internal/callback/async"
-                headers:
-                  Content-Type: application/json
-                data:
-                  request_id: "{{ workload.request_id }}"
-                  status: "COMPLETED"
-                  data: "{{ return_users }}"
-          - next:
-              - step: end
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          - next:
-              - step: end
+    next:
+      - step: send_users_callback
+        when: "{{ workload.request_id }}"
+      - step: end
+        when: "{{ not workload.request_id }}"
+
+  - step: send_users_callback
+    desc: Send users list callback
+    tool:
+      kind: http
+      method: POST
+      url: "{{ workload.gateway_url }}/api/internal/callback/async"
+      headers:
+        Content-Type: application/json
+      data:
+        request_id: "{{ workload.request_id }}"
+        status: "COMPLETED"
+        data: "{{ return_users }}"
+    next:
+      - step: end
 
   # ============================================================================
   # LIST ROLES - Get all available roles
@@ -162,16 +143,11 @@ workflow:
           created_at
         FROM auth.roles
         ORDER BY role_id;
-    case:
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          - next:
-              - step: return_roles
+    next:
+      - step: return_roles
 
   - step: return_roles
     desc: Format and send roles list callback
-    spec:
-      case_mode: exclusive
     tool:
       kind: python
       code: |
@@ -182,26 +158,26 @@ workflow:
             "roles": rows,
             "count": len(rows)
         }
-    case:
-      - when: "{{ event.name == 'call.done' and workload.request_id }}"
-        then:
-          - send_callback:
-              tool:
-                kind: http
-                method: POST
-                url: "{{ workload.gateway_url }}/api/internal/callback/async"
-                headers:
-                  Content-Type: application/json
-                data:
-                  request_id: "{{ workload.request_id }}"
-                  status: "COMPLETED"
-                  data: "{{ return_roles }}"
-          - next:
-              - step: end
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          - next:
-              - step: end
+    next:
+      - step: send_roles_callback
+        when: "{{ workload.request_id }}"
+      - step: end
+        when: "{{ not workload.request_id }}"
+
+  - step: send_roles_callback
+    desc: Send roles list callback
+    tool:
+      kind: http
+      method: POST
+      url: "{{ workload.gateway_url }}/api/internal/callback/async"
+      headers:
+        Content-Type: application/json
+      data:
+        request_id: "{{ workload.request_id }}"
+        status: "COMPLETED"
+        data: "{{ return_roles }}"
+    next:
+      - step: end
 
   # ============================================================================
   # GET USER - Get single user details
@@ -236,16 +212,11 @@ workflow:
         WHERE u.user_id = {{ workload.user_id }}
         GROUP BY u.user_id, u.auth0_id, u.email, u.display_name,
                  u.last_login_at, u.is_active, u.created_at;
-    case:
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          - next:
-              - step: return_user
+    next:
+      - step: return_user
 
   - step: return_user
     desc: Format and send user details callback
-    spec:
-      case_mode: exclusive
     tool:
       kind: python
       code: |
@@ -262,26 +233,26 @@ workflow:
                 "action": "get_user",
                 "error": "User not found"
             }
-    case:
-      - when: "{{ event.name == 'call.done' and workload.request_id }}"
-        then:
-          - send_callback:
-              tool:
-                kind: http
-                method: POST
-                url: "{{ workload.gateway_url }}/api/internal/callback/async"
-                headers:
-                  Content-Type: application/json
-                data:
-                  request_id: "{{ workload.request_id }}"
-                  status: "COMPLETED"
-                  data: "{{ return_user }}"
-          - next:
-              - step: end
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          - next:
-              - step: end
+    next:
+      - step: send_user_callback
+        when: "{{ workload.request_id }}"
+      - step: end
+        when: "{{ not workload.request_id }}"
+
+  - step: send_user_callback
+    desc: Send user details callback
+    tool:
+      kind: http
+      method: POST
+      url: "{{ workload.gateway_url }}/api/internal/callback/async"
+      headers:
+        Content-Type: application/json
+      data:
+        request_id: "{{ workload.request_id }}"
+        status: "COMPLETED"
+        data: "{{ return_user }}"
+    next:
+      - step: end
 
   # ============================================================================
   # UPDATE USER ROLES - Replace user's roles
@@ -293,11 +264,8 @@ workflow:
       auth: "{{ workload.db_credential }}"
       command: |
         DELETE FROM auth.user_roles WHERE user_id = {{ workload.user_id }};
-    case:
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          - next:
-              - step: insert_user_roles
+    next:
+      - step: insert_user_roles
 
   - step: insert_user_roles
     desc: Insert new roles for user
@@ -314,11 +282,8 @@ workflow:
         WHERE r.role_name = ANY(ARRAY[{% for name in workload.role_names %}'{{ name }}'{% if not loop.last %},{% endif %}{% endfor %}])
         ON CONFLICT (user_id, role_id) DO NOTHING
         RETURNING role_id;
-    case:
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          - next:
-              - step: get_updated_roles
+    next:
+      - step: get_updated_roles
 
   - step: get_updated_roles
     desc: Fetch updated roles for confirmation
@@ -331,16 +296,11 @@ workflow:
         JOIN auth.roles r ON ur.role_id = r.role_id
         WHERE ur.user_id = {{ workload.user_id }}
         ORDER BY r.role_name;
-    case:
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          - next:
-              - step: return_updated_roles
+    next:
+      - step: return_updated_roles
 
   - step: return_updated_roles
     desc: Return update result callback
-    spec:
-      case_mode: exclusive
     tool:
       kind: python
       code: |
@@ -352,34 +312,32 @@ workflow:
             "roles": rows,
             "message": f"Updated {len(rows)} roles for user {context['workload']['user_id']}"
         }
-    case:
-      - when: "{{ event.name == 'call.done' and workload.request_id }}"
-        then:
-          - send_callback:
-              tool:
-                kind: http
-                method: POST
-                url: "{{ workload.gateway_url }}/api/internal/callback/async"
-                headers:
-                  Content-Type: application/json
-                data:
-                  request_id: "{{ workload.request_id }}"
-                  status: "COMPLETED"
-                  data: "{{ return_updated_roles }}"
-          - next:
-              - step: end
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          - next:
-              - step: end
+    next:
+      - step: send_updated_roles_callback
+        when: "{{ workload.request_id }}"
+      - step: end
+        when: "{{ not workload.request_id }}"
+
+  - step: send_updated_roles_callback
+    desc: Send updated roles callback
+    tool:
+      kind: http
+      method: POST
+      url: "{{ workload.gateway_url }}/api/internal/callback/async"
+      headers:
+        Content-Type: application/json
+      data:
+        request_id: "{{ workload.request_id }}"
+        status: "COMPLETED"
+        data: "{{ return_updated_roles }}"
+    next:
+      - step: end
 
   # ============================================================================
   # ERROR HANDLING
   # ============================================================================
   - step: error_invalid_action
     desc: Return error callback for invalid action
-    spec:
-      case_mode: exclusive
     tool:
       kind: python
       code: |
@@ -388,27 +346,27 @@ workflow:
             "error": f"Invalid action: {context['workload'].get('action')}",
             "valid_actions": ["list_users", "list_roles", "update_user_roles", "get_user"]
         }
-    case:
-      - when: "{{ event.name == 'call.done' and workload.request_id }}"
-        then:
-          - send_callback:
-              tool:
-                kind: http
-                method: POST
-                url: "{{ workload.gateway_url }}/api/internal/callback/async"
-                headers:
-                  Content-Type: application/json
-                data:
-                  request_id: "{{ workload.request_id }}"
-                  status: "FAILED"
-                  error:
-                    message: "{{ error_invalid_action.error }}"
-          - next:
-              - step: end
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          - next:
-              - step: end
+    next:
+      - step: send_error_callback
+        when: "{{ workload.request_id }}"
+      - step: end
+        when: "{{ not workload.request_id }}"
+
+  - step: send_error_callback
+    desc: Send error callback
+    tool:
+      kind: http
+      method: POST
+      url: "{{ workload.gateway_url }}/api/internal/callback/async"
+      headers:
+        Content-Type: application/json
+      data:
+        request_id: "{{ workload.request_id }}"
+        status: "FAILED"
+        error:
+          message: "{{ error_invalid_action.error }}"
+    next:
+      - step: end
 
   - step: end
     desc: Complete

@@ -1,10 +1,12 @@
-//! NoETL DSL v2 Types
+//! NoETL DSL v2 Types - Canonical Format
 //!
 //! Complete type definitions for NoETL playbooks:
-//! - tool.kind pattern for tool configuration
-//! - Step-level case/when/then for event-driven control flow
-//! - Step-level loop for iteration
-//! - Event-driven architecture
+//! - tool as ordered pipeline (list of labeled tasks) or single tool shorthand
+//! - step.when for transition enable guard
+//! - next[].when for conditional routing
+//! - loop.spec.mode for iteration mode
+//! - tool.eval for per-task flow control
+//! - No case/when/then blocks (removed in canonical format)
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -29,6 +31,13 @@ pub enum ToolKind {
     Transfer,
     SnowflakeTransfer,
     Gcs,
+    Gateway,
+    Nats,
+    Shell,
+    Artifact,
+    Noop,
+    TaskSequence,
+    Rhai,
 }
 
 impl std::fmt::Display for ToolKind {
@@ -50,10 +59,71 @@ impl std::fmt::Display for ToolKind {
             ToolKind::Transfer => "transfer",
             ToolKind::SnowflakeTransfer => "snowflake_transfer",
             ToolKind::Gcs => "gcs",
+            ToolKind::Gateway => "gateway",
+            ToolKind::Nats => "nats",
+            ToolKind::Shell => "shell",
+            ToolKind::Artifact => "artifact",
+            ToolKind::Noop => "noop",
+            ToolKind::TaskSequence => "task_sequence",
+            ToolKind::Rhai => "rhai",
         };
         write!(f, "{}", s)
     }
 }
+
+// ============================================================================
+// Eval Condition - Tool-level flow control
+// ============================================================================
+
+/// Eval condition for per-task flow control.
+/// Evaluated after each tool execution.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EvalCondition {
+    /// Jinja2 expression to evaluate.
+    /// Access outcome object: outcome.status, outcome.error, outcome.result
+    #[serde(default)]
+    pub expr: Option<String>,
+
+    /// Action to take: continue, retry, break, jump, fail
+    #[serde(rename = "do")]
+    pub action: String,
+
+    /// Retry attempts (for do: retry).
+    #[serde(default)]
+    pub attempts: Option<i32>,
+
+    /// Retry backoff strategy: linear or exponential.
+    #[serde(default)]
+    pub backoff: Option<String>,
+
+    /// Retry delay in seconds.
+    #[serde(default)]
+    pub delay: Option<f64>,
+
+    /// Variables to set (step-scoped).
+    #[serde(default)]
+    pub set_vars: Option<HashMap<String, serde_json::Value>>,
+
+    /// Target step (for do: jump).
+    #[serde(default)]
+    pub target: Option<String>,
+}
+
+/// Else clause for eval conditions.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EvalElse {
+    /// Action to take.
+    #[serde(rename = "do")]
+    pub action: String,
+
+    /// Variables to set.
+    #[serde(default)]
+    pub set_vars: Option<HashMap<String, serde_json::Value>>,
+}
+
+// ============================================================================
+// Tool Specification
+// ============================================================================
 
 /// Tool specification with tool.kind pattern.
 /// All execution-specific fields live under tool.
@@ -61,6 +131,11 @@ impl std::fmt::Display for ToolKind {
 pub struct ToolSpec {
     /// Tool type.
     pub kind: ToolKind,
+
+    /// Tool-level flow control (canonical format).
+    /// Evaluated after tool execution.
+    #[serde(default)]
+    pub eval: Option<Vec<EvalEntry>>,
 
     /// Authentication configuration.
     #[serde(default)]
@@ -90,14 +165,71 @@ pub struct ToolSpec {
     #[serde(default)]
     pub query: Option<String>,
 
+    /// Command (for database/shell tools).
+    #[serde(default)]
+    pub command: Option<String>,
+
     /// Connection string or credential reference.
     #[serde(default)]
     pub connection: Option<String>,
+
+    /// HTTP params.
+    #[serde(default)]
+    pub params: Option<HashMap<String, serde_json::Value>>,
+
+    /// HTTP headers.
+    #[serde(default)]
+    pub headers: Option<HashMap<String, String>>,
+
+    /// Output selection strategy (for result externalization).
+    #[serde(default)]
+    pub output_select: Option<serde_json::Value>,
 
     /// Additional tool-specific configuration.
     #[serde(flatten)]
     pub extra: HashMap<String, serde_json::Value>,
 }
+
+/// Eval entry - can be a condition or an else clause.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum EvalEntry {
+    /// Conditional eval with expr.
+    Condition(EvalCondition),
+    /// Else clause (no condition).
+    Else { r#else: EvalElse },
+}
+
+// ============================================================================
+// Pipeline Task - Labeled tool in a pipeline
+// ============================================================================
+
+/// Pipeline task - a labeled tool in a task sequence.
+/// Format: { label: { kind: ..., args: ..., eval: ... } }
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PipelineTask {
+    /// Task label (for referencing with _prev).
+    pub label: String,
+
+    /// Tool specification.
+    pub tool: ToolSpec,
+}
+
+/// Tool definition - can be single tool or pipeline.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ToolDefinition {
+    /// Single tool (shorthand).
+    Single(ToolSpec),
+
+    /// Pipeline - list of labeled tasks.
+    /// Each item is a map with single key (label) -> tool spec.
+    Pipeline(Vec<HashMap<String, ToolSpec>>),
+}
+
+// ============================================================================
+// Loop Configuration
+// ============================================================================
 
 /// Loop execution mode.
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
@@ -106,10 +238,21 @@ pub enum LoopMode {
     #[default]
     Sequential,
     Parallel,
-    Async,
 }
 
-/// Step-level loop configuration.
+/// Loop runtime specification (canonical format).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LoopSpec {
+    /// Execution mode: sequential or parallel.
+    #[serde(default)]
+    pub mode: LoopMode,
+
+    /// Maximum concurrent iterations in parallel mode.
+    #[serde(default)]
+    pub max_in_flight: Option<i32>,
+}
+
+/// Step-level loop configuration (canonical format).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Loop {
     /// Jinja expression for collection to iterate over.
@@ -119,32 +262,30 @@ pub struct Loop {
     /// Variable name for each item.
     pub iterator: String,
 
-    /// Execution mode.
+    /// Loop spec with mode (canonical format).
     #[serde(default)]
-    pub mode: LoopMode,
+    pub spec: Option<LoopSpec>,
 }
 
-/// Target for next transition.
+// ============================================================================
+// Next Transitions (Canonical Format)
+// ============================================================================
+
+/// Target for next transition with optional conditional routing.
+/// Canonical format: next[].when for conditional routing.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NextTarget {
+pub struct CanonicalNextTarget {
     /// Target step name.
     pub step: String,
+
+    /// Transition guard expression (Jinja2).
+    /// Evaluated by server after step completion.
+    #[serde(default)]
+    pub when: Option<String>,
 
     /// Arguments to pass to target step.
     #[serde(default)]
     pub args: Option<HashMap<String, serde_json::Value>>,
-}
-
-/// Conditional behavior rule.
-/// Evaluated against event context with Jinja2.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CaseEntry {
-    /// Jinja2 condition expression.
-    pub when: String,
-
-    /// Actions to execute when condition is true.
-    /// Can be a list of actions or a single action dict (backwards compatible).
-    pub then: serde_json::Value,
 }
 
 /// Next step specification - can be string, list of strings, or list of targets.
@@ -157,11 +298,44 @@ pub enum NextSpec {
     /// List of step names.
     List(Vec<String>),
 
-    /// List of step targets with optional args.
-    Targets(Vec<NextTarget>),
+    /// List of step targets with optional when conditions (canonical format).
+    Targets(Vec<CanonicalNextTarget>),
 }
 
-/// Workflow step with event-driven control flow.
+// ============================================================================
+// Step Specification
+// ============================================================================
+
+/// Step-level behavior configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct StepSpec {
+    /// Next evaluation mode: exclusive (first match) or inclusive (all matches).
+    #[serde(default)]
+    pub next_mode: Option<String>,
+
+    /// Step timeout (e.g., "30s", "5m").
+    #[serde(default)]
+    pub timeout: Option<String>,
+
+    /// Error handling: fail, continue, or retry.
+    #[serde(default)]
+    pub on_error: Option<String>,
+}
+
+// ============================================================================
+// Step Definition (Canonical Format)
+// ============================================================================
+
+/// Workflow step with canonical format control flow.
+///
+/// Canonical step structure:
+/// - step: name (unique identifier)
+/// - desc: description
+/// - spec: step behavior (next_mode, timeout, on_error)
+/// - when: transition enable guard (evaluated by server on input token)
+/// - loop: optional loop wrapper with spec.mode
+/// - tool: ordered pipeline (list of labeled tasks) OR single tool shorthand
+/// - next: outgoing arcs with optional when conditions for routing
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Step {
     /// Step name (unique identifier).
@@ -171,7 +345,16 @@ pub struct Step {
     #[serde(default)]
     pub desc: Option<String>,
 
-    /// Input arguments for this step (from previous steps or templates).
+    /// Step behavior configuration.
+    #[serde(default)]
+    pub spec: Option<StepSpec>,
+
+    /// Transition enable guard (canonical format).
+    /// Jinja2 expression evaluated by server before step runs.
+    #[serde(default)]
+    pub when: Option<String>,
+
+    /// Input arguments for this step.
     #[serde(default)]
     pub args: Option<HashMap<String, serde_json::Value>>,
 
@@ -179,21 +362,21 @@ pub struct Step {
     #[serde(default)]
     pub vars: Option<HashMap<String, serde_json::Value>>,
 
-    /// Loop configuration.
+    /// Loop configuration with spec.mode.
     #[serde(default)]
     pub r#loop: Option<Loop>,
 
-    /// Tool configuration with tool.kind.
-    pub tool: ToolSpec,
+    /// Tool configuration - single tool or pipeline.
+    pub tool: ToolDefinition,
 
-    /// Event-driven conditional rules.
-    #[serde(default)]
-    pub case: Option<Vec<CaseEntry>>,
-
-    /// Structural default next step(s) - unconditional.
+    /// Next step(s) with optional when conditions for routing.
     #[serde(default)]
     pub next: Option<NextSpec>,
 }
+
+// ============================================================================
+// Workbook and Keychain
+// ============================================================================
 
 /// Reusable task definition in workbook.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -236,6 +419,10 @@ pub struct KeychainDef {
     pub extra: HashMap<String, serde_json::Value>,
 }
 
+// ============================================================================
+// Playbook Metadata
+// ============================================================================
+
 /// Playbook metadata.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Metadata {
@@ -259,7 +446,11 @@ pub struct Metadata {
     pub extra: HashMap<String, serde_json::Value>,
 }
 
-/// Complete workflow definition (v2).
+// ============================================================================
+// Playbook Definition
+// ============================================================================
+
+/// Complete workflow definition (v2 canonical format).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Playbook {
     /// API version (noetl.io/v2).
@@ -275,6 +466,10 @@ pub struct Playbook {
     /// Global workflow variables.
     #[serde(default)]
     pub workload: Option<serde_json::Value>,
+
+    /// Top-level variables (canonical format).
+    #[serde(default)]
+    pub vars: Option<HashMap<String, serde_json::Value>>,
 
     /// Keychain definitions for credentials and tokens.
     #[serde(default)]
@@ -313,6 +508,33 @@ impl Playbook {
     pub fn name(&self) -> &str {
         &self.metadata.name
     }
+}
+
+// ============================================================================
+// Command Specification (Canonical Format)
+// ============================================================================
+
+/// Command-level behavior configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct CommandSpec {
+    /// Next evaluation mode: exclusive (first match) or inclusive (all matches).
+    #[serde(default)]
+    pub next_mode: Option<String>,
+}
+
+/// Next target info for command routing.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NextTargetInfo {
+    /// Target step name.
+    pub step: String,
+
+    /// Transition guard expression.
+    #[serde(default)]
+    pub when: Option<String>,
+
+    /// Arguments to pass.
+    #[serde(default)]
+    pub args: Option<HashMap<String, serde_json::Value>>,
 }
 
 // ============================================================================
@@ -362,11 +584,38 @@ impl ToolCall {
                 serde_json::Value::String(query.clone()),
             );
         }
+        if let Some(ref command) = spec.command {
+            config.insert(
+                "command".to_string(),
+                serde_json::Value::String(command.clone()),
+            );
+        }
         if let Some(ref connection) = spec.connection {
             config.insert(
                 "connection".to_string(),
                 serde_json::Value::String(connection.clone()),
             );
+        }
+        if let Some(ref params) = spec.params {
+            config.insert(
+                "params".to_string(),
+                serde_json::to_value(params).unwrap_or_default(),
+            );
+        }
+        if let Some(ref headers) = spec.headers {
+            config.insert(
+                "headers".to_string(),
+                serde_json::to_value(headers).unwrap_or_default(),
+            );
+        }
+        if let Some(ref eval) = spec.eval {
+            config.insert(
+                "eval".to_string(),
+                serde_json::to_value(eval).unwrap_or_default(),
+            );
+        }
+        if let Some(ref output_select) = spec.output_select {
+            config.insert("output_select".to_string(), output_select.clone());
         }
 
         Self {
@@ -376,7 +625,7 @@ impl ToolCall {
     }
 }
 
-/// Command to be executed by worker.
+/// Command to be executed by worker (canonical format).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Command {
     /// Execution identifier.
@@ -396,9 +645,17 @@ pub struct Command {
     #[serde(default)]
     pub render_context: HashMap<String, serde_json::Value>,
 
-    /// Case blocks for worker-side conditional execution.
+    /// Pipeline tasks (for task_sequence execution).
     #[serde(default)]
-    pub case: Option<Vec<serde_json::Value>>,
+    pub pipeline: Option<Vec<HashMap<String, serde_json::Value>>>,
+
+    /// Next targets with optional when conditions for routing.
+    #[serde(default)]
+    pub next_targets: Option<Vec<NextTargetInfo>>,
+
+    /// Command behavior specification.
+    #[serde(default)]
+    pub spec: Option<CommandSpec>,
 
     /// Attempt number for retries.
     #[serde(default = "default_attempt")]
@@ -450,14 +707,14 @@ workflow:
     tool:
       kind: python
       code: |
-        return {"status": "ok"}
+        result = {"status": "ok"}
     next:
       - step: end
   - step: end
     tool:
       kind: python
       code: |
-        return {"status": "done"}
+        result = {"status": "done"}
 "#;
 
         let playbook: Playbook = serde_yaml::from_str(yaml).unwrap();
@@ -469,7 +726,7 @@ workflow:
     }
 
     #[test]
-    fn test_parse_playbook_with_loop() {
+    fn test_parse_playbook_with_loop_spec() {
         let yaml = r#"
 apiVersion: noetl.io/v2
 kind: Playbook
@@ -482,11 +739,12 @@ workflow:
     loop:
       in: "{{ workload.items }}"
       iterator: item
-      mode: sequential
+      spec:
+        mode: sequential
     tool:
       kind: python
       code: |
-        return {"item": input_data.get("item")}
+        result = {"item": input_data.get("item")}
     args:
       item: "{{ item }}"
 "#;
@@ -496,55 +754,160 @@ workflow:
         assert!(step.r#loop.is_some());
         let loop_config = step.r#loop.as_ref().unwrap();
         assert_eq!(loop_config.iterator, "item");
-        assert_eq!(loop_config.mode, LoopMode::Sequential);
+        assert!(loop_config.spec.is_some());
+        assert_eq!(loop_config.spec.as_ref().unwrap().mode, LoopMode::Sequential);
     }
 
     #[test]
-    fn test_parse_playbook_with_case() {
+    fn test_parse_playbook_with_next_when() {
         let yaml = r#"
 apiVersion: noetl.io/v2
 kind: Playbook
 metadata:
-  name: case_test
+  name: routing_test
 workflow:
   - step: start
     tool:
       kind: python
       code: |
-        return {"value": 10}
-    case:
-      - when: "{{ result.value > 5 }}"
-        then:
-          - next:
-              step: high
-      - when: "{{ result.value <= 5 }}"
-        then:
-          - next:
-              step: low
+        result = {"value": 10}
+    next:
+      - step: high
+        when: "{{ start.value > 5 }}"
+      - step: low
+        when: "{{ start.value <= 5 }}"
   - step: high
     tool:
       kind: python
       code: |
-        return {"path": "high"}
+        result = {"path": "high"}
   - step: low
     tool:
       kind: python
       code: |
-        return {"path": "low"}
+        result = {"path": "low"}
 "#;
 
         let playbook: Playbook = serde_yaml::from_str(yaml).unwrap();
         let step = playbook.get_step("start").unwrap();
-        assert!(step.case.is_some());
-        let cases = step.case.as_ref().unwrap();
-        assert_eq!(cases.len(), 2);
-        assert_eq!(cases[0].when, "{{ result.value > 5 }}");
+        assert!(step.next.is_some());
+
+        if let Some(NextSpec::Targets(targets)) = &step.next {
+            assert_eq!(targets.len(), 2);
+            assert_eq!(targets[0].step, "high");
+            assert_eq!(targets[0].when, Some("{{ start.value > 5 }}".to_string()));
+            assert_eq!(targets[1].step, "low");
+        } else {
+            panic!("Expected NextSpec::Targets");
+        }
+    }
+
+    #[test]
+    fn test_parse_playbook_with_step_when() {
+        let yaml = r#"
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: guard_test
+workflow:
+  - step: conditional
+    when: "{{ workload.enabled }}"
+    tool:
+      kind: python
+      code: |
+        result = {"status": "ran"}
+"#;
+
+        let playbook: Playbook = serde_yaml::from_str(yaml).unwrap();
+        let step = playbook.get_step("conditional").unwrap();
+        assert_eq!(step.when, Some("{{ workload.enabled }}".to_string()));
+    }
+
+    #[test]
+    fn test_parse_playbook_with_pipeline() {
+        let yaml = r#"
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: pipeline_test
+workflow:
+  - step: fetch_transform
+    tool:
+      - fetch:
+          kind: http
+          url: "https://api.example.com/data"
+          method: GET
+      - transform:
+          kind: python
+          args:
+            data: "{{ _prev }}"
+          code: |
+            result = {"processed": True}
+    next:
+      - step: end
+  - step: end
+    tool:
+      kind: noop
+"#;
+
+        let playbook: Playbook = serde_yaml::from_str(yaml).unwrap();
+        let step = playbook.get_step("fetch_transform").unwrap();
+
+        if let ToolDefinition::Pipeline(tasks) = &step.tool {
+            assert_eq!(tasks.len(), 2);
+            assert!(tasks[0].contains_key("fetch"));
+            assert!(tasks[1].contains_key("transform"));
+        } else {
+            panic!("Expected ToolDefinition::Pipeline");
+        }
+    }
+
+    #[test]
+    fn test_parse_tool_with_eval() {
+        let yaml = r#"
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: eval_test
+workflow:
+  - step: fetch
+    tool:
+      kind: http
+      url: "https://api.example.com/data"
+      eval:
+        - expr: "{{ outcome.error.retryable }}"
+          do: retry
+          attempts: 3
+          backoff: exponential
+          delay: 1.0
+        - expr: "{{ outcome.status == 'error' }}"
+          do: fail
+        - else:
+            do: continue
+    next:
+      - step: end
+  - step: end
+    tool:
+      kind: noop
+"#;
+
+        let playbook: Playbook = serde_yaml::from_str(yaml).unwrap();
+        let step = playbook.get_step("fetch").unwrap();
+
+        if let ToolDefinition::Single(spec) = &step.tool {
+            assert!(spec.eval.is_some());
+            let eval = spec.eval.as_ref().unwrap();
+            assert_eq!(eval.len(), 3);
+        } else {
+            panic!("Expected ToolDefinition::Single");
+        }
     }
 
     #[test]
     fn test_tool_call_from_spec() {
         let spec = ToolSpec {
             kind: ToolKind::Python,
+            eval: None,
             auth: None,
             libs: None,
             args: None,
@@ -552,7 +915,11 @@ workflow:
             url: None,
             method: None,
             query: None,
+            command: None,
             connection: None,
+            params: None,
+            headers: None,
+            output_select: None,
             extra: HashMap::new(),
         };
 

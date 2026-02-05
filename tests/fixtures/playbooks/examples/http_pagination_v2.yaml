@@ -12,71 +12,89 @@ workload:
   api_url: "https://api.example.com"
   page_size: 100
 
+vars:
+  current_page: 1
+  all_pages: []
+
 workflow:
   - step: start
     desc: "Initialize pagination workflow"
     tool:
       kind: python
-      auth: {}
-      libs: {}
-      args: {}
       code: |
         result = {"status": "initialized"}
     next:
       - step: fetch_paginated
 
   - step: fetch_paginated
-    desc: "Fetch data with pagination"
+    desc: "Fetch data with pagination using tool.eval flow control"
     tool:
-      kind: http
-      method: GET
-      endpoint: "{{ workload.api_url }}/data"
-      params:
-        page: 1
-        pageSize: "{{ workload.page_size }}"
-    case:
-      # Retry on 5xx errors
-      - when: "{{ event.name == 'call.error' and error is defined and error.status in [500, 502, 503] }}"
-        then:
-          - retry:
-              max_attempts: 3
-              backoff_multiplier: 2.0
-              initial_delay: 0.5
+      - init:
+          kind: noop
+          eval:
+            - else:
+                do: continue
+                set_iter: { page: 1, has_more: true, items: [] }
 
-      # Collect and continue pagination if hasMore
-      - when: "{{ event.name == 'call.done' and response is defined and response.data.paging.hasMore == true }}"
-        then:
-          - collect:
-              from: response.data.items
-              into: all_pages
-              mode: extend
-          - call:
-              params:
-                page: "{{ (response.data.paging.page | int) + 1 }}"
-                pageSize: "{{ response.data.paging.pageSize }}"
+      - fetch_page:
+          kind: http
+          method: GET
+          endpoint: "{{ workload.api_url }}/data"
+          params:
+            page: "{{ iter.page }}"
+            pageSize: "{{ workload.page_size }}"
+          eval:
+            - expr: "{{ outcome.status == 'error' and outcome.http.status in [500, 502, 503] }}"
+              do: retry
+              attempts: 3
+              backoff: exponential
+              delay: 0.5
+            - expr: "{{ outcome.status == 'error' }}"
+              do: fail
+            - else:
+                do: continue
+                set_iter:
+                  has_more: "{{ outcome.result.data.paging.hasMore | default(false) }}"
+                  page: "{{ outcome.result.data.paging.page | default(iter.page) }}"
+                  items: "{{ outcome.result.data.items | default([]) }}"
 
-      # Final page - collect and transition
-      - when: "{{ event.name == 'call.done' and response is defined and response.data.paging.hasMore == false }}"
-        then:
-          - collect:
-              from: response.data.items
-              into: all_pages
-              mode: extend
-          - result:
-              from: ctx.all_pages
-          - next:
-              - step: process_results
-                args:
-                  items: "{{ ctx.all_pages }}"
+      - collect_items:
+          kind: python
+          args:
+            items: "{{ iter.items }}"
+            all_pages: "{{ vars.all_pages }}"
+          code: |
+            # Extend collection with new items
+            all_pages.extend(items)
+            result = {"all_pages": all_pages, "count": len(all_pages)}
+          eval:
+            - else:
+                do: continue
+                set_vars:
+                  all_pages: "{{ outcome.result.all_pages }}"
+
+      - paginate:
+          kind: noop
+          eval:
+            - expr: "{{ iter.has_more == true }}"
+              do: jump
+              to: fetch_page
+              set_iter:
+                page: "{{ (iter.page | int) + 1 }}"
+            - else:
+                do: break
+
+    next:
+      - step: process_results
+        args:
+          items: "{{ vars.all_pages }}"
 
   - step: process_results
     desc: "Process collected results"
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args:
-        items: "{{ items }}"
+        items: "{{ args.items }}"
       code: |
         print(f"Processing {len(items)} items")
         result = {"count": len(items), "status": "processed"}
@@ -87,8 +105,5 @@ workflow:
     desc: "End workflow"
     tool:
       kind: python
-      auth: {}
-      libs: {}
-      args: {}
       code: |
         result = {"status": "complete"}

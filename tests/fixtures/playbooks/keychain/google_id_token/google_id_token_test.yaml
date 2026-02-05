@@ -132,15 +132,16 @@ workflow:
         Authorization: "Bearer {{ keychain.cloud_run_id_token.id_token }}"
         x-customer-code: "{{ workload.customer_code }}"
         Accept: "application/json"
-    case:
-      - when: "{{ event.name == 'call.error' }}"
-        then:
-          next:
-            - step: store_api_call_error
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          next:
-            - step: store_api_call_success
+      eval:
+        - expr: "{{ outcome.status == 'error' }}"
+          do: continue
+        - else:
+            do: continue
+    next:
+      - step: store_api_call_error
+        when: "{{ test_api_call_with_id_token.status_code != 200 }}"
+      - step: store_api_call_success
+        when: "{{ test_api_call_with_id_token.status_code == 200 }}"
 
   - step: store_api_call_error
     desc: Store API call error result

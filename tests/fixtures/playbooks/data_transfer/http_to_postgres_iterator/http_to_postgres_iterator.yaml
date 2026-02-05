@@ -51,7 +51,8 @@ workflow:
     loop:
       in: "{{ fetch_http_data.data }}"
       iterator: item
-      mode: parallel
+      spec:
+        mode: parallel
     tool:
       kind: postgres
       auth: "{{ workload.pg_auth }}"
@@ -63,11 +64,8 @@ workflow:
           $${{ item.title }}$$,
           $${{ item.body }}$$
         );
-    case:
-      - when: "{{ event.name == 'loop.done' }}"
-        then:
-          next:
-            - step: show_count
+    next:
+      - step: show_count
 
   - step: show_count
     desc: Verify record count

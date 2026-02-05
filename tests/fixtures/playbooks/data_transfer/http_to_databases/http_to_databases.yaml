@@ -203,7 +203,8 @@ workflow:
     loop:
       in: "{{ transform_http_to_pg.rows }}"
       iterator: user
-      mode: sequential
+      spec:
+        mode: sequential
     next:
       - step: verify_pg_data
 
@@ -254,7 +255,8 @@ workflow:
     loop:
       in: "{{ transform_http_to_pg.rows }}"
       iterator: user
-      mode: sequential
+      spec:
+        mode: sequential
     next:
       - step: verify_sf_data
 
@@ -299,7 +301,8 @@ workflow:
     loop:
       in: "{{ transform_http_to_pg.rows }}"
       iterator: user
-      mode: sequential
+      spec:
+        mode: sequential
     next:
       - step: insert_to_ducklake
 
@@ -333,7 +336,8 @@ workflow:
     loop:
       in: "{{ transform_http_to_pg.rows }}"
       iterator: user
-      mode: async  # Parallel execution across multiple workers - safe with DuckLake catalog coordination
+      spec:
+        mode: parallel  # Parallel execution across multiple workers - safe with DuckLake catalog coordination
     next:
       - step: verify_duckdb_data
 

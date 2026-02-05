@@ -34,7 +34,7 @@ workflow:
           dict_field TEXT,
           decimal_field DOUBLE PRECISION
         );
-        
+
         -- Create table for special characters test
         CREATE TABLE IF NOT EXISTS test_special_chars (
           execution_id VARCHAR,
@@ -45,111 +45,99 @@ workflow:
           backslashes TEXT,
           json_string TEXT
         );
-    
-    case:
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          next:
-            - step: test_mixed_types
+    next:
+      - step: test_mixed_types
 
   # Test mixed data types
   - step: test_mixed_types
     desc: "Test save with mixed data types"
     tool:
-      kind: python
-      auth: {}
-      libs:
-        datetime:
-          from: datetime
-          import: datetime
-        Decimal:
-          from: decimal
-          import: Decimal
-      args:
-        input_data: {}
-      code: |
-        mixed_data = { 
-          "string_field": "test_string",
-          "integer_field": 12345,
-          "float_field": 3.14159,
-          "boolean_field": True,
-          "null_field": None,
-          "datetime_field": datetime.now().isoformat(),
-          "list_field": [1, 2, 3, "mixed", True],
-          "dict_field": {"nested": "value", "count": 42},
-          "decimal_field": float(Decimal("99.99"))
-        }
-        
-        result = mixed_data
-    
-    case:
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          - save_mixed_types:
-              tool:
-                kind: postgres
-                auth: "{{ workload.pg_auth }}"
-                command: |
-                  INSERT INTO test_mixed_types (
-                    execution_id, string_field, integer_field, float_field,
-                    boolean_field, null_field, datetime_field, list_field,
-                    dict_field, decimal_field
-                  ) VALUES (
-                    '{{ execution_id }}',
-                    '{{ response.string_field }}',
-                    {{ response.integer_field }},
-                    {{ response.float_field }},
-                    {% if response.boolean_field %}true{% else %}false{% endif %},
-                    {% if response.null_field is none %}NULL{% else %}'{{ response.null_field }}'{% endif %},
-                    '{{ response.datetime_field }}',
-                    '{{ response.list_field | tojson | replace("'", "''") }}',
-                    '{{ response.dict_field | tojson | replace("'", "''") }}',
-                    {{ response.decimal_field }}
-                  )
-          - next:
-              - step: test_special_characters
+      - generate_mixed:
+          kind: python
+          auth: {}
+          libs:
+            datetime:
+              from: datetime
+              import: datetime
+            Decimal:
+              from: decimal
+              import: Decimal
+          args:
+            input_data: {}
+          code: |
+            mixed_data = {
+              "string_field": "test_string",
+              "integer_field": 12345,
+              "float_field": 3.14159,
+              "boolean_field": True,
+              "null_field": None,
+              "datetime_field": datetime.now().isoformat(),
+              "list_field": [1, 2, 3, "mixed", True],
+              "dict_field": {"nested": "value", "count": 42},
+              "decimal_field": float(Decimal("99.99"))
+            }
+
+            result = mixed_data
+      - save_mixed_types:
+          kind: postgres
+          auth: "{{ workload.pg_auth }}"
+          command: |
+            INSERT INTO test_mixed_types (
+              execution_id, string_field, integer_field, float_field,
+              boolean_field, null_field, datetime_field, list_field,
+              dict_field, decimal_field
+            ) VALUES (
+              '{{ execution_id }}',
+              '{{ generate_mixed.string_field }}',
+              {{ generate_mixed.integer_field }},
+              {{ generate_mixed.float_field }},
+              {% if generate_mixed.boolean_field %}true{% else %}false{% endif %},
+              {% if generate_mixed.null_field is none %}NULL{% else %}'{{ generate_mixed.null_field }}'{% endif %},
+              '{{ generate_mixed.datetime_field }}',
+              '{{ generate_mixed.list_field | tojson | replace("'", "''") }}',
+              '{{ generate_mixed.dict_field | tojson | replace("'", "''") }}',
+              {{ generate_mixed.decimal_field }}
+            )
+    next:
+      - step: test_special_characters
 
   # Test special characters and unicode
   - step: test_special_characters
     desc: "Test save with special characters and unicode"
     tool:
-      kind: python
-      auth: {}
-      libs: {}
-      args:
-        input_data: "{{ test_mixed_types }}"
-      code: |
-        special_data = {
-            "quotes": "This has 'single' and \"double\" quotes",
-            "unicode": "Unicode: αβγδε, 中文, 🚀🌟",
-            "sql_injection": "'; DROP TABLE test; --",
-            "newlines": "Line 1\nLine 2\r\nLine 3",
-            "backslashes": "C:\\path\\to\\file",
-            "json_string": '{"embedded": "json", "value": 123}'
-        }
-        
-        result = special_data
-    
-    case:
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          - save_special_chars:
-              tool:
-                kind: postgres
-                auth: "{{ workload.pg_auth }}"
-                command: |
-                  INSERT INTO test_special_chars (execution_id, quotes, unicode, sql_injection, newlines, backslashes, json_string)
-                  VALUES (
-                    '{{ execution_id }}',
-                    '{{ response.quotes | replace("'", "''") }}',
-                    '{{ response.unicode | replace("'", "''") }}',
-                    '{{ response.sql_injection | replace("'", "''") }}',
-                    '{{ response.newlines | replace("'", "''") }}',
-                    '{{ response.backslashes | replace("'", "''") }}',
-                    '{{ response.json_string | replace("'", "''") }}'
-                  )
-          - next:
-              - step: test_empty_data
+      - generate_special:
+          kind: python
+          auth: {}
+          libs: {}
+          args:
+            input_data: "{{ test_mixed_types }}"
+          code: |
+            special_data = {
+                "quotes": "This has 'single' and \"double\" quotes",
+                "unicode": "Unicode: alphabetagammadeltaepsilon, zhongwen, rocketstar",
+                "sql_injection": "'; DROP TABLE test; --",
+                "newlines": "Line 1\nLine 2\r\nLine 3",
+                "backslashes": "C:\\path\\to\\file",
+                "json_string": '{"embedded": "json", "value": 123}'
+            }
+
+            result = special_data
+      - save_special_chars:
+          kind: postgres
+          auth: "{{ workload.pg_auth }}"
+          command: |
+            INSERT INTO test_special_chars (execution_id, quotes, unicode, sql_injection, newlines, backslashes, json_string)
+            VALUES (
+              '{{ execution_id }}',
+              '{{ generate_special.quotes | replace("'", "''") }}',
+              '{{ generate_special.unicode | replace("'", "''") }}',
+              '{{ generate_special.sql_injection | replace("'", "''") }}',
+              '{{ generate_special.newlines | replace("'", "''") }}',
+              '{{ generate_special.backslashes | replace("'", "''") }}',
+              '{{ generate_special.json_string | replace("'", "''") }}'
+            )
+    next:
+      - step: test_empty_data
 
   # Test empty and null data scenarios
   - step: test_empty_data
@@ -169,69 +157,61 @@ workflow:
             "false_value": False,
             "none_value": None
         }
-        
+
         result = empty_scenarios
-    
-    case:
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          - next:
-              - step: test_large_payload
+    next:
+      - step: test_large_payload
 
   # Test large payload handling
   - step: test_large_payload
     desc: "Test save with large data payload"
     tool:
-      kind: python
-      auth: {}
-      libs: {}
-      args:
-        input_data: "{{ test_empty_data }}"
-      code: |
-        # Generate moderately large dataset
-        large_data = {
-            "metadata": {
-                "test_type": "large_payload",
-                "record_count": 100
-            },
-            "records": []
-        }
-        
-        for i in range(100):
-            record = {
-                "id": i + 1,
-                "name": f"Test Record {i + 1}",
-                "description": f"This is a test record with ID {i + 1} " * 5,  # Repeat for size
-                "data_field": f"data_value_{i}",
-                "large_text": "Lorem ipsum dolor sit amet " * 20  # Large text field
+      - generate_large:
+          kind: python
+          auth: {}
+          libs: {}
+          args:
+            input_data: "{{ test_empty_data }}"
+          code: |
+            # Generate moderately large dataset
+            large_data = {
+                "metadata": {
+                    "test_type": "large_payload",
+                    "record_count": 100
+                },
+                "records": []
             }
-            large_data["records"].append(record)
-        
-        result = large_data
-    
-    case:
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          - save_large_payload:
-              tool:
-                kind: duckdb
-                commands: |
-                  -- Create table for large dataset
-                  CREATE OR REPLACE TABLE test_large_payload (
-                    test_type VARCHAR,
-                    record_count INTEGER,
-                    execution_id VARCHAR,
-                    created_at TIMESTAMP
-                  );
 
-                  -- Insert test record
-                  INSERT INTO test_large_payload
-                  VALUES ('large_payload_test', {{ response.metadata.record_count }}, '{{ execution_id }}', NOW());
+            for i in range(100):
+                record = {
+                    "id": i + 1,
+                    "name": f"Test Record {i + 1}",
+                    "description": f"This is a test record with ID {i + 1} " * 5,  # Repeat for size
+                    "data_field": f"data_value_{i}",
+                    "large_text": "Lorem ipsum dolor sit amet " * 20  # Large text field
+                }
+                large_data["records"].append(record)
 
-                  -- Query results
-                  SELECT * FROM test_large_payload WHERE execution_id = '{{ execution_id }}';
-          - next:
-              - step: test_error_recovery
+            result = large_data
+      - save_large_payload:
+          kind: duckdb
+          commands: |
+            -- Create table for large dataset
+            CREATE OR REPLACE TABLE test_large_payload (
+              test_type VARCHAR,
+              record_count INTEGER,
+              execution_id VARCHAR,
+              created_at TIMESTAMP
+            );
+
+            -- Insert test record
+            INSERT INTO test_large_payload
+            VALUES ('large_payload_test', {{ generate_large.metadata.record_count }}, '{{ execution_id }}', NOW());
+
+            -- Query results
+            SELECT * FROM test_large_payload WHERE execution_id = '{{ execution_id }}';
+    next:
+      - step: test_error_recovery
 
   # Test error recovery scenarios
   - step: test_error_recovery
@@ -242,20 +222,16 @@ workflow:
       libs: {}
       args: {}
       code: |
-        # Data that might cause issues but should be handled gracefully            
+        # Data that might cause issues but should be handled gracefully
         potentially_problematic = {
             "valid_field": "this should work",
             "test_execution": "completed",
             "recovery_test": True
         }
-        
+
         result = potentially_problematic
-    
-    case:
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          - next:
-              - step: test_completion_summary
+    next:
+      - step: test_completion_summary
 
   # Final summary
   - step: test_completion_summary
@@ -276,20 +252,16 @@ workflow:
             ],
             "storage_types_tested": [
                 "postgres",
-                "python", 
+                "python",
                 "duckdb",
                 "http"
             ],
             "test_status": "completed"
         }
-        
+
         result = summary
-    
-    case:
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          - next:
-              - step: end
+    next:
+      - step: end
 
   # End
   - step: end

@@ -11,14 +11,18 @@ workload:
   retry_limit: 3
   user_id: "{{ payload.user_id }}"
 
+vars:
+  user_email: null
+  user_status: null
+  user_created: null
+  email_domain: null
+  user_score: 0
+
 workflow:
   - step: start
     desc: "Entry point"
     tool:
       kind: python
-      auth: {}
-      libs: {}
-      args: {}
       code: |
         result = {"status": "initialized"}
     next:
@@ -27,30 +31,28 @@ workflow:
   - step: fetch_user_data
     desc: "Fetch user data using global variables"
     tool:
-      kind: http
-      method: GET
-      endpoint: "{{ workload.api_base_url }}/users/{{ workload.user_id }}"
-      headers:
-        X-Environment: "{{ workload.environment }}"
-    case:
-      - when: "{{ event.name == 'call.done' and response is defined }}"
-        then:
-          - set:
-              - name: user_email
-                value: "{{ response.data.email }}"
-              - name: user_status
-                value: "{{ response.data.status }}"
-              - name: user_created
-                value: "{{ response.data.created_at }}"
-          - next:
-              - step: calculate_metrics
+      - fetch:
+          kind: http
+          method: GET
+          endpoint: "{{ workload.api_base_url }}/users/{{ workload.user_id }}"
+          headers:
+            X-Environment: "{{ workload.environment }}"
+          eval:
+            - expr: "{{ outcome.status == 'error' }}"
+              do: fail
+            - else:
+                do: continue
+                set_vars:
+                  user_email: "{{ outcome.result.email }}"
+                  user_status: "{{ outcome.result.status }}"
+                  user_created: "{{ outcome.result.created_at }}"
+    next:
+      - step: calculate_metrics
 
   - step: calculate_metrics
     desc: "Calculate metrics using args from previous step"
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args:
         email: "{{ vars.user_email }}"
         status: "{{ vars.user_status }}"
@@ -63,39 +65,28 @@ workflow:
             "score": 100 if status == 'active' else 0
         }
         result = metrics
-    case:
-      - when: "{{ event.name == 'call.done' and response is defined and response.is_active }}"
-        then:
-          - set:
-              - name: email_domain
-                value: "{{ response.email_domain }}"
-              - name: user_score
-                value: "{{ response.score }}"
-          - next:
-              - step: active_user_flow
-                args:
-                  domain: "{{ response.email_domain }}"
-                  score: "{{ response.score }}"
-
-      - when: "{{ event.name == 'call.done' and response is defined and not response.is_active }}"
-        then:
-          - set:
-              - name: email_domain
-                value: "{{ response.email_domain }}"
-              - name: user_score
-                value: "{{ response.score }}"
-          - next:
-              - step: inactive_user_flow
+      eval:
+        - else:
+            do: continue
+            set_vars:
+              email_domain: "{{ outcome.result.email_domain }}"
+              user_score: "{{ outcome.result.score }}"
+    next:
+      - step: active_user_flow
+        when: "{{ vars.user_status == 'active' }}"
+        args:
+          domain: "{{ vars.email_domain }}"
+          score: "{{ vars.user_score }}"
+      - step: inactive_user_flow
+        when: "{{ vars.user_status != 'active' }}"
 
   - step: active_user_flow
     desc: "Process active users with received args"
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args:
-        domain: null
-        score: null
+        domain: "{{ args.domain }}"
+        score: "{{ args.score }}"
         global_env: "{{ workload.environment }}"
       code: |
         result = {
@@ -110,8 +101,6 @@ workflow:
     desc: "Process inactive users"
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args:
         email: "{{ vars.user_email }}"
         status: "{{ vars.user_status }}"
@@ -128,10 +117,8 @@ workflow:
     desc: "Store results using direct step access"
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args:
-        user_email: "{{ fetch_user_data.data.email }}"
+        user_email: "{{ vars.user_email }}"
         user_score: "{{ vars.user_score }}"
         environment: "{{ workload.environment }}"
         active_result: "{{ active_user_flow.message if active_user_flow else 'N/A' }}"
@@ -152,8 +139,5 @@ workflow:
     desc: "Workflow complete"
     tool:
       kind: python
-      auth: {}
-      libs: {}
-      args: {}
       code: |
         result = {"status": "complete"}

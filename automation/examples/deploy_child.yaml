@@ -9,6 +9,9 @@ executor:
   version: noetl-runtime/1
 workflow:
   - step: start
+    desc: Start deploy workflow
+    tool:
+      kind: noop
     next:
       - step: deploy
 
@@ -24,3 +27,6 @@ workflow:
       - step: end
 
   - step: end
+    desc: End workflow
+    tool:
+      kind: noop

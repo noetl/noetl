@@ -22,16 +22,11 @@ workflow:
       args: {}
       code: |
         result = {"status": "initialized"}
-    case:
-      - when: "{{ event.name == 'call.done' and spec.state == 'ready' }}"
-        then:
-          - next:
-              - step: fetch_weather
-
-      - when: "{{ event.name == 'call.done' and spec.state != 'ready' }}"
-        then:
-          - next:
-              - step: end
+    next:
+      - step: fetch_weather
+        when: "{{ spec.state == 'ready' }}"
+      - step: end
+        when: "{{ spec.state != 'ready' }}"
 
   - step: fetch_weather
     desc: "Fetch weather data for the city"
@@ -42,22 +37,17 @@ workflow:
         httpx: httpx
       args: {}
       code: "threshold = 20\ncity_dict = {\"name\": \"New York\", \"lat\": 40.71, \"lon\": -74.01}\nurl = f\"https://api.open-meteo.com/v1/forecast\"\nparams = {\n    \"latitude\": city_dict[\"lat\"],\n    \"longitude\": city_dict[\"lon\"],\n    \"hourly\": \"temperature_2m\",\n    \"forecast_days\": 1\n}\n\nresponse = httpx.get(url, params=params)\nforecast_data = response.json()\n\n# Extract max temperature from forecast\ntemperatures = forecast_data.get('hourly', {}).get('temperature_2m', [])\nmax_temp = max(temperatures) if temperatures else 15\n\nresult = {\n    'city': city_dict,\n    'max_temp': max_temp,\n    'alert': max_temp > threshold\n}"
-    case:
-      - when: "{{ event.name == 'call.done' and response is defined and response.max_temp > spec.temperature_threshold }}"
-        then:
-          - next:
-              - step: report_warm
-                args:
-                  city: "{{ response.city }}"
-                  temperature: "{{ response.max_temp }}"
-
-      - when: "{{ event.name == 'call.done' and response is defined and response.max_temp <= spec.temperature_threshold }}"
-        then:
-          - next:
-              - step: report_cold
-                args:
-                  city: "{{ response.city }}"
-                  temperature: "{{ response.max_temp }}"
+    next:
+      - step: report_warm
+        when: "{{ fetch_weather.max_temp > spec.temperature_threshold }}"
+        args:
+          city: "{{ fetch_weather.city }}"
+          temperature: "{{ fetch_weather.max_temp }}"
+      - step: report_cold
+        when: "{{ fetch_weather.max_temp <= spec.temperature_threshold }}"
+        args:
+          city: "{{ fetch_weather.city }}"
+          temperature: "{{ fetch_weather.max_temp }}"
 
   - step: report_warm
     desc: "Report warm weather"

@@ -12,8 +12,6 @@ workflow:
   - step: start
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args: {}
       code: |
         result = {"status": "initialized"}
@@ -25,25 +23,21 @@ workflow:
     tool:
       kind: duckdb
       command: "{{ workload.test_query }}"
-    case:
-      - when: "{{ event.name == 'call.error' and error is defined }}"
-        then:
-          - retry:
-              max_attempts: 3
-              initial_delay: 0.5
-              backoff_multiplier: 1.5
-
-      - when: "{{ event.name == 'call.done' and response is defined }}"
-        then:
-          - next:
-              - step: end
+      eval:
+        - expr: "{{ outcome.status == 'error' }}"
+          do: retry
+          attempts: 3
+          delay: 0.5
+          backoff: exponential
+        - else:
+            do: continue
+    next:
+      - step: end
 
   - step: end
     desc: End workflow
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args: {}
       code: |
         result = {"status": "complete"}

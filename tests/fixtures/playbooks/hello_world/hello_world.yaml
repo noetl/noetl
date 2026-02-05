@@ -13,43 +13,28 @@ workflow:
     desc: "Start hello world test"
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args: {}
       code: |
         result = {"status": "initialized"}
-    
-    case:
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          - next:
-              - step: test_step
+    next:
+      - step: test_step
 
   - step: test_step
     desc: "Hello world test step"
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args:
         message: "{{ workload.message }}"
       code: |
         print(f"HELLO_WORLD: {message}")
-        # Required envelope: {status, data, meta?}
         result = {"status": "success", "data": {"message": message}}
-
-    case:
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          - next:
-              - step: end
+    next:
+      - step: end
 
   - step: end
     desc: "End hello world test"
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args: {}
       code: |
         result = {"status": "complete"}

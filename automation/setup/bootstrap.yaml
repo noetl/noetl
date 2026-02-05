@@ -365,13 +365,10 @@ workflow:
       cmds:
         - |
           echo "Deploy Gateway flag: {{ workload.deploy_gateway }}"
-    case:
-      - when: "{{ workload.deploy_gateway }} == true"
-        then:
-          - step: deploy_gateway
-      - when: "true"
-        then:
-          - step: deploy_noetl
+    next:
+      - step: deploy_gateway
+        when: "{{ workload.deploy_gateway == true }}"
+      - step: deploy_noetl
   
   - step: deploy_gateway
     desc: Build and deploy NoETL Gateway API
@@ -522,3 +519,5 @@ workflow:
   
   - step: end
     desc: End bootstrap workflow
+    tool:
+      kind: noop

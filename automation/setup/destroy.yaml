@@ -105,3 +105,5 @@ workflow:
   
   - step: end
     desc: End destroy workflow
+    tool:
+      kind: noop

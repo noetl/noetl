@@ -44,8 +44,6 @@ workload:
 workflow:
   - step: start
     desc: Lookup and validate session from Postgres (source of truth)
-    spec:
-      case_mode: exclusive  # First matching case wins
     tool:
       kind: postgres
       auth: "{{ workload.db_credential }}"
@@ -68,37 +66,13 @@ workflow:
         FROM auth.sessions s
         JOIN auth.users u ON s.user_id = u.user_id
         WHERE s.session_token = '{{ workload.session_token }}';
-    case:
-      # Valid session - cache in NATS and send success callback
-      - when: "{{ event.name == 'call.done' and result.command_0.rows | length > 0 and result.command_0.rows[0].session_valid }}"
-        then:
-          - next:
-              - step: cache_session
-
-      # Invalid session (expired, inactive, or not found) - send failure callback
-      - when: "{{ event.name == 'call.done' and request_id }}"
-        then:
-          - send_invalid:
-              tool:
-                kind: http
-                method: POST
-                url: "{{ gateway_url }}/api/internal/callback"
-                headers:
-                  Content-Type: application/json
-                data:
-                  request_id: "{{ request_id }}"
-                  status: "success"
-                  data:
-                    valid: false
-                    message: "Session not found or expired"
-          - next:
-              - step: end
-
-      # No callback requested
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          - next:
-              - step: end
+    next:
+      - step: cache_session
+        when: "{{ result.command_0.rows | length > 0 and result.command_0.rows[0].session_valid }}"
+      - step: send_invalid_callback
+        when: "{{ request_id and (result.command_0.rows | length == 0 or not result.command_0.rows[0].session_valid) }}"
+      - step: end
+        when: "{{ not request_id and (result.command_0.rows | length == 0 or not result.command_0.rows[0].session_valid) }}"
 
   - step: cache_session
     desc: Cache valid session in NATS K/V for fast gateway lookups
@@ -115,50 +89,60 @@ workflow:
         display_name: "{{ start.command_0.rows[0].display_name }}"
         expires_at: "{{ start.command_0.rows[0].expires_at }}"
         is_active: true
-    case:
-      # Cache success or failure - both proceed to send callback
-      - when: "{{ event.name == 'call.done' or event.name == 'call.error' }}"
-        then:
-          - next:
-              - step: send_success_callback
+    next:
+      - step: send_success_callback
 
   - step: send_success_callback
     desc: Send success callback to gateway
-    spec:
-      case_mode: exclusive
     tool:
-      kind: python
-      code: |
-        result = {"status": "callback_ready"}
-    case:
-      # Send callback if request_id is set
-      - when: "{{ event.name == 'call.done' and request_id }}"
-        then:
-          - send_callback:
-              tool:
-                kind: http
-                method: POST
-                url: "{{ gateway_url }}/api/internal/callback"
-                headers:
-                  Content-Type: application/json
-                data:
-                  request_id: "{{ request_id }}"
-                  status: "success"
-                  data:
-                    valid: true
-                    user:
-                      user_id: "{{ start.command_0.rows[0].user_id }}"
-                      email: "{{ start.command_0.rows[0].email }}"
-                      display_name: "{{ start.command_0.rows[0].display_name }}"
-                    expires_at: "{{ start.command_0.rows[0].expires_at }}"
-                    message: "Session is valid"
-          - next:
-              - step: end
-      # No callback requested
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          - next:
-              - step: end
+      - prepare:
+          kind: python
+          code: |
+            result = {"status": "callback_ready"}
+      - send_callback:
+          kind: http
+          method: POST
+          url: "{{ gateway_url }}/api/internal/callback"
+          headers:
+            Content-Type: application/json
+          data:
+            request_id: "{{ request_id }}"
+            status: "success"
+            data:
+              valid: true
+              user:
+                user_id: "{{ start.command_0.rows[0].user_id }}"
+                email: "{{ start.command_0.rows[0].email }}"
+                display_name: "{{ start.command_0.rows[0].display_name }}"
+              expires_at: "{{ start.command_0.rows[0].expires_at }}"
+              message: "Session is valid"
+          eval:
+            - expr: "{{ outcome.status == 'error' }}"
+              do: continue
+            - else:
+                do: continue
+    next:
+      - step: end
+        when: "{{ request_id }}"
+      - step: end
+        when: "{{ not request_id }}"
+
+  - step: send_invalid_callback
+    desc: Send invalid session callback to gateway
+    tool:
+      kind: http
+      method: POST
+      url: "{{ gateway_url }}/api/internal/callback"
+      headers:
+        Content-Type: application/json
+      data:
+        request_id: "{{ request_id }}"
+        status: "success"
+        data:
+          valid: false
+          message: "Session not found or expired"
+    next:
+      - step: end
 
   - step: end
     desc: Complete

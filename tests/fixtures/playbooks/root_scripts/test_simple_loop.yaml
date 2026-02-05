@@ -19,22 +19,21 @@ workflow:
     desc: Start workflow
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args: {}
       code: |
         result = {"status": "started"}
-    next: loop_test
-  
+    next:
+      - step: loop_test
+
   - step: loop_test
     desc: Loop over numbers and print
     loop:
+      spec:
+        mode: sequential
       in: "{{ workload.numbers }}"
       iterator: num
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args:
         num: "{{ num }}"
       code: |
@@ -44,14 +43,13 @@ workflow:
             "name": num["name"],
             "doubled": num["value"] * 2
         }
-    next: end
-  
+    next:
+      - step: end
+
   - step: end
     desc: End workflow
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args: {}
       code: |
         result = {"status": "completed"}

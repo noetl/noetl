@@ -14,11 +14,9 @@ workflow:
   - step: start
     desc: Initialize data processing
     tool:
-      kind: python
-      auth: {}
-      libs: {}
-      args: {}
-      code: |
+      - init:
+          kind: python
+          code: |
             print(f"[START] Processing initial data")
             data = {"count": 0, "sum": 0, "items": []}
             return data
@@ -29,29 +27,25 @@ workflow:
   - step: process_loop
     desc: Loop through numbers and double them
     loop:
+      spec:
+        mode: sequential
       in: "{{ workload.numbers }}"
-      iterator: "num"
-      mode: "sequential"
+      iterator: num
     tool:
-      kind: python
-      auth: {}
-      libs: {}
-      args: {}
-      code: |
+      - double_number:
+          kind: python
+          args:
+            num: "{{ iter.num }}"
+          code: |
             num = input_data.get('num')
             print(f"[LOOP] Processing {num}")
             result = num * 2
             return {"original": num, "doubled": result}
-    args:
-      num: "{{ num }}"
-    case:
-      # Collect each result
-      - when: "{{ result is defined }}"
-        then:
-          - collect:
-              from: "{{ result }}"
-              into: "loop_results"
-              mode: "append"
+          eval:
+            - else:
+                do: continue
+                set_iter:
+                  loop_result: "{{ outcome.result }}"
     next:
       - step: aggregate
 
@@ -59,47 +53,40 @@ workflow:
   - step: aggregate
     desc: Sum all doubled values
     tool:
-      kind: python
-      auth: {}
-      libs: {}
-      args: {}
-      code: |
+      - aggregate_results:
+          kind: python
+          args:
+            loop_results: "{{ vars.loop_results | default([]) }}"
+          code: |
             results = input_data.get('loop_results', [])
             print(f"[AGGREGATE] Processing {len(results)} results")
-            
+
             total = sum(item['doubled'] for item in results)
             original_sum = sum(item['original'] for item in results)
-            
+
             return {
                 "count": len(results),
                 "original_sum": original_sum,
                 "doubled_sum": total
             }
-    args:
-      loop_results: "{{ vars.loop_results }}"
-    case:
-      # Test CALL action - invoke a helper step
-      - when: "{{ event.name == 'call.done' and response.count > 0 }}"
-        then:
-          - call:
-              step: "helper"
-              args:
-                message: "Aggregate completed with {{ response.count }} items"
-                data: "{{ response }}"
-          - next:
-              - step: test_secrets
     next:
+      - step: helper
+        when: "{{ aggregate.count > 0 }}"
+        args:
+          message: "Aggregate completed with {{ aggregate.count }} items"
+          data: "{{ aggregate }}"
       - step: test_secrets
 
   # Helper step (called by aggregate)
   - step: helper
     desc: Helper step to demonstrate call action
     tool:
-      kind: python
-      auth: {}
-      libs: {}
-      args: {}
-      code: |
+      - helper_action:
+          kind: python
+          args:
+            message: "{{ args.message | default('No message') }}"
+            data: "{{ args.data | default({}) }}"
+          code: |
             message = input_data.get('message', 'No message')
             data = input_data.get('data', {})
             print(f"[HELPER] {message}")
@@ -112,15 +99,10 @@ workflow:
   - step: test_secrets
     desc: Fetch secret from environment
     tool:
-      kind: secrets
-      provider: "env"
-      name: "TEST_SECRET"
-    case:
-      # If secret found, proceed
-      - when: "{{ result.value is defined }}"
-        then:
-          - next:
-              - step: verify
+      - fetch_secret:
+          kind: secrets
+          provider: "env"
+          name: "TEST_SECRET"
     next:
       - step: verify
 
@@ -128,23 +110,24 @@ workflow:
   - step: verify
     desc: Verify all actions completed
     tool:
-      kind: python
-      auth: {}
-      libs: {}
-      args: {}
-      code: |
+      - verify_actions:
+          kind: python
+          args:
+            aggregate: "{{ aggregate | default({}) }}"
+            helper: "{{ helper | default({}) }}"
+          code: |
             print("[VERIFY] All actions completed successfully")
-            
+
             # Check if we have the expected data
             aggregate_result = input_data.get('aggregate', {})
             helper_result = input_data.get('helper', {})
-            
+
             success = (
                 aggregate_result.get('count', 0) == 3 and
                 aggregate_result.get('doubled_sum', 0) == 120 and
                 helper_result.get('helper_called', False)
             )
-            
+
             return {
                 "success": success,
                 "aggregate": aggregate_result,
@@ -158,11 +141,11 @@ workflow:
   - step: end
     desc: Workflow complete
     tool:
-      kind: python
-      auth: {}
-      libs: {}
-      args: {}
-      code: |
+      - complete:
+          kind: python
+          args:
+            verify: "{{ verify }}"
+          code: |
             verify_result = input_data.get('verify', {})
             print(f"[END] {verify_result.get('message', 'Complete')}")
             return {"status": "completed", "success": verify_result.get('success', False)}

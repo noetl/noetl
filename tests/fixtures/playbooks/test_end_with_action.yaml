@@ -12,61 +12,51 @@ workflow:
   - step: start
     desc: Entry point router
     tool:
-      kind: python
-      auth: {}
-      libs: {}
-      args: {}
-      code: |
-        result = {"status": "initialized"}
+      - init:
+          kind: python
+          code: |
+            result = {"status": "initialized"}
     next:
       - step: process_data
 
   - step: process_data
     desc: Process data
     tool:
-      kind: python
-      auth: {}
-      libs: {}
-      args: {}
-      code: |
-        result = {
-            'status': 'success',
-            'data': {
-                'records_processed': 100,
-                'temp_table': 'temp_session_12345'
+      - process:
+          kind: python
+          code: |
+            result = {
+                'status': 'success',
+                'data': {
+                    'records_processed': 100,
+                    'temp_table': 'temp_session_12345'
+                }
             }
-        }
-    case:
-      - when: "{{ event.name == 'call.done' and response is defined }}"
-        then:
-          - result:
-              from: response
-          - next:
-              - step: end
-                args:
-                  input_data:
-                    temp_table: "{{ response.data.temp_table }}"
-                    cleanup_required: "{{ workload.cleanup_required }}"
+    next:
+      - step: end
+        args:
+          input_data:
+            temp_table: "{{ process_data.data.temp_table }}"
+            cleanup_required: "{{ workload.cleanup_required }}"
 
   - step: end
     desc: End step with cleanup action
     tool:
-      kind: python
-      auth: {}
-      libs: {}
-      args:
-        input_data:
-          temp_table: "{{ process_data.data.temp_table }}"
-          cleanup_required: "{{ workload.cleanup_required }}"
-      code: |
-        temp_table = input_data.get('temp_table', 'unknown')
-        cleanup = input_data.get('cleanup_required', False)
+      - cleanup:
+          kind: python
+          args:
+            input_data:
+              temp_table: "{{ args.input_data.temp_table | default(process_data.data.temp_table) }}"
+              cleanup_required: "{{ args.input_data.cleanup_required | default(workload.cleanup_required) }}"
+          code: |
+            temp_table = input_data.get('temp_table', 'unknown')
+            cleanup = input_data.get('cleanup_required', False)
 
-        result = {
-            'status': 'completed',
-            'message': f'Cleanup performed on {temp_table}' if cleanup else 'No cleanup needed',
-            'data': {
-                'cleaned_up': cleanup,
-                'table': temp_table
+            result = {
+                'status': 'completed',
+                'message': f'Cleanup performed on {temp_table}' if cleanup else 'No cleanup needed',
+                'data': {
+                    'cleaned_up': cleanup,
+                    'table': temp_table
+                }
             }
-        }

@@ -3,7 +3,7 @@ kind: Playbook
 metadata:
   name: test_pipeline_simple
   path: tests/pagination/pipeline/simple
-  description: Simple pipeline test with fetch -> transform -> validate
+  description: Simple task sequence test with fetch -> transform -> validate
 
 workload:
   api_url: "http://paginated-api.test-server.svc.cluster.local:5555"
@@ -14,68 +14,56 @@ workflow:
     tool:
       kind: python
       code: |
-        result = {"status": "starting pipeline test"}
+        result = {"status": "starting task sequence test"}
     next:
       - step: run_pipeline
 
   - step: run_pipeline
-    desc: Execute fetch -> transform -> validate pipeline
+    desc: Execute fetch -> transform -> validate task sequence
     tool:
-      kind: noop
-    case:
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          - pipe:
-              - fetch:
-                  tool:
-                    kind: http
-                    url: "{{ workload.api_url }}/api/v1/assessments"
-                    method: GET
-                    params:
-                      page: 1
-                      pageSize: 5
+      - fetch:
+          kind: http
+          url: "{{ workload.api_url }}/api/v1/assessments"
+          method: GET
+          params:
+            page: 1
+            pageSize: 5
+          eval:
+            - expr: "{{ outcome.error.retryable }}"
+              do: retry
+              attempts: 3
+              backoff: linear
+              delay: 1.0
+            - expr: "{{ outcome.status == 'error' }}"
+              do: fail
 
-              - transform:
-                  tool:
-                    kind: python
-                    args:
-                      http_response: "{{ _prev }}"
-                    code: |
-                      response_body = http_response.get('data', {})
-                      items = response_body.get('data', [])
-                      result = {
-                        'count': len(items),
-                        'ids': [i['id'] for i in items],
-                        'has_more': response_body.get('paging', {}).get('hasMore', False)
-                      }
+      - transform:
+          kind: python
+          args:
+            http_response: "{{ _prev }}"
+          code: |
+            response_body = http_response.get('data', {})
+            items = response_body.get('data', [])
+            result = {
+              'count': len(items),
+              'ids': [i['id'] for i in items],
+              'has_more': response_body.get('paging', {}).get('hasMore', False)
+            }
 
-              - validate:
-                  tool:
-                    kind: python
-                    args:
-                      transformed: "{{ _prev }}"
-                    code: |
-                      assert transformed['count'] == 5, f"Expected 5 items, got {transformed['count']}"
-                      assert transformed['ids'] == [1, 2, 3, 4, 5], f"Expected [1,2,3,4,5], got {transformed['ids']}"
-                      result = {
-                        'status': 'passed',
-                        'message': 'Pipeline executed successfully',
-                        'items_processed': transformed['count']
-                      }
-
-            catch:
-              cond:
-                - when: "{{ _err.retryable }}"
-                  do: retry
-                  attempts: 3
-                  backoff: linear
-                  delay: 1.0
-                - else:
-                    do: fail
-
-            finally:
-              - next:
-                  - step: report_result
+      - validate:
+          kind: python
+          args:
+            transformed: "{{ _prev }}"
+          code: |
+            assert transformed['count'] == 5, f"Expected 5 items, got {transformed['count']}"
+            assert transformed['ids'] == [1, 2, 3, 4, 5], f"Expected [1,2,3,4,5], got {transformed['ids']}"
+            result = {
+              'status': 'passed',
+              'message': 'Task sequence executed successfully',
+              'items_processed': transformed['count']
+            }
+    next:
+      - step: report_result
 
   - step: report_result
     desc: Report test result

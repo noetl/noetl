@@ -55,12 +55,10 @@ workflow:
         source: adc
     vars:
       bucket_exists: "{{ result.status == 200 }}"
-    case:
-      - when: "{{ vars.bucket_exists }}"
-        then:
-          - step: bucket_exists_info
-      - else:
-          - step: create_bucket
+    next:
+      - step: bucket_exists_info
+        when: "{{ vars.bucket_exists }}"
+      - step: create_bucket
 
   - step: bucket_exists_info
     desc: Bucket already exists
@@ -117,12 +115,10 @@ workflow:
             "enabled": {{ workload.enable_versioning | lower }}
           }
         }
-    case:
-      - when: "{{ workload.enable_versioning }}"
-        then:
-          - step: configure_lifecycle
-      - else:
-          - step: create_folder_structure
+    next:
+      - step: configure_lifecycle
+        when: "{{ workload.enable_versioning }}"
+      - step: create_folder_structure
 
   - step: configure_lifecycle
     desc: Configure lifecycle rules for snapshot retention
@@ -169,7 +165,7 @@ workflow:
       cmds:
         - |
           echo "Creating folder structure in gs://{{ vars.final_bucket_name }}/"
-          
+
           # Create placeholder files to establish folder structure
           # Note: In real implementation, this would use GCS uploads
           echo "Folders to create:"
@@ -354,3 +350,5 @@ workflow:
 
   - step: end
     desc: Setup complete
+    tool:
+      kind: noop

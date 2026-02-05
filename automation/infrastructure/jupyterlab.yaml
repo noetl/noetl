@@ -18,50 +18,28 @@ workflow:
       cmds:
         - echo "JupyterLab Automation - Action '{{ workload.action }}'"
     next:
-      - when: "{{ workload.action }} == deploy"
-        then:
-          - step: deploy_jupyterlab
-        args: {}
-      - when: "{{ workload.action }} == undeploy"
-        then:
-          - step: undeploy_jupyterlab
-        args: {}
-      - when: "{{ workload.action }} == full"
-        then:
-          - step: full_deployment
-        args: {}
-      - when: "{{ workload.action }} == status"
-        then:
-          - step: check_status
-        args: {}
-      - when: "{{ workload.action }} == logs"
-        then:
-          - step: view_logs
-        args: {}
-      - when: "{{ workload.action }} == port-forward"
-        then:
-          - step: port_forward
-        args: {}
-      - when: "{{ workload.action }} == restart"
-        then:
-          - step: restart_deployment
-        args: {}
-      - when: "{{ workload.action }} == shell"
-        then:
-          - step: open_shell
-        args: {}
-      - when: "{{ workload.action }} == test"
-        then:
-          - step: test_deployment
-        args: {}
-      - when: "{{ workload.action }} == update-notebook"
-        then:
-          - step: update_notebook
-        args: {}
-      - when: "{{ workload.action }} == help"
-        then:
-          - step: show_help
-        args: {}
+      - step: deploy_jupyterlab
+        when: "{{ workload.action == 'deploy' }}"
+      - step: undeploy_jupyterlab
+        when: "{{ workload.action == 'undeploy' }}"
+      - step: full_deployment
+        when: "{{ workload.action == 'full' }}"
+      - step: check_status
+        when: "{{ workload.action == 'status' }}"
+      - step: view_logs
+        when: "{{ workload.action == 'logs' }}"
+      - step: port_forward
+        when: "{{ workload.action == 'port-forward' }}"
+      - step: restart_deployment
+        when: "{{ workload.action == 'restart' }}"
+      - step: open_shell
+        when: "{{ workload.action == 'shell' }}"
+      - step: test_deployment
+        when: "{{ workload.action == 'test' }}"
+      - step: update_notebook
+        when: "{{ workload.action == 'update-notebook' }}"
+      - step: show_help
+        when: "{{ workload.action == 'help' }}"
       - step: show_help
 
   - step: deploy_jupyterlab
@@ -320,3 +298,5 @@ workflow:
 
   - step: end
     desc: End workflow
+    tool:
+      kind: noop

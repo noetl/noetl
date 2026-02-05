@@ -3,7 +3,7 @@ kind: Playbook
 metadata:
   name: retry_simple_config
   path: tests/retry/simple_config
-  description: Test simplified retry configuration options
+  description: Test simplified retry configuration using tool.eval
 
 workload:
   api_url: http://paginated-api.test-server.svc.cluster.local:5555
@@ -11,11 +11,9 @@ workload:
 
 workflow:
   - step: start
-    desc: Fetch URL and retry on 5xx status codes
+    desc: Initialize retry tests
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args: {}
       code: |
         result = {"status": "initialized"}
@@ -31,17 +29,17 @@ workflow:
       params:
         page: 1
         fail_on: "{{ workload.fail_on_page }}"
-    case:
-      - when: "{{ event.name == 'call.error' and error.status in [500, 502, 503] }}"
-        then:
-          - retry:
-              max_attempts: 3
-              initial_delay: 0.5
-
-      - when: "{{ event.name == 'call.done' and response is defined }}"
-        then:
-          - next:
-              - step: integer_retry
+      eval:
+        - expr: "{{ outcome.http.status in [500, 502, 503] }}"
+          do: retry
+          attempts: 3
+          delay: 0.5
+        - expr: "{{ outcome.status == 'error' }}"
+          do: fail
+        - else:
+            do: continue
+    next:
+      - step: integer_retry
 
   - step: integer_retry
     desc: Retry with custom max attempts
@@ -52,17 +50,17 @@ workflow:
       params:
         page: 1
         fail_on: "{{ workload.fail_on_page }}"
-    case:
-      - when: "{{ event.name == 'call.error' and error.status in [500, 502, 503] }}"
-        then:
-          - retry:
-              max_attempts: 5
-              initial_delay: 0.5
-
-      - when: "{{ event.name == 'call.done' and response is defined }}"
-        then:
-          - next:
-              - step: full_config_retry
+      eval:
+        - expr: "{{ outcome.http.status in [500, 502, 503] }}"
+          do: retry
+          attempts: 5
+          delay: 0.5
+        - expr: "{{ outcome.status == 'error' }}"
+          do: fail
+        - else:
+            do: continue
+    next:
+      - step: full_config_retry
 
   - step: full_config_retry
     desc: Full configuration retry with backoff
@@ -73,26 +71,23 @@ workflow:
       params:
         page: 1
         fail_on: "{{ workload.fail_on_page }}"
-    case:
-      - when: "{{ event.name == 'call.error' and error.status in [500, 502, 503] }}"
-        then:
-          - retry:
-              max_attempts: 3
-              initial_delay: 0.5
-              backoff_multiplier: 2.0
-              max_delay: 10.0
-
-      - when: "{{ event.name == 'call.done' and response is defined }}"
-        then:
-          - next:
-              - step: end
+      eval:
+        - expr: "{{ outcome.http.status in [500, 502, 503] }}"
+          do: retry
+          attempts: 3
+          backoff: exponential
+          delay: 0.5
+        - expr: "{{ outcome.status == 'error' }}"
+          do: fail
+        - else:
+            do: continue
+    next:
+      - step: end
 
   - step: end
     desc: End workflow
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args: {}
       code: |
         result = {"status": "complete"}

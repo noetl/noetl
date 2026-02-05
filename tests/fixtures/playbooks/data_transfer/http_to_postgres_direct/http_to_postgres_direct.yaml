@@ -18,11 +18,8 @@ workflow:
       args: {}
       code: |
         result = {"status": "initialized"}
-    case:
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          - next:
-              - step: create_table
+    next:
+      - step: create_table
 
   - step: create_table
     desc: Create table for storing HTTP data
@@ -37,37 +34,40 @@ workflow:
         );
 
         TRUNCATE TABLE public.http_to_postgres_direct;
-    case:
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          - next:
-              - step: fetch_and_store
+    next:
+      - step: fetch_and_store
 
   - step: fetch_and_store
     desc: Fetch HTTP data and store in PostgreSQL
     tool:
-      kind: http
-      method: GET
-      url: "{{ workload.api_url }}"
-    case:
-      - when: "{{ event.name == 'call.done' and response is defined and response.get('status_code') == 200 }}"
-        then:
-          - save_posts:
-              tool:
-                kind: postgres
-                auth: "{{ workload.pg_auth }}"
-                command: |
-                  {% for item in response.get('data', []) %}
-                  INSERT INTO public.http_to_postgres_direct (data) VALUES ('{{ item | tojson | replace("'", "''") }}'::jsonb);
-                  {% endfor %}
-          - next:
-              - step: show_count
-      - when: "{{ event.name == 'call.error' and response is defined and response.get('status_code') in [500, 502, 503] }}"
-        then:
-          - retry:
-              max_attempts: 3
-              backoff_multiplier: 2.0
-              initial_delay: 0.5
+      - fetch_posts:
+          kind: http
+          method: GET
+          url: "{{ workload.api_url }}"
+          eval:
+            - expr: "{{ outcome.http.status in [500, 502, 503] }}"
+              do: retry
+              attempts: 3
+              backoff: exponential
+              delay: 0.5
+            - expr: "{{ outcome.status == 'error' }}"
+              do: fail
+            - else:
+                do: continue
+      - save_posts:
+          kind: postgres
+          auth: "{{ workload.pg_auth }}"
+          command: |
+            {% for item in fetch_posts.data %}
+            INSERT INTO public.http_to_postgres_direct (data) VALUES ('{{ item | tojson | replace("'", "''") }}'::jsonb);
+            {% endfor %}
+          eval:
+            - expr: "{{ outcome.status == 'error' }}"
+              do: continue
+            - else:
+                do: continue
+    next:
+      - step: show_count
 
   - step: show_count
     desc: Verify record count
@@ -76,13 +76,8 @@ workflow:
       auth: "{{ workload.pg_auth }}"
       command: |
         SELECT COUNT(*) as records FROM public.http_to_postgres_direct;
-    case:
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          - set:
-              direct_count: "{{ response.command_0.rows[0].records }}"
-          - next:
-              - step: validate_count
+    next:
+      - step: validate_count
 
   - step: validate_count
     desc: Fail if no rows stored
@@ -91,17 +86,14 @@ workflow:
       auth: {}
       libs: {}
       args:
-        direct_count: "{{ vars.direct_count }}"
+        show_count: "{{ show_count }}"
       code: |
-        count = int(direct_count or 0)
+        count = int(show_count.get('command_0', {}).get('rows', [{}])[0].get('records', 0))
         if count == 0:
             raise ValueError("No rows stored in http_to_postgres_direct")
         result = {"status": "ok", "records": count}
-    case:
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          - next:
-              - step: end
+    next:
+      - step: end
 
   - step: end
     desc: End workflow

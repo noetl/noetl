@@ -16,19 +16,20 @@ workflow:
   # Step 1: Generate data and store in GCS
   - step: start
     tool:
-      kind: python
-      args:
-        count: "{{ workload.item_count }}"
-        size: "{{ workload.item_size }}"
-      code: |
-        items = [{"id": i, "data": "G" * size, "type": "gcs_test"} for i in range(count)]
-        result = {
-            "status": "ok",
-            "tier": "gcs",
-            "count": len(items),
-            "total_bytes": count * size,
-            "items": items
-        }
+      - generate_data:
+          kind: python
+          args:
+            count: "{{ workload.item_count }}"
+            size: "{{ workload.item_size }}"
+          code: |
+            items = [{"id": i, "data": "G" * size, "type": "gcs_test"} for i in range(count)]
+            result = {
+                "status": "ok",
+                "tier": "gcs",
+                "count": len(items),
+                "total_bytes": count * size,
+                "items": items
+            }
     result:
       # Explicitly use GCS storage
       store:
@@ -44,54 +45,57 @@ workflow:
   # Step 2: Verify GCS storage was used
   - step: verify_gcs_storage
     tool:
-      kind: python
-      args:
-        has_ref: "{{ start._ref is defined }}"
-        store_type: "{{ start._store | default('none') }}"
-        status: "{{ start.status }}"
-        count: "{{ start.count }}"
-        total_bytes: "{{ start.total_bytes }}"
-      code: |
-        is_gcs = store_type == "gcs"
-        result = {
-            "test_result": "PASSED" if is_gcs else "FAILED",
-            "externalized": has_ref,
-            "storage_tier": store_type,
-            "expected_tier": "gcs",
-            "correct_tier": is_gcs,
-            "status": status,
-            "count": count,
-            "total_bytes": total_bytes,
-            "message": f"GCS storage {'verified' if is_gcs else 'NOT used - got ' + store_type}"
-        }
+      - verify:
+          kind: python
+          args:
+            has_ref: "{{ start._ref is defined }}"
+            store_type: "{{ start._store | default('none') }}"
+            status: "{{ start.status }}"
+            count: "{{ start.count }}"
+            total_bytes: "{{ start.total_bytes }}"
+          code: |
+            is_gcs = store_type == "gcs"
+            result = {
+                "test_result": "PASSED" if is_gcs else "FAILED",
+                "externalized": has_ref,
+                "storage_tier": store_type,
+                "expected_tier": "gcs",
+                "correct_tier": is_gcs,
+                "status": status,
+                "count": count,
+                "total_bytes": total_bytes,
+                "message": f"GCS storage {'verified' if is_gcs else 'NOT used - got ' + store_type}"
+            }
     next:
       - step: load_from_gcs
 
   # Step 3: Lazy load from GCS
   - step: load_from_gcs
     tool:
-      kind: artifact
-      action: get
-      args:
-        result_ref: "{{ start._ref }}"
+      - load_artifact:
+          kind: artifact
+          action: get
+          args:
+            result_ref: "{{ start._ref }}"
     next:
       - step: final_summary
 
   # Step 4: Final verification
   - step: final_summary
     tool:
-      kind: python
-      args:
-        tier_correct: "{{ verify_gcs_storage.correct_tier }}"
-        loaded_count: "{{ load_from_gcs.count | default(0) }}"
-        expected_count: "{{ workload.item_count }}"
-      code: |
-        data_loaded = loaded_count == expected_count
-        result = {
-            "test_result": "PASSED" if (tier_correct and data_loaded) else "FAILED",
-            "gcs_tier_used": tier_correct,
-            "data_loaded_from_gcs": data_loaded,
-            "items_loaded": loaded_count,
-            "items_expected": expected_count,
-            "message": "GCS storage and retrieval working correctly" if (tier_correct and data_loaded) else "GCS test failed"
-        }
+      - summarize:
+          kind: python
+          args:
+            tier_correct: "{{ verify_gcs_storage.correct_tier }}"
+            loaded_count: "{{ load_from_gcs.count | default(0) }}"
+            expected_count: "{{ workload.item_count }}"
+          code: |
+            data_loaded = loaded_count == expected_count
+            result = {
+                "test_result": "PASSED" if (tier_correct and data_loaded) else "FAILED",
+                "gcs_tier_used": tier_correct,
+                "data_loaded_from_gcs": data_loaded,
+                "items_loaded": loaded_count,
+                "items_expected": expected_count,
+                "message": "GCS storage and retrieval working correctly" if (tier_correct and data_loaded) else "GCS test failed"
+            }

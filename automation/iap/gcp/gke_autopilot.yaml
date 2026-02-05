@@ -131,22 +131,16 @@ workflow:
       deploy_stack: "{{ workload.deploy_stack | default(false) }}"
       resource_id: "{{ workload.project_id }}/{{ workload.region }}/{{ workload.cluster_name }}"
       state_bucket: "{{ workload.state_bucket if workload.state_bucket else workload.project_id + '-noetl-state' }}"
-    case:
-      - when: "{{ workload.action }} == create"
-        then:
-          - step: enable_apis
-      - when: "{{ workload.action }} == deploy"
-        then:
-          - step: check_existing
-      - when: "{{ workload.action }} == destroy"
-        then:
-          - step: delete_cluster
-      - when: "{{ workload.action }} == plan"
-        then:
-          - step: plan_changes
-      - when: "true"
-        then:
-          - step: show_help
+    next:
+      - step: enable_apis
+        when: "{{ workload.action == 'create' }}"
+      - step: check_existing
+        when: "{{ workload.action == 'deploy' }}"
+      - step: delete_cluster
+        when: "{{ workload.action == 'destroy' }}"
+      - step: plan_changes
+        when: "{{ workload.action == 'plan' }}"
+      - step: show_help
 
   - step: show_help
     desc: Show available actions
@@ -211,16 +205,10 @@ workflow:
         source: adc
     vars:
       cluster_status: "{{ result.status }}"
-    case:
-      - when: "{{ vars.cluster_status }} == 200"
-        then:
-          - step: get_cluster_details
-      - when: "true"
-        then:
-          - step: deploy_cluster_not_found
-      - when: "true"
-        then:
-          - step: enable_apis
+    next:
+      - step: get_cluster_details
+        when: "{{ vars.cluster_status == 200 }}"
+      - step: deploy_cluster_not_found
 
   - step: cluster_exists_info
     desc: Cluster already exists
@@ -289,13 +277,10 @@ workflow:
     vars:
       operation_name: "{{ result.body.name | default('') }}"
       create_status: "{{ result.status }}"
-    case:
-      - when: "{{ vars.create_status }} == 200"
-        then:
-          - step: wait_for_operation
-      - when: "true"
-        then:
-          - step: create_error
+    next:
+      - step: wait_for_operation
+        when: "{{ vars.create_status == 200 }}"
+      - step: create_error
 
   - step: create_error
     desc: Handle cluster creation error
@@ -337,26 +322,26 @@ workflow:
         // Get GCP auth token
         let token = get_gcp_token();
         let url = `https://container.googleapis.com/v1/projects/${args.project_id}/locations/${args.region}/clusters/${args.cluster_name}`;
-        
+
         log("");
         log(`Cluster creation initiated. Operation: ${args.operation_name}`);
         log("Waiting for cluster to be ready (this may take 5-10 minutes)...");
         log("");
-        
+
         let max_retries = 60;
         let retry_interval = 10;
         let retry_count = 0;
         let final_status = "UNKNOWN";
-        
+
         while retry_count < max_retries {
           retry_count += 1;
-          
+
           let response = http_get_auth(url, token);
-          
+
           if response.status == 200 {
             let cluster_status = response.body.status;
             log(`[${timestamp()}] Cluster status: ${cluster_status} (attempt ${retry_count}/${max_retries})`);
-            
+
             if cluster_status == "RUNNING" {
               log("");
               log("Cluster is now RUNNING");
@@ -374,14 +359,14 @@ workflow:
           } else {
             log(`[${timestamp()}] Unexpected response: ${response.status}`);
           }
-          
+
           sleep(retry_interval);
         }
-        
+
         if final_status != "RUNNING" {
           throw `Timeout waiting for cluster after ${max_retries * retry_interval} seconds`;
         }
-        
+
         #{ status: final_status, attempts: retry_count }
       args:
         project_id: "{{ workload.project_id }}"
@@ -409,17 +394,11 @@ workflow:
   - step: maybe_deploy_stack
     desc: Deploy NoETL stack if requested
     tool:
-      kind: shell
-      cmds:
-        - |
-          echo "Deploy stack flag: {{ workload.deploy_stack }}"
-    case:
-      - when: "{{ workload.deploy_stack }} == true or {{ workload.action }} == deploy"
-        then:
-          - step: configure_kubecontext
-      - when: "true"
-        then:
-          - step: save_state
+      kind: noop
+    next:
+      - step: configure_kubecontext
+        when: "{{ workload.deploy_stack == true or workload.action == 'deploy' }}"
+      - step: save_state
 
   - step: configure_kubecontext
     desc: Configure kubectl context for the GKE cluster
@@ -494,17 +473,11 @@ workflow:
   - step: maybe_init_noetl_schema
     desc: Initialize NoETL schema if enabled
     tool:
-      kind: shell
-      cmds:
-        - |
-          echo "Init NoETL schema flag: {{ workload.init_noetl_schema }}"
-    case:
-      - when: "{{ workload.init_noetl_schema }} == true"
-        then:
-          - step: init_noetl_schema
-      - when: "true"
-        then:
-          - step: deploy_nats_helm
+      kind: noop
+    next:
+      - step: init_noetl_schema
+        when: "{{ workload.init_noetl_schema == true }}"
+      - step: deploy_nats_helm
 
   - step: init_noetl_schema
     desc: Initialize NoETL schema in PostgreSQL
@@ -557,17 +530,11 @@ workflow:
   - step: maybe_deploy_clickhouse
     desc: Deploy ClickHouse if enabled
     tool:
-      kind: shell
-      cmds:
-        - |
-          echo "ClickHouse enabled: {{ workload.clickhouse_enabled }}"
-    case:
-      - when: "{{ workload.clickhouse_enabled }} == true"
-        then:
-          - step: deploy_clickhouse
-      - when: "true"
-        then:
-          - step: deploy_noetl_helm
+      kind: noop
+    next:
+      - step: deploy_clickhouse
+        when: "{{ workload.clickhouse_enabled == true }}"
+      - step: deploy_noetl_helm
 
   - step: deploy_clickhouse
     desc: Deploy ClickHouse for observability
@@ -902,16 +869,12 @@ workflow:
     vars:
       delete_status: "{{ result.status }}"
       delete_operation: "{{ result.body.name | default('') }}"
-    case:
-      - when: "{{ vars.delete_status }} == 200"
-        then:
-          - step: wait_delete
-      - when: "{{ vars.delete_status }} == 404"
-        then:
-          - step: cluster_not_found
-      - when: "true"
-        then:
-          - step: delete_error
+    next:
+      - step: wait_delete
+        when: "{{ vars.delete_status == 200 }}"
+      - step: cluster_not_found
+        when: "{{ vars.delete_status == 404 }}"
+      - step: delete_error
 
   - step: cluster_not_found
     desc: Cluster doesn't exist
@@ -946,21 +909,21 @@ workflow:
         // Get GCP auth token
         let token = get_gcp_token();
         let url = `https://container.googleapis.com/v1/projects/${args.project_id}/locations/${args.region}/clusters/${args.cluster_name}`;
-        
+
         log("");
         log(`Cluster deletion initiated. Operation: ${args.delete_operation}`);
         log("Waiting for deletion to complete...");
         log("");
-        
+
         let max_retries = 60;
         let retry_interval = 10;
         let retry_count = 0;
-        
+
         while retry_count < max_retries {
           retry_count += 1;
-          
+
           let response = http_get_auth(url, token);
-          
+
           if response.status == 404 {
             // Cluster is gone
             log("");
@@ -969,7 +932,7 @@ workflow:
           } else if response.status == 200 {
             let cluster_status = response.body.status;
             log(`[${timestamp()}] Cluster status: ${cluster_status} (attempt ${retry_count}/${max_retries})`);
-            
+
             if cluster_status == "ERROR" {
               throw "Cluster deletion failed";
             }
@@ -982,10 +945,10 @@ workflow:
             }
             log(`[${timestamp()}] Unexpected response: ${response.status}`);
           }
-          
+
           sleep(retry_interval);
         }
-        
+
         throw `Timeout waiting for cluster deletion after ${max_retries * retry_interval} seconds`;
       args:
         project_id: "{{ workload.project_id }}"
@@ -1006,7 +969,7 @@ workflow:
           operation_id, resource_id, operation_type, status,
           playbook_name
         )
-        SELECT 
+        SELECT
           '{{ workload.project_id }}-{{ workload.cluster_name }}-delete-' || strftime(CURRENT_TIMESTAMP, '%Y%m%d%H%M%S'),
           '{{ vars.resource_id }}',
           'delete',
@@ -1063,3 +1026,5 @@ workflow:
 
   - step: end
     desc: Workflow complete
+    tool:
+      kind: noop

@@ -19,6 +19,11 @@ workload:
       path: /api/v1/assessments
       page_size: 30
 
+vars:
+  current_endpoint_index: 0
+  current_page: 1
+  current_endpoint: null
+
 workflow:
   - step: start
     desc: Start loop + pagination test with sink to Postgres
@@ -42,68 +47,110 @@ workflow:
         DELETE FROM pagination_test_results WHERE execution_id = {{ execution_id }};
         SELECT 'Table ready' as status;
     next:
-      - step: fetch_all_endpoints
+      - step: init_endpoint_loop
 
-  - step: fetch_all_endpoints
-    desc: Loop over endpoints with HTTP pagination - persist data to Postgres with sink
-    loop:
-      in: "{{ workload.endpoints }}"
-      iterator: endpoint
-      mode: sequential
+  - step: init_endpoint_loop
+    desc: Initialize endpoint loop
     tool:
-      kind: http
-      method: GET
-      url: "{{ workload.api_url }}{{ endpoint.path }}"
-      params:
-        page: 1
-        pageSize: "{{ endpoint.page_size }}"
-    case:
-      - when: "{{ event.name == 'call.done' and response.data.paging.hasMore == true }}"
-        then:
-          - save_page:
-              tool:
-                kind: postgres
-                auth: pg_k8s
-                command: |
-                  INSERT INTO pagination_test_results (execution_id, endpoint_name, iteration_index, page_number, items, items_count, has_more)
-                  VALUES (
-                    {{ execution_id }},
-                    '{{ endpoint.name }}',
-                    {{ loop.index }},
-                    {{ response.data.paging.page }},
-                    '{{ response.data.data | tojson | replace("'", "''") }}'::jsonb,
-                    {{ response.data.data | length }},
-                    {{ response.data.paging.hasMore | lower }}
-                  );
-          - retry:
-              max_attempts: 10
-              args:
-                params:
-                  page: "{{ response.data.paging.page + 1 }}"
-                  pageSize: "{{ endpoint.page_size }}"
+      kind: python
+      args:
+        endpoints: "{{ workload.endpoints }}"
+        endpoint_index: "{{ vars.current_endpoint_index }}"
+      code: |
+        if endpoint_index < len(endpoints):
+            current = endpoints[endpoint_index]
+            result = {
+                'has_more_endpoints': True,
+                'endpoint': current,
+                'index': endpoint_index
+            }
+        else:
+            result = {
+                'has_more_endpoints': False,
+                'endpoint': None,
+                'index': endpoint_index
+            }
+    vars:
+      current_endpoint: "{{ init_endpoint_loop.endpoint }}"
+      current_page: 1
+    next:
+      - step: fetch_page
+        when: "{{ init_endpoint_loop.has_more_endpoints == true }}"
+      - step: validate_results
+        when: "{{ init_endpoint_loop.has_more_endpoints != true }}"
 
-      - when: "{{ event.name == 'call.done' and response.data.paging.hasMore != true }}"
-        then:
-          - save_final_page:
-              tool:
-                kind: postgres
-                auth: pg_k8s
-                command: |
-                  INSERT INTO pagination_test_results (execution_id, endpoint_name, iteration_index, page_number, items, items_count, has_more)
-                  VALUES (
-                    {{ execution_id }},
-                    '{{ endpoint.name }}',
-                    {{ loop.index }},
-                    {{ response.data.paging.page }},
-                    '{{ response.data.data | tojson | replace("'", "''") }}'::jsonb,
-                    {{ response.data.data | length }},
-                    {{ response.data.paging.hasMore | lower }}
-                  );
+  - step: fetch_page
+    desc: Fetch a page from current endpoint and persist to Postgres
+    tool:
+      - fetch:
+          kind: http
+          method: GET
+          url: "{{ workload.api_url }}{{ vars.current_endpoint.path }}"
+          params:
+            page: "{{ vars.current_page }}"
+            pageSize: "{{ vars.current_endpoint.page_size }}"
+          eval:
+            - expr: "{{ outcome.error.retryable }}"
+              do: retry
+              attempts: 3
+              backoff: linear
+              delay: 1.0
+            - expr: "{{ outcome.status == 'error' }}"
+              do: fail
 
-      - when: "{{ event.name == 'loop.done' }}"
-        then:
-          - next:
-              - step: validate_results
+      - save_page:
+          kind: postgres
+          auth:
+            type: postgres
+            credential: pg_k8s
+          query: |
+            INSERT INTO pagination_test_results (execution_id, endpoint_name, iteration_index, page_number, items, items_count, has_more)
+            VALUES (
+              {{ execution_id }},
+              '{{ vars.current_endpoint.name }}',
+              {{ vars.current_endpoint_index }},
+              {{ _prev.data.paging.page }},
+              '{{ _prev.data.data | tojson | replace("'", "''") }}'::jsonb,
+              {{ _prev.data.data | length }},
+              {{ _prev.data.paging.hasMore | lower }}
+            );
+          eval:
+            - expr: "{{ outcome.error.retryable }}"
+              do: retry
+              attempts: 3
+              backoff: linear
+              delay: 1.0
+            - expr: "{{ outcome.status == 'error' }}"
+              do: fail
+
+      - check_pagination:
+          kind: python
+          args:
+            http_response: "{{ fetch_page.fetch }}"
+          code: |
+            paging = http_response.get('data', {}).get('paging', {})
+            result = {
+                'has_more': paging.get('hasMore', False),
+                'current_page': paging.get('page', 1)
+            }
+    vars:
+      current_page: "{{ (vars.current_page | int) + 1 }}"
+    next:
+      - step: fetch_page
+        when: "{{ fetch_page.has_more == true }}"
+      - step: next_endpoint
+        when: "{{ fetch_page.has_more != true }}"
+
+  - step: next_endpoint
+    desc: Move to next endpoint in the loop
+    tool:
+      kind: python
+      code: |
+        result = {"status": "moving_to_next_endpoint"}
+    vars:
+      current_endpoint_index: "{{ (vars.current_endpoint_index | int) + 1 }}"
+    next:
+      - step: init_endpoint_loop
 
   - step: validate_results
     desc: Validate loop + pagination results from Postgres table
@@ -132,8 +179,6 @@ workflow:
     desc: Verify data was stored correctly
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args:
         db_results: "{{ validate_results.data.result.command_0.rows }}"
         workload: "{{ workload }}"
@@ -228,8 +273,5 @@ workflow:
     desc: Test complete
     tool:
       kind: python
-      auth: {}
-      libs: {}
-      args: {}
       code: |
         result = {"status": "complete"}

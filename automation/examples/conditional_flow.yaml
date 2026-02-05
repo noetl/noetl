@@ -14,16 +14,15 @@ workload:
 workflow:
   - step: start
     desc: "Start with condition check"
-    case:
-      - when: "{{ workload.environment }} == production"
-        then:
-          - step: prod_setup
-      - when: "{{ workload.environment }} == staging"
-        then:
-          - step: staging_setup
-        else:
-          - step: dev_setup
-  
+    tool:
+      kind: noop
+    next:
+      - step: prod_setup
+        when: "{{ workload.environment == 'production' }}"
+      - step: staging_setup
+        when: "{{ workload.environment == 'staging' }}"
+      - step: dev_setup
+
   - step: prod_setup
     desc: "Production environment setup"
     tool:
@@ -34,7 +33,7 @@ workflow:
         - "echo 'Replicas: 5'"
     next:
       - step: check_deploy
-  
+
   - step: staging_setup
     desc: "Staging environment setup"
     tool:
@@ -44,7 +43,7 @@ workflow:
         - "echo 'Replicas: 2'"
     next:
       - step: check_deploy
-  
+
   - step: dev_setup
     desc: "Development environment setup"
     tool:
@@ -54,18 +53,17 @@ workflow:
         - "echo 'Debug mode: enabled'"
     next:
       - step: check_deploy
-  
+
   - step: check_deploy
     desc: "Check if deployment should proceed"
-    case:
-      - when: "{{ workload.deploy }} == true"
-        then:
-          - step: deploy_app
-          - step: verify_deployment
-      - when: "{{ workload.deploy }} != true"
-        then:
-          - step: skip_deploy
-  
+    tool:
+      kind: noop
+    next:
+      - step: deploy_app
+        when: "{{ workload.deploy == 'true' }}"
+      - step: skip_deploy
+        when: "{{ workload.deploy != 'true' }}"
+
   - step: deploy_app
     desc: "Deploy application"
     tool:
@@ -74,8 +72,8 @@ workflow:
         - "echo 'Deploying application to {{ workload.environment }}...'"
         - "echo 'Deployment complete'"
     next:
-      - step: end
-  
+      - step: verify_deployment
+
   - step: verify_deployment
     desc: "Verify deployment"
     tool:
@@ -85,7 +83,7 @@ workflow:
         - "echo 'Health check: OK'"
     next:
       - step: end
-  
+
   - step: skip_deploy
     desc: "Skip deployment"
     tool:
@@ -94,6 +92,8 @@ workflow:
         - "echo 'Deployment skipped (deploy flag is false)'"
     next:
       - step: end
-  
+
   - step: end
     desc: "End of workflow"
+    tool:
+      kind: noop

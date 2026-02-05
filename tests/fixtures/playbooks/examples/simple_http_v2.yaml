@@ -19,32 +19,28 @@ workflow:
     tool:
       kind: http
       method: GET
-      endpoint: "{{ workload.api_url }}/get"
+      url: "{{ workload.api_url }}/get"
       params:
         test: "hello"
-    case:
-      - when: "{{ event.name == 'call.done' and response is defined and response.status_code == 200 }}"
-        then:
-          - result:
-              from: response.data
-          - next:
-              - step: process
-                args:
-                  data: "{{ response.data }}"
-
-      - when: "{{ event.name == 'call.error' }}"
-        then:
-          - retry:
-              max_attempts: 3
-              backoff_multiplier: 2.0
-              initial_delay: 0.5
+      eval:
+        - expr: "{{ outcome.status == 'error' and outcome.error.retryable }}"
+          do: retry
+          attempts: 3
+          backoff: exponential
+          delay: 0.5
+        - expr: "{{ outcome.status == 'error' }}"
+          do: fail
+        - else:
+            do: continue
+    next:
+      - step: process
+        args:
+          data: "{{ start.data }}"
 
   - step: process
     desc: "Process HTTP response"
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args:
         data: "{{ data }}"
       code: |
@@ -57,8 +53,6 @@ workflow:
     desc: "End workflow"
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args: {}
       code: |
         print("Workflow complete")

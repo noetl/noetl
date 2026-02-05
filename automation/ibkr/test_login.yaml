@@ -23,11 +23,11 @@ workload:
 workflow:
   - step: start
     desc: Optional setup (Playwright)
-    case:
-      - when: "{{ workload.setup }}"
-        then:
-          - step: setup
+    tool:
+      kind: noop
     next:
+      - step: setup
+        when: "{{ workload.setup == true }}"
       - step: resolve_credentials
 
   - step: resolve_credentials
@@ -172,3 +172,5 @@ workflow:
 
   - step: end
     desc: Done
+    tool:
+      kind: noop

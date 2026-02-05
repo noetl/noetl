@@ -18,38 +18,22 @@ workflow:
       cmds:
         - echo "Kind Cluster Automation - Action '{{ workload.action }}'"
     next:
-      - when: "{{ workload.action }} == create"
-        then:
-          - step: create_cluster
-        args: {}
-      - when: "{{ workload.action }} == delete"
-        then:
-          - step: delete_cluster
-        args: {}
-      - when: "{{ workload.action }} == list"
-        then:
-          - step: list_clusters
-        args: {}
-      - when: "{{ workload.action }} == image-load"
-        then:
-          - step: load_image
-        args: {}
-      - when: "{{ workload.action }} == images-list"
-        then:
-          - step: list_images
-        args: {}
-      - when: "{{ workload.action }} == status"
-        then:
-          - step: check_status
-        args: {}
-      - when: "{{ workload.action }} == context-set"
-        then:
-          - step: set_context
-        args: {}
-      - when: "{{ workload.action }} == help"
-        then:
-          - step: show_help
-        args: {}
+      - step: create_cluster
+        when: "{{ workload.action == 'create' }}"
+      - step: delete_cluster
+        when: "{{ workload.action == 'delete' }}"
+      - step: list_clusters
+        when: "{{ workload.action == 'list' }}"
+      - step: load_image
+        when: "{{ workload.action == 'image-load' }}"
+      - step: list_images
+        when: "{{ workload.action == 'images-list' }}"
+      - step: check_status
+        when: "{{ workload.action == 'status' }}"
+      - step: set_context
+        when: "{{ workload.action == 'context-set' }}"
+      - step: show_help
+        when: "{{ workload.action == 'help' }}"
       - step: show_help
 
   - step: create_cluster
@@ -194,3 +178,5 @@ workflow:
 
   - step: end
     desc: End workflow
+    tool:
+      kind: noop

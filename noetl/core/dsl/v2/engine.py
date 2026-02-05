@@ -55,15 +55,15 @@ async def finalize_abandoned_execution(self, execution_id: str, reason: str = "A
     await self.state_store.save_state(state)
     logger.info(f"[FINALIZE] Emitted terminal events for execution {execution_id}")
 """
-NoETL V2 Execution Engine
+NoETL V2 Execution Engine - Canonical Format
 
 Event-driven control flow engine that:
 1. Consumes events from workers
-2. Evaluates case/when/then rules  
+2. Evaluates next[].when transitions for conditional routing
 3. Emits commands to queue table
 4. Maintains execution state
 
-No backward compatibility - pure v2 implementation.
+Canonical format only - no case/when/then blocks.
 """
 
 import logging
@@ -77,7 +77,7 @@ from jinja2 import Template, Environment, StrictUndefined
 from psycopg.types.json import Json
 from psycopg.rows import dict_row
 
-from noetl.core.dsl.v2.models import Event, Command, Playbook, Step, CaseEntry, ToolCall
+from noetl.core.dsl.v2.models import Event, Command, Playbook, Step, ToolCall, CommandSpec
 from noetl.core.db.pool import get_pool_connection, get_snowflake_id
 from noetl.core.cache import get_nats_cache
 
@@ -789,10 +789,10 @@ class TemplateCache:
 
 class ControlFlowEngine:
     """
-    V2 Control Flow Engine.
+    V2 Control Flow Engine - Canonical Format.
 
-    Processes events and applies case/when/then rules to determine next actions.
-    Pure event-driven architecture with no backward compatibility.
+    Processes events and evaluates next[].when transitions for conditional routing.
+    Pure event-driven architecture with canonical DSL format only.
     """
 
     # Shared template cache across all ControlFlowEngine instances
@@ -890,82 +890,99 @@ class ControlFlowEngine:
             logger.error(f"Condition evaluation error: {e} | Condition: {when_expr}")
             return False
     
-    async def _process_case_rules(
+    async def _evaluate_next_transitions(
         self,
         state: ExecutionState,
         step_def: Step,
         event: Event
     ) -> list[Command]:
         """
-        Process case rules for a given event and return matching commands.
+        Evaluate next[].when conditions and return commands for matching transitions.
 
-        Supports two case evaluation modes via step.spec.case_mode:
-        - exclusive (default): XOR-split, first matching when: wins
-        - inclusive: OR-split, ALL matching when: conditions execute their then: blocks
+        Canonical format routing using next[].when:
+        - Each next entry has optional 'when' condition
+        - Entries without 'when' always match
+        - next_mode controls evaluation: exclusive (first match) or inclusive (all matches)
 
-        In inclusive mode:
-        - All matching conditions execute their then: blocks sequentially
-        - next: in any then: block acts as a break - stops evaluation and transitions
-        - else: only executes if zero when: conditions matched
+        Example:
+            next:
+              - step: success_handler
+                when: "{{ outcome.status == 'success' }}"
+              - step: error_handler
+                when: "{{ outcome.status == 'error' }}"
+              - step: default_handler  # No when = always matches
         """
         commands = []
         context = state.get_render_context(event)
 
-        # Get case_mode from step spec (default: exclusive)
-        case_mode = "exclusive"
-        if step_def.spec and step_def.spec.case_mode:
-            case_mode = step_def.spec.case_mode
+        # Get next_mode from step spec (default: exclusive)
+        next_mode = "exclusive"
+        if step_def.spec and step_def.spec.next_mode:
+            next_mode = step_def.spec.next_mode
 
-        if step_def.case:
-            logger.info(f"[CASE-EVAL] Step {event.step} has {len(step_def.case)} case rules, mode={case_mode}, evaluating for event {event.name}")
+        if not step_def.next:
+            return commands
 
-            any_matched = False
-            break_evaluation = False
+        # Normalize next to list of dicts
+        next_items = step_def.next
+        if isinstance(next_items, str):
+            next_items = [{"step": next_items}]
+        elif isinstance(next_items, list):
+            next_items = [
+                item if isinstance(item, dict) else {"step": item}
+                for item in next_items
+            ]
 
-            for idx, case_entry in enumerate(step_def.case):
-                if break_evaluation:
-                    break
+        logger.info(f"[NEXT-EVAL] Step {event.step} has {len(next_items)} next targets, mode={next_mode}, evaluating for event {event.name}")
 
-                # Handle else: clause (no when: condition)
-                if not case_entry.when or case_entry.when == "else":
-                    # else: only fires when no conditions matched (at the end)
-                    if not any_matched:
-                        logger.info(f"[CASE-ELSE] Step {event.step}: executing else clause")
-                        new_commands, has_next = await self._process_then_actions_with_break(
-                            case_entry.then,
-                            state,
-                            event
-                        )
-                        commands.extend(new_commands)
-                        if has_next:
-                            break_evaluation = True
+        any_matched = False
+
+        for idx, next_target in enumerate(next_items):
+            target_step = next_target.get("step")
+            when_condition = next_target.get("when")
+            target_args = next_target.get("args", {})
+
+            if not target_step:
+                logger.warning(f"[NEXT-EVAL] Skipping next entry {idx} with no step")
+                continue
+
+            # Evaluate when condition (if present)
+            if when_condition:
+                logger.debug(f"[NEXT-EVAL] Evaluating next[{idx}].when: {when_condition}")
+                if not self._evaluate_condition(when_condition, context):
+                    logger.debug(f"[NEXT-EVAL] Next[{idx}] condition not matched: {when_condition}")
                     continue
+                logger.info(f"[NEXT-MATCH] Step {event.step}: matched next[{idx}] -> {target_step} (when: {when_condition})")
+            else:
+                # No when condition = always matches
+                logger.info(f"[NEXT-MATCH] Step {event.step}: matched next[{idx}] -> {target_step} (unconditional)")
 
-                # Evaluate condition
-                logger.debug(f"[CASE-EVAL] Evaluating case {idx}: {case_entry.when}")
-                if self._evaluate_condition(case_entry.when, context):
-                    logger.info(f"[CASE-MATCH] Step {event.step}, event {event.name}: matched case {idx}: {case_entry.when}")
-                    any_matched = True
+            any_matched = True
 
-                    # Process then actions
-                    new_commands, has_next = await self._process_then_actions_with_break(
-                        case_entry.then,
-                        state,
-                        event
-                    )
-                    commands.extend(new_commands)
-                    logger.info(f"[CASE-MATCH] Generated {len(new_commands)} commands from case rule")
+            # Get target step definition
+            target_step_def = state.get_step(target_step)
+            if not target_step_def:
+                logger.error(f"[NEXT-EVAL] Target step not found: {target_step}")
+                continue
 
-                    # In exclusive mode: first match wins, stop evaluation
-                    # In inclusive mode: next: acts as break, otherwise continue
-                    if case_mode == "exclusive":
-                        break
-                    elif has_next:
-                        # next: in inclusive mode acts as break
-                        logger.info(f"[CASE-BREAK] Inclusive mode: next: in case {idx} triggered break")
-                        break_evaluation = True
-                else:
-                    logger.debug(f"[CASE-EVAL] Case {idx} did not match: {case_entry.when}")
+            # Render target args
+            rendered_args = {}
+            if target_args:
+                from noetl.core.dsl.render import render_template as recursive_render
+                rendered_args = recursive_render(self.jinja_env, target_args, context)
+
+            # Create command for target step
+            command = await self._create_command_for_step(state, target_step_def, rendered_args)
+            if command:
+                commands.append(command)
+                logger.info(f"[NEXT-MATCH] Created command for step {target_step}")
+
+            # In exclusive mode: first match wins
+            if next_mode == "exclusive":
+                break
+
+        if not any_matched:
+            logger.debug(f"[NEXT-EVAL] No next targets matched for step {event.step}")
 
         return commands
 
@@ -1002,7 +1019,7 @@ class ControlFlowEngine:
         Process actions in a then block.
 
         Supports:
-        - Pipeline blocks: pipe: [...] with catch: and finally:
+        - Task sequences: labeled tasks with tool.eval: for flow control
         - Reserved action types: next, set, result, fail, collect, retry
         - Inline tasks with tool: { task_name: { tool: { kind: ... } } }
 
@@ -1016,39 +1033,45 @@ class ControlFlowEngine:
 
         # Reserved action keys that are not named tasks
         # Any key not in this set that contains a tool: is treated as an inline task
-        reserved_actions = {"next", "set", "vars", "result", "fail", "collect", "retry", "pipe", "catch", "finally"}
+        reserved_actions = {"next", "set", "vars", "result", "fail", "collect", "retry"}
 
         # Normalize to list
         actions = then_block if isinstance(then_block, list) else [then_block]
 
         context = state.get_render_context(event)
 
-        # Check for pipeline block (pipe: with optional catch: and finally:)
-        # Pipeline blocks are executed as atomic units by a single worker
-        from noetl.worker.pipeline_executor import is_pipeline_block, extract_pipeline_block
+        # Check for task sequence (labeled tasks with tool: containing eval:)
+        # Task sequences are executed as atomic units by a single worker
+        from noetl.worker.task_sequence_executor import is_task_sequence, extract_task_sequence
 
-        pipeline_block = None
-        for action in actions:
-            if isinstance(action, dict) and "pipe" in action:
-                pipeline_block = action
-                break
+        if is_task_sequence(actions):
+            # Extract labeled tool tasks and remaining actions
+            task_list, remaining_actions = extract_task_sequence(actions)
 
-        if pipeline_block:
-            # Create a single command for the entire pipeline
-            logger.info(f"[PIPELINE] Processing pipeline block for step {event.step}")
-            command = await self._create_pipeline_command(
-                state, event.step, pipeline_block, context
-            )
-            if command:
-                commands.append(command)
+            if task_list:
+                # Create a single command for the task sequence
+                logger.info(f"[TASK_SEQ] Processing task sequence for step {event.step} with {len(task_list)} tasks")
+                command = await self._create_task_sequence_command(
+                    state, event.step, task_list, remaining_actions, context
+                )
+                if command:
+                    commands.append(command)
 
-            # Process any non-pipeline actions (set, result, fail before pipeline)
-            for action in actions:
-                if not isinstance(action, dict) or "pipe" in action:
-                    continue
-                await self._process_immediate_actions(action, state, context, event, commands)
+                # Process any immediate actions (set, vars, etc. - not next)
+                for action in actions:
+                    if not isinstance(action, dict):
+                        continue
+                    # Skip labeled tasks (they're in the task sequence)
+                    is_task = any(
+                        key not in {"next", "set", "vars", "result", "fail", "collect", "retry"}
+                        and isinstance(val, dict) and "tool" in val
+                        for key, val in action.items()
+                    )
+                    if is_task:
+                        continue
+                    await self._process_immediate_actions(action, state, context, event, commands)
 
-            return commands
+                return commands
         max_pages_env = os.getenv("NOETL_PAGINATION_MAX_PAGES", "100")
         try:
             max_pages = max(1, int(max_pages_env))
@@ -1614,7 +1637,6 @@ class ControlFlowEngine:
             ),
             args={},
             render_context=context,
-            case=None,  # Inline tasks don't have their own case blocks
             attempt=1,
             priority=0,
             metadata={"inline_task": True, "task_name": task_name, "parent_step": step_name}
@@ -1623,66 +1645,65 @@ class ControlFlowEngine:
         logger.info(f"[INLINE-TASK] Created command for task '{task_name}' (kind={tool_kind})")
         return command
 
-    async def _create_pipeline_command(
+    async def _create_task_sequence_command(
         self,
         state: ExecutionState,
         step_name: str,
-        pipeline_block: dict[str, Any],
+        task_list: list[dict[str, Any]],
+        remaining_actions: list[dict[str, Any]],
         context: dict[str, Any]
     ) -> Optional[Command]:
         """
-        Create a command for a pipeline block execution.
+        Create a command for a task sequence execution.
 
-        Pipeline blocks are executed as atomic units by a single worker.
-        The worker handles task sequencing, error handling, and control flow locally.
+        Task sequences are executed as atomic units by a single worker.
+        The worker handles task sequencing, eval: flow control, and control flow locally.
 
         Args:
             state: Current execution state
-            step_name: The step this pipeline belongs to
-            pipeline_block: Pipeline definition:
-                {
-                    "pipe": [...tasks...],
-                    "catch": {"cond": [...]},
-                    "finally": [...]
-                }
+            step_name: The step this task sequence belongs to
+            task_list: List of labeled tasks:
+                [
+                    {"fetch": {"tool": {"kind": "http", "eval": [...]}}},
+                    {"transform": {"tool": {"kind": "python", ...}}},
+                    ...
+                ]
+            remaining_actions: Non-task actions to process after sequence (next, vars, etc.)
             context: Render context for Jinja2 templates
 
         Returns:
-            Command object for the pipeline
+            Command object for the task sequence
         """
-        pipe_tasks = pipeline_block.get("pipe", [])
-        if not pipe_tasks:
-            logger.warning(f"[PIPELINE] Empty pipeline for step {step_name}")
+        if not task_list:
+            logger.warning(f"[TASK_SEQ] Empty task sequence for step {step_name}")
             return None
 
         # Get task names for logging
         task_names = []
-        for task in pipe_tasks:
+        for task in task_list:
             if isinstance(task, dict):
                 task_names.extend(task.keys())
 
-        logger.info(f"[PIPELINE] Creating command for step {step_name} with tasks: {task_names}")
+        logger.info(f"[TASK_SEQ] Creating command for step {step_name} with tasks: {task_names}")
 
-        # Create command with special "pipeline" tool kind
-        # The worker will recognize this and use PipelineExecutor
+        # Create command with "task_sequence" tool kind
+        # The worker will recognize this and use TaskSequenceExecutor
         command = Command(
             execution_id=state.execution_id,
-            step=f"{step_name}:pipeline",  # Mark as pipeline
+            step=f"{step_name}:task_sequence",  # Mark as task_sequence
             tool=ToolCall(
-                kind="pipeline",  # Special kind for pipeline execution
+                kind="task_sequence",  # Special kind for task sequence execution
                 config={
-                    "pipe": pipe_tasks,
-                    "catch": pipeline_block.get("catch", {}),
-                    "finally": pipeline_block.get("finally", []),
+                    "tasks": task_list,
+                    "remaining_actions": remaining_actions,
                 }
             ),
             args={},
             render_context=context,
-            case=None,  # Pipeline has its own catch block
             attempt=1,
             priority=0,
             metadata={
-                "pipeline": True,
+                "task_sequence": True,
                 "parent_step": step_name,
                 "task_names": task_names,
             }
@@ -1780,23 +1801,6 @@ class ControlFlowEngine:
             state.variables["loop_index"] = completed_count
             logger.info(f"[LOOP] Added to state.variables: {step.loop.iterator}={item}, loop_index={completed_count}")
         
-        # Build tool config - extract all fields from ToolSpec
-        tool_dict = step.tool.model_dump()
-        tool_config = {k: v for k, v in tool_dict.items() if k != "kind"}
-
-        # Merge step-level result config (for output_select pattern)
-        # This allows playbooks to use step-level result: with output_select and store
-        if step.result:
-            tool_config["result"] = step.result
-        
-        # Build args separately - for step inputs
-        step_args = {}
-        if step.args:
-            step_args.update(step.args)
-        
-        # Merge transition args
-        step_args.update(args)
-        
         # Get render context for Jinja2 templates
         context = state.get_render_context(Event(
             execution_id=state.execution_id,
@@ -1804,58 +1808,93 @@ class ControlFlowEngine:
             name="command_creation",
             payload={}
         ))
-        
+
+        # Import render utility
+        from noetl.core.dsl.render import render_template as recursive_render
+
         # Debug: Log state for verify_result step
         if step.step == "verify_result":
             gcs_result = state.step_results.get('run_python_from_gcs', 'NOT_FOUND')
-            logger.error(f"DEBUG verify_result: step_results={list(state.step_results.keys())} | variables={list(state.variables.keys())} | step_args={step_args} | run_python_from_gcs={gcs_result}")
-        
+            logger.error(f"DEBUG verify_result: step_results={list(state.step_results.keys())} | variables={list(state.variables.keys())} | run_python_from_gcs={gcs_result}")
+
         # Debug: Log loop variables in context
         if step.loop:
             logger.warning(f"[LOOP-DEBUG] Step {step.step}: context_keys={list(context.keys())} | iterator='{step.loop.iterator}'={context.get(step.loop.iterator, 'NOT_FOUND')} | loop_index={context.get('loop_index', 'NOT_FOUND')} | state.variables={state.variables}")
-        
-        # Render Jinja2 templates in tool config
-        # CRITICAL: Use recursive render_template to handle nested dicts/lists like params: {latitude: "{{ city.lat }}"}
-        from noetl.core.dsl.render import render_template as recursive_render
-        
-        # Use existing engine environment to benefit from cached filters and settings
-        rendered_tool_config = recursive_render(self.jinja_env, tool_config, context)
-        
-        # Render Jinja2 templates in args (also use recursive rendering for nested structures)
-        rendered_args = recursive_render(self.jinja_env, step_args, context)
-        
-        # Extract case blocks from step definition (if present) for worker-side execution
-        case_blocks = None
-        if step.case:
-            # Convert Pydantic models to dicts for serialization
-            case_blocks = [case_entry.model_dump() for case_entry in step.case]
-            logger.info(f"[CASE] Including {len(case_blocks)} case blocks in command for step '{step.step}'")
 
-        # Extract step spec for case evaluation behavior
+        # Build args separately - for step inputs
+        step_args = {}
+        if step.args:
+            step_args.update(step.args)
+
+        # Merge transition args
+        step_args.update(args)
+
+        # Render Jinja2 templates in args
+        rendered_args = recursive_render(self.jinja_env, step_args, context)
+
+        # Check if step.tool is a pipeline (list of labeled tasks) or single tool
+        pipeline = None
+        if isinstance(step.tool, list):
+            # Pipeline: list of labeled tasks
+            # Each item is {label: {kind: ..., args: ..., eval: ...}}
+            pipeline = recursive_render(self.jinja_env, step.tool, context)
+            logger.info(f"[PIPELINE] Step '{step.step}' has pipeline with {len(pipeline)} tasks")
+
+            # For pipeline steps, use task_sequence as tool kind
+            tool_kind = "task_sequence"
+            tool_config = {"pipeline": pipeline}
+        else:
+            # Single tool (shorthand)
+            tool_dict = step.tool.model_dump()
+            tool_config = {k: v for k, v in tool_dict.items() if k != "kind"}
+            tool_kind = step.tool.kind
+
+            # Merge step-level result config (for output_select pattern)
+            if step.result:
+                tool_config["result"] = step.result
+
+            # Render Jinja2 templates in tool config
+            tool_config = recursive_render(self.jinja_env, tool_config, context)
+
+        # Extract next targets for conditional routing (canonical format)
+        next_targets = None
+        if step.next:
+            # Normalize next to list of dicts
+            next_items = step.next
+            if isinstance(next_items, str):
+                next_items = [{"step": next_items}]
+            elif isinstance(next_items, list):
+                next_items = [
+                    item if isinstance(item, dict) else {"step": item}
+                    for item in next_items
+                ]
+            next_targets = next_items
+            logger.debug(f"[NEXT] Step '{step.step}' has {len(next_targets)} next targets")
+
+        # Extract step spec for next evaluation behavior (canonical format)
         command_spec = None
         if step.spec:
-            from noetl.core.dsl.v2.models import CommandSpec
             command_spec = CommandSpec(
-                case_mode=step.spec.case_mode,
-                eval_mode=step.spec.eval_mode
+                next_mode=step.spec.next_mode
             )
-            logger.info(f"[SPEC] Step '{step.step}' has spec: case_mode={step.spec.case_mode}, eval_mode={step.spec.eval_mode}")
+            logger.debug(f"[SPEC] Step '{step.step}' has spec: next_mode={step.spec.next_mode}")
 
         command = Command(
             execution_id=state.execution_id,
             step=step.step,
             tool=ToolCall(
-                kind=step.tool.kind,
-                config=rendered_tool_config  # Tool-specific config (code, url, query, etc.)
+                kind=tool_kind,
+                config=tool_config
             ),
-            args=rendered_args,  # Rendered step input arguments
-            render_context=context,  # Pass full context for plugin template rendering
-            case=case_blocks,  # Pass case blocks to worker for immediate execution
-            spec=command_spec,  # Pass step behavior spec for case evaluation
+            args=rendered_args,
+            render_context=context,
+            pipeline=pipeline,
+            next_targets=next_targets,
+            spec=command_spec,
             attempt=1,
             priority=0
         )
-        
+
         return command
     
     async def _process_vars_block(self, event: Event, state: ExecutionState, step_def: Step) -> None:
@@ -1953,12 +1992,12 @@ class ControlFlowEngine:
             logger.error("Event missing step name")
             return commands
         
-        # Handle inline tasks (dynamically created from case then blocks)
+        # Handle inline tasks (dynamically created from pipeline task execution)
         # These have format "parent_step:task_name" (e.g., "success:send_callback")
         # and don't exist as workflow steps. They execute and emit events, but don't need orchestration
-        # EXCEPTION: Pipeline steps (e.g., "step:pipeline") are NOT inline tasks - they need special handling
-        is_pipeline_step = event.step.endswith(":pipeline")
-        is_inline_task = ':' in event.step and state.get_step(event.step) is None and not is_pipeline_step
+        # EXCEPTION: Task sequence steps (e.g., "step:task_sequence") are NOT inline tasks - they need special handling
+        is_task_sequence_step = event.step.endswith(":task_sequence")
+        is_inline_task = ':' in event.step and state.get_step(event.step) is None and not is_task_sequence_step
         if is_inline_task:
             logger.debug(f"Inline task: {event.step} - persisting event without orchestration")
             # Persist the event but don't generate commands (no orchestration needed)
@@ -2027,25 +2066,25 @@ class ControlFlowEngine:
                     await self.state_store.save_state(state)
             return commands
 
-        # Handle pipeline completion events
-        # Pipeline steps have suffix :pipeline (e.g., run_pipeline:pipeline)
-        if event.step.endswith(":pipeline") and event.name == "call.done":
+        # Handle task sequence completion events
+        # Task sequence steps have suffix :task_sequence (e.g., fetch_page:task_sequence)
+        if event.step.endswith(":task_sequence") and event.name == "call.done":
             parent_step = event.step.rsplit(":", 1)[0]
             response_data = event.payload.get("response", event.payload)
 
-            # Store pipeline result under the parent step name
+            # Store task sequence result under the parent step name
             state.mark_step_completed(parent_step, response_data)
-            logger.info(f"[PIPELINE] Stored pipeline result for parent step '{parent_step}'")
+            logger.info(f"[TASK_SEQ] Stored task sequence result for parent step '{parent_step}'")
 
-            # Process finally block from pipeline result
-            finally_block = response_data.get("finally", [])
-            if finally_block:
-                logger.info(f"[PIPELINE] Processing finally block: {finally_block}")
-                pipeline_commands = await self._process_then_actions(
-                    finally_block, state, event
+            # Process remaining actions from task sequence result (next, vars, etc.)
+            remaining_actions = response_data.get("remaining_actions", [])
+            if remaining_actions:
+                logger.info(f"[TASK_SEQ] Processing remaining actions: {remaining_actions}")
+                seq_commands = await self._process_then_actions(
+                    remaining_actions, state, event
                 )
-                commands.extend(pipeline_commands)
-                logger.info(f"[PIPELINE] Generated {len(pipeline_commands)} commands from finally block")
+                commands.extend(seq_commands)
+                logger.info(f"[TASK_SEQ] Generated {len(seq_commands)} commands from remaining actions")
 
             return commands
 
@@ -2057,18 +2096,18 @@ class ControlFlowEngine:
         # Update current step
         state.set_current_step(event.step)
         
-        # PRE-PROCESSING: Identify if a retry is triggered by worker or server rules
+        # PRE-PROCESSING: Identify if a retry is triggered by worker eval rules
         # This is needed to handle pagination correctly in loops
-        worker_case_action = event.payload.get("case_action")
-        has_worker_retry = worker_case_action and worker_case_action.get("type") == "retry"
-        
-        # CRITICAL: Store call.done/call.error response in state BEFORE processing case rules
+        worker_eval_action = event.payload.get("eval_action")
+        has_worker_retry = worker_eval_action and worker_eval_action.get("type") == "retry"
+
+        # CRITICAL: Store call.done/call.error response in state BEFORE evaluating next transitions
         # This ensures the result is available in render context for subsequent steps
         # Worker sends response directly as payload (not wrapped in "response" key)
         if event.name == "call.done":
             response_data = event.payload.get("response", event.payload)
             state.mark_step_completed(event.step, response_data)
-            logger.debug(f"[CALL.DONE] Stored response for step {event.step} in state BEFORE case evaluation")
+            logger.debug(f"[CALL.DONE] Stored response for step {event.step} in state BEFORE next evaluation")
         elif event.name == "call.error":
             # Mark step as completed even on error - it finished executing (with failure)
             error_data = event.payload.get("error", event.payload)
@@ -2078,18 +2117,18 @@ class ControlFlowEngine:
         # Get render context AFTER storing call.done response
         context = state.get_render_context(event)
 
-        # Process case rules ONCE and store results
+        # Evaluate next[].when transitions ONCE and store results
         # This allows us to detect retries before deciding whether to aggregate results
         # IMPORTANT: Only process on call.done/call.error to avoid duplicate command generation
-        # step.exit should NOT trigger case evaluation because the worker already emits call.done
-        # which triggers case evaluation and generates transition commands
-        case_commands = []
+        # step.exit should NOT trigger next evaluation because the worker already emits call.done
+        # which triggers next evaluation and generates transition commands
+        next_commands = []
         if event.name in ("call.done", "call.error"):
-            case_commands = await self._process_case_rules(state, step_def, event)
+            next_commands = await self._evaluate_next_transitions(state, step_def, event)
             
-        # Identify retry commands from server rules
-        server_retry_commands = [c for c in case_commands if c.step == event.step]
-        
+        # Identify retry commands (commands targeting the same step are retries)
+        server_retry_commands = [c for c in next_commands if c.step == event.step]
+
         is_retrying = bool(server_retry_commands) or has_worker_retry
         if is_retrying:
             logger.info(f"[ENGINE] Step {event.step} is retrying (server_retry={bool(server_retry_commands)}, worker_retry={has_worker_retry})")
@@ -2186,22 +2225,21 @@ class ControlFlowEngine:
                 state.mark_step_completed(event.step, event.payload["result"])
                 logger.debug(f"Stored result for step {event.step} in state")
         
-        # Note: call.done response was stored earlier (before case evaluation) to ensure
+        # Note: call.done response was stored earlier (before next evaluation) to ensure
         # it's available in render_context when creating commands for subsequent steps
-        
-        # Add case commands we already generated to the final list
-        commands.extend(case_commands)
 
-        # DISABLED: Worker case action processing
-        # The server now evaluates all cases on call.done events, so we don't need
-        # to process worker case actions. This prevents duplicate command generation.
-        # The worker can still execute inline tasks directly, but routing (next/retry) is
-        # handled by the server on call.done.
+        # Add next transition commands we already generated to the final list
+        commands.extend(next_commands)
+
+        # DISABLED: Worker eval action processing
+        # The server now evaluates all next[].when transitions on call.done events,
+        # so we don't need to process worker eval actions. This prevents duplicate
+        # command generation. The worker handles tool.eval for flow control (retry/fail/continue).
         should_process_worker_action = False  # Disabled to prevent duplicate commands
         if should_process_worker_action:
-            action_type = worker_case_action.get("type")
+            action_type = worker_eval_action.get("type")
             # Worker sends "steps" for next actions, "config" for retry
-            action_config = worker_case_action.get("config") or worker_case_action.get("steps", {})
+            action_config = worker_eval_action.get("config") or worker_eval_action.get("steps", {})
 
             logger.info(f"[ENGINE] Server matched no rules, but worker reported '{action_type}' action. Processing worker action. config={action_config}")
 
@@ -2228,7 +2266,7 @@ class ControlFlowEngine:
                 logger.info(f"[ENGINE] Applied next from worker: {len(worker_commands)} commands generated")
         
         # Handle loop.item events - continue loop iteration
-        # Only process if case didn't generate commands
+        # Only process if next transitions didn't generate commands
         if not commands and event.name == "loop.item" and step_def.loop:
             logger.debug(f"Processing loop.item event for {event.step}")
             command = await self._create_command_for_step(state, step_def, {})
@@ -2238,10 +2276,10 @@ class ControlFlowEngine:
             else:
                 # Loop completed, would emit loop.done below
                 logger.debug(f"Loop iteration complete, will check for loop.done")
-        
+
         # Check if step has completed loop - emit loop.done event
-        # Check on step.exit regardless of whether case generated commands
-        # (case may have matched call.done and generated inline task/next commands)
+        # Check on step.exit regardless of whether next transitions generated commands
+        # (next may have matched call.done and generated transition commands)
         logger.info(f"[LOOP-DEBUG] Checking step.exit: step={event.step}, event.name={event.name}, has_loop={step_def.loop is not None}")
         if step_def.loop and event.name == "step.exit":
             logger.info(f"[LOOP-DEBUG] Entering loop completion check for {event.step}")
@@ -2344,7 +2382,7 @@ class ControlFlowEngine:
                         state.mark_step_completed(event.step, loop_aggregation)
                         logger.info(f"Stored aggregated loop result for {event.step}: {loop_aggregation['stats']}")
                         
-                        # Process loop.done event through case matching
+                        # Process loop.done event through next transitions
                         loop_done_event = Event(
                             execution_id=event.execution_id,
                             step=event.step,
@@ -2355,15 +2393,15 @@ class ControlFlowEngine:
                                 "result": loop_aggregation  # Include aggregated result in payload
                             }
                         )
-                        loop_done_commands = await self._process_case_rules(state, step_def, loop_done_event)
+                        loop_done_commands = await self._evaluate_next_transitions(state, step_def, loop_done_event)
                         commands.extend(loop_done_commands)
-        
+
         # Process vars block if present (extract variables from step result after completion)
         if event.name == "step.exit" and step_def:
             logger.info(f"[VARS_DEBUG] step.exit event for step '{event.step}', step_def.vars={getattr(step_def, 'vars', None)}")
             await self._process_vars_block(event, state, step_def)
-        
-        # If step.exit event and no case/loop matched, use structural next as fallback
+
+        # If step.exit event and no next/loop matched, use structural next as fallback
         if event.name == "step.exit" and step_def.next and not commands:
             # Check if step failed - don't process next if it did
             step_status = event.payload.get("status", "").upper()
@@ -2371,7 +2409,7 @@ class ControlFlowEngine:
                 logger.info(f"[STRUCTURAL-NEXT] Step {event.step} failed, skipping structural next")
             # Only proceed to next if loop is done (or no loop) and step didn't fail
             elif not step_def.loop or state.is_loop_done(event.step):
-                logger.info(f"[STRUCTURAL-NEXT] No case matched for step.exit, using structural next: {step_def.next}")
+                logger.info(f"[STRUCTURAL-NEXT] No next matched for step.exit, using structural next: {step_def.next}")
                 # Handle structural next
                 next_items = step_def.next
                 if isinstance(next_items, str):
@@ -2434,32 +2472,32 @@ class ControlFlowEngine:
         
         # Check for completion (only emit once) - prepare completion events but persist after current event
         # Completion triggers when step.exit occurs with no commands generated AND step has no routing
-        # This handles explicit terminal steps (no next/case blocks) only
+        # This handles explicit terminal steps (no next blocks) only
         # OR when a step fails with no error handler (no commands generated despite having routing)
         completion_events = []
-        logger.info(f"COMPLETION CHECK: event={event.name}, step={event.step}, commands={len(commands)}, completed={state.completed}, has_next={bool(step_def.next if step_def else False)}, has_case={bool(step_def.case if step_def else False)}, has_error={bool(event.payload.get('error'))}")
-        
+        logger.info(f"COMPLETION CHECK: event={event.name}, step={event.step}, commands={len(commands)}, completed={state.completed}, has_next={bool(step_def.next if step_def else False)}, has_error={bool(event.payload.get('error'))}")
+
         # Check if step failed
         has_error = event.payload.get("error") is not None
-        
+
         # Only trigger completion if:
         # 1. step.exit event
         # 2. No commands generated
-        # 3. EITHER: Step has NO next or case blocks (true terminal step)
+        # 3. EITHER: Step has NO next (true terminal step)
         #    OR: Step failed with no error handling (has error but no commands)
-        #    OR: Step has routing (next/case) but none of them matched/generated commands (effective terminal)
+        #    OR: Step has routing (next) but none matched/generated commands (effective terminal)
         # 4. Not already completed
-        is_terminal_step = step_def and not step_def.next and not step_def.case
+        is_terminal_step = step_def and not step_def.next
         is_failed_with_no_handler = has_error and not commands
-        
+
         # EFFECTIVE TERMINAL: Step has routing but no commands were generated
-        # (e.g. all case rules only had inline tasks, or structural next was skipped)
+        # (e.g. all next[].when conditions failed, or structural next was skipped)
         is_effective_terminal = step_def and not commands and not state.completed
 
         # Check for pending commands using multiple methods:
         # 1. In-memory state tracking (issued_steps vs completed_steps)
         # 2. Database query as backup (only if in-memory state is uncertain)
-        # This prevents premature completion when case blocks trigger on call.done but step.exit has no matching case
+        # This prevents premature completion when next transitions trigger on call.done but step.exit has no matching next
         has_pending_commands = False
 
         # Debug: log current state before pending check
@@ -2807,10 +2845,21 @@ class ControlFlowEngine:
                 logger.error(f"ENGINE: Failed to process keychain section: {e}")
                 # Don't fail execution, keychain errors will surface when workers try to resolve
         
-        # Find start step
-        start_step = state.get_step("start")
+        # Find entry step using canonical rules:
+        # 1. executor.spec.entry_step if configured
+        # 2. workflow[0].step (first step in workflow array)
+        entry_step_name = playbook.get_entry_step()
+        start_step = state.get_step(entry_step_name)
         if not start_step:
-            raise ValueError("Playbook must have a 'start' step")
+            # Fallback to legacy "start" step for backwards compatibility
+            start_step = state.get_step("start")
+            if start_step:
+                entry_step_name = "start"
+            else:
+                raise ValueError(
+                    f"Entry step '{entry_step_name}' not found in workflow. "
+                    f"Available steps: {[s.step for s in playbook.workflow]}"
+                )
         
         # Emit playbook.initialized event (playbook loaded and validated)
         # CRITICAL: Strip massive result objects from workload to prevent state pollution in sub-playbooks
@@ -2847,8 +2896,8 @@ class ControlFlowEngine:
             name="workflow.initialized",
             payload=LifecycleEventPayload(
                 status="initialized",
-                final_step=None,
-                result={"first_step": "start", "playbook_path": playbook_path, "workload": workload_snapshot}
+                final_step=playbook.get_final_step(),  # Include final_step if configured
+                result={"first_step": entry_step_name, "playbook_path": playbook_path, "workload": workload_snapshot}
             ).model_dump(),
             timestamp=datetime.now(timezone.utc)
         )

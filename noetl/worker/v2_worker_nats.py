@@ -1849,13 +1849,13 @@ class V2Worker:
                 return result
             return result.get('data', result) if isinstance(result, dict) else result
 
-        elif tool_kind == "pipeline":
-            # Pipeline execution - run tasks sequentially with error handling
-            from noetl.worker.pipeline_executor import PipelineExecutor
+        elif tool_kind == "task_sequence":
+            # Task sequence execution - run labeled tasks with tool.eval flow control
+            from noetl.worker.task_sequence_executor import TaskSequenceExecutor
 
-            # Create pipeline executor with tool execution callback
-            async def execute_pipeline_tool(kind: str, config: dict, ctx: dict) -> Any:
-                """Execute a single tool within the pipeline."""
+            # Create task sequence executor with tool execution callback
+            async def execute_task_tool(kind: str, config: dict, ctx: dict) -> Any:
+                """Execute a single tool within the task sequence."""
                 return await self._execute_tool(kind, config, {}, step, ctx)
 
             def render_template_str(template: str, ctx: dict) -> str:
@@ -1863,7 +1863,7 @@ class V2Worker:
                 try:
                     return jinja_env.from_string(template).render(**ctx)
                 except Exception as e:
-                    logger.warning(f"[PIPELINE] Template render error: {e}")
+                    logger.warning(f"[TASK_SEQ] Template render error: {e}")
                     return template
 
             def render_dict_templates(data: dict, ctx: dict) -> dict:
@@ -1871,20 +1871,27 @@ class V2Worker:
                 from noetl.core.dsl.render import render_template as recursive_render
                 return recursive_render(jinja_env, data, ctx)
 
-            executor = PipelineExecutor(
-                tool_executor=execute_pipeline_tool,
+            executor = TaskSequenceExecutor(
+                tool_executor=execute_task_tool,
                 render_template=render_template_str,
                 render_dict=render_dict_templates,
             )
 
-            # Execute the pipeline
-            pipeline_result = await executor.execute(
-                pipeline=task_config,
+            # Extract tasks and remaining actions from config
+            tasks = task_config.get("tasks", [])
+            remaining_actions = task_config.get("remaining_actions", [])
+
+            # Execute the task sequence
+            seq_result = await executor.execute(
+                tasks=tasks,
                 base_context=context,
             )
 
-            # Return pipeline result
-            return pipeline_result
+            # Include remaining actions in result for engine to process
+            if remaining_actions and seq_result.get("status") != "failed":
+                seq_result["remaining_actions"] = remaining_actions
+
+            return seq_result
 
         elif tool_kind == "noop":
             # No-operation tool - used for case-driven steps that don't need tool execution

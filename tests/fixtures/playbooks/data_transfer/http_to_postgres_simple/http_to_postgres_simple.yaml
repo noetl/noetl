@@ -130,8 +130,7 @@ workflow:
     desc: End HTTP to PostgreSQL transfer
     tool:
       kind: python
-      code: |
-        auth: {}
+      auth: {}
       libs: {}
       args: {}
       code: |

@@ -48,16 +48,11 @@ workflow:
       name: compute_flag
       args:
         temperature_c: "{{ workload.temperature_c }}"
-    case:
-      - when: "{{ event.name == 'call.done' and response is defined and response.is_hot == true }}"
-        then:
-          - next:
-              - step: hot_path
-
-      - when: "{{ event.name == 'call.done' and response is defined and response.is_hot == false }}"
-        then:
-          - next:
-              - step: cold_path
+    next:
+      - step: hot_path
+        when: "{{ eval_flag.is_hot == true }}"
+      - step: cold_path
+        when: "{{ eval_flag.is_hot == false }}"
 
   - step: hot_path
     desc: "Hot branch; fan out to two steps in PARALLEL"

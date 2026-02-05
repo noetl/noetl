@@ -4,14 +4,14 @@ metadata:
   name: test_pipeline_error_handling
   path: tests/pagination/pipeline/errors
   description: |
-    Tests catch.cond error handling patterns in pipeline execution.
+    Tests tool.eval error handling patterns in task sequence execution.
 
     Validates:
     - Retry on transient errors (500, 503)
     - Rate limit handling with Retry-After header
-    - Skip on transform errors
+    - Continue on transform errors (skip pattern)
     - Fail on auth errors (401, 403)
-    - _err variable access in conditions
+    - outcome variable access in eval conditions
 
 workload:
   api_url: "http://paginated-api.test-server.svc.cluster.local:5555"
@@ -41,203 +41,163 @@ workflow:
   - step: test_retry_transient
     desc: Test retry on 500 errors with flaky endpoint
     tool:
-      kind: noop
-    case:
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          - pipe:
-              - reset_flaky:
-                  tool:
-                    kind: http
-                    url: "{{ workload.api_url }}/api/v1/flaky/reset"
-                    method: POST
+      - reset_flaky:
+          kind: http
+          url: "{{ workload.api_url }}/api/v1/flaky/reset"
+          method: POST
 
-              - fetch_flaky:
-                  tool:
-                    kind: http
-                    url: "{{ workload.api_url }}/api/v1/flaky"
-                    method: GET
-                    params:
-                      page: 1
-                      fail_on: "1"
+      - fetch_flaky:
+          kind: http
+          url: "{{ workload.api_url }}/api/v1/flaky"
+          method: GET
+          params:
+            page: 1
+            fail_on: "1"
+          eval:
+            - expr: "{{ outcome.error.retryable and outcome.error.kind == 'server_error' }}"
+              do: retry
+              attempts: 3
+              backoff: linear
+              delay: 0.5
+            - expr: "{{ outcome.status == 'error' }}"
+              do: fail
+            - else:
+                do: continue
 
-              - validate:
-                  tool:
-                    kind: python
-                    args:
-                      http_response: "{{ _prev }}"
-                    code: |
-                      response_body = http_response.get('data', {})
-                      data = response_body.get('data', [])
-                      result = {
-                        'test': 'retry_on_500',
-                        'status': 'passed' if len(data) > 0 else 'failed',
-                        'items_received': len(data),
-                        'message': 'Retry succeeded after 500 error'
-                      }
-
-            catch:
-              cond:
-                - when: "{{ _err.retryable and _err.kind == 'server_error' }}"
-                  do: retry
-                  attempts: 3
-                  backoff: linear
-                  delay: 0.5
-
-                - else:
-                    do: fail
-
-            finally:
-              - next:
-                  - step: test_rate_limit
+      - validate:
+          kind: python
+          args:
+            http_response: "{{ _prev }}"
+          code: |
+            response_body = http_response.get('data', {})
+            data = response_body.get('data', [])
+            result = {
+              'test': 'retry_on_500',
+              'status': 'passed' if len(data) > 0 else 'failed',
+              'items_received': len(data),
+              'message': 'Retry succeeded after 500 error'
+            }
+    next:
+      - step: test_rate_limit
 
   - step: test_rate_limit
     desc: Test rate limit handling with Retry-After header
     tool:
-      kind: noop
-    case:
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          - pipe:
-              - fetch_1:
-                  tool:
-                    kind: http
-                    url: "{{ workload.api_url }}/api/v1/rate-limited"
-                    method: GET
-                    params:
-                      page: 1
-                      requests_per_second: 1
+      - fetch_1:
+          kind: http
+          url: "{{ workload.api_url }}/api/v1/rate-limited"
+          method: GET
+          params:
+            page: 1
+            requests_per_second: 1
+          eval:
+            - expr: "{{ outcome.error.kind == 'rate_limit' }}"
+              do: retry
+              attempts: 5
+              delay: 2.0
+            - expr: "{{ outcome.error.retryable }}"
+              do: retry
+              attempts: 3
+            - expr: "{{ outcome.status == 'error' }}"
+              do: fail
+            - else:
+                do: continue
 
-              - fetch_2:
-                  tool:
-                    kind: http
-                    url: "{{ workload.api_url }}/api/v1/rate-limited"
-                    method: GET
-                    params:
-                      page: 2
-                      requests_per_second: 1
+      - fetch_2:
+          kind: http
+          url: "{{ workload.api_url }}/api/v1/rate-limited"
+          method: GET
+          params:
+            page: 2
+            requests_per_second: 1
+          eval:
+            - expr: "{{ outcome.error.kind == 'rate_limit' }}"
+              do: retry
+              attempts: 5
+              delay: 2.0
+            - expr: "{{ outcome.error.retryable }}"
+              do: retry
+              attempts: 3
+            - expr: "{{ outcome.status == 'error' }}"
+              do: fail
+            - else:
+                do: continue
 
-              - validate:
-                  tool:
-                    kind: python
-                    args:
-                      http_response: "{{ _prev }}"
-                    code: |
-                      response_body = http_response.get('data', {})
-                      data = response_body.get('data', [])
-                      result = {
-                        'test': 'retry_on_rate_limit',
-                        'status': 'passed',
-                        'items_received': len(data),
-                        'message': 'Rate limit handled correctly'
-                      }
-
-            catch:
-              cond:
-                - when: "{{ _err.kind == 'rate_limit' }}"
-                  do: retry
-                  attempts: 5
-                  delay: "{{ _err.retry_after | default(2) }}"
-
-                - when: "{{ _err.retryable }}"
-                  do: retry
-                  attempts: 3
-
-                - else:
-                    do: fail
-
-            finally:
-              - next:
-                  - step: test_skip_transform
+      - validate:
+          kind: python
+          args:
+            http_response: "{{ _prev }}"
+          code: |
+            response_body = http_response.get('data', {})
+            data = response_body.get('data', [])
+            result = {
+              'test': 'retry_on_rate_limit',
+              'status': 'passed',
+              'items_received': len(data),
+              'message': 'Rate limit handled correctly'
+            }
+    next:
+      - step: test_skip_transform
 
   - step: test_skip_transform
-    desc: Test skip action on transform errors
+    desc: Test continue action on transform errors (skip pattern)
     tool:
-      kind: noop
-    case:
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          - pipe:
-              - fetch:
-                  tool:
-                    kind: http
-                    url: "{{ workload.api_url }}/api/v1/assessments"
-                    method: GET
-                    params:
-                      page: 1
+      - fetch:
+          kind: http
+          url: "{{ workload.api_url }}/api/v1/assessments"
+          method: GET
+          params:
+            page: 1
 
-              - transform_bad:
-                  tool:
-                    kind: python
-                    args:
-                      http_response: "{{ _prev }}"
-                    code: |
-                      broken = http_response['nonexistent_key']['also_missing']
-                      result = broken
+      - transform_bad:
+          kind: python
+          args:
+            http_response: "{{ _prev }}"
+          code: |
+            broken = http_response['nonexistent_key']['also_missing']
+            result = broken
+          eval:
+            - expr: "{{ outcome.status == 'error' }}"
+              do: continue
+            - else:
+                do: continue
 
-              - validate:
-                  tool:
-                    kind: python
-                    args:
-                      prev_data: "{{ _prev }}"
-                    code: |
-                      result = {
-                        'test': 'skip_transform_error',
-                        'status': 'passed',
-                        'skipped': True,
-                        'prev_after_skip': prev_data,
-                        'message': 'Transform error was skipped successfully'
-                      }
-
-            catch:
-              cond:
-                - when: "{{ _task == 'transform_bad' }}"
-                  do: skip
-                  set_prev:
-                    skipped: true
-                    reason: "transform failed"
-                    fallback_data: []
-
-                - else:
-                    do: fail
-
-            finally:
-              - next:
-                  - step: test_fail_auth
+      - validate:
+          kind: python
+          args:
+            prev_data: "{{ _prev }}"
+          code: |
+            result = {
+              'test': 'skip_transform_error',
+              'status': 'passed',
+              'skipped': True,
+              'prev_after_skip': prev_data,
+              'message': 'Transform error was skipped successfully'
+            }
+    next:
+      - step: test_fail_auth
 
   - step: test_fail_auth
     desc: Test fail action on auth errors
     tool:
-      kind: noop
-    case:
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          - pipe:
-              - fetch_auth_error:
-                  tool:
-                    kind: http
-                    url: "{{ workload.api_url }}/api/v1/errors"
-                    method: GET
-                    params:
-                      error_type: "auth"
+      - fetch_auth_error:
+          kind: http
+          url: "{{ workload.api_url }}/api/v1/errors"
+          method: GET
+          params:
+            error_type: "auth"
+          eval:
+            - expr: "{{ outcome.error.kind == 'auth' }}"
+              do: fail
+            - else:
+                do: continue
 
-              - should_not_reach:
-                  tool:
-                    kind: python
-                    code: |
-                      result = {'error': 'This should not execute'}
-
-            catch:
-              cond:
-                - when: "{{ _err.kind == 'auth' }}"
-                  do: fail
-
-                - else:
-                    do: fail
-
-            finally:
-              - next:
-                  - step: generate_report
+      - should_not_reach:
+          kind: python
+          code: |
+            result = {'error': 'This should not execute'}
+    next:
+      - step: generate_report
 
   - step: generate_report
     desc: Generate test results report
@@ -258,14 +218,14 @@ workflow:
             "failed": failed
           },
           "test_results": results,
-          "catch_cond_features_tested": [
+          "tool_eval_features_tested": [
             "retry with exponential backoff",
             "retry with Retry-After header",
-            "skip with set_prev fallback",
+            "continue on error (skip pattern)",
             "fail on non-retryable errors",
-            "_err.kind condition matching",
-            "_err.retryable boolean check",
-            "_task name matching"
+            "outcome.error.kind condition matching",
+            "outcome.error.retryable boolean check",
+            "outcome.status check"
           ]
         }
     next:

@@ -24,41 +24,54 @@ workflow:
   - step: start
     desc: Begin NATS K/V test
     tool:
-      kind: python
-      code: |
-        result = {"status": "initialized"}
+      - init:
+          kind: python
+          code: |
+            result = {"status": "initialized"}
+    next:
+      - step: kv_put
 
   - step: kv_put
     desc: Put a test value in NATS K/V
     tool:
-      kind: nats
-      auth: "{{ workload.nats_credential }}"
-      operation: kv_put
-      bucket: "{{ workload.bucket }}"
-      key: "{{ workload.test_key }}"
-      value: "{{ workload.test_value }}"
+      - put_value:
+          kind: nats
+          auth: "{{ workload.nats_credential }}"
+          operation: kv_put
+          bucket: "{{ workload.bucket }}"
+          key: "{{ workload.test_key }}"
+          value: "{{ workload.test_value }}"
+    next:
+      - step: kv_get
 
   - step: kv_get
     desc: Get the value back from NATS K/V
     tool:
-      kind: nats
-      auth: "{{ workload.nats_credential }}"
-      operation: kv_get
-      bucket: "{{ workload.bucket }}"
-      key: "{{ workload.test_key }}"
+      - get_value:
+          kind: nats
+          auth: "{{ workload.nats_credential }}"
+          operation: kv_get
+          bucket: "{{ workload.bucket }}"
+          key: "{{ workload.test_key }}"
+    next:
+      - step: kv_delete
 
   - step: kv_delete
     desc: Delete the test value
     tool:
-      kind: nats
-      auth: "{{ workload.nats_credential }}"
-      operation: kv_delete
-      bucket: "{{ workload.bucket }}"
-      key: "{{ workload.test_key }}"
+      - delete_value:
+          kind: nats
+          auth: "{{ workload.nats_credential }}"
+          operation: kv_delete
+          bucket: "{{ workload.bucket }}"
+          key: "{{ workload.test_key }}"
+    next:
+      - step: end
 
   - step: end
     desc: Test complete
     tool:
-      kind: python
-      code: |
-        result = {"status": "complete", "message": "NATS K/V operations tested successfully"}
+      - complete:
+          kind: python
+          code: |
+            result = {"status": "complete", "message": "NATS K/V operations tested successfully"}

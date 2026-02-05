@@ -40,12 +40,8 @@ workflow:
       args: {}
       code: |
         result = {"status": "initialized"}
-    
-    case:
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          next:
-            - step: setup_storage
+    next:
+      - step: setup_storage
 
   - step: setup_storage
     desc: "Ensure results table exists"
@@ -61,55 +57,45 @@ workflow:
           score_category TEXT,
           processed_at TIMESTAMPTZ DEFAULT now()
         );
-    
-    case:
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          next:
-            - step: process_users
+    next:
+      - step: process_users
 
   - step: process_users
     desc: "Process each user through profile scoring sub-playbook"
     loop:
       in: "{{ workload.users }}"
       iterator: user
-      mode: sequential
+      spec:
+        mode: sequential
     tool:
-      kind: playbook
-      # Provide an explicit task identifier so nested playbook propagates correct parent_step
-      task: process_users
-      path: tests/fixtures/playbooks/playbook_composition/user_profile_scorer
-      return_step: finalize_result
-      args:
-        user_data: "{{ user }}"
-        execution_context: "{{ execution_id }}"
-    
-    case:
-      - when: "{{ event.name == 'call.done' and response is defined }}"
-        then:
-          - save_profile:
-              tool:
-                kind: postgres
-                auth: "{{ workload.pg_auth }}"
-                command: |
-                  INSERT INTO public.user_profile_results (id, execution_id, user_name, profile_score, score_category)
-                  VALUES (
-                    '{{ execution_id }}:{{ user.name }}',
-                    '{{ execution_id }}',
-                    '{{ user.name }}',
-                    {{ response.profile_score | default(0.0) }},
-                    '{{ response.score_category | default("unknown") }}'
-                  )
-                  ON CONFLICT (id) DO UPDATE SET
-                    user_name = EXCLUDED.user_name,
-                    profile_score = EXCLUDED.profile_score,
-                    score_category = EXCLUDED.score_category,
-                    processed_at = now();
-
-      - when: "{{ event.name == 'loop.done' }}"
-        then:
-          - next:
-              - step: validate_results
+      - save_profile:
+          kind: playbook
+          # Provide an explicit task identifier so nested playbook propagates correct parent_step
+          task: process_users
+          path: tests/fixtures/playbooks/playbook_composition/user_profile_scorer
+          return_step: finalize_result
+          args:
+            user_data: "{{ user }}"
+            execution_context: "{{ execution_id }}"
+      - store_result:
+          kind: postgres
+          auth: "{{ workload.pg_auth }}"
+          command: |
+            INSERT INTO public.user_profile_results (id, execution_id, user_name, profile_score, score_category)
+            VALUES (
+              '{{ execution_id }}:{{ user.name }}',
+              '{{ execution_id }}',
+              '{{ user.name }}',
+              {{ save_profile.profile_score | default(0.0) }},
+              '{{ save_profile.score_category | default("unknown") }}'
+            )
+            ON CONFLICT (id) DO UPDATE SET
+              user_name = EXCLUDED.user_name,
+              profile_score = EXCLUDED.profile_score,
+              score_category = EXCLUDED.score_category,
+              processed_at = now();
+    next:
+      - step: validate_results
 
   - step: validate_results
     desc: "Validate all profile scores are within expected range and categories are correct"
@@ -200,12 +186,8 @@ workflow:
                 "validation_details": validation_results,
                 "summary": f"Processed {len(user_results)} users, {sum(1 for v in validation_results if v['valid'])} valid"
             }
-    
-    case:
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          next:
-            - step: end
+    next:
+      - step: end
 
   - step: end
     desc: "Complete profile processing pipeline"

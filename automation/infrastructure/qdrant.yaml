@@ -17,32 +17,23 @@ workflow:
       kind: shell
       cmds:
         - echo "Qdrant Automation - Action '{{ workload.action }}'"
-    case:
-      - when: "{{ workload.action == 'deploy' }}"
-        then:
-          - step: deploy_qdrant
-      - when: "{{ workload.action == 'undeploy' }}"
-        then:
-          - step: undeploy_qdrant
-      - when: "{{ workload.action == 'status' }}"
-        then:
-          - step: check_status
-      - when: "{{ workload.action == 'logs' }}"
-        then:
-          - step: show_logs
-      - when: "{{ workload.action == 'health' }}"
-        then:
-          - step: check_health
-      - when: "{{ workload.action == 'test' }}"
-        then:
-          - step: test_qdrant
-      - when: "{{ workload.action == 'collections' }}"
-        then:
-          - step: list_collections
-      - when: "{{ workload.action == 'restart' }}"
-        then:
-          - step: restart_qdrant
     next:
+      - step: deploy_qdrant
+        when: "{{ workload.action == 'deploy' }}"
+      - step: undeploy_qdrant
+        when: "{{ workload.action == 'undeploy' }}"
+      - step: check_status
+        when: "{{ workload.action == 'status' }}"
+      - step: show_logs
+        when: "{{ workload.action == 'logs' }}"
+      - step: check_health
+        when: "{{ workload.action == 'health' }}"
+      - step: test_qdrant
+        when: "{{ workload.action == 'test' }}"
+      - step: list_collections
+        when: "{{ workload.action == 'collections' }}"
+      - step: restart_qdrant
+        when: "{{ workload.action == 'restart' }}"
       - step: show_help
 
   - step: deploy_qdrant
@@ -214,3 +205,5 @@ workflow:
 
   - step: end
     desc: End workflow
+    tool:
+      kind: noop

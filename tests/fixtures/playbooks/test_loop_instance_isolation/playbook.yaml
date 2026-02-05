@@ -33,7 +33,8 @@ workflow:
     loop:
       in: "{{ workload.users }}"
       iterator: user
-      mode: sequential
+      spec:
+        mode: sequential
     tool:
       kind: python
       code: |
@@ -64,7 +65,8 @@ workflow:
     loop:
       in: "{{ workload.products }}"
       iterator: product
-      mode: sequential
+      spec:
+        mode: sequential
     tool:
       kind: python
       code: |

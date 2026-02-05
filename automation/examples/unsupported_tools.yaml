@@ -13,6 +13,8 @@ workload:
 workflow:
   - step: start
     desc: "Try to use unsupported tools"
+    tool:
+      kind: noop
     next:
       - step: try_postgres
   
@@ -53,5 +55,8 @@ workflow:
         - "echo 'Shell tool works in local mode!'"
     next:
       - step: end
-  
+
   - step: end
+    desc: End workflow
+    tool:
+      kind: noop

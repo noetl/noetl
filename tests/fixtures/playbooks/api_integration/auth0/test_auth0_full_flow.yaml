@@ -53,15 +53,11 @@ workflow:
         auth0_domain: "{{ workload.auth0_domain }}"
         client_id: "{{ workload.client_id }}"
         auth0_credential: "{{ workload.auth0_credential }}"
-    case:
-      - when: "{{ event.name == 'call.done' and get_auth0_token.status == 'success' }}"
-        then:
-          - next:
-              - step: login_with_token
-      - when: "{{ event.name == 'call.done' and get_auth0_token.status == 'error' }}"
-        then:
-          - next:
-              - step: auth_error
+    next:
+      - step: login_with_token
+        when: "{{ get_auth0_token.status == 'success' }}"
+      - step: auth_error
+        when: "{{ get_auth0_token.status == 'error' }}"
 
   - step: login_with_token
     desc: Create NoETL session with Auth0 token
@@ -71,15 +67,11 @@ workflow:
       args:
         auth0_token: "{{ get_auth0_token.access_token }}"
         client_ip: "127.0.0.1"
-    case:
-      - when: "{{ event.name == 'call.done' and login_with_token.status == 'authenticated' }}"
-        then:
-          - next:
-              - step: test_success
-      - when: "{{ event.name == 'call.done' and login_with_token.status != 'authenticated' }}"
-        then:
-          - next:
-              - step: login_error
+    next:
+      - step: test_success
+        when: "{{ login_with_token.status == 'authenticated' }}"
+      - step: login_error
+        when: "{{ login_with_token.status != 'authenticated' }}"
 
   - step: test_success
     desc: Return successful test result
