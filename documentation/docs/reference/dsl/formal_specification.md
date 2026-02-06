@@ -4,40 +4,40 @@ title: Formal Specification (Canonical)
 description: Normative specification for NoETL DSL v2 (Petri-net canonical execution model)
 ---
 
-# NoETL Playbook DSL — Formal Specification (Canonical)
+# NoETL Playbook DSL — Formal Specification (Canonical v10)
 
-> **Scope (normative):** This document defines the **normative** semantics of the NoETL Playbook DSL and its **event‑sourced execution model** using the **Petri-net canonical form**:
+> **Normative scope:** This document defines the **normative** semantics of the NoETL Playbook DSL and its **event‑sourced execution model** using the **Petri‑net canonical form**:
 >
-> - Step = `when` (enable guard) + `tool` (ordered pipeline) + `next` (arcs)
-> - Tool-level `eval` (with `expr`) controls retry/jump/break/fail/continue inside the pipeline
-> - Runtime semantics/policy is expressed via `spec` at relevant scopes (playbook/step/loop/tool/next)
+> - **Step** = admission gate (`step.spec.policy.admit`) + ordered pipeline (`step.tool`) + router (`step.next` with Petri‑net **arcs**)
+> - **Task‑level policy** (`task.spec.policy.rules`) maps `outcome → do` (`retry|jump|continue|break|fail`) inside the pipeline
+> - Runtime knobs/policies are expressed via **`spec`** at relevant scopes (executor/step/loop/task/next)
 >
 > **Versioning:** DSL is versioned via `apiVersion`. This spec targets `apiVersion: noetl.io/v2`.
 
 ---
 
-## 1. Conformance and terminology
+## 1. Conformance and terminology (normative)
 
 The key words **MUST**, **MUST NOT**, **SHOULD**, **SHOULD NOT**, and **MAY** are to be interpreted as normative requirements.
 
 ### 1.1 Entities (normative)
 
-- **Playbook**: a YAML document describing immutable workload defaults and a workflow of steps.
-- **Workflow**: an ordered list of **Step** objects (graph routing defined via `next`).
-- **Step**: a Petri-net transition which consumes a token when enabled and produces tokens via `next` arcs.
-- **Tool**: an executable adapter (HTTP, Postgres, DuckDB, Python, nested playbook, secrets lookup, etc.).
-- **Token**: a routing envelope that targets a step, carrying `args` (arc inscription payload).
+- **Playbook**: a YAML document describing workload defaults and a workflow of steps.
+- **Workflow**: an ordered list of **Step** objects, routed via `next` arcs.
+- **Step**: a Petri‑net transition that consumes a token when enabled and produces tokens via `next` arcs.
+- **Task**: a labeled tool invocation within an ordered step pipeline.
+- **Tool**: an executable adapter (HTTP, Postgres, DuckDB, Python, playbook, secrets lookup, etc.).
+- **Token**: a routing envelope targeting a step, carrying `args` (arc inscription payload).
 - **Workload**: immutable merged input (playbook defaults + execution request overrides).
-- **Context**: runtime evaluation environment containing namespaces: `workload`, `ctx`, `vars`, `iter`, `args`, and pipeline locals.
-- **ctx**: **execution-scoped** mutable state shared across steps, persisted as event-sourced patches.
-- **vars**: **step-run-scoped** mutable state local to the current step execution.
-- **iter**: **iteration-scoped** mutable state local to one loop iteration.
-- **eval**: tool-level ordered rules mapping `outcome` → control directive.
+- **Context**: the runtime evaluation environment containing namespaces: `workload`, `ctx`, `iter`, `args`, and pipeline locals.
+- **ctx**: execution‑scoped mutable state shared across steps, persisted as event‑sourced patches.
+- **iter**: iteration‑scoped mutable state local to one loop iteration.
+- **policy.rules**: ordered rules mapping `outcome` → control directive.
 
 ### 1.2 Architecture roles (normative)
 
 - **Server (control plane)**: provides API surface, token routing/scheduling, and authoritative event log persistence.
-- **Worker (data plane)**: background execution pool (no HTTP endpoints); executes tool invocations and step pipelines; reports events to server.
+- **Worker (data plane)**: background execution pool (no HTTP endpoints); executes step pipelines; reports events to server.
 - **CLI**: manages server/worker lifecycle and worker pools.
 
 ---
@@ -56,7 +56,7 @@ A playbook is a YAML mapping with (at minimum):
 - `workflow`: list of steps (REQUIRED)
 - `workbook`: mapping (OPTIONAL)
 
-**Root restriction (normative):** A playbook MUST NOT include `vars` at root level. Execution-scope state is `ctx` (runtime) and is not a root field.
+**Root restriction (normative):** A playbook MUST NOT include `vars` at root level.
 
 ### 2.2 Step model (canonical)
 
@@ -64,17 +64,17 @@ A step is a mapping containing:
 
 - `step`: **required** string identifier
 - `desc`: optional string
-- `spec`: optional mapping (semantics/policy, e.g., `next_mode`)
-- `when`: optional templated string expression (enable guard; default `true`)
-- `args`: optional mapping (step input shaping; implementation-defined)
+- `spec`: optional mapping (step semantics/policy)
 - `loop`: optional loop block
-- `tool`: optional ordered list of tool tasks (pipeline)
-- `next`: optional list of transitions (arcs)
+- `tool`: optional ordered list of tasks (pipeline)
+- `next`: optional router defining outgoing arcs
 
 A step **MUST** have at least one of: `tool` or `next`.
 (If `tool` is absent, the step is a pure routing transition.)
 
-### 2.3 Loop model
+**Canonical restriction:** The step MUST NOT include a top‑level `when` field. Step admission is specified only via `step.spec.policy.admit`.
+
+### 2.3 Loop model (normative)
 
 Loop modifies step execution by iterating the step pipeline over a collection:
 
@@ -83,24 +83,25 @@ loop:
   spec:
     mode: sequential | parallel     # default sequential
     # max_in_flight: <int>          # optional for parallel
+    policy:
+      exec: distributed | local     # optional placement intent
   in: "{{ <collection expr> }}"
   iterator: <name>
 ```
 
-### 2.4 Tool task model
+### 2.4 Task model (normative)
 
-A tool task is an entry in the step pipeline:
+A task is an entry in the step pipeline:
 
 ```yaml
 - <task_label>:
     kind: <kind>
-    spec: { ... }     # runtime knobs/policy (timeouts, pooling, internal retry, etc.)
+    spec: { ... }          # runtime knobs + policy
     ...inputs...
-    eval: [ ... ]     # optional control rules (outcome -> directive)
 ```
 
-Tool `kind` values are implementation-defined. The public reference includes:
-- `http`, `postgres`, `duckdb`, `python`, `secrets`, `playbook`, `workbook`
+Tool `kind` values are implementation‑defined. Public kinds typically include:
+- `http`, `postgres`, `duckdb`, `python`, `secrets`, `playbook`, `workbook`, `noop`
 
 (Implementations MAY add additional kinds, including `quantum`.)
 
@@ -116,17 +117,17 @@ All expressions are **Jinja2** templates embedded as YAML strings.
 The evaluation context is a dictionary with conventional namespaces:
 
 - `workload`: immutable merged workload
-- `ctx`: execution-scoped mutable context (shared across steps)
-- `vars`: step-run-scoped variables
-- `iter`: iteration-scoped variables (only inside loops)
+- `ctx`: execution‑scoped mutable context (shared across steps)
+- `iter`: iteration‑scoped variables (only inside loops)
 - `args`: token payload / arc inscription input
 - `execution_id`: unique execution identifier
 - pipeline locals: `_prev`, `_task`, `_attempt`
-- `outcome`: tool outcome envelope (only within `eval.expr`)
+- `outcome`: tool outcome envelope (only within task policy evaluation)
+- `event`: boundary event payload (only within routing evaluation)
 
-### 3.3 Precedence recommendation (informative)
-For reads: `args` → `ctx` → `workload`.
-For writes: per-iteration → `iter`; per-step → `vars`; cross-step → `ctx`.
+### 3.3 Read precedence recommendation (informative)
+For reads: `args` → `ctx` → `iter` → `workload`.
+For writes: per‑iteration → `iter`; cross‑step → `ctx`.
 
 ---
 
@@ -142,27 +143,42 @@ When an execution request is received, the server MUST:
 4. Persist `PlaybookRequestEvaluated`.
 5. Merge request payload with playbook `workload` defaults → **MergedWorkload**.
 6. Initialize runtime state: `ctx = {}` (empty unless provided by request profile).
-7. Locate the initial step (convention: `start`) and enqueue a token targeting that step.
+7. Determine initial token(s) and enqueue token(s) targeting the first runnable step(s) (implementation defined; a common convention is `step: start`).
 
-### 4.2 Step scheduling (server)
+### 4.2 Step admission (server)
 
 The server is the authoritative scheduler of which step(s) run next.
 
-For each token, the server MUST:
-- evaluate `step.when` (default `true`)
-- if enabled, create a `step_run_id` and dispatch an execution command to a worker pool
-- record scheduling and routing decisions in the event log
+For each token targeting a step, the server MUST:
+- evaluate `step.spec.policy.admit.rules` (if present)
+- if admitted, create a `step_run_id` and dispatch an execution command to a worker pool
+- record scheduling decisions in the event log
+
+Admission rule shape (normative):
+```yaml
+spec:
+  policy:
+    admit:
+      rules:
+        - when: "{{ <bool expr> }}"
+          then: { allow: true|false }
+        - else:
+            then: { allow: true|false }
+```
+
+If `admit` is omitted, admission defaults to **allow**.
 
 ### 4.3 Step execution (worker)
 
 The worker MUST:
 - claim the `step_run_id` lease (single owner)
 - execute the step pipeline (`step.tool`) deterministically
-- emit tool/task events and terminal step events back to the server
+- if `loop` exists, execute the pipeline per iteration with isolated `iter` scope
+- emit task events and terminal step events back to the server
 
 ### 4.4 Completion (server)
 
-The workflow completes when there are no runnable tokens remaining (or end convention).
+The workflow completes when there are no runnable tokens remaining.
 The server emits `WorkflowFinished` and `PlaybookProcessed`.
 
 ---
@@ -171,58 +187,63 @@ The server emits `WorkflowFinished` and `PlaybookProcessed`.
 
 Every tool invocation MUST produce one final outcome envelope:
 
-- `outcome.status`: `"success"` | `"error"`
-- `outcome.result`: tool output (success)
-- `outcome.error`: error object (error)
+- `outcome.status`: `"ok"` | `"error"`
+- `outcome.result`: tool output (success; may be a reference)
+- `outcome.error`: error object (error; MUST include `kind` and SHOULD include `retryable`)
 - `outcome.meta`: attempt, duration, trace ids, timestamps
 
 Kind helpers MAY be included:
 - HTTP: `outcome.http.status`, `outcome.http.headers`
-- Postgres: `outcome.pg.code`, `outcome.pg.message`
-- Python: `outcome.py.exception`
+- Postgres: `outcome.pg.code`, `outcome.pg.sqlstate`
+- Python: `outcome.py.exception_type`
 
 ---
 
-## 6. Tool-level `eval` (normative)
+## 6. Task policy (`task.spec.policy.rules`) (normative)
 
 ### 6.1 Purpose
-`eval` maps a tool outcome to a deterministic pipeline directive.
+Task policy maps a tool outcome to a deterministic pipeline directive.
 
-### 6.2 Structure
+### 6.2 Structure (normative)
+
+Policy MUST be an object containing `rules:`:
 
 ```yaml
-eval:
-  - expr: "{{ <bool expr over outcome/locals> }}"
-    do: continue | retry | jump | break | fail
-    attempts: <int>                 # for retry
-    backoff: fixed | linear | exponential
-    delay: <seconds|expr>
-    to: <task_label>                # for jump
-    set_iter: { ... }               # iteration-scoped write (preferred in loops)
-    set_vars: { ... }               # step-run-scoped write
-    set_ctx: { ... }                # execution-scoped patch
-    set_shared: { ... }             # explicit shared write (reducers/atomics; optional feature)
-    set_prev: <value>               # override pipeline _prev
-  - else:
-      do: continue
+spec:
+  policy:
+    rules:
+      - when: "{{ <bool expr over outcome/locals> }}"
+        then:
+          do: continue | retry | jump | break | fail
+          attempts: <int>                 # for retry
+          backoff: none | linear | exponential
+          delay: <seconds|expr>
+          to: <task_label>                # for jump
+          set_iter: { ... }               # iteration-scoped write (preferred in loops)
+          set_ctx: { ... }                # execution-scoped patch
+      - else:
+          then:
+            do: continue
 ```
 
 ### 6.3 Evaluation algorithm (normative)
 
-Given a tool completion:
-1. Evaluate `eval` entries in order.
-2. First matching `expr` wins.
+Given a task completion:
+1. Evaluate `rules` entries in order.
+2. First matching `when` wins.
 3. If no entry matches and `else` exists, apply `else`.
-4. If `eval` omitted (or no match and no else):
+4. If policy omitted:
    - on success → `continue`
    - on error → `fail`
+5. If policy exists but no match and no else:
+   - default → `continue`
 
 ### 6.4 Directive semantics (normative)
 - `continue`: advance to next pipeline task
 - `retry`: rerun current task until `attempts` exhausted (backoff/delay applied)
 - `jump`: set pipeline program counter to `to`
-- `break`: end pipeline successfully (emit `step.done`)
-- `fail`: end pipeline with failure (emit `step.failed`)
+- `break`: end pipeline successfully (iteration done / step.done)
+- `fail`: end pipeline with failure (iteration failed / step.failed)
 
 ---
 
@@ -237,31 +258,34 @@ For each element in `loop.in`, a new iteration scope is created:
 ### 7.2 Parallel safety
 If `loop.spec.mode: parallel`:
 - `set_iter` writes are always safe
-- writes to shared `vars` require explicit intent (e.g., `set_shared`) OR must be deterministically mapped to iteration scope (implementation MUST pick one behavior and document it)
+- `set_ctx` writes MUST be restricted or rejected unless the implementation defines reducers/atomics
 
 ### 7.3 Termination
 When all iterations complete, worker emits `loop.done`.
 
 ---
 
-## 8. Next / routing semantics (normative)
+## 8. Next routing (Petri‑net arcs) (normative)
 
-### 8.1 Next transitions
-`next` is a list of arcs. Each arc may have a guard and token payload.
+### 8.1 Router model
+`next` is a router object with arcs.
 
 ```yaml
 next:
-  - step: next_step
-    when: "{{ <expr> }}"          # default true if omitted
-    args: { ... }                # token payload (arc inscription)
+  spec:
+    mode: exclusive | inclusive     # default exclusive
+  arcs:
+    - step: next_step
+      when: "{{ <expr> }}"          # default true if omitted
+      args: { ... }                # token payload (arc inscription)
 ```
 
-### 8.2 Selection (`step.spec.next_mode`)
+### 8.2 Selection (`next.spec.mode`)
 - `exclusive` (default): first matching arc fires (ordered)
 - `inclusive`: all matching arcs fire
 
 ### 8.3 Evaluation placement
-The server MUST evaluate `next[]` upon receiving a terminal step event (`step.done`, `step.failed`, `loop.done`) and persist the selected transitions.
+The server MUST evaluate `next.arcs[]` upon receiving a terminal step event (`step.done`, `step.failed`, `loop.done`) and persist the selected transitions.
 
 ---
 
@@ -278,6 +302,8 @@ Recommended reference object shape:
 
 ### 9.2 Updating execution context (`ctx`)
 Cross-step state SHOULD be stored as references in `ctx` using `set_ctx` patches (recorded as events).
+
+**Note:** There is no special “Sink” tool kind. A sink is just a storage task that returns a reference.
 
 ---
 
@@ -327,12 +353,13 @@ from the event stream plus any optional snapshots.
 - accept execution requests and validate playbooks
 - schedule steps by routing tokens
 - persist the append-only event log
-- evaluate `step.when` and `next[].when`
+- evaluate step admission via `step.spec.policy.admit`
+- evaluate routing via `next.arcs[].when` and `next.spec.mode`
 - coordinate fan-out/fan-in and pause/resume semantics (if implemented)
 
 ### 11.2 Worker MUST
 - execute tool calls and step pipelines
-- apply tool-level `eval` deterministically
+- apply task policy deterministically
 - emit detailed task/step/loop events to server
 - require no inbound HTTP endpoints
 
@@ -342,7 +369,7 @@ from the event stream plus any optional snapshots.
 
 This canonical model maps naturally to quantum orchestration:
 - job submission as tools (`kind: quantum`)
-- polling as a pipeline loop via `eval: jump/retry`
+- polling as a pipeline loop via `policy: jump/retry`
 - parameter sweeps via `loop`
 - reproducibility via event sourcing + immutable workload inputs
 - results stored externally and referenced via `ctx`
@@ -353,11 +380,12 @@ This canonical model maps naturally to quantum orchestration:
 
 An implementation MUST reject a playbook if:
 - step names are not unique within `workflow`
-- the `start` step is missing (convention; if your runtime uses a different entrypoint, document it)
-- a `next.step` references a non-existent step
+- a `next.arc.step` references a non-existent step
 - a `loop` block is present without both `in` and `iterator`
 - a tool `kind` is not recognized (unless extension handling is enabled)
 - `vars` exists at playbook root level
+- a step has top-level `when`
+- a task policy is not an object containing `rules`
 
 ---
 
@@ -373,22 +401,21 @@ step_list       ::= "-" step { "-" step }
 step            ::= "step" ":" IDENT
                     ["desc" ":" STRING]
                     ["spec" ":" map]
-                    ["when" ":" STRING]
-                    ["args" ":" map]
                     ["loop" ":" loop]
                     ["tool" ":" tool_pipeline]
-                    ["next" ":" next_list]
+                    ["next" ":" next_router]
 
 loop            ::= "in" ":" (STRING|list) "iterator" ":" IDENT ["spec" ":" map]
 
 tool_pipeline   ::= "-" task { "-" task }
 task            ::= IDENT ":" tool
-tool            ::= "kind" ":" IDENT ["spec" ":" map] ["eval" ":" eval_list] { pair }
+tool            ::= "kind" ":" IDENT ["spec" ":" map] { pair }
 
-next_list       ::= "-" next_arc { "-" next_arc }
+next_router     ::= "spec" ":" map "arcs" ":" next_arcs
+next_arcs       ::= "-" next_arc { "-" next_arc }
 next_arc        ::= "step" ":" IDENT ["when" ":" STRING] ["args" ":" map] ["spec" ":" map]
-eval_list       ::= "-" eval_rule { "-" eval_rule }
-eval_rule       ::= ("expr" ":" STRING "do" ":" IDENT { pair }) | ("else" ":" map)
+policy_rules    ::= "-" policy_rule { "-" policy_rule }
+policy_rule     ::= ("when" ":" STRING "then" ":" map) | ("else" ":" map)
 ```
 
 ---

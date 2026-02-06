@@ -14,19 +14,20 @@ workflow:
     desc: "Start schema creation"
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args: {}
       code: |
         result = {"status": "initialized"}
     next:
-      - step: create_test_results_table
+      spec:
+        mode: exclusive
+      arcs:
+        - step: create_test_results_table
 
   - step: create_test_results_table
     desc: "Create table for storing test execution results"
     tool:
       kind: postgres
-      auth: "{{ workload.pg_auth }}"
+      auth: "{{ pg_auth }}"
       command: |
         CREATE SCHEMA IF NOT EXISTS noetl_test;
 
@@ -60,13 +61,16 @@ workflow:
         COMMENT ON COLUMN noetl_test.regression_results.validation_passed IS 'Whether validation rules passed';
         COMMENT ON COLUMN noetl_test.regression_results.test_passed IS 'Overall test pass/fail';
     next:
-      - step: create_test_summary_table
+      spec:
+        mode: exclusive
+      arcs:
+        - step: create_test_summary_table
 
   - step: create_test_summary_table
     desc: "Create table for test run summaries"
     tool:
       kind: postgres
-      auth: "{{ workload.pg_auth }}"
+      auth: "{{ pg_auth }}"
       command: |
         DROP TABLE IF EXISTS noetl_test.regression_summary CASCADE;
 
@@ -89,13 +93,16 @@ workflow:
 
         COMMENT ON TABLE noetl_test.regression_summary IS 'Summary of regression test runs';
     next:
-      - step: create_expected_results_table
+      spec:
+        mode: exclusive
+      arcs:
+        - step: create_expected_results_table
 
   - step: create_expected_results_table
     desc: "Create table for storing expected results (baseline)"
     tool:
       kind: postgres
-      auth: "{{ workload.pg_auth }}"
+      auth: "{{ pg_auth }}"
       command: |
         DROP TABLE IF EXISTS noetl_test.expected_results CASCADE;
 
@@ -117,14 +124,15 @@ workflow:
 
         COMMENT ON TABLE noetl_test.expected_results IS 'Expected results baseline for playbooks';
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: "Schema creation completed"
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args: {}
       code: |
         result = {

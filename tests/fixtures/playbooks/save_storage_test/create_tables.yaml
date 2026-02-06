@@ -1,9 +1,9 @@
-apiVersion: noetl.io/v2
+apiVersion: noetl.io/v10
 kind: Playbook
 metadata:
   name: create_test_tables
   path: tests/fixtures/playbooks/save_storage_test/create_tables
-  
+
 workload:
   test_name: create_test_tables
   pg_auth: pg_local
@@ -16,13 +16,16 @@ workflow:
       code: |
         result = {"status": "initialized"}
     next:
-      - step: create_all_tables
+      spec:
+        mode: exclusive
+      arcs:
+        - step: create_all_tables
 
   - step: create_all_tables
     desc: Create all test tables in single operation
     tool:
       kind: postgres
-      auth: "{{ workload.pg_auth }}"
+      auth: "{{ pg_auth }}"
       pool:
         name: test_shared_pool
         timeout: 60
@@ -57,7 +60,10 @@ workflow:
           created_at TIMESTAMP DEFAULT NOW()
         );
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: Table creation completed

@@ -1,4 +1,4 @@
-apiVersion: noetl.io/v2
+apiVersion: noetl.io/v10
 kind: Playbook
 metadata:
   name: postgres_file_script_example
@@ -13,52 +13,60 @@ workflow:
     desc: Start workflow
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args: {}
       code: |
         result = {"status": "initialized"}
     next:
-      - step: run_postgres_from_file
+      spec:
+        mode: exclusive
+      arcs:
+        - step: run_postgres_from_file
 
   - step: run_postgres_from_file
     desc: Execute SQL script from local file
     tool:
       kind: postgres
-      auth: "{{ workload.pg_auth }}"
+      auth: "{{ pg_auth }}"
       script:
-        uri: "{{ workload.script_path }}"
+        uri: "{{ script_path }}"
         source:
           type: file
     next:
-      - step: verify_records
+      spec:
+        mode: exclusive
+      arcs:
+        - step: verify_records
 
   - step: verify_records
     desc: Verify table was created and populated
     tool:
       kind: postgres
-      auth: "{{ workload.pg_auth }}"
+      auth: "{{ pg_auth }}"
       command: |
         SELECT * FROM public.script_test ORDER BY id;
     next:
-      - step: cleanup
+      spec:
+        mode: exclusive
+      arcs:
+        - step: cleanup
 
   - step: cleanup
     desc: Clean up test table
     tool:
       kind: postgres
-      auth: "{{ workload.pg_auth }}"
+      auth: "{{ pg_auth }}"
       command: |
         DROP TABLE IF EXISTS public.script_test;
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: End workflow
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args: {}
       code: |
         result = {"status": "complete"}

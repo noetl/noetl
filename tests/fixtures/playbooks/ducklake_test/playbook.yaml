@@ -1,4 +1,7 @@
-apiVersion: noetl.io/v2
+# NoETL Canonical v10 Playbook
+# Test DuckLake distributed DuckDB with PostgreSQL metastore.
+
+apiVersion: noetl.io/v10
 kind: Playbook
 metadata:
   name: ducklake_test
@@ -23,7 +26,10 @@ workflow:
       code: |
         result = {"status": "initialized", "message": "Starting DuckLake test"}
     next:
-      - step: create_catalog_db
+      spec:
+        mode: exclusive
+      arcs:
+        - step: create_catalog_db
 
   # Setup: Create PostgreSQL catalog database
   - step: create_catalog_db
@@ -34,10 +40,13 @@ workflow:
       command: |
         SELECT 1 FROM pg_database WHERE datname = 'ducklake_catalog';
     next:
-      - step: create_db_sql
-        when: "{{ create_catalog_db.data | length == 0 }}"
-      - step: create_users_table
-        when: "{{ create_catalog_db.data | length > 0 }}"
+      spec:
+        mode: exclusive
+      arcs:
+        - step: create_db_sql
+          when: "{{ create_catalog_db.data | length == 0 }}"
+        - step: create_users_table
+          when: "{{ create_catalog_db.data | length > 0 }}"
 
   - step: create_db_sql
     desc: "Actually create the database"
@@ -47,16 +56,19 @@ workflow:
       command: |
         CREATE DATABASE ducklake_catalog;
     next:
-      - step: create_users_table
+      spec:
+        mode: exclusive
+      arcs:
+        - step: create_users_table
 
   # Test 1: Create table and insert data
   - step: create_users_table
     desc: "Create users table in DuckLake catalog"
     tool:
       kind: ducklake
-      catalog_connection: "{{ workload.catalog_connection }}"
-      catalog_name: "{{ workload.catalog_name }}"
-      data_path: "{{ workload.data_path }}"
+      catalog_connection: "{{ catalog_connection }}"
+      catalog_name: "{{ catalog_name }}"
+      data_path: "{{ data_path }}"
       command: |
         CREATE TABLE IF NOT EXISTS users (
           id INTEGER PRIMARY KEY,
@@ -65,50 +77,65 @@ workflow:
           created_at TIMESTAMP
         );
     next:
-      - step: insert_initial_users
+      spec:
+        mode: exclusive
+      arcs:
+        - step: insert_initial_users
 
   - step: insert_initial_users
     desc: "Insert initial user data"
     tool:
       kind: ducklake
-      catalog_connection: "{{ workload.catalog_connection }}"
-      catalog_name: "{{ workload.catalog_name }}"
-      data_path: "{{ workload.data_path }}"
+      catalog_connection: "{{ catalog_connection }}"
+      catalog_name: "{{ catalog_name }}"
+      data_path: "{{ data_path }}"
       command: |
         INSERT INTO users VALUES
           (1, 'Alice', 'alice@example.com', NOW()),
           (2, 'Bob', 'bob@example.com', NOW());
     next:
-      - step: query_users
+      spec:
+        mode: exclusive
+      arcs:
+        - step: query_users
 
   # Test 2: Query data
   - step: query_users
     desc: "Query users table"
     tool:
       kind: ducklake
-      catalog_connection: "{{ workload.catalog_connection }}"
-      catalog_name: "{{ workload.catalog_name }}"
-      data_path: "{{ workload.data_path }}"
+      catalog_connection: "{{ catalog_connection }}"
+      catalog_name: "{{ catalog_name }}"
+      data_path: "{{ data_path }}"
       command: |
         SELECT * FROM users ORDER BY id;
-    vars:
-      user_count: "{{ query_users.data | length }}"
+      spec:
+        policy:
+          rules:
+            - else:
+                then:
+                  do: continue
+                  set_ctx:
+                    user_count: "{{ query_users.data | length }}"
     next:
-      - step: loop_insert_events
+      spec:
+        mode: exclusive
+      arcs:
+        - step: loop_insert_events
 
   # Test 3: Distributed loop (parallel mode - multiple workers)
   - step: loop_insert_events
     desc: "Insert events for users in parallel"
     loop:
-      in: "{{ workload.user_ids }}"
+      in: "{{ user_ids }}"
       iterator: user_id
       spec:
         mode: parallel
     tool:
       kind: ducklake
-      catalog_connection: "{{ workload.catalog_connection }}"
-      catalog_name: "{{ workload.catalog_name }}"
-      data_path: "{{ workload.data_path }}"
+      catalog_connection: "{{ catalog_connection }}"
+      catalog_name: "{{ catalog_name }}"
+      data_path: "{{ data_path }}"
       command: |
         CREATE TABLE IF NOT EXISTS user_events (
           user_id INTEGER,
@@ -118,39 +145,60 @@ workflow:
         INSERT INTO user_events (user_id, event_type, event_time)
         VALUES ({{ user_id }}, 'test_event', NOW());
     next:
-      - step: count_events
+      spec:
+        mode: exclusive
+      arcs:
+        - step: count_events
 
   # Test 4: Verify distributed inserts
   - step: count_events
     desc: "Count events inserted by distributed workers"
     tool:
       kind: ducklake
-      catalog_connection: "{{ workload.catalog_connection }}"
-      catalog_name: "{{ workload.catalog_name }}"
-      data_path: "{{ workload.data_path }}"
+      catalog_connection: "{{ catalog_connection }}"
+      catalog_name: "{{ catalog_name }}"
+      data_path: "{{ data_path }}"
       command: |
         SELECT COUNT(*) as event_count FROM user_events;
-    vars:
-      event_count: "{{ count_events.data[0].event_count | default(0) }}"
+      spec:
+        policy:
+          rules:
+            - else:
+                then:
+                  do: continue
+                  set_ctx:
+                    event_count: "{{ count_events.data[0].event_count | default(0) }}"
     next:
-      - step: get_catalog_info
+      spec:
+        mode: exclusive
+      arcs:
+        - step: get_catalog_info
 
   # Test 5: Get catalog metadata
   - step: get_catalog_info
     desc: "Get DuckLake catalog snapshots and table info"
     tool:
       kind: ducklake
-      catalog_connection: "{{ workload.catalog_connection }}"
-      catalog_name: "{{ workload.catalog_name }}"
-      data_path: "{{ workload.data_path }}"
+      catalog_connection: "{{ catalog_connection }}"
+      catalog_name: "{{ catalog_name }}"
+      data_path: "{{ data_path }}"
       commands:
-        - "SELECT * FROM ducklake_snapshots('{{ workload.catalog_name }}') ORDER BY snapshot_id DESC LIMIT 5;"
-        - "SELECT * FROM ducklake_table_info('{{ workload.catalog_name }}');"
-    vars:
-      snapshot_count: "{{ get_catalog_info.data[0] | length }}"
-      table_count: "{{ get_catalog_info.data[1] | length }}"
+        - "SELECT * FROM ducklake_snapshots('{{ catalog_name }}') ORDER BY snapshot_id DESC LIMIT 5;"
+        - "SELECT * FROM ducklake_table_info('{{ catalog_name }}');"
+      spec:
+        policy:
+          rules:
+            - else:
+                then:
+                  do: continue
+                  set_ctx:
+                    snapshot_count: "{{ get_catalog_info.data[0] | length }}"
+                    table_count: "{{ get_catalog_info.data[1] | length }}"
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: "DuckLake test completed"

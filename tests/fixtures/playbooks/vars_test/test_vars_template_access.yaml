@@ -1,9 +1,9 @@
 ---
-apiVersion: noetl.io/v2
+apiVersion: noetl.io/v10
 kind: Playbook
 metadata:
   name: test_vars_template_access
-  description: Test {{ vars.var_name }} template access in Jinja2
+  description: Test {{ ctx.var_name }} template access in Jinja2
   path: vars_test/test_vars_template_access
   version: 1.0.0
   labels:
@@ -18,26 +18,25 @@ workflow:
   - step: start
     desc: Start workflow
     tool:
-      - label:
+      - start_task:
           kind: python
-          auth: {}
-          libs: {}
           args: {}
           code: |
             result = {"status": "initialized"}
     next:
-      - step: set_variables
+      spec:
+        mode: exclusive
+      arcs:
+        - step: set_variables
 
   - step: set_variables
-    desc: Set multiple test variables via vars block
+    desc: Set multiple test variables via policy rules
     tool:
-      - label:
+      - set_vars_task:
           kind: python
-          auth: {}
-          libs: {}
           args: {}
           code: |
-            # Return values that will be extracted via vars block
+            # Return values that will be extracted via policy rules
             result = {
                 "counter": 42,
                 "message": "Template access works!",
@@ -46,27 +45,34 @@ workflow:
                     "retries": 3
                 }
             }
-    vars:
-      counter: "{{ result.counter }}"
-      message: "{{ result.message }}"
-      config: "{{ result.config }}"
+          spec:
+            policy:
+              rules:
+                - else:
+                    then:
+                      do: continue
+                      set_ctx:
+                        counter: "{{ outcome.result.counter }}"
+                        message: "{{ outcome.result.message }}"
+                        config: "{{ outcome.result.config }}"
     next:
-      - step: use_vars_in_template
+      spec:
+        mode: exclusive
+      arcs:
+        - step: use_vars_in_template
 
   - step: use_vars_in_template
-    desc: Use {{ vars.var_name }} in step data
+    desc: Use {{ ctx.var_name }} in step data
     tool:
-      - label:
+      - use_vars_task:
           kind: python
-          auth: {}
-          libs: {}
           args:
-            counter: "{{ vars.counter }}"
-            message: "{{ vars.message }}"
-            timeout: "{{ vars.config.timeout }}"
-            full_greeting: "{{ workload.greeting }}, {{ vars.message }}"
+            counter: "{{ ctx.counter }}"
+            message: "{{ ctx.message }}"
+            timeout: "{{ ctx.config.timeout }}"
+            full_greeting: "{{ greeting }}, {{ ctx.message }}"
           code: |
-            # This step receives data using {{ vars.* }} templates
+            # This step receives data using {{ ctx.* }} templates
             result = {
                 "status": "success",
                 "received_counter": counter,
@@ -75,15 +81,16 @@ workflow:
                 "full_greeting": full_greeting
             }
     next:
-      - step: verify_results
+      spec:
+        mode: exclusive
+      arcs:
+        - step: verify_results
 
   - step: verify_results
     desc: Verify template values were rendered correctly
     tool:
-      - label:
+      - verify_task:
           kind: python
-          auth: {}
-          libs: {}
           args: {}
           code: |
             # Get previous step result
@@ -120,15 +127,16 @@ workflow:
                 }
             }
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: End workflow
     tool:
-      - label:
+      - end_task:
           kind: python
-          auth: {}
-          libs: {}
           args: {}
           code: |
             result = {"status": "complete"}

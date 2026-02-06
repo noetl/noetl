@@ -9,6 +9,14 @@ metadata:
     feature: result_storage
     category: api_integration
 
+# Canonical v10 root sections only:
+# metadata, executor, workload, workflow, workbook
+executor:
+  profile: distributed
+  version: noetl-runtime/2
+
+
+
 workload:
   pg_auth: pg_k8s
   gcp_auth: google_oauth
@@ -16,26 +24,26 @@ workload:
   amadeus_key_path: projects/1014428265962/secrets/api-key-test-api-amadeus-com/versions/1
   amadeus_secret_path: projects/1014428265962/secrets/api-secret-test-api-amadeus-com/versions/1
   query: I want a one-way flight from SFO to JFK on March 15, 2026 for 1 adult
-  request_id: "{{ request_id | default('') }}"
-  gateway_url: "{{ gateway_url | default('http://gateway.gateway.svc.cluster.local:8090') }}"
+  request_id: ""
+  gateway_url: "http://gateway.gateway.svc.cluster.local:8090"
 
 keychain:
   - name: openai_token
     kind: secret_manager
     provider: gcp
     scope: global
-    auth: "{{ workload.gcp_auth }}"
+    auth: "{{ gcp_auth }}"
     map:
-      api_key: '{{ workload.openai_secret_path }}'
+      api_key: '{{ openai_secret_path }}'
 
   - name: amadeus_credentials
     kind: secret_manager
     provider: gcp
     scope: global
-    auth: "{{ workload.gcp_auth }}"
+    auth: "{{ gcp_auth }}"
     map:
-      client_id: '{{ workload.amadeus_key_path }}'
-      client_secret: '{{ workload.amadeus_secret_path }}'
+      client_id: '{{ amadeus_key_path }}'
+      client_secret: '{{ amadeus_secret_path }}'
 
   - name: amadeus_token
     kind: oauth2
@@ -51,347 +59,399 @@ keychain:
       client_secret: '{{ keychain.amadeus_credentials.client_secret }}'
 
 workflow:
-- step: start
-  desc: Initialize workflow and create database tables
-  tool:
-    kind: postgres
-    auth: "{{ workload.pg_auth }}"
-    command: |
-      -- Create results table
-      CREATE TABLE IF NOT EXISTS api_results (
-        id SERIAL PRIMARY KEY,
-        execution_id VARCHAR(64),
-        source VARCHAR(32),
-        result JSONB,
-        created_at TIMESTAMP DEFAULT NOW()
-      );
+  - step: init_db
+    desc: Ensure DB tables exist for event + results (reference-first)
+    tool:
+      - ensure_tables:
+          kind: postgres
+          auth: pg_k8s
+          query: |
+            CREATE TABLE IF NOT EXISTS amadeus_ai_events (
+              id BIGSERIAL PRIMARY KEY,
+              execution_id TEXT NOT NULL,
+              event_type TEXT NOT NULL,
+              created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              payload_ref JSONB NOT NULL,
+              payload_meta JSONB
+            );
 
-      -- Create events table
-      CREATE TABLE IF NOT EXISTS amadeus_ai_events (
-        id SERIAL PRIMARY KEY,
-        execution_id VARCHAR(64),
-        event_type VARCHAR(32),
-        api_call_type VARCHAR(32),
-        input_data JSONB,
-        output_data JSONB,
-        status_code INTEGER,
-        event_time TIMESTAMP DEFAULT NOW(),
-        duration_ms INTEGER,
-        details JSONB
-      );
-  next:
-    - step: translate_query_to_amadeus
+            CREATE TABLE IF NOT EXISTS amadeus_ai_results (
+              id BIGSERIAL PRIMARY KEY,
+              execution_id TEXT NOT NULL,
+              created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              query_text TEXT,
+              amadeus_query TEXT,
+              openai_query_ref JSONB,
+              amadeus_ref JSONB,
+              openai_response_ref JSONB,
+              summary_text TEXT
+            );
+          spec:
+            policy:
+              rules:
+                - when: "{{ outcome.status == 'error' and outcome.pg.code in ['40001','40P01'] }}"
+                  then: { do: retry, attempts: 5, backoff: exponential, delay: 2.0 }
+                - when: "{{ outcome.status == 'error' }}"
+                  then: { do: fail }
+                - else:
+                    then: { do: continue }
+            result:
+              inline_max_bytes: 8192
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: run_amadeus_ai
 
-- step: translate_query_to_amadeus
-  desc: Convert natural language query to Amadeus API endpoint using OpenAI
-  tool:
-    kind: http
-    method: POST
-    endpoint: https://api.openai.com/v1/chat/completions
-    headers:
-      Authorization: "Bearer {{ keychain.openai_token.api_key }}"
-    payload:
-      model: gpt-4o-mini
-      messages:
-      - role: system
-        content: |
-          You are a translator that converts natural-language travel queries into Amadeus API endpoints and parameters.
+  - step: run_amadeus_ai
+    desc: |
+      Single-step pipeline (Canonical v10):
+      1) OpenAI translates user query -> Amadeus query
+      2) Amadeus API call
+      3) Transform + OpenAI summary/translation
+      4) Persist reference-only event records + final result
+      5) Optional callback
+    tool:
+      # --- 1) OpenAI translate user query -> Amadeus query (reference-first) ---
+      - openai_translate_query:
+          kind: http
+          method: POST
+          url: "https://api.openai.com/v1/chat/completions"
+          headers:
+            Authorization: "Bearer {{ keychain.openai_token.api_key }}"
+            Content-Type: "application/json"
+          body:
+            model: "gpt-4o-mini"
+            messages:
+              - role: system
+                content: "Translate user travel request into an Amadeus Search API query (JSON or query params). Return ONLY JSON."
+              - role: user
+                content: "{{ workload.query }}"
+          spec:
+            timeout: { connect: 10, read: 30 }
+            policy:
+              rules:
+                - when: "{{ outcome.status == 'error' and outcome.http.status in [429,500,502,503,504] }}"
+                  then: { do: retry, attempts: 8, backoff: exponential, delay: 2.0 }
+                - when: "{{ outcome.status == 'error' and outcome.http.status in [401,403] }}"
+                  then: { do: fail }
+                - when: "{{ outcome.status == 'error' }}"
+                  then: { do: fail }
+                - else:
+                    then: { do: continue }
+            result:
+              store:
+                kind: auto
+                scope: execution
+                ttl: "2h"
+                compression: gzip
+              inline_max_bytes: 8192
+              preview_max_bytes: 2048
+              select:
+                - path: "$.choices[0].message.content"
+                  as: raw_content
+                - path: "$.usage.total_tokens"
+                  as: tokens_used
 
-          When given a request, follow these steps:
-          1. Understand what the user wants: flight search, hotel offers, airport search, etc.
-          2. Map the details (origin, destination, dates, passengers, etc.) to the correct REST API endpoint and parameters.
-          3. Return ONLY a JSON object with two properties:
-             - "endpoint": The Amadeus API endpoint (e.g., "/v2/shopping/flight-offers")
-             - "params": An object containing all query parameters
+      - log_openai_query_event:
+          kind: postgres
+          auth: pg_k8s
+          query: |
+            INSERT INTO amadeus_ai_events (execution_id, event_type, payload_ref, payload_meta)
+            VALUES (
+              '{{ execution_id }}',
+              'openai.translate_query',
+              '{{ openai_translate_query.__ref__ | tojson }}'::jsonb,
+              jsonb_build_object(
+                'tokens_used', '{{ openai_translate_query.tokens_used | default(0) }}',
+                'content_preview', '{{ openai_translate_query.raw_content | default('') | replace('"','\"') }}'
+              )
+            );
+          spec:
+            policy:
+              rules:
+                - when: "{{ outcome.status == 'error' and outcome.pg.code in ['40001','40P01'] }}"
+                  then: { do: retry, attempts: 5, backoff: exponential, delay: 2.0 }
+                - when: "{{ outcome.status == 'error' }}"
+                  then: { do: fail }
+                - else:
+                    then: { do: continue }
 
-          4. Use real values from user input, and apply correct formatting (e.g., ISO dates).
-          5. If values are ambiguous or missing, make reasonable assumptions.
-          6. If the user provides a travel date without a year, assume they mean 2025.
-          7. Always limit the number of returned results to 3 where applicable.
-
-          Example:
-          User: "I want a one-way flight from SFO to JFK on September 15, 2025 for 1 adult."
-          Response:
-          {
-            "endpoint": "/v2/shopping/flight-offers",
-            "params": {
-              "originLocationCode": "SFO",
-              "destinationLocationCode": "JFK",
-              "departureDate": "2025-09-15",
-              "adults": 1,
-              "max": 3
+      - build_amadeus_query:
+          kind: python
+          args:
+            raw: "{{ openai_translate_query.raw_content }}"
+          code: |
+            import json
+            raw = raw or "{}"
+            try:
+                obj = json.loads(raw)
+            except Exception:
+                obj = {"query": raw}
+            amadeus_query = obj.get("query") or obj.get("params") or obj
+            result = {
+                "amadeus_query": json.dumps(amadeus_query) if not isinstance(amadeus_query, str) else amadeus_query
             }
-          }
-      - role: user
-        content: '{{ workload.query }}'
-      temperature: 0.1
-    output:
-      store:
-        kind: auto
-        ttl: "30m"
-      select:
-        - path: "$.choices[0].message.content"
-          as: raw_content
-        - path: "$.usage.total_tokens"
-          as: tokens_used
-      inline_max_bytes: 4096
-      scope: execution
-  next:
-    - step: store_openai_query_event
+          spec:
+            policy:
+              rules:
+                - when: "{{ outcome.status == 'error' }}"
+                  then: { do: fail }
+                - else:
+                    then: { do: continue }
+            result:
+              inline_max_bytes: 8192
 
-- step: store_openai_query_event
-  desc: Store the OpenAI query translation event in database
-  tool:
-    kind: postgres
-    auth: '{{ workload.pg_auth }}'
-    command: |
-      INSERT INTO amadeus_ai_events (execution_id, event_type, api_call_type, input_data, output_data, status_code, duration_ms, details)
-      VALUES (
-        '{{ job.uuid }}',
-        'openai_query_translation',
-        'openai',
-        $json${{ {"user_query": workload.query, "model": "gpt-4o-mini", "system_prompt": "natural_language_to_amadeus_rest_api"} | tojson }}$json$::jsonb,
-        {% if translate_query_to_amadeus.data is defined %}$json${{ translate_query_to_amadeus.data | tojson }}$json$::jsonb{% else %}NULL{% endif %},
-        {{ translate_query_to_amadeus.status_code | default(0) }},
-        {{ (translate_query_to_amadeus.elapsed * 1000) | round | int if translate_query_to_amadeus.elapsed else 0 }},
-        $json${{ {"endpoint": "https://api.openai.com/v1/chat/completions", "method": "POST"} | tojson }}$json$::jsonb
-      );
-  next:
-    - step: parse_openai_response
+      # --- 2) OAuth + Call Amadeus (reference-first, but keep enough inline for immediate transform) ---
+      - amadeus_oauth_token:
+          kind: http
+          method: POST
+          url: "{{ workload.api_url }}/v1/security/oauth2/token"
+          headers:
+            Content-Type: "application/x-www-form-urlencoded"
+          form:
+            grant_type: "client_credentials"
+            client_id: "{{ keychain.amadeus_key.value }}"
+            client_secret: "{{ keychain.amadeus_secret.value }}"
+          spec:
+            timeout: { connect: 10, read: 30 }
+            policy:
+              rules:
+                - when: "{{ outcome.status == 'error' and outcome.http.status in [429,500,502,503,504] }}"
+                  then: { do: retry, attempts: 8, backoff: exponential, delay: 2.0 }
+                - when: "{{ outcome.status == 'error' and outcome.http.status in [401,403] }}"
+                  then: { do: fail }
+                - when: "{{ outcome.status == 'error' }}"
+                  then: { do: fail }
+                - else:
+                    then: { do: continue }
+            result:
+              store: { kind: auto, scope: execution, ttl: "2h", compression: gzip }
+              inline_max_bytes: 8192
+              select:
+                - path: "$.access_token"
+                  as: access_token
+                - path: "$.expires_in"
+                  as: expires_in
 
-- step: parse_openai_response
-  desc: Parse OpenAI response to extract Amadeus endpoint and parameters
-  tool:
-    kind: python
-    auth: {}
-    libs:
-      json: json
-      re: re
-    args:
-      openai_response: '{{ translate_query_to_amadeus.data }}'
-    code: |
-      try:
-          if not openai_response or not openai_response.get('choices'):
-              result = {
-                  "status": "error",
-                  "message": "No response from OpenAI"
-              }
-          else:
-              content = openai_response['choices'][0]['message']['content'].strip()
+      - amadeus_search:
+          kind: http
+          method: POST
+          url: "{{ workload.api_url }}/v2/shopping/flight-offers"
+          headers:
+            Authorization: "Bearer {{ amadeus_oauth_token.access_token }}"
+            Content-Type: "application/json"
+          body: "{{ build_amadeus_query.amadeus_query }}"
+          spec:
+            timeout: { connect: 10, read: 60 }
+            policy:
+              rules:
+                - when: "{{ outcome.status == 'error' and outcome.http.status in [429,500,502,503,504] }}"
+                  then: { do: retry, attempts: 10, backoff: exponential, delay: 2.0 }
+                - when: "{{ outcome.status == 'error' and outcome.http.status in [401,403] }}"
+                  then: { do: fail }
+                - when: "{{ outcome.status == 'error' }}"
+                  then: { do: fail }
+                - else:
+                    then: { do: continue }
+            result:
+              store:
+                kind: auto
+                scope: execution
+                ttl: "2h"
+                compression: gzip
+              inline_max_bytes: 262144
+              preview_max_bytes: 4096
+              select:
+                - path: "$.meta.count"
+                  as: offer_count
+                - path: "$.errors[0].code"
+                  as: first_error_code
 
-              # Handle markdown code blocks if present
-              if content.startswith('```json'):
-                  lines = content.split('\n')
-                  json_lines = []
-                  in_json_block = False
-                  for line in lines:
-                      if line.strip() == '```json':
-                          in_json_block = True
-                      elif line.strip() == '```' and in_json_block:
-                          break
-                      elif in_json_block:
-                          json_lines.append(line)
-                  content = '\n'.join(json_lines)
+      - log_amadeus_event:
+          kind: postgres
+          auth: pg_k8s
+          query: |
+            INSERT INTO amadeus_ai_events (execution_id, event_type, payload_ref, payload_meta)
+            VALUES (
+              '{{ execution_id }}',
+              'amadeus.search',
+              '{{ amadeus_search.__ref__ | tojson }}'::jsonb,
+              jsonb_build_object(
+                'offer_count', '{{ amadeus_search.offer_count | default(0) }}',
+                'first_error_code', '{{ amadeus_search.first_error_code | default('') }}'
+              )
+            );
+          spec:
+            policy:
+              rules:
+                - when: "{{ outcome.status == 'error' and outcome.pg.code in ['40001','40P01'] }}"
+                  then: { do: retry, attempts: 5, backoff: exponential, delay: 2.0 }
+                - when: "{{ outcome.status == 'error' }}"
+                  then: { do: fail }
+                - else:
+                    then: { do: continue }
 
-              # Strip JavaScript-style comments (// ...) that GPT sometimes adds
-              content = re.sub(r'//[^\n]*', '', content)
+      # --- 3) Transform to compact payload and translate/format via OpenAI ---
+      - compact_amadeus_payload:
+          kind: python
+          args:
+            amadeus: "{{ amadeus_search }}"
+          code: |
+            data = {}
+            if isinstance(amadeus, dict):
+                data = amadeus.get("data") or amadeus
+            offers = data.get("data") if isinstance(data, dict) else None
+            if not isinstance(offers, list):
+                offers = []
+            compact = []
+            for o in offers[:10]:
+                try:
+                    price = (o.get("price") or {}).get("total")
+                    itineraries = o.get("itineraries") or []
+                    compact.append({
+                        "id": o.get("id"),
+                        "price_total": price,
+                        "itineraries_count": len(itineraries),
+                    })
+                except Exception:
+                    continue
+            result = {
+                "offers_preview": compact,
+                "offers_total": len(offers),
+            }
+          spec:
+            policy:
+              rules:
+                - when: "{{ outcome.status == 'error' }}"
+                  then: { do: fail }
+                - else:
+                    then: { do: continue }
+            result:
+              inline_max_bytes: 65536
 
-              # Parse JSON
-              parsed = json.loads(content)
+      - openai_translate_response:
+          kind: http
+          method: POST
+          url: "https://api.openai.com/v1/chat/completions"
+          headers:
+            Authorization: "Bearer {{ keychain.openai_token.api_key }}"
+            Content-Type: "application/json"
+          body:
+            model: "gpt-4o-mini"
+            messages:
+              - role: system
+                content: |
+                  You are a travel assistant. Summarize flight offers and return user-friendly text.
+                  Use the provided compact JSON. If offers_total==0, explain no offers found.
+              - role: user
+                content: "{{ compact_amadeus_payload | tojson }}"
+          spec:
+            timeout: { connect: 10, read: 60 }
+            policy:
+              rules:
+                - when: "{{ outcome.status == 'error' and outcome.http.status in [429,500,502,503,504] }}"
+                  then: { do: retry, attempts: 6, backoff: exponential, delay: 2.0 }
+                - when: "{{ outcome.status == 'error' and outcome.http.status in [401,403] }}"
+                  then: { do: fail }
+                - when: "{{ outcome.status == 'error' }}"
+                  then: { do: fail }
+                - else:
+                    then: { do: continue }
+            result:
+              store: { kind: auto, scope: execution, ttl: "2h", compression: gzip }
+              inline_max_bytes: 8192
+              select:
+                - path: "$.choices[0].message.content"
+                  as: summary_text
 
-              result = {
-                  "status": "success",
-                  "endpoint": parsed.get('endpoint'),
-                  "params": parsed.get('params')
-              }
-      except Exception as e:
-          result = {
-              "status": "error",
-              "message": f"Failed to parse OpenAI response: {str(e)}"
-          }
-  next:
-    - step: execute_amadeus_query
+      - log_openai_response_event:
+          kind: postgres
+          auth: pg_k8s
+          query: |
+            INSERT INTO amadeus_ai_events (execution_id, event_type, payload_ref, payload_meta)
+            VALUES (
+              '{{ execution_id }}',
+              'openai.translate_response',
+              '{{ openai_translate_response.__ref__ | tojson }}'::jsonb,
+              jsonb_build_object('summary_preview', '{{ openai_translate_response.summary_text | default('') | replace('"','\"') }}')
+            );
+          spec:
+            policy:
+              rules:
+                - when: "{{ outcome.status == 'error' and outcome.pg.code in ['40001','40P01'] }}"
+                  then: { do: retry, attempts: 5, backoff: exponential, delay: 2.0 }
+                - when: "{{ outcome.status == 'error' }}"
+                  then: { do: fail }
+                - else:
+                    then: { do: continue }
 
-- step: execute_amadeus_query
-  desc: Execute Amadeus API query using REST API
-  tool:
-    kind: http
-    method: GET
-    endpoint: https://test.api.amadeus.com{{ parse_openai_response.endpoint }}
-    params: '{{ parse_openai_response.params }}'
-    headers:
-      Authorization: "Bearer {{ keychain.amadeus_token.access_token }}"
-    output:
-      store:
-        kind: auto
-        ttl: "30m"
-        compression: gzip
-      select:
-        - path: "$.meta.count"
-          as: result_count
-        - path: "$.dictionaries"
-          as: dictionaries
-      inline_max_bytes: 8192
-      scope: execution
-    eval:
-      - expr: "{{ outcome.error.kind == 'server_error' and outcome.error.status_code in [500, 502, 503] }}"
-        do: retry
-        attempts: 3
-        backoff: exponential
-        delay: 0.5
-      - expr: "{{ outcome.status == 'error' }}"
-        do: continue
-      - else:
-          do: continue
-  next:
-    - step: store_amadeus_query_event
+      # --- 4) Persist final result (refs only + summary text) ---
+      - persist_result:
+          kind: postgres
+          auth: pg_k8s
+          query: |
+            INSERT INTO amadeus_ai_results (
+              execution_id,
+              query_text,
+              amadeus_query,
+              openai_query_ref,
+              amadeus_ref,
+              openai_response_ref,
+              summary_text
+            )
+            VALUES (
+              '{{ execution_id }}',
+              '{{ workload.query | replace("'", "''") }}',
+              '{{ build_amadeus_query.amadeus_query | replace("'", "''") }}',
+              '{{ openai_translate_query.__ref__ | tojson }}'::jsonb,
+              '{{ amadeus_search.__ref__ | tojson }}'::jsonb,
+              '{{ openai_translate_response.__ref__ | tojson }}'::jsonb,
+              '{{ openai_translate_response.summary_text | default('') | replace("'", "''") }}'
+            );
+          spec:
+            policy:
+              rules:
+                - when: "{{ outcome.status == 'error' and outcome.pg.code in ['40001','40P01'] }}"
+                  then: { do: retry, attempts: 5, backoff: exponential, delay: 2.0 }
+                - when: "{{ outcome.status == 'error' }}"
+                  then: { do: fail }
+                - else:
+                    then: { do: continue }
 
-- step: store_amadeus_query_event
-  desc: Store the Amadeus API query event in database
-  tool:
-    kind: postgres
-    auth: '{{ workload.pg_auth }}'
-    command: |
-      INSERT INTO amadeus_ai_events (execution_id, event_type, api_call_type, input_data, output_data, status_code, duration_ms, details)
-      VALUES (
-        '{{ job.uuid }}',
-        'amadeus_api_search',
-        'amadeus',
-        $json${{ {"endpoint": parse_openai_response.endpoint, "params": parse_openai_response.params, "access_token_used": true} | tojson }}$json$::jsonb,
-        {% if execute_amadeus_query.data is defined %}$json${{ execute_amadeus_query.data | tojson }}$json$::jsonb{% else %}NULL{% endif %},
-        {{ execute_amadeus_query.status_code | default(0) }},
-        {{ (execute_amadeus_query.elapsed * 1000) | round | int if execute_amadeus_query.elapsed else 0 }},
-        $json${{ {"full_endpoint": execute_amadeus_query.url, "method": "GET"} | tojson }}$json$::jsonb
-      );
-  next:
-    - step: translate_amadeus_response
+      # --- 5) Optional callback (skip if request_id/callback_url missing) ---
+      - callback_if_requested:
+          kind: http
+          method: POST
+          url: "{{ workload.callback_url }}"
+          headers:
+            Authorization: "Bearer {{ keychain.callback_secret.value }}"
+            Content-Type: "application/json"
+          body:
+            request_id: "{{ workload.request_id }}"
+            execution_id: "{{ execution_id }}"
+            summary: "{{ openai_translate_response.summary_text | default('') }}"
+            result_ref: "{{ openai_translate_response.__ref__ | tojson }}"
+          spec:
+            policy:
+              rules:
+                - when: "{{ workload.request_id == '' }}"
+                  then: { do: skip }
+                - when: "{{ workload.callback_url == '' }}"
+                  then: { do: skip }
+                - when: "{{ outcome.status == 'error' and outcome.http.status in [429,500,502,503,504] }}"
+                  then: { do: retry, attempts: 6, backoff: exponential, delay: 2.0 }
+                - when: "{{ outcome.status == 'error' }}"
+                  then: { do: fail }
+                - else:
+                    then: { do: continue }
 
-- step: translate_amadeus_response
-  desc: Convert Amadeus API response to natural language using OpenAI
-  tool:
-    kind: http
-    method: POST
-    endpoint: https://api.openai.com/v1/chat/completions
-    headers:
-      Authorization: "Bearer {{ keychain.openai_token.api_key }}"
-    payload:
-      model: gpt-4o-mini
-      messages:
-      - role: system
-        content: |
-          You are a helpful assistant that reads raw JSON responses from the Amadeus API and summarizes them into clear, human-readable language.
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: end
 
-          Your task is to:
-          1. Read and understand the JSON response structure (e.g. flights, hotels, etc.).
-          2. Identify key information relevant to the user (e.g. origin/destination, dates, price, airline, stops, hotel name, stars, location, price).
-          3. Summarize the most important details in clean, natural English.
-          4. Use lists, bullet points, and grouping if appropriate.
-          5. Do not show any raw JSON keys or code — just understandable sentences.
-          6. For IATA codes always write a transcription (i.e. SVO will be Sheremetyevo International Airport)
-      - role: user
-        content: '{{ execute_amadeus_query.data | tojson }}'
-      temperature: 0.3
-    output:
-      store:
-        kind: auto
-        ttl: "30m"
-      select:
-        - path: "$.choices[0].message.content"
-          as: natural_language_result
-        - path: "$.usage.total_tokens"
-          as: tokens_used
-      inline_max_bytes: 4096
-      scope: execution
-  next:
-    - step: store_openai_response_event
-
-- step: store_openai_response_event
-  desc: Store the OpenAI response translation event in database
-  tool:
-    kind: postgres
-    auth: '{{ workload.pg_auth }}'
-    command: |
-      INSERT INTO amadeus_ai_events (execution_id, event_type, api_call_type, input_data, output_data, status_code, duration_ms, details)
-      VALUES (
-        '{{ job.uuid }}',
-        'openai_response_translation',
-        'openai',
-        $json${{ {"amadeus_response_base64": execute_amadeus_query.data | tojson | b64encode, "model": "gpt-4o-mini", "system_prompt": "amadeus_response_to_natural_language"} | tojson }}$json$::jsonb,
-        {% if translate_amadeus_response.data is defined %}$json${{ {"response_base64": translate_amadeus_response.data | tojson | b64encode, "is_base64_encoded": true} | tojson }}$json$::jsonb{% else %}NULL{% endif %},
-        {{ translate_amadeus_response.status_code | default(0) }},
-        {{ (translate_amadeus_response.elapsed * 1000) | round | int if translate_amadeus_response.elapsed else 0 }},
-        $json${{ {"endpoint": "https://api.openai.com/v1/chat/completions", "method": "POST"} | tojson }}$json$::jsonb
-      );
-  next:
-    - step: insert_final_result
-
-- step: insert_final_result
-  desc: Insert final natural language result into PostgreSQL
-  tool:
-    kind: postgres
-    auth: '{{ workload.pg_auth }}'
-    command: |
-      INSERT INTO api_results (execution_id, source, result)
-      VALUES (
-        '{{ job.uuid }}',
-        'amadeus_api',
-        $json${{ {"query": workload.query, "natural_language_result": (translate_amadeus_response.natural_language_result | default('No response generated')) | b64encode, "execution_id": job.uuid, "is_base64_encoded": true, "result_count": execute_amadeus_query.result_count | default(0)} | tojson }}$json$::jsonb
-      );
-  next:
-    - step: prepare_result
-
-- step: prepare_result
-  desc: Prepare final result for callback
-  tool:
-    kind: python
-    args:
-      query: "{{ workload.query }}"
-      nl_result: "{{ translate_amadeus_response.data.choices[0].message.content | default('No response generated') }}"
-      execution_id: "{{ job.uuid }}"
-      openai_tokens: "{{ translate_query_to_amadeus.tokens_used | default(0) + translate_amadeus_response.tokens_used | default(0) }}"
-      amadeus_results: "{{ execute_amadeus_query.result_count | default(0) }}"
-    code: |
-      result = {
-          "status": "COMPLETED",
-          "textOutput": nl_result,
-          "query": query,
-          "executionId": execution_id,
-          "meta": {
-              "totalTokensUsed": openai_tokens,
-              "amadeusResultCount": amadeus_results
-          }
-      }
-  next:
-    - step: send_callback
-      when: "{{ workload.request_id }}"
-    - step: end
-      when: "{{ not workload.request_id }}"
-
-- step: send_callback
-  desc: Send result to gateway via HTTP callback
-  tool:
-    kind: http
-    method: POST
-    endpoint: "{{ workload.gateway_url }}/api/internal/callback/async"
-    headers:
-      Content-Type: application/json
-    payload:
-      request_id: "{{ workload.request_id }}"
-      execution_id: "{{ job.uuid }}"
-      status: "{{ prepare_result.status }}"
-      data:
-        textOutput: "{{ prepare_result.textOutput }}"
-        query: "{{ prepare_result.query }}"
-        executionId: "{{ prepare_result.executionId }}"
-  next:
-    - step: end
-
-- step: end
-  desc: End of workflow
-  tool:
-    kind: python
-    args:
-      status: "{{ prepare_result.status | default('COMPLETED') }}"
-      text_output: "{{ prepare_result.textOutput | default('Workflow completed') }}"
-    code: |
-      result = {"status": status, "textOutput": text_output}
+  - step: end
+    desc: Finished
+    tool:
+      - done:
+          kind: noop

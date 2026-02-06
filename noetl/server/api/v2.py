@@ -70,8 +70,11 @@ class ExecuteRequest(BaseModel):
     path: Optional[str] = Field(None, description="Playbook catalog path")
     catalog_id: Optional[int] = Field(None, description="Catalog ID (alternative to path)")
     version: Optional[int] = Field(None, description="Specific version to execute (used with path)")
-    payload: dict[str, Any] = Field(default_factory=dict, description="Input payload")
+    payload: dict[str, Any] = Field(default_factory=dict, alias="workload", description="Input payload/workload")
     parent_execution_id: Optional[int] = Field(None, description="Parent execution ID")
+
+    class Config:
+        populate_by_name = True  # Allow both 'payload' and 'workload' field names
 
     @model_validator(mode='after')
     def validate_path_or_catalog_id(self):
@@ -198,8 +201,9 @@ async def execute(req: ExecuteRequest) -> ExecuteResponse:
                         "tool_config": cmd.tool.config,
                         "args": cmd.args or {},
                         "render_context": cmd.render_context,
-                        "case": cmd.case,
-                        "spec": cmd.spec.model_dump() if cmd.spec else None,  # Case evaluation behavior
+                        "next_targets": cmd.next_targets,  # Canonical v2: routing via next[].when
+                        "pipeline": cmd.pipeline,  # Canonical v2: task pipeline
+                        "spec": cmd.spec.model_dump() if cmd.spec else None,  # Step behavior (next_mode)
                     }
                 meta = {
                     "command_id": cmd_id,
@@ -660,8 +664,9 @@ async def handle_event(req: EventRequest) -> EventResponse:
                         "tool_config": cmd.tool.config,
                         "args": cmd.args or {},
                         "render_context": cmd.render_context,
-                        "case": cmd.case,
-                        "spec": cmd.spec.model_dump() if cmd.spec else None,  # Case evaluation behavior
+                        "next_targets": cmd.next_targets,  # Canonical v2: routing via next[].when
+                        "pipeline": cmd.pipeline,  # Canonical v2: task pipeline
+                        "spec": cmd.spec.model_dump() if cmd.spec else None,  # Step behavior (next_mode)
                     }
                     meta = {
                         "command_id": cmd_id,

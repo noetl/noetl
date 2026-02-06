@@ -1,10 +1,10 @@
-apiVersion: noetl.io/v2
+apiVersion: noetl.io/v10
 kind: Playbook
 metadata:
   name: http_to_postgres_iterator
   path: examples/data_transfer/http_to_postgres_iterator
 
-workload:
+ctx:
   api_url: "https://jsonplaceholder.typicode.com/posts"
   pg_auth: pg_local
 
@@ -16,13 +16,16 @@ workflow:
       code: |
         result = {"status": "initialized"}
     next:
-      - step: create_table
+      spec:
+        mode: exclusive
+      arcs:
+        - step: create_table
 
   - step: create_table
     desc: Create table for storing HTTP data
     tool:
       kind: postgres
-      auth: "{{ workload.pg_auth }}"
+      auth: "{{ pg_auth }}"
       command: |
         DROP TABLE IF EXISTS public.http_to_postgres_iterator;
 
@@ -35,16 +38,22 @@ workflow:
           fetched_at TIMESTAMPTZ DEFAULT NOW()
         );
     next:
-      - step: fetch_http_data
+      spec:
+        mode: exclusive
+      arcs:
+        - step: fetch_http_data
 
   - step: fetch_http_data
     desc: Fetch data from HTTP API
     tool:
       kind: http
       method: GET
-      url: "{{ workload.api_url }}"
+      url: "{{ api_url }}"
     next:
-      - step: insert_posts
+      spec:
+        mode: exclusive
+      arcs:
+        - step: insert_posts
 
   - step: insert_posts
     desc: Insert posts into PostgreSQL
@@ -55,7 +64,7 @@ workflow:
         mode: parallel
     tool:
       kind: postgres
-      auth: "{{ workload.pg_auth }}"
+      auth: "{{ pg_auth }}"
       command: |
         INSERT INTO public.http_to_postgres_iterator (post_id, user_id, title, body)
         VALUES (
@@ -65,17 +74,23 @@ workflow:
           $${{ item.body }}$$
         );
     next:
-      - step: show_count
+      spec:
+        mode: exclusive
+      arcs:
+        - step: show_count
 
   - step: show_count
     desc: Verify record count
     tool:
       kind: postgres
-      auth: "{{ workload.pg_auth }}"
+      auth: "{{ pg_auth }}"
       command: |
         SELECT COUNT(*) as records FROM public.http_to_postgres_iterator;
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: End workflow

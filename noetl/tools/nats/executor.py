@@ -450,7 +450,7 @@ OPERATIONS = {
 }
 
 
-def execute_nats_task(
+async def execute_nats_task(
     task_config: Dict[str, Any],
     context: Dict[str, Any],
     jinja_env: Environment,
@@ -512,15 +512,12 @@ def execute_nats_task(
             op_kwargs[field] = val
 
     # Run async operation
-    async def _run():
-        nc = None
-        try:
-            nc = await _get_nats_client(conn_params)
-            op_func = OPERATIONS[operation]
-            result = await op_func(nc, **op_kwargs)
-            return result
-        finally:
-            if nc:
-                await nc.close()
-
-    return asyncio.get_event_loop().run_until_complete(_run())
+    nc = None
+    try:
+        nc = await _get_nats_client(conn_params)
+        op_func = OPERATIONS[operation]
+        result = await op_func(nc, **op_kwargs)
+        return result
+    finally:
+        if nc:
+            await nc.close()

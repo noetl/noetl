@@ -243,20 +243,20 @@ class ExecutionState:
         if playbook.workload:
             self.variables.update(playbook.workload)
         
-        # Merge payload
-        # CRITICAL: If payload contains 'workload' or 'vars', it can overwrite sub-playbook state.
-        # We only merge keys that are NOT 'workload' or 'vars' directly into self.variables
-        # unless they are explicitly intended to be there.
+        # Merge payload into ctx (canonical v10: use ctx for execution-scoped variables)
+        # NOTE: 'vars' key is REMOVED in strict v10 - use 'ctx' instead
         for k, v in payload.items():
-            if k not in ("workload", "vars"):
-                self.variables[k] = v
+            if k == "ctx" and isinstance(v, dict):
+                # Merge execution request ctx into variables (canonical v10)
+                self.variables.update(v)
+                logger.debug(f"[STATE-INIT] Merged execution ctx into variables: {list(v.keys())}")
             else:
-                # If it's workload/vars, deep merge instead of overwrite if they exist
-                if k in self.variables and isinstance(self.variables[k], dict) and isinstance(v, dict):
-                    self.variables[k].update(v)
-                else:
-                    self.variables[k] = v
-    
+                # Other keys go directly into variables
+                self.variables[k] = v
+
+        # Log final state for debugging reconstruction issues
+        logger.info(f"[STATE-INIT] Final state: execution_id={execution_id}, variables_count={len(self.variables)}, variable_keys={list(self.variables.keys())[:10]}")
+
     def get_step(self, step_name: str) -> Optional[Step]:
         """Get step by name."""
         for step in self.playbook.workflow:
@@ -391,15 +391,28 @@ class ExecutionState:
     
     def get_render_context(self, event: Event) -> dict[str, Any]:
         """Get context for Jinja2 rendering.
-        
+
         Loop variables are added to state.variables in _create_command_for_step,
         so they will be available via **self.variables spread below.
         """
-        logger.info(f"ENGINE: get_render_context called, catalog_id={self.catalog_id}, execution_id={self.execution_id}")
+        # Log workload variables for debugging state reconstruction issues
+        workload_vars = {k: v for k, v in self.variables.items() if not isinstance(v, dict) or 'status' not in v}
+        logger.info(f"ENGINE: get_render_context called, catalog_id={self.catalog_id}, execution_id={self.execution_id}, variables_count={len(self.variables)}, workload_sample={list(workload_vars.items())[:5]}")
         
         # Protected system fields that should not be overridden by workload variables
         protected_fields = {"execution_id", "catalog_id", "job"}
         
+        # Separate iteration-scoped variables (loop iterator, loop index)
+        iter_vars = {}
+        if event.step and event.step in self.loop_state:
+            loop_state = self.loop_state[event.step]
+            iterator_name = loop_state.get("iterator", "item")
+            if iterator_name in self.variables:
+                iter_vars[iterator_name] = self.variables[iterator_name]
+            iter_vars["_index"] = loop_state["index"] - 1 if loop_state["index"] > 0 else 0
+            iter_vars["_first"] = loop_state["index"] == 1
+            iter_vars["_last"] = loop_state["index"] >= len(loop_state["collection"])
+
         context = {
             "event": {
                 "name": event.name,
@@ -407,10 +420,10 @@ class ExecutionState:
                 "step": event.step,
                 "timestamp": event.timestamp.isoformat() if event.timestamp else None,
             },
-            # Note: variables includes loop vars, but we avoid top-level spreading 
-            # to prevent state pollution in sub-playbooks
-            "workload": self.variables,
-            "vars": self.variables,
+            # Canonical v10: ctx = execution-scoped, iter = iteration-scoped
+            # NOTE: Legacy 'workload' and 'vars' aliases REMOVED in strict v10
+            "ctx": self.variables,  # Execution-scoped variables (canonical v10)
+            "iter": iter_vars,      # Iteration-scoped variables (canonical v10)
             **self.step_results,  # Make step results accessible (e.g., {{ process }})
         }
         
@@ -504,9 +517,10 @@ class PlaybookRepo:
                 import yaml
                 content_dict = yaml.safe_load(row["content"])
 
-                # Validate it's v2
-                if content_dict.get("apiVersion") != "noetl.io/v2":
-                    logger.error(f"Playbook {path} is not v2 format")
+                # Validate it's v2 or v10 format
+                api_version = content_dict.get("apiVersion")
+                if api_version not in ("noetl.io/v2", "noetl.io/v10"):
+                    logger.error(f"Playbook {path} has unsupported apiVersion: {api_version}")
                     return None
 
                 # Parse into Pydantic model
@@ -539,9 +553,10 @@ class PlaybookRepo:
                 import yaml
                 content_dict = yaml.safe_load(row["content"])
 
-                # Validate it's v2
-                if content_dict.get("apiVersion") != "noetl.io/v2":
-                    logger.error(f"Playbook catalog_id={catalog_id} is not v2 format")
+                # Validate it's v2 or v10 format
+                api_version = content_dict.get("apiVersion")
+                if api_version not in ("noetl.io/v2", "noetl.io/v10"):
+                    logger.error(f"Playbook catalog_id={catalog_id} has unsupported apiVersion: {api_version}")
                     return None
 
                 # Parse into Pydantic model
@@ -584,7 +599,8 @@ class StateStore:
         
         # Reconstruct state from events in database using event sourcing
         async with get_pool_connection() as conn:
-            async with conn.cursor() as cur:
+            # Explicitly use dict_row for predictable results
+            async with conn.cursor(row_factory=dict_row) as cur:
                 # Get playbook info and workload from playbook.initialized event
                 await cur.execute("""
                     SELECT catalog_id, result
@@ -593,9 +609,11 @@ class StateStore:
                     ORDER BY event_id
                     LIMIT 1
                 """, (int(execution_id),))
-                
+
                 result = await cur.fetchone()
+                logger.info(f"[STATE-LOAD] playbook.initialized query result: type={type(result)}, is_none={result is None}")
                 if not result:
+                    logger.warning(f"[STATE-LOAD] No playbook.initialized event found for execution {execution_id}")
                     return None
 
                 if isinstance(result, dict):
@@ -610,9 +628,14 @@ class StateStore:
                 # Extract workload from playbook.initialized event result
                 # This contains the merged workload (playbook defaults + parent args)
                 workload = {}
+                logger.info(f"[STATE-LOAD] Raw event_result type: {type(event_result)}, truthy: {bool(event_result)}, is_dict: {isinstance(event_result, dict) if event_result else 'N/A'}")
                 if event_result and isinstance(event_result, dict):
                     workload = event_result.get("workload", {})
-                    logger.debug(f"Restored workload from playbook.initialized event: {list(workload.keys()) if workload else 'empty'}")
+                    logger.info(f"[STATE-LOAD] Restored workload from playbook.initialized event: keys={list(workload.keys()) if workload else 'empty'}")
+                    if not workload:
+                        logger.warning(f"[STATE-LOAD] Workload is empty! event_result keys: {list(event_result.keys())}, full event_result: {event_result}")
+                else:
+                    logger.warning(f"[STATE-LOAD] Could not extract workload from event_result - raw value: {str(event_result)[:500] if event_result else 'None'}")
                 
                 # Load playbook
                 playbook = await self.playbook_repo.load_playbook_by_id(catalog_id)
@@ -832,7 +855,7 @@ class ControlFlowEngine:
             simple_var_match = re.match(r'^\{\{\s*([\w.]+)\s*\}\}$', template_str.strip())
             if simple_var_match:
                 var_path = simple_var_match.group(1)
-                # Navigate dot notation: workload.api_url → context['workload']['api_url']
+                # Navigate dot notation: ctx.api_url → context['ctx']['api_url']
                 value = context
                 parts = var_path.split('.')
                 
@@ -915,19 +938,34 @@ class ControlFlowEngine:
         commands = []
         context = state.get_render_context(event)
 
-        # Get next_mode from step spec (default: exclusive)
+        # Get next_mode from next.spec.mode (canonical v10 - not step.spec.next_mode)
         next_mode = "exclusive"
-        if step_def.spec and step_def.spec.next_mode:
-            next_mode = step_def.spec.next_mode
+        if step_def.next:
+            # next is normalized to router format: {spec: {mode: ...}, arcs: [...]}
+            if isinstance(step_def.next, dict):
+                next_spec = step_def.next.get("spec", {})
+                if isinstance(next_spec, dict) and "mode" in next_spec:
+                    next_mode = next_spec.get("mode", "exclusive")
 
         if not step_def.next:
             return commands
 
-        # Normalize next to list of dicts
+        # Normalize next to list of dicts (arcs)
         next_items = step_def.next
         if isinstance(next_items, str):
+            # String shorthand: next: "step_name"
             next_items = [{"step": next_items}]
+        elif isinstance(next_items, dict):
+            # V10 router format: {spec: {...}, arcs: [...]}
+            if "arcs" in next_items:
+                next_items = next_items.get("arcs", [])
+            elif "step" in next_items:
+                # Legacy single target: {step: "name", when: "..."}
+                next_items = [next_items]
+            else:
+                next_items = []
         elif isinstance(next_items, list):
+            # Legacy list format: [{ step: ... }, ...]
             next_items = [
                 item if isinstance(item, dict) else {"step": item}
                 for item in next_items
@@ -965,6 +1003,12 @@ class ControlFlowEngine:
                 logger.error(f"[NEXT-EVAL] Target step not found: {target_step}")
                 continue
 
+            # DEDUPLICATION: Skip if command for this step is already pending
+            # This prevents duplicate commands when multiple events trigger orchestration
+            if target_step in state.issued_steps and target_step not in state.completed_steps:
+                logger.warning(f"[NEXT-EVAL] Skipping duplicate command for step '{target_step}' - already in issued_steps")
+                continue
+
             # Render target args
             rendered_args = {}
             if target_args:
@@ -975,7 +1019,10 @@ class ControlFlowEngine:
             command = await self._create_command_for_step(state, target_step_def, rendered_args)
             if command:
                 commands.append(command)
-                logger.info(f"[NEXT-MATCH] Created command for step {target_step}")
+                # CRITICAL: Mark step as issued immediately to prevent duplicate commands
+                # from parallel event processing
+                state.issued_steps.add(target_step)
+                logger.info(f"[NEXT-MATCH] Created command for step {target_step}, added to issued_steps")
 
             # In exclusive mode: first match wins
             if next_mode == "exclusive":
@@ -1033,7 +1080,8 @@ class ControlFlowEngine:
 
         # Reserved action keys that are not named tasks
         # Any key not in this set that contains a tool: is treated as an inline task
-        reserved_actions = {"next", "set", "vars", "result", "fail", "collect", "retry"}
+        # NOTE: 'vars' REMOVED in strict v10
+        reserved_actions = {"next", "set", "result", "fail", "collect", "retry"}
 
         # Normalize to list
         actions = then_block if isinstance(then_block, list) else [then_block]
@@ -1057,13 +1105,13 @@ class ControlFlowEngine:
                 if command:
                     commands.append(command)
 
-                # Process any immediate actions (set, vars, etc. - not next)
+                # Process any immediate actions (set, etc. - not next)
                 for action in actions:
                     if not isinstance(action, dict):
                         continue
                     # Skip labeled tasks (they're in the task sequence)
                     is_task = any(
-                        key not in {"next", "set", "vars", "result", "fail", "collect", "retry"}
+                        key not in {"next", "set", "result", "fail", "collect", "retry"}
                         and isinstance(val, dict) and "tool" in val
                         for key, val in action.items()
                     )
@@ -1452,14 +1500,7 @@ class ControlFlowEngine:
                 else:
                     state.variables[key] = value
 
-        if "vars" in action:
-            # Set variables (alias for 'set')
-            vars_data = action["vars"]
-            for key, value in vars_data.items():
-                if isinstance(value, str) and "{{" in value:
-                    state.variables[key] = self._render_template(value, context)
-                else:
-                    state.variables[key] = value
+        # NOTE: 'vars' action is REMOVED in strict v10 - use 'set' or task.spec.policy.rules set_ctx
 
         if "result" in action:
             # Set step result
@@ -1668,7 +1709,7 @@ class ControlFlowEngine:
                     {"transform": {"tool": {"kind": "python", ...}}},
                     ...
                 ]
-            remaining_actions: Non-task actions to process after sequence (next, vars, etc.)
+            remaining_actions: Non-task actions to process after sequence (next, etc.)
             context: Render context for Jinja2 templates
 
         Returns:
@@ -1842,28 +1883,37 @@ class ControlFlowEngine:
 
             # For pipeline steps, use task_sequence as tool kind
             tool_kind = "task_sequence"
-            tool_config = {"pipeline": pipeline}
+            tool_config = {"tasks": pipeline}  # Worker expects "tasks" key
         else:
             # Single tool (shorthand)
             tool_dict = step.tool.model_dump()
             tool_config = {k: v for k, v in tool_dict.items() if k != "kind"}
             tool_kind = step.tool.kind
 
-            # Merge step-level result config (for output_select pattern)
-            if step.result:
-                tool_config["result"] = step.result
+            # NOTE: step.result removed in v10 - output config is now in tool.output or tool.spec.policy
 
             # Render Jinja2 templates in tool config
             tool_config = recursive_render(self.jinja_env, tool_config, context)
 
-        # Extract next targets for conditional routing (canonical format)
+        # Extract next targets for conditional routing (canonical v10 format)
         next_targets = None
         if step.next:
-            # Normalize next to list of dicts
+            # Normalize next to list of dicts (arcs)
             next_items = step.next
             if isinstance(next_items, str):
+                # String shorthand: next: "step_name"
                 next_items = [{"step": next_items}]
+            elif isinstance(next_items, dict):
+                # V10 router format: { spec: { mode: ... }, arcs: [...] }
+                if "arcs" in next_items:
+                    next_items = next_items.get("arcs", [])
+                elif "step" in next_items:
+                    # Legacy single target: { step: "name", when: "..." }
+                    next_items = [next_items]
+                else:
+                    next_items = []
             elif isinstance(next_items, list):
+                # Legacy list format: [{ step: ... }, ...]
                 next_items = [
                     item if isinstance(item, dict) else {"step": item}
                     for item in next_items
@@ -1871,13 +1921,15 @@ class ControlFlowEngine:
             next_targets = next_items
             logger.debug(f"[NEXT] Step '{step.step}' has {len(next_targets)} next targets")
 
-        # Extract step spec for next evaluation behavior (canonical format)
+        # Extract next_mode from next.spec.mode (canonical v10)
         command_spec = None
-        if step.spec:
-            command_spec = CommandSpec(
-                next_mode=step.spec.next_mode
-            )
-            logger.debug(f"[SPEC] Step '{step.step}' has spec: next_mode={step.spec.next_mode}")
+        next_mode = "exclusive"
+        if step.next and isinstance(step.next, dict):
+            next_spec = step.next.get("spec", {})
+            if isinstance(next_spec, dict) and "mode" in next_spec:
+                next_mode = next_spec.get("mode", "exclusive")
+        command_spec = CommandSpec(next_mode=next_mode)
+        logger.debug(f"[SPEC] Step '{step.step}': next_mode={next_mode} (from next.spec.mode)")
 
         command = Command(
             execution_id=state.execution_id,
@@ -1896,78 +1948,9 @@ class ControlFlowEngine:
         )
 
         return command
-    
-    async def _process_vars_block(self, event: Event, state: ExecutionState, step_def: Step) -> None:
-        """
-        Process vars block from step definition after step completion.
-        
-        Extracts variables using templates like {{ result.field }} and stores them
-        in the transient table for access via {{ vars.var_name }} in subsequent steps.
-        
-        Args:
-            event: The step.exit event
-            state: Current execution state
-            step_def: Step definition containing optional vars block
-        """
-        vars_block = step_def.vars
-        if not vars_block or not isinstance(vars_block, dict):
-            logger.debug(f"[VARS] No vars block for step '{event.step}'")
-            return
-        
-        logger.info(f"[VARS] Processing vars block for step '{event.step}': {list(vars_block.keys())}")
-        
-        try:
-            # Import TransientVars for storage
-            from noetl.worker.transient import TransientVars
 
-            # Build context for template rendering
-            # The 'result' key points to the step's output for current step vars extraction
-            eval_ctx = state.get_render_context(event)
+    # NOTE: _process_vars_block REMOVED in strict v10 - use task.spec.policy.rules set_ctx
 
-            rendered_vars = {}
-
-            for var_name, var_template in vars_block.items():
-                try:
-                    if isinstance(var_template, str):
-                        rendered_value = self._render_template(var_template, eval_ctx)
-
-                        # Try to parse as JSON if it looks like JSON
-                        if isinstance(rendered_value, str) and rendered_value.strip().startswith(("{", "[")):
-                            try:
-                                import json
-                                rendered_value = json.loads(rendered_value)
-                            except Exception:
-                                pass  # Keep string if not valid JSON
-                    else:
-                        # Non-string values pass through
-                        rendered_value = var_template
-
-                    rendered_vars[var_name] = rendered_value
-                    logger.info(f"[VARS] Rendered '{var_name}' = {rendered_value}")
-                except Exception as e:
-                    logger.warning(f"[VARS] Failed to render '{var_name}': {e}")
-                    continue
-
-            if not rendered_vars:
-                logger.debug(f"[VARS] No vars successfully rendered for step '{event.step}'")
-                return
-
-            # Store variables in transient table
-            count = await TransientVars.set_multiple(
-                variables=rendered_vars,
-                execution_id=event.execution_id,
-                var_type="step_result",
-                source_step=event.step
-            )
-
-            # Also add to state.variables for immediate template access
-            state.variables.update(rendered_vars)
-
-            logger.info(f"[VARS] Stored {count} variables from step '{event.step}'")
-
-        except Exception as e:
-            logger.exception(f"[VARS] Error processing vars block for step '{event.step}': {e}")
-    
     async def handle_event(self, event: Event, already_persisted: bool = False) -> list[Command]:
         """
         Handle an event and return commands to enqueue.
@@ -2076,7 +2059,7 @@ class ControlFlowEngine:
             state.mark_step_completed(parent_step, response_data)
             logger.info(f"[TASK_SEQ] Stored task sequence result for parent step '{parent_step}'")
 
-            # Process remaining actions from task sequence result (next, vars, etc.)
+            # Process remaining actions from task sequence result (next, etc.)
             remaining_actions = response_data.get("remaining_actions", [])
             if remaining_actions:
                 logger.info(f"[TASK_SEQ] Processing remaining actions: {remaining_actions}")
@@ -2112,7 +2095,9 @@ class ControlFlowEngine:
             # Mark step as completed even on error - it finished executing (with failure)
             error_data = event.payload.get("error", event.payload)
             state.completed_steps.add(event.step)
-            logger.debug(f"[CALL.ERROR] Marked step {event.step} as completed (with error)")
+            # CRITICAL: Track that execution has failures for final status determination
+            state.failed = True
+            logger.debug(f"[CALL.ERROR] Marked step {event.step} as completed (with error), execution marked as failed")
 
         # Get render context AFTER storing call.done response
         context = state.get_render_context(event)
@@ -2396,12 +2381,11 @@ class ControlFlowEngine:
                         loop_done_commands = await self._evaluate_next_transitions(state, step_def, loop_done_event)
                         commands.extend(loop_done_commands)
 
-        # Process vars block if present (extract variables from step result after completion)
-        if event.name == "step.exit" and step_def:
-            logger.info(f"[VARS_DEBUG] step.exit event for step '{event.step}', step_def.vars={getattr(step_def, 'vars', None)}")
-            await self._process_vars_block(event, state, step_def)
+        # NOTE: step.vars is REMOVED in strict v10 - use task.spec.policy.rules set_ctx
 
         # If step.exit event and no next/loop matched, use structural next as fallback
+        # NOTE: This code path should rarely be hit because next transitions are evaluated
+        # on call.done events. This is a fallback for steps without conditional routing.
         if event.name == "step.exit" and step_def.next and not commands:
             # Check if step failed - don't process next if it did
             step_status = event.payload.get("status", "").upper()
@@ -2409,26 +2393,48 @@ class ControlFlowEngine:
                 logger.info(f"[STRUCTURAL-NEXT] Step {event.step} failed, skipping structural next")
             # Only proceed to next if loop is done (or no loop) and step didn't fail
             elif not step_def.loop or state.is_loop_done(event.step):
-                logger.info(f"[STRUCTURAL-NEXT] No next matched for step.exit, using structural next: {step_def.next}")
+                # Get next_mode from next.spec.mode (canonical v10)
+                next_mode = "exclusive"
+                if step_def.next and isinstance(step_def.next, dict):
+                    next_spec = step_def.next.get("spec", {})
+                    if isinstance(next_spec, dict) and "mode" in next_spec:
+                        next_mode = next_spec.get("mode", "exclusive")
+
+                logger.info(f"[STRUCTURAL-NEXT] No next matched for step.exit, using structural next: {step_def.next}, mode={next_mode}")
                 # Handle structural next
                 next_items = step_def.next
                 if isinstance(next_items, str):
                     next_items = [next_items]
-                
+
+                context = state.get_render_context(event)
+
                 for next_item in next_items:
                     if isinstance(next_item, str):
                         target_step = next_item
+                        when_condition = None
                     elif isinstance(next_item, dict):
                         target_step = next_item.get("step")
+                        when_condition = next_item.get("when")
                     else:
                         continue
-                    
+
+                    # Evaluate when condition if present
+                    if when_condition:
+                        if not self._evaluate_condition(when_condition, context):
+                            logger.debug(f"[STRUCTURAL-NEXT] Skipping {target_step}: condition not met ({when_condition})")
+                            continue
+                        logger.info(f"[STRUCTURAL-NEXT] Condition matched for {target_step}: {when_condition}")
+
                     next_step_def = state.get_step(target_step)
                     if next_step_def:
                         command = await self._create_command_for_step(state, next_step_def, {})
                         if command:
                             commands.append(command)
                             logger.info(f"[STRUCTURAL-NEXT] Created command for step {target_step}")
+
+                            # In exclusive mode, stop after first match
+                            if next_mode == "exclusive":
+                                break
 
         # Finalize pagination data if step.exit and no retry commands were generated
         if event.name == "step.exit" and event.step in state.pagination_state and not (step_def and step_def.loop):
@@ -2542,9 +2548,12 @@ class ControlFlowEngine:
         if event.name == "step.exit" and not commands and not has_pending_commands and (is_terminal_step or is_failed_with_no_handler or is_effective_terminal) and not state.completed:
             # No more commands to execute - workflow and playbook are complete (or failed)
             state.completed = True
-            # Check if step failed by looking at error in payload
+            # Check if ANY step failed during execution (state.failed) OR if this final step has error
+            # This ensures we report failure even if execution continued past failed steps
             from noetl.core.dsl.v2.models import LifecycleEventPayload
-            completion_status = "failed" if has_error else "completed"
+            completion_status = "failed" if (state.failed or has_error) else "completed"
+            if state.failed:
+                logger.info(f"[COMPLETION] Execution {event.execution_id} marked as failed due to earlier step failures")
             
             # Persist current event FIRST to get its event_id for parent_event_id
             # Skip if already persisted by API caller
@@ -2610,12 +2619,14 @@ class ControlFlowEngine:
         # Only check if we haven't already generated completion events (avoid duplicate stopping logic)
         if not completion_events:
             if event.name == "command.failed":
+                state.failed = True  # Track failure for final status
                 logger.error(f"[FAILURE] Received command.failed event for step {event.step}, stopping execution")
                 return []  # Return empty commands list to stop workflow
-            
+
             if event.name == "step.exit":
                 step_status = event.payload.get("status", "").upper()
                 if step_status == "FAILED":
+                    state.failed = True  # Track failure for final status
                     logger.error(f"[FAILURE] Step {event.step} failed, stopping execution")
                     return []  # Return empty commands list to stop workflow
 
@@ -2873,6 +2884,8 @@ class ControlFlowEngine:
             if k in state.step_results:
                 continue
             workload_snapshot[k] = v
+
+        logger.info(f"[PLAYBOOK-INIT] Workload snapshot keys: {list(workload_snapshot.keys())}, sample values: {list(workload_snapshot.items())[:5]}")
 
         from noetl.core.dsl.v2.models import LifecycleEventPayload
         playbook_init_event = Event(

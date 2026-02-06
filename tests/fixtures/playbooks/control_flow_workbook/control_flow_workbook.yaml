@@ -1,4 +1,4 @@
-apiVersion: noetl.io/v2
+apiVersion: noetl.io/v10
 kind: Playbook
 
 metadata:
@@ -13,8 +13,6 @@ workbook:
   - name: compute_flag
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args:
         temperature_c: null
       code: |
@@ -33,13 +31,14 @@ workflow:
     desc: "Begin"
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args: {}
       code: |
         result = {"status": "initialized"}
     next:
-      - step: eval_flag
+      spec:
+        mode: exclusive
+      arcs:
+        - step: eval_flag
 
   - step: eval_flag
     desc: "Call workbook action to compute is_hot"
@@ -47,77 +46,83 @@ workflow:
       kind: workbook
       name: compute_flag
       args:
-        temperature_c: "{{ workload.temperature_c }}"
+        temperature_c: "{{ temperature_c }}"
     next:
-      - step: hot_path
-        when: "{{ eval_flag.is_hot == true }}"
-      - step: cold_path
-        when: "{{ eval_flag.is_hot == false }}"
+      spec:
+        mode: exclusive
+      arcs:
+        - step: hot_path
+          when: "{{ eval_flag.is_hot == true }}"
+        - step: cold_path
+          when: "{{ eval_flag.is_hot == false }}"
 
   - step: hot_path
     desc: "Hot branch; fan out to two steps in PARALLEL"
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args: {}
       code: |
         result = {"status": "routing_to_parallel"}
     next:
-      - step: hot_task_a
-      - step: hot_task_b
+      spec:
+        mode: parallel
+      arcs:
+        - step: hot_task_a
+        - step: hot_task_b
 
   - step: hot_task_a
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args: {}
       code: |
         result = {"who": "A"}
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: hot_task_b
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args: {}
       code: |
         result = {"who": "B"}
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: cold_path
     desc: "Cold branch single continuation"
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args: {}
       code: |
         result = {"status": "routing_to_cold"}
     next:
-      - step: cold_task
+      spec:
+        mode: exclusive
+      arcs:
+        - step: cold_task
 
   - step: cold_task
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args: {}
       code: |
         result = {"who": "C"}
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: "Finish"
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args: {}
       code: |
         result = {"status": "complete"}

@@ -1,4 +1,4 @@
-apiVersion: noetl.io/v2
+apiVersion: noetl.io/v10
 kind: Playbook
 metadata:
   name: python_gcs_script_example
@@ -14,35 +14,37 @@ workflow:
     desc: Start workflow
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args: {}
       code: |
         result = {"status": "initialized"}
     next:
-      - step: run_python_from_gcs
+      spec:
+        mode: exclusive
+      arcs:
+        - step: run_python_from_gcs
 
   - step: run_python_from_gcs
     desc: Execute Python script from Google Cloud Storage using full URI
     tool:
       kind: python
       script:
-        uri: "{{ workload.gcs_script_uri }}"
+        uri: "{{ gcs_script_uri }}"
         source:
           type: gcs
-          auth: "{{ workload.gcp_credential }}"
+          auth: "{{ gcp_credential }}"
       args:
-        name: "{{ workload.greeting_name }}"
+        name: "{{ greeting_name }}"
         count: 2
     next:
-      - step: verify_result
+      spec:
+        mode: exclusive
+      arcs:
+        - step: verify_result
 
   - step: verify_result
     desc: Verify GCS-loaded script executed correctly
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args:
         result: "{{ run_python_from_gcs }}"
       code: |
@@ -57,14 +59,15 @@ workflow:
             "result": result
         }
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: End workflow
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args: {}
       code: |
         result = {"status": "complete"}

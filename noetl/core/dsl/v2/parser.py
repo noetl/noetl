@@ -1,13 +1,14 @@
 """
-NoETL DSL v2 Parser - Canonical Format
+NoETL DSL v2 Parser - Canonical v10 Format
 
-Class-based YAML parser for v2 playbooks with canonical format:
-- tool as pipeline (list of labeled tasks) or single tool shorthand
-- step.when for transition enable guard
-- next[].when for conditional routing
-- loop.spec.mode for iteration mode
-- tool.eval for per-task flow control
-- Rejects case blocks (deprecated)
+Class-based YAML parser for v2 playbooks with canonical v10 format:
+- `when` is the ONLY conditional keyword (reject `expr`)
+- All knobs live under `spec` at any level
+- Policies under `spec.policy` typed by scope
+- Task outcome via `task.spec.policy.rules` (reject `eval`)
+- Routing via `next.spec` + `next.arcs[]` (Petri-net arcs)
+- NO `step.when` field (use `step.spec.policy.admit.rules`)
+- NO root `vars` (use ctx/iter via policy)
 """
 
 import yaml
@@ -18,16 +19,16 @@ from .models import Playbook, Step, ToolSpec, Loop, WorkbookTask
 
 class DSLParser:
     """
-    YAML parser for NoETL DSL v2 playbooks (canonical format).
+    YAML parser for NoETL DSL v2 playbooks (canonical v10 format).
 
     Validates:
     - tool.kind pattern (rejects old 'type' field)
     - tool as single object or pipeline list
-    - step.when for enable guards
-    - next[].when for conditional routing
+    - task.spec.policy.rules for outcome handling (rejects eval)
+    - next.spec + next.arcs[] for routing (rejects simple next[] list)
+    - step.spec.policy.admit.rules for admission (rejects step.when)
     - loop.spec.mode for iteration
-    - Rejects case blocks (use step.when + next[].when instead)
-    - Ensures 'start' step exists
+    - Rejects case blocks, expr, eval, step.when, root vars
     """
 
     def __init__(self):
@@ -55,8 +56,8 @@ class DSLParser:
         except yaml.YAMLError as e:
             raise ValueError(f"Invalid YAML: {e}")
 
-        # Validate canonical structure
-        self._validate_canonical_structure(data)
+        # Validate canonical v10 structure
+        self._validate_canonical_v10(data)
 
         # Parse to model
         playbook = Playbook(**data)
@@ -152,10 +153,14 @@ class DSLParser:
         """List all step names in playbook."""
         return [step.step for step in playbook.workflow]
 
-    def _validate_canonical_structure(self, data: dict[str, Any]):
+    # =========================================================================
+    # Canonical v10 Validation
+    # =========================================================================
+
+    def _validate_canonical_v10(self, data: dict[str, Any]):
         """
-        Validate that data uses canonical v2 structure.
-        Reject deprecated patterns.
+        Validate that data uses canonical v10 structure.
+        Reject all deprecated patterns.
         """
         # Check apiVersion
         api_version = data.get("apiVersion", "")
@@ -169,6 +174,13 @@ class DSLParser:
         if data.get("kind") != "Playbook":
             raise ValueError("kind must be 'Playbook'")
 
+        # REJECT root vars (v10: use ctx/iter via policy)
+        if "vars" in data:
+            raise ValueError(
+                "Root 'vars' is not allowed in canonical v10. "
+                "Use 'ctx' (execution-scoped) and 'iter' (iteration-scoped) via policy mutations."
+            )
+
         # Validate executor if present
         if "executor" in data:
             self._validate_executor(data["executor"], data.get("workflow", []))
@@ -178,15 +190,51 @@ class DSLParser:
         if not workflow:
             raise ValueError("Workflow cannot be empty")
 
+        # Collect all task labels for jump validation
+        all_task_labels = set()
         for step_data in workflow:
-            self._validate_step_canonical(step_data)
+            labels = self._collect_task_labels(step_data)
+            all_task_labels.update(labels)
 
-    def _validate_step_canonical(self, step_data: dict[str, Any]):
+        for step_data in workflow:
+            self._validate_step_v10(step_data, all_task_labels)
+
+    def _collect_task_labels(self, step_data: dict[str, Any]) -> set[str]:
+        """Collect all task labels in a step for jump validation."""
+        labels = set()
+        tool_data = step_data.get("tool")
+        if isinstance(tool_data, list):
+            for i, task_def in enumerate(tool_data):
+                if isinstance(task_def, dict) and len(task_def) == 1:
+                    label = next(iter(task_def.keys()))
+                    labels.add(label)
+                else:
+                    # Generate label for unnamed tasks
+                    labels.add(f"task_{i + 1}")
+        return labels
+
+    def _validate_step_v10(self, step_data: dict[str, Any], all_task_labels: set[str]):
         """
-        Validate step uses canonical structure.
-        Reject deprecated patterns (case blocks).
+        Validate step uses canonical v10 structure.
+        Reject deprecated patterns.
         """
         step_name = step_data.get("step", "<unknown>")
+
+        # REJECT step.when (v10: use step.spec.policy.admit.rules)
+        if "when" in step_data:
+            raise ValueError(
+                f"Step '{step_name}': 'when' field is not allowed on step in v10. "
+                "Use 'step.spec.policy.admit.rules' for admission control."
+            )
+
+        # REJECT case blocks
+        if "case" in step_data:
+            raise ValueError(
+                f"Step '{step_name}': 'case' blocks are not allowed in v10. "
+                "Use 'step.spec.policy.admit.rules' for admission, "
+                "'task.spec.policy.rules' for outcome handling, "
+                "and 'next.arcs[].when' for routing."
+            )
 
         # Check for old 'type' field
         if "type" in step_data:
@@ -195,52 +243,33 @@ class DSLParser:
                 "Use 'tool.kind' instead."
             )
 
-        # REJECT case blocks - use step.when + next[].when instead
-        if "case" in step_data:
-            raise ValueError(
-                f"Step '{step_name}': 'case' blocks are not allowed in canonical format. "
-                "Use 'step.when' for enable guards and 'next[].when' for conditional routing. "
-                "For pipelines, use 'tool: [- label: {{kind: ...}}]' directly on the step."
-            )
-
-        # Validate tool field
-        has_tool = "tool" in step_data
-        if not has_tool:
+        # Validate tool field is required
+        if "tool" not in step_data:
             raise ValueError(
                 f"Step '{step_name}': Missing 'tool' field. "
-                "Every step must have a tool (use 'kind: noop' for pure routing steps)."
+                "Every step must have a tool (use 'kind: noop' for pure routing)."
             )
 
         tool_data = step_data["tool"]
-        self._validate_tool_canonical(tool_data, step_name)
-
-        # Validate step.when if present
-        if "when" in step_data:
-            when_expr = step_data["when"]
-            if not isinstance(when_expr, str):
-                raise ValueError(
-                    f"Step '{step_name}': 'when' must be a Jinja2 expression string"
-                )
-
-        # Validate next with conditional routing
-        if "next" in step_data:
-            self._validate_next_canonical(step_data["next"], step_name)
-
-        # Validate loop.spec.mode
-        if "loop" in step_data:
-            self._validate_loop_canonical(step_data["loop"], step_name)
+        self._validate_tool_v10(tool_data, step_name, all_task_labels)
 
         # Validate step.spec if present
         if "spec" in step_data:
-            self._validate_step_spec(step_data["spec"], step_name)
+            self._validate_step_spec_v10(step_data["spec"], step_name)
 
-    def _validate_tool_canonical(self, tool_data: Any, step_name: str):
+        # Validate next router
+        if "next" in step_data:
+            self._validate_next_router_v10(step_data["next"], step_name)
+
+        # Validate loop.spec
+        if "loop" in step_data:
+            self._validate_loop_v10(step_data["loop"], step_name)
+
+    def _validate_tool_v10(self, tool_data: Any, step_name: str, all_task_labels: set[str]):
         """
-        Validate tool field in canonical format.
+        Validate tool field in canonical v10 format.
 
-        Supports two forms:
-        - Single tool object: {kind: http, url: "..."}
-        - Pipeline list: [- label: {kind: http, ...}]
+        REJECTS: eval (use task.spec.policy.rules instead)
         """
         if isinstance(tool_data, dict):
             # Single tool shorthand
@@ -249,24 +278,28 @@ class DSLParser:
                     f"Step '{step_name}': tool must have 'kind' field "
                     "(e.g., http, postgres, python, noop)"
                 )
-            # Validate tool.eval if present
+            # REJECT eval (v10: use task.spec.policy.rules)
             if "eval" in tool_data:
-                self._validate_tool_eval(tool_data["eval"], step_name, "tool")
+                raise ValueError(
+                    f"Step '{step_name}': 'eval' is not allowed in v10. "
+                    "Use 'task.spec.policy.rules' for outcome handling instead."
+                )
+            # Validate task.spec.policy if present
+            if "spec" in tool_data:
+                self._validate_task_spec_v10(tool_data["spec"], step_name, "tool", all_task_labels)
 
         elif isinstance(tool_data, list):
             # Pipeline format
-            self._validate_tool_pipeline(tool_data, step_name)
+            self._validate_tool_pipeline_v10(tool_data, step_name, all_task_labels)
 
         else:
             raise ValueError(
                 f"Step '{step_name}': 'tool' must be an object or list of labeled tasks"
             )
 
-    def _validate_tool_pipeline(self, pipeline: list, step_name: str):
+    def _validate_tool_pipeline_v10(self, pipeline: list, step_name: str, all_task_labels: set[str]):
         """
-        Validate tool pipeline (list of labeled tasks).
-
-        Each task must be: {label: {kind: ..., eval: [...], ...}}
+        Validate tool pipeline (list of labeled tasks) in v10 format.
         """
         if not pipeline:
             raise ValueError(
@@ -305,68 +338,341 @@ class DSLParser:
                     f"Step '{step_name}': tool[{i}].{label} must have 'kind' field"
                 )
 
-            # Validate tool.eval if present
+            # REJECT eval (v10: use task.spec.policy.rules)
             if "eval" in task_config:
-                self._validate_tool_eval(
-                    task_config["eval"], step_name, f"tool[{i}].{label}"
+                raise ValueError(
+                    f"Step '{step_name}': tool[{i}].{label}: 'eval' is not allowed in v10. "
+                    "Use 'spec.policy.rules' for outcome handling instead."
                 )
 
-    def _validate_next_canonical(self, next_data: Any, step_name: str):
-        """
-        Validate canonical next format with conditional routing.
+            # Validate task.spec.policy if present
+            if "spec" in task_config:
+                self._validate_task_spec_v10(
+                    task_config["spec"], step_name, f"tool[{i}].{label}", all_task_labels
+                )
 
-        Supports:
-        - String shorthand: next: "step_name"
-        - List of strings: next: ["step1", "step2"]
-        - List of objects with optional when: next: [{step: x, when: "..."}]
+    def _validate_task_spec_v10(self, spec_data: Any, step_name: str, location: str, all_task_labels: set[str]):
         """
+        Validate task.spec in v10 format.
+
+        task.spec.policy MUST be an object with required `rules:` list.
+        """
+        if not isinstance(spec_data, dict):
+            raise ValueError(
+                f"Step '{step_name}': {location}.spec must be an object"
+            )
+
+        if "policy" in spec_data:
+            policy = spec_data["policy"]
+            if not isinstance(policy, dict):
+                raise ValueError(
+                    f"Step '{step_name}': {location}.spec.policy must be an object"
+                )
+
+            # MUST have rules (v10 requirement)
+            if "rules" not in policy:
+                raise ValueError(
+                    f"Step '{step_name}': {location}.spec.policy must have 'rules' field. "
+                    "Task policy requires rules: [...] in v10."
+                )
+
+            rules = policy["rules"]
+            if not isinstance(rules, list):
+                raise ValueError(
+                    f"Step '{step_name}': {location}.spec.policy.rules must be a list"
+                )
+
+            self._validate_policy_rules_v10(rules, step_name, f"{location}.spec.policy", all_task_labels)
+
+    def _validate_policy_rules_v10(self, rules: list, step_name: str, location: str, all_task_labels: set[str]):
+        """
+        Validate policy rules in v10 format.
+
+        Each rule must use `when` (not `expr`) and have `then.do`.
+        """
+        valid_actions = {"continue", "retry", "break", "jump", "fail"}
+
+        for i, rule in enumerate(rules):
+            if not isinstance(rule, dict):
+                raise ValueError(
+                    f"Step '{step_name}': {location}.rules[{i}] must be an object"
+                )
+
+            # Check for else clause
+            if "else" in rule:
+                else_data = rule["else"]
+                if isinstance(else_data, dict) and "then" in else_data:
+                    self._validate_then_v10(
+                        else_data["then"], step_name, f"{location}.rules[{i}].else",
+                        valid_actions, all_task_labels
+                    )
+                continue
+
+            # REJECT expr (v10: only `when` is allowed)
+            if "expr" in rule:
+                raise ValueError(
+                    f"Step '{step_name}': {location}.rules[{i}]: 'expr' is not allowed in v10. "
+                    "Use 'when' as the ONLY conditional keyword."
+                )
+
+            # Must have `when` condition (or be else clause)
+            if "when" not in rule:
+                raise ValueError(
+                    f"Step '{step_name}': {location}.rules[{i}] must have 'when' or be an 'else' clause"
+                )
+
+            if not isinstance(rule["when"], str):
+                raise ValueError(
+                    f"Step '{step_name}': {location}.rules[{i}].when must be a Jinja2 expression string"
+                )
+
+            # Must have `then` with action
+            if "then" not in rule:
+                raise ValueError(
+                    f"Step '{step_name}': {location}.rules[{i}] must have 'then' field"
+                )
+
+            self._validate_then_v10(
+                rule["then"], step_name, f"{location}.rules[{i}]",
+                valid_actions, all_task_labels
+            )
+
+    def _validate_then_v10(self, then_data: Any, step_name: str, location: str,
+                          valid_actions: set[str], all_task_labels: set[str]):
+        """
+        Validate `then` block in v10 format.
+
+        MUST have `do` field with valid action.
+        """
+        if not isinstance(then_data, dict):
+            raise ValueError(
+                f"Step '{step_name}': {location}.then must be an object"
+            )
+
+        # For admit policies, allow: is valid
+        if "allow" in then_data and "do" not in then_data:
+            return  # Valid admit rule
+
+        # MUST have `do` field (v10 requirement)
+        if "do" not in then_data:
+            raise ValueError(
+                f"Step '{step_name}': {location}.then must have 'do' field. "
+                "Task policy rules require 'then.do' in v10."
+            )
+
+        action = then_data["do"]
+        if action not in valid_actions:
+            raise ValueError(
+                f"Step '{step_name}': {location}.then.do must be one of: {valid_actions}. "
+                f"Got: '{action}'"
+            )
+
+        # Validate jump requires 'to' target
+        if action == "jump":
+            if "to" not in then_data:
+                raise ValueError(
+                    f"Step '{step_name}': {location}.then: jump action requires 'to' target"
+                )
+            jump_target = then_data["to"]
+            if jump_target not in all_task_labels:
+                raise ValueError(
+                    f"Step '{step_name}': {location}.then.to: unknown task label '{jump_target}'. "
+                    f"Available labels: {sorted(all_task_labels)}"
+                )
+
+        # Validate retry options
+        if action == "retry":
+            if "attempts" in then_data and not isinstance(then_data["attempts"], int):
+                raise ValueError(
+                    f"Step '{step_name}': {location}.then.attempts must be an integer"
+                )
+            valid_backoff = ("none", "linear", "exponential")
+            if "backoff" in then_data and then_data["backoff"] not in valid_backoff:
+                raise ValueError(
+                    f"Step '{step_name}': {location}.then.backoff must be one of: {valid_backoff}"
+                )
+
+    def _validate_step_spec_v10(self, spec_data: Any, step_name: str):
+        """
+        Validate step.spec in v10 format.
+
+        NOTE: next_mode is REMOVED from step.spec in v10.
+        Use next.spec.mode instead.
+        """
+        if not isinstance(spec_data, dict):
+            raise ValueError(
+                f"Step '{step_name}': 'spec' must be an object"
+            )
+
+        # REJECT next_mode at step level (v10: use next.spec.mode)
+        if "next_mode" in spec_data:
+            raise ValueError(
+                f"Step '{step_name}': 'spec.next_mode' is not allowed in v10. "
+                "Use 'next.spec.mode' for routing mode."
+            )
+
+        # Validate policy if present
+        if "policy" in spec_data:
+            policy = spec_data["policy"]
+            if not isinstance(policy, dict):
+                raise ValueError(
+                    f"Step '{step_name}': spec.policy must be an object"
+                )
+
+            # Validate admit policy
+            if "admit" in policy:
+                self._validate_admit_policy_v10(policy["admit"], step_name)
+
+    def _validate_admit_policy_v10(self, admit_data: Any, step_name: str):
+        """
+        Validate step.spec.policy.admit in v10 format.
+        """
+        if not isinstance(admit_data, dict):
+            raise ValueError(
+                f"Step '{step_name}': spec.policy.admit must be an object"
+            )
+
+        if "rules" in admit_data:
+            rules = admit_data["rules"]
+            if not isinstance(rules, list):
+                raise ValueError(
+                    f"Step '{step_name}': spec.policy.admit.rules must be a list"
+                )
+
+            for i, rule in enumerate(rules):
+                if not isinstance(rule, dict):
+                    raise ValueError(
+                        f"Step '{step_name}': spec.policy.admit.rules[{i}] must be an object"
+                    )
+
+                # Check for else clause
+                if "else" in rule:
+                    else_data = rule["else"]
+                    if isinstance(else_data, dict) and "then" in else_data:
+                        then = else_data["then"]
+                        if isinstance(then, dict) and "allow" not in then:
+                            raise ValueError(
+                                f"Step '{step_name}': spec.policy.admit.rules[{i}].else.then "
+                                "must have 'allow' field for admission"
+                            )
+                    continue
+
+                # REJECT expr
+                if "expr" in rule:
+                    raise ValueError(
+                        f"Step '{step_name}': spec.policy.admit.rules[{i}]: "
+                        "'expr' is not allowed in v10. Use 'when'."
+                    )
+
+                # Must have when or be else
+                if "when" not in rule:
+                    raise ValueError(
+                        f"Step '{step_name}': spec.policy.admit.rules[{i}] "
+                        "must have 'when' or be an 'else' clause"
+                    )
+
+                # Must have then with allow
+                if "then" not in rule:
+                    raise ValueError(
+                        f"Step '{step_name}': spec.policy.admit.rules[{i}] "
+                        "must have 'then' field"
+                    )
+
+    def _validate_next_router_v10(self, next_data: Any, step_name: str):
+        """
+        Validate next router in v10 format.
+
+        Canonical format: {spec: {...}, arcs: [...]}
+        Also accepts legacy formats for backward compatibility during migration.
+        """
+        # String shorthand: next: "step_name" - allowed, normalized by model
         if isinstance(next_data, str):
-            return  # Simple step name - valid
+            return
 
+        # List format: next: ["step1", "step2"] or [{step: x, when: "..."}] - allowed
         if isinstance(next_data, list):
             for i, item in enumerate(next_data):
                 if isinstance(item, str):
-                    continue  # Simple step name
-
+                    continue
                 if isinstance(item, dict):
-                    # Must have 'step' key
                     if "step" not in item:
                         raise ValueError(
                             f"Step '{step_name}': next[{i}] must have 'step' field"
                         )
-
-                    # Validate 'when' if present
+                    # REJECT expr in next (v10: only when)
+                    if "expr" in item:
+                        raise ValueError(
+                            f"Step '{step_name}': next[{i}]: 'expr' is not allowed. "
+                            "Use 'when' for arc guards."
+                        )
+                    # Validate when if present
                     if "when" in item and not isinstance(item["when"], str):
                         raise ValueError(
-                            f"Step '{step_name}': next[{i}].when must be a Jinja2 expression string"
+                            f"Step '{step_name}': next[{i}].when must be a string"
+                        )
+            return
+
+        # Canonical router format: {spec: {...}, arcs: [...]}
+        if isinstance(next_data, dict):
+            # Check for canonical format
+            if "arcs" in next_data:
+                arcs = next_data["arcs"]
+                if not isinstance(arcs, list):
+                    raise ValueError(
+                        f"Step '{step_name}': next.arcs must be a list"
+                    )
+                for i, arc in enumerate(arcs):
+                    if not isinstance(arc, dict):
+                        raise ValueError(
+                            f"Step '{step_name}': next.arcs[{i}] must be an object"
+                        )
+                    if "step" not in arc:
+                        raise ValueError(
+                            f"Step '{step_name}': next.arcs[{i}] must have 'step' field"
+                        )
+                    # REJECT expr in arcs
+                    if "expr" in arc:
+                        raise ValueError(
+                            f"Step '{step_name}': next.arcs[{i}]: 'expr' is not allowed. "
+                            "Use 'when' for arc guards."
+                        )
+                    if "when" in arc and not isinstance(arc["when"], str):
+                        raise ValueError(
+                            f"Step '{step_name}': next.arcs[{i}].when must be a string"
                         )
 
-                    # Reject old then/else patterns
-                    if "then" in item or "else" in item:
+                # Validate spec if present
+                if "spec" in next_data:
+                    spec = next_data["spec"]
+                    if not isinstance(spec, dict):
                         raise ValueError(
-                            f"Step '{step_name}': next[{i}] cannot have 'then' or 'else'. "
-                            "Use next[].when for conditional routing."
+                            f"Step '{step_name}': next.spec must be an object"
                         )
-                else:
+                    if "mode" in spec and spec["mode"] not in ("exclusive", "inclusive"):
+                        raise ValueError(
+                            f"Step '{step_name}': next.spec.mode must be 'exclusive' or 'inclusive'"
+                        )
+                return
+
+            # Legacy single target: {step: name, when: "..."}
+            if "step" in next_data:
+                if "expr" in next_data:
                     raise ValueError(
-                        f"Step '{step_name}': next[{i}] must be a string or object"
+                        f"Step '{step_name}': next: 'expr' is not allowed. Use 'when'."
                     )
-        else:
+                return
+
             raise ValueError(
-                f"Step '{step_name}': 'next' must be a string or list"
+                f"Step '{step_name}': next must have 'arcs' (router) or 'step' (single target)"
             )
 
-    def _validate_loop_canonical(self, loop_data: dict, step_name: str):
-        """
-        Validate canonical loop format with spec.
+        raise ValueError(
+            f"Step '{step_name}': 'next' must be a string, list, or router object"
+        )
 
-        Canonical format:
-            loop:
-              spec:
-                mode: parallel
-                max_in_flight: 5
-              in: "{{ workload.items }}"
-              iterator: item
+    def _validate_loop_v10(self, loop_data: dict, step_name: str):
+        """
+        Validate loop in v10 format.
         """
         if not isinstance(loop_data, dict):
             raise ValueError(
@@ -404,36 +710,21 @@ class DSLParser:
                         f"Step '{step_name}': loop.spec.max_in_flight must be a positive integer"
                     )
 
-    def _validate_step_spec(self, spec_data: dict, step_name: str):
-        """Validate step.spec configuration."""
-        if not isinstance(spec_data, dict):
-            raise ValueError(
-                f"Step '{step_name}': 'spec' must be an object"
-            )
-
-        # Validate next_mode
-        if "next_mode" in spec_data:
-            if spec_data["next_mode"] not in ("exclusive", "inclusive"):
-                raise ValueError(
-                    f"Step '{step_name}': spec.next_mode must be 'exclusive' or 'inclusive'"
-                )
-
-        # Validate on_error
-        if "on_error" in spec_data:
-            if spec_data["on_error"] not in ("fail", "continue", "retry"):
-                raise ValueError(
-                    f"Step '{step_name}': spec.on_error must be 'fail', 'continue', or 'retry'"
-                )
+            # Validate loop.spec.policy if present
+            if "policy" in spec:
+                policy = spec["policy"]
+                if not isinstance(policy, dict):
+                    raise ValueError(
+                        f"Step '{step_name}': loop.spec.policy must be an object"
+                    )
+                if "exec" in policy and policy["exec"] not in ("distributed", "local"):
+                    raise ValueError(
+                        f"Step '{step_name}': loop.spec.policy.exec must be 'distributed' or 'local'"
+                    )
 
     def _validate_executor(self, executor_data: Any, workflow: list):
         """
-        Validate executor configuration (canonical v2).
-
-        Validates:
-        - profile: local, distributed, auto
-        - version: semantic version string
-        - requires: tools and features lists
-        - spec: entry_step, final_step, no_next_is_error
+        Validate executor configuration in v10 format.
         """
         if not isinstance(executor_data, dict):
             raise ValueError("executor must be an object")
@@ -494,68 +785,6 @@ class DSLParser:
             if "no_next_is_error" in spec:
                 if not isinstance(spec["no_next_is_error"], bool):
                     raise ValueError("executor.spec.no_next_is_error must be a boolean")
-
-    def _validate_tool_eval(self, eval_data: Any, step_name: str, location: str):
-        """
-        Validate tool.eval structure.
-
-        Each entry must be either:
-        - {expr: "...", do: "action", ...} - Conditional action
-        - {else: {do: "action"}} - Default action
-        """
-        if not isinstance(eval_data, list):
-            raise ValueError(
-                f"Step '{step_name}': {location}.eval must be a list of conditions"
-            )
-
-        valid_actions = {"continue", "retry", "break", "jump", "fail"}
-
-        for i, entry in enumerate(eval_data):
-            if not isinstance(entry, dict):
-                raise ValueError(
-                    f"Step '{step_name}': {location}.eval[{i}] must be an object"
-                )
-
-            # Check for else clause
-            if "else" in entry:
-                else_data = entry["else"]
-                if isinstance(else_data, dict):
-                    action = else_data.get("do", "continue")
-                    if action not in valid_actions:
-                        raise ValueError(
-                            f"Step '{step_name}': {location}.eval[{i}].else.do must be one of: {valid_actions}"
-                        )
-                continue
-
-            # Validate expr condition
-            if "expr" not in entry and "do" not in entry:
-                raise ValueError(
-                    f"Step '{step_name}': {location}.eval[{i}] must have 'expr' or be an 'else' clause"
-                )
-
-            action = entry.get("do", "continue")
-            if action not in valid_actions:
-                raise ValueError(
-                    f"Step '{step_name}': {location}.eval[{i}].do must be one of: {valid_actions}"
-                )
-
-            # Validate jump requires 'to' target
-            if action == "jump" and "to" not in entry:
-                raise ValueError(
-                    f"Step '{step_name}': {location}.eval[{i}] jump action requires 'to' target"
-                )
-
-            # Validate retry options
-            if action == "retry":
-                if "attempts" in entry and not isinstance(entry["attempts"], int):
-                    raise ValueError(
-                        f"Step '{step_name}': {location}.eval[{i}].attempts must be an integer"
-                    )
-                valid_backoff = ("none", "linear", "exponential", "fixed")
-                if "backoff" in entry and entry["backoff"] not in valid_backoff:
-                    raise ValueError(
-                        f"Step '{step_name}': {location}.eval[{i}].backoff must be one of: {valid_backoff}"
-                    )
 
 
 # ============================================================================

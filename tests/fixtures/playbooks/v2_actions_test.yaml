@@ -21,7 +21,10 @@ workflow:
             data = {"count": 0, "sum": 0, "items": []}
             return data
     next:
-      - step: process_loop
+      spec:
+        mode: exclusive
+      arcs:
+        - step: process_loop
 
   # Loop through numbers and collect results
   - step: process_loop
@@ -29,7 +32,7 @@ workflow:
     loop:
       spec:
         mode: sequential
-      in: "{{ workload.numbers }}"
+      in: "{{ numbers }}"
       iterator: num
     tool:
       - double_number:
@@ -41,13 +44,19 @@ workflow:
             print(f"[LOOP] Processing {num}")
             result = num * 2
             return {"original": num, "doubled": result}
-          eval:
-            - else:
-                do: continue
-                set_iter:
-                  loop_result: "{{ outcome.result }}"
+          spec:
+            policy:
+              rules:
+                - when: "{{ true }}"
+                  then:
+                    do: continue
+                    set_iter:
+                      loop_result: "{{ outcome.result }}"
     next:
-      - step: aggregate
+      spec:
+        mode: exclusive
+      arcs:
+        - step: aggregate
 
   # Aggregate loop results
   - step: aggregate
@@ -56,7 +65,7 @@ workflow:
       - aggregate_results:
           kind: python
           args:
-            loop_results: "{{ vars.loop_results | default([]) }}"
+            loop_results: "{{ ctx.loop_results | default([]) }}"
           code: |
             results = input_data.get('loop_results', [])
             print(f"[AGGREGATE] Processing {len(results)} results")
@@ -70,12 +79,15 @@ workflow:
                 "doubled_sum": total
             }
     next:
-      - step: helper
-        when: "{{ aggregate.count > 0 }}"
-        args:
-          message: "Aggregate completed with {{ aggregate.count }} items"
-          data: "{{ aggregate }}"
-      - step: test_secrets
+      spec:
+        mode: exclusive
+      arcs:
+        - step: helper
+          when: "{{ aggregate.count > 0 }}"
+          args:
+            message: "Aggregate completed with {{ aggregate.count }} items"
+            data: "{{ aggregate }}"
+        - step: test_secrets
 
   # Helper step (called by aggregate)
   - step: helper
@@ -93,7 +105,10 @@ workflow:
             print(f"[HELPER] Data: {data}")
             return {"helper_called": True, "message": message}
     next:
-      - step: verify
+      spec:
+        mode: exclusive
+      arcs:
+        - step: verify
 
   # Test secrets tool
   - step: test_secrets
@@ -104,7 +119,10 @@ workflow:
           provider: "env"
           name: "TEST_SECRET"
     next:
-      - step: verify
+      spec:
+        mode: exclusive
+      arcs:
+        - step: verify
 
   # Verify results
   - step: verify
@@ -135,7 +153,10 @@ workflow:
                 "message": "All tests passed!" if success else "Some tests failed"
             }
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   # End step
   - step: end

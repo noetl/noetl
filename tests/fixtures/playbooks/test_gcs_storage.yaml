@@ -19,8 +19,8 @@ workflow:
       - generate_data:
           kind: python
           args:
-            count: "{{ workload.item_count }}"
-            size: "{{ workload.item_size }}"
+            count: "{{ item_count }}"
+            size: "{{ item_size }}"
           code: |
             items = [{"id": i, "data": "G" * size, "type": "gcs_test"} for i in range(count)]
             result = {
@@ -40,7 +40,10 @@ workflow:
         - count
         - total_bytes
     next:
-      - step: verify_gcs_storage
+      spec:
+        mode: exclusive
+      arcs:
+        - step: verify_gcs_storage
 
   # Step 2: Verify GCS storage was used
   - step: verify_gcs_storage
@@ -67,7 +70,10 @@ workflow:
                 "message": f"GCS storage {'verified' if is_gcs else 'NOT used - got ' + store_type}"
             }
     next:
-      - step: load_from_gcs
+      spec:
+        mode: exclusive
+      arcs:
+        - step: load_from_gcs
 
   # Step 3: Lazy load from GCS
   - step: load_from_gcs
@@ -78,7 +84,10 @@ workflow:
           args:
             result_ref: "{{ start._ref }}"
     next:
-      - step: final_summary
+      spec:
+        mode: exclusive
+      arcs:
+        - step: final_summary
 
   # Step 4: Final verification
   - step: final_summary
@@ -88,7 +97,7 @@ workflow:
           args:
             tier_correct: "{{ verify_gcs_storage.correct_tier }}"
             loaded_count: "{{ load_from_gcs.count | default(0) }}"
-            expected_count: "{{ workload.item_count }}"
+            expected_count: "{{ item_count }}"
           code: |
             data_loaded = loaded_count == expected_count
             result = {

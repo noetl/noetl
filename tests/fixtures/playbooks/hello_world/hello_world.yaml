@@ -1,3 +1,6 @@
+# NoETL Canonical v10 Playbook
+# Simple hello world test
+
 apiVersion: noetl.io/v2
 kind: Playbook
 
@@ -17,19 +20,25 @@ workflow:
       code: |
         result = {"status": "initialized"}
     next:
-      - step: test_step
+      spec:
+        mode: exclusive
+      arcs:
+        - step: test_step
 
   - step: test_step
     desc: "Hello world test step"
     tool:
       kind: python
       args:
-        message: "{{ workload.message }}"
+        message: "{{ message }}"
       code: |
         print(f"HELLO_WORLD: {message}")
-        result = {"status": "success", "data": {"message": message}}
+        result = {"status": "ok", "data": {"message": message}}
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: "End hello world test"

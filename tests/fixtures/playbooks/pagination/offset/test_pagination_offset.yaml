@@ -1,4 +1,4 @@
-apiVersion: noetl.io/v2
+apiVersion: noetl.io/v10
 kind: Playbook
 metadata:
   name: test_pagination_offset
@@ -8,7 +8,7 @@ metadata:
 workload:
   api_url: "http://paginated-api.test-server.svc.cluster.local:5555"
 
-vars:
+ctx:
   offset: 0
   limit: 10
   collected_users: []
@@ -23,29 +23,40 @@ workflow:
       code: |
         result = {"status": "initialized"}
     next:
-      - step: fetch_page
+      spec:
+        mode: exclusive
+      arcs:
+        - step: fetch_page
 
   - step: fetch_page
     desc: Fetch a single page of users with offset
     tool:
       kind: http
-      url: "{{ workload.api_url }}/api/v1/users"
+      url: "{{ api_url }}/api/v1/users"
       method: GET
       params:
-        offset: "{{ vars.offset }}"
-        limit: "{{ vars.limit }}"
-      eval:
-        - expr: "{{ outcome.status == 'error' and outcome.error.retryable }}"
-          do: retry
-          attempts: 5
-          backoff: exponential
-          delay: 1.0
-        - expr: "{{ outcome.status == 'error' }}"
-          do: fail
-        - else:
-            do: continue
+        offset: "{{ ctx.offset }}"
+        limit: "{{ ctx.limit }}"
+      spec:
+        policy:
+          rules:
+            - when: "{{ outcome.status == 'error' and outcome.error.retryable }}"
+              then:
+                do: retry
+                attempts: 5
+                backoff: exponential
+                delay: 1.0
+            - when: "{{ outcome.status == 'error' }}"
+              then:
+                do: fail
+            - else:
+                then:
+                  do: continue
     next:
-      - step: check_pagination
+      spec:
+        mode: exclusive
+      arcs:
+        - step: check_pagination
 
   - step: check_pagination
     desc: Check if more pages exist and collect results
@@ -53,9 +64,9 @@ workflow:
       kind: python
       args:
         response: "{{ fetch_page }}"
-        collected: "{{ vars.collected_users }}"
-        current_offset: "{{ vars.offset }}"
-        limit: "{{ vars.limit }}"
+        collected: "{{ ctx.collected_users }}"
+        current_offset: "{{ ctx.offset }}"
+        limit: "{{ ctx.limit }}"
       code: |
         data = response.get('data', {})
         users = data.get('users', [])
@@ -72,22 +83,25 @@ workflow:
             'next_offset': next_offset,
             'total_collected': len(all_users)
         }
-    vars:
+    set_ctx:
       collected_users: "{{ check_pagination.collected_users }}"
       offset: "{{ check_pagination.next_offset }}"
       has_more: "{{ check_pagination.has_more }}"
     next:
-      - step: fetch_page
-        when: "{{ vars.has_more == true }}"
-      - step: validate_results
-        when: "{{ vars.has_more != true }}"
+      spec:
+        mode: exclusive
+      arcs:
+        - step: fetch_page
+          when: "{{ ctx.has_more == true }}"
+        - step: validate_results
+          when: "{{ ctx.has_more != true }}"
 
   - step: validate_results
     desc: Validate merged results
     tool:
       kind: python
       args:
-        users: "{{ vars.collected_users }}"
+        users: "{{ ctx.collected_users }}"
       code: |
         data = users if isinstance(users, list) else []
 
@@ -113,7 +127,10 @@ workflow:
             'last_id': last_id
         }
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: Workflow complete

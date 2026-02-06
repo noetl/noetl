@@ -17,45 +17,54 @@ workflow:
     tool:
       kind: python
       args:
-        db_name: "{{ workload.db_name }}"
+        db_name: "{{ db_name }}"
       code: |
         result = {"status": "starting", "db_name": db_name}
     next:
-      - step: run_schema
+      spec:
+        mode: exclusive
+      arcs:
+        - step: run_schema
 
   - step: run_schema
     desc: Apply TradeDB DDL
     tool:
       kind: postgres
-      auth: "{{ workload.pg_app_auth }}"
+      auth: "{{ pg_app_auth }}"
       with:
-        db_name: "{{ workload.db_name }}"
+        db_name: "{{ db_name }}"
       script:
-        uri: "{{ workload.ddl_script_uri }}"
+        uri: "{{ ddl_script_uri }}"
         source:
           type: file
     next:
-      - step: run_dictionaries
+      spec:
+        mode: exclusive
+      arcs:
+        - step: run_dictionaries
 
   - step: run_dictionaries
     desc: Apply TradeDB dictionaries
     tool:
       kind: postgres
-      auth: "{{ workload.pg_app_auth }}"
+      auth: "{{ pg_app_auth }}"
       with:
-        db_name: "{{ workload.db_name }}"
+        db_name: "{{ db_name }}"
       script:
-        uri: "{{ workload.dictionaries_script_uri }}"
+        uri: "{{ dictionaries_script_uri }}"
         source:
           type: file
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: Done
     tool:
       kind: python
       args:
-        db_name: "{{ workload.db_name }}"
+        db_name: "{{ db_name }}"
       code: |
         result = {"status": "completed", "db_name": db_name}

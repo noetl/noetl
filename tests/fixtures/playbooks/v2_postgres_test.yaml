@@ -15,7 +15,10 @@ workflow:
           kind: postgres
           query: "SELECT kind, COUNT(*) as count FROM noetl.catalog GROUP BY kind ORDER BY count DESC"
     next:
-      - step: process
+      spec:
+        mode: exclusive
+      arcs:
+        - step: process
 
   - step: process
     desc: Process query results
@@ -51,7 +54,10 @@ workflow:
 
             return {"status": "error", "message": "Invalid query result format", "received": str(query_results)[:200]}
     next:
-      - step: verify
+      spec:
+        mode: exclusive
+      arcs:
+        - step: verify
 
   - step: verify
     desc: Verify data integrity
@@ -105,7 +111,10 @@ workflow:
             print(f"[VERIFY] Verification: {verification['status']}")
             return verification
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: Complete

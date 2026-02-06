@@ -1,4 +1,4 @@
-apiVersion: noetl.io/v2
+apiVersion: noetl.io/v10
 kind: Playbook
 metadata:
   name: test_vars_block
@@ -12,23 +12,22 @@ workflow:
   - step: start
     desc: Start execution
     tool:
-      - label:
+      - start_task:
           kind: python
-          auth: {}
-          libs: {}
           args: {}
           code: |
             result = {"status": "initialized"}
     next:
-      - step: fetch_data
+      spec:
+        mode: exclusive
+      arcs:
+        - step: fetch_data
 
   - step: fetch_data
     desc: Simulate fetching data and extract vars
     tool:
-      - label:
+      - fetch_data_task:
           kind: python
-          auth: {}
-          libs: {}
           args: {}
           code: |
             # Simulate fetching data from a database
@@ -43,26 +42,33 @@ workflow:
                     "source": "test_db"
                 }
             }
-    vars:
-      first_user_id: "{{ response.users[0].user_id }}"
-      first_email: "{{ response.users[0].email }}"
-      user_count: "{{ response.metadata.count }}"
-      data_source: "{{ response.metadata.source }}"
+          spec:
+            policy:
+              rules:
+                - else:
+                    then:
+                      do: continue
+                      set_ctx:
+                        first_user_id: "{{ outcome.response.users[0].user_id }}"
+                        first_email: "{{ outcome.response.users[0].email }}"
+                        user_count: "{{ outcome.response.metadata.count }}"
+                        data_source: "{{ outcome.response.metadata.source }}"
     next:
-      - step: use_extracted_vars
+      spec:
+        mode: exclusive
+      arcs:
+        - step: use_extracted_vars
 
   - step: use_extracted_vars
     desc: Use variables that were extracted by vars block
     tool:
-      - label:
+      - use_vars_task:
           kind: python
-          auth: {}
-          libs: {}
           args:
-            first_user_id: "{{ vars.first_user_id }}"
-            first_email: "{{ vars.first_email }}"
-            user_count: "{{ vars.user_count }}"
-            data_source: "{{ vars.data_source }}"
+            first_user_id: "{{ ctx.first_user_id }}"
+            first_email: "{{ ctx.first_email }}"
+            user_count: "{{ ctx.user_count }}"
+            data_source: "{{ ctx.data_source }}"
           code: |
             # This step receives vars extracted from previous step
             result = {
@@ -78,20 +84,21 @@ workflow:
                 }
             }
     next:
-      - step: verify_vars
+      spec:
+        mode: exclusive
+      arcs:
+        - step: verify_vars
 
   - step: verify_vars
     desc: Verify all vars were extracted and used correctly
     tool:
-      - label:
+      - verify_task:
           kind: python
-          auth: {}
-          libs: {}
           args:
-            first_user_id: "{{ vars.first_user_id }}"
-            first_email: "{{ vars.first_email }}"
-            user_count: "{{ vars.user_count }}"
-            data_source: "{{ vars.data_source }}"
+            first_user_id: "{{ ctx.first_user_id }}"
+            first_email: "{{ ctx.first_email }}"
+            user_count: "{{ ctx.user_count }}"
+            data_source: "{{ ctx.data_source }}"
           code: |
             # Verify vars via template args (no direct API access)
             checks = {
@@ -114,15 +121,16 @@ workflow:
                 }
             }
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: End execution
     tool:
-      - label:
+      - end_task:
           kind: python
-          auth: {}
-          libs: {}
           args: {}
           code: |
             result = {"status": "complete"}

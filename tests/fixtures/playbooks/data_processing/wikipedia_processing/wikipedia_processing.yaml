@@ -3,6 +3,7 @@ kind: Playbook
 metadata:
   name: wikipedia_processing
   path: data_processing/wikipedia_processing
+
 workload:
   jobId: "{{ job.uuid }}"
   execution_id: "{{ job.uuid }}"
@@ -13,18 +14,20 @@ workload:
   pg_password: "{{ env.POSTGRES_PASSWORD | default('demo') }}"
   pg_db: "{{ env.POSTGRES_DB | default('demo_noetl') }}"
   table_name: "wikipedia_articles"
+
 workflow:
   - step: start
     desc: "Start Wikipedia Data Processing Workflow"
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args: {}
       code: |
         result = {"status": "initialized"}
     next:
-      - step: fetch_wikipedia_data
+      spec:
+        mode: exclusive
+      arcs:
+        - step: fetch_wikipedia_data
 
   - step: fetch_wikipedia_data
     desc: "Fetch data from Wikipedia API"
@@ -36,7 +39,10 @@ workflow:
         User-Agent: "NoETL Example/1.0"
         Accept: "application/json"
     next:
-      - step: process_in_duckdb
+      spec:
+        mode: exclusive
+      arcs:
+        - step: process_in_duckdb
 
   - step: process_in_duckdb
     desc: "Process Wikipedia data in DuckDB"
@@ -44,13 +50,16 @@ workflow:
       kind: duckdb
       query: "-- Create a table from the Wikipedia API response\nDROP TABLE IF EXISTS wiki_data;\nCREATE TABLE wiki_data AS\nSELECT \n  '{{ fetch_wikipedia_data.data.title }}' AS title,\n  '{{ fetch_wikipedia_data.data.extract }}' AS extract,\n  '{{ fetch_wikipedia_data.data.description }}' AS description,\n  '{{ fetch_wikipedia_data.data.timestamp }}' AS last_updated;\n\n-- Show the data\nSELECT * FROM wiki_data;\n\n-- Create a table with word counts from the extract using proper DuckDB syntax\nDROP TABLE IF EXISTS word_counts;\nCREATE TABLE word_counts AS\nSELECT \n  word,\n  COUNT(*) as count\nFROM (\n  SELECT unnest(string_split(extract, ' ')) AS word\n  FROM wiki_data\n)\nGROUP BY word\nORDER BY count DESC\nLIMIT 10;\n\n-- Show word counts\nSELECT * FROM word_counts;\n"
     next:
-      - step: store_in_postgres
+      spec:
+        mode: exclusive
+      arcs:
+        - step: store_in_postgres
 
   - step: store_in_postgres
     desc: "Store processed data in PostgreSQL"
     tool:
       kind: postgres
-      auth: '{{ workload.pg_auth }}'
+      auth: '{{ pg_auth }}'
       command: |
         -- Create table for Wikipedia articles
         DROP TABLE IF EXISTS wikipedia_articles;
@@ -77,33 +86,36 @@ workflow:
         -- Show inserted data
         SELECT * FROM wikipedia_articles;
     next:
-      - step: analyze_results
+      spec:
+        mode: exclusive
+      arcs:
+        - step: analyze_results
 
   - step: analyze_results
     desc: "Analyze stored results with PostgreSQL"
     tool:
       kind: postgres
-      auth: '{{ workload.pg_auth }}'
+      auth: '{{ pg_auth }}'
       command: |
         -- Get article data
-        SELECT 
+        SELECT
           title,
-          description, 
+          description,
           word_count,
           'success' as status
-        FROM wikipedia_articles 
-        ORDER BY created_at DESC 
+        FROM wikipedia_articles
+        ORDER BY created_at DESC
         LIMIT 1;
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
-    desc: End workflow
+    desc: "End of Wikipedia processing workflow"
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args: {}
       code: |
         result = {"status": "completed"}
-    desc: "End of Wikipedia processing workflow"

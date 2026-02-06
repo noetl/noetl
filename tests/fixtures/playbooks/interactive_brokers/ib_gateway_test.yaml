@@ -15,39 +15,41 @@ workflow:
     desc: Start IB Gateway test
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args: {}
       code: |
         result = {"status": "initialized"}
     next:
-      - step: check_gateway_status
+      spec:
+        mode: exclusive
+      arcs:
+        - step: check_gateway_status
 
   - step: check_gateway_status
     desc: Check if IB Gateway is running and authenticated
     tool:
       kind: http
       method: GET
-      url: "{{ workload.gateway_url }}/v1/api/iserver/auth/status"
+      url: "{{ gateway_url }}/v1/api/iserver/auth/status"
       headers:
         Content-Type: application/json
         User-Agent: NoETL/1.0
       verify_ssl: false
     next:
-      - step: parse_auth_status
+      spec:
+        mode: exclusive
+      arcs:
+        - step: parse_auth_status
 
   - step: parse_auth_status
     desc: Parse authentication status
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args:
         api_response: "{{ check_gateway_status }}"
       code: |
         """
         Parse IB Gateway auth status.
-        
+
         Expected response:
         {
           "authenticated": true,
@@ -66,7 +68,7 @@ workflow:
         else:
             data = api_response.get('data', {})
             status_code = api_response.get('status_code', 0)
-            
+
             if status_code != 200:
                 result = {
                     'status': 'error',
@@ -82,7 +84,7 @@ workflow:
             else:
                 authenticated = data.get('authenticated', False)
                 connected = data.get('connected', False)
-                
+
                 if not authenticated or not connected:
                     result = {
                         'status': 'error',
@@ -100,29 +102,33 @@ workflow:
                         'server_info': data.get('serverInfo', {})
                     }
     next:
-      - step: get_accounts
-        when: "{{ parse_auth_status.status == 'success' }}"
-      - step: gateway_error
-        when: "{{ parse_auth_status.status != 'success' }}"
+      spec:
+        mode: exclusive
+      arcs:
+        - step: get_accounts
+          when: "{{ parse_auth_status.status == 'success' }}"
+        - step: gateway_error
+          when: "{{ parse_auth_status.status != 'success' }}"
 
   - step: get_accounts
     desc: Get account information
     tool:
       kind: http
       method: GET
-      url: "{{ workload.gateway_url }}/v1/api/portfolio/accounts"
+      url: "{{ gateway_url }}/v1/api/portfolio/accounts"
       headers:
         Content-Type: application/json
       verify_ssl: false
     next:
-      - step: parse_accounts
+      spec:
+        mode: exclusive
+      arcs:
+        - step: parse_accounts
 
   - step: parse_accounts
     desc: Parse account information
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args:
         api_response: "{{ get_accounts }}"
       code: |
@@ -132,7 +138,7 @@ workflow:
         else:
             data = api_response.get('data', [])
             status_code = api_response.get('status_code', 0)
-            
+
             if status_code != 200:
                 result = {
                     'status': 'error',
@@ -154,14 +160,15 @@ workflow:
                     'message': 'No accounts found in response'
                 }
     next:
-      - step: get_portfolio_summary
+      spec:
+        mode: exclusive
+      arcs:
+        - step: get_portfolio_summary
 
   - step: get_portfolio_summary
     desc: Get portfolio summary for first account
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args:
         accounts_data: "{{ parse_accounts }}"
       code: |
@@ -179,26 +186,30 @@ workflow:
                     'message': f'Using account {accounts[0]}'
                 }
     next:
-      - step: get_account_ledger
+      spec:
+        mode: exclusive
+      arcs:
+        - step: get_account_ledger
 
   - step: get_account_ledger
     desc: Get account ledger (balances)
     tool:
       kind: http
       method: GET
-      url: "{{ workload.gateway_url }}/v1/api/portfolio/{{ get_portfolio_summary.account_id }}/ledger"
+      url: "{{ gateway_url }}/v1/api/portfolio/{{ get_portfolio_summary.account_id }}/ledger"
       headers:
         Content-Type: application/json
       verify_ssl: false
     next:
-      - step: parse_ledger
+      spec:
+        mode: exclusive
+      arcs:
+        - step: parse_ledger
 
   - step: parse_ledger
     desc: Parse account ledger
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args:
         api_response: "{{ get_account_ledger }}"
       code: |
@@ -208,7 +219,7 @@ workflow:
         else:
             data = api_response.get('data', {})
             status_code = api_response.get('status_code', 0)
-            
+
             if status_code != 200:
                 result = {
                     'status': 'error',
@@ -221,7 +232,7 @@ workflow:
                 if isinstance(data, dict):
                     for key in data.keys():
                         ledger[key] = data[key]
-                
+
                 result = {
                     'status': 'success',
                     'ledger_fields': list(ledger.keys()),
@@ -229,25 +240,26 @@ workflow:
                     'message': 'Account ledger retrieved successfully'
                 }
     next:
-      - step: verify_test
+      spec:
+        mode: exclusive
+      arcs:
+        - step: verify_test
 
   - step: verify_test
     desc: Verify IB Gateway test completed
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args:
         auth_status: "{{ parse_auth_status }}"
         accounts: "{{ parse_accounts }}"
         ledger: "{{ parse_ledger }}"
       code: |
         """Verify complete IB Gateway flow."""
-        
+
         auth_ok = auth_status.get('status') == 'success'
         accounts_ok = accounts.get('status') == 'success'
         ledger_ok = ledger.get('status') == 'success'
-        
+
         if auth_ok and accounts_ok and ledger_ok:
             result = {
                 'status': 'success',
@@ -266,14 +278,15 @@ workflow:
                 'ledger_status': ledger.get('status')
             }
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: gateway_error
     desc: Gateway not available
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args:
         error_info: "{{ parse_auth_status }}"
       code: |
@@ -290,14 +303,15 @@ workflow:
             ]
         }
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: IB Gateway test completed
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args: {}
       code: |
         result = {"status": "completed"}

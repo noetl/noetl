@@ -23,8 +23,8 @@ workflow:
       - generate_data:
           kind: python
           args:
-            count: "{{ workload.item_count }}"
-            data_size: "{{ workload.item_data_size }}"
+            count: "{{ item_count }}"
+            data_size: "{{ item_data_size }}"
           code: |
             items = [{"id": i, "data": "A" * data_size, "active": True} for i in range(count)]
             result = {
@@ -39,7 +39,10 @@ workflow:
         - count
         - metadata
     next:
-      - step: check_extraction
+      spec:
+        mode: exclusive
+      arcs:
+        - step: check_extraction
 
   # Verify extraction works
   - step: check_extraction

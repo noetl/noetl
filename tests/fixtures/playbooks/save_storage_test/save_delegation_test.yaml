@@ -1,4 +1,4 @@
-apiVersion: noetl.io/v2
+apiVersion: noetl.io/v10
 kind: Playbook
 metadata:
   name: save_storage_delegation_test
@@ -15,13 +15,13 @@ workflow:
     desc: "Setup test tables"
     tool:
       kind: python
-      auth: {}
-      libs: {}
-      args: {}
       code: |
         result = {"status": "initialized"}
     next:
-      - step: create_tables
+      spec:
+        mode: exclusive
+      arcs:
+        - step: create_tables
 
   - step: create_tables
     desc: "Create required test tables"
@@ -29,28 +29,31 @@ workflow:
       kind: playbook
       path: tests/fixtures/playbooks/save_storage_test/create_tables
       args:
-        pg_auth: "{{ workload.pg_auth }}"
+        pg_auth: "{{ pg_auth }}"
     next:
-      - step: truncate_tables
+      spec:
+        mode: exclusive
+      arcs:
+        - step: truncate_tables
 
   - step: truncate_tables
     desc: "Clear test data from previous runs"
     tool:
       kind: postgres
-      auth: "{{ workload.pg_auth }}"
+      auth: "{{ pg_auth }}"
       command: |
         TRUNCATE TABLE simple_test_flat CASCADE;
     next:
-      - step: event_test
+      spec:
+        mode: exclusive
+      arcs:
+        - step: event_test
 
   # Test 1: Event storage (default)
   - step: event_test
     desc: "Test event storage delegation"
     tool:
       kind: python
-      auth: {}
-      libs: {}
-      args: {}
       code: |
         # Simple function that doesn't need input_data parameter
         result = {
@@ -58,7 +61,10 @@ workflow:
             "message": "Event storage delegation working"
         }
     next:
-      - step: postgres_test
+      spec:
+        mode: exclusive
+      arcs:
+        - step: postgres_test
 
   # Test 2: Postgres storage delegation
   - step: postgres_test
@@ -66,9 +72,6 @@ workflow:
     tool:
       - generate_data:
           kind: python
-          auth: {}
-          libs: {}
-          args: {}
           code: |
             result = {
                 "test": "postgres_storage",
@@ -77,7 +80,7 @@ workflow:
             }
       - save_postgres:
           kind: postgres
-          auth: "{{ workload.pg_auth }}"
+          auth: "{{ pg_auth }}"
           command: |
             INSERT INTO simple_test_flat (test_id, test_name, test_value, storage_type, test_execution)
             VALUES (
@@ -93,7 +96,10 @@ workflow:
               storage_type = EXCLUDED.storage_type,
               test_execution = EXCLUDED.test_execution;
     next:
-      - step: duckdb_test
+      spec:
+        mode: exclusive
+      arcs:
+        - step: duckdb_test
 
   # Test 3: DuckDB storage delegation
   - step: duckdb_test
@@ -101,9 +107,6 @@ workflow:
     tool:
       - generate_data:
           kind: python
-          auth: {}
-          libs: {}
-          args: {}
           code: |
             result = {
                 "test": "duckdb_storage",
@@ -116,7 +119,10 @@ workflow:
             SELECT 'delegation_test' as test_type, 'duckdb_working' as status;
             SELECT * FROM test_duckdb;
     next:
-      - step: http_test
+      spec:
+        mode: exclusive
+      arcs:
+        - step: http_test
 
   # Test 4: HTTP storage delegation
   - step: http_test
@@ -124,9 +130,6 @@ workflow:
     tool:
       - generate_data:
           kind: python
-          auth: {}
-          libs: {}
-          args: {}
           code: |
             result = {
                 "test": "http_storage",
@@ -142,14 +145,14 @@ workflow:
             test: "{{ generate_data.test }}"
             message: "{{ generate_data.message }}"
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: "Complete delegation test"
     tool:
       kind: python
-      auth: {}
-      libs: {}
-      args: {}
       code: |
         result = {"status": "complete"}

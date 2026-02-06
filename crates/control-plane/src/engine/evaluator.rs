@@ -160,8 +160,39 @@ impl ConditionEvaluator {
                     results.push(EvaluationResult::matched(next_step, None));
                 }
             }
+            Some(NextSpec::Router(router)) => {
+                // Canonical v10 format: router with spec and arcs
+                // Determine mode from router spec (overrides step-level next_mode)
+                let router_mode = router
+                    .spec
+                    .as_ref()
+                    .and_then(|s| s.mode.as_ref())
+                    .map(|m| NextMode::from_str(m))
+                    .unwrap_or(next_mode);
+
+                for arc in &router.arcs {
+                    // Evaluate when condition if present
+                    let should_transition = match &arc.when {
+                        Some(when_expr) => self.evaluate_condition(when_expr, context)?,
+                        None => true, // No condition = always matches
+                    };
+
+                    if should_transition {
+                        let with_params = arc
+                            .args
+                            .as_ref()
+                            .map(|args| serde_json::to_value(args).unwrap_or(serde_json::Value::Null));
+                        results.push(EvaluationResult::matched(&arc.step, with_params));
+
+                        // In exclusive mode, first match wins
+                        if router_mode == NextMode::Exclusive {
+                            break;
+                        }
+                    }
+                }
+            }
             Some(NextSpec::Targets(targets)) => {
-                // Canonical format: targets with optional when conditions
+                // Legacy canonical format: targets with optional when conditions
                 for target in targets {
                     // Evaluate when condition if present
                     let should_transition = match &target.when {

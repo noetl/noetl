@@ -1,4 +1,4 @@
-apiVersion: noetl.io/v2
+apiVersion: noetl.io/v10
 kind: Playbook
 metadata:
   name: provision_auth_schema
@@ -16,7 +16,7 @@ metadata:
     - database
     - provisioning
 
-workload:
+ctx:
   db_credential: pg_auth
 
 workflow:
@@ -27,13 +27,16 @@ workflow:
       code: |
         result = {"status": "initialized"}
     next:
-      - step: provision_schema
+      spec:
+        mode: exclusive
+      arcs:
+        - step: provision_schema
 
   - step: provision_schema
     desc: Execute SQL to create auth schema and tables
     tool:
       kind: postgres
-      auth: "{{ workload.db_credential }}"
+      auth: "{{ ctx.db_credential }}"
       command: |
         -- Create auth schema
         CREATE SCHEMA IF NOT EXISTS auth;
@@ -176,20 +179,26 @@ workflow:
 
         SELECT 'Auth schema provisioned successfully' as result;
     next:
-      - step: verify_schema
+      spec:
+        mode: exclusive
+      arcs:
+        - step: verify_schema
 
   - step: verify_schema
     desc: Verify auth schema was created successfully
     tool:
       kind: postgres
-      auth: "{{ workload.db_credential }}"
+      auth: "{{ ctx.db_credential }}"
       command: |
         SELECT
           (SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'auth') as table_count,
           (SELECT COUNT(*) FROM auth.roles) as role_count,
           (SELECT COUNT(*) FROM auth.permissions) as permission_count;
     next:
-      - step: success
+      spec:
+        mode: exclusive
+      arcs:
+        - step: success
 
   - step: success
     desc: Schema provisioned successfully
@@ -204,7 +213,10 @@ workflow:
             "details": verification
         }
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: Complete provisioning workflow

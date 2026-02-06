@@ -148,7 +148,9 @@ struct Step {
     #[serde(rename = "when")]
     when_guard: Option<String>,
     tool: Option<Tool>,
-    next: Option<Vec<NextStep>>,
+    /// Next transitions - raw YAML, parsed manually to support both v10 router and legacy formats
+    #[serde(default)]
+    next: Option<serde_yaml::Value>,
     #[serde(rename = "case")]
     case: Option<Vec<CaseCondition>>,
     #[serde(rename = "loop")]
@@ -176,6 +178,83 @@ enum NextMode {
     Exclusive,
     Inclusive,
 }
+
+/// V10 router spec for next transitions
+#[derive(Debug, Clone)]
+struct NextRouterSpec {
+    mode: Option<String>,
+}
+
+/// V10 arc for router format
+#[derive(Debug, Clone)]
+struct NextArc {
+    step: String,
+    when_condition: Option<String>,
+    args: Option<HashMap<String, serde_yaml::Value>>,
+}
+
+/// Next format - supports both v10 router and legacy array formats
+#[derive(Debug)]
+enum NextFormat {
+    /// V10 router format: { spec: { mode: ... }, arcs: [...] }
+    Router { spec: Option<NextRouterSpec>, arcs: Vec<NextArc> },
+    /// Legacy array format: [{ step: ... }, ...]
+    Array(Vec<NextStep>),
+}
+
+impl NextFormat {
+    /// Parse next field from serde_yaml::Value
+    fn from_yaml_value(value: &serde_yaml::Value) -> Option<NextFormat> {
+        match value {
+            serde_yaml::Value::Sequence(arr) => {
+                // Legacy array format
+                let steps: Vec<NextStep> = serde_yaml::from_value(value.clone()).ok()?;
+                Some(NextFormat::Array(steps))
+            }
+            serde_yaml::Value::Mapping(map) => {
+                // V10 router format: { spec: { mode: ... }, arcs: [...] }
+                let spec = map.get(&serde_yaml::Value::String("spec".to_string()))
+                    .and_then(|v| {
+                        if let serde_yaml::Value::Mapping(spec_map) = v {
+                            let mode = spec_map.get(&serde_yaml::Value::String("mode".to_string()))
+                                .and_then(|m| m.as_str().map(|s| s.to_string()));
+                            Some(NextRouterSpec { mode })
+                        } else {
+                            None
+                        }
+                    });
+
+                let arcs = map.get(&serde_yaml::Value::String("arcs".to_string()))
+                    .and_then(|v| {
+                        if let serde_yaml::Value::Sequence(arcs_arr) = v {
+                            let arcs: Vec<NextArc> = arcs_arr.iter()
+                                .filter_map(|arc_val| {
+                                    if let serde_yaml::Value::Mapping(arc_map) = arc_val {
+                                        let step = arc_map.get(&serde_yaml::Value::String("step".to_string()))
+                                            .and_then(|s| s.as_str().map(|s| s.to_string()))?;
+                                        let when_condition = arc_map.get(&serde_yaml::Value::String("when".to_string()))
+                                            .and_then(|w| w.as_str().map(|s| s.to_string()));
+                                        let args = arc_map.get(&serde_yaml::Value::String("args".to_string()))
+                                            .and_then(|a| serde_yaml::from_value(a.clone()).ok());
+                                        Some(NextArc { step, when_condition, args })
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .collect();
+                            Some(arcs)
+                        } else {
+                            None
+                        }
+                    })?;
+
+                Some(NextFormat::Router { spec, arcs })
+            }
+            _ => None,
+        }
+    }
+}
+
 
 /// Then block can be either a list of actions or a single action dict.
 #[derive(Debug, Deserialize)]
@@ -686,13 +765,29 @@ impl PlaybookRunner {
 
         // Execute next steps only if no case matched or no case defined
         if !case_matched {
-            if let Some(next_steps) = &step.next {
-                // Get next_mode from step spec (default: exclusive)
-                let next_mode = step.spec.as_ref()
-                    .and_then(|s| s.next_mode.clone())
-                    .unwrap_or(NextMode::Exclusive);
+            if let Some(next_value) = &step.next {
+                // Parse next as either v10 router format or legacy array format
+                if let Some(next_format) = NextFormat::from_yaml_value(next_value) {
+                    match next_format {
+                        NextFormat::Router { spec, arcs } => {
+                            // V10 router format: get mode from router.spec
+                            let next_mode = spec.as_ref()
+                                .and_then(|s| s.mode.as_ref())
+                                .map(|m| if m == "inclusive" { NextMode::Inclusive } else { NextMode::Exclusive })
+                                .unwrap_or(NextMode::Exclusive);
 
-                self.execute_next_steps_with_mode(playbook, next_steps, context, &next_mode)?;
+                            self.execute_router_arcs(playbook, &arcs, context, &next_mode)?;
+                        }
+                        NextFormat::Array(next_steps) => {
+                            // Legacy array format: get next_mode from step spec
+                            let next_mode = step.spec.as_ref()
+                                .and_then(|s| s.next_mode.clone())
+                                .unwrap_or(NextMode::Exclusive);
+
+                            self.execute_next_steps_with_mode(playbook, &next_steps, context, &next_mode)?;
+                        }
+                    }
+                }
             }
             // No next section = branch termination (leaf step)
         }
@@ -781,6 +876,85 @@ impl PlaybookRunner {
         if matched_steps.is_empty() {
             if self.verbose && !next_steps.is_empty() {
                 println!("   ⏹️  Branch terminated (no matching routes)");
+            }
+            return Ok(());
+        }
+
+        // Log fan-out in inclusive mode
+        if matches!(next_mode, NextMode::Inclusive) && matched_steps.len() > 1 && self.verbose {
+            println!("   ⚡ Fan-out to {} steps: {:?}", matched_steps.len(), matched_steps);
+        }
+
+        // Execute matched steps
+        for (i, step_name) in matched_steps.iter().enumerate() {
+            // Apply args to context if present
+            if let Some(Some(args)) = matched_args.get(i) {
+                for (key, value) in args {
+                    let value_str = match value {
+                        serde_yaml::Value::String(s) => s.clone(),
+                        serde_yaml::Value::Number(n) => n.to_string(),
+                        serde_yaml::Value::Bool(b) => b.to_string(),
+                        other => serde_yaml::to_string(other)?.trim().to_string(),
+                    };
+                    context.set_variable(format!("args.{}", key), value_str);
+                }
+            }
+
+            self.execute_step(playbook, step_name, context)?;
+        }
+
+        Ok(())
+    }
+
+    /// Execute v10 router arcs with specified routing mode
+    fn execute_router_arcs(
+        &self,
+        playbook: &Playbook,
+        arcs: &[NextArc],
+        context: &mut ExecutionContext,
+        next_mode: &NextMode,
+    ) -> Result<()> {
+        let mut matched_steps: Vec<String> = Vec::new();
+        let mut matched_args: Vec<Option<HashMap<String, serde_yaml::Value>>> = Vec::new();
+
+        // Evaluate conditions and collect matching arcs
+        for arc in arcs {
+            // Evaluate when condition if present
+            let matches = if let Some(condition) = &arc.when_condition {
+                let rendered = self.render_template(condition, context)?;
+                self.evaluate_condition(&rendered, context)?
+            } else {
+                // No when condition = always matches (default arc)
+                true
+            };
+
+            if matches {
+                if self.verbose {
+                    if let Some(cond) = &arc.when_condition {
+                        println!("   ✓ Arc matched: {} ({})", arc.step, cond);
+                    } else {
+                        println!("   ✓ Arc: {} (default)", arc.step);
+                    }
+                }
+
+                matched_steps.push(arc.step.clone());
+                matched_args.push(arc.args.clone());
+
+                // In exclusive mode, stop at first match
+                if matches!(next_mode, NextMode::Exclusive) {
+                    break;
+                }
+            } else if self.verbose {
+                if let Some(cond) = &arc.when_condition {
+                    println!("   ✗ Arc skipped: {} ({})", arc.step, cond);
+                }
+            }
+        }
+
+        // Branch termination: no matches = branch ends
+        if matched_steps.is_empty() {
+            if self.verbose && !arcs.is_empty() {
+                println!("   ⏹️  Branch terminated (no matching arcs)");
             }
             return Ok(());
         }

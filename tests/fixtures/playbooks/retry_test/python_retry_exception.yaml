@@ -1,4 +1,4 @@
-apiVersion: noetl.io/v2
+apiVersion: noetl.io/v10
 kind: Playbook
 metadata:
   name: python_retry_exception
@@ -28,16 +28,18 @@ workflow:
             'message': f'Success after retry (value: {rand_val})',
             'data': {'value': rand_val}
         }
-      eval:
-        - expr: "{{ outcome.status == 'error' }}"
-          do: retry
-          attempts: 5
-          delay: 0.2
-          backoff: exponential
-        - else:
-            do: continue
+      spec:
+        policy:
+          rules:
+            - when: "{{ outcome.status == 'error' }}"
+              then: { do: retry, attempts: 5, delay: 0.2, backoff: exponential }
+            - else:
+                then: { do: continue }
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: End workflow

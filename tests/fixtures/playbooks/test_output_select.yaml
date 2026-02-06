@@ -23,8 +23,8 @@ workflow:
       - generate_data:
           kind: python
           args:
-            count: "{{ workload.item_count }}"
-            size: "{{ workload.item_size }}"
+            count: "{{ item_count }}"
+            size: "{{ item_size }}"
           code: |
             # Generate large result that exceeds inline threshold (64KB)
             items = [
@@ -48,7 +48,10 @@ workflow:
         - count
         - total_size
     next:
-      - step: verify_extracted_fields
+      spec:
+        mode: exclusive
+      arcs:
+        - step: verify_extracted_fields
 
   # Step 2: Verify extracted fields are available without loading full data
   - step: verify_extracted_fields
@@ -72,7 +75,10 @@ workflow:
                 "message": f"Verified {count} items with total size {total_size}"
             }
     next:
-      - step: lazy_load_full_data
+      spec:
+        mode: exclusive
+      arcs:
+        - step: lazy_load_full_data
 
   # Step 3: Lazy load full data via artifact.get (only when needed)
   - step: lazy_load_full_data
@@ -84,7 +90,10 @@ workflow:
             # Access the ResultRef from the externalized result
             result_ref: "{{ start._ref }}"
     next:
-      - step: process_full_data
+      spec:
+        mode: exclusive
+      arcs:
+        - step: process_full_data
 
   # Step 4: Process the full data (now loaded)
   - step: process_full_data
@@ -107,7 +116,10 @@ workflow:
             else:
                 result = {"status": "error", "message": "Data not in expected format"}
     next:
-      - step: summary
+      spec:
+        mode: exclusive
+      arcs:
+        - step: summary
 
   # Step 5: Final summary
   - step: summary

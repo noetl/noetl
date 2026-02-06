@@ -1,11 +1,11 @@
-apiVersion: noetl.io/v2
+apiVersion: noetl.io/v10
 kind: Playbook
 
 metadata:
   name: http_to_postgres_simple
   path: tests/fixtures/playbooks/data_transfer/http_to_postgres_simple
 
-workload:
+ctx:
   pg_auth: pg_k8s
   message: Simple HTTP to PostgreSQL transfer example
   api_url: https://jsonplaceholder.typicode.com/posts
@@ -15,28 +15,32 @@ workflow:
     desc: Start HTTP to PostgreSQL transfer
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args: {}
       code: |
         result = {"status": "initialized"}
     next:
-      - step: fetch_posts
+      spec:
+        mode: exclusive
+      arcs:
+        - step: fetch_posts
 
   - step: fetch_posts
     desc: Fetch posts from JSONPlaceholder API
     tool:
       kind: http
       method: GET
-      url: "{{ workload.api_url }}"
+      url: "{{ api_url }}"
     next:
-      - step: create_pg_table
+      spec:
+        mode: exclusive
+      arcs:
+        - step: create_pg_table
 
   - step: create_pg_table
     desc: Create PostgreSQL table for posts
     tool:
       kind: postgres
-      auth: "{{ workload.pg_auth }}"
+      auth: "{{ pg_auth }}"
       command: |
         CREATE TABLE IF NOT EXISTS public.http_to_postgres_simple (
           id INTEGER PRIMARY KEY,
@@ -47,14 +51,15 @@ workflow:
 
         TRUNCATE TABLE public.http_to_postgres_simple;
     next:
-      - step: transform_and_insert
+      spec:
+        mode: exclusive
+      arcs:
+        - step: transform_and_insert
 
   - step: transform_and_insert
     desc: Transform and insert posts into PostgreSQL
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args:
         input_data: "{{ fetch_posts }}"
       code: |
@@ -88,22 +93,28 @@ workflow:
                 'count': len(insert_statements)
             }
     next:
-      - step: execute_inserts
+      spec:
+        mode: exclusive
+      arcs:
+        - step: execute_inserts
 
   - step: execute_inserts
     desc: Execute INSERT statements
     tool:
       kind: postgres
-      auth: "{{ workload.pg_auth }}"
+      auth: "{{ pg_auth }}"
       command: "{{ transform_and_insert.sql_statements | join('\n') }}"
     next:
-      - step: verify_data
+      spec:
+        mode: exclusive
+      arcs:
+        - step: verify_data
 
   - step: verify_data
     desc: Verify data was inserted
     tool:
       kind: postgres
-      auth: "{{ workload.pg_auth }}"
+      auth: "{{ pg_auth }}"
       command: |
         SELECT
           COUNT(*) as total_posts,
@@ -111,27 +122,31 @@ workflow:
           MAX(id) as max_post_id
         FROM public.http_to_postgres_simple;
     next:
-      - step: show_sample
+      spec:
+        mode: exclusive
+      arcs:
+        - step: show_sample
 
   - step: show_sample
     desc: Show sample posts
     tool:
       kind: postgres
-      auth: "{{ workload.pg_auth }}"
+      auth: "{{ pg_auth }}"
       command: |
         SELECT id, user_id, title, LEFT(body, 50) || '...' as body_preview
         FROM public.http_to_postgres_simple
         ORDER BY id
         LIMIT 5;
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: End HTTP to PostgreSQL transfer
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args: {}
       code: |
         result = {"status": "completed"}

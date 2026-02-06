@@ -28,7 +28,7 @@ workload:
   # Processing delay per item (seconds) - set to 0 for max speed
   processing_delay: 0
 
-vars:
+ctx:
   loop_results: []
 
 workflow:
@@ -37,7 +37,7 @@ workflow:
     tool:
       kind: python
       args:
-        item_count: "{{ workload.item_count }}"
+        item_count: "{{ item_count }}"
       code: |
         import time
 
@@ -64,7 +64,10 @@ workflow:
         }
         print(f"Initialized with {len(items)} items to process")
     next:
-      - step: process_items
+      spec:
+        mode: exclusive
+      arcs:
+        - step: process_items
 
   - step: process_items
     desc: Loop over items and process each one (heavy load simulation)
@@ -78,9 +81,9 @@ workflow:
           kind: python
           args:
             item: "{{ iter.item }}"
-            padding_size: "{{ workload.result_padding_size }}"
-            delay: "{{ workload.processing_delay }}"
-            loop_results: "{{ vars.loop_results }}"
+            padding_size: "{{ result_padding_size }}"
+            delay: "{{ processing_delay }}"
+            loop_results: "{{ ctx.loop_results }}"
           code: |
             import time
             import hashlib
@@ -124,16 +127,21 @@ workflow:
                 "item_result": item_result,
                 "loop_results": loop_results
             }
-          eval:
-            - else:
-                do: continue
-                set_vars:
-                  loop_results: "{{ outcome.result.loop_results }}"
+          spec:
+            policy:
+              rules:
+                - else:
+                    do: continue
+                    set_ctx:
+                      loop_results: "{{ outcome.result.loop_results }}"
 
     next:
-      - step: aggregate_results
-        args:
-          loop_results: "{{ vars.loop_results }}"
+      spec:
+        mode: exclusive
+      arcs:
+        - step: aggregate_results
+          args:
+            loop_results: "{{ ctx.loop_results }}"
 
   - step: aggregate_results
     desc: Aggregate all loop results and compute statistics
@@ -211,7 +219,10 @@ workflow:
 
         print(f"Aggregation complete: {total_items} items in {processing_time:.2f}s ({items_per_second:.2f} items/sec)")
     next:
-      - step: validate_results
+      spec:
+        mode: exclusive
+      arcs:
+        - step: validate_results
 
   - step: validate_results
     desc: Validate that the test completed successfully
@@ -219,7 +230,7 @@ workflow:
       kind: python
       args:
         aggregation: "{{ aggregate_results }}"
-        expected_count: "{{ workload.item_count }}"
+        expected_count: "{{ item_count }}"
       code: |
         # Validate test results
         summary = aggregation.get("summary", {})
@@ -268,7 +279,10 @@ workflow:
             print(f"  [{status}] {v['check']}: {v['message']}")
         print(f"{'='*60}\n")
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: End of heavy load test

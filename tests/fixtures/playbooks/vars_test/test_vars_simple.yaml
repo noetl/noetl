@@ -1,4 +1,4 @@
-apiVersion: noetl.io/v2
+apiVersion: noetl.io/v10
 kind: Playbook
 metadata:
   name: test_vars_simple
@@ -8,22 +8,22 @@ workflow:
 - step: start
   desc: Simple transient test
   tool:
-    - label:
+    - start_task:
         kind: python
-        auth: {}
-        libs: {}
         args: {}
         code: |
           result = {"status": "initialized"}
   next:
-    - step: set_var
+    spec:
+      mode: exclusive
+    arcs:
+      - step: set_var
 
 - step: set_var
   desc: Set a test variable
   tool:
-    - label:
+    - set_vars:
         kind: python
-        auth: {}
         libs:
           os: os
           logging: logging
@@ -34,30 +34,37 @@ workflow:
           logger.info(f"DEBUG: SERVER_API_URL = {os.getenv('SERVER_API_URL')}")
           logger.info(f"DEBUG: context keys = {list(context.keys())}")
 
-          # Return value that will be stored via vars block
+          # Return value that will be stored via policy rules
           result = {
             "status": "success",
             "test_counter": 42,
             "message": "Variable set successfully"
           }
-  vars:
-    test_counter: "{{ result.test_counter }}"
-    set_message: "{{ result.message }}"
+        spec:
+          policy:
+            rules:
+              - else:
+                  then:
+                    do: continue
+                    set_ctx:
+                      test_counter: "{{ outcome.result.test_counter }}"
+                      set_message: "{{ outcome.result.message }}"
   next:
-    - step: get_var
+    spec:
+      mode: exclusive
+    arcs:
+      - step: get_var
 
 - step: get_var
   desc: Get the variable back
   tool:
-    - label:
+    - get_vars:
         kind: python
-        auth: {}
-        libs: {}
         args:
-          counter_value: "{{ vars.test_counter }}"
-          previous_message: "{{ vars.set_message }}"
+          counter_value: "{{ ctx.test_counter }}"
+          previous_message: "{{ ctx.set_message }}"
         code: |
-          # Access variable via args (passed from vars context)
+          # Access variable via args (passed from ctx context)
           counter = counter_value
           message = previous_message
 
@@ -71,15 +78,16 @@ workflow:
             "verification": counter == 42
           }
   next:
-    - step: end
+    spec:
+      mode: exclusive
+    arcs:
+      - step: end
 
 - step: end
   desc: Test complete
   tool:
-    - label:
+    - end_task:
         kind: python
-        auth: {}
-        libs: {}
         args: {}
         code: |
           result = {"status": "complete"}

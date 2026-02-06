@@ -1,10 +1,10 @@
-apiVersion: noetl.io/v2
+apiVersion: noetl.io/v10
 kind: Playbook
 metadata:
   name: http_to_postgres_transfer
   path: tests/fixtures/playbooks/data_transfer/http_to_postgres_transfer
 
-workload:
+ctx:
   api_url: "https://jsonplaceholder.typicode.com/posts"
   pg_auth: pg_local
 
@@ -13,19 +13,20 @@ workflow:
     desc: Start workflow
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args: {}
       code: |
         result = {"status": "initialized"}
     next:
-      - step: create_table
+      spec:
+        mode: exclusive
+      arcs:
+        - step: create_table
 
   - step: create_table
     desc: Create table for storing HTTP data
     tool:
       kind: postgres
-      auth: "{{ workload.pg_auth }}"
+      auth: "{{ pg_auth }}"
       command: |
         DROP TABLE IF EXISTS public.http_to_postgres_transfer;
 
@@ -38,7 +39,10 @@ workflow:
           fetched_at TIMESTAMPTZ DEFAULT NOW()
         );
     next:
-      - step: transfer_http_to_pg
+      spec:
+        mode: exclusive
+      arcs:
+        - step: transfer_http_to_pg
 
   - step: transfer_http_to_pg
     desc: Transfer HTTP data to PostgreSQL with column mapping
@@ -46,13 +50,13 @@ workflow:
       kind: transfer
       source:
         type: http
-        url: "{{ workload.api_url }}"
+        url: "{{ api_url }}"
         method: GET
       target:
         type: postgres
         auth:
           source: credential
-          key: "{{ workload.pg_auth }}"
+          key: "{{ pg_auth }}"
         table: public.http_to_postgres_transfer
         mapping:
           user_id: userId
@@ -60,24 +64,28 @@ workflow:
           title: title
           body: body
     next:
-      - step: show_count
+      spec:
+        mode: exclusive
+      arcs:
+        - step: show_count
 
   - step: show_count
     desc: Verify record count
     tool:
       kind: postgres
-      auth: "{{ workload.pg_auth }}"
+      auth: "{{ pg_auth }}"
       command: |
         SELECT COUNT(*) as records FROM public.http_to_postgres_transfer;
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: End workflow
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args: {}
       code: |
         result = {"status": "completed"}

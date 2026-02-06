@@ -1,40 +1,42 @@
 """
-Task sequence executor for NoETL worker.
+Task sequence executor for NoETL worker - Canonical v10 Format (Strict).
 
-Executes labeled tasks in then: blocks with tool-level eval: flow control.
+Executes labeled tasks in tool pipelines with task.spec.policy for flow control.
 
 Features:
 - Sequential task execution within a single worker
 - Data threading via _prev (like Clojure's ->)
-- Per-task flow control via tool.eval:
+- Per-task flow control via task.spec.policy.rules (canonical v10 ONLY)
 - Control actions: continue, retry, break, jump, fail
 - Tracks _task, _prev, _attempt, outcome for template access
+- Uses `when` as the ONLY conditional keyword (rejects `expr`)
+- Outcome status uses "ok" | "error" (rejects "success")
+- Variable mutations via set_ctx/set_iter (rejects set_vars)
 
-Usage in playbooks:
-    case:
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          - fetch:
-              tool:
-                kind: http
-                url: "..."
-                eval:
-                  - expr: "{{ outcome.error.retryable }}"
-                    do: retry
-                    attempts: 5
-                    backoff: exponential
-                    delay: 1.0
-                  - expr: "{{ outcome.status == 'error' }}"
-                    do: fail
+NO BACKWARD COMPATIBILITY - v10 patterns only.
+
+Canonical v10 usage in playbooks:
+    - step: fetch_and_transform
+      tool:
+        - fetch:
+            kind: http
+            url: "..."
+            spec:
+              policy:
+                rules:
+                  - when: "{{ outcome.status == 'error' and outcome.error.retryable }}"
+                    then: { do: retry, attempts: 5, backoff: exponential, delay: 1.0 }
+                  - when: "{{ outcome.status == 'error' }}"
+                    then: { do: fail }
                   - else:
-                      do: continue
-          - transform:
-              tool:
-                kind: python
-                args: {data: "{{ _prev }}"}
-                code: "..."
-          - next:
-              - step: continue
+                      then: { do: continue }
+        - transform:
+            kind: python
+            args: { data: "{{ _prev }}" }
+            code: "..."
+      next:
+        arcs:
+          - step: continue
 """
 
 import asyncio
@@ -51,24 +53,24 @@ logger = setup_logger(__name__, include_location=True)
 @dataclass
 class TaskSequenceContext:
     """
-    Runtime context for task sequence execution.
+    Runtime context for task sequence execution (canonical v10 - strict).
 
     Variable scoping:
-    - _prev: pipeline-local, only valid during then: list execution
+    - _prev: pipeline-local, only valid during tool pipeline execution
     - _task: current task name (pipeline-local)
     - _attempt: retry attempt for current task (pipeline-local)
     - outcome: current task execution result (pipeline-local)
     - results: all task results by name (pipeline-local)
-    - step_vars: step-scoped mutable state (visible to subsequent tools and case evaluation)
-    - iter_vars: iteration-scoped vars (isolated per parallel loop iteration)
+    - ctx: execution-scoped mutable state (canonical v10)
+    - iter: iteration-scoped vars (canonical v10, isolated per parallel loop iteration)
     """
     _task: str = ""
     _prev: Any = None
     _attempt: int = 1
     outcome: Optional[dict[str, Any]] = None
     results: dict[str, Any] = field(default_factory=dict)
-    step_vars: dict[str, Any] = field(default_factory=dict)
-    iter_vars: dict[str, Any] = field(default_factory=dict)
+    ctx: dict[str, Any] = field(default_factory=dict)
+    iter: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dict for template rendering."""
@@ -78,8 +80,8 @@ class TaskSequenceContext:
             "_attempt": self._attempt,
             "outcome": self.outcome,
             "results": self.results,
-            "vars": self.step_vars,  # Expose step vars as 'vars' for templates
-            "iter": self.iter_vars,  # Expose iteration vars as 'iter' for templates
+            "ctx": self.ctx,
+            "iter": self.iter,
         }
 
     def update_success(self, task_name: str, result: Any, outcome: dict[str, Any]):
@@ -94,25 +96,25 @@ class TaskSequenceContext:
         self._task = task_name
         self.outcome = outcome
 
-    def set_step_vars(self, vars_dict: dict[str, Any]):
-        """Update step-scoped variables."""
-        self.step_vars.update(vars_dict)
+    def set_ctx_vars(self, vars_dict: dict[str, Any]):
+        """Update execution-scoped context (canonical v10: set_ctx)."""
+        self.ctx.update(vars_dict)
 
     def set_iter_vars(self, vars_dict: dict[str, Any]):
-        """Update iteration-scoped variables (for parallel loops)."""
-        self.iter_vars.update(vars_dict)
+        """Update iteration-scoped variables (canonical v10: set_iter)."""
+        self.iter.update(vars_dict)
 
 
 @dataclass
 class ControlAction:
-    """Result of eval condition evaluation."""
+    """Result of policy rule evaluation (canonical v10)."""
     action: str  # continue, retry, break, jump, fail
     to: Optional[str] = None  # For jump: target task label
     attempts: int = 3  # Max retry attempts
     backoff: str = "none"  # none, linear, exponential
     delay: float = 1.0  # Initial delay seconds
-    set_vars: Optional[dict[str, Any]] = None  # Step-scoped vars to set
-    set_iter: Optional[dict[str, Any]] = None  # Iteration-scoped vars to set
+    set_ctx: Optional[dict[str, Any]] = None  # Execution-scoped vars
+    set_iter: Optional[dict[str, Any]] = None  # Iteration-scoped vars
 
 
 def build_outcome(
@@ -125,11 +127,11 @@ def build_outcome(
     attempt: int = 1,
 ) -> dict[str, Any]:
     """
-    Build a structured outcome object for eval expressions.
+    Build a structured outcome object for policy rule expressions.
 
     Args:
-        status: "success" or "error"
-        result: Tool output (if success)
+        status: "ok" or "error" (canonical v10 - "success" is REJECTED)
+        result: Tool output (if ok)
         error: Structured error dict (if error)
         meta: Additional metadata
         tool_kind: Tool type for tool-specific helpers
@@ -138,7 +140,17 @@ def build_outcome(
 
     Returns:
         Outcome dict with status, result/error, meta, and tool-specific helpers
+
+    Raises:
+        ValueError: If status is "success" (must use "ok" in v10)
     """
+    # STRICT v10: Reject "success" - must use "ok"
+    if status == "success":
+        raise ValueError("Canonical v10 requires status='ok', not 'success'")
+
+    if status not in ("ok", "error"):
+        raise ValueError(f"Invalid outcome status: {status}. Must be 'ok' or 'error'")
+
     outcome = {
         "status": status,
         "meta": {
@@ -148,7 +160,7 @@ def build_outcome(
         },
     }
 
-    if status == "success":
+    if status == "ok":
         outcome["result"] = result
     else:
         outcome["error"] = error or {"kind": "unknown", "retryable": False, "message": "Unknown error"}
@@ -177,10 +189,12 @@ def build_outcome(
 
 class TaskSequenceExecutor:
     """
-    Executes a task sequence within a single worker.
+    Executes a task sequence within a single worker (canonical v10 - strict).
 
-    Tasks are labeled items in a then: block, with tool-level eval:
+    Tasks are labeled items in a tool pipeline, with task.spec.policy.rules
     for flow control. The sequence is treated as an atomic unit.
+
+    NO BACKWARD COMPATIBILITY - rejects eval, expr, set_vars.
     """
 
     def __init__(
@@ -207,21 +221,21 @@ class TaskSequenceExecutor:
         base_context: dict[str, Any],
     ) -> dict[str, Any]:
         """
-        Execute a task sequence.
+        Execute a task sequence (canonical v10 - strict).
 
         Args:
-            tasks: List of labeled task definitions:
+            tasks: List of labeled task definitions (canonical v10 format ONLY):
                 [
-                    {"fetch": {"tool": {"kind": "http", "url": "...", "eval": [...]}}},
-                    {"transform": {"tool": {"kind": "python", ...}}},
+                    {"fetch": {"kind": "http", "url": "...", "spec": {"policy": {"rules": [...]}}}},
+                    {"transform": {"kind": "python", ...}},
                     ...
                 ]
-            base_context: Base render context (workload, vars, step results)
+            base_context: Base render context (workload, ctx, iter, step results)
 
         Returns:
             Sequence result:
                 {
-                    "status": "success" | "failed" | "break",
+                    "status": "ok" | "failed" | "break",
                     "_prev": final _prev value,
                     "results": {task_name: result, ...},
                     "error": {...} if failed,
@@ -230,24 +244,24 @@ class TaskSequenceExecutor:
         """
         if not tasks:
             logger.warning("[TASK_SEQ] Empty task sequence - no tasks to execute")
-            return {"status": "success", "_prev": None, "results": {}}
+            return {"status": "ok", "_prev": None, "results": {}}
 
-        # Parse task list
+        # Parse task list (strict v10)
         parsed_tasks = self._parse_tasks(tasks)
         task_names = [t["name"] for t in parsed_tasks]
         logger.info(f"[TASK_SEQ] Executing {len(parsed_tasks)} tasks: {task_names}")
 
         # Initialize context
         ctx = TaskSequenceContext()
-        retry_counts: dict[str, int] = {}  # task_name -> attempt count
+        retry_counts: dict[str, int] = {}
 
         # Execute tasks
         current_idx = 0
         while current_idx < len(parsed_tasks):
             task = parsed_tasks[current_idx]
             task_name = task["name"]
-            tool_spec = task["tool"]
-            eval_conditions = task.get("eval", [])
+            tool_config = task["config"]
+            policy_rules = task.get("policy_rules", [])
 
             ctx._task = task_name
             ctx._attempt = retry_counts.get(task_name, 0) + 1
@@ -261,14 +275,12 @@ class TaskSequenceExecutor:
             # Execute tool and build outcome
             start_time = time.monotonic()
             try:
-                # Render tool config with current context
-                tool_kind = tool_spec.get("kind")
-                tool_config = {k: v for k, v in tool_spec.items() if k not in ("kind", "eval", "output")}
-                rendered_config = self.render_dict(tool_config, render_ctx)
+                tool_kind = tool_config.get("kind")
+                config_to_render = {k: v for k, v in tool_config.items() if k not in ("kind", "spec", "output")}
+                rendered_config = self.render_dict(config_to_render, render_ctx)
 
                 logger.info(f"[TASK_SEQ] Executing task '{task_name}' (kind={tool_kind}, attempt={ctx._attempt})")
 
-                # Execute tool
                 result = await self.tool_executor(tool_kind, rendered_config, render_ctx)
                 duration_ms = int((time.monotonic() - start_time) * 1000)
 
@@ -289,9 +301,8 @@ class TaskSequenceExecutor:
                     )
                     ctx.update_error(task_name, outcome)
                 else:
-                    # Success
                     outcome = build_outcome(
-                        status="success",
+                        status="ok",
                         result=result,
                         tool_kind=tool_kind,
                         duration_ms=duration_ms,
@@ -302,40 +313,38 @@ class TaskSequenceExecutor:
 
             except Exception as e:
                 duration_ms = int((time.monotonic() - start_time) * 1000)
-                # Task failed - classify error
-                error_info = self._classify_task_error(e, task_name, tool_spec.get("kind", "unknown"))
+                error_info = self._classify_task_error(e, task_name, tool_config.get("kind", "unknown"))
                 outcome = build_outcome(
                     status="error",
                     error=error_info.to_dict(),
-                    tool_kind=tool_spec.get("kind", "unknown"),
+                    tool_kind=tool_config.get("kind", "unknown"),
                     duration_ms=duration_ms,
                     attempt=ctx._attempt,
                 )
                 ctx.update_error(task_name, outcome)
                 logger.warning(f"[TASK_SEQ] Task '{task_name}' failed: {error_info.message}")
 
-            # Evaluate tool.eval conditions
+            # Evaluate policy rules (strict v10)
             eval_ctx = {**render_ctx, **ctx.to_dict()}
-            action = self._evaluate_eval(eval_conditions, eval_ctx, ctx.outcome)
+            action = self._evaluate_policy_rules(policy_rules, eval_ctx, ctx.outcome)
 
-            # Apply set_vars and set_iter from the matched eval condition
-            if action.set_vars:
-                # Render the vars values with current context
-                rendered_vars = {}
-                for key, value in action.set_vars.items():
+            # Apply set_ctx
+            if action.set_ctx:
+                rendered_ctx = {}
+                for key, value in action.set_ctx.items():
                     if isinstance(value, str) and "{{" in value:
                         try:
-                            rendered_vars[key] = self.render_template(value, eval_ctx)
+                            rendered_ctx[key] = self.render_template(value, eval_ctx)
                         except Exception as e:
-                            logger.warning(f"[TASK_SEQ] Error rendering set_vars.{key}: {e}")
-                            rendered_vars[key] = value
+                            logger.warning(f"[TASK_SEQ] Error rendering set_ctx.{key}: {e}")
+                            rendered_ctx[key] = value
                     else:
-                        rendered_vars[key] = value
-                ctx.set_step_vars(rendered_vars)
-                logger.debug(f"[TASK_SEQ] Set step vars: {list(rendered_vars.keys())}")
+                        rendered_ctx[key] = value
+                ctx.set_ctx_vars(rendered_ctx)
+                logger.debug(f"[TASK_SEQ] Set ctx vars: {list(rendered_ctx.keys())}")
 
+            # Apply set_iter
             if action.set_iter:
-                # Render the iter vars values with current context
                 rendered_iter = {}
                 for key, value in action.set_iter.items():
                     if isinstance(value, str) and "{{" in value:
@@ -351,12 +360,7 @@ class TaskSequenceExecutor:
 
             # Apply control action
             if action.action == "continue":
-                if ctx.outcome["status"] == "success":
-                    current_idx += 1
-                else:
-                    # Error but continue anyway
-                    logger.info(f"[TASK_SEQ] Continuing after error in task '{task_name}'")
-                    current_idx += 1
+                current_idx += 1
 
             elif action.action == "retry":
                 retry_counts[task_name] = retry_counts.get(task_name, 0) + 1
@@ -367,19 +371,17 @@ class TaskSequenceExecutor:
                         "status": "failed",
                         "_prev": ctx._prev,
                         "results": ctx.results,
-                        "step_vars": ctx.step_vars,
+                        "ctx": ctx.ctx,
                         "error": ctx.outcome.get("error") if ctx.outcome else None,
                         "failed_task": task_name,
                     }
 
-                # Apply backoff delay
                 delay = self._calculate_delay(action, retry_counts[task_name])
                 if delay > 0:
                     logger.info(f"[TASK_SEQ] Waiting {delay:.2f}s before retry (backoff={action.backoff})")
                     await asyncio.sleep(delay)
 
                 logger.info(f"[TASK_SEQ] Retrying task '{task_name}' (attempt {retry_counts[task_name] + 1}/{action.attempts})")
-                # Stay at current_idx to retry
 
             elif action.action == "jump":
                 target = action.to
@@ -389,7 +391,7 @@ class TaskSequenceExecutor:
                         "status": "failed",
                         "_prev": ctx._prev,
                         "results": ctx.results,
-                        "step_vars": ctx.step_vars,
+                        "ctx": ctx.ctx,
                         "error": {"kind": "config", "message": "Jump action missing 'to' target"},
                         "failed_task": task_name,
                     }
@@ -401,7 +403,7 @@ class TaskSequenceExecutor:
                         "status": "failed",
                         "_prev": ctx._prev,
                         "results": ctx.results,
-                        "step_vars": ctx.step_vars,
+                        "ctx": ctx.ctx,
                         "error": {"kind": "config", "message": f"Jump target '{target}' not found"},
                         "failed_task": task_name,
                     }
@@ -410,14 +412,13 @@ class TaskSequenceExecutor:
                 current_idx = target_idx
 
             elif action.action == "break":
-                # Stop task sequence, return remaining actions for step-level processing
                 remaining = tasks[current_idx + 1:] if current_idx + 1 < len(tasks) else []
                 logger.info(f"[TASK_SEQ] Breaking from task sequence at '{task_name}'")
                 return {
                     "status": "break",
                     "_prev": ctx._prev,
                     "results": ctx.results,
-                    "step_vars": ctx.step_vars,
+                    "ctx": ctx.ctx,
                     "remaining_actions": remaining,
                 }
 
@@ -427,41 +428,56 @@ class TaskSequenceExecutor:
                     "status": "failed",
                     "_prev": ctx._prev,
                     "results": ctx.results,
-                    "step_vars": ctx.step_vars,
+                    "ctx": ctx.ctx,
                     "error": ctx.outcome.get("error") if ctx.outcome else None,
                     "failed_task": task_name,
                 }
 
-        # All tasks completed successfully
         logger.info(f"[TASK_SEQ] Task sequence completed successfully, {len(ctx.results)} tasks executed")
         return {
-            "status": "success",
+            "status": "ok",
             "_prev": ctx._prev,
             "results": ctx.results,
-            "step_vars": ctx.step_vars,
+            "ctx": ctx.ctx,
         }
 
     def _parse_tasks(self, tasks: list[dict]) -> list[dict]:
-        """Parse task list into task definitions."""
+        """
+        Parse task list into task definitions (strict v10 - no legacy support).
+
+        REJECTS: eval (must use spec.policy.rules)
+        """
         parsed = []
         for task_def in tasks:
             if not isinstance(task_def, dict):
                 continue
 
-            # Skip non-tool actions (next, vars, etc.)
-            # Only process labeled tool tasks
             for name, config in task_def.items():
-                # Skip reserved action names
                 if name in ("next", "vars", "collect", "emit", "set"):
                     continue
 
-                if isinstance(config, dict) and "tool" in config:
-                    tool = config["tool"]
+                if isinstance(config, dict) and "kind" in config:
+                    # STRICT v10: Reject eval
+                    if "eval" in config:
+                        raise ValueError(
+                            f"Task '{name}': 'eval' is not allowed in v10. "
+                            "Use 'spec.policy.rules' for outcome handling."
+                        )
+
+                    # Get policy rules from spec.policy.rules
+                    policy_rules = []
+                    if "spec" in config and isinstance(config["spec"], dict):
+                        spec = config["spec"]
+                        if "policy" in spec and isinstance(spec["policy"], dict):
+                            policy = spec["policy"]
+                            policy_rules = policy.get("rules", [])
+
                     parsed.append({
                         "name": name,
-                        "tool": tool,
-                        "eval": tool.get("eval", []) if isinstance(tool, dict) else [],
+                        "config": config,
+                        "policy_rules": policy_rules,
                     })
+
         return parsed
 
     def _classify_task_error(
@@ -473,80 +489,103 @@ class TaskSequenceExecutor:
         """Classify a task execution error."""
         context = {}
 
-        # Extract HTTP-specific info
         if isinstance(error, TaskSequenceError):
             if error.context:
                 context["status_code"] = error.context.get("status_code")
                 context["headers"] = error.context.get("headers")
             return classify_error(error, source=error.source, context=context)
 
-        # Generic classification
         return classify_error(error, source=tool_kind, context=context)
 
-    def _evaluate_eval(
+    def _evaluate_policy_rules(
         self,
-        eval_conditions: list[dict],
+        policy_rules: list[dict],
         render_ctx: dict,
         outcome: dict[str, Any],
     ) -> ControlAction:
         """
-        Evaluate tool.eval conditions to determine control action.
+        Evaluate task.spec.policy.rules (strict v10 - no legacy support).
 
-        Default behavior (if tool.eval is omitted):
-        - success → continue
+        REJECTS: expr (must use when)
+        REJECTS: set_vars (must use set_ctx)
+
+        Default behavior (if no rules):
+        - ok → continue
         - error → fail
-
-        If tool.eval is present and no clause matches, same default applies
-        unless an else clause is provided.
-
-        Returns first matching condition's action with any set_vars/set_iter.
         """
-        # Default behavior when no eval: block is specified
-        if not eval_conditions:
+        if not policy_rules:
             if outcome and outcome.get("status") == "error":
                 return ControlAction(action="fail")
             return ControlAction(action="continue")
 
-        for cond in eval_conditions:
-            if not isinstance(cond, dict):
+        for rule in policy_rules:
+            if not isinstance(rule, dict):
                 continue
 
-            # Check for else clause: - else: {do: continue, set_vars: {...}}
-            if "else" in cond:
-                action_spec = cond["else"]
-                if isinstance(action_spec, dict):
-                    return self._parse_action(action_spec)
+            # Check for else clause
+            if "else" in rule:
+                else_data = rule["else"]
+                if isinstance(else_data, dict) and "then" in else_data:
+                    return self._parse_then(else_data["then"])
                 continue
 
-            # Check expr condition
-            expr = cond.get("expr")
-            if expr is None:
-                # No expr means this is a default/else clause with inline action
-                return self._parse_action(cond)
+            # STRICT v10: Reject expr
+            if "expr" in rule:
+                raise ValueError(
+                    "Policy rule uses 'expr' which is not allowed in v10. "
+                    "Use 'when' as the ONLY conditional keyword."
+                )
+
+            # Get when condition (required for non-else rules)
+            condition = rule.get("when")
+            if condition is None:
+                if "then" in rule:
+                    return self._parse_then(rule["then"])
+                continue
 
             try:
-                # Render condition with context including outcome
-                rendered = self.render_template(expr, render_ctx)
-                # Evaluate as boolean
+                rendered = self.render_template(condition, render_ctx)
                 if rendered.lower() in ("true", "1", "yes"):
-                    return self._parse_action(cond)
+                    if "then" not in rule:
+                        raise ValueError(
+                            f"Policy rule with 'when' must have 'then' block in v10. "
+                            f"Rule: {rule}"
+                        )
+                    return self._parse_then(rule["then"])
+            except ValueError:
+                raise
             except Exception as e:
-                logger.warning(f"[TASK_SEQ] Error evaluating eval condition: {e}")
+                logger.warning(f"[TASK_SEQ] Error evaluating policy rule condition: {e}")
                 continue
 
-        # No clause matched - apply default behavior based on outcome status
-        # This is the same as if no eval: block was specified
+        # No rule matched
         if outcome and outcome.get("status") == "error":
-            logger.debug("[TASK_SEQ] No eval condition matched for error, defaulting to fail")
+            logger.debug("[TASK_SEQ] No policy rule matched for error, defaulting to fail")
             return ControlAction(action="fail")
 
-        logger.debug("[TASK_SEQ] No eval condition matched for success, defaulting to continue")
+        logger.debug("[TASK_SEQ] No policy rule matched for ok, defaulting to continue")
         return ControlAction(action="continue")
 
-    def _parse_action(self, action_spec: dict) -> ControlAction:
-        """Parse eval condition into ControlAction."""
-        # Handle delay that might be a template expression (rendered as string)
-        delay = action_spec.get("delay", 1.0)
+    def _parse_then(self, then_data: dict) -> ControlAction:
+        """Parse canonical v10 `then` block (strict - no legacy support)."""
+        if not isinstance(then_data, dict):
+            raise ValueError("Policy rule 'then' must be an object in v10")
+
+        # STRICT v10: Reject set_vars
+        if "set_vars" in then_data:
+            raise ValueError(
+                "Policy rule uses 'set_vars' which is not allowed in v10. "
+                "Use 'set_ctx' for execution-scoped variables."
+            )
+
+        # STRICT v10: Require 'do' field
+        if "do" not in then_data:
+            raise ValueError(
+                "Policy rule 'then' must have 'do' field in v10. "
+                f"Got: {then_data}"
+            )
+
+        delay = then_data.get("delay", 1.0)
         if isinstance(delay, str):
             try:
                 delay = float(delay)
@@ -554,13 +593,13 @@ class TaskSequenceExecutor:
                 delay = 1.0
 
         return ControlAction(
-            action=action_spec.get("do", "continue"),
-            to=action_spec.get("to"),
-            attempts=action_spec.get("attempts", 3),
-            backoff=action_spec.get("backoff", "none"),
+            action=then_data["do"],
+            to=then_data.get("to"),
+            attempts=then_data.get("attempts", 3),
+            backoff=then_data.get("backoff", "none"),
             delay=delay,
-            set_vars=action_spec.get("set_vars"),
-            set_iter=action_spec.get("set_iter"),
+            set_ctx=then_data.get("set_ctx"),
+            set_iter=then_data.get("set_iter"),
         )
 
     def _calculate_delay(self, action: ControlAction, attempt: int) -> float:
@@ -590,53 +629,51 @@ class TaskSequenceError(Exception):
         super().__init__(error)
 
 
-def is_task_sequence(then_block: Any) -> bool:
+def is_task_sequence(tool_list: Any) -> bool:
     """
-    Check if a then: block contains labeled tool tasks (task sequence).
+    Check if a tool list contains labeled tool tasks (task sequence).
 
-    A task sequence is detected when the then: block contains items
-    that are labeled tasks with tool: configs (not reserved actions).
+    A task sequence is detected when the list contains items
+    that are labeled tasks with kind configs (not reserved actions).
     """
-    if not isinstance(then_block, list):
+    if not isinstance(tool_list, list):
         return False
 
     reserved_actions = {"next", "vars", "collect", "emit", "set", "pipe"}
 
-    for item in then_block:
+    for item in tool_list:
         if not isinstance(item, dict):
             continue
-        # Check if this is a labeled task (not a reserved action)
         for key, value in item.items():
-            if key not in reserved_actions and isinstance(value, dict) and "tool" in value:
-                return True
+            if key not in reserved_actions and isinstance(value, dict):
+                if "kind" in value:
+                    return True
 
     return False
 
 
-def extract_task_sequence(then_block: list[dict]) -> tuple[list[dict], list[dict]]:
+def extract_task_sequence(tool_list: list[dict]) -> tuple[list[dict], list[dict]]:
     """
-    Extract task sequence and remaining actions from then: block.
+    Extract task sequence and remaining actions from a tool list.
 
     Returns:
         (task_list, remaining_actions)
-        - task_list: labeled tool tasks to execute
-        - remaining_actions: non-task actions (next, vars, etc.) to process after
     """
     tasks = []
     remaining = []
     reserved_actions = {"next", "vars", "collect", "emit", "set"}
 
-    for item in then_block:
+    for item in tool_list:
         if not isinstance(item, dict):
             continue
 
-        # Check if this is a labeled task or a reserved action
         is_task = False
         for key, value in item.items():
-            if key not in reserved_actions and isinstance(value, dict) and "tool" in value:
-                tasks.append(item)
-                is_task = True
-                break
+            if key not in reserved_actions and isinstance(value, dict):
+                if "kind" in value:
+                    tasks.append(item)
+                    is_task = True
+                    break
 
         if not is_task:
             remaining.append(item)

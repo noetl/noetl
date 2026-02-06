@@ -1169,11 +1169,17 @@ class V2Worker:
             
             # Check if tool returned error status FIRST (before case evaluation)
             # This allows case blocks to handle errors via call.error event
+            # NOTE: task_sequence returns status="failed", other tools use status="error"
             tool_error = None
             error_response = None
             if isinstance(response, dict):
-                if response.get('status') == 'error':
-                    tool_error = response.get('error', 'Tool returned error status')
+                if response.get('status') in ('error', 'failed'):
+                    # Extract error from either 'error' dict (task_sequence) or 'error' string (other tools)
+                    error_val = response.get('error')
+                    if isinstance(error_val, dict):
+                        tool_error = error_val.get('message', str(error_val))
+                    else:
+                        tool_error = error_val or 'Tool returned error status'
                     error_response = response
                 # Also check nested data errors (for tools that return {data: {...}})
                 elif isinstance(response.get('data'), dict):

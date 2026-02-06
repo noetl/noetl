@@ -17,7 +17,10 @@ workflow:
           code: |
             result = {"status": "initialized"}
     next:
-      - step: process_data
+      spec:
+        mode: exclusive
+      arcs:
+        - step: process_data
 
   - step: process_data
     desc: Process data
@@ -33,11 +36,14 @@ workflow:
                 }
             }
     next:
-      - step: end
-        args:
-          input_data:
-            temp_table: "{{ process_data.data.temp_table }}"
-            cleanup_required: "{{ workload.cleanup_required }}"
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
+          args:
+            input_data:
+              temp_table: "{{ process_data.data.temp_table }}"
+              cleanup_required: "{{ cleanup_required }}"
 
   - step: end
     desc: End step with cleanup action
@@ -47,7 +53,7 @@ workflow:
           args:
             input_data:
               temp_table: "{{ args.input_data.temp_table | default(process_data.data.temp_table) }}"
-              cleanup_required: "{{ args.input_data.cleanup_required | default(workload.cleanup_required) }}"
+              cleanup_required: "{{ args.input_data.cleanup_required | default(cleanup_required) }}"
           code: |
             temp_table = input_data.get('temp_table', 'unknown')
             cleanup = input_data.get('cleanup_required', False)

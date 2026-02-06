@@ -1,4 +1,4 @@
-apiVersion: noetl.io/v2
+apiVersion: noetl.io/v10
 kind: Playbook
 metadata:
   name: variable_lifecycle_example
@@ -11,7 +11,7 @@ workload:
   retry_limit: 3
   user_id: "{{ payload.user_id }}"
 
-vars:
+ctx:
   user_email: null
   user_status: null
   user_created: null
@@ -23,121 +23,149 @@ workflow:
     desc: "Entry point"
     tool:
       kind: python
-      code: |
-        result = {"status": "initialized"}
+      spec:
+        code: |
+          result = {"status": "initialized"}
     next:
-      - step: fetch_user_data
+      spec:
+        mode: exclusive
+      arcs:
+        - step: fetch_user_data
 
   - step: fetch_user_data
     desc: "Fetch user data using global variables"
     tool:
       - fetch:
           kind: http
-          method: GET
-          endpoint: "{{ workload.api_base_url }}/users/{{ workload.user_id }}"
-          headers:
-            X-Environment: "{{ workload.environment }}"
-          eval:
-            - expr: "{{ outcome.status == 'error' }}"
-              do: fail
-            - else:
-                do: continue
-                set_vars:
-                  user_email: "{{ outcome.result.email }}"
-                  user_status: "{{ outcome.result.status }}"
-                  user_created: "{{ outcome.result.created_at }}"
+          spec:
+            method: GET
+            endpoint: "{{ api_base_url }}/users/{{ user_id }}"
+            headers:
+              X-Environment: "{{ environment }}"
+            policy:
+              rules:
+                - when: "{{ outcome.status == 'error' }}"
+                  then:
+                    do: fail
+                - else:
+                    do: continue
+                    set_ctx:
+                      user_email: "{{ outcome.result.email }}"
+                      user_status: "{{ outcome.result.status }}"
+                      user_created: "{{ outcome.result.created_at }}"
     next:
-      - step: calculate_metrics
+      spec:
+        mode: exclusive
+      arcs:
+        - step: calculate_metrics
 
   - step: calculate_metrics
     desc: "Calculate metrics using args from previous step"
     tool:
       kind: python
-      args:
-        email: "{{ vars.user_email }}"
-        status: "{{ vars.user_status }}"
-        retry_count: "{{ workload.retry_limit }}"
-      code: |
-        metrics = {
-            "email_domain": email.split('@')[1] if '@' in email else 'unknown',
-            "is_active": status == 'active',
-            "max_retries": retry_count,
-            "score": 100 if status == 'active' else 0
-        }
-        result = metrics
-      eval:
-        - else:
-            do: continue
-            set_vars:
-              email_domain: "{{ outcome.result.email_domain }}"
-              user_score: "{{ outcome.result.score }}"
-    next:
-      - step: active_user_flow
-        when: "{{ vars.user_status == 'active' }}"
+      spec:
         args:
-          domain: "{{ vars.email_domain }}"
-          score: "{{ vars.user_score }}"
-      - step: inactive_user_flow
-        when: "{{ vars.user_status != 'active' }}"
+          email: "{{ ctx.user_email }}"
+          status: "{{ ctx.user_status }}"
+          retry_count: "{{ retry_limit }}"
+        code: |
+          metrics = {
+              "email_domain": email.split('@')[1] if '@' in email else 'unknown',
+              "is_active": status == 'active',
+              "max_retries": retry_count,
+              "score": 100 if status == 'active' else 0
+          }
+          result = metrics
+        policy:
+          rules:
+            - else:
+                do: continue
+                set_ctx:
+                  email_domain: "{{ outcome.result.email_domain }}"
+                  user_score: "{{ outcome.result.score }}"
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: active_user_flow
+          when: "{{ ctx.user_status == 'active' }}"
+          args:
+            domain: "{{ ctx.email_domain }}"
+            score: "{{ ctx.user_score }}"
+        - step: inactive_user_flow
+          when: "{{ ctx.user_status != 'active' }}"
 
   - step: active_user_flow
     desc: "Process active users with received args"
     tool:
       kind: python
-      args:
-        domain: "{{ args.domain }}"
-        score: "{{ args.score }}"
-        global_env: "{{ workload.environment }}"
-      code: |
-        result = {
-            "message": f"Active user in {global_env}",
-            "domain": domain,
-            "bonus_score": score + 10
-        }
+      spec:
+        args:
+          domain: "{{ args.domain }}"
+          score: "{{ args.score }}"
+          global_env: "{{ environment }}"
+        code: |
+          result = {
+              "message": f"Active user in {global_env}",
+              "domain": domain,
+              "bonus_score": score + 10
+          }
     next:
-      - step: store_results
+      spec:
+        mode: exclusive
+      arcs:
+        - step: store_results
 
   - step: inactive_user_flow
     desc: "Process inactive users"
     tool:
       kind: python
-      args:
-        email: "{{ vars.user_email }}"
-        status: "{{ vars.user_status }}"
-      code: |
-        result = {
-            "message": f"Inactive user: {email}",
-            "status": status,
-            "action": "send_reactivation_email"
-        }
+      spec:
+        args:
+          email: "{{ ctx.user_email }}"
+          status: "{{ ctx.user_status }}"
+        code: |
+          result = {
+              "message": f"Inactive user: {email}",
+              "status": status,
+              "action": "send_reactivation_email"
+          }
     next:
-      - step: store_results
+      spec:
+        mode: exclusive
+      arcs:
+        - step: store_results
 
   - step: store_results
     desc: "Store results using direct step access"
     tool:
       kind: python
-      args:
-        user_email: "{{ vars.user_email }}"
-        user_score: "{{ vars.user_score }}"
-        environment: "{{ workload.environment }}"
-        active_result: "{{ active_user_flow.message if active_user_flow else 'N/A' }}"
-        inactive_result: "{{ inactive_user_flow.message if inactive_user_flow else 'N/A' }}"
-      code: |
-        result = {
-            "stored_at": "2025-12-02T17:30:00Z",
-            "email": user_email,
-            "score": user_score,
-            "environment": environment,
-            "flow_result": active_result if active_result != 'N/A' else inactive_result
-        }
-        print(f"Stored results for {user_email} in {environment}")
+      spec:
+        args:
+          user_email: "{{ ctx.user_email }}"
+          user_score: "{{ ctx.user_score }}"
+          environment: "{{ environment }}"
+          active_result: "{{ active_user_flow.message if active_user_flow else 'N/A' }}"
+          inactive_result: "{{ inactive_user_flow.message if inactive_user_flow else 'N/A' }}"
+        code: |
+          result = {
+              "stored_at": "2025-12-02T17:30:00Z",
+              "email": user_email,
+              "score": user_score,
+              "environment": environment,
+              "flow_result": active_result if active_result != 'N/A' else inactive_result
+          }
+          print(f"Stored results for {user_email} in {environment}")
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: "Workflow complete"
     tool:
       kind: python
-      code: |
-        result = {"status": "complete"}
+      spec:
+        code: |
+          result = {"status": "complete"}

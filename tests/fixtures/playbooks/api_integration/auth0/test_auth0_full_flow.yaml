@@ -1,4 +1,4 @@
-apiVersion: noetl.io/v2
+apiVersion: noetl.io/v10
 kind: Playbook
 metadata:
   name: test_auth0_full_flow
@@ -21,7 +21,7 @@ metadata:
     - authentication
     - integration-test
 
-workload:
+ctx:
   username: "{{ username | default('kadyapam@gmail.com') }}"
   password: "{{ password }}"
   auth0_domain: "mestumre-development.us.auth0.com"
@@ -34,13 +34,14 @@ workflow:
     desc: Begin full Auth0 flow test
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args: {}
       code: |
         result = {"status": "starting", "test": "auth0_full_flow"}
     next:
-      - step: get_auth0_token
+      spec:
+        mode: exclusive
+      arcs:
+        - step: get_auth0_token
 
   - step: get_auth0_token
     desc: Get Auth0 access token
@@ -48,16 +49,19 @@ workflow:
       kind: playbook
       path: api_integration/auth0/get_auth0_token
       args:
-        username: "{{ workload.username }}"
-        password: "{{ workload.password }}"
-        auth0_domain: "{{ workload.auth0_domain }}"
-        client_id: "{{ workload.client_id }}"
-        auth0_credential: "{{ workload.auth0_credential }}"
+        username: "{{ ctx.username }}"
+        password: "{{ ctx.password }}"
+        auth0_domain: "{{ ctx.auth0_domain }}"
+        client_id: "{{ ctx.client_id }}"
+        auth0_credential: "{{ ctx.auth0_credential }}"
     next:
-      - step: login_with_token
-        when: "{{ get_auth0_token.status == 'success' }}"
-      - step: auth_error
-        when: "{{ get_auth0_token.status == 'error' }}"
+      spec:
+        mode: exclusive
+      arcs:
+        - step: login_with_token
+          when: "{{ get_auth0_token.status == 'success' }}"
+        - step: auth_error
+          when: "{{ get_auth0_token.status == 'error' }}"
 
   - step: login_with_token
     desc: Create NoETL session with Auth0 token
@@ -68,17 +72,18 @@ workflow:
         auth0_token: "{{ get_auth0_token.access_token }}"
         client_ip: "127.0.0.1"
     next:
-      - step: test_success
-        when: "{{ login_with_token.status == 'authenticated' }}"
-      - step: login_error
-        when: "{{ login_with_token.status != 'authenticated' }}"
+      spec:
+        mode: exclusive
+      arcs:
+        - step: test_success
+          when: "{{ login_with_token.status == 'authenticated' }}"
+        - step: login_error
+          when: "{{ login_with_token.status != 'authenticated' }}"
 
   - step: test_success
     desc: Return successful test result
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args:
         session_token: "{{ login_with_token.session_token }}"
         user_id: "{{ login_with_token.user.user_id }}"
@@ -97,14 +102,15 @@ workflow:
             "expires_at": expires_at
         }
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: auth_error
     desc: Auth0 token acquisition failed
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args:
         error: "{{ get_auth0_token }}"
       code: |
@@ -115,14 +121,15 @@ workflow:
             "error": error
         }
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: login_error
     desc: NoETL login failed
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args:
         error: "{{ login_with_token }}"
       code: |
@@ -133,14 +140,15 @@ workflow:
             "error": error
         }
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: Complete
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args: {}
       code: |
         result = {"status": "complete"}

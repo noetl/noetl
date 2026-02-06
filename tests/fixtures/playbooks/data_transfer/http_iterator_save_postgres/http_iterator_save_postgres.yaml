@@ -1,11 +1,11 @@
-apiVersion: noetl.io/v2
+apiVersion: noetl.io/v10
 kind: Playbook
 metadata:
   name: http_iterator_save_postgres
   path: tests/fixtures/playbooks/data_transfer/http_iterator_save_postgres
   description: "Test HTTP calls in iterator with save to Postgres - validates loop execution with storage"
 
-workload:
+ctx:
   pg_auth: pg_k8s
   test_cities:
     - name: "London"
@@ -23,19 +23,20 @@ workflow:
     desc: Start HTTP iterator save test
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args: {}
       code: |
         result = {"status": "initialized"}
     next:
-      - step: create_table
+      spec:
+        mode: exclusive
+      arcs:
+        - step: create_table
 
   - step: create_table
     desc: Create table for HTTP iterator results
     tool:
       kind: postgres
-      auth: "{{ workload.pg_auth }}"
+      auth: "{{ pg_auth }}"
       command: |
         CREATE TABLE IF NOT EXISTS public.http_iterator_save_test (
           id TEXT PRIMARY KEY,
@@ -52,7 +53,10 @@ workflow:
         DELETE FROM public.http_iterator_save_test
         WHERE execution_id = '{{ execution_id }}';
     next:
-      - step: fetch_weather_data
+      spec:
+        mode: exclusive
+      arcs:
+        - step: fetch_weather_data
 
   - step: fetch_weather_data
     desc: Fetch weather data for multiple cities using iterator with HTTP and save
@@ -69,7 +73,7 @@ workflow:
             current: temperature_2m
       - save_weather:
           kind: postgres
-          auth: "{{ workload.pg_auth }}"
+          auth: "{{ pg_auth }}"
           command: |
             INSERT INTO public.http_iterator_save_test (id, execution_id, city_name, temperature, latitude, longitude, http_status)
             VALUES (
@@ -85,24 +89,31 @@ workflow:
               temperature = EXCLUDED.temperature,
               http_status = EXCLUDED.http_status,
               created_at = NOW();
-          eval:
-            - expr: "{{ outcome.status == 'error' }}"
-              do: continue
-            - else:
-                do: continue
+          spec:
+            policy:
+              rules:
+                - when: "{{ outcome.status == 'error' }}"
+                  then:
+                    do: continue
+                - else:
+                    then:
+                      do: continue
     loop:
-      in: "{{ workload.test_cities }}"
+      in: "{{ test_cities }}"
       iterator: city
       spec:
         mode: sequential
     next:
-      - step: verify_results
+      spec:
+        mode: exclusive
+      arcs:
+        - step: verify_results
 
   - step: verify_results
     desc: Verify all records were saved
     tool:
       kind: postgres
-      auth: "{{ workload.pg_auth }}"
+      auth: "{{ pg_auth }}"
       command: |
         SELECT
           COUNT(*) as total_records,
@@ -113,13 +124,16 @@ workflow:
         FROM public.http_iterator_save_test
         WHERE execution_id = '{{ execution_id }}';
     next:
-      - step: show_details
+      spec:
+        mode: exclusive
+      arcs:
+        - step: show_details
 
   - step: show_details
     desc: Show detailed results
     tool:
       kind: postgres
-      auth: "{{ workload.pg_auth }}"
+      auth: "{{ pg_auth }}"
       command: |
         SELECT
           city_name,
@@ -132,14 +146,15 @@ workflow:
         WHERE execution_id = '{{ execution_id }}'
         ORDER BY city_name;
     next:
-      - step: validate_data
+      spec:
+        mode: exclusive
+      arcs:
+        - step: validate_data
 
   - step: validate_data
     desc: Validate that all cities have data
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args:
         verify_results: "{{ verify_results }}"
       code: |
@@ -176,14 +191,15 @@ workflow:
         if not all_valid:
             raise ValueError(f"Validation FAILED: {total_records} records saved for {unique_cities} cities (expected {expected_cities})")
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: Test completed
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args: {}
       code: |
         result = {"status": "completed"}

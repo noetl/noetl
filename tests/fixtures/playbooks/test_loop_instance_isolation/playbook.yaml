@@ -25,13 +25,16 @@ workflow:
       code: |
         result = {"message": "Starting workflow"}
     next:
-      - step: process_items_users
+      spec:
+        mode: exclusive
+      arcs:
+        - step: process_items_users
 
   # First loop - process users
   - step: process_items_users
     desc: Process users collection
     loop:
-      in: "{{ workload.users }}"
+      in: "{{ users }}"
       iterator: user
       spec:
         mode: sequential
@@ -47,8 +50,11 @@ workflow:
     args:
       user: "{{ user }}"
     next:
-      - step: middle
-    
+      spec:
+        mode: exclusive
+      arcs:
+        - step: middle
+
   # Middle step
   - step: middle
     desc: Middle step between two loops
@@ -57,13 +63,16 @@ workflow:
       code: |
         result = {"message": "Middle step executed"}
     next:
-      - step: process_items_products
+      spec:
+        mode: exclusive
+      arcs:
+        - step: process_items_products
 
   # Second loop - process products (SAME step name pattern, different collection)
   - step: process_items_products
     desc: Process products collection
     loop:
-      in: "{{ workload.products }}"
+      in: "{{ products }}"
       iterator: product
       spec:
         mode: sequential
@@ -79,7 +88,10 @@ workflow:
     args:
       product: "{{ product }}"
     next:
-      - step: verify_results
+      spec:
+        mode: exclusive
+      arcs:
+        - step: verify_results
 
   # Verify both loops completed independently
   - step: verify_results
@@ -89,12 +101,12 @@ workflow:
       code: |
         users_result = input_data.get("users_result", {})
         products_result = input_data.get("products_result", {})
-        
+
         result = {
           "users_count": len(users_result.get("results", [])),
           "products_count": len(products_result.get("results", [])),
           "verification": "Both loops completed independently" if (
-            len(users_result.get("results", [])) == 2 and 
+            len(users_result.get("results", [])) == 2 and
             len(products_result.get("results", [])) == 2
           ) else "FAILED: Loop state collision detected",
           "users_results": users_result,
@@ -104,7 +116,10 @@ workflow:
       users_result: "{{ process_items_users }}"
       products_result: "{{ process_items_products }}"
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: End workflow

@@ -305,7 +305,29 @@ fn validate_next_refs(
                 }
             }
         }
+        crate::playbook::types::NextSpec::Router(router) => {
+            // Canonical v10 format: validate arcs
+            for arc in &router.arcs {
+                if !valid_steps.contains(arc.step.as_str()) {
+                    return Err(AppError::Validation(format!(
+                        "Step '{}' references unknown step '{}' in next.arcs",
+                        current_step, arc.step
+                    )));
+                }
+
+                // Validate when condition if present
+                if let Some(ref when) = arc.when {
+                    if !is_valid_jinja_expression(when) {
+                        return Err(AppError::Validation(format!(
+                            "Step '{}': next.arcs[].when has invalid expression: {}",
+                            current_step, when
+                        )));
+                    }
+                }
+            }
+        }
         crate::playbook::types::NextSpec::Targets(targets) => {
+            // Legacy canonical format
             for target in targets {
                 if !valid_steps.contains(target.step.as_str()) {
                     return Err(AppError::Validation(format!(

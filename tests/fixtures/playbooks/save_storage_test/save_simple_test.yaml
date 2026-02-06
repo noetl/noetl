@@ -1,4 +1,4 @@
-apiVersion: noetl.io/v2
+apiVersion: noetl.io/v10
 kind: Playbook
 metadata:
   name: save_storage_simple_test
@@ -19,13 +19,13 @@ workflow:
     desc: "Setup test tables"
     tool:
       kind: python
-      auth: {}
-      libs: {}
-      args: {}
       code: |
         result = {"status": "initialized"}
     next:
-      - step: create_tables
+      spec:
+        mode: exclusive
+      arcs:
+        - step: create_tables
 
   - step: create_tables
     desc: "Create required test tables"
@@ -33,29 +33,32 @@ workflow:
       kind: playbook
       path: tests/fixtures/playbooks/save_storage_test/create_tables
       args:
-        pg_auth: "{{ workload.pg_auth }}"
+        pg_auth: "{{ pg_auth }}"
     next:
-      - step: truncate_tables
+      spec:
+        mode: exclusive
+      arcs:
+        - step: truncate_tables
 
   - step: truncate_tables
     desc: "Clear test data from previous runs"
     tool:
       kind: postgres
-      auth: "{{ workload.pg_auth }}"
+      auth: "{{ pg_auth }}"
       command: |
         TRUNCATE TABLE simple_test_flat;
         TRUNCATE TABLE simple_test_nested;
     next:
-      - step: event_test
+      spec:
+        mode: exclusive
+      arcs:
+        - step: event_test
 
   # Test 1: Event log storage (default)
   - step: event_test
     desc: "Test event log storage (simplest form)"
     tool:
       kind: python
-      auth: {}
-      libs: {}
-      args: {}
       code: |
         result = {
             "status": "success",
@@ -66,7 +69,10 @@ workflow:
             }
         }
     next:
-      - step: postgres_flat_test
+      spec:
+        mode: exclusive
+      arcs:
+        - step: postgres_flat_test
 
   # Test 2: Postgres flat structure
   - step: postgres_flat_test
@@ -74,9 +80,6 @@ workflow:
     tool:
       - generate_data:
           kind: python
-          auth: {}
-          libs: {}
-          args: {}
           code: |
             result = {
                 "status": "success",
@@ -88,7 +91,7 @@ workflow:
             }
       - save_flat:
           kind: postgres
-          auth: "{{ workload.pg_auth }}"
+          auth: "{{ pg_auth }}"
           command: |
             INSERT INTO simple_test_flat (test_id, test_name, test_value, storage_type, test_execution)
             VALUES (
@@ -104,7 +107,10 @@ workflow:
               storage_type = EXCLUDED.storage_type,
               test_execution = EXCLUDED.test_execution;
     next:
-      - step: postgres_nested_test
+      spec:
+        mode: exclusive
+      arcs:
+        - step: postgres_nested_test
 
   # Test 3: Postgres nested structure
   - step: postgres_nested_test
@@ -112,11 +118,10 @@ workflow:
     tool:
       - generate_nested:
           kind: python
-          auth: {}
           libs:
             json: json
           args:
-            test_data_value: "{{ workload.test_data.value }}"
+            test_data_value: "{{ test_data.value }}"
           code: |
             # Receive test_data_value as an argument
             test_data = {
@@ -132,7 +137,7 @@ workflow:
             }
       - save_nested:
           kind: postgres
-          auth: "{{ workload.pg_auth }}"
+          auth: "{{ pg_auth }}"
           command: |
             INSERT INTO simple_test_nested (test_id, test_name, test_data, storage_type, test_execution)
             VALUES (
@@ -148,15 +153,15 @@ workflow:
               storage_type = EXCLUDED.storage_type,
               test_execution = EXCLUDED.test_execution;
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: "Test completion"
     tool:
       kind: python
-      auth: {}
-      libs: {}
-      args: {}
       code: |
         result = {
             "status": "success",

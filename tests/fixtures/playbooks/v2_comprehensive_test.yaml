@@ -15,7 +15,7 @@ workflow:
     tool:
       kind: python
       args:
-        initial_message: "{{ workload.initial_message }}"
+        initial_message: "{{ initial_message }}"
       code: |
         import random
         value = random.randint(1, 20)
@@ -27,10 +27,13 @@ workflow:
             "message": initial_message
         }
     next:
-      - step: process_high
-        when: "{{ start.random_value > workload.threshold }}"
-      - step: process_low
-        when: "{{ start.random_value <= workload.threshold }}"
+      spec:
+        mode: exclusive
+      arcs:
+        - step: process_high
+          when: "{{ start.random_value > threshold }}"
+        - step: process_low
+          when: "{{ start.random_value <= threshold }}"
 
   - step: process_high
     desc: Process high values
@@ -50,7 +53,10 @@ workflow:
             "category": "high"
         }
     next:
-      - step: summarize
+      spec:
+        mode: exclusive
+      arcs:
+        - step: summarize
 
   - step: process_low
     desc: Process low values
@@ -70,7 +76,10 @@ workflow:
             "category": "low"
         }
     next:
-      - step: summarize
+      spec:
+        mode: exclusive
+      arcs:
+        - step: summarize
 
   - step: summarize
     desc: Generate final summary
@@ -95,13 +104,15 @@ workflow:
         print(f"[SUMMARIZE] Final summary: {json.dumps(summary, indent=2)}")
         result = summary
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: Workflow complete
     tool:
       kind: python
-      args: {}
       code: |
         print("[END] Workflow execution completed successfully!")
         result = {"status": "completed"}

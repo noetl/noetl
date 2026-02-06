@@ -23,16 +23,16 @@ keychain:
     kind: google_id_token
     scope: global
     auto_renew: true
-    auth: "{{ workload.gcp_auth }}"
-    service_account_secret: "{{ workload.service_account_secret_path }}"
-    target_audience: "{{ workload.target_service_url }}"
+    auth: "{{ gcp_auth }}"
+    service_account_secret: "{{ service_account_secret_path }}"
+    target_audience: "{{ target_service_url }}"
 
 workflow:
   - step: start
     desc: Initialize Google ID token test workflow
     tool:
       kind: postgres
-      auth: "{{ workload.pg_auth }}"
+      auth: "{{ pg_auth }}"
       command: |
         -- Create test results table
         CREATE TABLE IF NOT EXISTS google_id_token_test_results (
@@ -42,7 +42,7 @@ workflow:
           result JSONB,
           created_at TIMESTAMP DEFAULT NOW()
         );
-        
+
         -- Record test start
         INSERT INTO google_id_token_test_results (execution_id, test_type, result)
         VALUES (
@@ -51,7 +51,10 @@ workflow:
           '{"status": "initialized", "message": "Google ID token test started"}'::jsonb
         );
     next:
-      - step: test_id_token_generation
+      spec:
+        mode: exclusive
+      arcs:
+        - step: test_id_token_generation
 
   - step: test_id_token_generation
     desc: Verify ID token was generated and is accessible in keychain
@@ -64,7 +67,7 @@ workflow:
       code: |
         import json
         import base64
-        
+
         # Decode JWT to inspect (without verification - just for testing)
         try:
             # JWT format: header.payload.signature
@@ -77,10 +80,10 @@ workflow:
                 padding = 4 - len(payload_b64) % 4
                 if padding != 4:
                     payload_b64 += '=' * padding
-                
+
                 payload_json = base64.urlsafe_b64decode(payload_b64).decode('utf-8')
                 payload = json.loads(payload_json)
-                
+
                 result = {
                     "status": "success",
                     "message": "ID token successfully generated",
@@ -98,13 +101,16 @@ workflow:
         except Exception as e:
             result = {"status": "error", "message": f"Failed to decode token: {str(e)}"}
     next:
-      - step: store_token_validation_result
+      spec:
+        mode: exclusive
+      arcs:
+        - step: store_token_validation_result
 
   - step: store_token_validation_result
     desc: Store token validation result in database
     tool:
       kind: postgres
-      auth: "{{ workload.pg_auth }}"
+      auth: "{{ pg_auth }}"
       command: |
         INSERT INTO google_id_token_test_results (execution_id, test_type, result)
         VALUES (
@@ -113,13 +119,16 @@ workflow:
           $${{ test_id_token_generation | tojson }}$$::jsonb
         );
     next:
-      - step: test_api_call_with_id_token
+      spec:
+        mode: exclusive
+      arcs:
+        - step: test_api_call_with_id_token
 
   - step: test_api_call_with_id_token
     desc: Test actual API call to Cloud Run service using the generated ID token
     tool:
       kind: http
-      url: "{{ workload.target_service_url }}{{ workload.test_endpoint }}"
+      url: "{{ target_service_url }}{{ test_endpoint }}"
       method: GET
       params:
         facId: 12
@@ -130,24 +139,30 @@ workflow:
         page: 1
       headers:
         Authorization: "Bearer {{ keychain.cloud_run_id_token.id_token }}"
-        x-customer-code: "{{ workload.customer_code }}"
+        x-customer-code: "{{ customer_code }}"
         Accept: "application/json"
-      eval:
-        - expr: "{{ outcome.status == 'error' }}"
-          do: continue
-        - else:
-            do: continue
+      spec:
+        policy:
+          rules:
+            - when: "{{ outcome.status == 'error' }}"
+              then:
+                do: continue
+            - else:
+                do: continue
     next:
-      - step: store_api_call_error
-        when: "{{ test_api_call_with_id_token.status_code != 200 }}"
-      - step: store_api_call_success
-        when: "{{ test_api_call_with_id_token.status_code == 200 }}"
+      spec:
+        mode: exclusive
+      arcs:
+        - step: store_api_call_error
+          when: "{{ test_api_call_with_id_token.status_code != 200 }}"
+        - step: store_api_call_success
+          when: "{{ test_api_call_with_id_token.status_code == 200 }}"
 
   - step: store_api_call_error
     desc: Store API call error result
     tool:
       kind: postgres
-      auth: "{{ workload.pg_auth }}"
+      auth: "{{ pg_auth }}"
       command: |
         INSERT INTO google_id_token_test_results (execution_id, test_type, result)
         VALUES (
@@ -156,13 +171,16 @@ workflow:
           $${{ {"status": "error", "status_code": error.status if error is defined else 0, "message": error.message if error is defined else "Unknown error"} | tojson }}$$::jsonb
         );
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: store_api_call_success
     desc: Store API call success result
     tool:
       kind: postgres
-      auth: "{{ workload.pg_auth }}"
+      auth: "{{ pg_auth }}"
       command: |
         INSERT INTO google_id_token_test_results (execution_id, test_type, result)
         VALUES (
@@ -171,7 +189,10 @@ workflow:
           $${{ {"status": "success", "status_code": test_api_call_with_id_token.status_code, "data_count": test_api_call_with_id_token.data.data | length if test_api_call_with_id_token.data and test_api_call_with_id_token.data.data else 0} | tojson }}$$::jsonb
         );
     next:
-      - step: test_token_auto_renewal
+      spec:
+        mode: exclusive
+      arcs:
+        - step: test_token_auto_renewal
 
   - step: test_token_auto_renewal
     desc: Verify token auto-renewal metadata is stored correctly
@@ -189,13 +210,16 @@ workflow:
             "note": "Auto-renewal will be tested when token expires (typically ~1 hour)"
         }
     next:
-      - step: store_renewal_test_result
+      spec:
+        mode: exclusive
+      arcs:
+        - step: store_renewal_test_result
 
   - step: store_renewal_test_result
     desc: Store renewal test result in database
     tool:
       kind: postgres
-      auth: "{{ workload.pg_auth }}"
+      auth: "{{ pg_auth }}"
       command: |
         INSERT INTO google_id_token_test_results (execution_id, test_type, result)
         VALUES (
@@ -204,7 +228,10 @@ workflow:
           $${{ test_token_auto_renewal | tojson }}$$::jsonb
         );
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: Complete Google ID token test workflow

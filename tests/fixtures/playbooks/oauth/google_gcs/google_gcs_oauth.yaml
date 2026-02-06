@@ -1,4 +1,4 @@
-apiVersion: noetl.io/v2
+apiVersion: noetl.io/v10
 kind: Playbook
 
 metadata:
@@ -22,32 +22,34 @@ workflow:
     desc: Start GCS OAuth test
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args: {}
       code: |
         result = {"status": "initialized", "message": "Starting GCS OAuth test"}
     next:
-      - step: list_buckets
+      spec:
+        mode: exclusive
+      arcs:
+        - step: list_buckets
 
   - step: list_buckets
     desc: List GCS buckets to verify authentication
     tool:
       kind: http
       method: GET
-      url: "https://storage.googleapis.com/storage/v1/b?project={{ workload.project_id }}"
+      url: "https://storage.googleapis.com/storage/v1/b?project={{ project_id }}"
       headers:
-        Authorization: "Bearer {{ token(workload.google_auth) }}"
+        Authorization: "Bearer {{ token(google_auth) }}"
         Content-Type: application/json
     next:
-      - step: parse_bucket_list
+      spec:
+        mode: exclusive
+      arcs:
+        - step: parse_bucket_list
 
   - step: parse_bucket_list
     desc: Parse bucket list response
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args:
         api_response: "{{ list_buckets }}"
       code: |
@@ -57,7 +59,7 @@ workflow:
         else:
             data = api_response.get('data', {})
             status_code = api_response.get('status_code', 0)
-            
+
             if status_code != 200:
                 result = {
                     'status': 'error',
@@ -68,30 +70,31 @@ workflow:
             else:
                 buckets = data.get('items', [])
                 bucket_names = [b.get('name') for b in buckets if b.get('name')]
-                
+
                 result = {
                     'status': 'success',
-                'bucket_count': len(bucket_names),
-                'buckets': bucket_names[:5],  # First 5 buckets
-                'message': f'Found {len(bucket_names)} buckets'
-            }
+                    'bucket_count': len(bucket_names),
+                    'buckets': bucket_names[:5],  # First 5 buckets
+                    'message': f'Found {len(bucket_names)} buckets'
+                }
     next:
-      - step: verify_oauth
+      spec:
+        mode: exclusive
+      arcs:
+        - step: verify_oauth
 
   - step: verify_oauth
     desc: Final OAuth verification
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args:
         bucket_result: "{{ parse_bucket_list }}"
       code: |
         """Verify OAuth flow completed successfully."""
-        
+
         # Check bucket listing worked
         bucket_ok = bucket_result.get('status') == 'success'
-        
+
         if bucket_ok:
             result = {
                 'status': 'success',
@@ -107,14 +110,15 @@ workflow:
                 'bucket_status': bucket_result.get('status')
             }
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: GCS OAuth test completed
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args: {}
       code: |
         result = {"status": "completed"}

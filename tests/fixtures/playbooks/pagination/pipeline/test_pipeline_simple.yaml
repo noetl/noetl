@@ -1,4 +1,4 @@
-apiVersion: noetl.io/v2
+apiVersion: noetl.io/v10
 kind: Playbook
 metadata:
   name: test_pipeline_simple
@@ -16,26 +16,36 @@ workflow:
       code: |
         result = {"status": "starting task sequence test"}
     next:
-      - step: run_pipeline
+      spec:
+        mode: exclusive
+      arcs:
+        - step: run_pipeline
 
   - step: run_pipeline
     desc: Execute fetch -> transform -> validate task sequence
     tool:
       - fetch:
           kind: http
-          url: "{{ workload.api_url }}/api/v1/assessments"
+          url: "{{ api_url }}/api/v1/assessments"
           method: GET
           params:
             page: 1
             pageSize: 5
-          eval:
-            - expr: "{{ outcome.error.retryable }}"
-              do: retry
-              attempts: 3
-              backoff: linear
-              delay: 1.0
-            - expr: "{{ outcome.status == 'error' }}"
-              do: fail
+          spec:
+            policy:
+              rules:
+                - when: "{{ outcome.error.retryable }}"
+                  then:
+                    do: retry
+                    attempts: 3
+                    backoff: linear
+                    delay: 1.0
+                - when: "{{ outcome.status == 'error' }}"
+                  then:
+                    do: fail
+                - else:
+                    then:
+                      do: continue
 
       - transform:
           kind: python
@@ -63,7 +73,10 @@ workflow:
               'items_processed': transformed['count']
             }
     next:
-      - step: report_result
+      spec:
+        mode: exclusive
+      arcs:
+        - step: report_result
 
   - step: report_result
     desc: Report test result
@@ -79,7 +92,10 @@ workflow:
           'pipeline_result': pipeline_result
         }
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: Test complete

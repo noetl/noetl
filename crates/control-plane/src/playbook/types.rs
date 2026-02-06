@@ -268,13 +268,13 @@ pub struct Loop {
 }
 
 // ============================================================================
-// Next Transitions (Canonical Format)
+// Next Transitions (Canonical v10 Format)
 // ============================================================================
 
-/// Target for next transition with optional conditional routing.
-/// Canonical format: next[].when for conditional routing.
+/// Arc specification for v10 next router format.
+/// Canonical format: next.arcs[].when for conditional routing (Petri-net arcs).
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CanonicalNextTarget {
+pub struct NextArc {
     /// Target step name.
     pub step: String,
 
@@ -288,18 +288,56 @@ pub struct CanonicalNextTarget {
     pub args: Option<HashMap<String, serde_json::Value>>,
 }
 
-/// Next step specification - can be string, list of strings, or list of targets.
+/// Next router spec for v10 format.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NextRouterSpec {
+    /// Routing mode: exclusive (first match) or inclusive (all matches).
+    #[serde(default)]
+    pub mode: Option<String>,
+}
+
+/// Canonical v10 next router format with spec and arcs.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NextRouter {
+    /// Router specification (mode: exclusive/inclusive).
+    #[serde(default)]
+    pub spec: Option<NextRouterSpec>,
+
+    /// List of arcs (outgoing transitions).
+    #[serde(default)]
+    pub arcs: Vec<NextArc>,
+}
+
+/// Legacy target for transition (deprecated, use NextArc).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CanonicalNextTarget {
+    /// Target step name.
+    pub step: String,
+
+    /// Transition guard expression (Jinja2).
+    #[serde(default)]
+    pub when: Option<String>,
+
+    /// Arguments to pass to target step.
+    #[serde(default)]
+    pub args: Option<HashMap<String, serde_json::Value>>,
+}
+
+/// Next step specification - supports multiple formats for compatibility.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum NextSpec {
+    /// Canonical v10 router format: { spec: { mode: ... }, arcs: [...] }
+    Router(NextRouter),
+
+    /// List of step targets with optional when conditions (legacy canonical format).
+    Targets(Vec<CanonicalNextTarget>),
+
     /// Single step name.
     Single(String),
 
     /// List of step names.
     List(Vec<String>),
-
-    /// List of step targets with optional when conditions (canonical format).
-    Targets(Vec<CanonicalNextTarget>),
 }
 
 // ============================================================================
@@ -799,6 +837,56 @@ workflow:
             assert_eq!(targets[1].step, "low");
         } else {
             panic!("Expected NextSpec::Targets");
+        }
+    }
+
+    #[test]
+    fn test_parse_playbook_with_v10_router_format() {
+        let yaml = r#"
+apiVersion: noetl.io/v10
+kind: Playbook
+metadata:
+  name: v10_routing_test
+workflow:
+  - step: start
+    tool:
+      kind: python
+      code: |
+        result = {"value": 10}
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: high
+          when: "{{ start.value > 5 }}"
+        - step: low
+          when: "{{ start.value <= 5 }}"
+  - step: high
+    tool:
+      kind: python
+      code: |
+        result = {"path": "high"}
+  - step: low
+    tool:
+      kind: python
+      code: |
+        result = {"path": "low"}
+"#;
+
+        let playbook: Playbook = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(playbook.api_version, "noetl.io/v10");
+        let step = playbook.get_step("start").unwrap();
+        assert!(step.next.is_some());
+
+        if let Some(NextSpec::Router(router)) = &step.next {
+            assert!(router.spec.is_some());
+            assert_eq!(router.spec.as_ref().unwrap().mode, Some("exclusive".to_string()));
+            assert_eq!(router.arcs.len(), 2);
+            assert_eq!(router.arcs[0].step, "high");
+            assert_eq!(router.arcs[0].when, Some("{{ start.value > 5 }}".to_string()));
+            assert_eq!(router.arcs[1].step, "low");
+        } else {
+            panic!("Expected NextSpec::Router, got {:?}", step.next);
         }
     }
 

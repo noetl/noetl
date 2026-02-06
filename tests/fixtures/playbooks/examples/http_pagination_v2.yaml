@@ -1,18 +1,18 @@
-apiVersion: noetl.io/v2
+apiVersion: noetl.io/v10
 kind: Playbook
 metadata:
   name: http_pagination_v2
   path: examples/http_pagination_v2
   labels:
     category: example
-    version: v2
+    version: v10
     pattern: pagination
 
 workload:
   api_url: "https://api.example.com"
   page_size: 100
 
-vars:
+ctx:
   current_page: 1
   all_pages: []
 
@@ -21,89 +21,112 @@ workflow:
     desc: "Initialize pagination workflow"
     tool:
       kind: python
-      code: |
-        result = {"status": "initialized"}
+      spec:
+        code: |
+          result = {"status": "initialized"}
     next:
-      - step: fetch_paginated
+      spec:
+        mode: exclusive
+      arcs:
+        - step: fetch_paginated
 
   - step: fetch_paginated
-    desc: "Fetch data with pagination using tool.eval flow control"
+    desc: "Fetch data with pagination using tool.spec.policy.rules flow control"
     tool:
       - init:
           kind: noop
-          eval:
-            - else:
-                do: continue
-                set_iter: { page: 1, has_more: true, items: [] }
+          spec:
+            policy:
+              rules:
+                - else:
+                    do: continue
+                    set_iter: { page: 1, has_more: true, items: [] }
 
       - fetch_page:
           kind: http
-          method: GET
-          endpoint: "{{ workload.api_url }}/data"
-          params:
-            page: "{{ iter.page }}"
-            pageSize: "{{ workload.page_size }}"
-          eval:
-            - expr: "{{ outcome.status == 'error' and outcome.http.status in [500, 502, 503] }}"
-              do: retry
-              attempts: 3
-              backoff: exponential
-              delay: 0.5
-            - expr: "{{ outcome.status == 'error' }}"
-              do: fail
-            - else:
-                do: continue
-                set_iter:
-                  has_more: "{{ outcome.result.data.paging.hasMore | default(false) }}"
-                  page: "{{ outcome.result.data.paging.page | default(iter.page) }}"
-                  items: "{{ outcome.result.data.items | default([]) }}"
+          spec:
+            method: GET
+            endpoint: "{{ api_url }}/data"
+            params:
+              page: "{{ iter.page }}"
+              pageSize: "{{ page_size }}"
+            policy:
+              rules:
+                - when: "{{ outcome.status == 'error' and outcome.http.status in [500, 502, 503] }}"
+                  then:
+                    do: retry
+                    attempts: 3
+                    backoff: exponential
+                    delay: 0.5
+                - when: "{{ outcome.status == 'error' }}"
+                  then:
+                    do: fail
+                - else:
+                    do: continue
+                    set_iter:
+                      has_more: "{{ outcome.result.data.paging.hasMore | default(false) }}"
+                      page: "{{ outcome.result.data.paging.page | default(iter.page) }}"
+                      items: "{{ outcome.result.data.items | default([]) }}"
 
       - collect_items:
           kind: python
-          args:
-            items: "{{ iter.items }}"
-            all_pages: "{{ vars.all_pages }}"
-          code: |
-            # Extend collection with new items
-            all_pages.extend(items)
-            result = {"all_pages": all_pages, "count": len(all_pages)}
-          eval:
-            - else:
-                do: continue
-                set_vars:
-                  all_pages: "{{ outcome.result.all_pages }}"
+          spec:
+            args:
+              items: "{{ iter.items }}"
+              all_pages: "{{ ctx.all_pages }}"
+            code: |
+              # Extend collection with new items
+              all_pages.extend(items)
+              result = {"all_pages": all_pages, "count": len(all_pages)}
+            policy:
+              rules:
+                - else:
+                    do: continue
+                    set_ctx:
+                      all_pages: "{{ outcome.result.all_pages }}"
 
       - paginate:
           kind: noop
-          eval:
-            - expr: "{{ iter.has_more == true }}"
-              do: jump
-              to: fetch_page
-              set_iter:
-                page: "{{ (iter.page | int) + 1 }}"
-            - else:
-                do: break
+          spec:
+            policy:
+              rules:
+                - when: "{{ iter.has_more == true }}"
+                  then:
+                    do: jump
+                    to: fetch_page
+                    set_iter:
+                      page: "{{ (iter.page | int) + 1 }}"
+                - else:
+                    do: break
 
     next:
-      - step: process_results
-        args:
-          items: "{{ vars.all_pages }}"
+      spec:
+        mode: exclusive
+      arcs:
+        - step: process_results
+          args:
+            items: "{{ ctx.all_pages }}"
 
   - step: process_results
     desc: "Process collected results"
     tool:
       kind: python
-      args:
-        items: "{{ args.items }}"
-      code: |
-        print(f"Processing {len(items)} items")
-        result = {"count": len(items), "status": "processed"}
+      spec:
+        args:
+          items: "{{ args.items }}"
+        code: |
+          print(f"Processing {len(items)} items")
+          result = {"count": len(items), "status": "processed"}
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: "End workflow"
     tool:
       kind: python
-      code: |
-        result = {"status": "complete"}
+      spec:
+        code: |
+          result = {"status": "complete"}

@@ -23,9 +23,12 @@ workflow:
                 'data': {'executed': True, 'input': input_data}
             }
     next:
-      - step: process
-        args:
-          from_start: "{{ start.data.executed }}"
+      spec:
+        mode: exclusive
+      arcs:
+        - step: process
+          args:
+            from_start: "{{ start.data.executed }}"
 
   - step: process
     desc: Process step - executed after start
@@ -44,7 +47,10 @@ workflow:
                 }
             }
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: End step - aggregator (no action type)

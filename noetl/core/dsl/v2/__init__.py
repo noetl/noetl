@@ -1,7 +1,7 @@
-"""NoETL DSL v2 package - Canonical format with event-driven execution."""
+"""NoETL DSL v10 package - Canonical format with event-driven execution."""
 
 from .models import (
-    CanonicalNextTarget,
+    # Core models
     Command,
     CommandSpec,
     Event,
@@ -12,6 +12,17 @@ from .models import (
     StepSpec,
     ToolCall,
     ToolSpec,
+    # v10 canonical models
+    Arc,
+    NextRouter,
+    NextSpec,
+    PolicyRule,
+    PolicyRuleThen,
+    StepPolicy,
+    AdmitPolicy,
+    TaskPolicy,
+    TaskSpec,
+    ToolOutcome,
 )
 
 __all__ = [
@@ -28,5 +39,16 @@ __all__ = [
     "ToolSpec",
     "Loop",
     "LoopSpec",
-    "CanonicalNextTarget",
+
+    # v10 canonical models
+    "Arc",
+    "NextRouter",
+    "NextSpec",
+    "PolicyRule",
+    "PolicyRuleThen",
+    "StepPolicy",
+    "AdmitPolicy",
+    "TaskPolicy",
+    "TaskSpec",
+    "ToolOutcome",
 ]

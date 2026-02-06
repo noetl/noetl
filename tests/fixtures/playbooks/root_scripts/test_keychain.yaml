@@ -3,21 +3,23 @@ kind: Playbook
 metadata:
   name: keychain_test
   path: tests/keychain_test
+
 workload:
   openai_key: "{{ args.openai_key | default('sk-default-key') }}"
   amadeus_client_id: "{{ args.amadeus_client_id | default('default-client-id') }}"
   amadeus_client_secret: "{{ args.amadeus_client_secret | default('default-secret') }}"
+
 keychain:
   - name: openai_token
     kind: bearer
     scope: global
-    token: "{{ workload.openai_key }}"
+    token: "{{ openai_key }}"
   - name: amadeus_credentials
     kind: static
     scope: global
     map:
-      client_id: "{{ workload.amadeus_client_id }}"
-      client_secret: "{{ workload.amadeus_client_secret }}"
+      client_id: "{{ amadeus_client_id }}"
+      client_secret: "{{ amadeus_client_secret }}"
   - name: amadeus_token
     kind: oauth2
     scope: global
@@ -30,6 +32,7 @@ keychain:
       grant_type: client_credentials
       client_id: "{{ keychain.amadeus_credentials.client_id }}"
       client_secret: "{{ keychain.amadeus_credentials.client_secret }}"
+
 workflow:
   - step: start
     desc: Simple workflow to test keychain
@@ -38,7 +41,11 @@ workflow:
       code: |
         result = {"status": "keychain test started"}
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
+
   - step: end
     desc: End workflow
     tool:

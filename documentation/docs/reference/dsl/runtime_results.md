@@ -1,356 +1,298 @@
 ---
 sidebar_position: 4
-title: Result Storage & Access
-description: How NoETL stores and retrieves tool outputs and step results
+title: Runtime Results (Canonical v10)
+description: How NoETL stores, indexes, and retrieves task outcomes and step results using reference-first storage
 ---
 
-# NoETL Runtime Result Storage & Access
+# NoETL Runtime Results — Storage & Access (Canonical v10)
 
-This document defines how NoETL stores and retrieves **tool outputs** and **step results** in an **event-sourced** system—efficiently and at scale.
+This document defines how NoETL stores and retrieves **task outcomes** and **step results** in a **reference-first, event-sourced** system.
 
-## Goals
+Aligned with **Canonical v10 DSL**:
+- No `sink` tool kind: storage is **just tools** that write data and return references.
+- No `retry`/`pagination`/`case` blocks: retries + pagination are handled by **task policies** (`task.spec.policy.rules`) and **iteration scope** (`iter.*`).
+- No `eval:`/`expr:`: use `when` in policies.
+- Events and context pass **references only** (inline only for size-capped preview/extracted fields).
 
-1. **Event-sourced correctness**: the event log remains the source of truth for *what happened*.
-2. **Efficiency**: large payloads must not bloat the event log or overload queries.
-3. **Composable access**: downstream steps must be able to reference:
-   - the **latest** result
-   - **per-attempt** results (retry)
-   - **per-page** results (pagination)
-   - **per-iteration** results (loop)
-   - **combined/aggregated** results (optional)
-4. **Pluggable storage**: results can be stored inline, in the event log, or externalized to an artifact store (S3/GCS/MinIO/localfs/DB large-object), with only a **reference** kept in events.
-5. **Streaming-friendly**: allow “combined results” to be represented as a **manifest** referencing parts (pages/iterations), rather than materializing a massive array.
+See also:
+- Canonical step spec: `noetl_canonical_step_spec_v10.md` fileciteturn36file0
+- Runtime events: `runtime_events_v2.md`
+- Result refs & stores: `result_storage_canonical_v10.md`
 
 ---
 
-## 1. Concepts
+## 1) Goals
 
-### 1.1 Tool call output vs Step result
+1. **Event-sourced correctness**: the event log is the source of truth for *what happened*.
+2. **Efficiency**: large payloads MUST NOT bloat the event log.
+3. **Composable access**: downstream steps MUST be able to reference:
+   - latest outcome
+   - per-attempt outcomes (retry)
+   - per-page outcomes (pagination streams)
+   - per-iteration outcomes (loop)
+   - combined outcomes via **manifests** (streamable)
+4. **Pluggable storage**: store bodies in:
+   - Postgres
+   - NATS KV
+   - NATS Object Store
+   - Google Cloud Storage (GCS)
+   and keep only **references + extracted fields** in events/context.
+5. **Streaming-friendly**: represent combined results as **manifests**, not huge merged arrays.
 
-- **Tool call output**: the raw output of a single tool invocation (e.g., one HTTP response).
-- **Step result**: the logical output of a step, potentially derived from:
-  - multiple tool call outputs (pagination)
-  - multiple iterations (loop)
-  - multiple attempts (retry)
+---
 
-A step may publish:
-- **part results** (many) — tool call outputs, iteration outputs, page outputs
-- **aggregate result** (one) — a combined view for convenient downstream use
+## 2) Concepts
 
-### 1.2 Result reference
+### 2.1 Task outcome vs step result
+- **Task outcome**: the final result of a single task invocation in a step pipeline (e.g., one HTTP call).
+- **Step result**: logical outcome of a step; may be comprised of many task outcomes due to:
+  - retries (multiple attempts)
+  - pagination (multiple pages)
+  - loops (multiple iterations)
 
-NoETL represents results using a **ResultRef** (a lightweight pointer):
+Canonical v10 produces step boundaries via `step.done` / `step.failed` events.
 
+### 2.2 Reference-first output rule
+A task’s output body is either:
+- **inline** (only if small and within caps), OR
+- externalized to a backend and returned as a **ResultRef**.
+
+The event log stores:
+- the **outcome envelope** (`status`, `error`, `meta`)
+- **ResultRef** + extracted fields + preview
+
+---
+
+## 3) ResultRef
+
+A **ResultRef** is a lightweight pointer to externally stored data.
+
+### 3.1 Canonical shape
 ```json
 {
   "kind": "result_ref",
-  "ref": "noetl://execution/<execution_id>/step/<step>/call/<tool_run_id>",
-  "store": "inline|eventlog|artifact",
-  "artifact": {
-    "id": "art_...",
-    "uri": "s3://bucket/.../payload.json.gz",
+  "ref": "noetl://execution/<eid>/step/<step>/task/<task>/run/<task_run_id>/attempt/<n>",
+  "store": "nats_kv|nats_object|gcs|postgres",
+  "scope": "step|execution|workflow|permanent",
+  "expires_at": "2026-02-01T13:00:00Z",
+  "meta": {
     "content_type": "application/json",
-    "compression": "gzip",
     "bytes": 123456,
-    "sha256": "..."
+    "sha256": "...",
+    "compression": "gzip"
+  },
+  "extracted": {
+    "page": 2,
+    "has_more": true
   },
   "preview": {
     "truncated": true,
-    "bytes": 32768,
-    "data": {"...": "..."}
+    "bytes": 2048,
+    "sample": [{"id": 1}]
   }
 }
 ```
 
-Key idea:
-- The **event log** stores the pointer (and optionally a small preview).
-- The **artifact store** holds the large body.
+### 3.2 Logical vs physical addressing
+- `ref` is a **logical NoETL URI**.
+- Physical location is derived from `store` + `meta` (bucket/key/object/table range), and/or a control-plane mapping.
 
 ---
 
-## 2. Storage tiers
+## 4) Storage tiers and recommended usage
 
-### 2.1 Inline (small)
-- Store output directly in the event payload.
-- Size capped (e.g., `inline_max_bytes = 64KB`).
-
-Use for:
-- small JSON responses
-- status objects
-- short summaries
-
-### 2.2 Eventlog (medium)
-- Store output in a dedicated `result` column/table inside Postgres (still part of the event store domain).
-- Useful when:
-  - output is moderate (e.g., 64KB–2MB)
-  - you want transactional proximity
-
-### 2.3 Artifact store (large)
-- Store output in external storage (S3/GCS/MinIO/localfs/DB large object).
-- Store only `ResultRef` in events.
+### 4.1 Inline (small)
+Store directly in the event payload for small results.
+- controlled by `inline_max_bytes`
 
 Use for:
-- large paginated API fetches
-- big query result sets
-- file outputs
-- quantum measurement datasets
+- small status objects
+- small aggregates
+- extracted fields
+
+### 4.2 Postgres (queryable)
+Use for:
+- queryable intermediate tables
+- projections / indices
+- moderate-sized JSON stored in tables (when useful)
+
+Recommended ResultRef meta:
+- `{ "schema": "...", "table": "...", "pk": "...", "range": "id:100-150" }`
+
+### 4.3 NATS KV (small, fast)
+Use for:
+- cursors
+- session-like state
+- small JSON parts (within practical limits)
+
+Recommended ResultRef meta:
+- `{ "bucket": "...", "key": "execution/<eid>/..." }`
+
+### 4.4 NATS Object Store (medium artifacts)
+Use for:
+- paginated pages
+- chunked streaming parts
+- medium artifacts
+
+Recommended ResultRef meta:
+- `{ "bucket": "...", "key": ".../page_001.json.gz" }`
+
+### 4.5 Google Cloud Storage (large, durable)
+Use for:
+- large payloads
+- durable datasets
+- cross-system distribution
+
+Recommended ResultRef meta:
+- `{ "bucket": "...", "object": ".../payload.json.gz" }`
 
 ---
 
-## 3. Addressing model (how you reference pieces)
+## 5) DSL controls for result storage (Canonical v10)
 
-### 3.1 Logical URIs
+Result storage controls live under **task.spec.result**.
 
-NoETL uses **logical** `noetl://` URIs to identify results, independent of physical storage:
+```yaml
+- fetch_page:
+    kind: http
+    method: GET
+    url: "{{ workload.api_url }}/items"
+    spec:
+      result:
+        inline_max_bytes: 65536
+        preview_max_bytes: 2048
+        store:
+          kind: auto                 # auto|nats_kv|nats_object|gcs|postgres
+          scope: execution           # step|execution|workflow|permanent
+          ttl: "1h"
+          compression: gzip
+        select:                      # extracted fields for routing/state
+          - path: "$.paging.hasMore"
+            as: has_more
+          - path: "$.paging.page"
+            as: page
+```
 
-- Tool call output:
-  - `noetl://execution/<eid>/step/<step>/call/<tool_run_id>`
+### 5.1 Extracted fields
+`select` extracts small values into `ResultRef.extracted`.
+These are safe to pass in context and to use in routing decisions without resolving the full body.
 
-- Retry attempt output:
-  - `noetl://execution/<eid>/step/<step>/attempt/<n>/call/<tool_run_id>`
+---
 
-- Loop iteration output:
-  - `noetl://execution/<eid>/step/<step>/iteration/<i>/call/<tool_run_id>`
+## 6) Indexing (how to address pieces)
 
-- Pagination page output:
-  - `noetl://execution/<eid>/step/<step>/page/<p>/call/<tool_run_id>`
+To retrieve “pieces” deterministically, every task completion SHOULD record correlation keys:
 
-- Combined (aggregate) step result:
-  - `noetl://execution/<eid>/step/<step>/result`
-
-The server maintains a mapping from logical refs to physical artifact URIs.
-
-### 3.2 Correlation keys
-
-Every tool output event SHOULD include these fields (when applicable):
-- `step_run_id`
-- `tool_run_id`
-- `attempt` (retry)
-- `iteration` and `iteration_id` (loop)
+- `execution_id`
+- `step_name`, `step_run_id`
+- `task_label`, `task_run_id`
+- `attempt` (retry attempt number, starting at 1)
+- `iteration` / `iteration_id` (loop)
 - `page` (pagination)
 
-These keys enable deterministic retrieval of *pieces*.
+This enables queries like:
+- final successful attempt for iteration 2 / page 3
+- all pages for iteration 7
+- latest output for task `transform` in step `fetch_transform_store`
 
 ---
 
-## 4. Aggregation without bloat: manifests
+## 7) Manifests (aggregation without bloat)
 
-### 4.1 Manifest-based aggregation
-
-Instead of merging 1,000 pages into one giant JSON array, NoETL can publish a **manifest**:
+### 7.1 Why manifests
+Do not materialize huge merged arrays in memory/events. Use **manifest refs** listing part refs.
 
 ```json
 {
   "kind": "manifest",
   "strategy": "append",
-  "merge_path": "data.items",
+  "merge_path": "$.data.items",
   "parts": [
-    {"ref": "noetl://.../page/1/call/..."},
-    {"ref": "noetl://.../page/2/call/..."}
+    {"ref": "noetl://.../page/1/..."},
+    {"ref": "noetl://.../page/2/..."}
   ]
 }
 ```
 
-Downstream steps can:
-- stream parts
-- selectively load pages
-- materialize on demand into DuckDB/Postgres
+### 7.2 Where manifests live
+A manifest itself is stored reference-first:
+- inline if tiny
+- else NATS Object Store / GCS / Postgres
 
-### 4.2 When to materialize a combined result
-
-Materialize (store a combined body) only when:
-- the combined output remains bounded
-- downstream requires random access to the entire merged dataset
-
-Otherwise prefer manifest aggregation.
+The step boundary event stores only a reference to the manifest.
 
 ---
 
-## 5. DSL extension: `result` storage policy
+## 8) How downstream steps access results (reference-only)
 
-A step MAY specify a `result` block to control how outputs are stored and published.
+Canonical rule: downstream steps receive **ResultRef + extracted fields**, not full payload bodies.
 
-### 5.1 Step-level result policy
+Recommended bindings for a task label `fetch_page`:
+- `fetch_page.__ref__` → ResultRef
+- `fetch_page.page`, `fetch_page.has_more` → extracted fields
+- `fetch_page.__preview__` → optional preview
 
-```yaml
-- step: fetch_users
-  tool:
-    kind: http
-    endpoint: "{{ workload.base_url }}/users"
-    method: GET
-
-  loop:
-    in: "{{ workload.regions }}"
-    iterator: region
-
-  retry:
-    max_attempts: 5
-    backoff:
-      type: exponential
-      delay_seconds: 1
-      max_delay_seconds: 30
-
-  pagination:
-    type: response_based
-    continue_while: "{{ response.data.next is not none }}"
-    next_page:
-      params:
-        cursor: "{{ response.data.next }}"
-
-  result:
-    store:
-      kind: artifact
-      inline_max_bytes: 65536
-      artifact:
-        driver: s3              # s3|gcs|minio|localfs|postgres_lo
-        uri: "s3://noetl-results/{{ execution_id }}/{{ step.name }}/{{ region }}/{{ tool_run_id }}.json.gz"
-        content_type: application/json
-        compression: gzip
-
-    publish:
-      parts_as: users_pages      # list of ResultRef (per page/call)
-      combined_as: users_manifest # manifest ResultRef (or inline)
-
-    aggregate:
-      mode: manifest             # manifest|materialize
-      strategy: append
-      merge_path: data.data
-```
-
-### 5.2 Publish semantics
-
-- `parts_as`: exposes a collection of piece refs (per-page, per-iteration, per-attempt).
-- `combined_as`: exposes a single ref representing the step’s logical output.
-
-Downstream steps can use these published values through normal templating (as refs):
-- pass the ref to a loader tool
-- pass the ref to DuckDB for direct scan
-- request the server to resolve a signed URL
+To read the full body, the playbook MUST explicitly resolve the ref:
+- via server API (resolve endpoint), or
+- via a tool (`kind: artifact/result`, `action: get`), or
+- by scanning the artifact directly (DuckDB, etc.), depending on backend.
 
 ---
 
-## 6. Runtime implementation strategy (event-sourced & efficient)
+## 9) Implementation strategy (event-sourced & efficient)
 
-### 6.1 What gets written where
+### 9.1 Worker responsibilities
+On each task completion:
+1. compute `outcome` (status/error/meta + raw result)
+2. apply `task.spec.result`:
+   - create preview (optional)
+   - extract selected fields (optional)
+   - choose store backend (auto/explicit)
+   - store full body if needed
+3. emit `task.attempt.*` + `task.done/failed` events containing:
+   - `outcome` (size-capped)
+   - ResultRef (if externalized) and extracted fields
+   - correlation keys
 
-**Worker**
-- executes tool call
-- produces tool output
-- applies result storage policy:
-  - inline if small
-  - artifact upload if large
-- emits `tool.processed` event with:
-  - `payload.output_inline` (optional)
-  - `payload.output_ref` (optional)
-  - `payload.preview` (optional)
+### 9.2 Server responsibilities
+On event ingestion:
+- persist events
+- upsert projections (rebuildable):
 
-**Server**
-- persists the event
-- updates projections:
-  - `step_last_result_ref` (latest)
-  - `result_index` (lookup by step/iteration/page/attempt)
-  - optional `step_aggregate_ref` (manifest/materialized)
+**`noetl.result_index`** (recommended)
+- execution_id, step_name, task_label
+- step_run_id, task_run_id
+- iteration, page, attempt
+- result_ref (json)
+- status, created_at
 
-### 6.2 Projection tables (recommended)
+**`noetl.step_state`** (recommended)
+- execution_id, step_name
+- last_result_ref
+- aggregate_result_ref (manifest)
+- status
 
-To avoid scanning the full event stream for common reads, maintain projections:
-
-1) `noetl.result_index`
-- `execution_id`
-- `step_name`
-- `step_run_id`
-- `tool_run_id`
-- `iteration`, `page`, `attempt`
-- `result_ref` (json)
-- `created_at`
-
-2) `noetl.step_state`
-- `execution_id`
-- `step_name`
-- `last_result_ref` (json)
-- `aggregate_result_ref` (json)
-- `status`
-
-These tables are derived from events and can be rebuilt.
-
-### 6.3 Server APIs (recommended)
-
-- `GET /executions/{id}/steps/{step}/result` → returns aggregate ref or inline result
-- `GET /executions/{id}/steps/{step}/parts?iteration=&page=&attempt=` → returns list of refs
-- `GET /artifacts/{artifact_id}` → streams artifact (or returns signed URL)
-
-Workers can use these APIs to resolve refs when needed for downstream tools.
+These projections prevent scanning the full event stream for common reads.
 
 ---
 
-## 7. How next steps access results
+## 10) Pagination + retry + loop (canonical mental model)
 
-### 7.1 Lightweight path (inline)
-If the result is inline, the server MAY include it directly in the step context passed to the next step.
+A single step with loop + pagination + retry yields a lattice of pieces indexed by:
+- iteration (outer loop: endpoint/city/hotel)
+- page (pagination stream inside that iteration)
+- attempt (retry per page)
 
-### 7.2 Reference path (artifact/eventlog)
-If the result is stored externally, the server passes only `ResultRef` into context.
-
-Downstream steps then:
-- pass the ref to a loader tool (e.g., `artifact.get`, `http.get` presigned URL, `duckdb.scan`)
-- or request the server to materialize a view
-
-### 7.3 Combining pieces
-Downstream steps can choose:
-- iterate over `parts_as` for streaming processing
-- materialize `combined_as` when needed
+Each externally stored page becomes a ResultRef part, and the entire stream is represented as a manifest ref.
 
 ---
 
-## 8. Pagination + retry + loop example (what gets indexed)
+## 11) Quantum orchestration note
 
-A single step with loop + pagination + retry can generate outputs indexed as:
+Quantum tools often return large measurement datasets.
+Canonical pattern:
+- tool returns a ResultRef (NATS Object Store or GCS)
+- extracted fields store small metadata (job id, backend, shots, cost)
+- manifests represent iterative algorithms (VQE/QAOA) or shot batches
 
-- By **iteration** (loop): region=0..N
-- By **page** (pagination): 1..P
-- By **attempt** (retry): 1..A
-
-Each tool output maps to a unique tuple:
-
-`(execution_id, step_name, iteration, page, attempt, tool_run_id)`
-
-This is sufficient to retrieve:
-- “give me page 3 for region 2”
-- “give me all pages for region 2”
-- “give me the final successful attempt for region 2/page 3”
-- “give me the manifest for region 2” (aggregate)
-
----
-
-## 9. Quantum note
-
-Quantum tools often produce large outputs (measurement counts, shots, calibration metadata). Store the body in an artifact store and keep only:
-- job_id
-- backend metadata
-- result refs
-
-in the event log. Manifests work well for shot batches or iterative algorithms.
-
-
-
----
-
-## 9. Result payload conventions (recommended)
-
-NoETL separates **small** results (kept close to events) from **large** results (stored externally), while keeping the event log authoritative.
-
-Within an event `payload`, prefer these fields:
-
-- `payload.inputs`: rendered input snapshot (safe/redacted)
-
-Result fields:
-- `payload.output_inline`: small result body (size-capped)
-- `payload.output_ref`: a ResultRef pointing to externally stored result body
-- `payload.preview`: truncated sample for UI/debugging
-
-Errors/metadata:
-- `payload.error`: structured error object
-- `payload.meta`: free-form metadata (http status, row counts, provider job_id, etc.)
-
-See `docs/runtime/results.md` for ResultRef schema, manifests, and access patterns.
-
+This preserves a complete experiment trace keyed by `execution_id` without embedding large payloads in events.

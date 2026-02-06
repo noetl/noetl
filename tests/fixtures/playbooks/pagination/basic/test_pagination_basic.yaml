@@ -1,4 +1,4 @@
-apiVersion: noetl.io/v2
+apiVersion: noetl.io/v10
 kind: Playbook
 metadata:
   name: test_pagination_basic
@@ -8,7 +8,7 @@ metadata:
 workload:
   api_url: "http://paginated-api.test-server.svc.cluster.local:5555"
 
-vars:
+ctx:
   current_page: 1
   page_size: 10
   collected_items: []
@@ -23,29 +23,40 @@ workflow:
       code: |
         result = {"status": "initialized"}
     next:
-      - step: fetch_page
+      spec:
+        mode: exclusive
+      arcs:
+        - step: fetch_page
 
   - step: fetch_page
     desc: Fetch a single page of assessments
     tool:
       kind: http
-      url: "{{ workload.api_url }}/api/v1/assessments"
+      url: "{{ api_url }}/api/v1/assessments"
       method: GET
       params:
-        page: "{{ vars.current_page }}"
-        pageSize: "{{ vars.page_size }}"
-      eval:
-        - expr: "{{ outcome.status == 'error' and outcome.error.retryable }}"
-          do: retry
-          attempts: 5
-          backoff: exponential
-          delay: 1.0
-        - expr: "{{ outcome.status == 'error' }}"
-          do: fail
-        - else:
-            do: continue
+        page: "{{ ctx.current_page }}"
+        pageSize: "{{ ctx.page_size }}"
+      spec:
+        policy:
+          rules:
+            - when: "{{ outcome.status == 'error' and outcome.error.retryable }}"
+              then:
+                do: retry
+                attempts: 5
+                backoff: exponential
+                delay: 1.0
+            - when: "{{ outcome.status == 'error' }}"
+              then:
+                do: fail
+            - else:
+                then:
+                  do: continue
     next:
-      - step: check_pagination
+      spec:
+        mode: exclusive
+      arcs:
+        - step: check_pagination
 
   - step: check_pagination
     desc: Check if more pages exist and collect results
@@ -53,8 +64,8 @@ workflow:
       kind: python
       args:
         response: "{{ fetch_page }}"
-        collected: "{{ vars.collected_items }}"
-        current_page: "{{ vars.current_page }}"
+        collected: "{{ ctx.collected_items }}"
+        current_page: "{{ ctx.current_page }}"
       code: |
         data = response.get('data', {})
         items = data.get('data', [])
@@ -72,22 +83,25 @@ workflow:
             'next_page': next_page,
             'total_collected': len(all_items)
         }
-    vars:
+    set_ctx:
       collected_items: "{{ check_pagination.collected_items }}"
       current_page: "{{ check_pagination.next_page }}"
       has_more: "{{ check_pagination.has_more }}"
     next:
-      - step: fetch_page
-        when: "{{ vars.has_more == true }}"
-      - step: validate_results
-        when: "{{ vars.has_more != true }}"
+      spec:
+        mode: exclusive
+      arcs:
+        - step: fetch_page
+          when: "{{ ctx.has_more == true }}"
+        - step: validate_results
+          when: "{{ ctx.has_more != true }}"
 
   - step: validate_results
     desc: Validate merged results
     tool:
       kind: python
       args:
-        items: "{{ vars.collected_items }}"
+        items: "{{ ctx.collected_items }}"
       code: |
         data = items if isinstance(items, list) else []
 
@@ -114,7 +128,10 @@ workflow:
             'expected': expected_count
         }
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: Workflow complete

@@ -1,4 +1,4 @@
-apiVersion: noetl.io/v2
+apiVersion: noetl.io/v10
 kind: Playbook
 metadata:
   name: user_management
@@ -28,7 +28,7 @@ metadata:
     - users
     - roles
 
-workload:
+ctx:
   db_credential: pg_k8s
   action: "list_users"
   user_id: null
@@ -43,19 +43,22 @@ workflow:
     tool:
       kind: python
       code: |
-        action = context['workload'].get('action', 'list_users')
+        action = context['ctx'].get('action', 'list_users')
         result = {"action": action}
     next:
-      - step: list_users
-        when: "{{ workload.action == 'list_users' }}"
-      - step: list_roles
-        when: "{{ workload.action == 'list_roles' }}"
-      - step: delete_user_roles
-        when: "{{ workload.action == 'update_user_roles' }}"
-      - step: get_user
-        when: "{{ workload.action == 'get_user' }}"
-      - step: error_invalid_action
-        when: "{{ workload.action not in ['list_users', 'list_roles', 'update_user_roles', 'get_user'] }}"
+      spec:
+        mode: exclusive
+      arcs:
+        - step: list_users
+          when: "{{ ctx.action == 'list_users' }}"
+        - step: list_roles
+          when: "{{ ctx.action == 'list_roles' }}"
+        - step: delete_user_roles
+          when: "{{ ctx.action == 'update_user_roles' }}"
+        - step: get_user
+          when: "{{ ctx.action == 'get_user' }}"
+        - step: error_invalid_action
+          when: "{{ ctx.action not in ['list_users', 'list_roles', 'update_user_roles', 'get_user'] }}"
 
   # ============================================================================
   # LIST USERS - Get all users with their roles
@@ -64,7 +67,7 @@ workflow:
     desc: Query all users with their assigned roles
     tool:
       kind: postgres
-      auth: "{{ workload.db_credential }}"
+      auth: "{{ ctx.db_credential }}"
       command: |
         SELECT
           u.user_id,
@@ -91,7 +94,10 @@ workflow:
                  u.last_login_at, u.is_active, u.created_at
         ORDER BY u.user_id;
     next:
-      - step: return_users
+      spec:
+        mode: exclusive
+      arcs:
+        - step: return_users
 
   - step: return_users
     desc: Format and send users list callback
@@ -106,25 +112,31 @@ workflow:
             "count": len(rows)
         }
     next:
-      - step: send_users_callback
-        when: "{{ workload.request_id }}"
-      - step: end
-        when: "{{ not workload.request_id }}"
+      spec:
+        mode: exclusive
+      arcs:
+        - step: send_users_callback
+          when: "{{ ctx.request_id }}"
+        - step: end
+          when: "{{ not ctx.request_id }}"
 
   - step: send_users_callback
     desc: Send users list callback
     tool:
       kind: http
       method: POST
-      url: "{{ workload.gateway_url }}/api/internal/callback/async"
+      url: "{{ ctx.gateway_url }}/api/internal/callback/async"
       headers:
         Content-Type: application/json
       data:
-        request_id: "{{ workload.request_id }}"
+        request_id: "{{ ctx.request_id }}"
         status: "COMPLETED"
         data: "{{ return_users }}"
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   # ============================================================================
   # LIST ROLES - Get all available roles
@@ -133,7 +145,7 @@ workflow:
     desc: Query all available roles
     tool:
       kind: postgres
-      auth: "{{ workload.db_credential }}"
+      auth: "{{ ctx.db_credential }}"
       command: |
         SELECT
           role_id,
@@ -144,7 +156,10 @@ workflow:
         FROM auth.roles
         ORDER BY role_id;
     next:
-      - step: return_roles
+      spec:
+        mode: exclusive
+      arcs:
+        - step: return_roles
 
   - step: return_roles
     desc: Format and send roles list callback
@@ -159,25 +174,31 @@ workflow:
             "count": len(rows)
         }
     next:
-      - step: send_roles_callback
-        when: "{{ workload.request_id }}"
-      - step: end
-        when: "{{ not workload.request_id }}"
+      spec:
+        mode: exclusive
+      arcs:
+        - step: send_roles_callback
+          when: "{{ ctx.request_id }}"
+        - step: end
+          when: "{{ not ctx.request_id }}"
 
   - step: send_roles_callback
     desc: Send roles list callback
     tool:
       kind: http
       method: POST
-      url: "{{ workload.gateway_url }}/api/internal/callback/async"
+      url: "{{ ctx.gateway_url }}/api/internal/callback/async"
       headers:
         Content-Type: application/json
       data:
-        request_id: "{{ workload.request_id }}"
+        request_id: "{{ ctx.request_id }}"
         status: "COMPLETED"
         data: "{{ return_roles }}"
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   # ============================================================================
   # GET USER - Get single user details
@@ -186,7 +207,7 @@ workflow:
     desc: Query single user with roles
     tool:
       kind: postgres
-      auth: "{{ workload.db_credential }}"
+      auth: "{{ ctx.db_credential }}"
       command: |
         SELECT
           u.user_id,
@@ -209,11 +230,14 @@ workflow:
         LEFT JOIN auth.user_roles ur ON u.user_id = ur.user_id
           AND (ur.expires_at IS NULL OR ur.expires_at > NOW())
         LEFT JOIN auth.roles r ON ur.role_id = r.role_id
-        WHERE u.user_id = {{ workload.user_id }}
+        WHERE u.user_id = {{ ctx.user_id }}
         GROUP BY u.user_id, u.auth0_id, u.email, u.display_name,
                  u.last_login_at, u.is_active, u.created_at;
     next:
-      - step: return_user
+      spec:
+        mode: exclusive
+      arcs:
+        - step: return_user
 
   - step: return_user
     desc: Format and send user details callback
@@ -234,25 +258,31 @@ workflow:
                 "error": "User not found"
             }
     next:
-      - step: send_user_callback
-        when: "{{ workload.request_id }}"
-      - step: end
-        when: "{{ not workload.request_id }}"
+      spec:
+        mode: exclusive
+      arcs:
+        - step: send_user_callback
+          when: "{{ ctx.request_id }}"
+        - step: end
+          when: "{{ not ctx.request_id }}"
 
   - step: send_user_callback
     desc: Send user details callback
     tool:
       kind: http
       method: POST
-      url: "{{ workload.gateway_url }}/api/internal/callback/async"
+      url: "{{ ctx.gateway_url }}/api/internal/callback/async"
       headers:
         Content-Type: application/json
       data:
-        request_id: "{{ workload.request_id }}"
+        request_id: "{{ ctx.request_id }}"
         status: "COMPLETED"
         data: "{{ return_user }}"
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   # ============================================================================
   # UPDATE USER ROLES - Replace user's roles
@@ -261,43 +291,52 @@ workflow:
     desc: Remove existing roles for user
     tool:
       kind: postgres
-      auth: "{{ workload.db_credential }}"
+      auth: "{{ ctx.db_credential }}"
       command: |
-        DELETE FROM auth.user_roles WHERE user_id = {{ workload.user_id }};
+        DELETE FROM auth.user_roles WHERE user_id = {{ ctx.user_id }};
     next:
-      - step: insert_user_roles
+      spec:
+        mode: exclusive
+      arcs:
+        - step: insert_user_roles
 
   - step: insert_user_roles
     desc: Insert new roles for user
     tool:
       kind: postgres
-      auth: "{{ workload.db_credential }}"
+      auth: "{{ ctx.db_credential }}"
       command: |
         INSERT INTO auth.user_roles (user_id, role_id, granted_by)
         SELECT
-          {{ workload.user_id }},
+          {{ ctx.user_id }},
           r.role_id,
-          {% if workload.granted_by %}{{ workload.granted_by }}{% else %}NULL{% endif %}
+          {% if ctx.granted_by %}{{ ctx.granted_by }}{% else %}NULL{% endif %}
         FROM auth.roles r
-        WHERE r.role_name = ANY(ARRAY[{% for name in workload.role_names %}'{{ name }}'{% if not loop.last %},{% endif %}{% endfor %}])
+        WHERE r.role_name = ANY(ARRAY[{% for name in ctx.role_names %}'{{ name }}'{% if not loop.last %},{% endif %}{% endfor %}])
         ON CONFLICT (user_id, role_id) DO NOTHING
         RETURNING role_id;
     next:
-      - step: get_updated_roles
+      spec:
+        mode: exclusive
+      arcs:
+        - step: get_updated_roles
 
   - step: get_updated_roles
     desc: Fetch updated roles for confirmation
     tool:
       kind: postgres
-      auth: "{{ workload.db_credential }}"
+      auth: "{{ ctx.db_credential }}"
       command: |
         SELECT r.role_id, r.role_name
         FROM auth.user_roles ur
         JOIN auth.roles r ON ur.role_id = r.role_id
-        WHERE ur.user_id = {{ workload.user_id }}
+        WHERE ur.user_id = {{ ctx.user_id }}
         ORDER BY r.role_name;
     next:
-      - step: return_updated_roles
+      spec:
+        mode: exclusive
+      arcs:
+        - step: return_updated_roles
 
   - step: return_updated_roles
     desc: Return update result callback
@@ -308,30 +347,36 @@ workflow:
         result = {
             "success": True,
             "action": "update_user_roles",
-            "user_id": context['workload']['user_id'],
+            "user_id": context['ctx']['user_id'],
             "roles": rows,
-            "message": f"Updated {len(rows)} roles for user {context['workload']['user_id']}"
+            "message": f"Updated {len(rows)} roles for user {context['ctx']['user_id']}"
         }
     next:
-      - step: send_updated_roles_callback
-        when: "{{ workload.request_id }}"
-      - step: end
-        when: "{{ not workload.request_id }}"
+      spec:
+        mode: exclusive
+      arcs:
+        - step: send_updated_roles_callback
+          when: "{{ ctx.request_id }}"
+        - step: end
+          when: "{{ not ctx.request_id }}"
 
   - step: send_updated_roles_callback
     desc: Send updated roles callback
     tool:
       kind: http
       method: POST
-      url: "{{ workload.gateway_url }}/api/internal/callback/async"
+      url: "{{ ctx.gateway_url }}/api/internal/callback/async"
       headers:
         Content-Type: application/json
       data:
-        request_id: "{{ workload.request_id }}"
+        request_id: "{{ ctx.request_id }}"
         status: "COMPLETED"
         data: "{{ return_updated_roles }}"
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   # ============================================================================
   # ERROR HANDLING
@@ -343,30 +388,36 @@ workflow:
       code: |
         result = {
             "success": False,
-            "error": f"Invalid action: {context['workload'].get('action')}",
+            "error": f"Invalid action: {context['ctx'].get('action')}",
             "valid_actions": ["list_users", "list_roles", "update_user_roles", "get_user"]
         }
     next:
-      - step: send_error_callback
-        when: "{{ workload.request_id }}"
-      - step: end
-        when: "{{ not workload.request_id }}"
+      spec:
+        mode: exclusive
+      arcs:
+        - step: send_error_callback
+          when: "{{ ctx.request_id }}"
+        - step: end
+          when: "{{ not ctx.request_id }}"
 
   - step: send_error_callback
     desc: Send error callback
     tool:
       kind: http
       method: POST
-      url: "{{ workload.gateway_url }}/api/internal/callback/async"
+      url: "{{ ctx.gateway_url }}/api/internal/callback/async"
       headers:
         Content-Type: application/json
       data:
-        request_id: "{{ workload.request_id }}"
+        request_id: "{{ ctx.request_id }}"
         status: "FAILED"
         error:
           message: "{{ error_invalid_action.error }}"
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: Complete

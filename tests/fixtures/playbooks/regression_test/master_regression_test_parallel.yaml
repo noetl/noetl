@@ -16,26 +16,26 @@ workload:
     - tests/fixtures/playbooks/hello_world
     - tests/control-flow/start_with_action
     - tests/control-flow/end_with_action
-    
+
     # Variable tests
     - test/vars_simple
     - vars_test/test_vars_block
     - vars_test/test_vars_template_access
     - /vars_test/api_test
     - test/cache_simple
-    
+
     # Control flow tests
     - tests/fixtures/playbooks/control_flow_workbook
     - control_flow/weather_control_flow
-    
+
     # Composition tests
     - tests/fixtures/playbooks/playbook_composition/playbook_composition
     - tests/fixtures/playbooks/playbook_composition/user_profile_scorer
-    
+
     # Iterator tests
     - tests/fixtures/playbooks/iterator_save_test/iterator_save_test
     - tests/fixtures/playbooks/json_serialization_save/json_serialization_save
-    
+
     # Pagination tests
     - tests/pagination/basic/basic
     - tests/pagination/cursor/cursor
@@ -43,7 +43,7 @@ workload:
     - tests/pagination/max_iterations/max_iterations
     - tests/pagination/retry/retry
     - tests/pagination/loop_with_pagination/loop_with_pagination
-    
+
     # Retry tests
     - tests/retry/simple_config
     - tests/retry/python_exception
@@ -51,17 +51,17 @@ workload:
     - tests/retry/http_stop_condition
     - tests/retry/postgres_connection
     - tests/retry/duckdb_query
-    
+
     # Save storage tests (depends on schema, run after setup)
     - tests/fixtures/playbooks/save_storage_test/save_simple_test
     - tests/fixtures/playbooks/save_storage_test/save_delegation_test
     - tests/fixtures/playbooks/save_storage_test/save_edge_cases
     - tests/fixtures/playbooks/save_storage_test/save_all_storage_types
-    
+
     # Script execution tests
     - tests/script_execution/python_gcs
     - tests/script_execution/python_http
-    
+
     # Data transfer tests
     - tests/fixtures/playbooks/data_transfer/http_to_postgres_simple
     - tests/fixtures/playbooks/data_transfer/http_to_postgres_direct
@@ -72,7 +72,7 @@ workload:
     - tests/fixtures/playbooks/data_transfer/http_to_databases
     - tests/fixtures/playbooks/data_transfer/snowflake_postgres
     - tests/fixtures/playbooks/python_psycopg/http_to_postgres_bulk_python
-    
+
     # Infrastructure tests
     - tests/fixtures/playbooks/duckdb_gcs_workload_identity/workload_identity
     - tests/fixtures/playbooks/oauth/google_gcs
@@ -81,7 +81,7 @@ workload:
     - api_integration/amadeus_ai_api
     - data_processing/wikipedia_processing
     - batch_execution/multi_playbook_batch
-    
+
     # Error handling tests
     - tests/fixtures/playbooks/broken_sql
     - tests/fixtures/playbooks/broken_playbooks/should_error_tool_is_required
@@ -96,8 +96,6 @@ workflow:
     desc: "Start parallel regression test suite - 48 playbooks (4 skipped)"
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args: {}
       code: |
         print(f"Starting parallel regression test suite")
@@ -105,7 +103,10 @@ workflow:
         print(f"Execution mode: PARALLEL")
         result = {"status": "initialized", "mode": "parallel"}
     next:
-      - step: setup_schema
+      spec:
+        mode: exclusive
+      arcs:
+        - step: setup_schema
 
   # Run setup playbooks sequentially (they create database objects)
   - step: setup_schema
@@ -114,17 +115,20 @@ workflow:
       kind: playbook
       path: "{{ playbook_path }}"
       payload:
-        pg_auth: "{{ workload.pg_auth }}"
+        pg_auth: "{{ pg_auth }}"
       retry:
         max_attempts: 2
         retry_on: ["timeout"]
     loop:
-      in: "{{ workload.setup_playbooks }}"
+      in: "{{ setup_playbooks }}"
       iterator: playbook_path
       spec:
         mode: sequential
     next:
-      - step: run_tests_parallel
+      spec:
+        mode: exclusive
+      arcs:
+        - step: run_tests_parallel
 
   # Run all test playbooks in parallel
   - step: run_tests_parallel
@@ -136,19 +140,22 @@ workflow:
         max_attempts: 2
         retry_on: ["timeout"]
     loop:
-      in: "{{ workload.test_playbooks }}"
+      in: "{{ test_playbooks }}"
       iterator: test_playbook
       spec:
         mode: parallel
         max_in_flight: 10
     next:
-      - step: generate_summary
+      spec:
+        mode: exclusive
+      arcs:
+        - step: generate_summary
 
   - step: generate_summary
     desc: "Generate regression test summary"
     tool:
       kind: postgres
-      auth: "{{ workload.pg_auth }}"
+      auth: "{{ pg_auth }}"
       command: |
         -- Count child executions by status
         WITH child_executions AS (
@@ -190,14 +197,15 @@ workflow:
         FROM child_executions
         RETURNING *;
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: "Regression test suite completed"
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args: {}
       code: |
         print("=== Parallel regression test suite completed ===")

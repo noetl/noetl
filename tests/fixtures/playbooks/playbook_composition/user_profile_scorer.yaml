@@ -22,8 +22,6 @@ workbook:
   - name: calculate_experience_score
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args:
         years_experience: null
       assert:
@@ -45,7 +43,7 @@ workbook:
             score = 10.0 + (years - 2) * 1.67  # 10-15 points
         else:
             score = years * 5.0                # 0-10 points
-        
+
         result = {
             "experience_score": round(score, 1),
             "experience_weight": 0.4  # 40% of total score
@@ -54,8 +52,6 @@ workbook:
   - name: calculate_performance_score
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args:
         performance_rating: null
       assert:
@@ -69,7 +65,7 @@ workbook:
         rating = float(performance_rating)
         # Assuming rating is 1-5 scale, convert to 0-25 points
         score = (rating - 1.0) * 6.25  # Maps 1-5 to 0-25
-        
+
         result = {
             "performance_score": round(score, 1),
             "performance_weight": 0.35  # 35% of total score
@@ -78,8 +74,6 @@ workbook:
   - name: calculate_department_score
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args:
         department: null
       assert:
@@ -99,9 +93,9 @@ workbook:
             "HR": 6.0,              # Support function
             "Finance": 8.0          # Support function
         }
-        
+
         score = dept_scores.get(department, 5.0)  # Default for unknown departments
-        
+
         result = {
             "department_score": score,
             "department_weight": 0.15  # 15% of total score
@@ -110,8 +104,6 @@ workbook:
   - name: calculate_age_factor
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args:
         age: null
       assert:
@@ -133,7 +125,7 @@ workbook:
             score = 5.0   # Senior veteran
         else:
             score = 7.0   # Early career
-        
+
         result = {
             "age_score": score,
             "age_weight": 0.1  # 10% of total score
@@ -142,8 +134,6 @@ workbook:
   - name: determine_category
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args:
         profile_score: null
         years_experience: null
@@ -156,7 +146,7 @@ workbook:
       code: |
         score = float(profile_score)
         experience = float(years_experience)
-        
+
         # Determine category based on score and experience
         if score >= 80 and experience >= 10:
             category = "Executive"
@@ -166,7 +156,7 @@ workbook:
             category = "Mid-Level"
         else:
             category = "Junior"
-        
+
         result = {"score_category": category}
 
 workflow:
@@ -174,33 +164,32 @@ workflow:
     desc: "Begin user profile scoring"
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args: {}
       code: |
         result = {"status": "initialized"}
     next:
-      - step: extract_user_data
+      spec:
+        mode: exclusive
+      arcs:
+        - step: extract_user_data
 
   - step: extract_user_data
     desc: "Extract and validate user data from input"
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args:
-        input_data: "{{ workload.user_data | default({'name': 'TestUser', 'age': 30, 'department': 'Engineering', 'years_experience': 5, 'performance_rating': 4.0}) }}"
+        input_data: "{{ user_data | default({'name': 'TestUser', 'age': 30, 'department': 'Engineering', 'years_experience': 5, 'performance_rating': 4.0}) }}"
       code: |
         # input_data comes directly as a dict from workload
         # Validate input is a dict
         if not isinstance(input_data, dict):
             raise ValueError(f"Expected user data dict, got {type(input_data)}")
-        
+
         required_fields = ['name', 'age', 'department', 'years_experience', 'performance_rating']
         for field in required_fields:
             if field not in input_data:
                 raise ValueError(f"Missing required field: {field}")
-        
+
         result = {
             "user_name": input_data['name'],
             "age": float(input_data['age']),
@@ -209,7 +198,10 @@ workflow:
             "performance_rating": float(input_data['performance_rating'])
         }
     next:
-      - step: score_experience
+      spec:
+        mode: exclusive
+      arcs:
+        - step: score_experience
 
   - step: score_experience
     desc: "Calculate experience-based score component"
@@ -219,7 +211,10 @@ workflow:
       args:
         years_experience: "{{ extract_user_data.years_experience }}"
     next:
-      - step: score_performance
+      spec:
+        mode: exclusive
+      arcs:
+        - step: score_performance
 
   - step: score_performance
     desc: "Calculate performance-based score component"
@@ -229,7 +224,10 @@ workflow:
       args:
         performance_rating: "{{ extract_user_data.performance_rating }}"
     next:
-      - step: score_department
+      spec:
+        mode: exclusive
+      arcs:
+        - step: score_department
 
   - step: score_department
     desc: "Calculate department-based score component"
@@ -239,7 +237,10 @@ workflow:
       args:
         department: "{{ extract_user_data.department }}"
     next:
-      - step: score_age
+      spec:
+        mode: exclusive
+      arcs:
+        - step: score_age
 
   - step: score_age
     desc: "Calculate age-based score component"
@@ -249,14 +250,15 @@ workflow:
       args:
         age: "{{ extract_user_data.age }}"
     next:
-      - step: compute_total_score
+      spec:
+        mode: exclusive
+      arcs:
+        - step: compute_total_score
 
   - step: compute_total_score
     desc: "Compute weighted total profile score"
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args:
         user_name: "{{ extract_user_data.user_name }}"
         experience_data: "{{ score_experience }}"
@@ -271,17 +273,17 @@ workflow:
             department_data['department_score'] * department_data['department_weight'] +
             age_data['age_score'] * age_data['age_weight']
         )
-        
+
         # Round to 1 decimal place
         total_score = round(total_score, 1)
-        
+
         print(f"Profile scoring for {user_name}:")
         print(f"  Experience: {experience_data['experience_score']} * {experience_data['experience_weight']} = {experience_data['experience_score'] * experience_data['experience_weight']}")
         print(f"  Performance: {performance_data['performance_score']} * {performance_data['performance_weight']} = {performance_data['performance_score'] * performance_data['performance_weight']}")
         print(f"  Department: {department_data['department_score']} * {department_data['department_weight']} = {department_data['department_score'] * department_data['department_weight']}")
         print(f"  Age Factor: {age_data['age_score']} * {age_data['age_weight']} = {age_data['age_score'] * age_data['age_weight']}")
         print(f"  Total Score: {total_score}")
-        
+
         result = {
             "user_name": user_name,
             "profile_score": total_score,
@@ -293,7 +295,10 @@ workflow:
             }
         }
     next:
-      - step: determine_score_category
+      spec:
+        mode: exclusive
+      arcs:
+        - step: determine_score_category
 
   - step: determine_score_category
     desc: "Determine user category based on score and experience"
@@ -304,18 +309,19 @@ workflow:
         profile_score: "{{ compute_total_score.profile_score }}"
         years_experience: "{{ extract_user_data.years_experience }}"
     next:
-      - step: finalize_result
+      spec:
+        mode: exclusive
+      arcs:
+        - step: finalize_result
 
   - step: finalize_result
     desc: "Prepare final result for parent playbook"
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args:
         score_data: "{{ compute_total_score }}"
         category_data: "{{ determine_score_category }}"
-        execution_context: "{{ workload.execution_context }}"
+        execution_context: "{{ execution_context }}"
       code: |
         result = {
             "user_name": score_data['user_name'],
@@ -325,5 +331,5 @@ workflow:
             "execution_id": execution_context,
             "processing_status": "completed"
         }
-        
+
         print(f"User profile scoring completed for {result['user_name']}: {result['profile_score']} ({result['score_category']})")

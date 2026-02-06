@@ -52,14 +52,17 @@ workflow:
           echo " Gateway Deployment to Kind Cluster"
           echo "=========================================="
           echo ""
-          echo "Project Root: {{ workload.project_root }}"
-          echo "Image: {{ workload.image_name }}:{{ workload.image_tag }}"
-          echo "Kind Cluster: {{ workload.kind_cluster }}"
-          echo "Namespace: {{ workload.namespace }}"
-          echo "Min Disk Space: {{ workload.min_disk_space_gb }}GB"
+          echo "Project Root: {{ project_root }}"
+          echo "Image: {{ image_name }}:{{ image_tag }}"
+          echo "Kind Cluster: {{ kind_cluster }}"
+          echo "Namespace: {{ namespace }}"
+          echo "Min Disk Space: {{ min_disk_space_gb }}GB"
           echo ""
     next:
-      - step: check_prerequisites
+      spec:
+        mode: exclusive
+      arcs:
+        - step: check_prerequisites
 
   - step: check_prerequisites
     desc: Verify Docker and Kind are available
@@ -91,16 +94,19 @@ workflow:
           echo "kubectl: $(kubectl version --client --short 2>/dev/null || kubectl version --client)"
 
           # Check Kind cluster exists
-          if ! kind get clusters 2>/dev/null | grep -q "{{ workload.kind_cluster }}"; then
-            echo "ERROR: Kind cluster '{{ workload.kind_cluster }}' not found"
+          if ! kind get clusters 2>/dev/null | grep -q "{{ kind_cluster }}"; then
+            echo "ERROR: Kind cluster '{{ kind_cluster }}' not found"
             exit 1
           fi
-          echo "Kind cluster '{{ workload.kind_cluster }}' found"
+          echo "Kind cluster '{{ kind_cluster }}' found"
 
           echo ""
           echo "All prerequisites met"
     next:
-      - step: check_disk_space
+      spec:
+        mode: exclusive
+      arcs:
+        - step: check_disk_space
 
   - step: check_disk_space
     desc: Check Docker disk space and cleanup if needed
@@ -108,13 +114,13 @@ workflow:
       kind: shell
       cmds:
         - |
-          if [ "{{ workload.skip_disk_check }}" = "true" ]; then
+          if [ "{{ skip_disk_check }}" = "true" ]; then
             echo "Skipping disk space check (skip_disk_check=true)"
             exit 0
           fi
 
           echo "Checking Docker disk space..."
-          echo "Minimum required: {{ workload.min_disk_space_gb }}GB"
+          echo "Minimum required: {{ min_disk_space_gb }}GB"
           echo ""
 
           # Get Docker disk usage info
@@ -139,7 +145,7 @@ workflow:
           echo "Total reclaimable: ${TOTAL_RECLAIMABLE_GB}GB"
 
           # If build cache is significant (> 5GB), recommend cleanup
-          MIN_SPACE={{ workload.min_disk_space_gb }}
+          MIN_SPACE={{ min_disk_space_gb }}
 
           # Use bc for floating point comparison, fallback to simple integer check
           if command -v bc &> /dev/null; then
@@ -160,10 +166,13 @@ workflow:
             echo "Disk space is adequate for build"
           fi
     next:
-      - step: docker_cleanup
-        cond: exit_code == 100
-      - step: build_image
-        cond: exit_code == 0
+      spec:
+        mode: exclusive
+      arcs:
+        - step: docker_cleanup
+          cond: exit_code == 100
+        - step: build_image
+          cond: exit_code == 0
 
   - step: docker_cleanup
     desc: Clean up Docker resources to free space
@@ -192,7 +201,10 @@ workflow:
           docker system df
           echo ""
     next:
-      - step: build_image
+      spec:
+        mode: exclusive
+      arcs:
+        - step: build_image
 
   - step: build_image
     desc: Build gateway Docker image
@@ -201,32 +213,35 @@ workflow:
       cmds:
         - |
           echo "Building gateway Docker image..."
-          echo "Project root: {{ workload.project_root }}"
-          echo "Image: {{ workload.image_name }}:{{ workload.image_tag }}"
-          echo "Force rebuild (no-cache): {{ workload.force_rebuild }}"
+          echo "Project root: {{ project_root }}"
+          echo "Image: {{ image_name }}:{{ image_tag }}"
+          echo "Force rebuild (no-cache): {{ force_rebuild }}"
           echo ""
 
-          cd {{ workload.project_root }}
+          cd {{ project_root }}
 
           # Build the image - use --no-cache if force_rebuild is true
-          if [ "{{ workload.force_rebuild }}" = "true" ]; then
+          if [ "{{ force_rebuild }}" = "true" ]; then
             echo "Using --no-cache for clean rebuild"
             docker build --no-cache \
-              -t {{ workload.image_name }}:{{ workload.image_tag }} \
+              -t {{ image_name }}:{{ image_tag }} \
               -f crates/gateway/Dockerfile \
               .
           else
             docker build \
-              -t {{ workload.image_name }}:{{ workload.image_tag }} \
+              -t {{ image_name }}:{{ image_tag }} \
               -f crates/gateway/Dockerfile \
               .
           fi
 
           echo ""
           echo "Docker build completed successfully"
-          docker images {{ workload.image_name }}:{{ workload.image_tag }}
+          docker images {{ image_name }}:{{ image_tag }}
     next:
-      - step: load_to_kind
+      spec:
+        mode: exclusive
+      arcs:
+        - step: load_to_kind
 
   - step: load_to_kind
     desc: Load image into Kind cluster
@@ -235,21 +250,24 @@ workflow:
       cmds:
         - |
           echo "Loading image into Kind cluster..."
-          echo "Cluster: {{ workload.kind_cluster }}"
+          echo "Cluster: {{ kind_cluster }}"
           echo ""
 
           # Remove old image from Kind's containerd cache to ensure fresh image is used
           echo "Clearing old image from Kind cache..."
-          docker exec {{ workload.kind_cluster }}-control-plane crictl rmi {{ workload.image_name }}:{{ workload.image_tag }} 2>/dev/null || true
+          docker exec {{ kind_cluster }}-control-plane crictl rmi {{ image_name }}:{{ image_tag }} 2>/dev/null || true
 
           # Load the new image
-          kind load docker-image {{ workload.image_name }}:{{ workload.image_tag }} \
-            --name {{ workload.kind_cluster }}
+          kind load docker-image {{ image_name }}:{{ image_tag }} \
+            --name {{ kind_cluster }}
 
           echo ""
           echo "Image loaded into Kind cluster successfully"
     next:
-      - step: restart_deployment
+      spec:
+        mode: exclusive
+      arcs:
+        - step: restart_deployment
 
   - step: restart_deployment
     desc: Restart gateway deployment
@@ -258,21 +276,24 @@ workflow:
       cmds:
         - |
           echo "Restarting gateway deployment..."
-          echo "Namespace: {{ workload.namespace }}"
-          echo "Deployment: {{ workload.deployment_name }}"
+          echo "Namespace: {{ namespace }}"
+          echo "Deployment: {{ deployment_name }}"
           echo ""
 
           # Set Kind context
-          kubectl config use-context kind-{{ workload.kind_cluster }}
+          kubectl config use-context kind-{{ kind_cluster }}
 
           # Restart the deployment
-          kubectl rollout restart deployment/{{ workload.deployment_name }} \
-            -n {{ workload.namespace }}
+          kubectl rollout restart deployment/{{ deployment_name }} \
+            -n {{ namespace }}
 
           echo ""
           echo "Deployment restart initiated"
     next:
-      - step: wait_for_rollout
+      spec:
+        mode: exclusive
+      arcs:
+        - step: wait_for_rollout
 
   - step: wait_for_rollout
     desc: Wait for rollout to complete
@@ -281,18 +302,21 @@ workflow:
       cmds:
         - |
           echo "Waiting for rollout to complete..."
-          echo "Timeout: {{ workload.timeout_seconds }} seconds"
+          echo "Timeout: {{ timeout_seconds }} seconds"
           echo ""
 
-          kubectl rollout status deployment/{{ workload.deployment_name }} \
-            -n {{ workload.namespace }} \
-            --timeout={{ workload.timeout_seconds }}s
+          kubectl rollout status deployment/{{ deployment_name }} \
+            -n {{ namespace }} \
+            --timeout={{ timeout_seconds }}s
 
           echo ""
           echo "Rollout completed successfully"
-          kubectl get pods -n {{ workload.namespace }} -l app={{ workload.deployment_name }}
+          kubectl get pods -n {{ namespace }} -l app={{ deployment_name }}
     next:
-      - step: verify_health
+      spec:
+        mode: exclusive
+      arcs:
+        - step: verify_health
 
   - step: verify_health
     desc: Verify gateway health endpoint
@@ -301,14 +325,14 @@ workflow:
       cmds:
         - |
           echo "Verifying gateway health..."
-          echo "Endpoint: {{ workload.health_endpoint }}"
+          echo "Endpoint: {{ health_endpoint }}"
           echo ""
 
           # Wait a bit for the service to be ready
           sleep 5
 
           # Check health endpoint
-          HEALTH_RESPONSE=$(curl -s -w "\n%{http_code}" {{ workload.health_endpoint }} 2>&1)
+          HEALTH_RESPONSE=$(curl -s -w "\n%{http_code}" {{ health_endpoint }} 2>&1)
           HTTP_CODE=$(echo "$HEALTH_RESPONSE" | tail -n1)
           BODY=$(echo "$HEALTH_RESPONSE" | head -n -1)
 
@@ -324,7 +348,10 @@ workflow:
             echo "The deployment may still be starting up"
           fi
     next:
-      - step: success
+      spec:
+        mode: exclusive
+      arcs:
+        - step: success
 
   - step: success
     desc: Deployment completed successfully
@@ -337,15 +364,18 @@ workflow:
           echo " Gateway Deployment Complete"
           echo "=========================================="
           echo ""
-          echo "Image: {{ workload.image_name }}:{{ workload.image_tag }}"
-          echo "Cluster: {{ workload.kind_cluster }}"
-          echo "Namespace: {{ workload.namespace }}"
-          echo "Deployment: {{ workload.deployment_name }}"
+          echo "Image: {{ image_name }}:{{ image_tag }}"
+          echo "Cluster: {{ kind_cluster }}"
+          echo "Namespace: {{ namespace }}"
+          echo "Deployment: {{ deployment_name }}"
           echo ""
-          echo "Gateway is now accessible at: {{ workload.health_endpoint }}"
+          echo "Gateway is now accessible at: {{ health_endpoint }}"
           echo ""
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: Complete

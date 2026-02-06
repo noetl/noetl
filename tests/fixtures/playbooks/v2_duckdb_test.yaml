@@ -19,7 +19,10 @@ workflow:
             INSERT INTO users VALUES (1, 'Alice', 30), (2, 'Bob', 25), (3, 'Charlie', 35);
             SELECT name, age FROM users WHERE age >= 30 ORDER BY age;
     next:
-      - step: process
+      spec:
+        mode: exclusive
+      arcs:
+        - step: process
 
   - step: process
     desc: Process query results
@@ -55,7 +58,10 @@ workflow:
 
             return {"status": "error", "message": "Invalid query result format"}
     next:
-      - step: verify
+      spec:
+        mode: exclusive
+      arcs:
+        - step: verify
 
   - step: verify
     desc: Verify results
@@ -91,7 +97,10 @@ workflow:
             print(f"[VERIFY] Verification: {verification['status']}")
             return verification
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: Complete the test

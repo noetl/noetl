@@ -1,4 +1,4 @@
-apiVersion: noetl.io/v2
+apiVersion: noetl.io/v10
 kind: Playbook
 metadata:
   name: test_transient
@@ -13,50 +13,56 @@ workflow:
   - step: start
     desc: Test transient functionality
     tool:
-      - label:
+      - start_task:
           kind: python
-          auth: {}
-          libs: {}
           args: {}
           code: |
             result = {"status": "initialized"}
     next:
-      - step: test_set_var
+      spec:
+        mode: exclusive
+      arcs:
+        - step: test_set_var
 
   - step: test_set_var
-    desc: Set initial variables using vars block
+    desc: Set initial variables using policy rules
     tool:
-      - label:
+      - set_vars_task:
           kind: python
-          auth: {}
-          libs: {}
           args: {}
           code: |
-            # Return values that will be extracted via vars block
+            # Return values that will be extracted via policy rules
             result = {
                 "status": "success",
                 "counter": 0,
                 "status_var": "initialized",
                 "config": {"timeout": 30, "retries": 3}
             }
-    vars:
-      counter: "{{ result.counter }}"
-      status_var: "{{ result.status_var }}"
-      config: "{{ result.config }}"
+          spec:
+            policy:
+              rules:
+                - else:
+                    then:
+                      do: continue
+                      set_ctx:
+                        counter: "{{ outcome.result.counter }}"
+                        status_var: "{{ outcome.result.status_var }}"
+                        config: "{{ outcome.result.config }}"
     next:
-      - step: test_get_var
+      spec:
+        mode: exclusive
+      arcs:
+        - step: test_get_var
 
   - step: test_get_var
     desc: Retrieve and verify variables via template args
     tool:
-      - label:
+      - get_vars_task:
           kind: python
-          auth: {}
-          libs: {}
           args:
-            counter: "{{ vars.counter }}"
-            status_var: "{{ vars.status_var }}"
-            config: "{{ vars.config }}"
+            counter: "{{ ctx.counter }}"
+            status_var: "{{ ctx.status_var }}"
+            config: "{{ ctx.config }}"
           code: |
             # Verify variables received via args
             result = {
@@ -73,15 +79,16 @@ workflow:
                 }
             }
     next:
-      - step: test_update_var
+      spec:
+        mode: exclusive
+      arcs:
+        - step: test_update_var
 
   - step: test_update_var
     desc: Update variable values
     tool:
-      - label:
+      - update_vars_task:
           kind: python
-          auth: {}
-          libs: {}
           args: {}
           code: |
             # Return updated values
@@ -90,23 +97,30 @@ workflow:
                 "counter": 1,
                 "status_var": "processing"
             }
-    vars:
-      counter: "{{ result.counter }}"
-      status_var: "{{ result.status_var }}"
+          spec:
+            policy:
+              rules:
+                - else:
+                    then:
+                      do: continue
+                      set_ctx:
+                        counter: "{{ outcome.result.counter }}"
+                        status_var: "{{ outcome.result.status_var }}"
     next:
-      - step: verify_updates
+      spec:
+        mode: exclusive
+      arcs:
+        - step: verify_updates
 
   - step: verify_updates
     desc: Verify updated values
     tool:
-      - label:
+      - verify_task:
           kind: python
-          auth: {}
-          libs: {}
           args:
-            counter: "{{ vars.counter }}"
-            status_var: "{{ vars.status_var }}"
-            config: "{{ vars.config }}"
+            counter: "{{ ctx.counter }}"
+            status_var: "{{ ctx.status_var }}"
+            config: "{{ ctx.config }}"
           code: |
             # Verify updated values
             result = {
@@ -123,15 +137,16 @@ workflow:
                 )
             }
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: End workflow
     tool:
-      - label:
+      - end_task:
           kind: python
-          auth: {}
-          libs: {}
           args: {}
           code: |
             result = {"status": "complete"}

@@ -1,22 +1,25 @@
-apiVersion: noetl.io/v2
+# NoETL Canonical v10 Playbook
+# Tests tool.spec.policy.rules error handling patterns in task sequence execution.
+
+apiVersion: noetl.io/v10
 kind: Playbook
 metadata:
   name: test_pipeline_error_handling
   path: tests/pagination/pipeline/errors
   description: |
-    Tests tool.eval error handling patterns in task sequence execution.
+    Tests tool.spec.policy.rules error handling patterns in task sequence execution.
 
     Validates:
     - Retry on transient errors (500, 503)
     - Rate limit handling with Retry-After header
     - Continue on transform errors (skip pattern)
     - Fail on auth errors (401, 403)
-    - outcome variable access in eval conditions
+    - outcome variable access in policy conditions
 
 workload:
   api_url: "http://paginated-api.test-server.svc.cluster.local:5555"
 
-vars:
+ctx:
   test_results: []
   current_test: null
 
@@ -36,33 +39,41 @@ workflow:
           ]
         }
     next:
-      - step: test_retry_transient
+      spec:
+        mode: exclusive
+      arcs:
+        - step: test_retry_transient
 
   - step: test_retry_transient
     desc: Test retry on 500 errors with flaky endpoint
     tool:
       - reset_flaky:
           kind: http
-          url: "{{ workload.api_url }}/api/v1/flaky/reset"
+          url: "{{ api_url }}/api/v1/flaky/reset"
           method: POST
 
       - fetch_flaky:
           kind: http
-          url: "{{ workload.api_url }}/api/v1/flaky"
+          url: "{{ api_url }}/api/v1/flaky"
           method: GET
           params:
             page: 1
             fail_on: "1"
-          eval:
-            - expr: "{{ outcome.error.retryable and outcome.error.kind == 'server_error' }}"
-              do: retry
-              attempts: 3
-              backoff: linear
-              delay: 0.5
-            - expr: "{{ outcome.status == 'error' }}"
-              do: fail
-            - else:
-                do: continue
+          spec:
+            policy:
+              rules:
+                - when: "{{ outcome.error.retryable and outcome.error.kind == 'server_error' }}"
+                  then:
+                    do: retry
+                    attempts: 3
+                    backoff: linear
+                    delay: 0.5
+                - when: "{{ outcome.status == 'error' }}"
+                  then:
+                    do: fail
+                - else:
+                    then:
+                      do: continue
 
       - validate:
           kind: python
@@ -78,50 +89,65 @@ workflow:
               'message': 'Retry succeeded after 500 error'
             }
     next:
-      - step: test_rate_limit
+      spec:
+        mode: exclusive
+      arcs:
+        - step: test_rate_limit
 
   - step: test_rate_limit
     desc: Test rate limit handling with Retry-After header
     tool:
       - fetch_1:
           kind: http
-          url: "{{ workload.api_url }}/api/v1/rate-limited"
+          url: "{{ api_url }}/api/v1/rate-limited"
           method: GET
           params:
             page: 1
             requests_per_second: 1
-          eval:
-            - expr: "{{ outcome.error.kind == 'rate_limit' }}"
-              do: retry
-              attempts: 5
-              delay: 2.0
-            - expr: "{{ outcome.error.retryable }}"
-              do: retry
-              attempts: 3
-            - expr: "{{ outcome.status == 'error' }}"
-              do: fail
-            - else:
-                do: continue
+          spec:
+            policy:
+              rules:
+                - when: "{{ outcome.error.kind == 'rate_limit' }}"
+                  then:
+                    do: retry
+                    attempts: 5
+                    delay: 2.0
+                - when: "{{ outcome.error.retryable }}"
+                  then:
+                    do: retry
+                    attempts: 3
+                - when: "{{ outcome.status == 'error' }}"
+                  then:
+                    do: fail
+                - else:
+                    then:
+                      do: continue
 
       - fetch_2:
           kind: http
-          url: "{{ workload.api_url }}/api/v1/rate-limited"
+          url: "{{ api_url }}/api/v1/rate-limited"
           method: GET
           params:
             page: 2
             requests_per_second: 1
-          eval:
-            - expr: "{{ outcome.error.kind == 'rate_limit' }}"
-              do: retry
-              attempts: 5
-              delay: 2.0
-            - expr: "{{ outcome.error.retryable }}"
-              do: retry
-              attempts: 3
-            - expr: "{{ outcome.status == 'error' }}"
-              do: fail
-            - else:
-                do: continue
+          spec:
+            policy:
+              rules:
+                - when: "{{ outcome.error.kind == 'rate_limit' }}"
+                  then:
+                    do: retry
+                    attempts: 5
+                    delay: 2.0
+                - when: "{{ outcome.error.retryable }}"
+                  then:
+                    do: retry
+                    attempts: 3
+                - when: "{{ outcome.status == 'error' }}"
+                  then:
+                    do: fail
+                - else:
+                    then:
+                      do: continue
 
       - validate:
           kind: python
@@ -137,14 +163,17 @@ workflow:
               'message': 'Rate limit handled correctly'
             }
     next:
-      - step: test_skip_transform
+      spec:
+        mode: exclusive
+      arcs:
+        - step: test_skip_transform
 
   - step: test_skip_transform
     desc: Test continue action on transform errors (skip pattern)
     tool:
       - fetch:
           kind: http
-          url: "{{ workload.api_url }}/api/v1/assessments"
+          url: "{{ api_url }}/api/v1/assessments"
           method: GET
           params:
             page: 1
@@ -156,11 +185,15 @@ workflow:
           code: |
             broken = http_response['nonexistent_key']['also_missing']
             result = broken
-          eval:
-            - expr: "{{ outcome.status == 'error' }}"
-              do: continue
-            - else:
-                do: continue
+          spec:
+            policy:
+              rules:
+                - when: "{{ outcome.status == 'error' }}"
+                  then:
+                    do: continue
+                - else:
+                    then:
+                      do: continue
 
       - validate:
           kind: python
@@ -175,50 +208,60 @@ workflow:
               'message': 'Transform error was skipped successfully'
             }
     next:
-      - step: test_fail_auth
+      spec:
+        mode: exclusive
+      arcs:
+        - step: test_fail_auth
 
   - step: test_fail_auth
     desc: Test fail action on auth errors
     tool:
       - fetch_auth_error:
           kind: http
-          url: "{{ workload.api_url }}/api/v1/errors"
+          url: "{{ api_url }}/api/v1/errors"
           method: GET
           params:
             error_type: "auth"
-          eval:
-            - expr: "{{ outcome.error.kind == 'auth' }}"
-              do: fail
-            - else:
-                do: continue
+          spec:
+            policy:
+              rules:
+                - when: "{{ outcome.error.kind == 'auth' }}"
+                  then:
+                    do: fail
+                - else:
+                    then:
+                      do: continue
 
       - should_not_reach:
           kind: python
           code: |
             result = {'error': 'This should not execute'}
     next:
-      - step: generate_report
+      spec:
+        mode: exclusive
+      arcs:
+        - step: generate_report
 
   - step: generate_report
     desc: Generate test results report
     tool:
       kind: python
       args:
-        results: "{{ vars.test_results }}"
+        results: "{{ ctx.test_results }}"
       code: |
         passed = sum(1 for r in results if r.get('status') == 'passed')
         failed = sum(1 for r in results if r.get('status') == 'failed')
         total = len(results)
 
         result = {
-          "status": "success" if failed == 0 else "failed",
+          "status": "ok" if failed == 0 else "failed",
           "summary": {
             "total_tests": total,
             "passed": passed,
             "failed": failed
           },
           "test_results": results,
-          "tool_eval_features_tested": [
+          "policy_features_tested": [
             "retry with exponential backoff",
             "retry with Retry-After header",
             "continue on error (skip pattern)",
@@ -229,7 +272,10 @@ workflow:
           ]
         }
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: Tests complete

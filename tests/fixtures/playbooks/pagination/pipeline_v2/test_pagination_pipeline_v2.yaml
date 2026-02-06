@@ -1,14 +1,14 @@
-apiVersion: noetl.io/v2
+apiVersion: noetl.io/v10
 kind: Playbook
 metadata:
   name: test_pagination_pipeline_v2
   path: tests/pagination/pipeline_v2
   description: |
-    Task sequence pagination test demonstrating tool.eval flow control.
+    Task sequence pagination test demonstrating tool.spec.policy.rules flow control.
 
-    Uses labeled tasks in tool: pipeline with tool.eval: for per-task flow control:
+    Uses labeled tasks in tool: pipeline with tool.spec.policy.rules: for per-task flow control:
     - _prev threads data between tasks (like Clojure's ->)
-    - tool.eval: provides per-task error handling
+    - tool.spec.policy.rules: provides per-task error handling
     - Retry, jump, fail, break, continue control actions
     - outcome object for accessing execution results
 
@@ -20,7 +20,7 @@ workload:
   db_user: "noetl"
   db_password: "noetl"
 
-vars:
+ctx:
   current_page: 1
   page_size: 10
   total_fetched: 0
@@ -28,16 +28,19 @@ vars:
 
 workflow:
   - step: start
-    desc: Initialize pagination test with tool.eval flow control
+    desc: Initialize pagination test with tool.spec.policy.rules flow control
     tool:
       kind: python
       code: |
         result = {
           "status": "initialized",
-          "message": "Starting pagination test with tool.eval flow control"
+          "message": "Starting pagination test with tool.spec.policy.rules flow control"
         }
     next:
-      - step: create_test_table
+      spec:
+        mode: exclusive
+      arcs:
+        - step: create_test_table
 
   - step: create_test_table
     desc: Create test table for storing fetched data
@@ -56,40 +59,49 @@ workflow:
           batch_id VARCHAR(36)
         );
     next:
-      - step: fetch_transform_store
+      spec:
+        mode: exclusive
+      arcs:
+        - step: fetch_transform_store
 
   - step: fetch_transform_store
     desc: |
       Task sequence: fetch page -> transform data -> store to DB
-      Demonstrates tool.eval flow control per task
+      Demonstrates tool.spec.policy.rules flow control per task
     tool:
       - fetch:
           kind: http
-          url: "{{ workload.api_url }}/api/v1/assessments"
+          url: "{{ api_url }}/api/v1/assessments"
           method: GET
           params:
-            page: "{{ vars.current_page }}"
-            pageSize: "{{ vars.page_size }}"
-          eval:
-            - expr: "{{ outcome.error.kind == 'rate_limit' }}"
-              do: retry
-              attempts: 10
-              delay: 5.0
-            - expr: "{{ outcome.error.retryable }}"
-              do: retry
-              attempts: 5
-              backoff: exponential
-              delay: 1.0
-            - expr: "{{ outcome.status == 'error' }}"
-              do: fail
-            - else:
-                do: continue
+            page: "{{ ctx.current_page }}"
+            pageSize: "{{ ctx.page_size }}"
+          spec:
+            policy:
+              rules:
+                - when: "{{ outcome.error.kind == 'rate_limit' }}"
+                  then:
+                    do: retry
+                    attempts: 10
+                    delay: 5.0
+                - when: "{{ outcome.error.retryable }}"
+                  then:
+                    do: retry
+                    attempts: 5
+                    backoff: exponential
+                    delay: 1.0
+                - when: "{{ outcome.status == 'error' }}"
+                  then:
+                    do: fail
+                - else:
+                    then:
+                      do: continue
 
       - transform:
           kind: python
           args:
             http_response: "{{ _prev }}"
-            page_num: "{{ vars.current_page }}"
+            page_num: "{{ ctx.current_page }}"
             execution_id: "{{ execution_id }}"
           code: |
             import json
@@ -116,21 +128,25 @@ workflow:
                 'current_page': paging.get('page', page_num),
                 'total': paging.get('total', 0)
             }
-          eval:
-            - expr: "{{ outcome.status == 'error' }}"
-              do: continue
-            - else:
-                do: continue
+          spec:
+            policy:
+              rules:
+                - when: "{{ outcome.status == 'error' }}"
+                  then:
+                    do: continue
+                - else:
+                    then:
+                      do: continue
 
       - store:
           kind: python
           args:
             data: "{{ _prev }}"
-            db_host: "{{ workload.db_host }}"
-            db_port: "{{ workload.db_port }}"
-            db_name: "{{ workload.db_name }}"
-            db_user: "{{ workload.db_user }}"
-            db_password: "{{ workload.db_password }}"
+            db_host: "{{ db_host }}"
+            db_port: "{{ db_port }}"
+            db_name: "{{ db_name }}"
+            db_user: "{{ db_user }}"
+            db_password: "{{ db_password }}"
           libs:
             - psycopg2-binary
           code: |
@@ -171,18 +187,26 @@ workflow:
                 'current_page': data['current_page'],
                 'total': data['total']
             }
-          eval:
-            - expr: "{{ outcome.error.retryable }}"
-              do: retry
-              attempts: 3
-              backoff: linear
-              delay: 2.0
-            - expr: "{{ outcome.status == 'error' }}"
-              do: fail
-            - else:
-                do: continue
+          spec:
+            policy:
+              rules:
+                - when: "{{ outcome.error.retryable }}"
+                  then:
+                    do: retry
+                    attempts: 3
+                    backoff: linear
+                    delay: 2.0
+                - when: "{{ outcome.status == 'error' }}"
+                  then:
+                    do: fail
+                - else:
+                    then:
+                      do: continue
     next:
-      - step: check_pagination
+      spec:
+        mode: exclusive
+      arcs:
+        - step: check_pagination
 
   - step: check_pagination
     desc: Check if more pages to fetch
@@ -190,8 +214,8 @@ workflow:
       kind: python
       args:
         pipeline_result: "{{ fetch_transform_store }}"
-        current_page: "{{ vars.current_page }}"
-        total_fetched: "{{ vars.total_fetched }}"
+        current_page: "{{ ctx.current_page }}"
+        total_fetched: "{{ ctx.total_fetched }}"
       code: |
         has_more = pipeline_result.get('has_more', False) if isinstance(pipeline_result, dict) else False
 
@@ -201,13 +225,16 @@ workflow:
           "total_fetched": total_fetched,
           "action": "continue" if has_more else "complete"
         }
-    vars:
-      current_page: "{{ (vars.current_page | int) + 1 }}"
+    set_ctx:
+      current_page: "{{ (ctx.current_page | int) + 1 }}"
     next:
-      - step: fetch_transform_store
-        when: "{{ check_pagination.has_more == true }}"
-      - step: validate_results
-        when: "{{ check_pagination.has_more != true }}"
+      spec:
+        mode: exclusive
+      arcs:
+        - step: fetch_transform_store
+          when: "{{ check_pagination.has_more == true }}"
+        - step: validate_results
+          when: "{{ check_pagination.has_more != true }}"
 
   - step: validate_results
     desc: Validate all data was fetched and stored correctly
@@ -223,7 +250,10 @@ workflow:
           AVG(score) as avg_score
         FROM pagination_test_v2_results
     next:
-      - step: final_report
+      spec:
+        mode: exclusive
+      arcs:
+        - step: final_report
 
   - step: final_report
     desc: Generate final test report
@@ -231,8 +261,8 @@ workflow:
       kind: python
       args:
         validation: "{{ validate_results }}"
-        pages_processed: "{{ vars.current_page }}"
-        total_fetched: "{{ vars.total_fetched }}"
+        pages_processed: "{{ ctx.current_page }}"
+        total_fetched: "{{ ctx.total_fetched }}"
       code: |
         if isinstance(validation, list) and len(validation) > 0:
             stats = validation[0]
@@ -259,7 +289,7 @@ workflow:
           },
           "features_tested": [
             "Labeled tasks in tool: pipeline",
-            "tool.eval: per-task flow control",
+            "tool.spec.policy.rules: per-task flow control",
             "_prev data threading between tasks",
             "outcome object for result/error inspection",
             "Retry with exponential backoff",
@@ -270,7 +300,10 @@ workflow:
         if not success:
             result["error"] = f"Expected {expected_items} records, got {total_records}"
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: Test complete

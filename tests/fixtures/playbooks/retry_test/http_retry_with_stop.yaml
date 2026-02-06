@@ -1,4 +1,4 @@
-apiVersion: noetl.io/v2
+apiVersion: noetl.io/v10
 kind: Playbook
 metadata:
   name: http_retry_with_stop
@@ -14,19 +14,21 @@ workflow:
     tool:
       kind: http
       method: GET
-      url: "{{ workload.test_url }}"
-      eval:
-        - expr: "{{ outcome.http.status in [500, 502, 503] }}"
-          do: retry
-          attempts: 3
-          delay: 0.5
-          backoff: exponential
-        - expr: "{{ outcome.status == 'error' }}"
-          do: fail
-        - else:
-            do: continue
+      url: "{{ test_url }}"
+      spec:
+        policy:
+          rules:
+            - when: "{{ outcome.http.status in [500, 502, 503] }}"
+              then: { do: retry, attempts: 3, delay: 0.5, backoff: exponential }
+            - when: "{{ outcome.status == 'error' }}"
+              then: { do: fail }
+            - else:
+                then: { do: continue }
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: End workflow

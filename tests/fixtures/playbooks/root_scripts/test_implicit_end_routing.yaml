@@ -5,36 +5,33 @@ metadata:
   path: test/test_implicit_end_routing
 
 workflow:
-- step: start
-  desc: Start workflow - router only
-  tool:
-    kind: python
-    auth: {}
-    libs: {}
-    args: {}
-    code: |
-      result = {"status": "started"}
-  next:
-    - step: step1
+  - step: start
+    desc: Start workflow - router only
+    tool:
+      kind: python
+      args: {}
+      code: |
+        result = {"status": "started"}
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: step1
 
-- step: step1
-  desc: Execute step1 - NO next field, should implicitly route to end
-  tool:
-    kind: python
-    auth: {}
-    libs: {}
-    args: {}
-    code: |
-      result = {"status": "step1_complete"}
+  - step: step1
+    desc: Execute step1 - NO next field, should implicitly route to end
+    tool:
+      kind: python
+      args: {}
+      code: |
+        result = {"status": "step1_complete"}
 
-# Note: step1 has NO next: field, so it should automatically route to 'end'
+  # Note: step1 has NO next: field, so it should automatically route to 'end'
 
-- step: end
-  desc: End step - aggregates all workflow results
-  tool:
-    kind: python
-    auth: {}
-    libs: {}
-    args: {}
-    code: |
-      result = {"status": "workflow_complete"}
+  - step: end
+    desc: End step - aggregates all workflow results
+    tool:
+      kind: python
+      args: {}
+      code: |
+        result = {"status": "workflow_complete"}

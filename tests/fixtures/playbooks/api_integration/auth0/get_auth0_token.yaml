@@ -1,4 +1,4 @@
-apiVersion: noetl.io/v2
+apiVersion: noetl.io/v10
 kind: Playbook
 metadata:
   name: get_auth0_token
@@ -23,7 +23,7 @@ metadata:
     - authentication
     - token
 
-workload:
+ctx:
   username: "{{ username }}"
   password: "{{ password }}"
   auth0_domain: "{{ auth0_domain | default('mestumre-development.us.auth0.com') }}"
@@ -35,49 +35,51 @@ keychain:
   - name: auth0_credentials
     kind: credential
     scope: global
-    credential: "{{ workload.auth0_credential }}"
+    credential: "{{ ctx.auth0_credential }}"
 
 workflow:
   - step: start
     desc: Begin token acquisition
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args: {}
       code: |
         result = {"status": "initialized"}
     next:
-      - step: get_token
+      spec:
+        mode: exclusive
+      arcs:
+        - step: get_token
 
   - step: get_token
     desc: Get access token from Auth0
     tool:
       kind: http
       method: POST
-      endpoint: "https://{{ workload.auth0_domain }}/oauth/token"
+      endpoint: "https://{{ ctx.auth0_domain }}/oauth/token"
       headers:
         Content-Type: "application/json"
       payload:
         grant_type: "password"
-        username: "{{ workload.username }}"
-        password: "{{ workload.password }}"
-        audience: "{{ workload.audience }}"
-        client_id: "{{ workload.client_id }}"
+        username: "{{ ctx.username }}"
+        password: "{{ ctx.password }}"
+        audience: "{{ ctx.audience }}"
+        client_id: "{{ ctx.client_id }}"
         client_secret: "{{ keychain.auth0_credentials.client_secret }}"
         scope: "openid profile email"
     next:
-      - step: success
-        when: "{{ response.status_code == 200 }}"
-      - step: error
-        when: "{{ response.status_code != 200 }}"
+      spec:
+        mode: exclusive
+      arcs:
+        - step: success
+          when: "{{ response.status_code == 200 }}"
+        - step: error
+          when: "{{ response.status_code != 200 }}"
 
   - step: success
     desc: Return token
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args:
         access_token: "{{ get_token.data.access_token }}"
         token_type: "{{ get_token.data.token_type }}"
@@ -91,14 +93,15 @@ workflow:
             "expires_in": expires_in
         }
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: error
     desc: Token acquisition failed
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args:
         status: "{{ get_token.status_code }}"
         error: "{{ get_token.data }}"
@@ -110,14 +113,15 @@ workflow:
             "error": error
         }
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: Complete
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args: {}
       code: |
         result = {"status": "complete"}

@@ -40,7 +40,10 @@ workflow:
           docker system df
           echo ""
     next:
-      - step: prune_containers
+      spec:
+        mode: exclusive
+      arcs:
+        - step: prune_containers
 
   - step: prune_containers
     desc: Remove stopped containers
@@ -52,7 +55,10 @@ workflow:
           docker container prune -f
           echo ""
     next:
-      - step: prune_images
+      spec:
+        mode: exclusive
+      arcs:
+        - step: prune_images
 
   - step: prune_images
     desc: Remove unused images
@@ -61,7 +67,7 @@ workflow:
       cmds:
         - |
           echo "Removing unused images..."
-          if [ "{{ workload.all_images }}" = "true" ]; then
+          if [ "{{ all_images }}" = "true" ]; then
             echo "Removing all unused images (not just dangling)"
             docker image prune -a -f
           else
@@ -70,7 +76,10 @@ workflow:
           fi
           echo ""
     next:
-      - step: prune_build_cache
+      spec:
+        mode: exclusive
+      arcs:
+        - step: prune_build_cache
 
   - step: prune_build_cache
     desc: Remove build cache
@@ -82,7 +91,10 @@ workflow:
           docker builder prune -a -f
           echo ""
     next:
-      - step: prune_volumes_optional
+      spec:
+        mode: exclusive
+      arcs:
+        - step: prune_volumes_optional
 
   - step: prune_volumes_optional
     desc: Optionally remove unused volumes
@@ -90,7 +102,7 @@ workflow:
       kind: shell
       cmds:
         - |
-          if [ "{{ workload.prune_volumes }}" = "true" ]; then
+          if [ "{{ prune_volumes }}" = "true" ]; then
             echo "WARNING: Removing unused volumes..."
             docker volume prune -f
           else
@@ -98,7 +110,10 @@ workflow:
           fi
           echo ""
     next:
-      - step: summary
+      spec:
+        mode: exclusive
+      arcs:
+        - step: summary
 
   - step: summary
     desc: Show cleanup results
@@ -114,7 +129,10 @@ workflow:
           docker system df
           echo ""
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: Complete

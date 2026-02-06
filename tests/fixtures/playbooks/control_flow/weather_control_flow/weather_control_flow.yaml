@@ -1,4 +1,4 @@
-apiVersion: noetl.io/v2
+apiVersion: noetl.io/v10
 kind: Playbook
 metadata:
   name: weather_control_flow
@@ -17,70 +17,73 @@ workflow:
     desc: "Start weather control flow workflow"
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args: {}
       code: |
         result = {"status": "initialized"}
     next:
-      - step: fetch_weather
-        when: "{{ spec.state == 'ready' }}"
-      - step: end
-        when: "{{ spec.state != 'ready' }}"
+      spec:
+        mode: exclusive
+      arcs:
+        - step: fetch_weather
+          when: "{{ spec.state == 'ready' }}"
+        - step: end
+          when: "{{ spec.state != 'ready' }}"
 
   - step: fetch_weather
     desc: "Fetch weather data for the city"
     tool:
       kind: python
-      auth: {}
       libs:
         httpx: httpx
       args: {}
       code: "threshold = 20\ncity_dict = {\"name\": \"New York\", \"lat\": 40.71, \"lon\": -74.01}\nurl = f\"https://api.open-meteo.com/v1/forecast\"\nparams = {\n    \"latitude\": city_dict[\"lat\"],\n    \"longitude\": city_dict[\"lon\"],\n    \"hourly\": \"temperature_2m\",\n    \"forecast_days\": 1\n}\n\nresponse = httpx.get(url, params=params)\nforecast_data = response.json()\n\n# Extract max temperature from forecast\ntemperatures = forecast_data.get('hourly', {}).get('temperature_2m', [])\nmax_temp = max(temperatures) if temperatures else 15\n\nresult = {\n    'city': city_dict,\n    'max_temp': max_temp,\n    'alert': max_temp > threshold\n}"
     next:
-      - step: report_warm
-        when: "{{ fetch_weather.max_temp > spec.temperature_threshold }}"
-        args:
-          city: "{{ fetch_weather.city }}"
-          temperature: "{{ fetch_weather.max_temp }}"
-      - step: report_cold
-        when: "{{ fetch_weather.max_temp <= spec.temperature_threshold }}"
-        args:
-          city: "{{ fetch_weather.city }}"
-          temperature: "{{ fetch_weather.max_temp }}"
+      spec:
+        mode: exclusive
+      arcs:
+        - step: report_warm
+          when: "{{ fetch_weather.max_temp > spec.temperature_threshold }}"
+          args:
+            city: "{{ fetch_weather.city }}"
+            temperature: "{{ fetch_weather.max_temp }}"
+        - step: report_cold
+          when: "{{ fetch_weather.max_temp <= spec.temperature_threshold }}"
+          args:
+            city: "{{ fetch_weather.city }}"
+            temperature: "{{ fetch_weather.max_temp }}"
 
   - step: report_warm
     desc: "Report warm weather"
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args:
         city: "{{ city }}"
         temperature: "{{ temperature }}"
       code: "city_name = city[\"name\"] if isinstance(city, dict) else str(city)\nprint(f\"It's warm in {city_name} ({temperature}°C)\")\nresult = {\"status\": \"warm\", \"city\": city_name, \"temperature\": temperature}"
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: report_cold
     desc: "Report cold weather"
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args:
         city: "{{ city }}"
         temperature: "{{ temperature }}"
       code: "city_name = city[\"name\"] if isinstance(city, dict) else str(city)\nprint(f\"It's cold in {city_name} ({temperature}°C)\")\nresult = {\"status\": \"cold\", \"city\": city_name, \"temperature\": temperature}"
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: "End of weather control flow workflow"
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args: {}
       code: |
         result = {"status": "complete"}

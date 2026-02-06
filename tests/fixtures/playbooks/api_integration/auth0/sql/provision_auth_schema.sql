@@ -352,28 +352,28 @@ ON CONFLICT DO NOTHING;
 
 -- Grant admin full playbook access
 INSERT INTO auth.playbook_permissions (role_id, playbook_path, can_execute, can_view, can_modify, allow_pattern)
-SELECT role_id, '*', true, true, true, '*'
+SELECT role_id, '%', true, true, true, '%'
 FROM auth.roles
 WHERE role_name = 'admin'
 ON CONFLICT DO NOTHING;
 
 -- Grant developer access to non-system playbooks
 INSERT INTO auth.playbook_permissions (role_id, playbook_path, can_execute, can_view, can_modify, allow_pattern, deny_pattern)
-SELECT role_id, '*', true, true, true, '*', 'system/*'
+SELECT role_id, '%', true, true, true, '%', 'system/%'
 FROM auth.roles
 WHERE role_name = 'developer'
 ON CONFLICT DO NOTHING;
 
 -- Grant analyst execute access
 INSERT INTO auth.playbook_permissions (role_id, playbook_path, can_execute, can_view, can_modify, allow_pattern)
-SELECT role_id, '*', true, true, false, 'data/*'
+SELECT role_id, '%', true, true, false, 'data/%'
 FROM auth.roles
 WHERE role_name = 'analyst'
 ON CONFLICT DO NOTHING;
 
 -- Grant viewer read-only access
 INSERT INTO auth.playbook_permissions (role_id, playbook_path, can_execute, can_view, can_modify, allow_pattern)
-SELECT role_id, '*', false, true, false, '*'
+SELECT role_id, '%', false, true, false, '%'
 FROM auth.roles
 WHERE role_name = 'viewer'
 ON CONFLICT DO NOTHING;

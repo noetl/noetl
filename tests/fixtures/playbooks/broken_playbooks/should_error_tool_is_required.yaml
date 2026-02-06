@@ -13,26 +13,29 @@ workflow:
     desc: Start data transfer pipeline
     tool:
       kind: python
-      auth: {}
-      libs: {}
-      args: {}
       code: |
         result = {"status": "initialized"}
     next:
-      - step: insert_report
+      spec:
+        mode: exclusive
+      arcs:
+        - step: insert_report
 
   - step: insert_report
     desc: Create PostgreSQL target table
     tool:
       kind: postgres
-      auth: "{{ workload.pg_auth }}"
+      auth: "{{ pg_auth }}"
     command: |
-      INSERT INTO {{ workload.pg_schema }}.reports (id, created_at)
+      INSERT INTO {{ pg_schema }}.reports (id, created_at)
         VALUES (gen_random_uuid(), NOW())
         RETURNING id;
 
     next:
-      -step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
   - step: end
     desc: End data transfer test pipeline
 

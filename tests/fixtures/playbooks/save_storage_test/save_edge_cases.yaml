@@ -1,4 +1,4 @@
-apiVersion: noetl.io/v2
+apiVersion: noetl.io/v10
 kind: Playbook
 metadata:
   name: save_edge_cases
@@ -19,7 +19,7 @@ workflow:
     desc: "Create test tables for edge cases"
     tool:
       kind: postgres
-      auth: "{{ workload.pg_auth }}"
+      auth: "{{ pg_auth }}"
       command: |
         -- Create table for mixed data types test
         CREATE TABLE IF NOT EXISTS test_mixed_types (
@@ -46,7 +46,10 @@ workflow:
           json_string TEXT
         );
     next:
-      - step: test_mixed_types
+      spec:
+        mode: exclusive
+      arcs:
+        - step: test_mixed_types
 
   # Test mixed data types
   - step: test_mixed_types
@@ -54,7 +57,6 @@ workflow:
     tool:
       - generate_mixed:
           kind: python
-          auth: {}
           libs:
             datetime:
               from: datetime
@@ -80,7 +82,7 @@ workflow:
             result = mixed_data
       - save_mixed_types:
           kind: postgres
-          auth: "{{ workload.pg_auth }}"
+          auth: "{{ pg_auth }}"
           command: |
             INSERT INTO test_mixed_types (
               execution_id, string_field, integer_field, float_field,
@@ -99,7 +101,10 @@ workflow:
               {{ generate_mixed.decimal_field }}
             )
     next:
-      - step: test_special_characters
+      spec:
+        mode: exclusive
+      arcs:
+        - step: test_special_characters
 
   # Test special characters and unicode
   - step: test_special_characters
@@ -107,8 +112,6 @@ workflow:
     tool:
       - generate_special:
           kind: python
-          auth: {}
-          libs: {}
           args:
             input_data: "{{ test_mixed_types }}"
           code: |
@@ -124,7 +127,7 @@ workflow:
             result = special_data
       - save_special_chars:
           kind: postgres
-          auth: "{{ workload.pg_auth }}"
+          auth: "{{ pg_auth }}"
           command: |
             INSERT INTO test_special_chars (execution_id, quotes, unicode, sql_injection, newlines, backslashes, json_string)
             VALUES (
@@ -137,15 +140,16 @@ workflow:
               '{{ generate_special.json_string | replace("'", "''") }}'
             )
     next:
-      - step: test_empty_data
+      spec:
+        mode: exclusive
+      arcs:
+        - step: test_empty_data
 
   # Test empty and null data scenarios
   - step: test_empty_data
     desc: "Test save with empty and null data"
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args:
         input_data: "{{ test_special_characters }}"
       code: |
@@ -160,7 +164,10 @@ workflow:
 
         result = empty_scenarios
     next:
-      - step: test_large_payload
+      spec:
+        mode: exclusive
+      arcs:
+        - step: test_large_payload
 
   # Test large payload handling
   - step: test_large_payload
@@ -168,8 +175,6 @@ workflow:
     tool:
       - generate_large:
           kind: python
-          auth: {}
-          libs: {}
           args:
             input_data: "{{ test_empty_data }}"
           code: |
@@ -211,16 +216,16 @@ workflow:
             -- Query results
             SELECT * FROM test_large_payload WHERE execution_id = '{{ execution_id }}';
     next:
-      - step: test_error_recovery
+      spec:
+        mode: exclusive
+      arcs:
+        - step: test_error_recovery
 
   # Test error recovery scenarios
   - step: test_error_recovery
     desc: "Test save error handling and recovery"
     tool:
       kind: python
-      auth: {}
-      libs: {}
-      args: {}
       code: |
         # Data that might cause issues but should be handled gracefully
         potentially_problematic = {
@@ -231,16 +236,16 @@ workflow:
 
         result = potentially_problematic
     next:
-      - step: test_completion_summary
+      spec:
+        mode: exclusive
+      arcs:
+        - step: test_completion_summary
 
   # Final summary
   - step: test_completion_summary
     desc: "Summarize edge case testing results"
     tool:
       kind: python
-      auth: {}
-      libs: {}
-      args: {}
       code: |
         summary = {
             "edge_case_tests_completed": [
@@ -261,15 +266,15 @@ workflow:
 
         result = summary
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   # End
   - step: end
     desc: "Edge case testing completed"
     tool:
       kind: python
-      auth: {}
-      libs: {}
-      args: {}
       code: |
         result = {"status": "complete"}

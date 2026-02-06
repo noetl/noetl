@@ -38,8 +38,8 @@ workflow:
       - generate_inline:
           kind: python
           args:
-            count: "{{ workload.inline_items }}"
-            size: "{{ workload.inline_item_size }}"
+            count: "{{ inline_items }}"
+            size: "{{ inline_item_size }}"
           code: |
             items = [{"id": i, "data": "x" * size} for i in range(count)]
             result = {
@@ -56,7 +56,10 @@ workflow:
         - count
         - total_bytes
     next:
-      - step: test_nats_kv
+      spec:
+        mode: exclusive
+      arcs:
+        - step: test_nats_kv
 
   # ============================================================
   # Step 2: Test NATS KV storage (64KB - 1MB)
@@ -66,8 +69,8 @@ workflow:
       - generate_kv:
           kind: python
           args:
-            count: "{{ workload.kv_items }}"
-            size: "{{ workload.kv_item_size }}"
+            count: "{{ kv_items }}"
+            size: "{{ kv_item_size }}"
           code: |
             items = [{"id": i, "data": "K" * size, "active": True} for i in range(count)]
             result = {
@@ -84,7 +87,10 @@ workflow:
         - count
         - total_bytes
     next:
-      - step: test_nats_object
+      spec:
+        mode: exclusive
+      arcs:
+        - step: test_nats_object
 
   # ============================================================
   # Step 3: Test NATS Object Store (1MB - 10MB)
@@ -94,8 +100,8 @@ workflow:
       - generate_object:
           kind: python
           args:
-            count: "{{ workload.object_items }}"
-            size: "{{ workload.object_item_size }}"
+            count: "{{ object_items }}"
+            size: "{{ object_item_size }}"
           code: |
             items = [{"id": i, "data": "O" * size, "active": True} for i in range(count)]
             result = {
@@ -112,7 +118,10 @@ workflow:
         - count
         - total_bytes
     next:
-      - step: test_large_storage
+      spec:
+        mode: exclusive
+      arcs:
+        - step: test_large_storage
 
   # ============================================================
   # Step 4: Test large storage (>10MB - S3/GCS or Object fallback)
@@ -122,8 +131,8 @@ workflow:
       - generate_large:
           kind: python
           args:
-            count: "{{ workload.large_items }}"
-            size: "{{ workload.large_item_size }}"
+            count: "{{ large_items }}"
+            size: "{{ large_item_size }}"
           code: |
             items = [{"id": i, "data": "L" * size, "active": True} for i in range(count)]
             result = {
@@ -140,7 +149,10 @@ workflow:
         - count
         - total_bytes
     next:
-      - step: verify_storage_tiers
+      spec:
+        mode: exclusive
+      arcs:
+        - step: verify_storage_tiers
 
   # ============================================================
   # Step 5: Verify each tier was used correctly
@@ -221,7 +233,10 @@ workflow:
                 }
             }
     next:
-      - step: load_kv_data
+      spec:
+        mode: exclusive
+      arcs:
+        - step: load_kv_data
 
   # ============================================================
   # Step 6: Test lazy loading from each externalized tier
@@ -234,7 +249,10 @@ workflow:
           args:
             result_ref: "{{ test_nats_kv._ref }}"
     next:
-      - step: load_object_data
+      spec:
+        mode: exclusive
+      arcs:
+        - step: load_object_data
 
   - step: load_object_data
     tool:
@@ -244,7 +262,10 @@ workflow:
           args:
             result_ref: "{{ test_nats_object._ref }}"
     next:
-      - step: load_large_data
+      spec:
+        mode: exclusive
+      arcs:
+        - step: load_large_data
 
   - step: load_large_data
     tool:
@@ -254,7 +275,10 @@ workflow:
           args:
             result_ref: "{{ test_large_storage._ref }}"
     next:
-      - step: final_summary
+      spec:
+        mode: exclusive
+      arcs:
+        - step: final_summary
 
   # ============================================================
   # Step 7: Final summary with load verification

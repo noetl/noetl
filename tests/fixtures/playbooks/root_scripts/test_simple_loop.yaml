@@ -23,14 +23,17 @@ workflow:
       code: |
         result = {"status": "started"}
     next:
-      - step: loop_test
+      spec:
+        mode: exclusive
+      arcs:
+        - step: loop_test
 
   - step: loop_test
     desc: Loop over numbers and print
     loop:
       spec:
         mode: sequential
-      in: "{{ workload.numbers }}"
+      in: "{{ numbers }}"
       iterator: num
     tool:
       kind: python
@@ -44,7 +47,10 @@ workflow:
             "doubled": num["value"] * 2
         }
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: End workflow

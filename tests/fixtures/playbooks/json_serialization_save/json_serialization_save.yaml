@@ -16,13 +16,16 @@ workflow:
       code: |
         result = {"status": "initialized"}
     next:
-      - step: create_test_table
+      spec:
+        mode: exclusive
+      arcs:
+        - step: create_test_table
 
   - step: create_test_table
     desc: Create test table with JSONB column
     tool:
       kind: postgres
-      auth: "{{ workload.pg_auth }}"
+      auth: "{{ pg_auth }}"
       command: |
         DROP TABLE IF EXISTS public.json_bug_test;
         CREATE TABLE public.json_bug_test (
@@ -30,7 +33,10 @@ workflow:
           payload JSONB
         );
     next:
-      - step: save_dict_to_jsonb
+      spec:
+        mode: exclusive
+      arcs:
+        - step: save_dict_to_jsonb
 
   - step: save_dict_to_jsonb
     desc: Save a Python dict to JSONB column (triggers bug)
@@ -52,36 +58,49 @@ workflow:
                     "array_field": [1, 2, 3, 4, 5]
                 }
             }
-          eval:
-            - else:
-                do: continue
-                set_vars:
-                  json_data: "{{ outcome.result.data }}"
+          spec:
+            policy:
+              rules:
+                - when: true
+                  then:
+                    do: continue
+                    set_ctx:
+                      json_data: "{{ outcome.result.data }}"
 
       - save_json:
           kind: postgres
-          auth: "{{ workload.pg_auth }}"
+          auth: "{{ pg_auth }}"
           command: |
             INSERT INTO public.json_bug_test (id, payload)
-            VALUES (1, '{{ vars.json_data | tojson | replace("'", "''") }}'::jsonb)
-          eval:
-            - expr: "{{ outcome.status == 'error' }}"
-              do: fail
-            - else:
-                do: continue
+            VALUES (1, '{{ ctx.json_data | tojson | replace("'", "''") }}'::jsonb)
+          spec:
+            policy:
+              rules:
+                - when: "{{ outcome.status == 'error' }}"
+                  then:
+                    do: fail
+                - when: true
+                  then:
+                    do: continue
 
     next:
-      - step: verify_save
+      spec:
+        mode: exclusive
+      arcs:
+        - step: verify_save
 
   - step: verify_save
     desc: Verify the saved data
     tool:
       kind: postgres
-      auth: "{{ workload.pg_auth }}"
+      auth: "{{ pg_auth }}"
       command: |
         SELECT id, payload FROM public.json_bug_test WHERE id = 1;
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: Finish workflow

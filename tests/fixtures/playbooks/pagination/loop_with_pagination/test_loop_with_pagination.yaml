@@ -1,4 +1,4 @@
-apiVersion: noetl.io/v2
+apiVersion: noetl.io/v10
 kind: Playbook
 metadata:
   name: test_loop_with_pagination
@@ -19,7 +19,7 @@ workload:
       path: /api/v1/assessments
       page_size: 30
 
-vars:
+ctx:
   current_endpoint_index: 0
   current_page: 1
   current_endpoint: null
@@ -47,15 +47,18 @@ workflow:
         DELETE FROM pagination_test_results WHERE execution_id = {{ execution_id }};
         SELECT 'Table ready' as status;
     next:
-      - step: init_endpoint_loop
+      spec:
+        mode: exclusive
+      arcs:
+        - step: init_endpoint_loop
 
   - step: init_endpoint_loop
     desc: Initialize endpoint loop
     tool:
       kind: python
       args:
-        endpoints: "{{ workload.endpoints }}"
-        endpoint_index: "{{ vars.current_endpoint_index }}"
+        endpoints: "{{ endpoints }}"
+        endpoint_index: "{{ ctx.current_endpoint_index }}"
       code: |
         if endpoint_index < len(endpoints):
             current = endpoints[endpoint_index]
@@ -70,14 +73,17 @@ workflow:
                 'endpoint': None,
                 'index': endpoint_index
             }
-    vars:
+    set_ctx:
       current_endpoint: "{{ init_endpoint_loop.endpoint }}"
       current_page: 1
     next:
-      - step: fetch_page
-        when: "{{ init_endpoint_loop.has_more_endpoints == true }}"
-      - step: validate_results
-        when: "{{ init_endpoint_loop.has_more_endpoints != true }}"
+      spec:
+        mode: exclusive
+      arcs:
+        - step: fetch_page
+          when: "{{ init_endpoint_loop.has_more_endpoints == true }}"
+        - step: validate_results
+          when: "{{ init_endpoint_loop.has_more_endpoints != true }}"
 
   - step: fetch_page
     desc: Fetch a page from current endpoint and persist to Postgres
@@ -85,18 +91,25 @@ workflow:
       - fetch:
           kind: http
           method: GET
-          url: "{{ workload.api_url }}{{ vars.current_endpoint.path }}"
+          url: "{{ api_url }}{{ ctx.current_endpoint.path }}"
           params:
-            page: "{{ vars.current_page }}"
-            pageSize: "{{ vars.current_endpoint.page_size }}"
-          eval:
-            - expr: "{{ outcome.error.retryable }}"
-              do: retry
-              attempts: 3
-              backoff: linear
-              delay: 1.0
-            - expr: "{{ outcome.status == 'error' }}"
-              do: fail
+            page: "{{ ctx.current_page }}"
+            pageSize: "{{ ctx.current_endpoint.page_size }}"
+          spec:
+            policy:
+              rules:
+                - when: "{{ outcome.error.retryable }}"
+                  then:
+                    do: retry
+                    attempts: 3
+                    backoff: linear
+                    delay: 1.0
+                - when: "{{ outcome.status == 'error' }}"
+                  then:
+                    do: fail
+                - else:
+                    then:
+                      do: continue
 
       - save_page:
           kind: postgres
@@ -107,21 +120,28 @@ workflow:
             INSERT INTO pagination_test_results (execution_id, endpoint_name, iteration_index, page_number, items, items_count, has_more)
             VALUES (
               {{ execution_id }},
-              '{{ vars.current_endpoint.name }}',
-              {{ vars.current_endpoint_index }},
+              '{{ ctx.current_endpoint.name }}',
+              {{ ctx.current_endpoint_index }},
               {{ _prev.data.paging.page }},
               '{{ _prev.data.data | tojson | replace("'", "''") }}'::jsonb,
               {{ _prev.data.data | length }},
               {{ _prev.data.paging.hasMore | lower }}
             );
-          eval:
-            - expr: "{{ outcome.error.retryable }}"
-              do: retry
-              attempts: 3
-              backoff: linear
-              delay: 1.0
-            - expr: "{{ outcome.status == 'error' }}"
-              do: fail
+          spec:
+            policy:
+              rules:
+                - when: "{{ outcome.error.retryable }}"
+                  then:
+                    do: retry
+                    attempts: 3
+                    backoff: linear
+                    delay: 1.0
+                - when: "{{ outcome.status == 'error' }}"
+                  then:
+                    do: fail
+                - else:
+                    then:
+                      do: continue
 
       - check_pagination:
           kind: python
@@ -133,13 +153,16 @@ workflow:
                 'has_more': paging.get('hasMore', False),
                 'current_page': paging.get('page', 1)
             }
-    vars:
-      current_page: "{{ (vars.current_page | int) + 1 }}"
+    set_ctx:
+      current_page: "{{ (ctx.current_page | int) + 1 }}"
     next:
-      - step: fetch_page
-        when: "{{ fetch_page.has_more == true }}"
-      - step: next_endpoint
-        when: "{{ fetch_page.has_more != true }}"
+      spec:
+        mode: exclusive
+      arcs:
+        - step: fetch_page
+          when: "{{ fetch_page.has_more == true }}"
+        - step: next_endpoint
+          when: "{{ fetch_page.has_more != true }}"
 
   - step: next_endpoint
     desc: Move to next endpoint in the loop
@@ -147,10 +170,13 @@ workflow:
       kind: python
       code: |
         result = {"status": "moving_to_next_endpoint"}
-    vars:
-      current_endpoint_index: "{{ (vars.current_endpoint_index | int) + 1 }}"
+    set_ctx:
+      current_endpoint_index: "{{ (ctx.current_endpoint_index | int) + 1 }}"
     next:
-      - step: init_endpoint_loop
+      spec:
+        mode: exclusive
+      arcs:
+        - step: init_endpoint_loop
 
   - step: validate_results
     desc: Validate loop + pagination results from Postgres table
@@ -173,7 +199,10 @@ workflow:
         GROUP BY endpoint_name, iteration_index
         ORDER BY iteration_index
     next:
-      - step: check_results
+      spec:
+        mode: exclusive
+      arcs:
+        - step: check_results
 
   - step: check_results
     desc: Verify data was stored correctly
@@ -254,7 +283,10 @@ workflow:
 
         result = validation
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: cleanup
     desc: Clean up test data from Postgres
@@ -267,7 +299,10 @@ workflow:
         DELETE FROM pagination_test_results WHERE execution_id = {{ execution_id }};
         SELECT 'Cleaned up test data' as message;
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: Test complete

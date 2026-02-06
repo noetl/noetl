@@ -26,24 +26,24 @@ keychain:
     kind: google_id_token
     scope: global
     auto_renew: true
-    auth: "{{ workload.gcp_auth }}"
-    service_account_secret: "{{ workload.service_account_secret_path }}"
-    target_audience: "{{ workload.target_service_url }}"
-  
+    auth: "{{ gcp_auth }}"
+    service_account_secret: "{{ service_account_secret_path }}"
+    target_audience: "{{ target_service_url }}"
+
   # Mode 2: Service account from credential table (simpler!)
   - name: id_token_from_credential
     kind: google_id_token
     scope: global
     auto_renew: true
-    service_account_credential: "{{ workload.service_account_credential_name }}"
-    target_audience: "{{ workload.target_service_url }}"
+    service_account_credential: "{{ service_account_credential_name }}"
+    target_audience: "{{ target_service_url }}"
 
 workflow:
   - step: start
     desc: Initialize comparison test
     tool:
       kind: postgres
-      auth: "{{ workload.pg_auth }}"
+      auth: "{{ pg_auth }}"
       command: |
         CREATE TABLE IF NOT EXISTS google_id_token_comparison_results (
           id SERIAL PRIMARY KEY,
@@ -53,7 +53,7 @@ workflow:
           result JSONB,
           created_at TIMESTAMP DEFAULT NOW()
         );
-        
+
         INSERT INTO google_id_token_comparison_results (execution_id, test_mode, test_step, result)
         VALUES (
           '{{ job.uuid }}',
@@ -62,13 +62,16 @@ workflow:
           '{"status": "initialized", "message": "Testing both Secret Manager and Credential table modes"}'::jsonb
         );
     next:
-      - step: test_secret_manager_mode
+      spec:
+        mode: exclusive
+      arcs:
+        - step: test_secret_manager_mode
 
   - step: test_secret_manager_mode
     desc: Test API call using token from Secret Manager
     tool:
       kind: http
-      url: "{{ workload.target_service_url }}{{ workload.test_endpoint }}"
+      url: "{{ target_service_url }}{{ test_endpoint }}"
       method: GET
       params:
         facId: 12
@@ -79,16 +82,19 @@ workflow:
         page: 1
       headers:
         Authorization: "Bearer {{ keychain.id_token_from_secret_manager.id_token }}"
-        x-customer-code: "{{ workload.customer_code }}"
+        x-customer-code: "{{ customer_code }}"
         Accept: "application/json"
     next:
-      - step: store_secret_manager_result
+      spec:
+        mode: exclusive
+      arcs:
+        - step: store_secret_manager_result
 
   - step: store_secret_manager_result
     desc: Store Secret Manager mode result
     tool:
       kind: postgres
-      auth: "{{ workload.pg_auth }}"
+      auth: "{{ pg_auth }}"
       command: |
         INSERT INTO google_id_token_comparison_results (execution_id, test_mode, test_step, result)
         VALUES (
@@ -103,13 +109,16 @@ workflow:
           } | tojson }}$$::jsonb
         );
     next:
-      - step: test_credential_table_mode
+      spec:
+        mode: exclusive
+      arcs:
+        - step: test_credential_table_mode
 
   - step: test_credential_table_mode
     desc: Test API call using token from credential table
     tool:
       kind: http
-      url: "{{ workload.target_service_url }}{{ workload.test_endpoint }}"
+      url: "{{ target_service_url }}{{ test_endpoint }}"
       method: GET
       params:
         facId: 12
@@ -120,16 +129,19 @@ workflow:
         page: 1
       headers:
         Authorization: "Bearer {{ keychain.id_token_from_credential.id_token }}"
-        x-customer-code: "{{ workload.customer_code }}"
+        x-customer-code: "{{ customer_code }}"
         Accept: "application/json"
     next:
-      - step: store_credential_table_result
+      spec:
+        mode: exclusive
+      arcs:
+        - step: store_credential_table_result
 
   - step: store_credential_table_result
     desc: Store credential table mode result
     tool:
       kind: postgres
-      auth: "{{ workload.pg_auth }}"
+      auth: "{{ pg_auth }}"
       command: |
         INSERT INTO google_id_token_comparison_results (execution_id, test_mode, test_step, result)
         VALUES (
@@ -144,7 +156,10 @@ workflow:
           } | tojson }}$$::jsonb
         );
     next:
-      - step: compare_results
+      spec:
+        mode: exclusive
+      arcs:
+        - step: compare_results
 
   - step: compare_results
     desc: Compare both modes and verify they work identically
@@ -155,7 +170,7 @@ workflow:
         cred_status: "{{ test_credential_table_mode.status_code }}"
       code: |
         both_successful = (sm_status == 200) and (cred_status == 200)
-        
+
         result = {
             "status": "success" if both_successful else "partial_success",
             "message": "Both modes work identically" if both_successful else "Check individual results",
@@ -170,13 +185,16 @@ workflow:
             "recommendation": "Use credential_table mode - simpler setup, no Secret Manager needed" if both_successful else "Debug individual modes"
         }
     next:
-      - step: store_comparison_result
+      spec:
+        mode: exclusive
+      arcs:
+        - step: store_comparison_result
 
   - step: store_comparison_result
     desc: Store final comparison result
     tool:
       kind: postgres
-      auth: "{{ workload.pg_auth }}"
+      auth: "{{ pg_auth }}"
       command: |
         INSERT INTO google_id_token_comparison_results (execution_id, test_mode, test_step, result)
         VALUES (
@@ -186,7 +204,10 @@ workflow:
           $${{ compare_results | tojson }}$$::jsonb
         );
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: Complete comparison test

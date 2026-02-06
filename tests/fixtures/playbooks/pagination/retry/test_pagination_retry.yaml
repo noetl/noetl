@@ -1,4 +1,4 @@
-apiVersion: noetl.io/v2
+apiVersion: noetl.io/v10
 kind: Playbook
 metadata:
   name: test_pagination_retry
@@ -8,7 +8,7 @@ metadata:
 workload:
   api_url: "http://paginated-api.test-server.svc.cluster.local:5555"
 
-vars:
+ctx:
   current_page: 1
   page_size: 10
   collected_data: []
@@ -21,37 +21,48 @@ workflow:
       code: |
         result = {"status": "initialized"}
     next:
-      - step: fetch_with_retry
+      spec:
+        mode: exclusive
+      arcs:
+        - step: fetch_with_retry
 
   - step: fetch_with_retry
     desc: Pagination with automatic retry on page 2
     tool:
       - fetch:
           kind: http
-          url: "{{ workload.api_url }}/api/v1/flaky"
+          url: "{{ api_url }}/api/v1/flaky"
           method: GET
           params:
-            page: "{{ vars.current_page }}"
+            page: "{{ ctx.current_page }}"
             fail_on: "2"
-          eval:
-            - expr: "{{ outcome.error.status in [500, 502, 503] }}"
-              do: retry
-              attempts: 3
-              backoff: exponential
-              delay: 0.5
-            - expr: "{{ outcome.error.retryable }}"
-              do: retry
-              attempts: 3
-              backoff: linear
-              delay: 1.0
-            - expr: "{{ outcome.status == 'error' }}"
-              do: fail
+          spec:
+            policy:
+              rules:
+                - when: "{{ outcome.error.status in [500, 502, 503] }}"
+                  then:
+                    do: retry
+                    attempts: 3
+                    backoff: exponential
+                    delay: 0.5
+                - when: "{{ outcome.error.retryable }}"
+                  then:
+                    do: retry
+                    attempts: 3
+                    backoff: linear
+                    delay: 1.0
+                - when: "{{ outcome.status == 'error' }}"
+                  then:
+                    do: fail
+                - else:
+                    then:
+                      do: continue
 
       - collect:
           kind: python
           args:
             http_response: "{{ _prev }}"
-            existing_data: "{{ vars.collected_data }}"
+            existing_data: "{{ ctx.collected_data }}"
           code: |
             response_body = http_response.get('data', {})
             items = response_body.get('data', [])
@@ -66,21 +77,24 @@ workflow:
                 'has_more': paging.get('hasMore', False),
                 'current_page': paging.get('page', 1)
             }
-    vars:
+    set_ctx:
       collected_data: "{{ fetch_with_retry.collected_data }}"
-      current_page: "{{ (vars.current_page | int) + 1 }}"
+      current_page: "{{ (ctx.current_page | int) + 1 }}"
     next:
-      - step: fetch_with_retry
-        when: "{{ fetch_with_retry.has_more == true }}"
-      - step: validate_results
-        when: "{{ fetch_with_retry.has_more != true }}"
+      spec:
+        mode: exclusive
+      arcs:
+        - step: fetch_with_retry
+          when: "{{ fetch_with_retry.has_more == true }}"
+        - step: validate_results
+          when: "{{ fetch_with_retry.has_more != true }}"
 
   - step: validate_results
     desc: Validate retry succeeded
     tool:
       kind: python
       args:
-        input_data: "{{ vars.collected_data }}"
+        input_data: "{{ ctx.collected_data }}"
       code: |
         # Check we got all items despite failures - handle server wrapping
         raw_data = input_data
@@ -107,7 +121,10 @@ workflow:
             'retry_worked': len(data) == 35
         }
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: Workflow complete

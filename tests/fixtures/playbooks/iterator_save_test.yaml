@@ -20,17 +20,19 @@ workflow:
     desc: Start test
     tool:
       kind: python
-      args: {}
       code: |
         result = {"status": "initialized"}
     next:
-      - step: create_table
+      spec:
+        mode: exclusive
+      arcs:
+        - step: create_table
 
   - step: create_table
     desc: Create test table
     tool:
       kind: postgres
-      credential: "{{ workload.pg_auth }}"
+      credential: "{{ pg_auth }}"
       query: |
         CREATE TABLE IF NOT EXISTS public.iterator_save_test (
           id TEXT PRIMARY KEY,
@@ -40,14 +42,17 @@ workflow:
           created_at TIMESTAMPTZ DEFAULT now()
         );
     next:
-      - step: process_items
+      spec:
+        mode: exclusive
+      arcs:
+        - step: process_items
 
   - step: process_items
     desc: Process items with pipeline to transform and save
     loop:
       spec:
         mode: sequential
-      in: "{{ workload.items }}"
+      in: "{{ items }}"
       iterator: item
     tool:
       - transform:
@@ -61,7 +66,7 @@ workflow:
             }
       - save_item:
           kind: postgres
-          credential: "{{ workload.pg_auth }}"
+          credential: "{{ pg_auth }}"
           query: |
             INSERT INTO public.iterator_save_test (id, execution_id, item_name, item_value)
             VALUES (
@@ -74,12 +79,14 @@ workflow:
               item_value = EXCLUDED.item_value,
               created_at = now();
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: End test
     tool:
       kind: python
-      args: {}
       code: |
         result = {"status": "complete"}

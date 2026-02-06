@@ -21,7 +21,7 @@ pub struct ExecuteRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub catalog_id: Option<i64>,
     /// Input payload/workload.
-    #[serde(default)]
+    #[serde(default, alias = "workload")]
     pub payload: HashMap<String, serde_json::Value>,
     /// Parent execution ID (for nested executions).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -256,9 +256,26 @@ async fn generate_initial_commands(
         .get_step("start")
         .ok_or_else(|| AppError::Validation("Start step 'start' not found".to_string()))?;
 
-    // Build command
+    // Build command context by merging playbook workload (defaults) with execution payload (overrides)
     let command_builder = crate::engine::commands::CommandBuilder::new();
-    let context = payload.clone();
+    let mut context = HashMap::new();
+
+    // First, add playbook workload defaults
+    if let Some(workload) = &playbook.workload {
+        if let serde_json::Value::Object(map) = workload {
+            for (k, v) in map {
+                context.insert(k.clone(), v.clone());
+            }
+        }
+    }
+
+    // Then, override with execution payload values (execution values take precedence)
+    for (k, v) in payload {
+        context.insert(k.clone(), v.clone());
+    }
+
+    // Also expose as 'workload' for {{ workload.session_token }} syntax
+    context.insert("workload".to_string(), serde_json::to_value(&context).unwrap_or_default());
 
     let command = command_builder.build_command(
         0, // Will be replaced with actual event_id

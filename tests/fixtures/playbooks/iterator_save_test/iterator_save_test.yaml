@@ -23,13 +23,16 @@ workflow:
       code: |
         result = {"status": "initialized"}
     next:
-      - step: create_table
+      spec:
+        mode: exclusive
+      arcs:
+        - step: create_table
 
   - step: create_table
     desc: Create test table
     tool:
       kind: postgres
-      auth: "{{ workload.pg_auth }}"
+      auth: "{{ pg_auth }}"
       command: |
         CREATE TABLE IF NOT EXISTS public.iterator_save_test (
           id TEXT PRIMARY KEY,
@@ -39,14 +42,17 @@ workflow:
           created_at TIMESTAMPTZ DEFAULT now()
         );
     next:
-      - step: process_items
+      spec:
+        mode: exclusive
+      arcs:
+        - step: process_items
 
   - step: process_items
     desc: Process items with sink
     loop:
       spec:
         mode: sequential
-      in: "{{ workload.items }}"
+      in: "{{ items }}"
       iterator: item
     tool:
       - process_item:
@@ -58,15 +64,18 @@ workflow:
                 'item_name': item.get('name', 'unknown'),
                 'item_value': item.get('value', 0)
             }
-          eval:
-            - else:
-                do: continue
-                set_iter:
-                  processed_item: "{{ outcome.result }}"
+          spec:
+            policy:
+              rules:
+                - when: true
+                  then:
+                    do: continue
+                    set_iter:
+                      processed_item: "{{ outcome.result }}"
 
       - save_item:
           kind: postgres
-          auth: "{{ workload.pg_auth }}"
+          auth: "{{ pg_auth }}"
           command: |
             INSERT INTO public.iterator_save_test (id, execution_id, item_name, item_value)
             VALUES (
@@ -78,14 +87,21 @@ workflow:
             ON CONFLICT (id) DO UPDATE SET
               item_value = EXCLUDED.item_value,
               created_at = now();
-          eval:
-            - expr: "{{ outcome.status == 'error' }}"
-              do: fail
-            - else:
-                do: continue
+          spec:
+            policy:
+              rules:
+                - when: "{{ outcome.status == 'error' }}"
+                  then:
+                    do: fail
+                - when: true
+                  then:
+                    do: continue
 
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: End test
