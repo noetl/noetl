@@ -8,6 +8,11 @@ description: Analysis of NoETL DSL against Van der Aalst Workflow Patterns with 
 
 This document analyzes the NoETL DSL against the canonical Workflow Patterns identified by Van der Aalst et al., comparing implementation approaches across major workflow DSLs: BPMN 2.0, Argo Workflows, GitHub Actions, and AWS Step Functions.
 
+**Note:** NoETL examples below use the **Canonical v10** form:
+- Routing uses `step.next` as a router object (`next.spec` + `next.arcs[]`)
+- Step bodies are ordered task pipelines (`step.tool` as a labeled list)
+- Cross-step state uses `ctx` (not legacy `vars`)
+
 ---
 
 ## Overview: Van der Aalst Workflow Patterns
@@ -37,7 +42,7 @@ The [Workflow Patterns Initiative](http://www.workflowpatterns.com/) established
 
 | DSL | Implementation | Example |
 |-----|----------------|---------|
-| **NoETL** | `next:` with single step | ✅ Native |
+| **NoETL** | `step.next.arcs[]` (exclusive router) | ✅ Native |
 | **BPMN** | Sequence Flow arrow | ✅ Native |
 | **Argo Workflows** | `dependencies:` array | ✅ Native |
 | **GitHub Actions** | `needs:` array | ✅ Native |
@@ -49,19 +54,42 @@ The [Workflow Patterns Initiative](http://www.workflowpatterns.com/) established
 workflow:
   - step: task_a
     tool:
-      kind: python
-      code: "result = {'value': 42}"
+      - compute:
+          kind: python
+          code: |
+            result = {"value": 42}
+          spec:
+            policy:
+              rules:
+                - else:
+                    then:
+                      do: break
+                      set_ctx:
+                        value: "{{ outcome.result.value }}"
     next:
-      - step: task_b
+      spec: { mode: exclusive }
+      arcs:
+        - step: task_b
+          when: "{{ event.name == 'step.done' }}"
 
   - step: task_b
     tool:
-      kind: python
-      args:
-        input: "{{ task_a.value }}"
-      code: "result = {'processed': input * 2}"
+      - process:
+          kind: python
+          args:
+            input: "{{ ctx.value }}"
+          code: |
+            result = {"processed": input * 2}
     next:
-      - step: end
+      spec: { mode: exclusive }
+      arcs:
+        - step: end
+          when: "{{ event.name == 'step.done' }}"
+
+  - step: end
+    tool:
+      - done:
+          kind: noop
 ```
 
 #### Cross-DSL Comparison
@@ -137,7 +165,7 @@ jobs:
 
 | DSL | Implementation | Example |
 |-----|----------------|---------|
-| **NoETL** | `next:` with multiple steps | ✅ Native |
+| **NoETL** | `next.spec.mode: inclusive` with multiple arcs | ✅ Native |
 | **BPMN** | Parallel Gateway (diamond with +) | ✅ Native |
 | **Argo Workflows** | Multiple tasks without dependencies | ✅ Native |
 | **GitHub Actions** | Multiple jobs without `needs:` | ✅ Native |
@@ -149,30 +177,53 @@ jobs:
 workflow:
   - step: start
     tool:
-      kind: python
-      code: "result = {'ready': True}"
+      - ready:
+          kind: noop
     next:
-      - step: branch_a  # All three execute in parallel
-      - step: branch_b
-      - step: branch_c
+      spec: { mode: inclusive }
+      arcs:
+        - step: branch_a  # All three execute in parallel
+          when: "{{ event.name == 'step.done' }}"
+        - step: branch_b
+          when: "{{ event.name == 'step.done' }}"
+        - step: branch_c
+          when: "{{ event.name == 'step.done' }}"
 
   - step: branch_a
-    tool: { kind: http, url: "{{ api_a }}" }
+    tool:
+      - call:
+          kind: http
+          url: "{{ workload.api_a }}"
     next:
-      - step: join_point
+      spec: { mode: exclusive }
+      arcs:
+        - step: join_point
+          when: "{{ event.name == 'step.done' }}"
 
   - step: branch_b
-    tool: { kind: http, url: "{{ api_b }}" }
+    tool:
+      - call:
+          kind: http
+          url: "{{ workload.api_b }}"
     next:
-      - step: join_point
+      spec: { mode: exclusive }
+      arcs:
+        - step: join_point
+          when: "{{ event.name == 'step.done' }}"
 
   - step: branch_c
-    tool: { kind: http, url: "{{ api_c }}" }
+    tool:
+      - call:
+          kind: http
+          url: "{{ workload.api_c }}"
     next:
-      - step: join_point
+      spec: { mode: exclusive }
+      arcs:
+        - step: join_point
+          when: "{{ event.name == 'step.done' }}"
 ```
 
-**Key insight:** NoETL's `next:` array naturally expresses AND-split without special syntax.
+**Key insight:** NoETL's `next.spec.mode: inclusive` naturally expresses AND-split without special syntax.
 
 #### Cross-DSL Comparison
 
@@ -233,7 +284,7 @@ dag:
 
 | DSL | Implementation | Complexity |
 |-----|----------------|------------|
-| **NoETL** | `case:` on `step.enter` checking `vars` | ✅ Explicit |
+| **NoETL** | Step admission gate (`step.spec.policy.admit`) checking `ctx` | ✅ Pattern-based |
 | **BPMN** | Parallel Gateway (converging) | ✅ Implicit |
 | **Argo Workflows** | `dependencies:` listing all predecessors | ✅ Implicit |
 | **GitHub Actions** | `needs: [job_a, job_b, job_c]` | ✅ Implicit |
@@ -241,52 +292,100 @@ dag:
 
 #### NoETL Implementation
 
-**Method 1: Explicit AND-Join via `case` conditions**
+**Method 1: Explicit AND-Join via step admission**
 
 ```yaml
 workflow:
   - step: start
-    tool: { kind: python, code: "result = {}" }
+    tool:
+      - ready:
+          kind: noop
     next:
-      - step: branch_a
-      - step: branch_b
+      spec: { mode: inclusive }
+      arcs:
+        - step: branch_a
+          when: "{{ event.name == 'step.done' }}"
+        - step: branch_b
+          when: "{{ event.name == 'step.done' }}"
 
   - step: branch_a
-    tool: { kind: http, url: "{{ api_a }}" }
-    vars:
-      branch_a_done: true
+    tool:
+      - call:
+          kind: http
+          url: "{{ workload.api_a }}"
+          spec:
+            policy:
+              rules:
+                - when: "{{ outcome.status == 'error' }}"
+                  then: { do: fail }
+                - else:
+                    then:
+                      do: break
+                      set_ctx: { branch_a_done: true }
     next:
-      - step: join_point
+      spec: { mode: exclusive }
+      arcs:
+        - step: join_point
+          when: "{{ event.name == 'step.done' }}"
 
   - step: branch_b
-    tool: { kind: http, url: "{{ api_b }}" }
-    vars:
-      branch_b_done: true
+    tool:
+      - call:
+          kind: http
+          url: "{{ workload.api_b }}"
+          spec:
+            policy:
+              rules:
+                - when: "{{ outcome.status == 'error' }}"
+                  then: { do: fail }
+                - else:
+                    then:
+                      do: break
+                      set_ctx: { branch_b_done: true }
     next:
-      - step: join_point
+      spec: { mode: exclusive }
+      arcs:
+        - step: join_point
+          when: "{{ event.name == 'step.done' }}"
 
   - step: join_point
-    case:
-      - when: "{{ event.name == 'step.enter' and vars.branch_a_done and vars.branch_b_done }}"
-        then:
-          next:
-            - step: after_join
-    # Step waits until all conditions met (re-evaluated on each branch completion)
+    spec:
+      policy:
+        admit:
+          rules:
+            - when: "{{ ctx.branch_a_done == true and ctx.branch_b_done == true }}"
+              then: { allow: true }
+            - else:
+                then: { allow: false }
+    tool:
+      - latch:
+          kind: noop
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: after_join
+          when: "{{ event.name == 'step.done' }}"
 ```
+
+**Note:** AND-join is **pattern-based**. In practice, runtimes typically add token dedupe/latching to ensure `join_point` runs exactly once under concurrent arrivals (for example by requiring/setting a `ctx.join_fired` latch).
 
 **Method 2: Sub-playbook (implicit synchronization)**
 
 ```yaml
 - step: parallel_work
   tool:
-    kind: playbook
-    path: "workflows/parallel_branches"
+    - run:
+        kind: playbook
+        path: "workflows/parallel_branches"
   # Blocks until sub-playbook's 'end' step completes
   next:
-    - step: after_join
+    spec: { mode: exclusive }
+    arcs:
+      - step: after_join
+        when: "{{ event.name == 'step.done' }}"
 ```
 
-**Analysis:** NoETL requires explicit `vars` tracking for AND-join within a single playbook. BPMN, Argo, and Step Functions provide implicit synchronization. This is a trade-off: explicit control vs. convenience.
+**Analysis:** NoETL requires explicit state tracking (typically via `ctx`) and admission gating for AND-join within a single playbook. BPMN, Argo, and Step Functions provide implicit synchronization. This is a trade-off: explicit control vs. convenience.
 
 #### Cross-DSL Comparison
 
@@ -335,7 +434,7 @@ jobs:
 
 | DSL | Implementation | Example |
 |-----|----------------|---------|
-| **NoETL** | `case:` with `when:` conditions (first match) | ✅ Native |
+| **NoETL** | `next.spec.mode: exclusive` with guarded arcs | ✅ Native |
 | **BPMN** | Exclusive Gateway (diamond with X) | ✅ Native |
 | **Argo Workflows** | `when:` expressions on tasks | ✅ Native |
 | **GitHub Actions** | `if:` conditions on jobs/steps | ✅ Native |
@@ -346,28 +445,36 @@ jobs:
 ```yaml
 - step: evaluate_order
   tool:
-    kind: python
-    args:
-      amount: "{{ workload.order_amount }}"
-    code: |
-      result = {
-        'priority': 'high' if amount > 10000 else 'normal',
-        'requires_approval': amount > 50000
-      }
-  case:
-    - when: "{{ result.requires_approval }}"
-      then:
-        next:
-          - step: manager_approval
-    - when: "{{ result.priority == 'high' }}"
-      then:
-        next:
-          - step: priority_processing
+    - evaluate:
+        kind: python
+        args:
+          amount: "{{ workload.order_amount }}"
+        code: |
+          result = {
+            "priority": "high" if amount > 10000 else "normal",
+            "requires_approval": amount > 50000
+          }
+        spec:
+          policy:
+            rules:
+              - else:
+                  then:
+                    do: break
+                    set_ctx:
+                      priority: "{{ outcome.result.priority }}"
+                      requires_approval: "{{ outcome.result.requires_approval }}"
   next:
-    - step: standard_processing  # Default path
+    spec: { mode: exclusive }
+    arcs:
+      - step: manager_approval
+        when: "{{ event.name == 'step.done' and ctx.requires_approval == true }}"
+      - step: priority_processing
+        when: "{{ event.name == 'step.done' and ctx.priority == 'high' }}"
+      - step: standard_processing  # Default path (fallback)
+        when: "{{ event.name == 'step.done' }}"
 ```
 
-**Key insight:** NoETL's `case:` evaluates conditions in order; first match wins (XOR semantics). The `next:` at step level serves as the default/fallback path.
+**Key insight:** NoETL's `next.spec.mode: exclusive` evaluates arcs in YAML order; first match wins (XOR semantics). A final unconditional arc provides a default/fallback path.
 
 #### Cross-DSL Comparison
 
@@ -448,30 +555,52 @@ dag:
 ```yaml
 workflow:
   - step: decision
-    case:
-      - when: "{{ workload.path == 'A' }}"
-        then:
-          next:
-            - step: path_a
+    tool:
+      - nop:
+          kind: noop
     next:
-      - step: path_b  # Default
+      spec: { mode: exclusive }
+      arcs:
+        - step: path_a
+          when: "{{ event.name == 'step.done' and workload.path == 'A' }}"
+        - step: path_b  # Default
+          when: "{{ event.name == 'step.done' }}"
 
   - step: path_a
-    tool: { kind: python, code: "result = {'from': 'A'}" }
+    tool:
+      - run:
+          kind: python
+          code: |
+            result = {"from": "A"}
     next:
-      - step: merge_point  # XOR-Join: whichever path was taken continues
+      spec: { mode: exclusive }
+      arcs:
+        - step: merge_point  # XOR-Join: whichever path was taken continues
+          when: "{{ event.name == 'step.done' }}"
 
   - step: path_b
-    tool: { kind: python, code: "result = {'from': 'B'}" }
+    tool:
+      - run:
+          kind: python
+          code: |
+            result = {"from": "B"}
     next:
-      - step: merge_point  # Same target - first to arrive proceeds
+      spec: { mode: exclusive }
+      arcs:
+        - step: merge_point  # Same target - first to arrive proceeds
+          when: "{{ event.name == 'step.done' }}"
 
   - step: merge_point
     tool:
-      kind: python
-      code: "result = {'merged': True}"
+      - run:
+          kind: python
+          code: |
+            result = {"merged": True}
     next:
-      - step: end
+      spec: { mode: exclusive }
+      arcs:
+        - step: end
+          when: "{{ event.name == 'step.done' }}"
 ```
 
 **Key insight:** XOR-join is implicit in NoETL. Since only ONE path was activated (from XOR-split), when it reaches the merge point, it simply proceeds. No special construct needed.
@@ -488,60 +617,30 @@ workflow:
 
 | DSL | Implementation | Status |
 |-----|----------------|--------|
-| **NoETL** | ❌ Not native (workaround: fork + guards) | **Gap - Phase 1** |
+| **NoETL** | `next.spec.mode: inclusive` with guarded arcs | ✅ Native |
 | **BPMN** | Inclusive Gateway (diamond with O) | ✅ Native |
 | **Argo Workflows** | `when:` on multiple parallel tasks | ✅ Native |
 | **GitHub Actions** | `if:` on multiple parallel jobs | ✅ Native |
 | **Step Functions** | ❌ Not native (workaround: Parallel + conditions) | Gap |
 
-#### NoETL Current Workaround
-
-```yaml
-# Fork unconditionally, then guard each branch
-- step: dispatch
-  next:
-    - step: check_high_value
-    - step: check_needs_audit
-    - step: check_notify
-
-- step: check_high_value
-  case:
-    - when: "{{ workload.amount > 10000 }}"
-      then:
-        next:
-          - step: high_value_handler
-  next:
-    - step: or_join  # Skip if condition false
-
-- step: check_needs_audit
-  case:
-    - when: "{{ workload.audit_required }}"
-      then:
-        next:
-          - step: audit_logger
-  next:
-    - step: or_join
-
-# ... and so on
-```
-
-#### NoETL Proposed Enhancement (Phase 1)
+#### NoETL Implementation
 
 ```yaml
 - step: decision
+  tool:
+    - nop:
+        kind: noop
   next:
-    mode: inclusive  # Evaluate ALL conditions
-    branches:
-      - when: "{{ workload.amount > 10000 }}"
-        step: high_value_handler
-      - when: "{{ workload.audit_required }}"
-        step: audit_logger
-      - when: "{{ workload.notify_customer }}"
-        step: send_notification
-    default: skip_all
+    spec: { mode: inclusive }
+    arcs:
+      - step: high_value_handler
+        when: "{{ event.name == 'step.done' and workload.amount > 10000 }}"
+      - step: audit_logger
+        when: "{{ event.name == 'step.done' and workload.audit_required }}"
+      - step: send_notification
+        when: "{{ event.name == 'step.done' and workload.notify_customer }}"
 ```
-
-See [DSL Enhancement Phases](./dsl_enhancement_phases.md) for detailed design.
+**Note:** This pattern describes the split only. Joining/final aggregation is typically modeled via explicit admission gating (Pattern 3) or a sub-playbook barrier.
 
 ---
 
@@ -566,16 +665,21 @@ See [DSL Enhancement Phases](./dsl_enhancement_phases.md) for detailed design.
   loop:
     in: "{{ workload.items }}"
     iterator: item
-    mode: parallel  # Or 'sequential' for one-at-a-time
+    spec:
+      mode: parallel  # Or 'sequential' for one-at-a-time
   tool:
-    kind: http
-    method: POST
-    url: "{{ api_url }}/process"
-    body:
-      id: "{{ item.id }}"
-      data: "{{ item.data }}"
+    - process:
+        kind: http
+        method: POST
+        url: "{{ workload.api_url }}/process"
+        body:
+          id: "{{ iter.item.id }}"
+          data: "{{ iter.item.data }}"
   next:
-    - step: aggregate_results
+    spec: { mode: exclusive }
+    arcs:
+      - step: aggregate_results
+        when: "{{ event.name == 'loop.done' }}"
 ```
 
 #### Cross-DSL Comparison
@@ -647,7 +751,7 @@ jobs:
 
 | DSL | Implementation | Status |
 |-----|----------------|--------|
-| **NoETL** | ⚠️ Polling via `retry:` | **Gap - Phase 3** |
+| **NoETL** | ⚠️ Polling via task policy (`do: retry`) | Pattern-based |
 | **BPMN** | Event-Based Gateway | ✅ Native |
 | **Argo Workflows** | ❌ Not native | Gap |
 | **GitHub Actions** | `workflow_dispatch` + conditions | ⚠️ Partial |
@@ -656,27 +760,33 @@ jobs:
 #### NoETL Current Workaround
 
 ```yaml
-# Poll for either event
 - step: wait_for_event
   tool:
-    kind: http
-    url: "{{ api }}/events?order_id={{ order_id }}"
-  retry:
-    max_attempts: 60
-    delay: 10
-    when: "{{ result.event_type not in ['payment', 'cancellation'] }}"
-  case:
-    - when: "{{ result.event_type == 'payment' }}"
-      then:
-        next:
-          - step: process_payment
-    - when: "{{ result.event_type == 'cancellation' }}"
-      then:
-        next:
-          - step: handle_cancellation
+    - poll:
+        kind: http
+        url: "{{ workload.api }}/events?order_id={{ workload.order_id }}"
+        spec:
+          policy:
+            rules:
+              - when: "{{ outcome.status == 'error' }}"
+                then: { do: fail }
+              - when: "{{ outcome.result.data.event_type not in ['payment','cancellation'] }}"
+                then: { do: retry, attempts: 60, delay: 10 }
+              - else:
+                  then:
+                    do: break
+                    set_ctx:
+                      event_type: "{{ outcome.result.data.event_type }}"
+  next:
+    spec: { mode: exclusive }
+    arcs:
+      - step: process_payment
+        when: "{{ event.name == 'step.done' and ctx.event_type == 'payment' }}"
+      - step: handle_cancellation
+        when: "{{ event.name == 'step.done' and ctx.event_type == 'cancellation' }}"
 ```
 
-#### NoETL Proposed Enhancement (Phase 3)
+#### NoETL Proposed Enhancement (future)
 
 ```yaml
 - step: wait_for_response
@@ -704,7 +814,7 @@ jobs:
 
 | DSL | Implementation | Status |
 |-----|----------------|--------|
-| **NoETL** | `next:` pointing to earlier step | ✅ Native |
+| **NoETL** | `next.arcs[]` pointing to an earlier step | ✅ Native |
 | **BPMN** | Sequence Flow to earlier activity | ✅ Native |
 | **Argo Workflows** | ❌ DAG only (no cycles) | Gap |
 | **GitHub Actions** | ❌ Not supported | Gap |
@@ -715,29 +825,59 @@ jobs:
 ```yaml
 workflow:
   - step: start
-    tool: { kind: python, code: "result = {'counter': 0}" }
+    tool:
+      - init:
+          kind: python
+          code: |
+            result = {"counter": 0, "done": False}
+          spec:
+            policy:
+              rules:
+                - else:
+                    then:
+                      do: break
+                      set_ctx:
+                        counter: "{{ outcome.result.counter }}"
+                        done: "{{ outcome.result.done }}"
     next:
-      - step: process
+      spec: { mode: exclusive }
+      arcs:
+        - step: process
+          when: "{{ event.name == 'step.done' }}"
 
   - step: process
     tool:
-      kind: python
-      args:
-        count: "{{ vars.counter | default(0) }}"
-      code: |
-        result = {'counter': count + 1, 'done': count >= 10}
-    vars:
-      counter: "{{ result.counter }}"
-    case:
-      - when: "{{ not result.done }}"
-        then:
-          next:
-            - step: process  # Backward jump - arbitrary cycle!
+      - tick:
+          kind: python
+          args:
+            count: "{{ ctx.counter | default(0) }}"
+          code: |
+            next_count = int(count) + 1
+            result = {"counter": next_count, "done": next_count >= 10}
+          spec:
+            policy:
+              rules:
+                - else:
+                    then:
+                      do: break
+                      set_ctx:
+                        counter: "{{ outcome.result.counter }}"
+                        done: "{{ outcome.result.done }}"
     next:
-      - step: end  # Exit when done
+      spec: { mode: exclusive }
+      arcs:
+        - step: process  # Backward edge - arbitrary cycle
+          when: "{{ event.name == 'step.done' and ctx.done != true }}"
+        - step: end  # Exit when done
+          when: "{{ event.name == 'step.done' and ctx.done == true }}"
+
+  - step: end
+    tool:
+      - done:
+          kind: noop
 ```
 
-**Key insight:** NoETL's `next:` can point to ANY step, enabling arbitrary cycles. This is more flexible than structured loops and supports complex retry/recovery patterns.
+**Key insight:** NoETL's `next.arcs[]` can point to ANY step, enabling arbitrary cycles. This is more flexible than structured loops and supports complex retry/recovery patterns.
 
 ---
 
@@ -753,18 +893,16 @@ workflow:
 | **4. XOR-Split** | ✅ | ✅ | ✅ | ✅ | ✅ |
 | **5. XOR-Join** | ✅ | ✅ | ✅ | ⚠️ | ✅ |
 
-*NoETL AND-Join requires explicit `vars` tracking or sub-playbook pattern
+*NoETL AND-Join typically requires explicit `ctx` tracking + admission gating (or a sub-playbook barrier)
 
 ### Advanced Patterns
 
 | Pattern | NoETL | BPMN | Argo | GitHub Actions | Step Functions |
 |---------|-------|------|------|----------------|----------------|
-| **6. OR-Split (Inclusive)** | ❌* | ✅ | ✅ | ✅ | ❌ |
+| **6. OR-Split (Inclusive)** | ✅ | ✅ | ✅ | ✅ | ❌ |
 | **7. Multi-Instance** | ✅ | ✅ | ✅ | ✅ | ✅ |
 | **8. Deferred Choice** | ⚠️ | ✅ | ❌ | ⚠️ | ✅ |
 | **9. Arbitrary Cycles** | ✅ | ✅ | ❌ | ❌ | ✅ |
-
-*Planned for [Phase 1](./dsl_enhancement_phases.md)
 
 ### NoETL Competitive Position
 
@@ -772,14 +910,13 @@ workflow:
 |----------|---------|
 | **Arbitrary Cycles** | Unlike Argo/GitHub Actions, supports backward jumps |
 | **Multi-Instance** | Full parallel/sequential loop support |
-| **Event-Driven** | `case:` evaluation on `step.enter`, `call.done`, `call.error` |
+| **Event-Driven** | Server routing on boundary events (`step.done`/`step.failed`/`loop.done`) plus task policies |
 | **NATS Infrastructure** | JetStream for messaging, KV for state |
 
-| Gap | Mitigation | Phase |
-|-----|------------|-------|
-| **Inclusive Gateway** | Fork + guards workaround | Phase 1 |
-| **Deferred Choice** | Polling via `retry:` | Phase 3 |
-| **Timer Events** | External scheduler | Phase 2 |
+| Gap | Mitigation |
+|-----|------------|
+| **Deferred Choice** | Polling via task policy (`do: retry`) |
+| **Timer Events** | External scheduler |
 
 ---
 
@@ -787,20 +924,18 @@ workflow:
 
 NoETL DSL covers **all 5 Basic Control Flow Patterns** required for a functional workflow engine:
 
-1. ✅ **Sequence** - `next:` with single step
-2. ✅ **AND-Split** - `next:` with multiple steps
-3. ✅ **AND-Join** - `case:` on `step.enter` checking `vars`
-4. ✅ **XOR-Split** - `case:` with `when:` conditions
+1. ✅ **Sequence** - `next.arcs[]` with a single target
+2. ✅ **AND-Split** - `next.spec.mode: inclusive` with multiple arcs
+3. ✅ **AND-Join** - admission gating (`step.spec.policy.admit`) checking `ctx` (pattern-based)
+4. ✅ **XOR-Split** - `next.spec.mode: exclusive` with guarded arcs
 5. ✅ **XOR-Join** - Implicit (multiple paths to same step)
 
 For **Advanced Patterns**, NoETL excels at:
-- **Arbitrary Cycles** (backward `next:`)
+- **Arbitrary Cycles** (backward `next.arcs[]`)
 - **Multi-Instance** (`loop:` with modes)
+- **OR-Split** (`next.spec.mode: inclusive`)
 
-Gaps planned for closure:
-- **Inclusive Gateway** → [Phase 1](./dsl_enhancement_phases.md)
-- **Deferred Choice** → [Phase 3](./dsl_enhancement_phases.md)
-- **Timer Events** → [Phase 2](./dsl_enhancement_phases.md)
+Remaining gaps are mostly around **event-based waiting** (deferred choice) and **timers/signals**, which are typically implemented via polling patterns or external schedulers until native primitives are added.
 
 ---
 
@@ -811,5 +946,4 @@ Gaps planned for closure:
 - [Argo Workflows Documentation](https://argoproj.github.io/argo-workflows/)
 - [GitHub Actions Documentation](https://docs.github.com/en/actions)
 - [AWS Step Functions Developer Guide](https://docs.aws.amazon.com/step-functions/latest/dg/)
-- [NoETL DSL Enhancement Phases](./dsl_enhancement_phases.md)
 - [NoETL DSL Analysis](./dsl_analysis_and_evaluation.md)

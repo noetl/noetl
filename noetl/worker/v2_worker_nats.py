@@ -1077,10 +1077,17 @@ class V2Worker:
             logger.debug(f"Args config: using_top_level | args={args}")
         
         logger.info(f"[EVENT] Executing {step} (tool={tool_kind}) for execution {execution_id}" + (f" command={command_id}" if command_id else ""))
-        
-        # Ensure execution_id is in render_context for keychain resolution
+
+        # Extract catalog_id from meta (where server stores it)
+        meta = command.get("meta", {})
+        catalog_id = meta.get("catalog_id")
+
+        # Ensure execution_id and catalog_id are in render_context for keychain resolution
         if "execution_id" not in render_context:
             render_context["execution_id"] = execution_id
+        if catalog_id and "catalog_id" not in render_context:
+            render_context["catalog_id"] = catalog_id
+            logger.info(f"[KEYCHAIN] Added catalog_id={catalog_id} to render_context for step {step}")
         
         try:
             import time
@@ -1546,6 +1553,7 @@ class V2Worker:
         # This scans the config for {{ keychain.* }} references and populates context['keychain']
         catalog_id = context.get('catalog_id')
         execution_id = context.get('execution_id')
+        logger.info(f"[KEYCHAIN-DEBUG] Step {step}: catalog_id={catalog_id}, execution_id={execution_id}, tool_kind={tool_kind}")
         if catalog_id:
             # Combine config and args into single dict for scanning
             task_config_combined = {**config, **args}

@@ -1,183 +1,156 @@
 ---
 sidebar_position: 1
 title: NoETL DSL
-description: Domain-Specific Language reference for NoETL workflow definitions
+description: Canonical v10 DSL reference for NoETL playbooks (noetl.io/v2)
 ---
 
-# NoETL DSL Reference
+# NoETL DSL Reference (Canonical v10)
 
-The NoETL Domain-Specific Language (DSL) defines how workflows are structured and executed. This section covers the complete syntax, patterns, and features of the DSL.
+The NoETL Domain-Specific Language (DSL) defines how playbooks are structured and executed under the **Canonical v10** model.
 
-## Core Specification
+## Start Here
 
-- [DSL Specification](./spec) - Formal specification for playbook syntax, step structure, and workflow patterns (v2)
+- [NoETL Canonical Step Spec (v10)](./noetl_step_spec) - Latest decisions (policies, routing, loops, spec layering)
+- [DSL Specification (Canonical)](./spec) - Normative playbook/step schema + semantics
+- [DSL Specification (Detailed)](./dsl_specification) - Full technical walkthrough
+- [Formal Specification (Canonical)](./formal_specification) - Normative execution model and grammar notes
 
-## Runtime & Events
+## Runtime
 
-- [Runtime Event Model](./runtime_events) - Canonical event taxonomy and envelope specification
-- [Result Storage & Access](./runtime_results) - How tool outputs and step results are stored and retrieved
-- [Artifact Tool](./artifact_tool) - Reading and writing externally stored results
-- [Result Storage Implementation](./results_storage_implementation) - Implementation guide for ResultRef and manifests
+- [Execution Model](./execution_model) - Control plane vs data plane responsibilities
+- [Runtime Event Model](./runtime_events) - Canonical event taxonomy and envelope
+- [Runtime Results](./runtime_results) - Reference-first storage (ResultRef/Manifest patterns)
+- [Pagination](./pagination) - Streaming pagination with `jump`/`break` inside iterations
 
-## Architecture
-
-- [Execution Model](./execution_model) - Event-sourced execution with control plane / data plane architecture
-- [Event Sourcing Whitepaper](./event_sourcing_whitepaper) - Technical whitepaper on the event-sourced architecture
-- [Formal Specification (Extended)](./formal_specification) - Extended formal specification with detailed semantics
-
-## Variables & Data Flow
-
-- [Variables Design](./variables_feature_design) - Architecture for workflow variables and data passing
-- [Vars Block Reference](./vars_block_quick_reference) - Quick reference for extracting values from step results
-- [Vars Block Implementation](./vars_block_implementation_summary) - Detailed implementation guide
-
-## Control Flow
-
-- [Unified Retry](./unified_retry) - Retry patterns for error recovery and success-driven repetition
-- [HTTP Pagination Reference](./http_pagination_quick_reference) - Quick reference for pagination patterns
-
-## Analysis & Completeness
+## Analysis
 
 - [DSL Analysis & Evaluation](./dsl_analysis_and_evaluation) - Turing-completeness, BPMN 2.0 coverage, and Petri net analysis
 - [Workflow Patterns Comparison](./workflow_patterns_comparison) - Van der Aalst patterns comparison across NoETL, BPMN, Argo, GitHub Actions, Step Functions
-- [DSL Enhancement Phases](./dsl_enhancement_phases) - Roadmap for inclusive gateway, timers, signals, and other enhancements
 
 ---
 
 ## DSL Overview
 
-### Playbook Structure
+### Minimal playbook (canonical v10)
 
 ```yaml
 apiVersion: noetl.io/v2
 kind: Playbook
+
 metadata:
   name: example_workflow
   path: workflows/example
+  version: "2.0"
+
+keychain:
+  - name: pg_k8s
+    kind: postgres_credential
+
 workload:
-  variable: value
-workbook:
-  - name: reusable_task
-    tool:
-      kind: python
-      libs: {}
-      args:
-        input_var: "{{ workload.variable }}"
-      code: |
-        # Pure Python code - variables from args are directly available
-        result = {"status": "success", "data": {"value": input_var}}
+  api_url: "https://api.example.com"
+
 workflow:
   - step: start
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: fetch
+
+  - step: fetch
     tool:
-      kind: python
-      auth: {}
-      libs: {}
-      args: {}
-      code: |
-        result = {"status": "initialized"}
-    case:
-      - when: "{{ event.name == 'step.exit' }}"
-        then:
-          next:
-            - step: process
-  - step: process
-    tool:
-      kind: workbook
-      name: reusable_task
-    case:
-      - when: "{{ event.name == 'step.exit' }}"
-        then:
-          next:
-            - step: end
+      - call:
+          kind: http
+          method: GET
+          url: "{{ workload.api_url }}/ping"
+          spec:
+            policy:
+              rules:
+                - when: "{{ outcome.status == 'error' and outcome.http.status in [429,500,502,503,504] }}"
+                  then: { do: retry, attempts: 5, backoff: exponential, delay: 2 }
+                - when: "{{ outcome.status == 'error' }}"
+                  then: { do: fail }
+                - else:
+                    then:
+                      do: break
+                      set_ctx:
+                        ping_ok: true
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: end
+          when: "{{ event.name == 'step.done' }}"
+
   - step: end
     tool:
-      kind: python
-      auth: {}
-      libs: {}
-      args: {}
-      code: |
-        result = {"status": "completed"}
+      - done:
+          kind: noop
 ```
 
 ### Key Concepts
 
 | Concept | Description |
 |---------|-------------|
-| **Playbook** | Top-level workflow definition with metadata, workload, workbook, and workflow |
-| **Workload** | Global variables merged with payload, available via Jinja2 templates |
-| **Workbook** | Library of named reusable tasks |
-| **Workflow** | Ordered list of steps defining execution flow |
-| **Step** | Execution unit with tool, args, vars, case, and routing |
-| **Tool** | Action executor with `kind` field (python, http, postgres, duckdb, etc.) |
+| **Playbook** | Top-level YAML document: `metadata`, optional `keychain`, optional `executor`, `workload`, `workflow`, optional `workbook` |
+| **Keychain** | Optional credential declarations resolved before execution; exposed as `keychain.*` (read-only) |
+| **Workload** | Immutable merged input (playbook defaults + request payload) |
+| **ctx** | Execution-scoped mutable context, patched via task policy actions (`set_ctx`) |
+| **iter** | Iteration-scoped mutable context inside loops (`step.loop`), patched via `set_iter` |
+| **Step** | Petri-net transition: admission policy + ordered tool pipeline + `next` router arcs |
+| **Task** | Labeled tool invocation in a pipeline (evaluated by the worker) |
+| **Next router** | `step.next` with `next.spec` + `next.arcs[]` (evaluated by the server) |
 
 ### Available Tool Kinds
 
-| Kind | Description |
-|------|-------------|
-| `python` | Execute inline Python code |
-| `http` | HTTP requests (GET, POST, etc.) |
-| `postgres` | PostgreSQL query execution |
-| `duckdb` | DuckDB query execution |
-| `workbook` | Reference to named task in workbook |
-| `playbook` | Execute sub-playbook by catalog path |
-| `secrets` | Fetch secret from provider |
-| `iterator` | Loop iteration control |
-| `snowflake` | Snowflake query execution |
-| `gcs` | Google Cloud Storage operations |
+Tool kinds are implementation-defined and extensible. Common kinds include:
+`http`, `postgres`, `duckdb`, `python`, `secrets`, `playbook`, `workbook`, `noop`, `script`.
 
 ### Template Namespaces
 
 Access data in templates using these namespaces:
 
 ```yaml
-# Global variables from workload
+# Immutable workload inputs
 "{{ workload.api_url }}"
 
-# Extracted variables from vars blocks
-"{{ vars.user_id }}"
+# Resolved credentials (read-only)
+"{{ keychain.openai_token }}"
 
-# Previous step results
-"{{ fetch_data.records }}"
+# Execution-scoped context (cross-step)
+"{{ ctx.customer_id }}"
 
-# Current step result (in vars block only)
-"{{ result.status }}"
+# Iteration-scoped context (inside loops)
+"{{ iter.endpoint }}"
 
-# Execution context
-"{{ execution_id }}"
+# Token payload / arc inscription
+"{{ args.page_size }}"
 
-# Event object (in case.when)
+# Pipeline locals (inside a step pipeline)
+"{{ _prev }}"
+"{{ _task }}"
+
+# Outcome envelope (inside task policy evaluation)
+"{{ outcome.status }}"
+
+# Boundary event (inside routing evaluation)
 "{{ event.name }}"
-
-# Response envelope (in case.when)
-"{{ response.status_code }}"
 ```
 
-### Step Routing (v2 Pattern)
+### Step Routing (canonical v10)
 
-In v2, conditional routing uses `case/when/then`:
+Routing is expressed as Petri-net arcs on `step.next`:
 
 ```yaml
-# Event-driven conditional routing
-case:
-  - when: "{{ event.name == 'step.exit' and response.status == 'success' }}"
-    then:
-      next:
-        - step: success_handler
-  - when: "{{ event.name == 'call.error' }}"
-    then:
-      next:
-        - step: error_handler
-
-# Default fallback routing (when no case matches)
 next:
-  - step: default_handler
+  spec: { mode: exclusive }
+  arcs:
+    - step: success_handler
+      when: "{{ event.name == 'step.done' }}"
+    - step: error_handler
+      when: "{{ event.name == 'step.failed' }}"
 ```
-
-**Note:** The old v1 pattern with `next: [{ when: ..., then: ... }]` is not supported in v2. Use `case` for conditional routing.
 
 ## See Also
 
-- [Playbook Structure](/docs/features/playbook_structure) - Getting started with playbooks
-- [Iterator Feature](/docs/features/iterator) - Looping over collections
-- [Pagination](/docs/features/pagination) - HTTP pagination patterns
-- [Tools Reference](/docs/reference/tools) - Available action tools
+- [Playbook Structure](./playbook_structure)
+- [Pagination](./pagination)
+- [Tools Reference](/docs/reference/tools)

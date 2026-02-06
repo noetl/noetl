@@ -6,11 +6,9 @@ description: Canonical pagination patterns for NoETL DSL v2 — streaming pagina
 
 # Pagination Handling — Canonical v10
 
-This document merges:
-- the **streaming pagination example** (no fall-through) fileciteturn31file0
-- the **HTTP pagination quick reference** fileciteturn31file1
-
-…and updates everything to the **Canonical v10** DSL:
+This document describes the **Canonical v10** pagination patterns:
+- **Outer fan-out** via `step.loop` (often parallel/distributed)
+- **Inner ordered pagination stream** within one iteration lease using task policy (`jump`/`break`)
 
 - **No** `eval:` blocks
 - **No** `expr:` keyword
@@ -347,7 +345,7 @@ Inside `task.spec.policy.rules[].when` you can reference:
 
 ## 9) Legacy note (non-canonical)
 
-Older NoETL docs included a `pagination:` block with `continue_while` and `next_page` and `merge_path`. fileciteturn31file1
+Older NoETL docs included a `pagination:` block with `continue_while` and `next_page` and `merge_path`.
 
 Canonical v10 replaces that with:
 - iteration state (`iter`) + ordered tasks

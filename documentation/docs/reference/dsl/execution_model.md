@@ -10,7 +10,7 @@ description: Event-sourced execution model with control plane and data plane arc
 NoETL is a declarative orchestration system for APIs, databases, scripts, and agentic workflows, built around **event sourcing**: every meaningful state transition is emitted as an immutable event and persisted for replay, observability, and optimization. The same execution model extends to **quantum computation orchestration** (parameter sweeps, job submission, polling, result capture, provenance).
 
 This document specifies the **canonical execution model** aligned with the latest DSL decisions:
-- Root playbook sections (`metadata`, `executor`, `workload`, `workflow`, `workbook`)
+- Root playbook sections (`metadata`, `keychain`, `executor`, `workload`, `workflow`, `workbook`)
 - Runtime scopes (`workload`, `ctx`, `iter`, pipeline locals)
 - **Petri-net semantics** (token → step transition → next arcs)
 - Control plane vs data plane responsibilities
@@ -76,6 +76,7 @@ A **Playbook** is the top-level YAML document. **Root sections are limited** to:
 
 - `apiVersion`, `kind`
 - `metadata`
+- `keychain` (optional but recommended)
 - `executor` (optional)
 - `workload`
 - `workflow`

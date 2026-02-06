@@ -1,7 +1,7 @@
 ---
 sidebar_position: 3
 title: Runtime Event Model (Canonical v10)
-description: Canonical event taxonomy and event envelope specification for NoETL execution (aligned with noetl_canonical_step_spec_v10)
+description: Canonical event taxonomy and event envelope specification for NoETL execution (aligned with noetl_step_spec)
 ---
 
 # NoETL Runtime Event Model — Canonical v10
@@ -15,7 +15,7 @@ It is aligned to **NoETL Canonical Step Spec (v10)**:
 - **Tools are executed as pipeline `tasks`** (task labels), each producing a single final `outcome`
 - Routing is server-side via **Petri-net arcs**: `step.next.spec` + `step.next.arcs[]`
 
-> Related docs: `noetl_canonical_step_spec_v10.md`, `spec_v3.md` (DSL canonical), `result_storage_canonical_v10.md` (reference-first results).
+> Related docs: [NoETL Canonical Step Spec (v10)](./noetl_step_spec), [DSL Specification (Canonical)](./spec), [Result Storage (Canonical v10)](../result_storage_canonical_v10).
 
 ---
 
@@ -49,6 +49,9 @@ Every stored event MUST include:
 - `event_type` (string; canonical dot name)
 - `timestamp` (RFC3339 UTC)
 - `execution_id` (string)
+
+**DSL aliasing (recommended):**
+- In DSL templates, the boundary event is exposed as `event`, and `event.name` SHOULD equal the persisted `event_type`.
 
 And SHOULD include:
 - `source` (`server` | `worker`)

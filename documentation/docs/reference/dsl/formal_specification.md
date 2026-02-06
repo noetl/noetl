@@ -51,6 +51,7 @@ A playbook is a YAML mapping with (at minimum):
 - `apiVersion`: string (MUST be `noetl.io/v2` for this spec)
 - `kind`: string (MUST be `Playbook`)
 - `metadata`: mapping (MUST include `name` and `path`)
+- `keychain`: list (OPTIONAL; credential declarations)
 - `executor`: mapping (OPTIONAL)
 - `workload`: mapping (OPTIONAL; defaults)
 - `workflow`: list of steps (REQUIRED)
@@ -117,6 +118,7 @@ All expressions are **Jinja2** templates embedded as YAML strings.
 The evaluation context is a dictionary with conventional namespaces:
 
 - `workload`: immutable merged workload
+- `keychain`: resolved credentials (read-only)
 - `ctx`: execution‑scoped mutable context (shared across steps)
 - `iter`: iteration‑scoped variables (only inside loops)
 - `args`: token payload / arc inscription input
@@ -393,7 +395,7 @@ An implementation MUST reject a playbook if:
 
 ```
 playbook        ::= map
-root_keys       ::= apiVersion kind metadata [executor] [workload] workflow [workbook]
+root_keys       ::= apiVersion kind metadata [keychain] [executor] [workload] workflow [workbook]
 
 workflow        ::= "workflow" ":" step_list
 step_list       ::= "-" step { "-" step }

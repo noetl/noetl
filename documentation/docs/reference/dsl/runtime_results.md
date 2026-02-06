@@ -15,9 +15,9 @@ Aligned with **Canonical v10 DSL**:
 - Events and context pass **references only** (inline only for size-capped preview/extracted fields).
 
 See also:
-- Canonical step spec: `noetl_canonical_step_spec_v10.md` fileciteturn36file0
-- Runtime events: `runtime_events_v2.md`
-- Result refs & stores: `result_storage_canonical_v10.md`
+- [NoETL Canonical Step Spec (v10)](./noetl_step_spec)
+- [Runtime Event Model (Canonical v10)](./runtime_events)
+- [Result Storage (Canonical v10)](../result_storage_canonical_v10)
 
 ---
 

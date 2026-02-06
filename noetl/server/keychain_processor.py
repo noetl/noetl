@@ -18,6 +18,21 @@ from jinja2 import Template, Environment, StrictUndefined
 logger = setup_logger(__name__, include_location=True)
 
 
+def _get_render_context(workload_vars: Dict[str, Any], keychain_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Build render context for Jinja2 templates.
+
+    Variables are available at both:
+    - Root level: {{ gcp_auth }}
+    - workload namespace: {{ workload.gcp_auth }}
+    - keychain namespace: {{ keychain.xxx }}
+    """
+    ctx = dict(workload_vars)  # Root level access
+    ctx['workload'] = workload_vars  # workload.xxx access
+    ctx['keychain'] = keychain_data  # keychain.xxx access
+    return ctx
+
+
 async def process_keychain_section(
     keychain_section: List[Dict[str, Any]],
     catalog_id: int,
@@ -133,7 +148,7 @@ async def _process_secret_manager(
     # Render auth reference
     env = Environment(undefined=StrictUndefined)
     auth_template = env.from_string(str(auth_ref))
-    auth_name = auth_template.render(workload=workload_vars, keychain=keychain_data)
+    auth_name = auth_template.render(**_get_render_context(workload_vars, keychain_data))
     
     logger.debug(f"KEYCHAIN_PROCESSOR: Fetching secrets from {provider} using auth '{auth_name}'")
     
@@ -173,7 +188,7 @@ async def _process_secret_manager(
     for key, secret_path_template in map_config.items():
         env = Environment(undefined=StrictUndefined)
         path_template = env.from_string(str(secret_path_template))
-        secret_path = path_template.render(workload=workload_vars, keychain=keychain_data)
+        secret_path = path_template.render(**_get_render_context(workload_vars, keychain_data))
         
         logger.debug(f"KEYCHAIN_PROCESSOR: Fetching secret '{key}' from path: {secret_path}")
         
@@ -225,19 +240,19 @@ async def _process_oauth2(
     
     # Render endpoint
     endpoint_template = env.from_string(str(endpoint))
-    rendered_endpoint = endpoint_template.render(workload=workload_vars, keychain=keychain_data)
+    rendered_endpoint = endpoint_template.render(**_get_render_context(workload_vars, keychain_data))
     
     # Render headers
     rendered_headers = {}
     for k, v in headers.items():
         template = env.from_string(str(v))
-        rendered_headers[k] = template.render(workload=workload_vars, keychain=keychain_data)
+        rendered_headers[k] = template.render(**_get_render_context(workload_vars, keychain_data))
     
     # Render data
     rendered_data = {}
     for k, v in data_config.items():
         template = env.from_string(str(v))
-        rendered_data[k] = template.render(workload=workload_vars, keychain=keychain_data)
+        rendered_data[k] = template.render(**_get_render_context(workload_vars, keychain_data))
     
     logger.debug(f"KEYCHAIN_PROCESSOR: Making OAuth2 request to {rendered_endpoint}")
     
@@ -327,7 +342,7 @@ async def _process_google_id_token(
     
     # Render target audience
     audience_template = env.from_string(str(target_audience_template))
-    target_audience = audience_template.render(workload=workload_vars, keychain=keychain_data)
+    target_audience = audience_template.render(**_get_render_context(workload_vars, keychain_data))
     
     logger.debug(f"KEYCHAIN_PROCESSOR: Generating Google ID token for audience: {target_audience}")
     
@@ -340,7 +355,7 @@ async def _process_google_id_token(
         
         # Render credential name
         sa_cred_template = env.from_string(str(sa_credential_template))
-        sa_cred_name = sa_cred_template.render(workload=workload_vars, keychain=keychain_data)
+        sa_cred_name = sa_cred_template.render(**_get_render_context(workload_vars, keychain_data))
         
         # Fetch credential
         cred_response = await client.get(
@@ -388,11 +403,11 @@ async def _process_google_id_token(
         
         # Render auth reference
         auth_template = env.from_string(str(auth_ref))
-        auth_name = auth_template.render(workload=workload_vars, keychain=keychain_data)
+        auth_name = auth_template.render(**_get_render_context(workload_vars, keychain_data))
         
         # Render service account secret path
         sa_path_template = env.from_string(str(sa_secret_path_template))
-        sa_secret_path = sa_path_template.render(workload=workload_vars, keychain=keychain_data)
+        sa_secret_path = sa_path_template.render(**_get_render_context(workload_vars, keychain_data))
         
         # Fetch credential to get auth data
         cred_response = await client.get(
@@ -491,7 +506,7 @@ async def _process_bearer(
     # Render token template
     env = Environment(undefined=StrictUndefined)
     token_template = env.from_string(str(token))
-    rendered_token = token_template.render(workload=workload_vars, keychain=keychain_data)
+    rendered_token = token_template.render(**_get_render_context(workload_vars, keychain_data))
     
     return {"access_token": rendered_token, "token_type": "Bearer"}
 
@@ -514,7 +529,7 @@ async def _process_static(
     
     for key, value_template in map_config.items():
         template = env.from_string(str(value_template))
-        result_data[key] = template.render(workload=workload_vars, keychain=keychain_data)
+        result_data[key] = template.render(**_get_render_context(workload_vars, keychain_data))
     
     return result_data
 
@@ -533,7 +548,7 @@ async def _process_credential_ref(
         return None
 
     env = Environment(undefined=StrictUndefined)
-    ref_rendered = env.from_string(str(ref)).render(workload=workload_vars, keychain=keychain_data)
+    ref_rendered = env.from_string(str(ref)).render(**_get_render_context(workload_vars, keychain_data))
 
     resp = await client.get(
         f"{api_base_url}/api/credentials/{ref_rendered}",

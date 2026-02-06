@@ -421,9 +421,10 @@ class ExecutionState:
                 "timestamp": event.timestamp.isoformat() if event.timestamp else None,
             },
             # Canonical v10: ctx = execution-scoped, iter = iteration-scoped
-            # NOTE: Legacy 'workload' and 'vars' aliases REMOVED in strict v10
             "ctx": self.variables,  # Execution-scoped variables (canonical v10)
             "iter": iter_vars,      # Iteration-scoped variables (canonical v10)
+            # Backward compatibility: workload namespace for {{ workload.xxx }}
+            "workload": self.variables,  # Legacy alias for v2 playbooks
             **self.step_results,  # Make step results accessible (e.g., {{ process }})
         }
         
@@ -2835,7 +2836,7 @@ class ControlFlowEngine:
         # Create execution state with catalog_id and parent_execution_id
         state = ExecutionState(execution_id, playbook, payload, catalog_id, parent_execution_id)
         await self.state_store.save_state(state)
-        
+
         # Process keychain section before workflow starts
         if playbook.keychain and catalog_id:
             logger.info(f"ENGINE: Processing keychain section with {len(playbook.keychain)} entries")
@@ -2855,7 +2856,7 @@ class ControlFlowEngine:
             except Exception as e:
                 logger.error(f"ENGINE: Failed to process keychain section: {e}")
                 # Don't fail execution, keychain errors will surface when workers try to resolve
-        
+
         # Find entry step using canonical rules:
         # 1. executor.spec.entry_step if configured
         # 2. workflow[0].step (first step in workflow array)

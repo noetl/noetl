@@ -26,6 +26,7 @@ A NoETL playbook is a YAML document that defines a workflow as a set of steps an
 - `apiVersion`
 - `kind`
 - `metadata`
+- `keychain` (optional but recommended)
 - `executor` (optional)
 - `workload`
 - `workflow`
@@ -33,6 +34,7 @@ A NoETL playbook is a YAML document that defines a workflow as a set of steps an
 
 **Root restrictions (canonical):**
 - `vars` MUST NOT appear at playbook root level.
+- If credentials are referenced by name (for example `auth: pg_k8s`), they SHOULD be declared under root `keychain`.
 - Any runtime knobs MUST be expressed under `spec` at their respective scope.
 
 ---
@@ -48,6 +50,10 @@ metadata:
   path: workflows/example_playbook
   version: "2.0"
   description: Example playbook using canonical v10 structure
+
+keychain:
+  - name: pg_k8s
+    kind: postgres_credential
 
 executor:
   kind: distributed
@@ -336,9 +342,9 @@ A sink is a storage-writing task in the pipeline that returns a reference (Resul
 ---
 
 ## Links
-- DSL Specification (canonical): `/docs/reference/dsl/spec`
-- Formal Specification (canonical): `/docs/reference/dsl/formal_specification`
-- Execution Model (canonical): `/docs/runtime/execution_model`
-- Retry Handling (canonical): `/docs/runtime/retry_mechanism`
-- Result Storage (canonical): `/docs/runtime/result_storage`
-- Pagination (canonical): `/docs/runtime/pagination`
+- DSL Specification (canonical): [spec](./spec)
+- Formal Specification (canonical): [formal_specification](./formal_specification)
+- Execution Model (canonical): [execution_model](./execution_model)
+- Retry Handling (canonical): [retry_mechanism_v2](../retry_mechanism_v2)
+- Result Storage (canonical): [result_storage_canonical_v10](../result_storage_canonical_v10)
+- Pagination (canonical): [pagination](./pagination)

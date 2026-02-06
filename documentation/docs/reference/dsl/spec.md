@@ -45,6 +45,7 @@ A playbook is a YAML mapping with exactly these root sections (plus `apiVersion`
 | `apiVersion` | string | Yes | MUST be `noetl.io/v2` |
 | `kind` | string | Yes | MUST be `Playbook` |
 | `metadata` | mapping | Yes | name/path/version/description |
+| `keychain` | list | No | credential declarations (resolved before execution) |
 | `executor` | mapping | No | placement/runtime defaults |
 | `workload` | mapping | No | immutable defaults merged with request payload |
 | `workflow` | list | Yes | steps (transitions) |
@@ -52,8 +53,22 @@ A playbook is a YAML mapping with exactly these root sections (plus `apiVersion`
 
 **Root restrictions (normative):**
 - Playbooks MUST NOT include root `vars`.
-- Playbooks MUST NOT include root `keychain` in canonical v10. (Credentials are referenced via tool `auth` and resolved by runtime providers; separate credential docs define provider configuration.)
+- If `keychain` is present, implementations MUST resolve it before workflow execution and expose it to templates as `keychain.<name>...`.
+- `keychain` values MUST be treated as read-only during execution (refresh/rotation is implemented via tools + policies, not by mutating `keychain`).
 - Any additional root keys MUST be rejected by canonical validators unless explicitly enabled as extensions.
+
+### 3.1 `keychain` (root) — credential declarations (normative)
+
+`keychain` declares which credentials/secrets/tokens a playbook needs and how they are resolved (by `name` + `kind`). Tool tasks SHOULD reference credentials by name (for example `auth: pg_k8s`).
+
+Example:
+```yaml
+keychain:
+  - name: openai_token
+    kind: secret_manager
+  - name: pg_k8s
+    kind: postgres_credential
+```
 
 ---
 
@@ -62,12 +77,13 @@ A playbook is a YAML mapping with exactly these root sections (plus `apiVersion`
 1. All expressions MUST be valid **Jinja2 templates** embedded as YAML strings.
 2. Implementations MUST evaluate templates with a runtime context containing (at minimum):
    - `workload` (immutable merged workload)
+   - `keychain` (resolved credentials; read-only)
    - `ctx` (execution-scoped context)
    - `args` (token payload; arc inscription)
    - `execution_id` (execution identifier)
    - `iter` (iteration scope; only when loop exists)
-   - pipeline locals: `_prev`, `_task`, `_attempt`, and `outcome` (policy evaluation only)
-   - `event` (routing evaluation only)
+    - pipeline locals: `_prev`, `_task`, `_attempt`, and `outcome` (policy evaluation only)
+    - `event` (routing evaluation only)
 
 ---
 

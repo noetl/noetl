@@ -37,6 +37,7 @@ A playbook document MUST contain only these root sections:
 - `apiVersion`
 - `kind`
 - `metadata`
+- `keychain` (optional but recommended)
 - `executor` (optional)
 - `workload`
 - `workflow`
@@ -55,6 +56,10 @@ metadata:
   path: examples/example
   version: "2.0"
   description: Example playbook
+
+keychain:
+  - name: pg_k8s
+    kind: postgres_credential
 
 executor:
   kind: distributed
