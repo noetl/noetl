@@ -1,15 +1,15 @@
 ---
 sidebar_position: 32
-title: Credential Caching (Canonical v2)
-description: Secure, reference-first credential materialization and caching for NoETL runtime (execution + global token caches)
+title: Credential Caching (Canonical v10)
+description: Secure, reference-first credential materialization and caching for NoETL runtime (execution + global token caches) — aligned with Canonical v10
 ---
 
-# Credential Caching (Canonical v2)
+# Credential Caching (Canonical v10)
 
-This document updates `credential_caching.md` to align with the **canonical NoETL v2** execution model:
+This document updates `credential_caching.md` to align with the **Canonical v10** execution model:
 
-- Root playbook sections: `metadata`, `executor`, `workload`, `workflow`, `workbook`
-- Step executes `tool` pipelines; control flow uses tool-level `eval`
+- Root playbook sections: `metadata`, `keychain` (optional), `executor` (optional), `workload`, `workflow`, `workbook` (optional)
+- Step executes `tool` pipelines; control flow uses task policy rules (`task.spec.policy.rules`)
 - Results are reference-first; “sink” is a pattern, not a tool kind
 - NATS KV is an **optional coordination/hot-cache layer**, not an authoritative store for bulk values
 
@@ -173,12 +173,12 @@ Example safe metadata:
 
 ## 9) Failure and retry interaction
 
-Credential resolution failures should be represented as structured errors in `outcome.error` so tool-level `eval` can decide policy:
+Credential resolution failures should be represented as structured errors in `outcome.error` so task policy rules can decide policy:
 
 - retry on transient provider failures (timeouts, 429, 5xx)
 - fail fast on auth invalid/denied (401, invalid_grant, etc.)
 
-> Retry is still expressed via tool-level `eval`. Credential resolution is part of the tool execution outcome.
+> Retry is expressed via task policy rules (`then.do: retry`). Credential resolution is part of the tool execution outcome.
 
 ---
 

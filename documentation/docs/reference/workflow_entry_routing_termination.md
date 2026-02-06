@@ -1,14 +1,14 @@
 ---
 sidebar_position: 6
-title: Workflow Entry, Routing, and Termination (Canonical v2)
-description: Canonical rules for initiating execution, default routing, Petri-net token semantics, and workflow termination without requiring step:start/step:end
+title: Workflow Entry, Routing, and Termination (Canonical v10)
+description: Canonical rules for initiating execution, Petri-net routing via next.arcs, admission gating, and workflow termination (quiescence)
 ---
 
-# Workflow Entry, Routing, and Termination (Canonical v2)
+# Workflow Entry, Routing, and Termination (Canonical v10)
 
 This document defines **canonical** semantics for:
 - workflow initiation (entry selection),
-- step routing (`next[]` arcs),
+- step routing (Petri-net **arcs**),
 - branch termination,
 - playbook completion (quiescence),
 - optional finalization/aggregation,
@@ -16,7 +16,7 @@ This document defines **canonical** semantics for:
 **without requiring reserved step names** such as `step: start` or `step: end`.
 
 The playbook root sections remain:
-- `metadata`, `executor`, `workload`, `workflow`, `workbook`
+- `metadata`, `keychain` (optional), `executor` (optional), `workload`, `workflow`, `workbook` (optional)
 
 The `workflow` section remains an **array of steps**.
 
@@ -28,20 +28,20 @@ The `workflow` section remains an **array of steps**.
 A workflow is modeled as a Petri net / state machine where:
 - a **token** represents a unit of control ready to run a step,
 - a **step** is a transition that consumes a token when it starts,
-- `next[]` defines outgoing **arcs** that produce new tokens for downstream steps.
+- `step.next.arcs[]` defines outgoing **arcs** that produce new tokens for downstream steps.
 
 ### 1.2 Server vs worker responsibilities
 - The **server (control plane)** is responsible for:
   - selecting the entry step,
-  - evaluating step enablement (`step.when`),
-  - evaluating routing (`next[].when`, `next_mode`),
+  - evaluating step admission (`step.spec.policy.admit.rules`),
+  - evaluating routing (`step.next.spec.mode` + `step.next.arcs[].when`),
   - scheduling step-runs to workers,
   - detecting completion (quiescence),
   - persisting the event log and maintaining projections.
 
 - The **worker (data plane)** is responsible for:
   - executing the step pipeline (`step.tool` tasks in order),
-  - applying tool-level `eval` control flow (`retry/jump/break/fail/continue`),
+  - applying task policy control flow (`retry/jump/break/fail/continue`) via `task.spec.policy.rules`,
   - emitting task and step outcome events.
 
 ---
@@ -75,19 +75,29 @@ At execution start, the server MUST create exactly one initial token targeting `
 
 ## 3. Step enablement
 
-### 3.1 `step.when` guard (server-side)
-A step may define a guard:
+### 3.1 Admission policy (server-side)
+Canonical v10 has **no** `step.when` field. Enablement is expressed via **step admission policy**:
 
-- `step.when: <expression>`
+- `step.spec.policy.admit.rules[]`
 
-Enablement rule:
-- a token targeting a step is **enabled** when `step.when` evaluates to truthy under the token’s bound inputs (`workload`, `ctx`, `args`, etc.).
+Admission rule shape:
+```yaml
+spec:
+  policy:
+    admit:
+      rules:
+        - when: "{{ <bool expr> }}"
+          then: { allow: true|false }
+        - else:
+            then: { allow: true|false }
+```
 
-If `step.when` is omitted:
-- it MUST be treated as `true`.
+Admission rule:
+- a token targeting a step is admitted when the server evaluates `allow: true`.
+- if `admit` is omitted, admission defaults to **allow**.
 
 ### 3.2 Disabled steps
-If `step.when` evaluates to false for a token:
+If admission evaluates to deny:
 - the token MUST NOT be scheduled to a worker.
 - the runtime MUST define one of:
   - token remains pending until it becomes enabled (default), or
@@ -98,38 +108,39 @@ Canonical default:
 
 ---
 
-## 4. Routing via `next[]` arcs
+## 4. Routing via `step.next` arcs
 
-### 4.1 `next[]` semantics
-A step may define outgoing arcs:
+### 4.1 Router semantics
+A step may define a `next` router object with outgoing arcs:
 
 ```yaml
 next:
-  - step: next_step_name
-    when: "<expression>"   # optional
-    args: {...}            # optional
+  spec:
+    mode: exclusive|inclusive
+  arcs:
+    - step: next_step_name
+      when: "{{ <bool expr> }}"   # optional (default true)
+      args: { ... }               # optional
 ```
 
-After a step reaches a terminal outcome (`step.done` or `step.failed`), the server MUST evaluate its `next[]` list to determine which new tokens to emit.
+After a step reaches a terminal outcome (`step.done` or `step.failed`, or `loop.done` when a loop is present), the server MUST evaluate `step.next.arcs[]` to determine which new tokens to emit.
 
 ### 4.2 Arc guard evaluation
 For each arc:
-- if `next[].when` is omitted, it MUST be treated as `true`.
+- if `next.arcs[].when` is omitted, it MUST be treated as `true`.
 - if present, it is evaluated server-side using available state:
-  - `workload`, `ctx`, `vars` (from step outcome), and step results references (implementation-defined exposure).
+  - `event` (boundary event), `workload`, `ctx`, and incoming `args`
 - the evaluation result determines whether the arc **matches**.
 
-### 4.3 `next_mode`
-A step MAY define:
-
-- `spec.next_mode: exclusive | inclusive`
+### 4.3 Router mode
+`next.spec.mode` controls fan-out:
 
 Defaults:
 - if omitted, `exclusive` MUST be assumed.
 
 Behavior:
-- **exclusive**: the server MUST select the first matching arc in `next[]` order and emit exactly one downstream token.
-- **inclusive**: the server MUST select all matching arcs and emit one token per match (fan-out).
+- **exclusive**: first matching arc (YAML order) wins; emit exactly one downstream token.
+- **inclusive**: all matching arcs fire; emit one downstream token per match (fan-out).
 
 ### 4.4 Arc payloads (`args`)
 If an arc includes `args`, they MUST be bound into the downstream token as immutable `args` for that step-run.
@@ -146,7 +157,7 @@ If a step has no `next` section:
 - after it completes, no downstream token is emitted by routing.
 
 ### 5.2 No matching arcs
-If a step has `next[]` but none match:
+If a step has `next.arcs[]` but none match:
 - the runtime MUST treat this as **branch termination** by default:
   - no downstream tokens are emitted.
 
@@ -219,7 +230,7 @@ If `final_step` fails, final execution status MUST follow policy, e.g.:
 
 `kind: noop` is a valid tool kind to support:
 - pure routing steps,
-- emitting context patches (`set_ctx`, `set_vars`, `set_iter`) via tool-level `eval`,
+- emitting context patches (`set_ctx`, `set_iter`) via task policy rules,
 - decision points inside pipelines.
 
 However:
@@ -231,8 +242,8 @@ However:
 ## 9. Summary (canonical defaults)
 
 - Entry step is **workflow[0]** unless overridden by `executor.spec.entry_step`.
-- Steps are enabled by `step.when` (default true).
-- Routing is defined by `next[]` with `spec.next_mode`:
+- Steps are enabled by admission (`step.spec.policy.admit`; default allow).
+- Routing is defined by `step.next`:
   - default `exclusive`, ordered first-match wins.
 - If no arcs match, the branch terminates by default.
 - Execution completes by **quiescence** (no runnable tokens, no in-flight runs, no pending fan-in).

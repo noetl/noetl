@@ -1,12 +1,12 @@
 ---
 sidebar_position: 15
-title: Token Refresh and Keychain Resolution (Canonical v2)
-description: How workers refresh expiring tokens during tool auth resolution (credential caching + optional keychain registry)
+title: Token Refresh and Keychain Resolution (Canonical v10)
+description: How workers refresh expiring tokens during tool auth resolution (credential caching + optional keychain registry) — aligned with Canonical v10
 ---
 
-# Token Refresh and Keychain Resolution (Canonical v2)
+# Token Refresh and Keychain Resolution (Canonical v10)
 
-This document updates **Keychain Token Refresh** to match the **canonical NoETL v2** runtime model.
+This document updates **Keychain Token Refresh** to match the **Canonical v10** runtime model.
 
 Canonical intent:
 - Playbooks do **not** embed tokens; they reference **auth/credentials by name** (often via `workload`).
@@ -35,7 +35,7 @@ This is executed **automatically** before each tool task that requires auth.
 
 ## 2) What playbooks reference
 
-Canonical v2 playbooks reference credentials by **name**, typically:
+Canonical playbooks reference credentials by **name**, typically:
 
 - `auth: pg_k8s`
 - `auth: "{{ workload.openai_auth }}"`
@@ -102,13 +102,13 @@ Token refresh integrates with the canonical caching scopes:
 
 ## 6) Error handling and retry
 
-Token refresh failures are represented as structured tool outcomes, allowing tool-level `eval` to decide:
+Token refresh failures are represented as structured tool outcomes, allowing task policy rules to decide:
 
 - retry for transient failures (timeouts, 429, 5xx from token provider)
 - fail fast for permanent auth failures (invalid_grant, invalid_client, 401)
 
 Important:
-- retries for refresh happen within the tool’s normal retry policy (tool-level `eval`)
+- retries for refresh happen via task policy (`then.do: retry`) and/or tool-internal retry knobs (implementation-defined)
 - the runtime should avoid repeated refresh storms (use jitter/backoff and global cache keys)
 
 ---
@@ -119,7 +119,7 @@ Important:
 - Decrypted tokens MUST NOT be:
   - written to the event log
   - returned in `outcome.result`
-  - written to `ctx/vars/iter`
+  - written to `ctx` or `iter`
   - included in projections
 - Logs MUST redact token values.
 - Cache entries MUST be encrypted at rest and include metadata (fingerprint, expiry, key id).

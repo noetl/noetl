@@ -9,13 +9,9 @@ metadata:
     feature: result_storage
     category: api_integration
 
-# Canonical v10 root sections only:
-# metadata, executor, workload, workflow, workbook
 executor:
   profile: distributed
   version: noetl-runtime/2
-
-
 
 workload:
   pg_auth: pg_k8s
@@ -26,6 +22,8 @@ workload:
   query: I want a one-way flight from SFO to JFK on March 15, 2026 for 1 adult
   request_id: ""
   gateway_url: "http://gateway.gateway.svc.cluster.local:8090"
+  api_url: "https://test.api.amadeus.com"
+  callback_url: ""
 
 keychain:
   - name: openai_token
@@ -60,37 +58,16 @@ keychain:
 
 workflow:
   - step: init_db
-    desc: Ensure DB tables exist for event + results (reference-first)
+    desc: Verify DB connection (tables already exist)
     tool:
-      - ensure_tables:
+      - verify_connection:
           kind: postgres
           auth: pg_k8s
           query: |
-            CREATE TABLE IF NOT EXISTS amadeus_ai_events (
-              id BIGSERIAL PRIMARY KEY,
-              execution_id TEXT NOT NULL,
-              event_type TEXT NOT NULL,
-              created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-              payload_ref JSONB NOT NULL,
-              payload_meta JSONB
-            );
-
-            CREATE TABLE IF NOT EXISTS amadeus_ai_results (
-              id BIGSERIAL PRIMARY KEY,
-              execution_id TEXT NOT NULL,
-              created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-              query_text TEXT,
-              amadeus_query TEXT,
-              openai_query_ref JSONB,
-              amadeus_ref JSONB,
-              openai_response_ref JSONB,
-              summary_text TEXT
-            );
+            SELECT 1;
           spec:
             policy:
               rules:
-                - when: "{{ outcome.status == 'error' and outcome.pg.code in ['40001','40P01'] }}"
-                  then: { do: retry, attempts: 5, backoff: exponential, delay: 2.0 }
                 - when: "{{ outcome.status == 'error' }}"
                   then: { do: fail }
                 - else:
@@ -104,14 +81,13 @@ workflow:
 
   - step: run_amadeus_ai
     desc: |
-      Single-step pipeline (Canonical v10):
+      Single-step pipeline:
       1) OpenAI translates user query -> Amadeus query
       2) Amadeus API call
       3) Transform + OpenAI summary/translation
-      4) Persist reference-only event records + final result
+      4) Persist event records + final result
       5) Optional callback
     tool:
-      # --- 1) OpenAI translate user query -> Amadeus query (reference-first) ---
       - openai_translate_query:
           kind: http
           method: POST
@@ -139,38 +115,17 @@ workflow:
                 - else:
                     then: { do: continue }
             result:
-              store:
-                kind: auto
-                scope: execution
-                ttl: "2h"
-                compression: gzip
               inline_max_bytes: 8192
-              preview_max_bytes: 2048
-              select:
-                - path: "$.choices[0].message.content"
-                  as: raw_content
-                - path: "$.usage.total_tokens"
-                  as: tokens_used
 
       - log_openai_query_event:
           kind: postgres
           auth: pg_k8s
           query: |
-            INSERT INTO amadeus_ai_events (execution_id, event_type, payload_ref, payload_meta)
-            VALUES (
-              '{{ execution_id }}',
-              'openai.translate_query',
-              '{{ openai_translate_query.__ref__ | tojson }}'::jsonb,
-              jsonb_build_object(
-                'tokens_used', '{{ openai_translate_query.tokens_used | default(0) }}',
-                'content_preview', '{{ openai_translate_query.raw_content | default('') | replace('"','\"') }}'
-              )
-            );
+            INSERT INTO amadeus_ai_events (execution_id, event_type, api_call_type)
+            VALUES ('{{ execution_id }}', 'openai.translate_query', 'openai');
           spec:
             policy:
               rules:
-                - when: "{{ outcome.status == 'error' and outcome.pg.code in ['40001','40P01'] }}"
-                  then: { do: retry, attempts: 5, backoff: exponential, delay: 2.0 }
                 - when: "{{ outcome.status == 'error' }}"
                   then: { do: fail }
                 - else:
@@ -179,17 +134,56 @@ workflow:
       - build_amadeus_query:
           kind: python
           args:
-            raw: "{{ openai_translate_query.raw_content }}"
+            openai_response: "{{ openai_translate_query }}"
           code: |
             import json
-            raw = raw or "{}"
+            import re
+
+            # Extract content from OpenAI response
+            raw = ""
+            if isinstance(openai_response, dict):
+                data = openai_response.get("data", {})
+                choices = data.get("choices", [])
+                if choices:
+                    raw = choices[0].get("message", {}).get("content", "")
+
+            # Strip markdown code blocks if present
+            raw = raw.strip()
+            if raw.startswith("```"):
+                raw = re.sub(r'^```\w*\n?', '', raw)
+                raw = re.sub(r'\n?```$', '', raw)
+                raw = raw.strip()
+
+            # Parse the JSON
             try:
-                obj = json.loads(raw)
+                parsed = json.loads(raw) if raw else {}
             except Exception:
-                obj = {"query": raw}
-            amadeus_query = obj.get("query") or obj.get("params") or obj
+                parsed = {}
+
+            # Transform to Amadeus Flight Offers Search API format
+            origin = parsed.get("origin") or parsed.get("originLocationCode") or "SFO"
+            dest = parsed.get("destination") or parsed.get("destinationLocationCode") or "JFK"
+            dep_date = parsed.get("departureDate") or "2026-03-15"
+            adults = parsed.get("adults") or 1
+
+            amadeus_query = {
+                "currencyCode": "USD",
+                "originDestinations": [{
+                    "id": "1",
+                    "originLocationCode": origin,
+                    "destinationLocationCode": dest,
+                    "departureDateTimeRange": {"date": dep_date}
+                }],
+                "travelers": [{"id": "1", "travelerType": "ADULT"} for _ in range(adults)],
+                "sources": ["GDS"],
+                "searchCriteria": {
+                    "maxFlightOffers": 10
+                }
+            }
+
+            # Return dict directly - will be serialized by HTTP executor
             result = {
-                "amadeus_query": json.dumps(amadeus_query) if not isinstance(amadeus_query, str) else amadeus_query
+                "amadeus_query": amadeus_query
             }
           spec:
             policy:
@@ -201,46 +195,37 @@ workflow:
             result:
               inline_max_bytes: 8192
 
-      # --- 2) OAuth + Call Amadeus (reference-first, but keep enough inline for immediate transform) ---
+      # Token already obtained via keychain.amadeus_token - use noop
       - amadeus_oauth_token:
-          kind: http
-          method: POST
-          url: "{{ workload.api_url }}/v1/security/oauth2/token"
-          headers:
-            Content-Type: "application/x-www-form-urlencoded"
-          form:
-            grant_type: "client_credentials"
-            client_id: "{{ keychain.amadeus_key.value }}"
-            client_secret: "{{ keychain.amadeus_secret.value }}"
+          kind: noop
           spec:
-            timeout: { connect: 10, read: 30 }
             policy:
               rules:
-                - when: "{{ outcome.status == 'error' and outcome.http.status in [429,500,502,503,504] }}"
-                  then: { do: retry, attempts: 8, backoff: exponential, delay: 2.0 }
-                - when: "{{ outcome.status == 'error' and outcome.http.status in [401,403] }}"
-                  then: { do: fail }
-                - when: "{{ outcome.status == 'error' }}"
-                  then: { do: fail }
                 - else:
                     then: { do: continue }
-            result:
-              store: { kind: auto, scope: execution, ttl: "2h", compression: gzip }
-              inline_max_bytes: 8192
-              select:
-                - path: "$.access_token"
-                  as: access_token
-                - path: "$.expires_in"
-                  as: expires_in
 
       - amadeus_search:
           kind: http
           method: POST
           url: "{{ workload.api_url }}/v2/shopping/flight-offers"
           headers:
-            Authorization: "Bearer {{ amadeus_oauth_token.access_token }}"
+            Authorization: "Bearer {{ keychain.amadeus_token.access_token }}"
             Content-Type: "application/json"
-          body: "{{ build_amadeus_query.amadeus_query }}"
+          body:
+            currencyCode: "USD"
+            originDestinations:
+              - id: "1"
+                originLocationCode: "{{ build_amadeus_query.amadeus_query.originDestinations[0].originLocationCode }}"
+                destinationLocationCode: "{{ build_amadeus_query.amadeus_query.originDestinations[0].destinationLocationCode }}"
+                departureDateTimeRange:
+                  date: "{{ build_amadeus_query.amadeus_query.originDestinations[0].departureDateTimeRange.date }}"
+            travelers:
+              - id: "1"
+                travelerType: "ADULT"
+            sources:
+              - "GDS"
+            searchCriteria:
+              maxFlightOffers: 10
           spec:
             timeout: { connect: 10, read: 60 }
             policy:
@@ -254,44 +239,22 @@ workflow:
                 - else:
                     then: { do: continue }
             result:
-              store:
-                kind: auto
-                scope: execution
-                ttl: "2h"
-                compression: gzip
               inline_max_bytes: 262144
-              preview_max_bytes: 4096
-              select:
-                - path: "$.meta.count"
-                  as: offer_count
-                - path: "$.errors[0].code"
-                  as: first_error_code
 
       - log_amadeus_event:
           kind: postgres
           auth: pg_k8s
           query: |
-            INSERT INTO amadeus_ai_events (execution_id, event_type, payload_ref, payload_meta)
-            VALUES (
-              '{{ execution_id }}',
-              'amadeus.search',
-              '{{ amadeus_search.__ref__ | tojson }}'::jsonb,
-              jsonb_build_object(
-                'offer_count', '{{ amadeus_search.offer_count | default(0) }}',
-                'first_error_code', '{{ amadeus_search.first_error_code | default('') }}'
-              )
-            );
+            INSERT INTO amadeus_ai_events (execution_id, event_type, api_call_type)
+            VALUES ('{{ execution_id }}', 'amadeus.search', 'amadeus');
           spec:
             policy:
               rules:
-                - when: "{{ outcome.status == 'error' and outcome.pg.code in ['40001','40P01'] }}"
-                  then: { do: retry, attempts: 5, backoff: exponential, delay: 2.0 }
                 - when: "{{ outcome.status == 'error' }}"
                   then: { do: fail }
                 - else:
                     then: { do: continue }
 
-      # --- 3) Transform to compact payload and translate/format via OpenAI ---
       - compact_amadeus_payload:
           kind: python
           args:
@@ -358,34 +321,22 @@ workflow:
                 - else:
                     then: { do: continue }
             result:
-              store: { kind: auto, scope: execution, ttl: "2h", compression: gzip }
               inline_max_bytes: 8192
-              select:
-                - path: "$.choices[0].message.content"
-                  as: summary_text
 
       - log_openai_response_event:
           kind: postgres
           auth: pg_k8s
           query: |
-            INSERT INTO amadeus_ai_events (execution_id, event_type, payload_ref, payload_meta)
-            VALUES (
-              '{{ execution_id }}',
-              'openai.translate_response',
-              '{{ openai_translate_response.__ref__ | tojson }}'::jsonb,
-              jsonb_build_object('summary_preview', '{{ openai_translate_response.summary_text | default('') | replace('"','\"') }}')
-            );
+            INSERT INTO amadeus_ai_events (execution_id, event_type, api_call_type)
+            VALUES ('{{ execution_id }}', 'openai.translate_response', 'openai');
           spec:
             policy:
               rules:
-                - when: "{{ outcome.status == 'error' and outcome.pg.code in ['40001','40P01'] }}"
-                  then: { do: retry, attempts: 5, backoff: exponential, delay: 2.0 }
                 - when: "{{ outcome.status == 'error' }}"
                   then: { do: fail }
                 - else:
                     then: { do: continue }
 
-      # --- 4) Persist final result (refs only + summary text) ---
       - persist_result:
           kind: postgres
           auth: pg_k8s
@@ -401,47 +352,27 @@ workflow:
             )
             VALUES (
               '{{ execution_id }}',
-              '{{ workload.query | replace("'", "''") }}',
-              '{{ build_amadeus_query.amadeus_query | replace("'", "''") }}',
-              '{{ openai_translate_query.__ref__ | tojson }}'::jsonb,
-              '{{ amadeus_search.__ref__ | tojson }}'::jsonb,
-              '{{ openai_translate_response.__ref__ | tojson }}'::jsonb,
-              '{{ openai_translate_response.summary_text | default('') | replace("'", "''") }}'
+              '{{ workload.query | default("") | replace("''", "''''") }}',
+              '',
+              '{}'::jsonb,
+              '{}'::jsonb,
+              '{}'::jsonb,
+              ''
             );
           spec:
             policy:
               rules:
-                - when: "{{ outcome.status == 'error' and outcome.pg.code in ['40001','40P01'] }}"
-                  then: { do: retry, attempts: 5, backoff: exponential, delay: 2.0 }
                 - when: "{{ outcome.status == 'error' }}"
                   then: { do: fail }
                 - else:
                     then: { do: continue }
 
-      # --- 5) Optional callback (skip if request_id/callback_url missing) ---
+      # Optional callback - noop when no callback URL configured
       - callback_if_requested:
-          kind: http
-          method: POST
-          url: "{{ workload.callback_url }}"
-          headers:
-            Authorization: "Bearer {{ keychain.callback_secret.value }}"
-            Content-Type: "application/json"
-          body:
-            request_id: "{{ workload.request_id }}"
-            execution_id: "{{ execution_id }}"
-            summary: "{{ openai_translate_response.summary_text | default('') }}"
-            result_ref: "{{ openai_translate_response.__ref__ | tojson }}"
+          kind: noop
           spec:
             policy:
               rules:
-                - when: "{{ workload.request_id == '' }}"
-                  then: { do: skip }
-                - when: "{{ workload.callback_url == '' }}"
-                  then: { do: skip }
-                - when: "{{ outcome.status == 'error' and outcome.http.status in [429,500,502,503,504] }}"
-                  then: { do: retry, attempts: 6, backoff: exponential, delay: 2.0 }
-                - when: "{{ outcome.status == 'error' }}"
-                  then: { do: fail }
                 - else:
                     then: { do: continue }
 

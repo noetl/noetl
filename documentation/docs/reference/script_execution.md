@@ -1,19 +1,20 @@
 ---
 sidebar_position: 14
-title: Script Loading and Script Jobs (Canonical v2)
-description: One unified specification for external script loading (script attribute) and Kubernetes job-based script execution (script tool kind)
+title: Script Loading and Script Jobs (Canonical v10)
+description: Unified specification for external script loading (script attribute) and Kubernetes job-based script execution (script tool kind) — Canonical v10
 ---
 
-# Script Loading and Script Jobs (Canonical v2)
+# Script Loading and Script Jobs (Canonical v10)
 
-This document consolidates and replaces the prior **Script Attribute** and **Script Tool** documents and updates them to the **canonical NoETL DSL v2** model.
+This document consolidates and replaces the prior **Script Attribute** and **Script Tool** documents and aligns them to the **Canonical v10** execution model.
 
 Canonical alignment:
-- Playbook root sections are `metadata`, `executor`, `workload`, `workflow`, `workbook`
-- A step is `when + tool (ordered pipeline) + next`
+- Playbook root sections are `metadata`, `keychain` (optional), `executor` (optional), `workload`, `workflow`, `workbook` (optional)
+- A step is `spec.policy` (admission/lifecycle) + `tool` (ordered pipeline) + `next` (router with arcs)
 - Each pipeline item is a **tool task** with `kind` and optional `spec`
 - Auth material is resolved **at runtime** by workers (credential caching + refresh); playbooks reference credential names only
 - Results are **reference-first**; large outputs should be stored externally and referenced
+- No legacy `eval`/`expr` or step-level `case`
 
 > This document describes two related capabilities:
 > 1) **External script loading** for tools that support code/queries/templates (the `script` attribute)  
@@ -30,13 +31,13 @@ Many tools accept code-like inputs:
 - request templates
 - transformation logic
 
-Canonical v2 supports providing that code from:
+Canonical v10 supports providing that code from:
 - inline fields (tool-specific)
 - encoded fields (tool-specific)
 - external locations via a common `script` descriptor
 
 ### 1.2 “Script tool” as an execution environment
-Some workloads require isolation, resource control, and dependency packaging. For those, canonical v2 supports a dedicated tool kind:
+Some workloads require isolation, resource control, and dependency packaging. For those, Canonical v10 supports a dedicated tool kind:
 
 - `kind: script` — runs a script as an isolated Kubernetes Job, with resource policies and controlled environment injection.
 
@@ -48,11 +49,11 @@ These are separate concepts:
 
 ## 2) Placement in the canonical step pipeline
 
-In canonical v2, steps execute an ordered pipeline:
+In Canonical v10, steps execute an ordered pipeline:
 
 - `step.tool` is a list of named tasks
 - Each task has `kind` and tool-specific configuration
-- Tool-level flow control is expressed via `eval: expr` (retry/continue/fail/jump/break)
+- Task outcome handling is expressed via **policy rules**: `task.spec.policy.rules` (`when` → `then.do`)
 
 This document only defines the script-related configuration surfaces. It does not change pipeline semantics.
 
@@ -144,10 +145,10 @@ Common job policy knobs include:
 - TTL cleanup after completion
 - environment variables (see credential handling below)
 
-These fields may be placed under `spec` (canonical v2 policy container).
+These fields may be placed under `spec` (canonical policy container).
 
 ### 4.4 Credential injection (canonical)
-Jobs often need cloud/database credentials. Canonical v2 requires:
+Jobs often need cloud/database credentials. Canonical v10 requires:
 - playbooks reference credential names, not secret values
 - workers materialize credentials and inject them into the job environment securely
 - tokens are refreshed according to runtime policy (threshold-based)
@@ -158,7 +159,7 @@ Recommended approach:
 - the event log records only metadata (no secret bytes)
 
 ### 4.5 Outputs and result references
-Job outputs can be large (logs, artifacts, produced datasets). Canonical v2 recommends:
+Job outputs can be large (logs, artifacts, produced datasets). Canonical v10 recommends:
 - store large outputs externally (object store, DB)
 - return a ResultRef describing the stored location
 - include only minimal metadata in events and pipeline outcomes
@@ -167,8 +168,8 @@ Job outputs can be large (logs, artifacts, produced datasets). Canonical v2 reco
 
 ## 5) Retry and failure handling
 
-### 5.1 Tool-level `eval` applies
-Both external script loading and job execution produce task outcomes. Retry is expressed via tool-level `eval: expr`, for example:
+### 5.1 Task policy applies
+Both external script loading and job execution produce task outcomes. Retry is expressed via task policy rules, for example:
 - retry on transient fetch failures (timeouts, 429/5xx)
 - retry on transient job failures (node preemption, image pull transient)
 - fail fast on permanent errors (permission denied, invalid script)
@@ -176,7 +177,7 @@ Both external script loading and job execution produce task outcomes. Retry is e
 ### 5.2 Job retry vs task retry
 There are two retry layers (implementation-defined but recommended):
 - **Job retry** (Kubernetes backoff limit) — retries inside the cluster job controller
-- **Task retry** (NoETL `eval: do: retry`) — reruns the task from the worker perspective
+- **Task retry** (NoETL `then.do: retry`) — reruns the task from the worker perspective
 
 Canonical guidance:
 - Use Kubernetes retry for quick transient pod failures.
@@ -217,7 +218,7 @@ Use object storage paths that incorporate:
 
 - Replace step-level `tool: python` shorthand with canonical pipeline tasks under `step.tool`.
 - Treat `script` as a **tool task attribute**, not a separate top-level mechanism.
-- Remove any direct `{{ keychain.*.token }}` injection patterns; prefer credential references and runtime injection.
+- Prefer referencing credentials by name (e.g., `auth: pg_k8s`, root `keychain` declarations) over embedding secret bytes into templated strings. If you template `keychain.*` values into headers, ensure the runtime redacts inputs in events/logs.
 - Keep script content out of events; store references + integrity metadata.
 
 ---
@@ -225,5 +226,5 @@ Use object storage paths that incorporate:
 ## See also
 - Credential caching: `credential_caching_v2.md`
 - Token refresh: `keychain_token_refresh_v2.md`
-- Result storage (reference-first): `result_storage_v2.md`
+- Result storage (reference-first): `result_storage_canonical_v10.md`
 - Pipeline execution: `pipeline_execution_v2.md`

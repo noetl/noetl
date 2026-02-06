@@ -1,7 +1,7 @@
 ---
 sidebar_position: 6
 title: Result Storage & References (Canonical)
-description: Reference-first result storage for NoETL DSL v2 (Canonical v10) — NATS KV/ObjectStore, GCS, Postgres, manifests, and event-sourced access
+description: Reference-first result storage for NoETL DSL (Canonical v10) — NATS KV/ObjectStore, GCS, Postgres, manifests, and event-sourced access
 ---
 
 # Result Storage & References — Canonical v10
@@ -12,6 +12,10 @@ This document **merges and supersedes** the older result/TempRef docs and update
 - No `eval:` / `expr:`. Outcome handling uses **`spec.policy.rules` with `when`**.
 - Events and step context pass **references only** (inline only for small previews / extracted fields).
 - Storage backends: **NATS KV**, **NATS Object Store**, **Google Cloud Storage**, **Postgres**.
+
+See also:
+- Canonical v10 runtime results model: `documentation/docs/reference/dsl/runtime_results.md`
+- Legacy v2 doc (pre-policy DSL): `documentation/docs/reference/result_storage_v2.md`
 
 ---
 

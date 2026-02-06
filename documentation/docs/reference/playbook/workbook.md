@@ -1,26 +1,19 @@
-# Workbook (reusable tasks)
+# Workbook (reusable blocks) — Canonical v10
 
-Optional block for named tasks reusable across workflows.
+`workbook` is **optional**. In Canonical v10 it is reserved for a catalog of named reusable tasks/templates. It is not required for the canonical baseline.
 
-What it is
-- A list of named actions with the same shape as workflow steps (tool, data, auth, code/command/sql, assert, sink)
-- Invoked from workflow steps via `tool: workbook` and a `name` reference
+Canonical placeholder shape:
 
-Required keys
-- `workbook`: array of task objects
-- Each task: `name`, `tool` (any action type except `workbook`), plus fields required by that action
+```yaml
+workbook:
+  tasks:
+    fetch_assessments:
+      kind: http
+      method: GET
+      url: "{{ workload.api_url }}/api/v1/assessments"
+```
 
-Invocation from workflow
-- Create a workflow step with `tool: workbook`
-- Provide `name: <task>` so the engine resolves the workbook entry
-- Pass `data` just like any other step to override inputs on that invocation
+How workbook entries are expanded/invoked is runtime/compiler-defined. Keep workbook entries in the same `kind:` task shape used in `step.tool` so they can be inlined/compiled safely.
 
-Patterns
-- Small Python utilities (validation, transformations)
-- Parameterised SQL snippets (Postgres, DuckDB)
-- Reusable HTTP integrations shared across steps or playbooks
-
-Tips
-- Keep task names unique within the workbook scope
-- Document expectations with `assert.expects`/`assert.returns`
-- Combine with `sink` to persist reusable action results consistently
+## See also
+- `documentation/docs/reference/dsl/playbook_structure.md`
