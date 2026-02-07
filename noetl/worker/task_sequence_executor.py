@@ -267,9 +267,11 @@ class TaskSequenceExecutor:
             ctx._attempt = retry_counts.get(task_name, 0) + 1
 
             # Build context for template rendering
+            # Spread task results at top level so {{ task_name }} works (not just {{ results.task_name }})
             render_ctx = {
                 **base_context,
-                **ctx.to_dict(),
+                **ctx.results,  # Task results at root level: {{ amadeus_search }}
+                **ctx.to_dict(),  # Also under 'results' for explicit access: {{ results.amadeus_search }}
             }
 
             # Execute tool and build outcome

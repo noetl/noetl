@@ -1,0 +1,31 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: amadeus_ai_api_test
+  path: api_integration/amadeus_ai_api_test
+
+workload:
+  query: "Test query"
+
+workflow:
+  - step: start
+    desc: "Test step"
+    tool:
+      kind: http
+      method: POST
+      url: "https://api.openai.com/v1/test"
+      headers:
+        Content-Type: "application/json"
+      payload:
+        model: "test"
+        value: "test"
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
+
+  - step: end
+    desc: "End"
+    tool:
+      kind: noop
