@@ -21,7 +21,7 @@ metadata:
     - optimized
     - gateway
 
-ctx:
+workload:
   auth0_token: ""
   client_ip: "0.0.0.0"
   auth0_domain: "mestumre-development.us.auth0.com"

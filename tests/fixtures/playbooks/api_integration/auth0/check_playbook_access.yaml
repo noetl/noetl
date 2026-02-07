@@ -17,7 +17,7 @@ metadata:
     - auth0
     - authorization
 
-ctx:
+workload:
   # Input parameters - provided by execution request
   session_token: ""
   playbook_path: ""
@@ -47,12 +47,12 @@ workflow:
     desc: Get user from session
     tool:
       kind: postgres
-      auth: "{{ ctx.db_credential }}"
+      auth: "{{ db_credential }}"
       command: |
         SELECT s.user_id, u.email, u.display_name
         FROM auth.sessions s
         JOIN auth.users u ON s.user_id = u.user_id
-        WHERE s.session_token = '{{ ctx.session_token }}'
+        WHERE s.session_token = '{{ session_token }}'
           AND s.is_active = true
           AND s.expires_at > NOW()
           AND u.is_active = true;
@@ -69,7 +69,7 @@ workflow:
     desc: Check permissions
     tool:
       kind: postgres
-      auth: "{{ ctx.db_credential }}"
+      auth: "{{ db_credential }}"
       command: |
         SELECT
           COUNT(*) > 0 as has_permission
@@ -79,14 +79,14 @@ workflow:
         WHERE ur.user_id = {{ get_user_from_session.command_0.rows[0].user_id }}
           AND (ur.expires_at IS NULL OR ur.expires_at > NOW())
           AND (
-            pp.playbook_path = '{{ ctx.playbook_path }}'
-            OR (pp.allow_pattern IS NOT NULL AND '{{ ctx.playbook_path }}' LIKE pp.allow_pattern)
+            pp.playbook_path = '{{ playbook_path }}'
+            OR (pp.allow_pattern IS NOT NULL AND '{{ playbook_path }}' LIKE pp.allow_pattern)
           )
-          AND (pp.deny_pattern IS NULL OR '{{ ctx.playbook_path }}' NOT LIKE pp.deny_pattern)
+          AND (pp.deny_pattern IS NULL OR '{{ playbook_path }}' NOT LIKE pp.deny_pattern)
           AND (
-            ('{{ ctx.action }}' = 'execute' AND pp.can_execute = true)
-            OR ('{{ ctx.action }}' = 'view' AND pp.can_view = true)
-            OR ('{{ ctx.action }}' = 'modify' AND pp.can_modify = true)
+            ('{{ action }}' = 'execute' AND pp.can_execute = true)
+            OR ('{{ action }}' = 'view' AND pp.can_view = true)
+            OR ('{{ action }}' = 'modify' AND pp.can_modify = true)
           );
     next:
       spec:
@@ -102,8 +102,8 @@ workflow:
     tool:
       kind: python
       args:
-        playbook_path: "{{ ctx.playbook_path }}"
-        action: "{{ ctx.action }}"
+        playbook_path: "{{ playbook_path }}"
+        action: "{{ action }}"
         user_id: "{{ get_user_from_session.command_0.rows[0].user_id }}"
         email: "{{ get_user_from_session.command_0.rows[0].email }}"
         display_name: "{{ get_user_from_session.command_0.rows[0].display_name }}"
@@ -155,8 +155,8 @@ workflow:
     tool:
       kind: python
       args:
-        playbook_path: "{{ ctx.playbook_path }}"
-        action: "{{ ctx.action }}"
+        playbook_path: "{{ playbook_path }}"
+        action: "{{ action }}"
       code: |
         result = {
             "allowed": False,

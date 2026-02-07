@@ -32,7 +32,7 @@ metadata:
     - nats
     - gateway
 
-ctx:
+workload:
   # Input parameters - provided by execution request
   session_token: ""
   # Configuration
@@ -48,7 +48,7 @@ workflow:
     desc: Lookup and validate session from Postgres (source of truth)
     tool:
       kind: postgres
-      auth: "{{ ctx.db_credential }}"
+      auth: "{{ db_credential }}"
       command: |
         SELECT
           s.session_id,
@@ -67,7 +67,7 @@ workflow:
           END as session_valid
         FROM auth.sessions s
         JOIN auth.users u ON s.user_id = u.user_id
-        WHERE s.session_token = '{{ ctx.session_token }}';
+        WHERE s.session_token = '{{ session_token }}';
     next:
       spec:
         mode: exclusive

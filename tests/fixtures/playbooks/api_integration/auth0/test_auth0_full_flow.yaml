@@ -21,7 +21,7 @@ metadata:
     - authentication
     - integration-test
 
-ctx:
+workload:
   username: "{{ username | default('kadyapam@gmail.com') }}"
   password: "{{ password }}"
   auth0_domain: "mestumre-development.us.auth0.com"
@@ -49,11 +49,11 @@ workflow:
       kind: playbook
       path: api_integration/auth0/get_auth0_token
       args:
-        username: "{{ ctx.username }}"
-        password: "{{ ctx.password }}"
-        auth0_domain: "{{ ctx.auth0_domain }}"
-        client_id: "{{ ctx.client_id }}"
-        auth0_credential: "{{ ctx.auth0_credential }}"
+        username: "{{ username }}"
+        password: "{{ password }}"
+        auth0_domain: "{{ auth0_domain }}"
+        client_id: "{{ client_id }}"
+        auth0_credential: "{{ auth0_credential }}"
     next:
       spec:
         mode: exclusive

@@ -23,7 +23,7 @@ metadata:
     - authentication
     - token
 
-ctx:
+workload:
   username: "{{ username }}"
   password: "{{ password }}"
   auth0_domain: "{{ auth0_domain | default('mestumre-development.us.auth0.com') }}"
@@ -35,7 +35,7 @@ keychain:
   - name: auth0_credentials
     kind: credential
     scope: global
-    credential: "{{ ctx.auth0_credential }}"
+    credential: "{{ auth0_credential }}"
 
 workflow:
   - step: start
@@ -56,15 +56,15 @@ workflow:
     tool:
       kind: http
       method: POST
-      endpoint: "https://{{ ctx.auth0_domain }}/oauth/token"
+      endpoint: "https://{{ auth0_domain }}/oauth/token"
       headers:
         Content-Type: "application/json"
       payload:
         grant_type: "password"
-        username: "{{ ctx.username }}"
-        password: "{{ ctx.password }}"
-        audience: "{{ ctx.audience }}"
-        client_id: "{{ ctx.client_id }}"
+        username: "{{ username }}"
+        password: "{{ password }}"
+        audience: "{{ audience }}"
+        client_id: "{{ client_id }}"
         client_secret: "{{ keychain.auth0_credentials.client_secret }}"
         scope: "openid profile email"
     next:

@@ -16,7 +16,7 @@ metadata:
     - database
     - provisioning
 
-ctx:
+workload:
   db_credential: pg_auth
 
 workflow:
@@ -36,7 +36,7 @@ workflow:
     desc: Execute SQL to create auth schema and tables
     tool:
       kind: postgres
-      auth: "{{ ctx.db_credential }}"
+      auth: "{{ db_credential }}"
       command: |
         -- Create auth schema
         CREATE SCHEMA IF NOT EXISTS auth;
@@ -188,7 +188,7 @@ workflow:
     desc: Verify auth schema was created successfully
     tool:
       kind: postgres
-      auth: "{{ ctx.db_credential }}"
+      auth: "{{ db_credential }}"
       command: |
         SELECT
           (SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'auth') as table_count,
