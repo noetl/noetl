@@ -239,11 +239,13 @@ class ExecutionState:
         # When inline tasks are in a then block with next actions, the next is deferred until inline tasks complete
         self.pending_next_actions: dict[str, dict[str, Any]] = {}  # inline_task_step -> {next_actions, inline_tasks, context_event_step}
         
-        # Initialize workload variables
+        # Initialize workload variables (becomes ctx at runtime)
+        # NOTE: Playbooks use 'workload:' section for default variables, NOT 'ctx:'
+        # The 'ctx' is an internal runtime concept, not a playbook structure
         if playbook.workload:
             self.variables.update(playbook.workload)
-        
-        # Merge payload into ctx (canonical v10: use ctx for execution-scoped variables)
+
+        # Merge payload into variables (execution request overrides playbook defaults)
         # NOTE: 'vars' key is REMOVED in strict v10 - use 'ctx' instead
         for k, v in payload.items():
             if k == "ctx" and isinstance(v, dict):

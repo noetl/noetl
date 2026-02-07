@@ -912,7 +912,7 @@ class Playbook(BaseModel):
     kind: Literal["Playbook"] = Field(..., description="Resource kind")
     metadata: dict[str, Any] = Field(..., description="Metadata (name, path, labels)")
     executor: Optional[Executor] = Field(None, description="Executor configuration")
-    workload: Optional[dict[str, Any]] = Field(None, description="Immutable workflow inputs")
+    workload: Optional[dict[str, Any]] = Field(None, description="Default variables (becomes ctx at runtime)")
     keychain: Optional[list[dict[str, Any]]] = Field(None, description="Keychain definitions")
     workbook: Optional[list[WorkbookTask]] = Field(None, description="Reusable tasks")
     workflow: list[Step] = Field(..., description="Workflow steps")
