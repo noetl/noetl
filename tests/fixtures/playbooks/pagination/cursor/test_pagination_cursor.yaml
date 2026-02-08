@@ -7,8 +7,6 @@ metadata:
 
 workload:
   api_url: "http://paginated-api.test-server.svc.cluster.local:5555"
-
-ctx:
   cursor: ""
   limit: 10
   collected_events: []
@@ -22,6 +20,11 @@ workflow:
       args: {}
       code: |
         result = {"status": "initialized"}
+    set_ctx:
+      cursor: "{{ workload.cursor }}"
+      limit: "{{ workload.limit }}"
+      collected_events: "{{ workload.collected_events }}"
+      has_more: "{{ workload.has_more }}"
     next:
       spec:
         mode: exclusive

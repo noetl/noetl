@@ -6,7 +6,7 @@ metadata:
   path: tests/fixtures/playbooks/data_transfer/postgres_jsonb_test
   description: Test PostgreSQL JSONB datatype operations and TRUNCATE command
 
-ctx:
+workload:
   pg_auth: pg_local
   test_table: postgres_jsonb_test
   sample_json_data:

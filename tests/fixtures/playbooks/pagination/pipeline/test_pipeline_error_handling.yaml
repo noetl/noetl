@@ -18,8 +18,6 @@ metadata:
 
 workload:
   api_url: "http://paginated-api.test-server.svc.cluster.local:5555"
-
-ctx:
   test_results: []
   current_test: null
 
@@ -38,6 +36,9 @@ workflow:
             "fail_on_auth_error"
           ]
         }
+    set_ctx:
+      test_results: "{{ workload.test_results }}"
+      current_test: "{{ workload.current_test }}"
     next:
       spec:
         mode: exclusive

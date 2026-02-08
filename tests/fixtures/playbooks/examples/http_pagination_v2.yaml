@@ -11,8 +11,6 @@ metadata:
 workload:
   api_url: "https://api.example.com"
   page_size: 100
-
-ctx:
   current_page: 1
   all_pages: []
 
@@ -24,6 +22,9 @@ workflow:
       spec:
         code: |
           result = {"status": "initialized"}
+    set_ctx:
+      current_page: "{{ workload.current_page }}"
+      all_pages: "{{ workload.all_pages }}"
     next:
       spec:
         mode: exclusive

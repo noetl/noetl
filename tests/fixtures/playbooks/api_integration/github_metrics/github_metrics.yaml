@@ -4,7 +4,7 @@ metadata:
   name: github_metrics
   path: api_integration/github_metrics
 
-ctx:
+workload:
   jobId: '{{ job.uuid }}'
   execution_id: '{{ job.uuid }}'
   pg_auth: pg_k8s
@@ -30,7 +30,7 @@ workflow:
     tool:
       kind: http
       method: GET
-      url: '{{ ctx.api_base_url }}/repos/{{ ctx.repository }}'
+      url: '{{ api_base_url }}/repos/{{ repository }}'
       headers:
         User-Agent: NoETL GitHub Metrics/1.0
         Accept: application/vnd.github.v3+json
@@ -94,7 +94,7 @@ workflow:
     desc: Store repository analysis in PostgreSQL
     tool:
       kind: postgres
-      auth: '{{ ctx.pg_auth }}'
+      auth: '{{ pg_auth }}'
       command: |
         -- Drop table if it exists
         DROP TABLE IF EXISTS github_repo_analysis;
@@ -142,7 +142,7 @@ workflow:
     desc: Query the stored data and perform final analysis
     tool:
       kind: postgres
-      auth: '{{ ctx.pg_auth }}'
+      auth: '{{ pg_auth }}'
       command: |
         -- Get the complete analysis with timestamps converted to strings
         SELECT

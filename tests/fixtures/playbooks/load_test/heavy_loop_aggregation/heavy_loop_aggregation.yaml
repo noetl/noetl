@@ -27,8 +27,6 @@ workload:
 
   # Processing delay per item (seconds) - set to 0 for max speed
   processing_delay: 0
-
-ctx:
   loop_results: []
 
 workflow:
@@ -63,6 +61,8 @@ workflow:
             "start_time": time.time()
         }
         print(f"Initialized with {len(items)} items to process")
+    set_ctx:
+      loop_results: "{{ workload.loop_results }}"
     next:
       spec:
         mode: exclusive

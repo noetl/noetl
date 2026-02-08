@@ -19,8 +19,6 @@ workload:
   db_name: "noetl"
   db_user: "noetl"
   db_password: "noetl"
-
-ctx:
   current_page: 1
   page_size: 10
   total_fetched: 0
@@ -36,6 +34,11 @@ workflow:
           "status": "initialized",
           "message": "Starting pagination test with tool.spec.policy.rules flow control"
         }
+    set_ctx:
+      current_page: "{{ workload.current_page }}"
+      page_size: "{{ workload.page_size }}"
+      total_fetched: "{{ workload.total_fetched }}"
+      all_pages_done: "{{ workload.all_pages_done }}"
     next:
       spec:
         mode: exclusive

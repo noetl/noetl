@@ -4,7 +4,7 @@ metadata:
   name: http_to_postgres_iterator
   path: examples/data_transfer/http_to_postgres_iterator
 
-ctx:
+workload:
   api_url: "https://jsonplaceholder.typicode.com/posts"
   pg_auth: pg_local
 

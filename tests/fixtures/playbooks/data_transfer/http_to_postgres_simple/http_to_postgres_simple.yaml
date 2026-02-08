@@ -5,7 +5,7 @@ metadata:
   name: http_to_postgres_simple
   path: tests/fixtures/playbooks/data_transfer/http_to_postgres_simple
 
-ctx:
+workload:
   pg_auth: pg_k8s
   message: Simple HTTP to PostgreSQL transfer example
   api_url: https://jsonplaceholder.typicode.com/posts

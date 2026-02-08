@@ -10,8 +10,6 @@ workload:
   api_base_url: "https://api.example.com"
   retry_limit: 3
   user_id: "{{ payload.user_id }}"
-
-ctx:
   user_email: null
   user_status: null
   user_created: null
@@ -26,6 +24,12 @@ workflow:
       spec:
         code: |
           result = {"status": "initialized"}
+    set_ctx:
+      user_email: "{{ workload.user_email }}"
+      user_status: "{{ workload.user_status }}"
+      user_created: "{{ workload.user_created }}"
+      email_domain: "{{ workload.email_domain }}"
+      user_score: "{{ workload.user_score }}"
     next:
       spec:
         mode: exclusive

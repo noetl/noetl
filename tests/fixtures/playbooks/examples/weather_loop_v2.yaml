@@ -17,8 +17,6 @@ workload:
       lon: -0.1278
   weather_api_url: https://api.open-meteo.com/v1/forecast
   alert_threshold: 30
-
-ctx:
   weather_results: []
   alerts: []
 
@@ -50,6 +48,9 @@ workflow:
       spec:
         code: |
           result = {"status": "initialized", "timestamp": "2025-12-10T00:00:00Z"}
+    set_ctx:
+      weather_results: "{{ workload.weather_results }}"
+      alerts: "{{ workload.alerts }}"
     next:
       spec:
         mode: exclusive

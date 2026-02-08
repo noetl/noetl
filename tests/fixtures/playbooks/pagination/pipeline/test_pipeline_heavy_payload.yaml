@@ -20,8 +20,6 @@ workload:
   payload_kb_per_item: 50
   page_size: 5
   max_pages: 3
-
-ctx:
   current_page: 1
   pages_processed: 0
   total_bytes_processed: 0
@@ -41,6 +39,10 @@ workflow:
             "estimated_kb_per_page": {{ payload_kb_per_item }} * {{ page_size }}
           }
         }
+    set_ctx:
+      current_page: "{{ workload.current_page }}"
+      pages_processed: "{{ workload.pages_processed }}"
+      total_bytes_processed: "{{ workload.total_bytes_processed }}"
     next:
       spec:
         mode: exclusive

@@ -43,7 +43,7 @@ workflow:
     tool:
       kind: python
       code: |
-        action = context['ctx'].get('action', 'list_users')
+        action = context.get('action', 'list_users')
         result = {"action": action}
     next:
       spec:
@@ -118,7 +118,7 @@ workflow:
         - step: send_users_callback
           when: "{{ request_id }}"
         - step: end
-          when: "{{ not ctx.request_id }}"
+          when: "{{ not request_id }}"
 
   - step: send_users_callback
     desc: Send users list callback
@@ -180,7 +180,7 @@ workflow:
         - step: send_roles_callback
           when: "{{ request_id }}"
         - step: end
-          when: "{{ not ctx.request_id }}"
+          when: "{{ not request_id }}"
 
   - step: send_roles_callback
     desc: Send roles list callback
@@ -264,7 +264,7 @@ workflow:
         - step: send_user_callback
           when: "{{ request_id }}"
         - step: end
-          when: "{{ not ctx.request_id }}"
+          when: "{{ not request_id }}"
 
   - step: send_user_callback
     desc: Send user details callback
@@ -310,9 +310,9 @@ workflow:
         SELECT
           {{ user_id }},
           r.role_id,
-          {% if ctx.granted_by %}{{ granted_by }}{% else %}NULL{% endif %}
+          {% if granted_by %}{{ granted_by }}{% else %}NULL{% endif %}
         FROM auth.roles r
-        WHERE r.role_name = ANY(ARRAY[{% for name in ctx.role_names %}'{{ name }}'{% if not loop.last %},{% endif %}{% endfor %}])
+        WHERE r.role_name = ANY(ARRAY[{% for name in role_names %}'{{ name }}'{% if not loop.last %},{% endif %}{% endfor %}])
         ON CONFLICT (user_id, role_id) DO NOTHING
         RETURNING role_id;
     next:
@@ -347,9 +347,9 @@ workflow:
         result = {
             "success": True,
             "action": "update_user_roles",
-            "user_id": context['ctx']['user_id'],
+            "user_id": context.get('user_id'),
             "roles": rows,
-            "message": f"Updated {len(rows)} roles for user {context['ctx']['user_id']}"
+            "message": f"Updated {len(rows)} roles for user {context.get('user_id')}"
         }
     next:
       spec:
@@ -358,7 +358,7 @@ workflow:
         - step: send_updated_roles_callback
           when: "{{ request_id }}"
         - step: end
-          when: "{{ not ctx.request_id }}"
+          when: "{{ not request_id }}"
 
   - step: send_updated_roles_callback
     desc: Send updated roles callback
@@ -388,7 +388,7 @@ workflow:
       code: |
         result = {
             "success": False,
-            "error": f"Invalid action: {context['ctx'].get('action')}",
+            "error": f"Invalid action: {context.get('action')}",
             "valid_actions": ["list_users", "list_roles", "update_user_roles", "get_user"]
         }
     next:
@@ -398,7 +398,7 @@ workflow:
         - step: send_error_callback
           when: "{{ request_id }}"
         - step: end
-          when: "{{ not ctx.request_id }}"
+          when: "{{ not request_id }}"
 
   - step: send_error_callback
     desc: Send error callback

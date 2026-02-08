@@ -7,8 +7,6 @@ metadata:
 
 workload:
   api_url: "http://paginated-api.test-server.svc.cluster.local:5555"
-
-ctx:
   current_page: 1
   page_size: 10
   collected_data: []
@@ -20,6 +18,10 @@ workflow:
       kind: python
       code: |
         result = {"status": "initialized"}
+    set_ctx:
+      current_page: "{{ workload.current_page }}"
+      page_size: "{{ workload.page_size }}"
+      collected_data: "{{ workload.collected_data }}"
     next:
       spec:
         mode: exclusive

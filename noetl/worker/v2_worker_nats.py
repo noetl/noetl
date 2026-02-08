@@ -1872,10 +1872,22 @@ class V2Worker:
                 """Execute a single tool within the task sequence."""
                 return await self._execute_tool(kind, config, {}, step, ctx)
 
-            def render_template_str(template: str, ctx: dict) -> str:
-                """Render a single Jinja2 template string."""
+            def render_template_str(template: str, ctx: dict) -> Any:
+                """Render a single Jinja2 template string, parsing JSON results back to objects."""
+                import json
                 try:
-                    return jinja_env.from_string(template).render(**ctx)
+                    rendered = jinja_env.from_string(template).render(**ctx)
+                    # If result looks like JSON (dict or list), parse it back to object
+                    # This allows {{ outcome.result }} to return the actual dict, not a string
+                    if isinstance(rendered, str):
+                        stripped = rendered.strip()
+                        if (stripped.startswith('{') and stripped.endswith('}')) or \
+                           (stripped.startswith('[') and stripped.endswith(']')):
+                            try:
+                                return json.loads(stripped)
+                            except json.JSONDecodeError:
+                                pass
+                    return rendered
                 except Exception as e:
                     logger.warning(f"[TASK_SEQ] Template render error: {e}")
                     return template

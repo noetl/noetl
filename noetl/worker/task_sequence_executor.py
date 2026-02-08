@@ -255,6 +255,12 @@ class TaskSequenceExecutor:
         ctx = TaskSequenceContext()
         retry_counts: dict[str, int] = {}
 
+        # Initialize iter namespace with values from base_context (loop iterator, etc.)
+        # This preserves {{ iter.item }} access within the task sequence
+        if isinstance(base_context.get("iter"), dict):
+            ctx.iter.update(base_context["iter"])
+            logger.debug(f"[TASK_SEQ] Initialized iter from base_context: {list(ctx.iter.keys())}")
+
         # Execute tasks
         current_idx = 0
         while current_idx < len(parsed_tasks):

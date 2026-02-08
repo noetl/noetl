@@ -5,7 +5,7 @@ metadata:
   name: http_to_databases
   path: tests/fixtures/playbooks/data_transfer/http_to_databases
 
-ctx:
+workload:
   sf_auth: sf_test
   pg_auth: pg_local
   ducklake_catalog_auth: noetl_ducklake_catalog

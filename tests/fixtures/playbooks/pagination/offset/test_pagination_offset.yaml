@@ -7,8 +7,6 @@ metadata:
 
 workload:
   api_url: "http://paginated-api.test-server.svc.cluster.local:5555"
-
-ctx:
   offset: 0
   limit: 10
   collected_users: []
@@ -22,6 +20,11 @@ workflow:
       args: {}
       code: |
         result = {"status": "initialized"}
+    set_ctx:
+      offset: "{{ workload.offset }}"
+      limit: "{{ workload.limit }}"
+      collected_users: "{{ workload.collected_users }}"
+      has_more: "{{ workload.has_more }}"
     next:
       spec:
         mode: exclusive

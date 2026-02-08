@@ -5,7 +5,7 @@ metadata:
   path: tests/fixtures/playbooks/data_transfer/http_iterator_save_postgres
   description: "Test HTTP calls in iterator with save to Postgres - validates loop execution with storage"
 
-ctx:
+workload:
   pg_auth: pg_k8s
   test_cities:
     - name: "London"

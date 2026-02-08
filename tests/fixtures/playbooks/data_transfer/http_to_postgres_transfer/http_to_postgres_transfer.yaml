@@ -4,7 +4,7 @@ metadata:
   name: http_to_postgres_transfer
   path: tests/fixtures/playbooks/data_transfer/http_to_postgres_transfer
 
-ctx:
+workload:
   api_url: "https://jsonplaceholder.typicode.com/posts"
   pg_auth: pg_local
 

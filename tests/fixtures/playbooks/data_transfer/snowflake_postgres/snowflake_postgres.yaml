@@ -5,7 +5,7 @@ metadata:
   name: snowflake_postgres_transfer
   path: tests/fixtures/playbooks/data_transfer/snowflake_postgres
 
-ctx:
+workload:
   sf_auth: sf_test
   pg_auth: pg_local
   message: Generic data transfer using unified transfer action type
