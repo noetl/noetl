@@ -2,6 +2,37 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.8.0](https://github.com/noetl/noetl/compare/v2.7.5...v2.8.0) (2026-02-08)
+
+### Features
+
+* Add canonical v2 workflow entry, routing, and termination semantics ([de0c1f7](https://github.com/noetl/noetl/commit/de0c1f738e606531290452f44f4d8b530e1a3f34))
+* Add NATS tool for JetStream, K/V Store, and Object Store operations ([ad49bee](https://github.com/noetl/noetl/commit/ad49bee4d0acf9aff758d926846ea8771f32639f))
+* Enhance gateway deployment with CORS support and NATS configuration; add context API and server-side rendering in executor ([f1d6ed3](https://github.com/noetl/noetl/commit/f1d6ed3fa0da9f39d8950cb87e67b12591fcbcee))
+* Implement NATS-based callback system for async playbook execution results and enhance auth middleware with callback support ([d287e1d](https://github.com/noetl/noetl/commit/d287e1da89bee1433a409ff9051a1263a2599314))
+* Implement PipelineExecutor with error handling and control flow ([f7624bf](https://github.com/noetl/noetl/commit/f7624bf68ba35adc1df2644e176a5d4f28dacb61))
+* Implement storage backends for NoETL ResultStore ([b872324](https://github.com/noetl/noetl/commit/b872324bf1efc9955b6650977ab5120aec066c5e))
+* Refactor workflow steps to enhance routing and add secret creation for NoETL deployment ([fe268eb](https://github.com/noetl/noetl/commit/fe268eb27ad0f947b3f54f24b981e493296f472e))
+* Update workflow to ensure DB tables exist for Amadeus AI events and results ([3fe2115](https://github.com/noetl/noetl/commit/3fe211554a3c8b9ffaffdf666cab2696313cd207))
+
+### Bug Fixes
+
+* add auto-resume logic on restarts for noetl server ([2eac632](https://github.com/noetl/noetl/commit/2eac632d6a09efaa72bf2a437d9fb756298bd3b4))
+* add TempStore service for managing TempRef storage operations ([3c9753e](https://github.com/noetl/noetl/commit/3c9753eb1663b6dc6236068aa0460ecac0442f62))
+* Enhance Amadeus AI API integration with improved workflow steps and add test playbook ([0bd59b3](https://github.com/noetl/noetl/commit/0bd59b3e411dea45d705109f1928f257d3f3e108))
+* enhance execution status checks to include cancellation and improve auto-resume logic ([e09a22d](https://github.com/noetl/noetl/commit/e09a22d922c89d7b6ffd614154b088bcb8856c8d))
+* implement atomic command claiming and fetching via new endpoint ([93cfd9f](https://github.com/noetl/noetl/commit/93cfd9f115a465c378c53df5f8a429bc12c9b92b))
+* implement connection hub for managing client SSE and WebSocket connections ([f7c43a9](https://github.com/noetl/noetl/commit/f7c43a949db1be9e12a1644be52ad1be5a902eb9))
+* Implement NATS tool support for K/V Store operations and add test playbook ([790f822](https://github.com/noetl/noetl/commit/790f822a3753acb9a42e72d3e2d5f5fe6decd3f3))
+* improve kind cluster check and port management logic in bootstrap workflow ([f0022b4](https://github.com/noetl/noetl/commit/f0022b4cbcbc2d3b5b3b4610fdaa8702bdefce72))
+* Refactor documentation and code for Canonical v10 updates ([bbeba8e](https://github.com/noetl/noetl/commit/bbeba8e5c3a5ff95c4ca1af699e10a9eb91ca0d1))
+* refactor playbook conditionals from next: with when to case: pattern ([d1ded12](https://github.com/noetl/noetl/commit/d1ded126c5b5c30c2fdb32a6ffbd3d6b4ce98740))
+* refactor playbook steps for improved clarity and execution flow ([9e80468](https://github.com/noetl/noetl/commit/9e80468979189230716cbace7065fd4aae1d1e75))
+* Replace 'ctx' with 'workload' in Auth0 playbooks for consistency ([f900a72](https://github.com/noetl/noetl/commit/f900a721bedb254bfa02c0813d63645b95ea52e6))
+* Replace 'sink' actions with 'send_callback' in Auth0 playbooks for error handling ([369ec34](https://github.com/noetl/noetl/commit/369ec340020a91883a7580e098a9647a110b4cf8))
+* TempStore service for managing temporary data storage ([fb171e4](https://github.com/noetl/noetl/commit/fb171e4f31764f0020f65f4dfa8d9436f6f2cf86))
+* Update workload variable handling in Playbook and YAML configuration for Auth0 integration ([2101292](https://github.com/noetl/noetl/commit/2101292f226bab069f3c244f03dbf94205bbf001))
+
 ## [2.7.5](https://github.com/noetl/noetl/compare/v2.7.4...v2.7.5) (2026-02-02)
 
 ### Bug Fixes
