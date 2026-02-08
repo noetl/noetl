@@ -15,15 +15,18 @@ workflow:
     desc: Create TradeDB role and database
     tool:
       kind: postgres
-      auth: "{{ workload.pg_admin_auth }}"
+      auth: "{{ pg_admin_auth }}"
       with:
-        db_name: "{{ workload.admin_db }}"
+        db_name: "{{ admin_db }}"
       script:
-        uri: "{{ workload.create_db_script_uri }}"
+        uri: "{{ create_db_script_uri }}"
         source:
           type: file
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: Done

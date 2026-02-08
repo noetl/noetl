@@ -88,7 +88,7 @@ def normalize_step(step: Dict[str, Any]) -> Dict[str, Any]:
             if "task" in loop and "task" not in out:
                 out["task"] = loop.get("task")
             if "save" in loop and "save" not in out:
-                out['sink'] = loop.get('sink')
+                out['save'] = loop.get('save')
     except Exception:
         # Best-effort normalization only
         pass

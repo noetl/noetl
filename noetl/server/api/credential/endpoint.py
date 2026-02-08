@@ -7,8 +7,7 @@ Provides REST endpoints for:
 """
 
 from typing import Optional
-from fastapi import APIRouter, Request, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, HTTPException
 from noetl.core.logger import setup_logger
 from .schema import (
     CredentialCreateRequest,
@@ -279,56 +278,3 @@ async def get_gcp_token(request: GCPTokenRequest) -> GCPTokenResponse:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ============================================================================
-# Legacy JSON Request Support (for backward compatibility)
-# ============================================================================
-
-@router.post("/credentials/legacy", response_class=JSONResponse)
-async def create_or_update_credential_legacy(request: Request):
-    """
-    Legacy endpoint that accepts raw JSON for backward compatibility.
-    
-    **Deprecated**: Use POST /credentials with typed request instead.
-    """
-    try:
-        body = await request.json()
-        if not isinstance(body, dict):
-            raise HTTPException(status_code=400, detail="Invalid JSON body")
-        
-        # Convert to typed request
-        typed_request = CredentialCreateRequest(**body)
-        response = await CredentialService.create_or_update_credential(typed_request)
-        
-        # Return as plain JSON for legacy compatibility
-        return JSONResponse(content=response.model_dump())
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception(f"Error in legacy credential endpoint: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/gcp/token/legacy", response_class=JSONResponse)
-async def get_gcp_token_legacy(request: Request):
-    """
-    Legacy endpoint that accepts raw JSON for backward compatibility.
-    
-    **Deprecated**: Use POST /gcp/token with typed request instead.
-    """
-    try:
-        try:
-            body = await request.json()
-        except Exception:
-            body = {}
-        
-        # Convert to typed request
-        typed_request = GCPTokenRequest(**body)
-        response = await CredentialService.get_gcp_token(typed_request)
-        
-        # Return as plain JSON for legacy compatibility
-        return JSONResponse(content=response.model_dump())
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception(f"Error in legacy GCP token endpoint: {e}")
-        raise HTTPException(status_code=500, detail=str(e))

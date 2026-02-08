@@ -19,22 +19,23 @@ workflow:
     desc: Start workflow
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args: {}
       code: |
         result = {"status": "initialized"}
     next:
-      - step: create_table
+      spec:
+        mode: exclusive
+      arcs:
+        - step: create_table
 
   - step: create_table
     desc: Create table for storing HTTP data
     tool:
       kind: postgres
-      auth: "{{ workload.pg_credential }}"
+      auth: "{{ pg_credential }}"
       command: |
         DROP TABLE IF EXISTS public.http_posts;
-        
+
         CREATE TABLE public.http_posts (
           id SERIAL PRIMARY KEY,
           post_id INTEGER,
@@ -44,48 +45,53 @@ workflow:
           fetched_at TIMESTAMPTZ DEFAULT NOW()
         );
     next:
-      - step: fetch_http_data
+      spec:
+        mode: exclusive
+      arcs:
+        - step: fetch_http_data
 
   - step: fetch_http_data
     desc: Fetch data from HTTP API
     tool:
       kind: http
       method: GET
-      url: "{{ workload.api_url }}"
+      url: "{{ api_url }}"
     next:
-      - step: bulk_insert
+      spec:
+        mode: exclusive
+      arcs:
+        - step: bulk_insert
 
   - step: bulk_insert
     desc: Bulk insert posts into PostgreSQL using Python and psycopg
     tool:
       kind: python
-      auth: {}
       libs:
         psycopg: psycopg
       args:
         http_data: "{{ fetch_http_data }}"
-        pg_host: "{{ workload.pg_host }}"
-        pg_port: "{{ workload.pg_port }}"
-        pg_user: "{{ workload.pg_user }}"
-        pg_password: "{{ workload.pg_password }}"
-        pg_database: "{{ workload.pg_database }}"
+        pg_host: "{{ pg_host }}"
+        pg_port: "{{ pg_port }}"
+        pg_user: "{{ pg_user }}"
+        pg_password: "{{ pg_password }}"
+        pg_database: "{{ pg_database }}"
       code: |
         """
         Bulk insert HTTP posts into PostgreSQL.
         Demonstrates direct psycopg (v3) usage for bulk operations.
         """
-        
+
         # Extract posts array from HTTP response
         posts = []
         if isinstance(http_data, dict) and 'data' in http_data:
             posts = http_data['data']
-        
+
         if not posts:
             result = {'inserted': 0, 'total': 0, 'message': 'No posts to insert'}
         else:
             # Build connection string for psycopg3
             conninfo = f"host={pg_host} port={pg_port or 5432} user={pg_user} password={pg_password} dbname={pg_database}"
-            
+
             # Connect to PostgreSQL using context manager
             with psycopg.connect(conninfo) as conn:
                 with conn.cursor() as cursor:
@@ -100,33 +106,37 @@ workflow:
                             (post['id'], post['userId'], post['title'], post['body'])
                         )
                         inserted += 1
-                    
+
                     conn.commit()
-            
+
             result = {
-                'inserted': inserted, 
+                'inserted': inserted,
                 'total': len(posts),
                 'message': f'Successfully inserted {inserted} posts'
             }
     next:
-      - step: show_count
+      spec:
+        mode: exclusive
+      arcs:
+        - step: show_count
 
   - step: show_count
     desc: Verify record count
     tool:
       kind: postgres
-      auth: "{{ workload.pg_credential }}"
+      auth: "{{ pg_credential }}"
       command: |
         SELECT COUNT(*) as records FROM public.http_posts;
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: End workflow
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args: {}
       code: |
         result = {"status": "completed"}

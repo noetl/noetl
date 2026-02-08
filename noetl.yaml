@@ -8,28 +8,27 @@ workload:
   registry: "local"
   image_name: "noetl"
 workflow:
-  - step: start
-    desc: Entry point for automation workflows
+  - step: route_target
+    desc: Entry point - route to appropriate workflow based on target
     tool:
       kind: shell
       cmds:
         - echo "Target is '{{ target }}'"
-    case:
-      - when: "{{ target == 'help' }}"
-        then:
-          - step: show_help
-      - when: "{{ target == 'bootstrap' or target == 'boot' }}"
-        then:
-          - step: bootstrap
-      - when: "{{ target == 'destroy' }}"
-        then:
-          - step: destroy
-      - when: "{{ target == 'dev' }}"
-        then:
-          - step: quick_dev
-        else:
-          - step: unknown_target
-  
+    spec:
+      next_mode: exclusive
+    next:
+      - step: show_help
+        when: "{{ target == 'help' }}"
+      - step: bootstrap
+        when: "{{ target == 'bootstrap' }}"
+      - step: bootstrap
+        when: "{{ target == 'boot' }}"
+      - step: destroy
+        when: "{{ target == 'destroy' }}"
+      - step: quick_dev
+        when: "{{ target == 'dev' }}"
+      - step: unknown_target
+
   - step: show_help
     desc: Display available automation targets
     tool:
@@ -55,42 +54,26 @@ workflow:
           echo "  dev         - Quick development cycle"
           echo "  help        - Show this help message"
           echo ""
-    next:
-      - step: end
-  
-  - step: boot
-    desc: Alias for bootstrap - Run complete bootstrap workflow
-    tool:
-      kind: playbook
-      path: automation/setup/bootstrap.yaml
-    next:
-      - step: end
-  
+
   - step: bootstrap
     desc: Run complete bootstrap workflow
     tool:
       kind: playbook
       path: automation/setup/bootstrap.yaml
-    next:
-      - step: end
-  
+
   - step: destroy
     desc: Run destroy workflow
     tool:
       kind: playbook
       path: automation/setup/destroy.yaml
-    next:
-      - step: end
-  
+
   - step: quick_dev
     desc: Quick development cycle
     tool:
       kind: shell
       cmds:
         - echo "Quick dev workflow not yet implemented"
-    next:
-      - step: end
-  
+
   - step: unknown_target
     desc: Handle unknown target
     tool:
@@ -100,8 +83,3 @@ workflow:
           echo "Error: Unknown target '{{ target }}'"
           echo "Available targets: bootstrap, destroy, dev, help"
           exit 1
-    next:
-      - step: end
-  
-  - step: end
-    desc: Workflow complete

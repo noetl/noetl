@@ -1,0 +1,386 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: deploy_gateway_kind
+  path: deployment/deploy_gateway_kind
+  description: |
+    Build and deploy the Gateway to Kind Kubernetes cluster.
+
+    Steps:
+    1. Check prerequisites (Docker, Kind, kubectl)
+    2. Validate disk space and auto-cleanup if needed
+    3. Build Docker image for gateway
+    4. Load image into Kind cluster
+    5. Restart gateway deployment
+    6. Wait for rollout to complete
+    7. Verify gateway health
+
+    Prerequisites:
+    - Docker running
+    - Kind cluster 'noetl' running
+    - kubectl configured for Kind context
+  tags:
+    - deployment
+    - gateway
+    - kind
+
+workload:
+  project_root: /Users/akuksin/projects/noetl/noetl
+  # Note: Must match the image name used in the Kubernetes deployment
+  image_name: noetl-gateway
+  image_tag: latest
+  kind_cluster: noetl
+  namespace: noetl
+  deployment_name: gateway
+  health_endpoint: http://localhost:8090/health
+  timeout_seconds: 120
+  # Set to "true" to force a clean rebuild (--no-cache)
+  force_rebuild: "false"
+  # Minimum required disk space in GB for Docker builds
+  min_disk_space_gb: "5"
+  # Set to "true" to skip disk space check
+  skip_disk_check: "false"
+
+workflow:
+  - step: start
+    desc: Begin gateway deployment
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "=========================================="
+          echo " Gateway Deployment to Kind Cluster"
+          echo "=========================================="
+          echo ""
+          echo "Project Root: {{ project_root }}"
+          echo "Image: {{ image_name }}:{{ image_tag }}"
+          echo "Kind Cluster: {{ kind_cluster }}"
+          echo "Namespace: {{ namespace }}"
+          echo "Min Disk Space: {{ min_disk_space_gb }}GB"
+          echo ""
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: check_prerequisites
+
+  - step: check_prerequisites
+    desc: Verify Docker and Kind are available
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "Checking prerequisites..."
+
+          # Check Docker
+          if ! command -v docker &> /dev/null; then
+            echo "ERROR: Docker is not installed or not in PATH"
+            exit 1
+          fi
+          echo "Docker: $(docker --version)"
+
+          # Check Kind
+          if ! command -v kind &> /dev/null; then
+            echo "ERROR: Kind is not installed or not in PATH"
+            exit 1
+          fi
+          echo "Kind: $(kind --version)"
+
+          # Check kubectl
+          if ! command -v kubectl &> /dev/null; then
+            echo "ERROR: kubectl is not installed or not in PATH"
+            exit 1
+          fi
+          echo "kubectl: $(kubectl version --client --short 2>/dev/null || kubectl version --client)"
+
+          # Check Kind cluster exists
+          if ! kind get clusters 2>/dev/null | grep -q "{{ kind_cluster }}"; then
+            echo "ERROR: Kind cluster '{{ kind_cluster }}' not found"
+            exit 1
+          fi
+          echo "Kind cluster '{{ kind_cluster }}' found"
+
+          echo ""
+          echo "All prerequisites met"
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: check_disk_space
+
+  - step: check_disk_space
+    desc: Check Docker disk space and cleanup if needed
+    tool:
+      kind: shell
+      cmds:
+        - |
+          if [ "{{ skip_disk_check }}" = "true" ]; then
+            echo "Skipping disk space check (skip_disk_check=true)"
+            exit 0
+          fi
+
+          echo "Checking Docker disk space..."
+          echo "Minimum required: {{ min_disk_space_gb }}GB"
+          echo ""
+
+          # Get Docker disk usage info
+          DOCKER_INFO=$(docker system df --format '{{`{{json .}}`}}' 2>/dev/null)
+
+          # Parse build cache size and reclaimable
+          BUILD_CACHE_SIZE=$(docker system df --format '{{`{{.Size}}`}}' | tail -1)
+          BUILD_CACHE_RECLAIMABLE=$(docker system df --format '{{`{{.Reclaimable}}`}}' | tail -1)
+
+          echo "Current Docker disk usage:"
+          docker system df
+          echo ""
+
+          # Extract reclaimable space from build cache (last line of df output)
+          # This is a simplified check - we look at total reclaimable across all categories
+          TOTAL_RECLAIMABLE_GB=$(docker system df --format '{{`{{.Reclaimable}}`}}' | grep -oE '[0-9]+\.?[0-9]*GB' | head -1 | sed 's/GB//' || echo "0")
+
+          # Also check build cache specifically
+          BUILD_CACHE_GB=$(docker system df | grep "Build" | awk '{print $4}' | sed 's/GB//' || echo "0")
+
+          echo "Build cache size: ${BUILD_CACHE_GB}GB"
+          echo "Total reclaimable: ${TOTAL_RECLAIMABLE_GB}GB"
+
+          # If build cache is significant (> 5GB), recommend cleanup
+          MIN_SPACE={{ min_disk_space_gb }}
+
+          # Use bc for floating point comparison, fallback to simple integer check
+          if command -v bc &> /dev/null; then
+            NEEDS_CLEANUP=$(echo "$BUILD_CACHE_GB > $MIN_SPACE" | bc -l 2>/dev/null || echo "0")
+          else
+            # Integer comparison fallback
+            BUILD_CACHE_INT=${BUILD_CACHE_GB%.*}
+            NEEDS_CLEANUP=$([[ "$BUILD_CACHE_INT" -gt "$MIN_SPACE" ]] && echo "1" || echo "0")
+          fi
+
+          if [ "$NEEDS_CLEANUP" = "1" ]; then
+            echo ""
+            echo "WARNING: Build cache exceeds ${MIN_SPACE}GB threshold"
+            echo "Auto-cleanup will be performed..."
+            exit 100  # Special exit code to trigger cleanup
+          else
+            echo ""
+            echo "Disk space is adequate for build"
+          fi
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: docker_cleanup
+          cond: exit_code == 100
+        - step: build_image
+          cond: exit_code == 0
+
+  - step: docker_cleanup
+    desc: Clean up Docker resources to free space
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "=========================================="
+          echo " Docker Auto-Cleanup"
+          echo "=========================================="
+          echo ""
+
+          echo "Removing stopped containers..."
+          docker container prune -f
+          echo ""
+
+          echo "Removing unused images (not just dangling)..."
+          docker image prune -a -f
+          echo ""
+
+          echo "Removing build cache..."
+          docker builder prune -a -f
+          echo ""
+
+          echo "Cleanup complete. New disk usage:"
+          docker system df
+          echo ""
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: build_image
+
+  - step: build_image
+    desc: Build gateway Docker image
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "Building gateway Docker image..."
+          echo "Project root: {{ project_root }}"
+          echo "Image: {{ image_name }}:{{ image_tag }}"
+          echo "Force rebuild (no-cache): {{ force_rebuild }}"
+          echo ""
+
+          cd {{ project_root }}
+
+          # Build the image - use --no-cache if force_rebuild is true
+          if [ "{{ force_rebuild }}" = "true" ]; then
+            echo "Using --no-cache for clean rebuild"
+            docker build --no-cache \
+              -t {{ image_name }}:{{ image_tag }} \
+              -f crates/gateway/Dockerfile \
+              .
+          else
+            docker build \
+              -t {{ image_name }}:{{ image_tag }} \
+              -f crates/gateway/Dockerfile \
+              .
+          fi
+
+          echo ""
+          echo "Docker build completed successfully"
+          docker images {{ image_name }}:{{ image_tag }}
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: load_to_kind
+
+  - step: load_to_kind
+    desc: Load image into Kind cluster
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "Loading image into Kind cluster..."
+          echo "Cluster: {{ kind_cluster }}"
+          echo ""
+
+          # Remove old image from Kind's containerd cache to ensure fresh image is used
+          echo "Clearing old image from Kind cache..."
+          docker exec {{ kind_cluster }}-control-plane crictl rmi {{ image_name }}:{{ image_tag }} 2>/dev/null || true
+
+          # Load the new image
+          kind load docker-image {{ image_name }}:{{ image_tag }} \
+            --name {{ kind_cluster }}
+
+          echo ""
+          echo "Image loaded into Kind cluster successfully"
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: restart_deployment
+
+  - step: restart_deployment
+    desc: Restart gateway deployment
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "Restarting gateway deployment..."
+          echo "Namespace: {{ namespace }}"
+          echo "Deployment: {{ deployment_name }}"
+          echo ""
+
+          # Set Kind context
+          kubectl config use-context kind-{{ kind_cluster }}
+
+          # Restart the deployment
+          kubectl rollout restart deployment/{{ deployment_name }} \
+            -n {{ namespace }}
+
+          echo ""
+          echo "Deployment restart initiated"
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: wait_for_rollout
+
+  - step: wait_for_rollout
+    desc: Wait for rollout to complete
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "Waiting for rollout to complete..."
+          echo "Timeout: {{ timeout_seconds }} seconds"
+          echo ""
+
+          kubectl rollout status deployment/{{ deployment_name }} \
+            -n {{ namespace }} \
+            --timeout={{ timeout_seconds }}s
+
+          echo ""
+          echo "Rollout completed successfully"
+          kubectl get pods -n {{ namespace }} -l app={{ deployment_name }}
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: verify_health
+
+  - step: verify_health
+    desc: Verify gateway health endpoint
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "Verifying gateway health..."
+          echo "Endpoint: {{ health_endpoint }}"
+          echo ""
+
+          # Wait a bit for the service to be ready
+          sleep 5
+
+          # Check health endpoint
+          HEALTH_RESPONSE=$(curl -s -w "\n%{http_code}" {{ health_endpoint }} 2>&1)
+          HTTP_CODE=$(echo "$HEALTH_RESPONSE" | tail -n1)
+          BODY=$(echo "$HEALTH_RESPONSE" | head -n -1)
+
+          echo "Response: $BODY"
+          echo "HTTP Code: $HTTP_CODE"
+
+          if [ "$HTTP_CODE" = "200" ]; then
+            echo ""
+            echo "Gateway is healthy!"
+          else
+            echo ""
+            echo "WARNING: Gateway health check returned $HTTP_CODE"
+            echo "The deployment may still be starting up"
+          fi
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: success
+
+  - step: success
+    desc: Deployment completed successfully
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "=========================================="
+          echo " Gateway Deployment Complete"
+          echo "=========================================="
+          echo ""
+          echo "Image: {{ image_name }}:{{ image_tag }}"
+          echo "Cluster: {{ kind_cluster }}"
+          echo "Namespace: {{ namespace }}"
+          echo "Deployment: {{ deployment_name }}"
+          echo ""
+          echo "Gateway is now accessible at: {{ health_endpoint }}"
+          echo ""
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
+
+  - step: end
+    desc: Complete
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "Deployment playbook completed"

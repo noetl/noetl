@@ -1,16 +1,16 @@
-apiVersion: noetl.io/v2
+apiVersion: noetl.io/v10
 kind: Playbook
 metadata:
   name: check_playbook_access
   path: api_integration/auth0/check_playbook_access
   description: |
     Check if user has permission to access a playbook.
-    
+
     Input:
       - session_token: NoETL session token
       - playbook_path: Path to playbook
       - action: Action type (execute, view, modify)
-    
+
     Output:
       - allowed: Boolean
   tags:
@@ -18,135 +18,186 @@ metadata:
     - authorization
 
 workload:
-  session_token: "{{ session_token }}"
-  playbook_path: "{{ playbook_path }}"
-  action: "{{ action | default('execute') }}"
-  db_credential: pg_k8s
+  # Input parameters - provided by execution request
+  session_token: ""
+  playbook_path: ""
+  action: "execute"
+  # Configuration
+  db_credential: pg_auth
+  callback_subject: ""  # Legacy - kept for compatibility
+  request_id: ""
+  # Gateway URL for HTTP callbacks (use K8s service name in cluster)
+  gateway_url: "http://gateway.gateway.svc.cluster.local:8090"
 
 workflow:
   - step: start
     desc: Begin access check
     tool:
       kind: python
-      auth: {}
-      libs: {}
-      args: {}
       code: |
+        print(f"DEBUG: request_id = {context.get('request_id', '')}")
         result = {"status": "initialized"}
-    case:
-      - when: "{{ event.name == 'step.exit' }}"
-        then:
-          next:
-            - step: get_user_from_session
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: get_user_from_session
 
   - step: get_user_from_session
     desc: Get user from session
     tool:
       kind: postgres
-      auth: "{{ workload.db_credential }}"
+      auth: "{{ db_credential }}"
       command: |
-        SELECT s.user_id, u.email
+        SELECT s.user_id, u.email, u.display_name
         FROM auth.sessions s
         JOIN auth.users u ON s.user_id = u.user_id
-        WHERE s.session_token = '{{ workload.session_token }}'
+        WHERE s.session_token = '{{ session_token }}'
           AND s.is_active = true
           AND s.expires_at > NOW()
           AND u.is_active = true;
-    case:
-      - when: "{{ event.name == 'step.exit' and response is defined and (response | length) > 0 }}"
-        then:
-          next:
-            - step: check_permission
-      - when: "{{ event.name == 'step.exit' }}"
-        then:
-          next:
-            - step: access_denied
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: check_permission
+          when: "{{ get_user_from_session.command_0 is defined and get_user_from_session.command_0.rows | length > 0 }}"
+        - step: access_denied
+          when: "{{ get_user_from_session.command_0 is not defined or get_user_from_session.command_0.rows | length == 0 }}"
 
   - step: check_permission
     desc: Check permissions
     tool:
       kind: postgres
-      auth: "{{ workload.db_credential }}"
+      auth: "{{ db_credential }}"
       command: |
-        SELECT 
+        SELECT
           COUNT(*) > 0 as has_permission
         FROM auth.user_roles ur
         JOIN auth.roles r ON ur.role_id = r.role_id
         JOIN auth.playbook_permissions pp ON r.role_id = pp.role_id
-        WHERE ur.user_id = {{ get_user_from_session[0].user_id }}
+        WHERE ur.user_id = {{ get_user_from_session.command_0.rows[0].user_id }}
           AND (ur.expires_at IS NULL OR ur.expires_at > NOW())
           AND (
-            pp.playbook_path = '{{ workload.playbook_path }}'
-            OR (pp.allow_pattern IS NOT NULL AND '{{ workload.playbook_path }}' LIKE pp.allow_pattern)
+            pp.playbook_path = '{{ playbook_path }}'
+            OR (pp.allow_pattern IS NOT NULL AND '{{ playbook_path }}' LIKE pp.allow_pattern)
           )
-          AND (pp.deny_pattern IS NULL OR '{{ workload.playbook_path }}' NOT LIKE pp.deny_pattern)
+          AND (pp.deny_pattern IS NULL OR '{{ playbook_path }}' NOT LIKE pp.deny_pattern)
           AND (
-            ('{{ workload.action }}' = 'execute' AND pp.can_execute = true)
-            OR ('{{ workload.action }}' = 'view' AND pp.can_view = true)
-            OR ('{{ workload.action }}' = 'modify' AND pp.can_modify = true)
+            ('{{ action }}' = 'execute' AND pp.can_execute = true)
+            OR ('{{ action }}' = 'view' AND pp.can_view = true)
+            OR ('{{ action }}' = 'modify' AND pp.can_modify = true)
           );
-    case:
-      - when: "{{ event.name == 'step.exit' and response is defined and response[0].has_permission }}"
-        then:
-          next:
-            - step: access_granted
-      - when: "{{ event.name == 'step.exit' }}"
-        then:
-          next:
-            - step: access_denied
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: access_granted
+          when: "{{ check_permission.command_0 is defined and check_permission.command_0.rows | length > 0 and check_permission.command_0.rows[0].has_permission }}"
+        - step: access_denied
+          when: "{{ check_permission.command_0 is not defined or check_permission.command_0.rows | length == 0 or not check_permission.command_0.rows[0].has_permission }}"
 
   - step: access_granted
     desc: Return allowed
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args:
-        playbook_path: "{{ workload.playbook_path }}"
-        action: "{{ workload.action }}"
+        playbook_path: "{{ playbook_path }}"
+        action: "{{ action }}"
+        user_id: "{{ get_user_from_session.command_0.rows[0].user_id }}"
+        email: "{{ get_user_from_session.command_0.rows[0].email }}"
+        display_name: "{{ get_user_from_session.command_0.rows[0].display_name }}"
       code: |
-        # Arguments injected: playbook_path, action
         result = {
             "allowed": True,
             "playbook_path": playbook_path,
             "action": action,
+            "user": {"user_id": user_id, "email": email, "display_name": display_name},
             "message": f"Access granted to {action} playbook"
         }
-    case:
-      - when: "{{ event.name == 'step.exit' }}"
-        then:
-          next:
-            - step: end
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: send_granted_callback
+          when: "{{ request_id }}"
+        - step: end
+          when: "{{ not request_id }}"
+
+  - step: send_granted_callback
+    desc: Send access granted callback to gateway
+    tool:
+      kind: http
+      method: POST
+      url: "{{ gateway_url }}/api/internal/callback"
+      headers:
+        Content-Type: application/json
+      data:
+        request_id: "{{ request_id }}"
+        status: "success"
+        data:
+          allowed: true
+          playbook_path: "{{ access_granted.playbook_path }}"
+          permission_type: "{{ access_granted.action }}"
+          user:
+            user_id: "{{ get_user_from_session.command_0.rows[0].user_id }}"
+            email: "{{ get_user_from_session.command_0.rows[0].email }}"
+            display_name: "{{ get_user_from_session.command_0.rows[0].display_name }}"
+          message: "{{ access_granted.message }}"
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: access_denied
     desc: Return denied
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args:
-        playbook_path: "{{ workload.playbook_path }}"
-        action: "{{ workload.action }}"
+        playbook_path: "{{ playbook_path }}"
+        action: "{{ action }}"
       code: |
-        # Arguments injected: playbook_path, action
         result = {
             "allowed": False,
             "playbook_path": playbook_path,
             "action": action,
             "message": "Access denied"
         }
-    case:
-      - when: "{{ event.name == 'step.exit' }}"
-        then:
-          next:
-            - step: end
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: send_denied_callback
+          when: "{{ request_id }}"
+        - step: end
+          when: "{{ not request_id }}"
+
+  - step: send_denied_callback
+    desc: Send access denied callback to gateway
+    tool:
+      kind: http
+      method: POST
+      url: "{{ gateway_url }}/api/internal/callback"
+      headers:
+        Content-Type: application/json
+      data:
+        request_id: "{{ request_id }}"
+        status: "success"
+        data:
+          allowed: false
+          playbook_path: "{{ access_denied.playbook_path }}"
+          permission_type: "{{ access_denied.action }}"
+          message: "{{ access_denied.message }}"
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: Complete
     tool:
       kind: python
-      auth: {}
-      libs: {}
-      args: {}
       code: |
         result = {"status": "complete"}

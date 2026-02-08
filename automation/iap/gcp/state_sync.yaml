@@ -14,15 +14,15 @@ executor:
 workload:
   # Action: push, pull, status
   action: status
-  
+
   # Project configuration
   project_id: mestumre-dev
   workspace: default
-  
+
   # State locations
   state_database: /tmp/noetl-iap-state.duckdb
   state_bucket: ""  # Defaults to {project_id}-noetl-state
-  
+
   # Sync options
   force: false  # Force overwrite without conflict check
   create_snapshot: true  # Create snapshot before sync
@@ -42,18 +42,14 @@ workflow:
     vars:
       bucket_name: "{{ workload.state_bucket if workload.state_bucket else workload.project_id + '-noetl-state' }}"
       gcs_state_path: "gs://{{ vars.bucket_name }}/terraform/{{ workload.workspace }}/state.duckdb"
-    case:
-      - when: "{{ workload.action }} == push"
-        then:
-          - step: push_state
-      - when: "{{ workload.action }} == pull"
-        then:
-          - step: pull_state
-      - when: "{{ workload.action }} == status"
-        then:
-          - step: sync_status
-      - else:
-          - step: show_help
+    next:
+      - step: push_state
+        when: "{{ workload.action == 'push' }}"
+      - step: pull_state
+        when: "{{ workload.action == 'pull' }}"
+      - step: sync_status
+        when: "{{ workload.action == 'status' }}"
+      - step: show_help
 
   - step: show_help
     desc: Show available sync actions
@@ -85,7 +81,7 @@ workflow:
           echo ""
           echo "Local State:"
           echo "  Path: {{ workload.state_database }}"
-          
+
           if [ -f "{{ workload.state_database }}" ]; then
             echo "  Status: EXISTS"
             echo "  Size: $(ls -lh {{ workload.state_database }} | awk '{print $5}')"
@@ -93,7 +89,7 @@ workflow:
           else
             echo "  Status: NOT FOUND"
           fi
-          
+
           echo ""
           echo "Remote State:"
           echo "  GCS: {{ vars.gcs_state_path }}"
@@ -144,12 +140,10 @@ workflow:
             exit 1
           fi
           echo "Preparing to push state to GCS..."
-    case:
-      - when: "{{ workload.create_snapshot }}"
-        then:
-          - step: create_snapshot_before_push
-      - else:
-          - step: do_push
+    next:
+      - step: create_snapshot_before_push
+        when: "{{ workload.create_snapshot }}"
+      - step: do_push
 
   - step: create_snapshot_before_push
     desc: Create snapshot before pushing
@@ -165,7 +159,7 @@ workflow:
           description,
           resource_count
         )
-        SELECT 
+        SELECT
           'snapshot-' || strftime(CURRENT_TIMESTAMP, '%Y%m%d%H%M%S'),
           '{{ workload.workspace }}',
           'state_sync:push',
@@ -184,14 +178,14 @@ workflow:
       cmds:
         - |
           echo "Uploading state to GCS..."
-          
+
           # Read the file and upload via GCS API
           # Note: In full implementation, this would use proper file upload
-          
+
           STATE_SIZE=$(stat -f%z "{{ workload.state_database }}")
           echo "Local state size: $STATE_SIZE bytes"
           echo "Destination: {{ vars.gcs_state_path }}"
-          
+
           # For now, we'll use gsutil if available
           if command -v gsutil &> /dev/null; then
             gsutil cp "{{ workload.state_database }}" "{{ vars.gcs_state_path }}"
@@ -229,19 +223,17 @@ workflow:
         - |
           echo ""
           echo "Pulling state from GCS..."
-          
+
           # Check if local state exists and warn
           if [ -f "{{ workload.state_database }}" ] && [ "{{ workload.force }}" != "true" ]; then
             echo "WARNING: Local state file exists"
             echo "Use --set force=true to overwrite"
             echo ""
           fi
-    case:
-      - when: "{{ workload.create_snapshot }}"
-        then:
-          - step: backup_local_state
-      - else:
-          - step: do_pull
+    next:
+      - step: backup_local_state
+        when: "{{ workload.create_snapshot }}"
+      - step: do_pull
 
   - step: backup_local_state
     desc: Backup local state before pulling
@@ -264,7 +256,7 @@ workflow:
       cmds:
         - |
           echo "Downloading state from GCS..."
-          
+
           if command -v gsutil &> /dev/null; then
             gsutil cp "{{ vars.gcs_state_path }}" "{{ workload.state_database }}"
             echo "State pulled successfully via gsutil"
@@ -293,7 +285,7 @@ workflow:
           echo "Remote: {{ vars.gcs_state_path }}"
           echo "Local:  {{ workload.state_database }}"
           echo ""
-          
+
           if [ -f "{{ workload.state_database }}" ]; then
             echo "State file size: $(ls -lh {{ workload.state_database }} | awk '{print $5}')"
           fi
@@ -302,3 +294,5 @@ workflow:
 
   - step: end
     desc: Sync complete
+    tool:
+      kind: noop

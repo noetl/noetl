@@ -211,3 +211,193 @@ $$ LANGUAGE plpgsql;
 ALTER TABLE noetl.catalog ALTER COLUMN catalog_id SET DEFAULT noetl.snowflake_id();
 ALTER TABLE noetl.schedule ALTER COLUMN schedule_id SET DEFAULT noetl.snowflake_id();
 alter table noetl.credential ALTER COLUMN id SET DEFAULT noetl.snowflake_id();
+
+-- ============================================================================
+-- Result Storage Tables
+-- ============================================================================
+-- Zero-copy reference system for efficient data passing between steps.
+-- Metadata index for temp storage. Actual data resides in NATS KV/Object,
+-- S3/GCS, or PostgreSQL temp tables.
+
+CREATE TABLE IF NOT EXISTS noetl.result_ref (
+    ref_id BIGINT PRIMARY KEY DEFAULT noetl.snowflake_id(),
+    ref TEXT UNIQUE NOT NULL,  -- noetl://execution/<eid>/result/<name>/<id>
+    execution_id BIGINT NOT NULL,
+    parent_execution_id BIGINT,  -- For workflow scope tracking
+
+    -- Identification
+    name TEXT NOT NULL,
+    scope TEXT NOT NULL CHECK (scope IN ('step', 'execution', 'workflow', 'permanent')),
+    source_step TEXT,
+
+    -- Storage tier
+    store_tier TEXT NOT NULL CHECK (store_tier IN ('memory', 'kv', 'object', 's3', 'gcs', 'db', 'duckdb', 'eventlog')),
+    physical_uri TEXT,  -- Actual storage location (s3://..., gs://..., kv://bucket/key)
+
+    -- Metadata
+    content_type TEXT DEFAULT 'application/json',
+    bytes_size BIGINT DEFAULT 0,
+    sha256 TEXT,
+    compression TEXT DEFAULT 'none' CHECK (compression IN ('none', 'gzip', 'lz4')),
+
+    -- Lifecycle
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    expires_at TIMESTAMPTZ,
+    accessed_at TIMESTAMPTZ DEFAULT now(),
+    access_count INTEGER DEFAULT 0,
+
+    -- Preview and correlation
+    preview JSONB,  -- Truncated sample for UI (max 1KB)
+    extracted JSONB,  -- Fields from output.select (available without resolution)
+    correlation JSONB,  -- Loop/pagination tracking keys
+    meta JSONB,  -- Additional metadata
+
+    -- Accumulation tracking
+    is_accumulated BOOLEAN DEFAULT FALSE,
+    accumulation_index INTEGER,
+    accumulation_manifest_ref TEXT
+);
+
+-- Indexes for common queries
+CREATE INDEX IF NOT EXISTS idx_result_ref_execution ON noetl.result_ref (execution_id);
+CREATE INDEX IF NOT EXISTS idx_result_ref_parent ON noetl.result_ref (parent_execution_id) WHERE parent_execution_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_result_ref_scope ON noetl.result_ref (scope);
+CREATE INDEX IF NOT EXISTS idx_result_ref_expires ON noetl.result_ref (expires_at) WHERE expires_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_result_ref_name_exec ON noetl.result_ref (execution_id, name);
+CREATE INDEX IF NOT EXISTS idx_result_ref_step ON noetl.result_ref (execution_id, source_step) WHERE source_step IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_result_ref_store_tier ON noetl.result_ref (store_tier);
+
+COMMENT ON TABLE noetl.result_ref IS 'ResultRef projection table - metadata index for result storage. Actual data in NATS/cloud storage.';
+COMMENT ON COLUMN noetl.result_ref.ref IS 'Logical URI: noetl://execution/<eid>/result/<name>/<id>';
+COMMENT ON COLUMN noetl.result_ref.scope IS 'Lifecycle scope: step (cleanup on step done), execution (cleanup on playbook done), workflow (cleanup on root done), permanent (never auto-cleaned)';
+COMMENT ON COLUMN noetl.result_ref.store_tier IS 'Storage backend: memory, kv (NATS KV), object (NATS Object), s3, gcs, db (PostgreSQL), duckdb, eventlog';
+COMMENT ON COLUMN noetl.result_ref.physical_uri IS 'Actual storage URI (s3://bucket/key, kv://bucket/key, etc.)';
+COMMENT ON COLUMN noetl.result_ref.preview IS 'Truncated sample of data for UI preview (max 1KB JSON)';
+COMMENT ON COLUMN noetl.result_ref.extracted IS 'Fields from output.select available without resolution';
+COMMENT ON COLUMN noetl.result_ref.correlation IS 'Loop/pagination tracking: iteration, page, cursor, batch_id';
+
+-- Legacy alias view for backwards compatibility
+CREATE OR REPLACE VIEW noetl.temp_ref AS SELECT * FROM noetl.result_ref;
+
+-- ============================================================================
+-- Manifest Table
+-- ============================================================================
+-- Aggregated results for pagination and loops. Instead of merging large
+-- datasets in memory, a manifest references the parts for streaming access.
+
+CREATE TABLE IF NOT EXISTS noetl.manifest (
+    manifest_id BIGINT PRIMARY KEY DEFAULT noetl.snowflake_id(),
+    ref TEXT UNIQUE NOT NULL,  -- noetl://execution/<eid>/manifest/<name>/<id>
+    execution_id BIGINT NOT NULL,
+
+    -- Configuration
+    strategy TEXT NOT NULL CHECK (strategy IN ('append', 'replace', 'merge', 'concat')),
+    merge_path TEXT,  -- JSONPath for nested array merge (e.g., $.data.items)
+
+    -- Statistics
+    total_parts INTEGER DEFAULT 0,
+    total_bytes BIGINT DEFAULT 0,
+
+    -- Lifecycle
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    completed_at TIMESTAMPTZ,
+
+    -- Metadata
+    source_step TEXT,
+    correlation JSONB,
+    meta JSONB
+);
+
+CREATE INDEX IF NOT EXISTS idx_manifest_execution ON noetl.manifest (execution_id);
+CREATE INDEX IF NOT EXISTS idx_manifest_step ON noetl.manifest (source_step) WHERE source_step IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_manifest_completed ON noetl.manifest (completed_at) WHERE completed_at IS NOT NULL;
+
+COMMENT ON TABLE noetl.manifest IS 'Manifest for aggregated results from pagination/loops. References parts rather than merging.';
+COMMENT ON COLUMN noetl.manifest.ref IS 'Logical URI: noetl://execution/<eid>/manifest/<name>/<id>';
+COMMENT ON COLUMN noetl.manifest.strategy IS 'Combination strategy: append (list), replace (overwrite), merge (deep merge), concat (flatten arrays)';
+COMMENT ON COLUMN noetl.manifest.merge_path IS 'JSONPath for nested array extraction in concat strategy';
+
+-- ============================================================================
+-- Manifest Parts Table
+-- ============================================================================
+-- Individual parts referenced by a manifest
+
+CREATE TABLE IF NOT EXISTS noetl.manifest_part (
+    manifest_id BIGINT NOT NULL REFERENCES noetl.manifest(manifest_id) ON DELETE CASCADE,
+    part_index INTEGER NOT NULL,
+    part_ref TEXT NOT NULL,  -- ResultRef URI
+    bytes_size BIGINT DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    meta JSONB,
+    PRIMARY KEY (manifest_id, part_index)
+);
+
+CREATE INDEX IF NOT EXISTS idx_manifest_part_ref ON noetl.manifest_part (part_ref);
+
+COMMENT ON TABLE noetl.manifest_part IS 'Individual parts of a manifest, ordered by part_index';
+COMMENT ON COLUMN noetl.manifest_part.part_ref IS 'Reference to part data (ResultRef URI or inline)';
+
+-- ============================================================================
+-- Extend transient table for ResultRef integration
+-- ============================================================================
+-- Add scope and expires_at columns if not present
+
+DO $$ BEGIN
+    ALTER TABLE noetl.transient ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
+EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+
+DO $$ BEGIN
+    ALTER TABLE noetl.transient ADD COLUMN IF NOT EXISTS scope TEXT DEFAULT 'execution' CHECK (scope IN ('step', 'execution', 'workflow', 'permanent'));
+EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+
+-- Index for TTL-based cleanup
+CREATE INDEX IF NOT EXISTS idx_transient_expires ON noetl.transient (expires_at) WHERE expires_at IS NOT NULL;
+
+-- ============================================================================
+-- Cleanup function for expired ResultRefs
+-- ============================================================================
+CREATE OR REPLACE FUNCTION noetl.cleanup_expired_result_refs()
+RETURNS INTEGER AS $$
+DECLARE
+    deleted_count INTEGER;
+BEGIN
+    -- Delete expired result_refs (permanent scope never expires via TTL)
+    WITH deleted AS (
+        DELETE FROM noetl.result_ref
+        WHERE expires_at IS NOT NULL AND expires_at < NOW()
+          AND scope != 'permanent'
+        RETURNING ref_id
+    )
+    SELECT COUNT(*) INTO deleted_count FROM deleted;
+
+    RETURN deleted_count;
+END;
+$$ LANGUAGE plpgsql;
+
+COMMENT ON FUNCTION noetl.cleanup_expired_result_refs() IS 'Clean up expired ResultRefs. Call periodically or via pg_cron.';
+
+-- ============================================================================
+-- Cleanup function for execution-scoped refs
+-- ============================================================================
+CREATE OR REPLACE FUNCTION noetl.cleanup_execution_result_refs(p_execution_id BIGINT)
+RETURNS INTEGER AS $$
+DECLARE
+    deleted_count INTEGER;
+BEGIN
+    -- Delete execution-scoped result_refs (not permanent)
+    WITH deleted AS (
+        DELETE FROM noetl.result_ref
+        WHERE execution_id = p_execution_id
+          AND scope IN ('step', 'execution')
+        RETURNING ref_id
+    )
+    SELECT COUNT(*) INTO deleted_count FROM deleted;
+
+    -- Delete manifests for this execution
+    DELETE FROM noetl.manifest WHERE execution_id = p_execution_id;
+
+    RETURN deleted_count;
+END;
+$$ LANGUAGE plpgsql;
+
+COMMENT ON FUNCTION noetl.cleanup_execution_result_refs(BIGINT) IS 'Clean up all result refs for a completed execution (excludes permanent scope).';

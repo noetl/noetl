@@ -9,31 +9,77 @@ executor:
   profile: local
   version: noetl-runtime/1
 workload:
-  action: help  # deploy, status
+  action: help  # build, load, deploy, redeploy, status
   registry: "local"
   image_name: "noetl"
 
 workflow:
-  - step: start
-    desc: Entry point for NoETL deploy automation
+  - step: route_action
+    desc: Entry point - route based on action parameter
     tool:
       kind: shell
       cmds:
         - echo "NoETL Deploy Automation - Action '{{ workload.action }}'"
+    spec:
+      next_mode: exclusive
     next:
-      - when: "{{ workload.action }} == deploy"
-        then:
-          - step: deploy_noetl
-        args: {}
-      - when: "{{ workload.action }} == status"
-        then:
-          - step: status
-        args: {}
-      - when: "{{ workload.action }} == help"
-        then:
-          - step: show_help
-        args: {}
+      - step: build_image
+        when: "{{ workload.action == 'build' }}"
+      - step: load_image
+        when: "{{ workload.action == 'load' }}"
+      - step: deploy_noetl
+        when: "{{ workload.action == 'deploy' }}"
+      - step: build_image
+        when: "{{ workload.action == 'redeploy' }}"
+      - step: status
+        when: "{{ workload.action == 'status' }}"
       - step: show_help
+        when: "{{ workload.action == 'help' }}"
+      - step: show_help
+
+  - step: build_image
+    desc: Build NoETL Docker image
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Building NoETL Docker image..."
+          IMAGE_TAG=$(date +%Y-%m-%d-%H-%M)
+          echo "$IMAGE_TAG" > .noetl_last_build_tag.txt
+          echo "Building with tag: $IMAGE_TAG"
+          docker buildx build --load --platform linux/amd64 \
+            -t {{ workload.registry }}/{{ workload.image_name }}:$IMAGE_TAG \
+            -f docker/noetl/dev/Dockerfile .
+          echo ""
+          echo "Build complete: {{ workload.registry }}/{{ workload.image_name }}:$IMAGE_TAG"
+    next:
+      - step: load_image
+        when: "{{ workload.action == 'redeploy' }}"
+      - step: end
+
+  - step: load_image
+    desc: Load Docker image into kind cluster
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Loading image into kind cluster..."
+          if [ ! -f .noetl_last_build_tag.txt ]; then
+            echo "ERROR: .noetl_last_build_tag.txt not found. Run 'build' action first."
+            exit 1
+          fi
+          IMAGE_TAG=$(cat .noetl_last_build_tag.txt)
+          IMAGE="{{ workload.registry }}/{{ workload.image_name }}:$IMAGE_TAG"
+          echo "Loading image: $IMAGE"
+          kind load docker-image "$IMAGE" --name noetl
+          echo ""
+          echo "Image loaded successfully"
+    next:
+      - step: deploy_noetl
+        when: "{{ workload.action == 'redeploy' }}"
+      - step: end
 
   - step: deploy_noetl
     desc: Deploy NoETL server and workers
@@ -55,9 +101,14 @@ workflow:
 
           for manifest in ci/manifests/noetl/*.yaml; do
             if [ -f "$manifest" ]; then
-              sed "s|{{ workload.registry }}/{{ workload.image_name }}:latest|$IMAGE|g" "$manifest" | kubectl apply -f -
+              sed "s|image_name:image_tag|$IMAGE|g" "$manifest" | kubectl apply -f -
             fi
           done
+
+          echo ""
+          echo "Restarting NoETL deployments to pick up new image..."
+          kubectl rollout restart deployment/noetl-server -n noetl 2>/dev/null || true
+          kubectl rollout restart deployment/noetl-worker -n noetl 2>/dev/null || true
 
           echo ""
           echo "Waiting for NoETL server..."
@@ -65,7 +116,7 @@ workflow:
           echo "Waiting for NoETL workers..."
           kubectl wait --for=condition=ready pod -l app=noetl-worker -n noetl --timeout=90s || echo "Warning: NoETL workers not ready"
     next:
-      - step: end
+      - step: status
 
   - step: status
     desc: Show NoETL pod and service status
@@ -95,11 +146,23 @@ workflow:
           echo "  noetl run automation/development/noetl.yaml --set action=<action>"
           echo ""
           echo "Actions:"
+          echo "  build    - Build NoETL Docker image"
+          echo "  load     - Load image into kind cluster"
           echo "  deploy   - Deploy NoETL server and workers"
+          echo "  redeploy - Full cycle: build, load, deploy"
           echo "  status   - Show NoETL pod and service status"
           echo "  help     - Show this help"
+          echo ""
+          echo "Examples:"
+          echo "  # Full rebuild and deploy"
+          echo "  noetl run automation/development/noetl.yaml --set action=redeploy"
+          echo ""
+          echo "  # Just deploy (after manual build)"
+          echo "  noetl run automation/development/noetl.yaml --set action=deploy"
     next:
       - step: end
 
   - step: end
     desc: Done
+    tool:
+      kind: noop

@@ -34,24 +34,18 @@ workflow:
           echo "==================="
           echo "Database: {{ workload.state_database }}"
           echo "Query:    {{ workload.query }}"
-    case:
-      - when: "{{ workload.query }} == summary"
-        then:
-          - step: show_summary
-      - when: "{{ workload.query }} == resources"
-        then:
-          - step: list_resources
-      - when: "{{ workload.query }} == operations"
-        then:
-          - step: list_operations
-      - when: "{{ workload.query }} == drift"
-        then:
-          - step: list_drift
-      - when: "{{ workload.query }} == all"
-        then:
-          - step: show_all
-      - else:
-          - step: show_help
+    next:
+      - step: show_summary
+        when: "{{ workload.query == 'summary' }}"
+      - step: list_resources
+        when: "{{ workload.query == 'resources' }}"
+      - step: list_operations
+        when: "{{ workload.query == 'operations' }}"
+      - step: list_drift
+        when: "{{ workload.query == 'drift' }}"
+      - step: show_all
+        when: "{{ workload.query == 'all' }}"
+      - step: show_help
 
   - step: show_help
     desc: Show available queries
@@ -196,3 +190,5 @@ workflow:
 
   - step: end
     desc: Inspection complete
+    tool:
+      kind: noop

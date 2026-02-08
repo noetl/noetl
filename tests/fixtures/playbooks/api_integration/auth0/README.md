@@ -792,9 +792,51 @@ The Auth0 integration enables user authentication and authorization for the noet
 
 ```
 Client -> noetl-gateway -> Auth0 (authentication) -> noetl-server (playbook execution)
-                    |
-              auth schema (user tracking, roles, playbook permissions)
+                    |                                       |
+              NATS K/V (session cache)              auth schema (Postgres)
 ```
+
+### Session Caching with NATS K/V
+
+The gateway uses NATS K/V as a fast session cache to avoid calling playbooks for every request:
+
+**Flow:**
+1. **Login Request:**
+   - Gateway receives Auth0 token from client
+   - Gateway calls `auth0_login` playbook
+   - Playbook validates token, creates user/session in Postgres
+   - Playbook caches session in NATS K/V bucket (`sessions`)
+   - Gateway receives callback with session details
+
+2. **Subsequent Requests:**
+   - Gateway checks NATS K/V for session (fast lookup)
+   - If found and valid → use cached session data
+   - If not found (cache miss) → call `auth0_validate_session` playbook
+   - Playbook validates from Postgres (source of truth)
+   - Playbook refreshes NATS K/V cache
+   - Gateway receives callback
+
+**Benefits:**
+- Fast session lookups (sub-millisecond from NATS K/V)
+- Reduced load on NoETL server and Postgres
+- Postgres remains source of truth for session data
+- Automatic cache refresh on validation
+
+**NATS K/V Session Data:**
+```json
+{
+  "session_token": "abc123...",
+  "user_id": 42,
+  "email": "user@example.com",
+  "display_name": "User Name",
+  "expires_at": "2026-01-15T10:00:00Z",
+  "is_active": true
+}
+```
+
+**Required Credentials:**
+- `nats_credential` - NATS connection (url, user, password)
+- `pg_auth` - Postgres connection for auth schema
 
 ## Components
 
@@ -1071,5 +1113,6 @@ noetl execution create api_integration/auth0/check_playbook_access
 - API key management
 - Role-based data filtering
 - Audit log retention policies
-- Session refresh mechanism
+- Session TTL in NATS K/V (auto-expiration)
 - OAuth2 scope mapping
+- NATS K/V cache invalidation on logout

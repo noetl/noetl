@@ -19,70 +19,38 @@ workflow:
       cmds:
         - echo "Linux/WSL2 Dev Tools Automation - Action '{{ workload.action }}'"
     next:
-      - when: "{{ workload.action }} == setup"
-        then:
-          - step: setup_tools
-        args: {}
-      - when: "{{ workload.action }} == validate-install"
-        then:
-          - step: validate_install
-        args: {}
-      - when: "{{ workload.action }} == validate-devtools"
-        then:
-          - step: validate_devtools
-        args: {}
-      - when: "{{ workload.action }} == validate-docker"
-        then:
-          - step: validate_docker
-        args: {}
-      - when: "{{ workload.action }} == install-base"
-        then:
-          - step: install_base
-        args: {}
-      - when: "{{ workload.action }} == install-devtools"
-        then:
-          - step: install_devtools
-        args: {}
-      - when: "{{ workload.action }} == install-jq"
-        then:
-          - step: install_jq
-        args: {}
-      - when: "{{ workload.action }} == install-yq"
-        then:
-          - step: install_yq
-        args: {}
-      - when: "{{ workload.action }} == install-kind"
-        then:
-          - step: install_kind
-        args: {}
-      - when: "{{ workload.action }} == install-pyenv"
-        then:
-          - step: install_pyenv
-        args: {}
-      - when: "{{ workload.action }} == install-uv"
-        then:
-          - step: install_uv
-        args: {}
-      - when: "{{ workload.action }} == install-tfenv"
-        then:
-          - step: install_tfenv
-        args: {}
-      - when: "{{ workload.action }} == install-psql"
-        then:
-          - step: install_psql
-        args: {}
-      - when: "{{ workload.action }} == ensure-path"
-        then:
-          - step: ensure_path
-        args: {}
-      - when: "{{ workload.action }} == fix-docker-perms"
-        then:
-          - step: fix_docker_perms
-        args: {}
-      - when: "{{ workload.action }} == help"
-        then:
-          - step: show_help
-        args: {}
+      - step: setup_tools
+        when: "{{ workload.action == 'setup' }}"
+      - step: validate_install
+        when: "{{ workload.action == 'validate-install' }}"
+      - step: validate_devtools
+        when: "{{ workload.action == 'validate-devtools' }}"
+      - step: validate_docker
+        when: "{{ workload.action == 'validate-docker' }}"
+      - step: install_base
+        when: "{{ workload.action == 'install-base' }}"
+      - step: install_devtools
+        when: "{{ workload.action == 'install-devtools' }}"
+      - step: install_jq
+        when: "{{ workload.action == 'install-jq' }}"
+      - step: install_yq
+        when: "{{ workload.action == 'install-yq' }}"
+      - step: install_kind
+        when: "{{ workload.action == 'install-kind' }}"
+      - step: install_pyenv
+        when: "{{ workload.action == 'install-pyenv' }}"
+      - step: install_uv
+        when: "{{ workload.action == 'install-uv' }}"
+      - step: install_tfenv
+        when: "{{ workload.action == 'install-tfenv' }}"
+      - step: install_psql
+        when: "{{ workload.action == 'install-psql' }}"
+      - step: ensure_path
+        when: "{{ workload.action == 'ensure-path' }}"
+      - step: fix_docker_perms
+        when: "{{ workload.action == 'fix-docker-perms' }}"
+      - step: show_help
+        when: "{{ workload.action == 'help' }}"
       - step: show_help
 
   - step: setup_tools
@@ -130,7 +98,6 @@ workflow:
             echo "[MISSING] docker not found in PATH"
             fail=1
           fi
-          if command -v task >/dev/null 2>&1; then echo "[OK] task available"; else echo "[INFO] task not installed (you are likely running this via task already)"; fi
           if command -v noetl >/dev/null 2>&1; then
             echo "[OK] noetl CLI: $(noetl --version 2>/dev/null | head -n1 || echo present)"
           else
@@ -188,7 +155,6 @@ workflow:
             echo "[MISSING] docker not found in PATH"
             fail=1
           fi
-          if command -v task >/dev/null 2>&1; then echo "[OK] task available"; else echo "[INFO] task not installed (you are likely running this via task already)"; fi
           if command -v noetl >/dev/null 2>&1; then
             echo "[OK] noetl CLI: $(noetl --version 2>/dev/null | head -n1 || echo present)"
           else
@@ -661,3 +627,5 @@ workflow:
 
   - step: end
     desc: End workflow
+    tool:
+      kind: noop

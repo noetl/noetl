@@ -23,9 +23,9 @@ workflow:
     tool:
       kind: python
       args:
-        credential_name: "{{ workload.credential_name }}"
-        override_gateway_url: "{{ workload.gateway_url }}"
-        override_base_url: "{{ workload.base_url }}"
+        credential_name: "{{ credential_name }}"
+        override_gateway_url: "{{ gateway_url }}"
+        override_base_url: "{{ base_url }}"
       code: |
         from noetl.worker.secrets import fetch_credential_by_key
 
@@ -53,7 +53,10 @@ workflow:
         else:
           result = {'status': 'ok', 'gateway_url': gateway_url, 'base_url': base_url}
     next:
-      - step: maintain
+      spec:
+        mode: exclusive
+      arcs:
+        - step: maintain
 
   - step: maintain
     desc: Tickle, decide, and reauthenticate if needed
@@ -130,7 +133,10 @@ workflow:
             "reauth": reauth,
         }
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: Done

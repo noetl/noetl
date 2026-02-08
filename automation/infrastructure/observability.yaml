@@ -18,26 +18,16 @@ workflow:
       cmds:
         - echo "Observability Automation - Action '{{ workload.action }}'"
     next:
-      - when: "{{ workload.action }} == activate-all"
-        then:
-          - step: activate_all_services
-        args: {}
-      - when: "{{ workload.action }} == deactivate-all"
-        then:
-          - step: deactivate_all_services
-        args: {}
-      - when: "{{ workload.action }} == status-all"
-        then:
-          - step: status_all_services
-        args: {}
-      - when: "{{ workload.action }} == health-all"
-        then:
-          - step: health_all_services
-        args: {}
-      - when: "{{ workload.action }} == restart-all"
-        then:
-          - step: restart_all_services
-        args: {}
+      - step: activate_all_services
+        when: "{{ workload.action == 'activate-all' }}"
+      - step: deactivate_all_services
+        when: "{{ workload.action == 'deactivate-all' }}"
+      - step: status_all_services
+        when: "{{ workload.action == 'status-all' }}"
+      - step: health_all_services
+        when: "{{ workload.action == 'health-all' }}"
+      - step: restart_all_services
+        when: "{{ workload.action == 'restart-all' }}"
       - step: show_help
 
   - step: activate_all_services
@@ -311,3 +301,5 @@ workflow:
 
   - step: end
     desc: End workflow
+    tool:
+      kind: noop

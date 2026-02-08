@@ -1,56 +1,65 @@
-apiVersion: noetl.io/v2
+apiVersion: noetl.io/v10
 kind: Playbook
 metadata:
   name: auth0_validate_session
   path: api_integration/auth0/auth0_validate_session
   description: |
-    Validate NoETL session token.
-    
+    Validate NoETL session token and refresh NATS cache.
+
+    Flow:
+      1. Validates session in Postgres (source of truth)
+      2. If valid, caches/refreshes session in NATS K/V
+      3. Sends callback to gateway with validation result
+
+    Gateway Integration:
+      - Gateway first checks NATS K/V for cached session
+      - If cache miss, gateway calls this playbook
+      - Playbook validates from Postgres and repopulates NATS cache
+      - Gateway can then fetch session from NATS K/V
+
     Input:
       - session_token: NoETL session token
-    
-    Output:
-      - valid: Boolean
-      - user: User details
+      - request_id: Gateway request ID for callback
+
+    Output (via callback):
+      - valid: Boolean (true if session is valid)
+      - user: User details (user_id, email, display_name)
+      - expires_at: Session expiration timestamp
+      - message: Validation result message
   tags:
     - auth0
     - validation
+    - nats
+    - gateway
 
 workload:
-  session_token: "{{ session_token }}"
-  db_credential: pg_k8s
+  # Input parameters - provided by execution request
+  session_token: ""
+  # Configuration
+  db_credential: pg_auth
+  nats_credential: nats_credential
+  # NATS K/V bucket for session cache
+  session_bucket: sessions
+  request_id: ""
+  gateway_url: "http://gateway.gateway.svc.cluster.local:8090"
 
 workflow:
   - step: start
-    desc: Begin validation
-    tool:
-      kind: python
-      auth: {}
-      libs: {}
-      args: {}
-      code: |
-        result = {"status": "initialized"}
-    case:
-      - when: "{{ event.name == 'step.exit' }}"
-        then:
-          next:
-            - step: lookup_session
-
-  - step: lookup_session
-    desc: Lookup session
+    desc: Lookup and validate session from Postgres (source of truth)
     tool:
       kind: postgres
-      auth: "{{ workload.db_credential }}"
+      auth: "{{ db_credential }}"
       command: |
-        SELECT 
+        SELECT
           s.session_id,
+          s.session_token,
           s.user_id,
           s.expires_at,
           s.is_active,
           u.email,
           u.display_name,
           u.is_active as user_is_active,
-          CASE 
+          CASE
             WHEN s.expires_at < NOW() THEN false
             WHEN NOT s.is_active THEN false
             WHEN NOT u.is_active THEN false
@@ -58,102 +67,104 @@ workflow:
           END as session_valid
         FROM auth.sessions s
         JOIN auth.users u ON s.user_id = u.user_id
-        WHERE s.session_token = '{{ workload.session_token }}';
-    case:
-      - when: "{{ event.name == 'step.exit' and response is defined and (response | length) > 0 and response[0].session_valid }}"
-        then:
-          next:
-            - step: update_activity
-      - when: "{{ event.name == 'step.exit' }}"
-        then:
-          next:
-            - step: validation_failed
+        WHERE s.session_token = '{{ session_token }}';
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: cache_session
+          when: "{{ start.command_0.rows | length > 0 and start.command_0.rows[0].session_valid }}"
+        - step: send_invalid_callback
+          when: "{{ request_id and (start.command_0.rows | length == 0 or not start.command_0.rows[0].session_valid) }}"
+        - step: end
+          when: "{{ not request_id and (start.command_0.rows | length == 0 or not start.command_0.rows[0].session_valid) }}"
 
-  - step: update_activity
-    desc: Update last activity
+  - step: cache_session
+    desc: Cache valid session in NATS K/V for fast gateway lookups
     tool:
-      kind: postgres
-      auth: "{{ workload.db_credential }}"
-      command: |
-        UPDATE auth.sessions
-        SET last_activity_at = NOW()
-        WHERE session_id = {{ lookup_session[0].session_id }};
-    case:
-      - when: "{{ event.name == 'step.exit' }}"
-        then:
-          next:
-            - step: get_roles
+      kind: nats
+      auth: "{{ nats_credential }}"
+      operation: kv_put
+      bucket: "{{ session_bucket }}"
+      key: "{{ start.command_0.rows[0].session_token }}"
+      value:
+        session_token: "{{ start.command_0.rows[0].session_token }}"
+        user_id: "{{ start.command_0.rows[0].user_id }}"
+        email: "{{ start.command_0.rows[0].email }}"
+        display_name: "{{ start.command_0.rows[0].display_name }}"
+        expires_at: "{{ start.command_0.rows[0].expires_at }}"
+        is_active: true
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: send_success_callback
 
-  - step: get_roles
-    desc: Get user roles
+  - step: send_success_callback
+    desc: Send success callback to gateway
     tool:
-      kind: postgres
-      auth: "{{ workload.db_credential }}"
-      command: |
-        SELECT r.role_name
-        FROM auth.user_roles ur
-        JOIN auth.roles r ON ur.role_id = r.role_id
-        WHERE ur.user_id = {{ lookup_session[0].user_id }}
-          AND (ur.expires_at IS NULL OR ur.expires_at > NOW());
-    case:
-      - when: "{{ event.name == 'step.exit' }}"
-        then:
-          next:
-            - step: success
+      - prepare:
+          kind: python
+          code: |
+            result = {"status": "callback_ready"}
+      - send_callback:
+          kind: http
+          method: POST
+          url: "{{ gateway_url }}/api/internal/callback"
+          headers:
+            Content-Type: application/json
+          data:
+            request_id: "{{ request_id }}"
+            status: "success"
+            data:
+              valid: true
+              user:
+                user_id: "{{ start.command_0.rows[0].user_id }}"
+                email: "{{ start.command_0.rows[0].email }}"
+                display_name: "{{ start.command_0.rows[0].display_name }}"
+              expires_at: "{{ start.command_0.rows[0].expires_at }}"
+              message: "Session is valid"
+          spec:
+            policy:
+              rules:
+                - when: "{{ outcome.status == 'error' }}"
+                  then:
+                    do: continue
+                - else:
+                    then:
+                      do: continue
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
+          when: "{{ request_id }}"
+        - step: end
+          when: "{{ not request_id }}"
 
-  - step: success
-    desc: Return valid session
+  - step: send_invalid_callback
+    desc: Send invalid session callback to gateway
     tool:
-      kind: python
-      auth: {}
-      libs: {}
-      args:
-        user_id: "{{ lookup_session[0].user_id }}"
-        email: "{{ lookup_session[0].email }}"
-        display_name: "{{ lookup_session[0].display_name }}"
-        roles: "{{ get_roles }}"
-      code: |
-        # Arguments injected: user_id, email, display_name, roles
-        result = {
-            "valid": True,
-            "user": {
-                "user_id": user_id,
-                "email": email,
-                "display_name": display_name,
-                "roles": [r["role_name"] for r in roles] if roles else []
-            },
-            "message": "Session is valid"
-        }
-    case:
-      - when: "{{ event.name == 'step.exit' }}"
-        then:
-          next:
-            - step: end
-
-  - step: validation_failed
-    desc: Return invalid
-    tool:
-      kind: python
-      auth: {}
-      libs: {}
-      args: {}
-      code: |
-        result = {
-            "valid": False,
-            "message": "Session not found or expired"
-        }
-    case:
-      - when: "{{ event.name == 'step.exit' }}"
-        then:
-          next:
-            - step: end
+      kind: http
+      method: POST
+      url: "{{ gateway_url }}/api/internal/callback"
+      headers:
+        Content-Type: application/json
+      data:
+        request_id: "{{ request_id }}"
+        status: "success"
+        data:
+          valid: false
+          message: "Session not found or expired"
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: Complete
     tool:
       kind: python
-      auth: {}
-      libs: {}
-      args: {}
       code: |
         result = {"status": "complete"}

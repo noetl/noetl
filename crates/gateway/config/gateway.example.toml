@@ -1,0 +1,83 @@
+# Gateway Configuration Example
+#
+# This file shows all available configuration options.
+# Copy this file to gateway.toml and modify as needed.
+#
+# Configuration can be loaded from:
+#   - GATEWAY_CONFIG=/path/to/config.toml (env var)
+#   - Environment variables (override file values)
+#
+# Environment variables override config file values.
+
+[server]
+# Gateway server port
+# Env: ROUTER_PORT or GATEWAY_PORT
+port = 8090
+
+# Bind address
+# Env: GATEWAY_BIND
+bind = "0.0.0.0"
+
+# Public URL for external access (optional)
+# Env: GATEWAY_PUBLIC_URL
+# public_url = "https://gateway.example.com"
+
+[noetl]
+# NoETL server base URL
+# Env: NOETL_BASE_URL
+base_url = "http://localhost:8082"
+
+# Request timeout in seconds
+# Env: NOETL_TIMEOUT_SECS
+timeout_secs = 120
+
+[nats]
+# NATS server URL
+# Env: NATS_URL
+url = "nats://127.0.0.1:4222"
+
+# NATS authentication (optional)
+# Env: NATS_USERNAME, NATS_PASSWORD
+# username = "noetl"
+# password = "secret"
+
+# Subject prefix for execution updates
+# Env: NATS_UPDATES_SUBJECT_PREFIX
+updates_subject_prefix = "playbooks.executions."
+
+# Subject prefix for callbacks
+# Env: NATS_CALLBACK_SUBJECT_PREFIX
+callback_subject_prefix = "noetl.callbacks"
+
+[cors]
+# Allowed origins (array format)
+# Env: CORS_ALLOWED_ORIGINS (comma-separated)
+allowed_origins = [
+    "http://localhost:8080",
+    "http://localhost:8090",
+    "http://localhost:3000"
+]
+
+# Allow credentials
+# Env: CORS_ALLOW_CREDENTIALS
+allow_credentials = true
+
+[auth_playbooks]
+# Authentication playbook paths
+# These playbooks are called by the gateway for auth operations.
+
+# Login playbook - authenticates user via Auth0/OAuth
+# Env: AUTH_PLAYBOOK_LOGIN
+login = "api_integration/auth0/auth0_login"
+
+# Session validation playbook - validates session tokens
+# Env: AUTH_PLAYBOOK_VALIDATE_SESSION
+validate_session = "api_integration/auth0/auth0_validate_session"
+
+# Access check playbook - checks if user can access a playbook
+# Env: AUTH_PLAYBOOK_CHECK_ACCESS
+check_access = "api_integration/auth0/check_playbook_access"
+
+# Playbook execution timeout in seconds
+# Env: AUTH_PLAYBOOK_TIMEOUT_SECS
+timeout_secs = 60

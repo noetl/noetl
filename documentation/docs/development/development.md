@@ -11,13 +11,62 @@ This guide provides information about setting up a development environment for N
 
 ## Setting Up a Development Environment
 
-### Option 1: Unified Kubernetes Platform (Recommended)
+### Option 1: Playbook-Based Kubernetes Development (Recommended)
 
-For a complete development environment with integrated observability:
+Use NoETL automation playbooks for a streamlined Kubernetes development workflow:
 
 **Prerequisites:**
 - Docker
-- Kind (Kubernetes in Docker) 
+- Kind (Kubernetes in Docker)
+- kubectl
+- NoETL CLI (`noetl` binary)
+
+```bash
+# Clone repository
+git clone https://github.com/noetl/noetl.git
+cd noetl
+
+# Bootstrap complete environment (first time setup)
+noetl run automation/setup/bootstrap.yaml
+
+# Or use the shortcut
+noetl run boot
+```
+
+**Development Cycle:**
+```bash
+# Make code changes...
+
+# Rebuild and deploy in one command
+noetl run automation/development/noetl.yaml --set action=redeploy
+
+# Check status
+noetl run automation/development/noetl.yaml --set action=status
+
+# View logs
+kubectl logs -f -n noetl -l app=noetl-server
+kubectl logs -f -n noetl -l app=noetl-worker
+```
+
+**Available Actions:**
+
+| Action | Description |
+|--------|-------------|
+| `build` | Build NoETL Docker image |
+| `load` | Load image into kind cluster |
+| `deploy` | Deploy to Kubernetes |
+| `redeploy` | Full cycle: build → load → deploy |
+| `status` | Show pod/service status |
+
+For detailed playbook documentation, see [Automation Playbooks](./automation_playbooks.md#noetl-development-deployment).
+
+### Option 2: Unified Platform Script
+
+For a complete development environment with integrated observability using scripts:
+
+**Prerequisites:**
+- Docker
+- Kind (Kubernetes in Docker)
 - kubectl
 - Helm
 
@@ -59,7 +108,7 @@ make unified-grafana-credentials
 kind delete cluster --name noetl-cluster
 ```
 
-### Option 2: Local Python Development
+### Option 3: Local Python Development
 
 #### 1. Clone the Repository
 
@@ -139,7 +188,34 @@ noetl/
 
 ## Development Workflow
 
-### Unified Platform Development (Recommended)
+### Playbook-Based Development (Recommended)
+
+The fastest way to iterate during development:
+
+```bash
+# After making code changes, rebuild and deploy
+noetl run automation/development/noetl.yaml --set action=redeploy
+
+# Check deployment status
+noetl run automation/development/noetl.yaml --set action=status
+
+# View logs
+kubectl logs -f -n noetl -l app=noetl-server
+kubectl logs -f -n noetl -l app=noetl-worker
+
+# Access services
+# NoETL API: http://localhost:30082/api/health
+```
+
+**What `redeploy` does:**
+1. Builds Docker image with timestamp tag using `docker/noetl/dev/Dockerfile`
+2. Loads image into kind cluster using `kind load docker-image`
+3. Applies Kubernetes manifests from `ci/manifests/noetl/`
+4. Restarts deployments and waits for pods to be ready
+
+### Unified Platform Development (Alternative)
+
+For full observability stack:
 
 ```bash
 # Deploy/redeploy the complete platform

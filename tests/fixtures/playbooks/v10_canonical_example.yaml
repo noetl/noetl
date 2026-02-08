@@ -1,0 +1,203 @@
+# NoETL Canonical v10 Example Playbook
+#
+# Demonstrates all canonical v10 patterns:
+# - `when` is the ONLY conditional keyword (no `expr`)
+# - All knobs live under `spec` at any level
+# - Policies under `spec.policy` typed by scope
+# - Task outcome via `task.spec.policy.rules` (not eval)
+# - Routing via `next.spec` + `next.arcs[]` (Petri-net arcs)
+# - NO `step.when` field (use `step.spec.policy.admit.rules`)
+# - Outcome status uses "ok" | "error" (not "success")
+# - Variables: `ctx` (execution-scoped) and `iter` (iteration-scoped)
+# - Direct access to workload values (no {{ workload.xxx }})
+
+apiVersion: noetl.io/v10
+kind: Playbook
+metadata:
+  name: v10_canonical_example
+  path: v10_canonical_example
+  description: Demonstrates all canonical v10 DSL patterns
+  version: "10.0"
+  labels:
+    feature: v10_canonical
+    category: example
+
+executor:
+  profile: auto
+  version: noetl-runtime/1
+  requires:
+    tools: [http, python, postgres]
+    features: [result_storage]
+  spec:
+    entry_step: start
+    no_next_is_error: false
+    policy:
+      defaults:
+        timeout_s: 30
+      results:
+        reference_first: true
+
+workload:
+  api_url: "https://api.example.com"
+  max_items: 100
+  enabled: true
+
+workflow:
+  # ==========================================================================
+  # Step 1: Simple step with conditional admission
+  # ==========================================================================
+  - step: start
+    desc: Initialize workflow with admission control
+    spec:
+      policy:
+        # Step admission via spec.policy.admit (server-side)
+        # NO step.when - use admit.rules instead
+        admit:
+          mode: exclusive
+          rules:
+            - when: "{{ enabled }}"
+              then: { allow: true }
+            - else:
+                then: { allow: false }
+    tool:
+      kind: python
+      code: |
+        result = {"status": "initialized", "timestamp": "now"}
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: fetch_data
+
+  # ==========================================================================
+  # Step 2: Single tool with task policy for outcome handling
+  # ==========================================================================
+  - step: fetch_data
+    desc: Fetch data with retry policy
+    tool:
+      kind: http
+      method: GET
+      url: "{{ api_url }}/data"
+      spec:
+        # Task policy lives under tool.spec.policy (not eval)
+        policy:
+          rules:
+            # Use `when` not `expr`
+            - when: "{{ outcome.status == 'error' and outcome.http.status in [429, 500, 502, 503] }}"
+              then:
+                do: retry
+                attempts: 3
+                backoff: exponential
+                delay: 1.0
+            - when: "{{ outcome.status == 'error' }}"
+              then:
+                do: fail
+            - else:
+                then:
+                  do: continue
+                  # set_ctx updates execution-scoped variables
+                  set_ctx:
+                    fetch_completed: true
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: process_data
+          when: "{{ event.name == 'call.done' }}"
+
+  # ==========================================================================
+  # Step 3: Tool pipeline with labeled tasks
+  # ==========================================================================
+  - step: process_data
+    desc: Process data with task pipeline
+    tool:
+      # Pipeline: list of labeled tasks
+      - validate:
+          kind: python
+          args:
+            data: "{{ fetch_data.data }}"
+          code: |
+            if not data:
+                result = {"status": "error", "message": "No data to validate"}
+            else:
+                result = {"status": "ok", "valid": True, "count": len(data)}
+          spec:
+            policy:
+              rules:
+                - when: "{{ outcome.result.status == 'error' }}"
+                  then: { do: fail }
+                - else:
+                    then: { do: continue }
+
+      - transform:
+          kind: python
+          args:
+            # _prev contains previous task's result
+            prev: "{{ _prev }}"
+          code: |
+            result = {"transformed": True, "items": prev.get("count", 0)}
+          spec:
+            policy:
+              rules:
+                - else:
+                    then:
+                      do: continue
+                      set_ctx:
+                        transform_done: true
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: store_results
+
+  # ==========================================================================
+  # Step 4: Loop with spec.mode and policy
+  # ==========================================================================
+  - step: store_results
+    desc: Store results with loop
+    loop:
+      in: "{{ process_data.results.transform.items or [1, 2, 3] }}"
+      iterator: item
+      spec:
+        mode: parallel
+        max_in_flight: 5
+        policy:
+          exec: local
+    tool:
+      kind: postgres
+      auth: pg_test
+      command: |
+        INSERT INTO results (item_id, data)
+        VALUES ({{ iter.item }}, '{}')
+        ON CONFLICT (item_id) DO NOTHING;
+      spec:
+        policy:
+          rules:
+            - when: "{{ outcome.status == 'error' and outcome.error.retryable }}"
+              then: { do: retry, attempts: 2 }
+            - when: "{{ outcome.status == 'error' }}"
+              then: { do: continue }  # Continue on non-retryable errors
+            - else:
+                then: { do: continue }
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
+          when: "{{ event.name == 'loop.done' }}"
+
+  # ==========================================================================
+  # Step 5: Terminal step
+  # ==========================================================================
+  - step: end
+    desc: Workflow complete
+    tool:
+      kind: python
+      args:
+        ctx_vars: "{{ ctx }}"
+      code: |
+        result = {
+            "status": "COMPLETED",
+            "message": "Workflow finished successfully",
+            "context": ctx_vars
+        }

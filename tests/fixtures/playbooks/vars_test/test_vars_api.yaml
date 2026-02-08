@@ -1,4 +1,4 @@
-apiVersion: noetl.io/v2
+apiVersion: noetl.io/v10
 kind: Playbook
 metadata:
   name: test_vars_api
@@ -13,114 +13,116 @@ workflow:
   - step: start
     desc: Start workflow
     tool:
-      kind: python
-      auth: {}
-      libs: {}
-      args: {}
-      code: |
-        result = {"status": "initialized"}
-    
-    case:
-      - when: "{{ event.name == 'step.exit' }}"
-        then:
-          next:
-            - step: create_initial_vars
+      - start_task:
+          kind: python
+          args: {}
+          code: |
+            result = {"status": "initialized"}
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: create_initial_vars
 
   - step: create_initial_vars
-    desc: Create some variables via vars block
+    desc: Create some variables via policy rules
     tool:
-      kind: python
-      auth: {}
-      libs: {}
-      args: {}
-      code: |
-        result = {
-          "user_id": 999,
-          "username": "api_tester",
-          "score": 85,
-          "metadata": {
-            "created": "2025-12-01",
-            "source": "test_playbook"
-          }
-        }
-    vars:
-      test_user_id: "{{ result.user_id }}"
-      test_username: "{{ result.username }}"
-      test_score: "{{ result.score }}"
-      test_metadata: "{{ result.metadata }}"
+      - create_vars_task:
+          kind: python
+          args: {}
+          code: |
+            result = {
+              "user_id": 999,
+              "username": "api_tester",
+              "score": 85,
+              "metadata": {
+                "created": "2025-12-01",
+                "source": "test_playbook"
+              }
+            }
+          spec:
+            policy:
+              rules:
+                - else:
+                    then:
+                      do: continue
+                      set_ctx:
+                        test_user_id: "{{ outcome.result.user_id }}"
+                        test_username: "{{ outcome.result.username }}"
+                        test_score: "{{ outcome.result.score }}"
+                        test_metadata: "{{ outcome.result.metadata }}"
     next:
-      - step: wait_for_api_calls
+      spec:
+        mode: exclusive
+      arcs:
+        - step: wait_for_api_calls
 
   - step: wait_for_api_calls
     desc: Pause to allow API endpoint testing
     tool:
-      kind: python
-      auth: {}
-      libs:
-        time: time
-      args: {}
-      code: |
-        # Keep execution alive for API testing
-        # In real test, external scripts will call API endpoints
-        time.sleep(5)
-        result = {"status": "ready_for_api_tests"}
-    
-    case:
-      - when: "{{ event.name == 'step.exit' and response is defined }}"
-        then:
-          next:
-            - step: verify_vars_accessible
+      - wait_task:
+          kind: python
+          libs:
+            time: time
+          args: {}
+          code: |
+            # Keep execution alive for API testing
+            # In real test, external scripts will call API endpoints
+            time.sleep(5)
+            result = {"status": "ready_for_api_tests"}
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: verify_vars_accessible
 
   - step: verify_vars_accessible
     desc: Verify variables are accessible after API operations
     tool:
-      kind: python
-      auth: {}
-      libs: {}
-      args:
-        user_id: "{{ vars.test_user_id }}"
-        username: "{{ vars.test_username }}"
-        score: "{{ vars.test_score }}"
-      code: |
-        # Debug: Show what we received
-        print(f"DEBUG: Received user_id={repr(user_id)}, username={repr(username)}, score={repr(score)}")
-        
-        # Convert to correct types, with validation
-        if not user_id or user_id == '':
-          raise ValueError(f"user_id is empty or None: {repr(user_id)}")
-        if not username or username == '':
-          raise ValueError(f"username is empty or None: {repr(username)}")
-        if not score or score == '':
-          raise ValueError(f"score is empty or None: {repr(score)}")
-          
-        user_id = int(user_id) if isinstance(user_id, str) else user_id
-        score = int(score) if isinstance(score, str) else score
-        
-        # Verify extracted variables are accessible
-        assert user_id == 999, f"Expected user_id=999, got {user_id}"
-        assert username == "api_tester", f"Expected username=api_tester, got {username}"
-        assert score == 85, f"Expected score=85, got {score}"
-        
-        result = {
-          "verification": "passed",
-          "vars_loaded": True,
-          "user_id": user_id,
-          "username": username,
-          "score": score
-        }
-    
-    case:
-      - when: "{{ event.name == 'step.exit' and response is defined }}"
-        then:
-          next:
-            - step: end
+      - verify_task:
+          kind: python
+          args:
+            user_id: "{{ ctx.test_user_id }}"
+            username: "{{ ctx.test_username }}"
+            score: "{{ ctx.test_score }}"
+          code: |
+            # Debug: Show what we received
+            print(f"DEBUG: Received user_id={repr(user_id)}, username={repr(username)}, score={repr(score)}")
+
+            # Convert to correct types, with validation
+            if not user_id or user_id == '':
+              raise ValueError(f"user_id is empty or None: {repr(user_id)}")
+            if not username or username == '':
+              raise ValueError(f"username is empty or None: {repr(username)}")
+            if not score or score == '':
+              raise ValueError(f"score is empty or None: {repr(score)}")
+
+            user_id = int(user_id) if isinstance(user_id, str) else user_id
+            score = int(score) if isinstance(score, str) else score
+
+            # Verify extracted variables are accessible
+            assert user_id == 999, f"Expected user_id=999, got {user_id}"
+            assert username == "api_tester", f"Expected username=api_tester, got {username}"
+            assert score == 85, f"Expected score=85, got {score}"
+
+            result = {
+              "verification": "passed",
+              "vars_loaded": True,
+              "user_id": user_id,
+              "username": username,
+              "score": score
+            }
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: End workflow
     tool:
-      kind: python
-      auth: {}
-      libs: {}
-      args: {}
-      code: |
-        result = {"status": "complete"}
+      - end_task:
+          kind: python
+          args: {}
+          code: |
+            result = {"status": "complete"}

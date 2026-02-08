@@ -66,14 +66,13 @@ workflow:
             echo "OK kubectl: $(kubectl version --client --short 2>/dev/null || echo 'installed')"
           fi
           
-          # Check task (required)
-          if ! command -v task &> /dev/null; then
-            echo "FAIL task not found"
-            MISSING="$MISSING task"
+          # Check helm (optional but recommended for some deployments)
+          if ! command -v helm &> /dev/null; then
+            echo "WARN helm not found (optional)"
           else
-            echo "OK task: $(task --version)"
+            echo "OK helm: $(helm version --short)"
           fi
-          
+
           # Check Python (optional but recommended)
           if ! command -v python3 &> /dev/null; then
             echo "WARN python3 not found (optional)"
@@ -105,7 +104,7 @@ workflow:
             echo "  noetl run automation/development/tooling_linux.yaml --set action=install-devtools"
             echo ""
             echo "  # Manual installation:"
-            echo "  macOS: brew install docker kind kubectl go-task"
+            echo "  macOS: brew install docker kind kubectl helm"
             echo "  Linux: See https://noetl.dev/docs/installation"
             exit 1
           else
@@ -216,22 +215,15 @@ workflow:
       kind: shell
       cmds:
         - |
-          if [ ! -f "{{ workload.kind_config }}" ]; then
-            echo "ERROR: kind config not found: {{ workload.kind_config }}"
-            exit 1
-          fi
-          PORTS=$(grep -E "hostPort:" "{{ workload.kind_config }}" | awk '{print $2}' | tr -d '"')
-          IN_USE=""
-          for port in $PORTS; do
-            if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
-              IN_USE="$IN_USE $port"
-            fi
-          done
-          if [ -n "$IN_USE" ]; then
-            echo "ERROR: The following host ports are already in use:$IN_USE"
-            echo "Stop the processes using those ports or re-run with a reduced mapping set:"
-            echo "  --set kind_config=ci/kind/config-minimal.yaml"
-            exit 1
+          echo ""
+          echo "Checking for kind cluster..."
+          
+          # Ports are managed by kind cluster configuration (ci/kind/config.yaml)
+          # Docker may hold ports from previous sessions, but kind will handle remapping
+          if kind get clusters 2>/dev/null | grep -q "^noetl$"; then
+            echo "OK Kind cluster 'noetl' already exists"
+          else
+            echo "INFO Kind cluster will be created with port mappings from {{ workload.kind_config }}"
           fi
     next:
       - step: create_kind_cluster
@@ -332,17 +324,27 @@ workflow:
           echo ""
           echo "Waiting for dependencies to be ready..."
           sleep 10
-          
+
           echo "Waiting for PostgreSQL..."
           kubectl wait --for=condition=ready pod -l app=postgres -n postgres --timeout=90s
-          
+
           echo "Waiting for NATS (mandatory)..."
           kubectl wait --for=condition=ready pod -l app=nats -n nats --timeout=120s || echo "ERROR: NATS failed to start - NoETL requires NATS"
-          
+
           echo "Waiting for Qdrant..."
           kubectl wait --for=condition=ready pod -l app=qdrant -n qdrant --timeout=90s || true
-          
-          echo "✓ Dependencies ready. Proceeding with NoETL deployment..."
+
+          echo "Dependencies ready. Proceeding..."
+    next:
+      - step: provision_auth_schema
+
+  - step: provision_auth_schema
+    desc: Provision Gateway auth schema (users, roles, permissions)
+    tool:
+      kind: playbook
+      path: ./provision_auth.yaml
+      args:
+        action: provision
     next:
       - step: deploy_test_server
   
@@ -363,24 +365,45 @@ workflow:
       cmds:
         - |
           echo "Deploy Gateway flag: {{ workload.deploy_gateway }}"
-    case:
-      - when: "{{ workload.deploy_gateway }} == true"
-        then:
-          - step: deploy_gateway
-      - when: "true"
-        then:
-          - step: deploy_noetl
-  
+    next:
+      - step: deploy_gateway
+        when: "{{ workload.deploy_gateway == true }}"
+      - step: create_noetl_secrets
+
   - step: deploy_gateway
-    desc: Deploy NoETL Gateway API
+    desc: Build and deploy NoETL Gateway API
     tool:
       kind: playbook
       path: ../infrastructure/gateway.yaml
       args:
-        action: deploy
+        action: deploy-all
+    next:
+      - step: create_noetl_secrets
+  
+  - step: create_noetl_secrets
+    desc: Create NoETL namespace and required secrets
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Creating NoETL namespace and secrets..."
+          # Create namespace first
+          kubectl apply -f ci/manifests/noetl/namespace/
+
+          # Create gcs-credentials secret (empty for local development)
+          # This secret is mounted by workers for GCS access but not used in local env
+          if ! kubectl get secret gcs-credentials -n noetl &>/dev/null; then
+            echo "Creating gcs-credentials secret for local development..."
+            kubectl create secret generic gcs-credentials -n noetl \
+              --from-literal=gcs-key.json='{}'
+            echo "OK gcs-credentials secret created"
+          else
+            echo "OK gcs-credentials secret already exists"
+          fi
     next:
       - step: deploy_noetl
-  
+
   - step: deploy_noetl
     desc: Deploy NoETL server and workers
     tool:
@@ -389,9 +412,7 @@ workflow:
         - |
           echo ""
           echo "Deploying NoETL..."
-          # Create namespace first
-          kubectl apply -f ci/manifests/noetl/namespace/
-          
+
           # Read the tag from the file created during build
           if [ ! -f .noetl_last_build_tag.txt ]; then
             echo "ERROR: .noetl_last_build_tag.txt not found. Build must have failed."
@@ -400,7 +421,7 @@ workflow:
           IMAGE_TAG=$(cat .noetl_last_build_tag.txt)
           IMAGE="{{ workload.registry }}/{{ workload.image_name }}:$IMAGE_TAG"
           echo "Using image: $IMAGE"
-          
+
           # Apply manifests with image substitution
           for manifest in ci/manifests/noetl/*.yaml; do
             if [ -f "$manifest" ]; then
@@ -469,6 +490,7 @@ workflow:
           echo "Environment Status:"
           echo "  Kind cluster: noetl"
           echo "  PostgreSQL: deployed"
+          echo "  Auth Schema: provisioned (users, roles, permissions)"
           echo "  NoETL server: deployed"
           echo "  NoETL workers: deployed"
           echo "  Gateway: deployed (Rust API)"
@@ -500,8 +522,16 @@ workflow:
           echo "  3. Test execution:"
           echo "     noetl execute catalog/test/hello_world"
           echo ""
-          echo "  4. Check status:"
+          echo "  4. First user login (via Auth0 at http://localhost:8080):"
+          echo "     - User will be created in auth.users table"
+          echo "     - Grant admin role to first user:"
+          echo "       kubectl exec -n postgres deploy/postgres -- psql -U demo -d demo_noetl -c \\"
+          echo "         \"INSERT INTO auth.user_roles (user_id, role_id) \\"
+          echo "          SELECT 1, role_id FROM auth.roles WHERE role_name = 'admin';\""
+          echo ""
+          echo "  5. Check status:"
           echo "     kubectl get pods -n noetl"
+          echo "     noetl run automation/setup/provision_auth.yaml --set action=status"
           echo ""
           echo "To destroy:"
           echo "  noetl run automation/main.yaml destroy"
@@ -511,3 +541,5 @@ workflow:
   
   - step: end
     desc: End bootstrap workflow
+    tool:
+      kind: noop

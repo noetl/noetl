@@ -30,10 +30,10 @@ impl NoetlClient {
     }
 
     /// Execute a playbook by path.
-    /// POST /api/run/playbook with { path, args }
+    /// POST /api/execute with { path, payload }
     pub async fn execute_playbook(&self, path: &str, args: serde_json::Value) -> anyhow::Result<ExecutionResponse> {
-        let url = format!("{}/api/run/playbook", self.base_url.trim_end_matches('/'));
-        let payload = serde_json::json!({ "path": path, "args": args });
+        let url = format!("{}/api/execute", self.base_url.trim_end_matches('/'));
+        let payload = serde_json::json!({ "path": path, "payload": args });
 
         let res = self.http.post(&url).json(&payload).send().await
             .context("execute_playbook: send")?;

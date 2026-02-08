@@ -5,10 +5,10 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use std::sync::Arc;
-
-use crate::noetl_client::NoetlClient;
+use tokio::time::{timeout, Duration};
 
 use super::types::UserContext;
+use super::AuthState;
 
 /// Check if auth bypass is enabled (for development/testing)
 fn is_auth_bypass_enabled() -> bool {
@@ -19,7 +19,7 @@ fn is_auth_bypass_enabled() -> bool {
 
 /// Middleware to validate session token and inject user context
 pub async fn auth_middleware(
-    State(noetl): State<Arc<NoetlClient>>,
+    State(state): State<Arc<AuthState>>,
     mut request: Request,
     next: Next,
 ) -> Result<Response, Response> {
@@ -50,43 +50,69 @@ pub async fn auth_middleware(
         return Ok(next.run(request).await);
     }
 
-    // Validate session via NoETL playbook
+    // Check session cache first for fast validation
+    if let Some(cached) = state.session_cache.get(token).await {
+        tracing::debug!("Middleware: session cache HIT for user={}", cached.email);
+        let user_context = UserContext {
+            user_id: cached.user_id,
+            email: cached.email,
+            display_name: cached.display_name,
+            session_token: token.to_string(),
+        };
+        request.extensions_mut().insert(user_context);
+        return Ok(next.run(request).await);
+    }
+
+    // Cache miss - validate via playbook
+    tracing::debug!("Middleware: session cache MISS, calling playbook");
+
+    // Register callback to receive result
+    let (request_id, callback_subject, rx) = state.callbacks.register().await;
+
+    // Validate session via NoETL playbook with callback info
+    // The gateway tool abstracts NATS - playbooks just see callback_subject
     let variables = serde_json::json!({
         "session_token": token,
+        "callback_subject": callback_subject,
+        "request_id": request_id.clone(),
     });
 
-    let result = noetl
+    let result = state.noetl
         .execute_playbook("api_integration/auth0/auth0_validate_session", variables)
         .await
         .map_err(|e| {
+            let callbacks = state.callbacks.clone();
+            let req_id = request_id.clone();
+            tokio::spawn(async move { callbacks.cancel(&req_id).await });
             tracing::error!("Session validation failed: {}", e);
             (StatusCode::INTERNAL_SERVER_ERROR, "Session validation failed").into_response()
         })?;
 
-    // Poll for result (simplified - in production use event system)
-    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+    tracing::debug!("Middleware validation execution_id: {}, request_id: {}", result.execution_id, request_id);
 
-    let status_result = noetl
-        .get_playbook_status(&result.execution_id)
+    // Wait for callback with 30 second timeout
+    let callback_result = timeout(Duration::from_secs(30), rx)
         .await
-        .map_err(|e| {
-            tracing::error!("Failed to get validation status: {}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, "Failed to verify session").into_response()
+        .map_err(|_| {
+            let callbacks = state.callbacks.clone();
+            let req_id = request_id.clone();
+            tokio::spawn(async move { callbacks.cancel(&req_id).await });
+            tracing::error!("Validation playbook timed out");
+            (StatusCode::INTERNAL_SERVER_ERROR, "Session validation timed out").into_response()
+        })?
+        .map_err(|_| {
+            tracing::error!("Callback channel closed");
+            (StatusCode::INTERNAL_SERVER_ERROR, "Callback channel closed").into_response()
         })?;
 
-    // Try multiple paths to find validation output (NoETL version compatibility)
-    let output = status_result.get("output")
-        .or_else(|| status_result.get("variables").and_then(|v| v.get("success")))
-        .or_else(|| status_result.get("result"))
-        .ok_or_else(|| {
-            tracing::error!("No output from validation playbook. Response: {:?}", status_result);
-            (StatusCode::INTERNAL_SERVER_ERROR, "Invalid validation response").into_response()
-        })?;
+    let output = callback_result.data;
 
     let valid = output.get("valid").and_then(|v| v.as_bool()).unwrap_or(false);
 
     if !valid {
         tracing::warn!("Invalid or expired session token");
+        // Invalidate any stale cache entry
+        let _ = state.session_cache.invalidate(token).await;
         return Err((StatusCode::UNAUTHORIZED, "Invalid or expired session").into_response());
     }
 
@@ -111,12 +137,29 @@ pub async fn auth_middleware(
         display_name: user_obj
             .get("display_name")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| {
-                (StatusCode::INTERNAL_SERVER_ERROR, "Invalid display_name").into_response()
-            })?
+            .unwrap_or("Unknown User")
             .to_string(),
         session_token: token.to_string(),
     };
+
+    // Cache the validated session for future requests
+    let expires_at = output
+        .get("expires_at")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    let cached_session = crate::session_cache::CachedSession {
+        session_token: token.to_string(),
+        user_id: user_context.user_id,
+        email: user_context.email.clone(),
+        display_name: user_context.display_name.clone(),
+        expires_at,
+        is_active: true,
+    };
+    if let Err(e) = state.session_cache.put(&cached_session).await {
+        tracing::warn!("Failed to cache session: {}", e);
+    }
 
     tracing::info!("Authenticated user: {} ({})", user_context.email, user_context.user_id);
 

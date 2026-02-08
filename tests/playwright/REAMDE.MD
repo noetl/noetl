@@ -18,7 +18,7 @@ git pull
 git checkout e2e
 git merge master
 git push
-task noetl:k8s:reset
+noetl k8s reset
 
 cd tests/playwright
 npx playwright test --ui

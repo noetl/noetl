@@ -23,23 +23,26 @@ workflow:
     desc: "Start container-based PostgreSQL initialization"
     tool:
       kind: python
-      auth: {}
-      libs: {}
-      args: {}
       code: |
         result = {"status": "initialized"}
     next:
-      - step: verify_postgres_connection
+      spec:
+        mode: exclusive
+      arcs:
+        - step: verify_postgres_connection
 
   - step: verify_postgres_connection
     desc: "Verify PostgreSQL connection before container execution"
     tool:
       kind: postgres
-      auth: "{{ workload.pg_auth }}"
+      auth: "{{ pg_auth }}"
       command: |
         SELECT version();
     next:
-      - step: run_schema_creation
+      spec:
+        mode: exclusive
+      arcs:
+        - step: run_schema_creation
 
   - step: run_schema_creation
     desc: "Execute schema creation via container job"
@@ -47,8 +50,8 @@ workflow:
       kind: container
       runtime:
         provider: kubernetes
-        namespace: "{{ workload.namespace }}"
-        image: "{{ workload.image }}"
+        namespace: "{{ namespace }}"
+        image: "{{ image }}"
         command: ["/bin/bash", "/workspace/init_schema.sh"]
         serviceAccountName: noetl-worker
         backoffLimit: 0
@@ -69,7 +72,10 @@ workflow:
         PGPASSWORD: "demo"
         EXECUTION_ID: "{{ execution_id }}"
     next:
-      - step: run_table_creation
+      spec:
+        mode: exclusive
+      arcs:
+        - step: run_table_creation
 
   - step: run_table_creation
     desc: "Create test tables via container job with SQL scripts"
@@ -77,8 +83,8 @@ workflow:
       kind: container
       runtime:
         provider: kubernetes
-        namespace: "{{ workload.namespace }}"
-        image: "{{ workload.image }}"
+        namespace: "{{ namespace }}"
+        image: "{{ image }}"
         command: ["/bin/bash", "/workspace/create_tables.sh"]
         serviceAccountName: noetl-worker
         backoffLimit: 0
@@ -100,7 +106,10 @@ workflow:
         EXECUTION_ID: "{{ execution_id }}"
         SCHEMA_NAME: container_test
     next:
-      - step: seed_test_data
+      spec:
+        mode: exclusive
+      arcs:
+        - step: seed_test_data
 
   - step: seed_test_data
     desc: "Seed test data via container job"
@@ -108,8 +117,8 @@ workflow:
       kind: container
       runtime:
         provider: kubernetes
-        namespace: "{{ workload.namespace }}"
-        image: "{{ workload.image }}"
+        namespace: "{{ namespace }}"
+        image: "{{ image }}"
         command: ["/bin/bash", "/workspace/seed_data.sh"]
         serviceAccountName: noetl-worker
         backoffLimit: 0
@@ -131,45 +140,51 @@ workflow:
         EXECUTION_ID: "{{ execution_id }}"
         SCHEMA_NAME: container_test
     next:
-      - step: verify_data
+      spec:
+        mode: exclusive
+      arcs:
+        - step: verify_data
 
   - step: verify_data
     desc: "Verify data was created successfully"
     tool:
       kind: postgres
-      auth: "{{ workload.pg_auth }}"
+      auth: "{{ pg_auth }}"
       command: |
-        SELECT 
+        SELECT
           schemaname,
           tablename,
           pg_size_pretty(pg_total_relation_size(schemaname||'.'||tablename)) AS size
-        FROM pg_tables 
+        FROM pg_tables
         WHERE schemaname = 'container_test'
         ORDER BY tablename;
-        
+
         SELECT COUNT(*) as customer_count FROM container_test.customers;
         SELECT COUNT(*) as order_count FROM container_test.orders;
         SELECT COUNT(*) as product_count FROM container_test.products;
     next:
-      - step: cleanup_test_data
+      spec:
+        mode: exclusive
+      arcs:
+        - step: cleanup_test_data
 
   - step: cleanup_test_data
     desc: "Clean up test schema (optional - disable in production)"
     tool:
       kind: postgres
-      auth: "{{ workload.pg_auth }}"
+      auth: "{{ pg_auth }}"
       command: |
         DROP SCHEMA IF EXISTS container_test CASCADE;
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: "Container-based PostgreSQL initialization complete"
     tool:
       kind: python
-      auth: {}
-      libs: {}
-      args: {}
       code: |
         result = {
             "status": "success",

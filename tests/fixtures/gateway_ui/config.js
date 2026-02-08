@@ -4,6 +4,10 @@ const isLocalDev = window.location.hostname === 'localhost' || window.location.h
 const auth0Config = {
   domain: 'mestumre-development.us.auth0.com',
   clientId: 'Jqop7YoaiZalLHdBRo5ScNQ1RJhbhbDN',
-  // Redirect back to login.html - use port 8090 for local dev (Auth0 allowed callback)
-  redirectUri: isLocalDev ? 'http://localhost:8090/login.html' : window.location.origin + '/login.html'
+  // Redirect back to login.html
+  // Port mapping (from ci/kind/config.yaml):
+  //   - 8080: UI server (Python HTTP server for development)
+  //   - 8090: Gateway API (Kind hostPort -> containerPort 30090)
+  // NOTE: Auth0 callback URLs must be configured to allow this port
+  redirectUri: isLocalDev ? 'http://localhost:8080/login.html' : window.location.origin + '/login.html'
 };

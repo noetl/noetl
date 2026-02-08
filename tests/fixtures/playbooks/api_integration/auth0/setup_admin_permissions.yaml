@@ -1,0 +1,74 @@
+apiVersion: noetl.io/v10
+kind: Playbook
+metadata:
+  name: setup_admin_permissions
+  path: api_integration/auth0/setup_admin_permissions
+  description: Grant admin role full playbook permissions
+  tags:
+    - auth0
+    - setup
+
+workload:
+  db_credential: pg_auth
+
+workflow:
+  - step: start
+    desc: Setup admin permissions
+    tool:
+      kind: python
+      code: |
+        result = {"status": "started"}
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: grant_permissions
+
+  - step: grant_permissions
+    desc: Grant admin role permissions for all playbooks
+    tool:
+      kind: postgres
+      auth: "{{ db_credential }}"
+      command: |
+        -- Grant admin role wildcard permission for all playbooks (use allow_pattern with dummy playbook_path)
+        INSERT INTO auth.playbook_permissions (role_id, playbook_path, allow_pattern, can_execute, can_view, can_modify)
+        SELECT r.role_id, '*', '%', true, true, true
+        FROM auth.roles r
+        WHERE r.role_name = 'admin'
+          AND NOT EXISTS (
+            SELECT 1 FROM auth.playbook_permissions pp
+            WHERE pp.role_id = r.role_id AND pp.allow_pattern = '%'
+          );
+
+        -- Grant developer role execution permission for all playbooks
+        INSERT INTO auth.playbook_permissions (role_id, playbook_path, allow_pattern, can_execute, can_view, can_modify)
+        SELECT r.role_id, '*', '%', true, true, false
+        FROM auth.roles r
+        WHERE r.role_name = 'developer'
+          AND NOT EXISTS (
+            SELECT 1 FROM auth.playbook_permissions pp
+            WHERE pp.role_id = r.role_id AND pp.allow_pattern = '%'
+          );
+
+        -- Assign admin role to user 1 (the existing user)
+        INSERT INTO auth.user_roles (user_id, role_id)
+        SELECT 1, role_id FROM auth.roles WHERE role_name = 'admin'
+        ON CONFLICT (user_id, role_id) DO NOTHING;
+
+        INSERT INTO auth.user_roles (user_id, role_id)
+        SELECT 1, role_id FROM auth.roles WHERE role_name = 'developer'
+        ON CONFLICT (user_id, role_id) DO NOTHING;
+
+        SELECT 'Permissions granted successfully' as result;
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
+
+  - step: end
+    desc: Complete
+    tool:
+      kind: python
+      code: |
+        result = {"status": "complete"}

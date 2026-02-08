@@ -1,20 +1,15 @@
 ---
-apiVersion: noetl.io/v2
+apiVersion: noetl.io/v10
 kind: Playbook
 metadata:
   name: test_vars_template_access
-  description: Test {{ vars.var_name }} template access in Jinja2
+  description: Test {{ ctx.var_name }} template access in Jinja2
   path: vars_test/test_vars_template_access
   version: 1.0.0
   labels:
     test: true
     feature: transient
     phase: 2
-
-# Test scenario:
-# 1. Set multiple variables using TransientVars
-# 2. Use {{ vars.var_name }} in subsequent step data
-# 3. Verify template rendering works with vars namespace
 
 workload:
   greeting: "Hello"
@@ -23,128 +18,125 @@ workflow:
   - step: start
     desc: Start workflow
     tool:
-      kind: python
-      auth: {}
-      libs: {}
-      args: {}
-      code: |
-        result = {"status": "initialized"}
-    
-    case:
-      - when: "{{ event.name == 'step.exit' }}"
-        then:
-          next:
-            - step: set_variables
+      - start_task:
+          kind: python
+          args: {}
+          code: |
+            result = {"status": "initialized"}
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: set_variables
 
   - step: set_variables
-    desc: Set multiple test variables via vars block
+    desc: Set multiple test variables via policy rules
     tool:
-      kind: python
-      auth: {}
-      libs: {}
-      args: {}
-      code: |
-        # Return values that will be extracted via vars block
-        result = {
-            "counter": 42,
-            "message": "Template access works!",
-            "config": {
-                "timeout": 30,
-                "retries": 3
+      - set_vars_task:
+          kind: python
+          args: {}
+          code: |
+            # Return values that will be extracted via policy rules
+            result = {
+                "counter": 42,
+                "message": "Template access works!",
+                "config": {
+                    "timeout": 30,
+                    "retries": 3
+                }
             }
-        }
-    vars:
-      counter: "{{ result.counter }}"
-      message: "{{ result.message }}"
-      config: "{{ result.config }}"
-    
-    case:
-      - when: "{{ event.name == 'step.exit' and response is defined }}"
-        then:
-          next:
-            - step: use_vars_in_template
+          spec:
+            policy:
+              rules:
+                - else:
+                    then:
+                      do: continue
+                      set_ctx:
+                        counter: "{{ outcome.result.counter }}"
+                        message: "{{ outcome.result.message }}"
+                        config: "{{ outcome.result.config }}"
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: use_vars_in_template
 
   - step: use_vars_in_template
-    desc: Use {{ vars.var_name }} in step data
+    desc: Use {{ ctx.var_name }} in step data
     tool:
-      kind: python
-      auth: {}
-      libs: {}
-      args:
-        counter: "{{ vars.counter }}"
-        message: "{{ vars.message }}"
-        timeout: "{{ vars.config.timeout }}"
-        full_greeting: "{{ workload.greeting }}, {{ vars.message }}"
-      code: |
-        # This step receives data using {{ vars.* }} templates          
-        result = {
-            "status": "success",
-            "received_counter": counter,
-            "received_message": message,
-            "received_timeout": timeout,
-            "full_greeting": full_greeting
-        }
-    
-    case:
-      - when: "{{ event.name == 'step.exit' and response is defined }}"
-        then:
-          next:
-            - step: verify_results
+      - use_vars_task:
+          kind: python
+          args:
+            counter: "{{ ctx.counter }}"
+            message: "{{ ctx.message }}"
+            timeout: "{{ ctx.config.timeout }}"
+            full_greeting: "{{ greeting }}, {{ ctx.message }}"
+          code: |
+            # This step receives data using {{ ctx.* }} templates
+            result = {
+                "status": "success",
+                "received_counter": counter,
+                "received_message": message,
+                "received_timeout": timeout,
+                "full_greeting": full_greeting
+            }
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: verify_results
 
   - step: verify_results
     desc: Verify template values were rendered correctly
     tool:
-      kind: python
-      auth: {}
-      libs: {}
-      args: {}
-      code: |
-        # Get previous step result
-        prev_result = context.get('use_vars_in_template', {})
-        if isinstance(prev_result, dict) and 'data' in prev_result:
-            prev_result = prev_result['data']
-        
-        # Verify values
-        counter = prev_result.get("received_counter")
-        message = prev_result.get("received_message")
-        timeout = prev_result.get("received_timeout")
-        greeting = prev_result.get("full_greeting")
-        
-        success = (
-            counter == 42 and
-            message == "Template access works!" and
-            timeout == 30 and
-            greeting == "Hello, Template access works!"
-        )
-        
-        result = {
-            "status": "success" if success else "failed",
-            "verification": {
-                "counter_correct": counter == 42,
-                "message_correct": message == "Template access works!",
-                "timeout_correct": timeout == 30,
-                "greeting_correct": greeting == "Hello, Template access works!"
-            },
-            "values": {
-                "counter": counter,
-                "message": message,
-                "timeout": timeout,
-                "greeting": greeting
+      - verify_task:
+          kind: python
+          args: {}
+          code: |
+            # Get previous step result
+            prev_result = context.get('use_vars_in_template', {})
+            if isinstance(prev_result, dict) and 'data' in prev_result:
+                prev_result = prev_result['data']
+
+            # Verify values
+            counter = prev_result.get("received_counter")
+            message = prev_result.get("received_message")
+            timeout = prev_result.get("received_timeout")
+            greeting = prev_result.get("full_greeting")
+
+            success = (
+                counter == 42 and
+                message == "Template access works!" and
+                timeout == 30 and
+                greeting == "Hello, Template access works!"
+            )
+
+            result = {
+                "status": "success" if success else "failed",
+                "verification": {
+                    "counter_correct": counter == 42,
+                    "message_correct": message == "Template access works!",
+                    "timeout_correct": timeout == 30,
+                    "greeting_correct": greeting == "Hello, Template access works!"
+                },
+                "values": {
+                    "counter": counter,
+                    "message": message,
+                    "timeout": timeout,
+                    "greeting": greeting
+                }
             }
-        }
-    
-    case:
-      - when: "{{ event.name == 'step.exit' and response is defined }}"
-        then:
-          next:
-            - step: end
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: End workflow
     tool:
-      kind: python
-      auth: {}
-      libs: {}
-      args: {}
-      code: |
-        result = {"status": "complete"}
+      - end_task:
+          kind: python
+          args: {}
+          code: |
+            result = {"status": "complete"}

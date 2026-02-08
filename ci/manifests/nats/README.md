@@ -21,9 +21,17 @@ NATS with JetStream provides messaging, streaming, and key-value store capabilit
 - TTL support
 - Watch/subscribe patterns
 
+**Session Cache Bucket:**
+The Gateway uses a K/V bucket named `sessions` to cache authenticated sessions:
+- Automatic creation on first use
+- Default TTL: 5 minutes (configurable via `NATS_SESSION_CACHE_TTL_SECS`)
+- Reduces playbook calls for session validation
+
 ### Accounts
-- System account (sys/sys)
-- Default account (noetl/noetl) with JetStream enabled
+- **$SYS** account (sys/sys) - System monitoring
+- **NOETL** account (noetl/noetl) - JetStream enabled for K/V and streams
+
+**Note:** JetStream K/V access requires the account-based configuration. The `noetl` user has full JetStream permissions within the NOETL account.
 
 ## Access
 
@@ -80,7 +88,23 @@ Default settings in `nats-config` ConfigMap:
 - Client port: 4222
 - HTTP monitoring: 8222
 - JetStream storage: /data/jetstream
-- Default user: noetl/noetl
+- JetStream max memory: 1GB
+- JetStream max file: 5GB
+
+**Accounts Configuration:**
+```conf
+accounts {
+  $SYS {
+    users: [ { user: sys, password: sys } ]
+  }
+  NOETL {
+    jetstream: enabled
+    users: [ { user: noetl, password: noetl } ]
+  }
+}
+```
+
+**Important:** The account-based configuration is required for JetStream K/V operations. Simple `authorization { user/password }` blocks don't grant JetStream permissions.
 
 ## Resources
 

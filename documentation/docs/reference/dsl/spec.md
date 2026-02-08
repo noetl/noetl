@@ -1,561 +1,441 @@
 ---
 sidebar_position: 2
-title: DSL Specification
-description: Formal specification for NoETL DSL v2 syntax, semantics, and workflow patterns
+title: DSL Specification (Canonical)
+description: Canonical specification for NoETL DSL v2 syntax, semantics, runtime scopes, and Petri-net workflow model
 ---
 
-# NoETL Playbook DSL - Formal Specification
+# NoETL Playbook DSL — Specification (Canonical v10)
 
-**Document type:** Formal Specification  
-**API Version:** noetl.io/v2
+**Document type:** Canonical DSL Specification  
+**API Version:** `noetl.io/v2`  
+**Status:** Normative for new playbooks
 
----
+This document **replaces** older v2 drafts that contained `vars`, `case`, `retry`, `sink`, `step.when`, `eval`, or `expr` constructs. Those are **non-canonical** in v10.
 
-## 1. Conformance and Terminology
-
-The key words **MUST**, **MUST NOT**, **SHOULD**, **SHOULD NOT**, and **MAY** are to be interpreted as described in RFC 2119.
-
-### 1.1 Components
-
-- **Server**: Control plane; provides API endpoints; orchestrates and persists events.
-- **Worker**: Background worker pool; executes tools; no HTTP endpoints.
-- **CLI**: Manages worker pools and server lifecycle.
-
-### 1.2 Core Entities
-
-- Playbook, Workload, Context, Workflow, Step, Tool, Workbook, Loop, Case, Next, Retry, Sink.
+Canonical v10 principles:
+- **Step = Petri-net transition**: admission gate + ordered pipeline + routing router
+- **Only conditional keyword is `when`**
+- All knobs live under **`spec`** at the appropriate scope
+- All execution control lives under **policies**: `spec.policy.*`
+- Retry/pagination/branching inside a step are driven by **task policy rules** (`do: retry|jump|continue|break|fail`)
+- Result storage is **reference-first**; “sink” is a **pattern**, not a tool kind
 
 ---
 
-## 2. Document Model
+## 1) Conformance terminology
 
-### 2.1 API Version
+The key words **MUST**, **MUST NOT**, **SHOULD**, **SHOULD NOT**, and **MAY** are normative requirements.
 
-This specification describes **Playbook v2**. All v2 playbooks MUST use:
+---
 
+## 2) Architecture roles (informative, aligned)
+
+- **Worker (`worker.py`)**: pure background worker pool (no HTTP endpoints)
+- **Server (`server.py`)**: orchestration/control plane + API endpoints + event log persistence
+- **CLI (`clictl.py`)**: manages worker pools and server lifecycle
+
+---
+
+## 3) Root document model (normative)
+
+A playbook is a YAML mapping with exactly these root sections (plus `apiVersion`, `kind`):
+
+| Key | Type | Required | Meaning |
+|---|---:|:---:|---|
+| `apiVersion` | string | Yes | MUST be `noetl.io/v2` |
+| `kind` | string | Yes | MUST be `Playbook` |
+| `metadata` | mapping | Yes | name/path/version/description |
+| `keychain` | list | No | credential declarations (resolved before execution) |
+| `executor` | mapping | No | placement/runtime defaults |
+| `workload` | mapping | No | immutable defaults merged with request payload |
+| `workflow` | list | Yes | steps (transitions) |
+| `workbook` | mapping | No | optional catalog of reusable task templates |
+
+**Root restrictions (normative):**
+- Playbooks MUST NOT include root `vars`.
+- If `keychain` is present, implementations MUST resolve it before workflow execution and expose it to templates as `keychain.<name>...`.
+- `keychain` values MUST be treated as read-only during execution (refresh/rotation is implemented via tools + policies, not by mutating `keychain`).
+- Any additional root keys MUST be rejected by canonical validators unless explicitly enabled as extensions.
+
+### 3.1 `keychain` (root) — credential declarations (normative)
+
+`keychain` declares which credentials/secrets/tokens a playbook needs and how they are resolved (by `name` + `kind`). Tool tasks SHOULD reference credentials by name (for example `auth: pg_k8s`).
+
+Example:
 ```yaml
-apiVersion: noetl.io/v2
-```
-
-A conforming server MUST reject playbooks that do not specify `apiVersion: noetl.io/v2`.
-
-### 2.2 Top-Level Keys
-
-A playbook is a YAML mapping with the following top-level keys:
-
-| Key | Type | Required | Description |
-|-----|------|----------|-------------|
-| `apiVersion` | string | Yes | Must be `noetl.io/v2` |
-| `kind` | string | Yes | Must be `Playbook` |
-| `metadata` | mapping | Yes | Contains `name` (required) and `path` (optional) |
-| `workload` | mapping | No | Global variables merged with payload |
-| `keychain` | list | No | Credential and token definitions |
-| `workbook` | list | No | Named reusable task definitions |
-| `workflow` | list | Yes | List of step definitions |
-
-### 2.3 Template Evaluation
-
-1. All templated expressions MUST be valid Jinja2 templates embedded as YAML strings.
-2. Template rendering context MUST include (at minimum):
-   - `workload` (materialized global variables)
-   - `vars` (persisted execution variables)
-   - `execution_id` (unique execution identifier)
-   - Prior step results (by step name)
-
----
-
-## 3. Execution Model (Normative)
-
-### 3.1 Execution Request
-
-An execution request MUST provide either:
-- `playbook_id`, OR
-- (`path`, `version`) identifying a cataloged playbook.
-
-An execution request MAY provide an arbitrary JSON/YAML payload.
-
-### 3.2 Workload Materialization
-
-1. The server MUST load the playbook.
-2. The server MUST evaluate the `workload` section (rendering templates).
-3. The server MUST merge the execution request payload into the materialized workload.
-   - Merge strategy is **deep merge**, where request payload keys override playbook workload keys.
-4. The server MUST construct the initial **context** from the merged workload.
-
-### 3.3 Workflow Start
-
-1. The workflow MUST contain a step named `start`.
-2. The server MUST emit `WorkflowStarted` and `StepStarted` for `start`.
-3. The initial context MUST be passed to the start step.
-
-### 3.4 Step Evaluation Order
-
-Given a step `S`, evaluation MUST occur in the following order:
-
-1. **Bind inputs**: Render and bind `args` parameters (if present).
-2. **Loop expansion**: If `loop` is present, create a loop scope and evaluate iteration plan.
-3. **Tool execution**: Execute the tool specified in `tool.kind`.
-4. **Result binding**: Bind step result into context.
-5. **Variable extraction**: If `vars` is present, extract and persist variables.
-6. **Routing**:
-   - Evaluate `case` if present; otherwise evaluate `next`.
-   - If neither exists, the step terminates and control returns to the server.
-7. **Sink**: If `sink` is present and its predicate holds, execute sink.
-
-A conforming implementation MUST record events for each phase.
-
----
-
-## 4. Step Schema
-
-A step is a YAML mapping with the following structure:
-
-```yaml
-- step: <step_name>           # Required: unique identifier
-  desc: <string?>             # Optional: description
-  args: <mapping?>            # Optional: input arguments
-  tool:                       # Required: tool configuration
-    kind: <tool_kind>         # Required: tool type
-    # ... tool-specific fields
-  loop: <loop_clause?>        # Optional: iteration control
-  vars: <mapping?>            # Optional: variable extraction
-  case: <case_clause?>        # Optional: event-driven routing
-  next: <next_clause?>        # Optional: default routing
-  sink: <sink_clause?>        # Optional: persistence
-  retry: <retry_clause?>      # Optional: retry policy
-```
-
-### 4.1 Tool Configuration
-
-Every step (except special routing steps) MUST have a `tool` block with a `kind` field:
-
-```yaml
-tool:
-  kind: python|http|postgres|duckdb|workbook|playbook|secrets|iterator|...
-  # Tool-specific configuration
-```
-
-### 4.2 Supported Tool Kinds
-
-| Kind | Description |
-|------|-------------|
-| `python` | Execute inline Python code |
-| `http` | HTTP request (GET, POST, etc.) |
-| `postgres` | PostgreSQL query execution |
-| `duckdb` | DuckDB query execution |
-| `workbook` | Reference to named task in workbook |
-| `playbook` | Execute sub-playbook by catalog path |
-| `secrets` | Fetch secret from provider |
-| `iterator` | Loop iteration control |
-| `snowflake` | Snowflake query execution |
-| `gcs` | Google Cloud Storage operations |
-| `container` | Container execution |
-| `script` | External script execution |
-
----
-
-## 5. Workbook Schema
-
-A workbook entry is a named tool definition:
-
-```yaml
-workbook:
-  - name: <task_name>         # Required: reference name
-    tool:                     # Required: tool configuration
-      kind: <tool_kind>
-      # ... tool-specific fields
-    sink: <sink_clause?>      # Optional: persistence after task
-```
-
-**Example:**
-
-```yaml
-workbook:
-  - name: fetch_weather
-    tool:
-      kind: http
-      method: GET
-      url: "https://api.weather.com/forecast"
-      params:
-        city: "{{ city }}"
+keychain:
+  - name: openai_token
+    kind: secret_manager
+  - name: pg_k8s
+    kind: postgres_credential
 ```
 
 ---
 
-## 6. Loop Clause (Normative)
+## 4) Template evaluation (normative)
 
-### 6.1 Syntax
+1. All expressions MUST be valid **Jinja2 templates** embedded as YAML strings.
+2. Implementations MUST evaluate templates with a runtime context containing (at minimum):
+   - `workload` (immutable merged workload)
+   - `keychain` (resolved credentials; read-only)
+   - `ctx` (execution-scoped context)
+   - `args` (token payload; arc inscription)
+   - `execution_id` (execution identifier)
+   - `iter` (iteration scope; only when loop exists)
+    - pipeline locals: `_prev`, `_task`, `_attempt`, and `outcome` (policy evaluation only)
+    - `event` (routing evaluation only)
 
+---
+
+## 5) Runtime scopes (normative)
+
+### 5.1 `workload` (immutable)
+- Produced once at execution start: deep merge (request payload overrides playbook defaults).
+- MUST NOT be mutated.
+
+### 5.2 `ctx` (execution-scoped mutable)
+- Shared across steps within one execution instance.
+- Writes are expressed via `set_ctx` patches in policies.
+- Patches MUST be persisted as events (event-sourced).
+
+### 5.3 `iter` (iteration-scoped mutable)
+- Exists only inside loop iterations.
+- Always isolated per iteration (safe for parallel mode).
+- Used for pagination counters, cursors, streaming state, per-item status, etc.
+
+### 5.4 Pipeline locals
+- `_prev`: previous task output (canonical: previous task’s `outcome.result`)
+- `_task`: current task label
+- `_attempt`: attempt counter for current task
+- `outcome`: tool outcome envelope (available inside task policy evaluation)
+
+---
+
+## 6) Workflow and steps (normative)
+
+### 6.1 Workflow
+`workflow` is a list of steps. Steps form a directed graph via `next` routers and Petri-net **arcs**.
+
+### 6.2 Step (Petri-net transition)
+A step has:
+- optional **admission policy**: `step.spec.policy.admit`
+- optional **loop modifier**: `step.loop`
+- optional **ordered pipeline**: `step.tool` (list of labeled tasks)
+- optional **router**: `step.next` (arcs)
+
+A step MUST have at least one of:
+- `tool`
+- `next`
+
+**Canonical restriction:** step MUST NOT contain top-level `when`. Admission is under `step.spec.policy.admit`.
+
+### 6.3 Canonical step schema
 ```yaml
-loop:
-  in: "{{ <jinja_expression> }}"  # Collection to iterate
-  iterator: <identifier>           # Variable name for each item
-  mode: sequential|parallel|async  # Execution mode (default: sequential)
-```
-
-### 6.2 Semantics
-
-- `in` MUST evaluate to a list/array.
-- For each element `e`, the implementation MUST create an iteration scope where:
-  - `iterator` binds to `e`
-  - `loop_index` is available as the iteration index
-- Sequential mode MUST preserve iteration order.
-- Parallel/async mode MAY reorder completion, but MUST preserve stable iteration identifiers.
-
-### 6.3 Example
-
-```yaml
-- step: process_items
-  loop:
-    in: "{{ workload.items }}"
-    iterator: item
-    mode: sequential
-  tool:
-    kind: python
-    args:
-      current_item: "{{ item }}"
-    code: |
-      print(f"Processing: {current_item}")
-      result = {"processed": current_item}
-  next:
-    - step: aggregate
+- step: <name>                       # required
+  desc: <string?>                    # optional
+  spec:                              # optional
+    policy:
+      admit:                         # optional server-side admission
+        rules: [ ... ]
+  loop: <loop?>                      # optional
+  tool: <pipeline?>                  # optional
+  next: <next_router?>               # optional
 ```
 
 ---
 
-## 7. Retry Clause (Normative)
+## 7) Step admission policy (server-side) (normative)
 
-### 7.1 Syntax
+Admission is evaluated on the server **before** the step is scheduled.
 
+Shape:
 ```yaml
-retry:
-  max_attempts: <int>
-  initial_delay: <number>         # Seconds
-  backoff_multiplier: <number>    # For exponential backoff
-  retry_when: "{{ <predicate> }}" # Condition to trigger retry
-  stop_when: "{{ <predicate> }}"  # Condition to stop retrying
+spec:
+  policy:
+    admit:
+      rules:
+        - when: "{{ <bool expr> }}"
+          then: { allow: true|false }
+        - else:
+            then: { allow: true|false }
 ```
 
-### 7.2 Semantics
+Rules are evaluated top-to-bottom; first match wins; `else` is fallback.
+If `admit` is omitted, admission defaults to `allow: true`.
 
-- If `stop_when` is present, the system MUST re-execute the tool until:
-  - `stop_when` evaluates to true, OR
-  - max attempts is reached.
-- If `retry_when` is present, retries MUST occur only when the predicate evaluates to true.
-
-### 7.3 Template Context for Retry
-
-In retry evaluation, these variables are available:
-- `attempt` - Current attempt number
-- `max_attempts` - Maximum attempts configured
-- `status_code` - HTTP status code (for HTTP tools)
-- `error` - Error message if present
-- `success` - Boolean success flag
-- `result` / `data` - Last attempt's result
+Inputs available in admission `when`:
+- `workload`, `ctx`, `args`, `execution_id`
+- (if available) triggering `event` (boundary event data)
 
 ---
 
-## 8. Case Clause (Normative)
+## 8) Loop clause (normative)
 
 ### 8.1 Syntax
-
 ```yaml
-case:
-  - when: "{{ <predicate> }}"
-    then:
-      next:
-        - step: <next_step>
-          args: <mapping?>
-      sink: <sink_clause?>
-      set: <set_clause?>
+loop:
+  in: "{{ <collection expr> }}"
+  iterator: <identifier>
+  spec:
+    mode: sequential|parallel         # default sequential
+    max_in_flight: <int?>             # for parallel
+    policy:
+      exec: local|distributed         # optional placement intent
 ```
 
 ### 8.2 Semantics
+- `in` MUST evaluate to a list/array.
+- For each element `e`, an iteration scope MUST be created:
+  - `iter.<iterator>` = e
+  - `iter.index` = iteration index
+- `sequential` MUST preserve iteration order.
+- `parallel` MAY complete out-of-order but MUST preserve stable iteration ids.
 
-- `case` is evaluated top-down.
-- The first true `when` wins.
-- `then` block contains actions to execute when condition matches.
-- If no `case` matches, `next` field (if present) provides fallback routing.
-
-### 8.3 Template Context for Case
-
-In `case.when` conditions:
-- `event` - Event object with `event.name` (e.g., 'step.exit', 'call.done', 'call.error')
-- `response` - Full step response envelope
-
-In `case.then` actions (sink, set):
-- `result` - Unwrapped step result data
-- `this` - Full result envelope (status, data, error, meta)
-
-### 8.4 Example
-
-```yaml
-- step: fetch_data
-  tool:
-    kind: http
-    method: GET
-    url: "{{ workload.api_url }}"
-  case:
-    - when: "{{ event.name == 'call.done' and response.status_code == 200 }}"
-      then:
-        next:
-          - step: process_data
-    - when: "{{ event.name == 'call.error' }}"
-      then:
-        next:
-          - step: handle_error
-  next:
-    - step: default_handler  # Fallback if no case matches
-```
+### 8.3 Parallel safety
+In `parallel` loop mode:
+- `set_iter` is always safe.
+- `set_ctx` MUST be restricted or rejected until reducers/atomics are implemented (implementation choice must be documented).
 
 ---
 
-## 9. Next Clause (Normative)
+## 9) Tool pipeline and tasks (normative)
 
-`next` provides default routing when no `case` rule matches.
-
-### 9.1 Syntax
+### 9.1 Pipeline shape
+A step pipeline is an **ordered list of labeled tasks**:
 
 ```yaml
-# Simple string
-next: step_name
-
-# List of steps (parallel routing)
-next:
-  - step: step_a
-  - step: step_b
-
-# Steps with args
-next:
-  - step: next_step
-    args:
-      key: "{{ value }}"
+tool:
+  - fetch:
+      kind: http
+      ...
+  - transform:
+      kind: python
+      ...
+  - store:
+      kind: postgres
+      ...
 ```
 
-### 9.2 V2 Restrictions
+### 9.2 Normalization (required)
+Implementations MAY accept shorthand task shapes, but MUST normalize to the labeled list form internally.
+Labels MUST be unique within the pipeline.
 
-In v2, `next` MUST NOT contain `when/then/else` clauses. Conditional routing MUST use `case`.
-
-**Invalid (v1 pattern - rejected in v2):**
-```yaml
-next:
-  - when: "{{ condition }}"
-    then:
-      - step: branch_a
-  - step: default
-```
-
-**Valid (v2 pattern):**
-```yaml
-case:
-  - when: "{{ condition }}"
-    then:
-      next:
-        - step: branch_a
-next:
-  - step: default
-```
+### 9.3 Tool kinds (extensible)
+Common kinds include:
+- `http`, `postgres`, `duckdb`, `python`, `secrets`, `playbook`, `workbook`, `noop`, `script`
+Implementations MAY add additional kinds (including quantum connectors).
 
 ---
 
-## 10. Sink Clause (Normative)
+## 10) Spec layering and precedence (normative)
 
-```yaml
-sink:
-  tool:
-    kind: postgres|duckdb|http|...
-  table: <table_name>
-  args: <mapping>
-  when: "{{ <predicate> }}"   # Optional condition
-```
+`spec` can appear at multiple levels. Effective configuration MUST be computed by deep-merge with precedence:
 
-### 10.1 Semantics
+`kind defaults` → `executor.spec` → `step.spec` → `loop.spec` → `task.spec`
 
-- The sink MUST run after the step's main tool (unless otherwise specified).
-- If `when` is present and evaluates to false, the sink MUST be skipped.
-- Sink execution MUST be recorded in the event log.
+Merge rules:
+- scalars: inner wins
+- maps: deep merge; inner wins conflicts
+- lists: replace
+
+This applies to runtime knobs and to policy subtrees (typed by scope).
 
 ---
 
-## 11. Variables (vars) Block
+## 11) Tool outcome envelope (normative)
 
-### 11.1 Syntax
+Every tool invocation MUST produce exactly one final `outcome` envelope:
 
-```yaml
-vars:
-  variable_name: "{{ result.field }}"
-  another_var: "{{ result.nested.value }}"
-```
+- `outcome.status`: `"ok"` or `"error"`
+- `outcome.result`: success output (small or reference)
+- `outcome.error`: error object (MUST include `kind`; SHOULD include `retryable`)
+- `outcome.meta`: duration, attempt, timestamps, trace ids
 
-### 11.2 Semantics
-
-- Executes AFTER step completes successfully
-- Templates use `{{ result.field }}` to access current step's result
-- Variables are stored in `noetl.transient` database table
-- Accessible in subsequent steps via `{{ vars.variable_name }}`
-
-### 11.3 Example
-
-```yaml
-- step: fetch_user
-  tool:
-    kind: postgres
-    query: "SELECT user_id, email FROM users WHERE id = 1"
-  vars:
-    user_id: "{{ result[0].user_id }}"
-    email: "{{ result[0].email }}"
-  next:
-    - step: send_notification
-
-- step: send_notification
-  tool:
-    kind: http
-    method: POST
-    url: "https://api.example.com/notify"
-    body:
-      user_id: "{{ vars.user_id }}"
-      email: "{{ vars.email }}"
-```
+Kind helpers MAY exist:
+- HTTP: `outcome.http.status`, `outcome.http.headers`
+- Postgres: `outcome.pg.code`, `outcome.pg.sqlstate`
+- Python: `outcome.py.exception_type`
 
 ---
 
-## 12. Event Model (Normative)
+## 12) Task policy (worker-side pipeline control) (normative)
 
-### 12.1 Event Envelope
+### 12.1 One canonical shape
+`task.spec.policy` MUST be an object with required `rules:`:
 
+```yaml
+spec:
+  policy:
+    rules:
+      - when: "{{ <bool expr over outcome/locals> }}"
+        then:
+          do: continue|retry|jump|break|fail
+          attempts: <int?>               # retry
+          backoff: none|linear|exponential
+          delay: <seconds|template?>
+          to: <task_label?>              # jump
+          set_iter: <mapping?>           # patch iter
+          set_ctx: <mapping?>            # patch ctx
+      - else:
+          then:
+            do: continue
+```
+
+### 12.2 Evaluation semantics
+- Evaluate rules top-to-bottom.
+- First matching `when` wins.
+- `else` applies if no `when` matched.
+- If `policy` omitted:
+  - ok → `continue`
+  - error → `fail`
+- If `policy` present but no match and no else:
+  - default → `continue`
+
+### 12.3 `do` directives (normative)
+- `continue`: proceed to next task; `_prev := outcome.result`
+- `retry`: rerun current task up to `attempts`
+- `jump`: set pipeline program counter to `then.to`
+- `break`: end pipeline successfully (iteration done / step.done)
+- `fail`: end pipeline with failure (iteration failed / step.failed)
+
+---
+
+## 13) Next routing (server-side Petri-net arcs) (normative)
+
+### 13.1 Router schema
+```yaml
+next:
+  spec:
+    mode: exclusive|inclusive         # default exclusive
+    policy: {}                        # reserved placeholders
+  arcs:
+    - step: <target_step>
+      when: "{{ <bool expr> }}"       # default true if omitted
+      args: <mapping?>                # token payload / arc inscription
+      spec: <mapping?>                # reserved placeholders
+```
+
+### 13.2 Matching semantics
+- All arcs with `when == true` are considered matches.
+- If multiple matches:
+  - `exclusive` (default): first match wins (stable YAML order)
+  - `inclusive`: all matches fire (fan-out)
+
+### 13.3 Evaluation time
+The server MUST evaluate arcs upon receiving a terminal step boundary event:
+- `step.done`
+- `step.failed`
+- `loop.done` (when step has a loop)
+
+Inputs available in arc `when`:
+- `event` (boundary event)
+- `workload`, `ctx`, `args` (token), and (optionally) summarized step outcome references
+
+---
+
+## 14) Results and storage (reference-first) (normative)
+
+- Large results SHOULD be stored externally (Postgres tables, object store, NATS object store, etc.).
+- Events SHOULD store metadata + reference objects rather than large payload bodies.
+
+Recommended reference shape:
+```json
+{ "store": "postgres.table", "key": "results_ok", "range": "id:100-150", "size": 123456, "checksum": "..." }
+```
+
+**No special sink:** “Sink” is just a tool task that writes data and returns a reference.
+
+---
+
+## 15) Events (canonical taxonomy) (normative minimum)
+
+### 15.1 Event envelope (minimum)
 A conforming event MUST include:
+- `event_id`, `execution_id`, `timestamp`
+- `source`: `server|worker`
+- `name`
+- `entity_type`: `playbook|workflow|step|task|loop|next`
+- `entity_id`
+- `status`: `in_progress|success|error|skipped`
+- `payload` (metadata/outcomes/references)
 
-- `event_id` (string; unique)
-- `event_type` (string; canonical name)
-- `execution_id` (string)
-- `timestamp` (RFC3339)
-- `entity_type` (playbook|workflow|step|tool|loop|sink|retry|case)
-- `entity_id` (string)
-- `status` (in_progress|success|error|skipped)
-- `payload` (object; inputs/outputs/metadata)
-
-### 12.2 Canonical Event Types
-
+### 15.2 Minimum recommended event set
+**Server:**
 - `playbook.execution.requested`
 - `playbook.request.evaluated`
-- `playbook.started`
 - `workflow.started`
-- `step.started` / `step.finished`
-- `tool.started` / `tool.processed`
-- `case.started` / `case.evaluated`
+- `step.scheduled`
 - `next.evaluated`
-- `loop.started` / `loop.iteration.started` / `loop.iteration.finished` / `loop.finished`
-- `retry.started` / `retry.processed`
-- `sink.started` / `sink.processed`
 - `workflow.finished`
 - `playbook.processed`
 
----
-
-## 13. Control Plane vs Data Plane
-
-### 13.1 Server-Emitted Events
-
-The server MUST emit:
-- Playbook request and validation events
-- Workflow and step scheduling events
-- Routing decisions (case/next evaluation)
-- Finalization events
-
-### 13.2 Worker-Emitted Events
-
-Workers MUST emit:
-- Tool lifecycle events (`tool.started`, `tool.processed`)
-- Retry attempt events for tool re-execution
-- Sink events if sinks execute on the worker
-- Loop iteration events if the worker is the iteration executor
-
-Workers MUST report events to the server for persistence.
+**Worker:**
+- `step.started`
+- `task.started`
+- `task.done` (includes outcome or references)
+- `step.done` / `step.failed`
+- `loop.iteration.*` and `loop.done` (if loop present)
 
 ---
 
-## Appendix A: Complete Playbook Example
+## 16) Deprecated constructs (rejected by canonical validators)
+
+The following MUST be rejected unless explicitly enabled as legacy extensions:
+
+- root `vars`
+- step `when` (top-level)
+- `case` / `retry` / `sink` step blocks
+- tool `eval` blocks or `expr` keyword
+- `step.spec.next_mode` (use `next.spec.mode`)
+
+---
+
+## Appendix A) Minimal canonical example
 
 ```yaml
 apiVersion: noetl.io/v2
 kind: Playbook
+
 metadata:
-  name: user_onboarding
-  path: workflows/onboarding/user
+  name: minimal
+  path: examples/minimal
+  version: "2.0"
 
 workload:
   api_url: "https://api.example.com"
-  notification_enabled: true
-
-workbook:
-  - name: send_welcome_email
-    tool:
-      kind: http
-      method: POST
-      url: "{{ workload.api_url }}/email"
-      body:
-        template: "welcome"
-        to: "{{ email }}"
 
 workflow:
   - step: start
-    tool:
-      kind: python
-      auth: {}
-      libs: {}
-      args: {}
-      code: |
-        result = {"status": "initialized"}
-    case:
-      - when: "{{ event.name == 'step.exit' }}"
-        then:
-          next:
-            - step: fetch_user
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: fetch
 
-  - step: fetch_user
+  - step: fetch
     tool:
-      kind: postgres
-      query: "SELECT * FROM users WHERE id = {{ workload.user_id }}"
-    vars:
-      user_email: "{{ result[0].email }}"
-      user_name: "{{ result[0].name }}"
-    case:
-      - when: "{{ event.name == 'step.exit' and response is defined }}"
-        then:
-          next:
-            - step: send_welcome
-
-  - step: send_welcome
-    tool:
-      kind: workbook
-      name: send_welcome_email
-      args:
-        email: "{{ vars.user_email }}"
-    case:
-      - when: "{{ event.name == 'step.exit' }}"
-        then:
-          next:
-            - step: end
+      - call:
+          kind: http
+          method: GET
+          url: "{{ workload.api_url }}/ping"
+          spec:
+            policy:
+              rules:
+                - when: "{{ outcome.status == 'error' and outcome.http.status in [429,500,502,503,504] }}"
+                  then: { do: retry, attempts: 5, backoff: exponential, delay: 2 }
+                - when: "{{ outcome.status == 'error' }}"
+                  then: { do: fail }
+                - else:
+                    then: { do: break }
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: end
+          when: "{{ event.name == 'step.done' }}"
 
   - step: end
     tool:
-      kind: python
-      auth: {}
-      libs: {}
-      args: {}
-      code: |
-        result = {"status": "completed", "message": "User onboarding complete"}
+      - done:
+          kind: noop
 ```
 
 ---
-
-## Appendix B: Template Variable Reference
-
-| Context | Location | Available Variables |
-|---------|----------|---------------------|
-| Event condition | `case: when:` | `event`, `response` |
-| Action blocks | `case: then: sink:` | `result` (unwrapped), `this` (envelope) |
-| Retry config | `case: then: retry:` | `response` |
-| Retry evaluation | `retry_when:`, `stop_when:` | `status_code`, `error`, `attempt`, `result` |
-| Vars extraction | `vars:` | `result` |
-| Step args | `args:` | `workload`, `vars`, prior step results |

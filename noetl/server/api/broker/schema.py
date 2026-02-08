@@ -65,8 +65,9 @@ class Manifest(BaseModel):
 class CorrelationKeys(BaseModel):
     """
     Correlation keys for loop/pagination/retry tracking.
-    
+
     These enable deterministic retrieval of specific pieces.
+    Extended for TempRef/Manifest support.
     """
     step_run_id: Optional[str] = Field(default=None, description="Step run identifier")
     tool_run_id: Optional[str] = Field(default=None, description="Tool run identifier")
@@ -74,6 +75,11 @@ class CorrelationKeys(BaseModel):
     iteration_id: Optional[str] = Field(default=None, description="Loop iteration identifier")
     page: Optional[int] = Field(default=None, description="Pagination page number")
     attempt: Optional[int] = Field(default=None, description="Retry attempt number")
+    # TempRef/Manifest extensions
+    cursor: Optional[str] = Field(default=None, description="Cursor for cursor-based pagination")
+    parent_ref: Optional[str] = Field(default=None, description="Parent TempRef/Manifest URI")
+    batch_id: Optional[str] = Field(default=None, description="Batch identifier for batch processing")
+    manifest_ref: Optional[str] = Field(default=None, description="Associated manifest URI")
 
 
 class EventPayloadData(BaseModel):

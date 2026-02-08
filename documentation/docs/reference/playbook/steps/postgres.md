@@ -1,87 +1,25 @@
-# Postgres step
+# Postgres in steps — Canonical v10
 
-Execute SQL against Postgres using a configured `auth` connection.
+Canonical v10 has no `tool: postgres` step type. Use a Postgres **tool task** (`kind: postgres`) inside `step.tool`.
 
-What it does
-- Runs DDL/DML/queries on a Postgres database.
-- Suitable for schema management, inserts/updates, and simple reads.
-
-Required keys
-- type: postgres
-- auth: reference to a credential
-- command or sql: SQL text to execute
-
-Common optional keys
-- assert: Validate inputs/outputs
-- sink: Capture driver response or query results (engine-dependent)
-
-Templating and JSON
-- Use templating for values from context (e.g., `{{ execution_id }}`, `{{ city.name }}`).
-- For JSON payloads, wrap with $$...$$ or use tojson to avoid quoting issues.
-
-Usage patterns (fragments)
-- Ensure table exists (idempotent)
-  ```yaml
-  - step: write
-    type: postgres
-    auth: app_db
-    command: |
-      CREATE TABLE IF NOT EXISTS public.weather_http_raw (
-        id TEXT PRIMARY KEY,
-        execution_id TEXT,
-        iter_index INTEGER,
-        city TEXT,
-        url TEXT,
-        elapsed DOUBLE PRECISION,
-        payload TEXT,
-        created_at TIMESTAMPTZ DEFAULT now()
-      );
-  ```
-
-- Upsert with templated values
-  ```yaml
-  - step: write
-    type: postgres
-    auth: app_db
-    sql: |
-      insert into public.items(id, name, content)
-      values
-        ({{ get_snowflake_id() }}, '{{ it.name }}', $${{ content | tojson }}$$)
-      on conflict (id) do update set
-        name = excluded.name,
-        content = excluded.content;
-  ```
-
-- Per-item save from iterator task
-  ```yaml
-  - step: write
-    type: postgres
-    auth: app_db
-    sql: |
-      insert into public.items(id, name, content)
-      values
-        ({{ get_snowflake_id() }}, '{{ it.name }}', $${{ content | tojson }}$$)
-      on conflict (id) do update set
-        name = excluded.name,
-        content = excluded.content;
-    sink:
-      - name: write_result
-        data: "{{ this.data }}"
-  ```
-
-Tips
-- Prefer CREATE TABLE IF NOT EXISTS and ON CONFLICT for idempotency.
-- Keep transactions small; batch writes where practical.
-- Define and reference auth entries in the playbook header.
-
-Retry
-- Use `retry` for transient connection or lock errors.
-- Context vars: `error` (error message), `success` (bool if adapter sets), `attempt`.
 ```yaml
-retry:
-  max_attempts: 3
-  initial_delay: 1.0
-  backoff_multiplier: 2.0
-  retry_when: "{{ error != None or success == False }}"
+- step: write_rows
+  tool:
+    - insert:
+        kind: postgres
+        auth: pg_k8s
+        command: "INSERT INTO my_table(col) VALUES ('x')"
+        spec:
+          policy:
+            rules:
+              - when: "{{ outcome.status == 'error' and outcome.pg.code in ['40001','40P01'] }}"
+                then: { do: retry, attempts: 5, backoff: exponential, delay: 2 }
+              - when: "{{ outcome.status == 'error' }}"
+                then: { do: fail }
+              - else:
+                  then: { do: break }
 ```
-See `retry.md` for details.
+
+## See also
+- Canonical Postgres tool: `documentation/docs/reference/tools/postgres.md`
+- Retry semantics: `documentation/docs/reference/retry_mechanism_v2.md`

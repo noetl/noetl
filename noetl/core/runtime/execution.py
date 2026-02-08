@@ -121,7 +121,6 @@ def execute_task(
     from noetl.core.workflow.playbook import execute_playbook_task
     from noetl.core.workflow.workbook import execute_workbook_task
     from noetl.core.secrets import execute_secrets_task
-    from noetl.core.storage import execute_sink_task
     # Note: container tool is imported lazily below only if needed to avoid optional deps
     from noetl.tools.duckdb import execute_duckdb_task
     from noetl.tools.http import execute_http_task
@@ -232,14 +231,10 @@ def execute_task(
             jinja_env,
             args
         )
-    elif task_type == 'sink':
-        return execute_sink_task(
-            task_config, wrapped_context, jinja_env, args or {}
-        )
     else:
         raise ValueError(
             f"Unknown task tool '{raw_type}'. "
-            f"Available tools: http, python, duckdb, postgres, container, snowflake, snowflake_transfer, transfer, secrets, playbook, workbook, save. "
+            f"Available tools: http, python, duckdb, postgres, container, snowflake, snowflake_transfer, transfer, secrets, playbook, workbook. "
             f"Note: 'loop:' attribute is handled server-side for distributed iteration."
         )
 

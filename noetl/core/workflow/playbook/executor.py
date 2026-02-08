@@ -155,48 +155,33 @@ def execute_playbook_task(
         
         # Step 7: Execute via server API to ensure proper catalog registration
         try:
-            # Make HTTP request to server's /api/run/playbook endpoint
+            # Make HTTP request to server's /api/execute endpoint
             import os
             import requests
-            
+
             server_url = os.environ.get("NOETL_SERVER_URL", "http://localhost:8083").rstrip('/')
             if not server_url.endswith('/api'):
                 server_url = server_url + '/api'
-            execute_url = f"{server_url}/run/playbook"
-            
+            execute_url = f"{server_url}/execute"
+
             logger.info(
                 f"PLAYBOOK: Calling {execute_url} for nested playbook execution "
                 f"with parent_execution_id={parent_execution_id}"
             )
-            
-            # Extract iterator metadata from context if present
-            iterator_meta = {}
-            try:
-                if '_loop' in context and isinstance(context['_loop'], dict):
-                    iterator_meta = {
-                        'iterator_index': context['_loop'].get('current_index'),
-                        'iterator_count': context['_loop'].get('count'),
-                        'iterator_item': context['_loop'].get('item')
-                    }
-                    logger.debug(f"PLAYBOOK: Extracted iterator metadata: {iterator_meta}")
-            except Exception as e:
-                logger.debug(f"PLAYBOOK: No iterator metadata found: {e}")
-            
-            # Build execution request payload
+
+            # Build execution request payload matching ExecuteRequest schema
             request_payload = {
                 "path": playbook_path or f"nested/{task_name}",
-                "version": playbook_version,
-                "type": "playbook",
-                "args": nested_context,  # Fixed: was "parameters", should be "args" to match ExecutionRequest schema
-                "merge": True,
-                "sync_to_postgres": True,
-                "context": {
-                    "parent_execution_id": str(parent_execution_id) if parent_execution_id else None,
-                    "parent_event_id": str(parent_event_id) if parent_event_id else None,
-                    "parent_step": parent_step
-                },
-                "metadata": iterator_meta if iterator_meta else None
+                "payload": nested_context,
+                "parent_execution_id": int(parent_execution_id) if parent_execution_id else None
             }
+
+            # Only add version if not 'latest'
+            if playbook_version and playbook_version != 'latest':
+                try:
+                    request_payload["version"] = int(playbook_version)
+                except (ValueError, TypeError):
+                    pass  # Keep as None if not a valid integer
             
             # Make synchronous HTTP POST request
             response = requests.post(

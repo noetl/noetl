@@ -1,281 +1,333 @@
 ---
 sidebar_position: 3
-title: Runtime Event Model
-description: Canonical event taxonomy and event envelope specification for NoETL execution
+title: Runtime Event Model (Canonical v10)
+description: Canonical event taxonomy and event envelope specification for NoETL execution (aligned with noetl_step_spec)
 ---
 
-# NoETL Runtime Event Model
+# NoETL Runtime Event Model — Canonical v10
 
 This document defines the **canonical event taxonomy** used by NoETL at runtime and stored in the **append-only event log**.
 
-- The **dot-separated** name is the **canonical machine key** (indexes, topics, filters).
-- The **PascalCase** name is a **display alias** (UI/CLI).
+It is aligned to **NoETL Canonical Step Spec (v10)**:
+- **No `case` entity/events**
+- **No special `retry` entity/events** (retry is represented as multiple task attempts + policy decisions)
+- **No `sink` entity/events** (storage is just tool tasks returning references)
+- **Tools are executed as pipeline `tasks`** (task labels), each producing a single final `outcome`
+- Routing is server-side via **Petri-net arcs**: `step.next.spec` + `step.next.arcs[]`
 
-> Related docs: `docs/spec.md` (normative DSL semantics), `docs/whitepaper.md` (architecture / rationale).
+> Related docs: [NoETL Canonical Step Spec (v10)](./noetl_step_spec), [DSL Specification (Canonical)](./spec), [Result Storage (Canonical v10)](../result_storage_canonical_v10).
 
 ---
 
-## 1. Event naming conventions (canonical)
+## 1) Event naming conventions (canonical)
 
 ### 1.1 Canonical name rules
-
 Canonical event types MUST:
 - be **lowercase**
 - use **dot-separated** segments
 - follow the pattern: `<entity>.<subentity?>.<verb>`
 
 Recommended verbs:
-- `requested`, `evaluated`, `started`, `finished`, `processed`, `paused`
+- `requested`, `evaluated`, `scheduled`, `started`, `done`, `failed`, `finished`, `paused`, `processed`
 
-**Guidance:**
-- Use `*.finished` for end-of-scope lifecycle closures (workflow/loop).
-- Use `*.processed` for “completed with outcome” entities (tool/sink/retry/playbook).
+**Guidance**
+- Prefer `*.done` / `*.failed` for boundary outcomes (step/task/iteration).
+- Prefer `*.finished` for higher-level closures (workflow/playbook).
+- Use `*.evaluated` for decisions (admission, routing).
 
-### 1.2 Display alias
-
-Implementations MAY attach `event_alias` for UI:
+### 1.2 Display alias (optional)
+Implementations MAY attach `event_alias` for UI/CLI:
 - `event_type`: canonical dot name (required)
-- `event_alias`: PascalCase name (optional)
+- `event_alias`: PascalCase alias (optional)
 
 ---
 
-## 2. Event envelope (normative)
+## 2) Event envelope (normative)
 
 Every stored event MUST include:
-
 - `event_id` (string; unique)
 - `event_type` (string; canonical dot name)
 - `timestamp` (RFC3339 UTC)
 - `execution_id` (string)
 
-And SHOULD include:
+**DSL aliasing (recommended):**
+- In DSL templates, the boundary event is exposed as `event`, and `event.name` SHOULD equal the persisted `event_type`.
 
-- `entity_type` (playbook|workflow|step|tool|loop|retry|sink|case|next)
-- `entity_id` (string; e.g., step name, tool name, loop id)
-- `parent_id` (string?; links nesting: workflow → step → tool)
+And SHOULD include:
+- `source` (`server` | `worker`)
+- `entity_type` (`playbook` | `workflow` | `step` | `task` | `loop` | `next` | `policy` | `result`)
+- `entity_id` (string; e.g. step name, task label, loop id)
+- `parent_id` (string?; nesting: workflow → step → task)
 - `seq` (int; monotonic per execution, if available)
 
-Optional correlation:
-
-- `workflow_run_id`, `step_run_id`, `tool_run_id`
+Optional correlation (highly recommended):
+- `workflow_run_id`, `step_run_id`, `task_run_id`
 - `iteration` (int; loop index)
-- `iteration_id` (string)
-- `attempt` (int; retry attempt index)
-- `status` (in_progress|success|error|skipped|paused)
+- `iteration_id` (string; stable)
+- `attempt` (int; task attempt index; starts at 1)
+- `status` (`in_progress` | `success` | `error` | `skipped` | `paused`)
 - `duration_ms` (int)
 
-Payload:
-
-- `payload.inputs` (rendered input snapshot)
-- `payload.output` (result snapshot)
+Payload fields (recommended):
+- `payload.inputs` (rendered input snapshot; size-capped)
+- `payload.outcome` (canonical outcome envelope; size-capped)
+- `payload.result_ref` (ResultRef; preferred for large payloads)
 - `payload.error` (structured error)
 - `payload.meta` (free-form metadata)
 
-> Idempotency: event persistence MUST be idempotent by `(execution_id, event_id)`.
+**Idempotency**
+- Event persistence MUST be idempotent by `(execution_id, event_id)`.
+
+**Reference-first**
+- Large outputs MUST be externalized; events SHOULD store only **references + extracted fields**.
 
 ---
 
-## 3. Canonical taxonomy (dot name ↔ PascalCase alias)
+## 3) Canonical taxonomy (dot name ↔ PascalCase alias)
 
-### 3.1 Playbook lifecycle
-
+### 3.1 Playbook lifecycle (server)
 | Canonical `event_type` | Alias (display) |
 |---|---|
 | `playbook.execution.requested` | `PlaybookExecutionRequested` |
 | `playbook.request.evaluated` | `PlaybookRequestEvaluated` |
-| `playbook.started` | `PlaybookStarted` *(recommended)* |
+| `playbook.started` | `PlaybookStarted` |
 | `playbook.paused` | `PlaybookPaused` |
+| `playbook.finished` | `PlaybookFinished` |
 | `playbook.processed` | `PlaybookProcessed` |
 
-### 3.2 Workflow lifecycle
-
+### 3.2 Workflow lifecycle (server)
 | Canonical `event_type` | Alias (display) |
 |---|---|
 | `workflow.started` | `WorkflowStarted` |
 | `workflow.finished` | `WorkflowFinished` |
 
-### 3.3 Step lifecycle
-
+### 3.3 Step lifecycle (worker + server scheduling)
 | Canonical `event_type` | Alias (display) |
 |---|---|
+| `step.scheduled` | `StepScheduled` |
 | `step.started` | `StepStarted` |
-| `step.finished` | `StepFinished` *(recommended)* |
+| `step.done` | `StepDone` |
+| `step.failed` | `StepFailed` |
 
-### 3.4 Tool lifecycle
+> Notes:
+> - `step.scheduled` is emitted by the server when a step token is committed for execution.
+> - `step.started/done/failed` are emitted by the worker and ingested by the server.
 
+### 3.4 Task lifecycle (worker)
 | Canonical `event_type` | Alias (display) |
 |---|---|
-| `tool.started` | `ToolStarted` |
-| `tool.processed` | `ToolProcessed` |
+| `task.started` | `TaskStarted` |
+| `task.attempt.started` | `TaskAttemptStarted` |
+| `task.attempt.done` | `TaskAttemptDone` |
+| `task.attempt.failed` | `TaskAttemptFailed` |
+| `task.done` | `TaskDone` |
+| `task.failed` | `TaskFailed` |
 
-### 3.5 Loop lifecycle
+> Notes:
+> - Retries are represented by multiple `task.attempt.*` events for the same `task_run_id`.
+> - The final outcome is `task.done` or `task.failed`.
 
+### 3.5 Loop lifecycle (server + worker)
 | Canonical `event_type` | Alias (display) |
 |---|---|
 | `loop.started` | `LoopStarted` |
+| `loop.iteration.scheduled` | `LoopIterationScheduled` |
 | `loop.iteration.started` | `LoopIterationStarted` |
-| `loop.iteration.finished` | `LoopIterationFinished` |
-| `loop.finished` | `LoopFinished` *(recommended)* |
+| `loop.iteration.done` | `LoopIterationDone` |
+| `loop.iteration.failed` | `LoopIterationFailed` |
+| `loop.done` | `LoopDone` |
 
-### 3.6 Case and routing
+### 3.6 Policies and decisions (server + worker)
+| Canonical `event_type` | Alias (display) | Emitted by |
+|---|---|---|
+| `policy.admit.evaluated` | `PolicyAdmitEvaluated` | server |
+| `policy.task.evaluated` | `PolicyTaskEvaluated` | worker |
+| `next.evaluated` | `NextEvaluated` | server |
 
+> Notes:
+> - `policy.admit.evaluated` corresponds to `step.spec.policy.admit.rules` evaluation.
+> - `policy.task.evaluated` records which rule matched in `task.spec.policy.rules` and what action was taken (`retry/jump/continue/break/fail`).
+> - `next.evaluated` records which arcs matched and which were fired.
+
+### 3.7 Result externalization (optional but recommended)
 | Canonical `event_type` | Alias (display) |
 |---|---|
-| `case.started` | `CaseStarted` |
-| `case.evaluated` | `CaseEvaluated` |
-| `next.evaluated` | `NextEvaluated` |
+| `result.stored` | `ResultStored` |
+| `result.manifest.updated` | `ResultManifestUpdated` |
 
-### 3.7 Retry lifecycle
-
-| Canonical `event_type` | Alias (display) |
-|---|---|
-| `retry.started` | `RetryStarted` |
-| `retry.processed` | `RetryProcessed` |
-
-### 3.8 Sink lifecycle
-
-| Canonical `event_type` | Alias (display) |
-|---|---|
-| `sink.started` | `SinkStarted` |
-| `sink.processed` | `SinkProcessed` |
+> Notes:
+> - These are emitted when the worker (or server) externalizes a payload and produces a ResultRef/ManifestRef.
+> - If you don’t want extra events, you MAY embed ResultRef in `task.attempt.*` and omit these.
 
 ---
 
-## 4. Legacy compatibility (executor task events)
+## 4) Legacy compatibility (non-canonical)
 
-Some tool executors may emit legacy events:
+If older executors emit legacy events, the server SHOULD normalize to canonical equivalents.
 
 | Legacy | Canonical |
 |---|---|
-| `task_start` | `tool.started` |
-| `task_complete` | `tool.processed` (status=`success`) |
-| `task_error` | `tool.processed` (status=`error`) |
+| `tool.started` | `task.started` |
+| `tool.processed` | `task.done` / `task.failed` |
+| `retry.started` | `task.attempt.started` |
+| `retry.processed` | `task.attempt.done` / `task.attempt.failed` |
+| `sink.*` | `task.*` (storage task) |
+| `case.*` | `next.evaluated` + `policy.*` (depending on purpose) |
 
-If legacy events are emitted, the server SHOULD either:
-- normalize them to the canonical taxonomy (recommended), or
-- store both (canonical + raw legacy) for backward compatibility.
+Canonical v10 validators SHOULD reject new emissions of legacy types from first-party components.
 
 ---
 
-## 5. Control plane vs data plane emission
+## 5) Control plane vs data plane emission (normative intent)
 
-### 5.1 Server (control plane)
-
-The server SHOULD emit:
+### 5.1 Server (control plane) MUST emit / persist
 - `playbook.execution.requested`
 - `playbook.request.evaluated`
 - `playbook.started`
 - `workflow.started`
-- `step.started` (when scheduling a step)
-- `case.started` / `case.evaluated` (when evaluating routing on server)
-- `next.evaluated` (server-authoritative routing decision)
+- `policy.admit.evaluated` (per step admission evaluation)
+- `step.scheduled` (when server commits a step token)
+- `next.evaluated` (server-authoritative routing via arcs)
 - `workflow.finished`
-- `playbook.paused`
-- `playbook.processed`
+- `playbook.paused` (if applicable)
+- `playbook.finished` / `playbook.processed`
 
-### 5.2 Worker pool (data plane)
+### 5.2 Worker pool (data plane) MUST emit (reported to server ingestion)
+- `step.started`
+- `task.started`
+- `task.attempt.*` (if retries occur)
+- `policy.task.evaluated` (recommended for observability/replay)
+- `task.done` / `task.failed`
+- `step.done` / `step.failed`
+- loop iteration events when the worker executes iteration bodies (`loop.iteration.*`)
 
-Workers MUST emit (and report to server ingestion):
-- `tool.started` / `tool.processed`
-- `retry.started` / `retry.processed` (for any re-execution attempts)
-- `sink.started` / `sink.processed` (if sink executes on worker)
-- `loop.*` iteration events (if the worker is the iteration executor)
-
-Workers MUST NOT persist events directly into the event log storage; they report events to the server API.
+**Hard rule**
+- Workers MUST NOT start steps. Step creation is server-only via `next.arcs` routing.
 
 ---
 
-## 6. Topics and indexing (recommended)
+## 6) Topics and indexing (recommended)
 
-### 6.1 Storage indexes
-Recommended event store indexes:
+### 6.1 Storage indexes (event store)
+Recommended indexes:
 - `(execution_id, seq)`
 - `(execution_id, event_type)`
 - `(execution_id, entity_type, entity_id)`
 - `(event_type, timestamp)`
 
 ### 6.2 Optional pub/sub topics
-If events are also published to a broker:
-- Topic = `noetl.events.<event_type>` (e.g., `noetl.events.tool.processed`)
-- Include `execution_id` in message headers for fast filtering
+If also published to a broker:
+- Subject/topic = `noetl.events.<event_type>` (e.g., `noetl.events.task.attempt.failed`)
+- Include `execution_id` in headers for fast filtering
+- Prefer reference-only payloads (ResultRef, ManifestRef).
 
 ---
 
-## 7. Example events
+## 7) Example events (canonical v10)
 
-### 7.1 Tool success event
+### 7.1 Task attempt failed → policy retries
 ```json
 {
   "event_id": "01JH...",
-  "event_type": "tool.processed",
-  "event_alias": "ToolProcessed",
-  "timestamp": "2026-01-17T23:11:22Z",
+  "event_type": "task.attempt.failed",
+  "event_alias": "TaskAttemptFailed",
+  "timestamp": "2026-02-05T23:11:22Z",
   "execution_id": "exec_01JH...",
-  "entity_type": "tool",
-  "entity_id": "http.fetch_weather",
-  "parent_id": "step:fetch_and_evaluate:run:7",
-  "status": "success",
-  "duration_ms": 312,
-  "iteration": 3,
-  "payload": {
-    "inputs": {"city": "Seattle"},
-    "output": {"temp_f": 51, "rain": false},
-    "meta": {"http_status": 200}
-  }
-}
-```
-
-### 7.2 Retry attempt event
-```json
-{
-  "event_id": "01JH...",
-  "event_type": "retry.processed",
-  "event_alias": "RetryProcessed",
-  "timestamp": "2026-01-17T23:11:27Z",
-  "execution_id": "exec_01JH...",
-  "entity_type": "retry",
-  "entity_id": "retry:http.fetch_weather",
-  "parent_id": "tool:http.fetch_weather:run:1",
+  "source": "worker",
+  "entity_type": "task",
+  "entity_id": "fetch_page",
+  "parent_id": "step:fetch_all_endpoints:run:7",
+  "task_run_id": "task:fetch_page:run:1",
   "attempt": 2,
-  "status": "success",
+  "status": "error",
   "payload": {
-    "policy": "exponential",
-    "delay_ms": 1000,
-    "reason": "http_status_503"
+    "outcome": {
+      "status": "error",
+      "error": {"kind": "http", "retryable": true},
+      "meta": {"duration_ms": 312, "http_status": 503}
+    }
   }
 }
 ```
 
-### 7.3 Next evaluated event (routing)
+### 7.2 Policy evaluated → action retry
+```json
+{
+  "event_id": "01JH...",
+  "event_type": "policy.task.evaluated",
+  "event_alias": "PolicyTaskEvaluated",
+  "timestamp": "2026-02-05T23:11:23Z",
+  "execution_id": "exec_01JH...",
+  "source": "worker",
+  "entity_type": "policy",
+  "entity_id": "task:fetch_page",
+  "parent_id": "task:fetch_page:run:1",
+  "status": "success",
+  "payload": {
+    "matched_rule_index": 0,
+    "action": {"do": "retry", "attempts": 10, "backoff": "exponential", "delay": 2.0}
+  }
+}
+```
+
+### 7.3 Result stored (reference-first)
+```json
+{
+  "event_id": "01JH...",
+  "event_type": "result.stored",
+  "event_alias": "ResultStored",
+  "timestamp": "2026-02-05T23:11:30Z",
+  "execution_id": "exec_01JH...",
+  "source": "worker",
+  "entity_type": "result",
+  "entity_id": "task:fetch_page:attempt:3",
+  "parent_id": "task:fetch_page:run:1",
+  "status": "success",
+  "payload": {
+    "result_ref": {
+      "kind": "result_ref",
+      "store": "nats_object",
+      "ref": "noetl://execution/..../page_001.json.gz",
+      "meta": {"bytes": 52480, "sha256": "..."}
+    },
+    "extracted": {"has_more": true, "page": 1}
+  }
+}
+```
+
+### 7.4 Next evaluated (Petri-net arcs)
 ```json
 {
   "event_id": "01JH...",
   "event_type": "next.evaluated",
   "event_alias": "NextEvaluated",
-  "timestamp": "2026-01-17T23:11:30Z",
+  "timestamp": "2026-02-05T23:12:10Z",
   "execution_id": "exec_01JH...",
+  "source": "server",
   "entity_type": "next",
-  "entity_id": "step:fetch_and_evaluate",
-  "parent_id": "step:fetch_and_evaluate:run:7",
+  "entity_id": "step:fetch_all_endpoints",
+  "parent_id": "step:fetch_all_endpoints:run:7",
   "status": "success",
   "payload": {
-    "selected": [
-      {"step": "end_city_loop", "with": {"city": "Seattle"}}
+    "mode": "exclusive",
+    "matched": [
+      {"step": "validate_results", "when": "event.name == 'loop.done'"}
     ],
-    "mode": "server"  
+    "selected": [
+      {"step": "validate_results", "args": {"execution_id": "exec_01JH..."}}
+    ]
   }
 }
 ```
 
 ---
 
-## 8. Quantum orchestration note (informative)
+## 8) Quantum orchestration note (informative)
 
-The taxonomy is intentionally compatible with asynchronous quantum job lifecycles:
-- submission tool → `tool.processed` contains `job_id`
-- polling implemented as predicate retry → `retry.*` events
-- parameter sweeps implemented as loops → `loop.iteration.*` events
-- results persistence → `sink.*` events
+The taxonomy is compatible with asynchronous quantum job lifecycles:
+- submission tool → `task.done` contains `job_ref` (ResultRef or small id)
+- polling implemented as task policy retries/jumps → `task.attempt.*` + `policy.task.evaluated`
+- parameter sweeps implemented as loops → `loop.iteration.*`
+- results persistence is just storage tasks producing ResultRef → `result.stored` (optional)
 
-This yields a reproducible experiment trace keyed by `execution_id`.
-
+This yields a reproducible experiment trace keyed by `execution_id` without embedding large payloads in the event log.

@@ -1,5 +1,9 @@
+# NoETL Canonical v10 Playbook
+# Simple Python test
+
 apiVersion: noetl.io/v2
 kind: Playbook
+
 metadata:
   name: v2_simple_python_test
   path: test/v2/simple_python
@@ -12,26 +16,25 @@ workflow:
   - step: start
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args:
-        message: "{{ workload.message }}"
+        message: "{{ message }}"
       code: |
         print(f"Processing: {message}")
         result = {
-            "status": "success", 
+            "status": "ok",
             "message": message,
             "timestamp": "2025-12-11"
         }
     next:
-      - step: end
-  
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
+
   - step: end
+    desc: Workflow complete
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args: {}
       code: |
         result = {"status": "completed"}
-    desc: Workflow complete

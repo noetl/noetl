@@ -5,6 +5,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Login - Cybx AI Gateway</title>
+  <script src="/env.js"></script>
   <script src="/config.js"></script>
   <link rel="stylesheet" href="/styles.css">
   <style>
@@ -290,11 +291,26 @@
   </div>
 
   <script>
-    // Gateway API - handles auth and proxies to NoETL internally
-    // Production gateway via Cloudflare (SSL: Flexible, cache bypass for API/OPTIONS)
-    const GATEWAY_API = 'https://gateway.mestumre.dev';
-    const AUTH_LOGIN_URL = `${GATEWAY_API}/api/auth/login`;
-    const AUTH_VALIDATE_URL = `${GATEWAY_API}/api/auth/validate`;
+    // Gateway API - configured via env.js
+    // Uses window.ENV.gatewayUrl set by environment detection
+    function getGatewayApi() {
+      if (window.ENV && window.ENV.gatewayUrl) {
+        return window.ENV.gatewayUrl;
+      }
+      console.warn('[login.js] ENV not loaded, using fallback localhost:8080');
+      return 'http://localhost:8080';
+    }
+
+    // Lazy-initialized URLs
+    let _gatewayApi = null;
+    function getAuthLoginUrl() {
+      if (!_gatewayApi) _gatewayApi = getGatewayApi();
+      return `${_gatewayApi}/api/auth/login`;
+    }
+    function getAuthValidateUrl() {
+      if (!_gatewayApi) _gatewayApi = getGatewayApi();
+      return `${_gatewayApi}/api/auth/validate`;
+    }
 
     // Auth0 Universal Login redirect
     function loginWithAuth0() {
@@ -328,8 +344,7 @@
 
           try {
             // Call Gateway's auth login endpoint with the Auth0 tokens
-            console.log('DEBUG: Calling Gateway auth/login with id_token');
-            const response = await fetch(AUTH_LOGIN_URL, {
+            const response = await fetch(getAuthLoginUrl(), {
               method: 'POST',
               headers: {'Content-Type': 'application/json'},
               body: JSON.stringify({
@@ -340,7 +355,6 @@
 
             if (response.ok) {
               const data = await response.json();
-              console.log('DEBUG: Gateway login response:', data);
 
               if (data.session_token) {
                 // Store session token and user info
@@ -379,7 +393,6 @@
       const token = localStorage.getItem('session_token');
       const userInfo = localStorage.getItem('user_info');
       if (token && userInfo) {
-        console.log('Token and user_info found, redirecting to dashboard (soft auth mode)');
         window.location.href = '/dashboard.html';
         return;
       } else if (token && !userInfo) {
@@ -390,7 +403,6 @@
         } else {
           // Token is invalid, clear it
           localStorage.removeItem('session_token');
-          console.log('Invalid session token cleared (no user_info cached)');
         }
         return;
       }
@@ -436,7 +448,7 @@
     // Validate session helper - calls Gateway API
     async function validateSession(token) {
       try {
-        const response = await fetch(AUTH_VALIDATE_URL, {
+        const response = await fetch(getAuthValidateUrl(), {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',

@@ -8,10 +8,10 @@ metadata:
 workload:
   # Test run ID (use execution_id from this playbook)
   test_run_id: "{{ execution_id }}"
-  
+
   # Credentials
   pg_auth: pg_k8s  # K8s cluster postgres credential
-  
+
   # Skip playbooks with known issues
   skip_playbooks:
     - test/transient  # datetime serialization issue in TransientVars (internal API test)
@@ -36,13 +36,14 @@ workflow:
     desc: "Start regression test suite - 52 playbooks (4 skipped)"
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args: {}
       code: |
         result = {"status": "initialized"}
     next:
-      - step: create_test_schema
+      spec:
+        mode: exclusive
+      arcs:
+        - step: create_test_schema
 
   # === SCHEMA SETUP ===
   - step: create_test_schema
@@ -51,12 +52,15 @@ workflow:
       kind: playbook
       path: tests/fixtures/playbooks/regression_test/create_test_schema
       payload:
-        pg_auth: "{{ workload.pg_auth }}"
+        pg_auth: "{{ pg_auth }}"
       retry:
         max_attempts: 2
         retry_on: ["timeout"]
     next:
-      - step: tests/fixtures/playbooks/hello_world
+      spec:
+        mode: exclusive
+      arcs:
+        - step: tests/fixtures/playbooks/hello_world
 
   # === BASIC TESTS ===
   - step: tests/fixtures/playbooks/hello_world
@@ -67,8 +71,11 @@ workflow:
         max_attempts: 2
         retry_on: ["timeout"]
     next:
-      - step: tests/control-flow/start_with_action
-  
+      spec:
+        mode: exclusive
+      arcs:
+        - step: tests/control-flow/start_with_action
+
   - step: tests/control-flow/start_with_action
     tool:
       kind: playbook
@@ -77,8 +84,11 @@ workflow:
         max_attempts: 2
         retry_on: ["timeout"]
     next:
-      - step: tests/control-flow/end_with_action
-  
+      spec:
+        mode: exclusive
+      arcs:
+        - step: tests/control-flow/end_with_action
+
   - step: tests/control-flow/end_with_action
     tool:
       kind: playbook
@@ -87,8 +97,11 @@ workflow:
         max_attempts: 2
         retry_on: ["timeout"]
     next:
-      - step: test/vars_simple
-  
+      spec:
+        mode: exclusive
+      arcs:
+        - step: test/vars_simple
+
   # === VARIABLE TESTS ===
   - step: test/vars_simple
     tool:
@@ -98,10 +111,13 @@ workflow:
         max_attempts: 2
         retry_on: ["timeout"]
     next:
-      - step: vars_test/test_vars_block
-  
+      spec:
+        mode: exclusive
+      arcs:
+        - step: vars_test/test_vars_block
+
   # SKIPPED: test/transient - asyncio not defined error
-  
+
   - step: vars_test/test_vars_block
     tool:
       kind: playbook
@@ -110,8 +126,11 @@ workflow:
         max_attempts: 2
         retry_on: ["timeout"]
     next:
-      - step: vars_test/test_vars_template_access
-  
+      spec:
+        mode: exclusive
+      arcs:
+        - step: vars_test/test_vars_template_access
+
   - step: vars_test/test_vars_template_access
     tool:
       kind: playbook
@@ -120,8 +139,11 @@ workflow:
         max_attempts: 2
         retry_on: ["timeout"]
     next:
-      - step: /vars_test/api_test
-  
+      spec:
+        mode: exclusive
+      arcs:
+        - step: /vars_test/api_test
+
   - step: /vars_test/api_test
     tool:
       kind: playbook
@@ -130,7 +152,10 @@ workflow:
         max_attempts: 2
         retry_on: ["timeout"]
     next:
-      - step: test/cache_simple
+      spec:
+        mode: exclusive
+      arcs:
+        - step: test/cache_simple
 
   # SKIPPED: test/transient - datetime serialization issue
 
@@ -143,7 +168,10 @@ workflow:
         max_attempts: 2
         retry_on: ["timeout"]
     next:
-      - step: tests/fixtures/playbooks/control_flow_workbook
+      spec:
+        mode: exclusive
+      arcs:
+        - step: tests/fixtures/playbooks/control_flow_workbook
 
   # === CONTROL FLOW TESTS ===
   - step: tests/fixtures/playbooks/control_flow_workbook
@@ -154,7 +182,10 @@ workflow:
         max_attempts: 2
         retry_on: ["timeout"]
     next:
-      - step: control_flow/weather_control_flow
+      spec:
+        mode: exclusive
+      arcs:
+        - step: control_flow/weather_control_flow
 
   - step: control_flow/weather_control_flow
     tool:
@@ -164,7 +195,10 @@ workflow:
         max_attempts: 2
         retry_on: ["timeout"]
     next:
-      - step: tests/fixtures/playbooks/playbook_composition/playbook_composition
+      spec:
+        mode: exclusive
+      arcs:
+        - step: tests/fixtures/playbooks/playbook_composition/playbook_composition
 
   # === COMPOSITION TESTS ===
   - step: tests/fixtures/playbooks/playbook_composition/playbook_composition
@@ -175,8 +209,11 @@ workflow:
         max_attempts: 2
         retry_on: ["timeout"]
     next:
-      - step: tests/fixtures/playbooks/playbook_composition/user_profile_scorer
-  
+      spec:
+        mode: exclusive
+      arcs:
+        - step: tests/fixtures/playbooks/playbook_composition/user_profile_scorer
+
   - step: tests/fixtures/playbooks/playbook_composition/user_profile_scorer
     tool:
       kind: playbook
@@ -185,7 +222,10 @@ workflow:
         max_attempts: 2
         retry_on: ["timeout"]
     next:
-      - step: tests/iterator_save_test
+      spec:
+        mode: exclusive
+      arcs:
+        - step: tests/iterator_save_test
 
   # === ITERATOR TESTS ===
   - step: tests/iterator_save_test
@@ -196,7 +236,10 @@ workflow:
         max_attempts: 2
         retry_on: ["timeout"]
     next:
-      - step: tests/fixtures/playbooks/json_serialization_save
+      spec:
+        mode: exclusive
+      arcs:
+        - step: tests/fixtures/playbooks/json_serialization_save
 
   # === SERIALIZATION TESTS ===
   - step: tests/fixtures/playbooks/json_serialization_save
@@ -207,7 +250,10 @@ workflow:
         max_attempts: 2
         retry_on: ["timeout"]
     next:
-      - step: tests/pagination/basic
+      spec:
+        mode: exclusive
+      arcs:
+        - step: tests/pagination/basic
 
   # === PAGINATION TESTS ===
   - step: tests/pagination/basic
@@ -218,8 +264,11 @@ workflow:
         max_attempts: 2
         retry_on: ["timeout"]
     next:
-      - step: tests/pagination/cursor
-  
+      spec:
+        mode: exclusive
+      arcs:
+        - step: tests/pagination/cursor
+
   - step: tests/pagination/cursor
     tool:
       kind: playbook
@@ -228,8 +277,11 @@ workflow:
         max_attempts: 2
         retry_on: ["timeout"]
     next:
-      - step: tests/pagination/offset
-  
+      spec:
+        mode: exclusive
+      arcs:
+        - step: tests/pagination/offset
+
   - step: tests/pagination/offset
     tool:
       kind: playbook
@@ -238,8 +290,11 @@ workflow:
         max_attempts: 2
         retry_on: ["timeout"]
     next:
-      - step: tests/pagination/max_iterations
-  
+      spec:
+        mode: exclusive
+      arcs:
+        - step: tests/pagination/max_iterations
+
   - step: tests/pagination/max_iterations
     tool:
       kind: playbook
@@ -248,8 +303,11 @@ workflow:
         max_attempts: 2
         retry_on: ["timeout"]
     next:
-      - step: tests/pagination/retry
-  
+      spec:
+        mode: exclusive
+      arcs:
+        - step: tests/pagination/retry
+
   - step: tests/pagination/retry
     tool:
       kind: playbook
@@ -258,8 +316,11 @@ workflow:
         max_attempts: 2
         retry_on: ["timeout"]
     next:
-      - step: tests/pagination/loop_with_pagination
-  
+      spec:
+        mode: exclusive
+      arcs:
+        - step: tests/pagination/loop_with_pagination
+
   - step: tests/pagination/loop_with_pagination
     tool:
       kind: playbook
@@ -268,7 +329,10 @@ workflow:
         max_attempts: 2
         retry_on: ["timeout"]
     next:
-      - step: tests/retry/simple_config
+      spec:
+        mode: exclusive
+      arcs:
+        - step: tests/retry/simple_config
 
   # === RETRY TESTS ===
   - step: tests/retry/simple_config
@@ -279,8 +343,11 @@ workflow:
         max_attempts: 2
         retry_on: ["timeout"]
     next:
-      - step: tests/retry/python_exception
-  
+      spec:
+        mode: exclusive
+      arcs:
+        - step: tests/retry/python_exception
+
   - step: tests/retry/python_exception
     tool:
       kind: playbook
@@ -289,8 +356,11 @@ workflow:
         max_attempts: 2
         retry_on: ["timeout"]
     next:
-      - step: tests/retry/http_status_code
-  
+      spec:
+        mode: exclusive
+      arcs:
+        - step: tests/retry/http_status_code
+
   - step: tests/retry/http_status_code
     tool:
       kind: playbook
@@ -299,8 +369,11 @@ workflow:
         max_attempts: 2
         retry_on: ["timeout"]
     next:
-      - step: tests/retry/http_stop_condition
-  
+      spec:
+        mode: exclusive
+      arcs:
+        - step: tests/retry/http_stop_condition
+
   - step: tests/retry/http_stop_condition
     tool:
       kind: playbook
@@ -309,8 +382,11 @@ workflow:
         max_attempts: 2
         retry_on: ["timeout"]
     next:
-      - step: tests/retry/postgres_connection
-  
+      spec:
+        mode: exclusive
+      arcs:
+        - step: tests/retry/postgres_connection
+
   - step: tests/retry/postgres_connection
     tool:
       kind: playbook
@@ -319,8 +395,11 @@ workflow:
         max_attempts: 2
         retry_on: ["timeout"]
     next:
-      - step: tests/retry/duckdb_query
-  
+      spec:
+        mode: exclusive
+      arcs:
+        - step: tests/retry/duckdb_query
+
   - step: tests/retry/duckdb_query
     tool:
       kind: playbook
@@ -329,7 +408,10 @@ workflow:
         max_attempts: 2
         retry_on: ["timeout"]
     next:
-      - step: tests/fixtures/playbooks/save_storage_test/create_tables
+      spec:
+        mode: exclusive
+      arcs:
+        - step: tests/fixtures/playbooks/save_storage_test/create_tables
 
   # === SAVE STORAGE TESTS ===
   - step: tests/fixtures/playbooks/save_storage_test/create_tables
@@ -340,8 +422,11 @@ workflow:
         max_attempts: 2
         retry_on: ["timeout"]
     next:
-      - step: tests/fixtures/playbooks/save_storage_test/save_simple_test
-  
+      spec:
+        mode: exclusive
+      arcs:
+        - step: tests/fixtures/playbooks/save_storage_test/save_simple_test
+
   - step: tests/fixtures/playbooks/save_storage_test/save_simple_test
     tool:
       kind: playbook
@@ -350,8 +435,11 @@ workflow:
         max_attempts: 2
         retry_on: ["timeout"]
     next:
-      - step: tests/fixtures/playbooks/save_storage_test/save_delegation_test
-  
+      spec:
+        mode: exclusive
+      arcs:
+        - step: tests/fixtures/playbooks/save_storage_test/save_delegation_test
+
   - step: tests/fixtures/playbooks/save_storage_test/save_delegation_test
     tool:
       kind: playbook
@@ -360,8 +448,11 @@ workflow:
         max_attempts: 2
         retry_on: ["timeout"]
     next:
-      - step: tests/fixtures/playbooks/save_storage_test/save_edge_cases
-  
+      spec:
+        mode: exclusive
+      arcs:
+        - step: tests/fixtures/playbooks/save_storage_test/save_edge_cases
+
   - step: tests/fixtures/playbooks/save_storage_test/save_edge_cases
     tool:
       kind: playbook
@@ -370,8 +461,11 @@ workflow:
         max_attempts: 2
         retry_on: ["timeout"]
     next:
-      - step: tests/fixtures/playbooks/save_storage_test/save_all_storage_types
-  
+      spec:
+        mode: exclusive
+      arcs:
+        - step: tests/fixtures/playbooks/save_storage_test/save_all_storage_types
+
   - step: tests/fixtures/playbooks/save_storage_test/save_all_storage_types
     tool:
       kind: playbook
@@ -380,11 +474,14 @@ workflow:
         max_attempts: 2
         retry_on: ["timeout"]
     next:
-      - step: tests/script_execution/python_gcs
+      spec:
+        mode: exclusive
+      arcs:
+        - step: tests/script_execution/python_gcs
 
   # === SCRIPT EXECUTION TESTS ===
   # SKIPPED: python_file - relative path issue
-  
+
   - step: tests/script_execution/python_gcs
     tool:
       kind: playbook
@@ -393,8 +490,11 @@ workflow:
         max_attempts: 2
         retry_on: ["timeout"]
     next:
-      - step: tests/script_execution/python_http
-  
+      spec:
+        mode: exclusive
+      arcs:
+        - step: tests/script_execution/python_http
+
   - step: tests/script_execution/python_http
     tool:
       kind: playbook
@@ -403,8 +503,11 @@ workflow:
         max_attempts: 2
         retry_on: ["timeout"]
     next:
-      - step: tests/fixtures/playbooks/data_transfer/http_to_postgres_simple
-  
+      spec:
+        mode: exclusive
+      arcs:
+        - step: tests/fixtures/playbooks/data_transfer/http_to_postgres_simple
+
   # SKIPPED: postgres_file - relative path issue
   # SKIPPED: postgres_s3 - missing S3 credentials
 
@@ -417,8 +520,11 @@ workflow:
         max_attempts: 2
         retry_on: ["timeout"]
     next:
-      - step: tests/fixtures/playbooks/data_transfer/http_to_postgres_direct
-  
+      spec:
+        mode: exclusive
+      arcs:
+        - step: tests/fixtures/playbooks/data_transfer/http_to_postgres_direct
+
   - step: tests/fixtures/playbooks/data_transfer/http_to_postgres_direct
     tool:
       kind: playbook
@@ -427,8 +533,11 @@ workflow:
         max_attempts: 2
         retry_on: ["timeout"]
     next:
-      - step: tests/fixtures/playbooks/data_transfer/http_to_postgres_transfer
-  
+      spec:
+        mode: exclusive
+      arcs:
+        - step: tests/fixtures/playbooks/data_transfer/http_to_postgres_transfer
+
   - step: tests/fixtures/playbooks/data_transfer/http_to_postgres_transfer
     tool:
       kind: playbook
@@ -437,8 +546,11 @@ workflow:
         max_attempts: 2
         retry_on: ["timeout"]
     next:
-      - step: examples/data_transfer/http_to_postgres_iterator
-  
+      spec:
+        mode: exclusive
+      arcs:
+        - step: examples/data_transfer/http_to_postgres_iterator
+
   - step: examples/data_transfer/http_to_postgres_iterator
     tool:
       kind: playbook
@@ -447,8 +559,11 @@ workflow:
         max_attempts: 2
         retry_on: ["timeout"]
     next:
-      - step: tests/fixtures/playbooks/data_transfer/http_iterator_save_postgres
-  
+      spec:
+        mode: exclusive
+      arcs:
+        - step: tests/fixtures/playbooks/data_transfer/http_iterator_save_postgres
+
   - step: tests/fixtures/playbooks/data_transfer/http_iterator_save_postgres
     tool:
       kind: playbook
@@ -457,8 +572,11 @@ workflow:
         max_attempts: 2
         retry_on: ["timeout"]
     next:
-      - step: tests/fixtures/playbooks/data_transfer/postgres_jsonb_test
-  
+      spec:
+        mode: exclusive
+      arcs:
+        - step: tests/fixtures/playbooks/data_transfer/postgres_jsonb_test
+
   - step: tests/fixtures/playbooks/data_transfer/postgres_jsonb_test
     tool:
       kind: playbook
@@ -467,8 +585,11 @@ workflow:
         max_attempts: 2
         retry_on: ["timeout"]
     next:
-      - step: tests/fixtures/playbooks/data_transfer/http_to_databases
-  
+      spec:
+        mode: exclusive
+      arcs:
+        - step: tests/fixtures/playbooks/data_transfer/http_to_databases
+
   - step: tests/fixtures/playbooks/data_transfer/http_to_databases
     tool:
       kind: playbook
@@ -477,8 +598,11 @@ workflow:
         max_attempts: 2
         retry_on: ["timeout"]
     next:
-      - step: tests/fixtures/playbooks/data_transfer/snowflake_postgres
-  
+      spec:
+        mode: exclusive
+      arcs:
+        - step: tests/fixtures/playbooks/data_transfer/snowflake_postgres
+
   - step: tests/fixtures/playbooks/data_transfer/snowflake_postgres
     tool:
       kind: playbook
@@ -487,8 +611,11 @@ workflow:
         max_attempts: 2
         retry_on: ["timeout"]
     next:
-      - step: tests/fixtures/playbooks/python_psycopg/http_to_postgres_bulk_python
-  
+      spec:
+        mode: exclusive
+      arcs:
+        - step: tests/fixtures/playbooks/python_psycopg/http_to_postgres_bulk_python
+
   - step: tests/fixtures/playbooks/python_psycopg/http_to_postgres_bulk_python
     tool:
       kind: playbook
@@ -497,8 +624,11 @@ workflow:
         max_attempts: 2
         retry_on: ["timeout"]
     next:
-      - step: tests/fixtures/playbooks/duckdb_gcs_workload_identity/workload_identity
-  
+      spec:
+        mode: exclusive
+      arcs:
+        - step: tests/fixtures/playbooks/duckdb_gcs_workload_identity/workload_identity
+
   # SKIPPED: tests/fixtures/playbooks/container_postgres_init - Container script handling issue
 
   # === INFRASTRUCTURE TESTS ===
@@ -510,8 +640,11 @@ workflow:
         max_attempts: 2
         retry_on: ["timeout"]
     next:
-      - step: tests/fixtures/playbooks/oauth/google_gcs
-  
+      spec:
+        mode: exclusive
+      arcs:
+        - step: tests/fixtures/playbooks/oauth/google_gcs
+
   - step: tests/fixtures/playbooks/oauth/google_gcs
     tool:
       kind: playbook
@@ -520,8 +653,11 @@ workflow:
         max_attempts: 2
         retry_on: ["timeout"]
     next:
-      - step: tests/fixtures/playbooks/oauth/google_secret_manager
-  
+      spec:
+        mode: exclusive
+      arcs:
+        - step: tests/fixtures/playbooks/oauth/google_secret_manager
+
   - step: tests/fixtures/playbooks/oauth/google_secret_manager
     tool:
       kind: playbook
@@ -530,8 +666,11 @@ workflow:
         max_attempts: 2
         retry_on: ["timeout"]
     next:
-      - step: api_integration/github_metrics
-  
+      spec:
+        mode: exclusive
+      arcs:
+        - step: api_integration/github_metrics
+
   - step: api_integration/github_metrics
     tool:
       kind: playbook
@@ -540,8 +679,11 @@ workflow:
         max_attempts: 2
         retry_on: ["timeout"]
     next:
-      - step: api_integration/amadeus_ai_api
-  
+      spec:
+        mode: exclusive
+      arcs:
+        - step: api_integration/amadeus_ai_api
+
   - step: api_integration/amadeus_ai_api
     tool:
       kind: playbook
@@ -550,8 +692,11 @@ workflow:
         max_attempts: 2
         retry_on: ["timeout"]
     next:
-      - step: data_processing/wikipedia_processing
-  
+      spec:
+        mode: exclusive
+      arcs:
+        - step: data_processing/wikipedia_processing
+
   - step: data_processing/wikipedia_processing
     tool:
       kind: playbook
@@ -560,8 +705,11 @@ workflow:
         max_attempts: 2
         retry_on: ["timeout"]
     next:
-      - step: batch_execution/multi_playbook_batch
-  
+      spec:
+        mode: exclusive
+      arcs:
+        - step: batch_execution/multi_playbook_batch
+
   - step: batch_execution/multi_playbook_batch
     tool:
       kind: playbook
@@ -570,8 +718,11 @@ workflow:
         max_attempts: 2
         retry_on: ["timeout"]
     next:
-      - step: tests/fixtures/playbooks/broken_sql
-  
+      spec:
+        mode: exclusive
+      arcs:
+        - step: tests/fixtures/playbooks/broken_sql
+
   # SKIPPED: tests/fixtures/playbooks/interactive_brokers/gateway_test - IB Gateway not running
 
   # === ERROR HANDLING TESTS ===
@@ -583,8 +734,11 @@ workflow:
         max_attempts: 2
         retry_on: ["timeout"]
     next:
-      - step: tests/fixtures/playbooks/broken_playbooks/should_error_tool_is_required
-  
+      spec:
+        mode: exclusive
+      arcs:
+        - step: tests/fixtures/playbooks/broken_playbooks/should_error_tool_is_required
+
   - step: tests/fixtures/playbooks/broken_playbooks/should_error_tool_is_required
     tool:
       kind: playbook
@@ -593,30 +747,33 @@ workflow:
         max_attempts: 2
         retry_on: ["timeout"]
     next:
-      - step: generate_summary
+      spec:
+        mode: exclusive
+      arcs:
+        - step: generate_summary
 
   # === GENERATE SUMMARY ===
   - step: generate_summary
     desc: "Generate regression test summary"
     tool:
       kind: postgres
-      auth: "{{ workload.pg_auth }}"
+      auth: "{{ pg_auth }}"
       command: |
         -- Count child executions by status
         -- UNKNOWN tests are counted as skipped to satisfy constraint: total = passed + failed + skipped
         WITH child_executions AS (
-          SELECT 
+          SELECT
             execution_id,
             node_name,
-            CASE 
+            CASE
               WHEN EXISTS (
-                SELECT 1 FROM noetl.event e2 
-                WHERE e2.execution_id = e.execution_id 
+                SELECT 1 FROM noetl.event e2
+                WHERE e2.execution_id = e.execution_id
                 AND e2.event_type = 'playbook_completed'
               ) THEN 'COMPLETED'
               WHEN EXISTS (
-                SELECT 1 FROM noetl.event e2 
-                WHERE e2.execution_id = e.execution_id 
+                SELECT 1 FROM noetl.event e2
+                WHERE e2.execution_id = e.execution_id
                 AND e2.event_type = 'playbook_failed'
               ) THEN 'FAILED'
               ELSE 'UNKNOWN'
@@ -633,7 +790,7 @@ workflow:
           skipped_tests,
           success_rate
         )
-        SELECT 
+        SELECT
           {{ execution_id }},
           COUNT(*) as total_tests,
           COUNT(*) FILTER (WHERE final_status = 'COMPLETED') as passed_tests,
@@ -643,15 +800,16 @@ workflow:
         FROM child_executions
         RETURNING *;
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   # === END ===
   - step: end
     desc: "Regression test suite completed"
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args: {}
       code: |
         print("=== Regression test suite completed - 52 playbooks tested (4 skipped) ===")

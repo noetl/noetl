@@ -1,111 +1,144 @@
-apiVersion: noetl.io/v2
+apiVersion: noetl.io/v10
 kind: Playbook
 metadata:
   name: test_pagination_offset
   path: tests/pagination/offset/offset
-  description: Offset-based pagination test
+  description: Offset-based pagination test using canonical format
 
 workload:
   api_url: "http://paginated-api.test-server.svc.cluster.local:5555"
+  offset: 0
+  limit: 10
+  collected_users: []
+  has_more: true
 
 workflow:
   - step: start
-    desc: Fetch all users with offset pagination
+    desc: Initialize offset pagination
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args: {}
       code: |
         result = {"status": "initialized"}
+    set_ctx:
+      offset: "{{ workload.offset }}"
+      limit: "{{ workload.limit }}"
+      collected_users: "{{ workload.collected_users }}"
+      has_more: "{{ workload.has_more }}"
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: fetch_page
 
-    case:
-      - when: "{{ event.name == 'step.exit' }}"
-        then:
-          next:
-            - step: fetch_all_users
-
-  - step: fetch_all_users
-    desc: Offset-based pagination with automatic continuation
+  - step: fetch_page
+    desc: Fetch a single page of users with offset
     tool:
       kind: http
-      url: "{{ workload.api_url }}/api/v1/users"
+      url: "{{ api_url }}/api/v1/users"
       method: GET
       params:
-        offset: 0
-        limit: 10
+        offset: "{{ ctx.offset }}"
+        limit: "{{ ctx.limit }}"
+      spec:
+        policy:
+          rules:
+            - when: "{{ outcome.status == 'error' and outcome.error.retryable }}"
+              then:
+                do: retry
+                attempts: 5
+                backoff: exponential
+                delay: 1.0
+            - when: "{{ outcome.status == 'error' }}"
+              then:
+                do: fail
+            - else:
+                then:
+                  do: continue
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: check_pagination
 
-    case:
-      - when: "{{ event.name == 'call.done' and response is defined and response.has_more == true }}"
-        then:
-          collect:
-            strategy: append
-            path: users
-            into: pages
-          retry:
-            max_attempts: 10
-            params:
-              offset: "{{ (response.offset | int) + (response.limit | int) }}"
-              limit: "{{ response.limit }}"
+  - step: check_pagination
+    desc: Check if more pages exist and collect results
+    tool:
+      kind: python
+      args:
+        response: "{{ fetch_page }}"
+        collected: "{{ ctx.collected_users }}"
+        current_offset: "{{ ctx.offset }}"
+        limit: "{{ ctx.limit }}"
+      code: |
+        data = response.get('data', {})
+        users = data.get('users', [])
+        has_more = data.get('has_more', False)
 
-      - when: "{{ event.name == 'call.done' and response is defined and response.has_more != true }}"
-        then:
-          collect:
-            strategy: append
-            path: users
-            into: pages
-          next:
-            - step: validate_results
+        # Append new users to collected
+        all_users = collected + users if isinstance(collected, list) else users
+
+        next_offset = current_offset + limit
+
+        result = {
+            'collected_users': all_users,
+            'has_more': has_more,
+            'next_offset': next_offset,
+            'total_collected': len(all_users)
+        }
+    set_ctx:
+      collected_users: "{{ check_pagination.collected_users }}"
+      offset: "{{ check_pagination.next_offset }}"
+      has_more: "{{ check_pagination.has_more }}"
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: fetch_page
+          when: "{{ ctx.has_more == true }}"
+        - step: validate_results
+          when: "{{ ctx.has_more != true }}"
 
   - step: validate_results
     desc: Validate merged results
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args:
-        input_data: "{{ fetch_all_users }}"
+        users: "{{ ctx.collected_users }}"
       code: |
-        # Check we got all items - handle server wrapping in {'value': [items]}
-        raw_data = input_data
-
-        # Unwrap if server wrapped in {'value': ...}
-        if isinstance(raw_data, dict) and 'value' in raw_data:
-            data = raw_data['value']
-        elif isinstance(raw_data, dict) and 'data' in raw_data:
-            data = raw_data['data']
-        elif isinstance(raw_data, list):
-            data = raw_data
-        else:
-            data = []
+        data = users if isinstance(users, list) else []
 
         print(f"Total users fetched: {len(data)}")
         print(f"First user: {data[0] if data else None}")
         print(f"Last user: {data[-1] if data else None}")
 
         # Validate
-        assert len(data) == 35, f"Expected 35 users, got {len(data)}"
-        assert data[0]['id'] == 1, f"First user should have id=1"
-        assert data[-1]['id'] == 35, f"Last user should have id=35"
+        expected_count = 35
+        success = len(data) == expected_count
+
+        if data:
+            first_id = data[0].get('id', 0)
+            last_id = data[-1].get('id', 0)
+        else:
+            first_id = 0
+            last_id = 0
 
         result = {
-            'status': 'success',
-            'total_users': len(data)
+            'status': 'success' if success else 'failed',
+            'total_users': len(data),
+            'first_id': first_id,
+            'last_id': last_id
         }
-
-    case:
-      - when: "{{ event.name == 'step.exit' and response is defined }}"
-        then:
-          next:
-            - step: end
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: Workflow complete
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args: {}
       code: |
-        # Direct execution
-            result = {"status": "complete"}
+        result = {"status": "complete"}

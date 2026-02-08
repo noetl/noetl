@@ -17,21 +17,18 @@ workflow:
         uri: inline
         source:
           type: inline
-          code: "{{ workload.test_code }}"
+          code: "{{ test_code }}"
       args: {}
-    
-    case:
-      - when: "{{ event.name == 'step.exit' }}"
-        then:
-          next:
-            - step: end
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: End workflow
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args:
         result: "{{ result }}"
       code: |

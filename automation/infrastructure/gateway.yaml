@@ -18,50 +18,28 @@ workflow:
       cmds:
         - echo "Gateway Automation - Action '{{ workload.action }}'"
     next:
-      - when: "{{ workload.action }} == build-image"
-        then:
-          - step: build_image
-        args: {}
-      - when: "{{ workload.action }} == load-image"
-        then:
-          - step: load_image
-        args: {}
-      - when: "{{ workload.action }} == deploy"
-        then:
-          - step: deploy_gateway
-        args: {}
-      - when: "{{ workload.action }} == deploy-all"
-        then:
-          - step: deploy_all
-        args: {}
-      - when: "{{ workload.action }} == remove"
-        then:
-          - step: remove_gateway
-        args: {}
-      - when: "{{ workload.action }} == redeploy"
-        then:
-          - step: redeploy_gateway
-        args: {}
-      - when: "{{ workload.action }} == restart"
-        then:
-          - step: restart_gateway
-        args: {}
-      - when: "{{ workload.action }} == status"
-        then:
-          - step: check_status
-        args: {}
-      - when: "{{ workload.action }} == logs"
-        then:
-          - step: view_logs
-        args: {}
-      - when: "{{ workload.action }} == test"
-        then:
-          - step: test_gateway
-        args: {}
-      - when: "{{ workload.action }} == help"
-        then:
-          - step: show_help
-        args: {}
+      - step: build_image
+        when: "{{ workload.action == 'build-image' }}"
+      - step: load_image
+        when: "{{ workload.action == 'load-image' }}"
+      - step: deploy_gateway
+        when: "{{ workload.action == 'deploy' }}"
+      - step: deploy_all
+        when: "{{ workload.action == 'deploy-all' }}"
+      - step: remove_gateway
+        when: "{{ workload.action == 'remove' }}"
+      - step: redeploy_gateway
+        when: "{{ workload.action == 'redeploy' }}"
+      - step: restart_gateway
+        when: "{{ workload.action == 'restart' }}"
+      - step: check_status
+        when: "{{ workload.action == 'status' }}"
+      - step: view_logs
+        when: "{{ workload.action == 'logs' }}"
+      - step: test_gateway
+        when: "{{ workload.action == 'test' }}"
+      - step: show_help
+        when: "{{ workload.action == 'help' }}"
       - step: show_help
 
   - step: build_image
@@ -266,3 +244,5 @@ workflow:
 
   - step: end
     desc: End workflow
+    tool:
+      kind: noop

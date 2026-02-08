@@ -1,4 +1,4 @@
-apiVersion: noetl.io/v2
+apiVersion: noetl.io/v10
 kind: Playbook
 metadata:
   name: test_vars_simple
@@ -8,78 +8,86 @@ workflow:
 - step: start
   desc: Simple transient test
   tool:
-    kind: python
-    auth: {}
-    libs: {}
-    args: {}
-    code: |
-      result = {"status": "initialized"}
-  
+    - start_task:
+        kind: python
+        args: {}
+        code: |
+          result = {"status": "initialized"}
   next:
-  - step: set_var
+    spec:
+      mode: exclusive
+    arcs:
+      - step: set_var
 
 - step: set_var
   desc: Set a test variable
   tool:
-    kind: python
-    auth: {}
-    libs:
-      os: os
-      logging: logging
-    args: {}
-    code: |
-      logger = logging.getLogger(__name__)
-      logger.info(f"DEBUG: NOETL_WORKER_MODE = {os.getenv('NOETL_WORKER_MODE')}")
-      logger.info(f"DEBUG: SERVER_API_URL = {os.getenv('SERVER_API_URL')}")
-      logger.info(f"DEBUG: context keys = {list(context.keys())}")
-      
-      # Return value that will be stored via vars block
-      result = {
-        "status": "success",
-        "test_counter": 42,
-        "message": "Variable set successfully"
-      }
-  
-  vars:
-    test_counter: "{{ result.test_counter }}"
-    set_message: "{{ result.message }}"
-  
+    - set_vars:
+        kind: python
+        libs:
+          os: os
+          logging: logging
+        args: {}
+        code: |
+          logger = logging.getLogger(__name__)
+          logger.info(f"DEBUG: NOETL_WORKER_MODE = {os.getenv('NOETL_WORKER_MODE')}")
+          logger.info(f"DEBUG: SERVER_API_URL = {os.getenv('SERVER_API_URL')}")
+          logger.info(f"DEBUG: context keys = {list(context.keys())}")
+
+          # Return value that will be stored via policy rules
+          result = {
+            "status": "success",
+            "test_counter": 42,
+            "message": "Variable set successfully"
+          }
+        spec:
+          policy:
+            rules:
+              - else:
+                  then:
+                    do: continue
+                    set_ctx:
+                      test_counter: "{{ outcome.result.test_counter }}"
+                      set_message: "{{ outcome.result.message }}"
   next:
-  - step: get_var
+    spec:
+      mode: exclusive
+    arcs:
+      - step: get_var
 
 - step: get_var
   desc: Get the variable back
   tool:
-    kind: python
-    auth: {}
-    libs: {}
-    args:
-      counter_value: "{{ vars.test_counter }}"
-      previous_message: "{{ vars.set_message }}"
-    code: |
-      # Access variable via args (passed from vars context)
-      counter = counter_value
-      message = previous_message
-      
-      print(f"Retrieved test_counter: {counter}")
-      print(f"Message: {message}")
-      
-      result = {
-        "status": "success",
-        "value": counter,
-        "message": message,
-        "verification": counter == 42
-      }
-  
+    - get_vars:
+        kind: python
+        args:
+          counter_value: "{{ ctx.test_counter }}"
+          previous_message: "{{ ctx.set_message }}"
+        code: |
+          # Access variable via args (passed from ctx context)
+          counter = counter_value
+          message = previous_message
+
+          print(f"Retrieved test_counter: {counter}")
+          print(f"Message: {message}")
+
+          result = {
+            "status": "success",
+            "value": counter,
+            "message": message,
+            "verification": counter == 42
+          }
   next:
-  - step: end
+    spec:
+      mode: exclusive
+    arcs:
+      - step: end
 
 - step: end
   desc: Test complete
   tool:
-    kind: python
-    auth: {}
-    libs: {}
-    args: {}
-    code: |
-      result = {"status": "complete"}
+    - end_task:
+        kind: python
+        args: {}
+        code: |
+          result = {"status": "complete"}

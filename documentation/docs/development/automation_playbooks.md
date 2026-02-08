@@ -649,6 +649,77 @@ noetl run automation/development/tooling_linux.yaml --set action=fix-docker-perm
 - `ensure-path` - Ensure tool paths in shell config (~/.zshrc on macOS, ~/.bashrc on Linux)
 - `fix-docker-perms` - (Linux/WSL2 only) Add user to docker group
 
+### NoETL Development Deployment
+
+The recommended way to build and deploy NoETL to a kind cluster during development:
+
+```bash
+# Show available actions
+noetl run automation/development/noetl.yaml --set action=help
+
+# Full rebuild and deploy cycle (build → load → deploy)
+noetl run automation/development/noetl.yaml --set action=redeploy
+
+# Individual actions
+noetl run automation/development/noetl.yaml --set action=build    # Build Docker image
+noetl run automation/development/noetl.yaml --set action=load     # Load image into kind
+noetl run automation/development/noetl.yaml --set action=deploy   # Deploy to Kubernetes
+noetl run automation/development/noetl.yaml --set action=status   # Show pod/service status
+```
+
+**Actions:**
+
+| Action | Description |
+|--------|-------------|
+| `build` | Build NoETL Docker image with timestamp tag |
+| `load` | Load Docker image into kind cluster |
+| `deploy` | Deploy NoETL server and workers to Kubernetes |
+| `redeploy` | Full cycle: build → load → deploy (recommended for dev) |
+| `status` | Show NoETL pod and service status |
+| `help` | Display available actions |
+
+**Workflow Details:**
+
+1. **Build** (`action=build`)
+   - Builds Docker image using `docker/noetl/dev/Dockerfile`
+   - Tags image with timestamp: `local/noetl:YYYY-MM-DD-HH-MM`
+   - Saves tag to `.noetl_last_build_tag.txt` for subsequent steps
+
+2. **Load** (`action=load`)
+   - Reads tag from `.noetl_last_build_tag.txt`
+   - Loads image into kind cluster: `kind load docker-image`
+
+3. **Deploy** (`action=deploy`)
+   - Applies namespace manifest
+   - Applies all manifests from `ci/manifests/noetl/`
+   - Restarts deployments to pick up new image
+   - Waits for pods to be ready
+
+4. **Redeploy** (`action=redeploy`)
+   - Executes full cycle: build → load → deploy
+   - **Recommended for development** - single command to update everything
+
+**Example Development Workflow:**
+
+```bash
+# Make code changes...
+
+# Rebuild and deploy in one command
+noetl run automation/development/noetl.yaml --set action=redeploy
+
+# Check deployment status
+noetl run automation/development/noetl.yaml --set action=status
+
+# View logs if needed
+kubectl logs -f -n noetl -l app=noetl-server
+kubectl logs -f -n noetl -l app=noetl-worker
+```
+
+**Prerequisites:**
+- Kind cluster must be running (`kind get clusters` shows `noetl`)
+- Docker daemon must be running
+- kubectl configured for kind-noetl context
+
 ### Docker Operations
 
 Manage Docker image building and cleanup:

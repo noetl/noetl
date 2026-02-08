@@ -1,15 +1,28 @@
-"""NoETL DSL v2 package - Event-driven execution model."""
+"""NoETL DSL v10 package - Canonical format with event-driven execution."""
 
 from .models import (
-    CaseEntry,
+    # Core models
     Command,
+    CommandSpec,
     Event,
     Loop,
+    LoopSpec,
     Playbook,
     Step,
-    ThenBlock,
+    StepSpec,
     ToolCall,
     ToolSpec,
+    # v10 canonical models
+    Arc,
+    NextRouter,
+    NextSpec,
+    PolicyRule,
+    PolicyRuleThen,
+    StepPolicy,
+    AdmitPolicy,
+    TaskPolicy,
+    TaskSpec,
+    ToolOutcome,
 )
 
 __all__ = [
@@ -17,12 +30,25 @@ __all__ = [
     "Event",
     "ToolCall",
     "Command",
-    
+    "CommandSpec",
+
     # DSL structure models
     "Playbook",
     "Step",
+    "StepSpec",
     "ToolSpec",
     "Loop",
-    "CaseEntry",
-    "ThenBlock",
+    "LoopSpec",
+
+    # v10 canonical models
+    "Arc",
+    "NextRouter",
+    "NextSpec",
+    "PolicyRule",
+    "PolicyRuleThen",
+    "StepPolicy",
+    "AdmitPolicy",
+    "TaskPolicy",
+    "TaskSpec",
+    "ToolOutcome",
 ]

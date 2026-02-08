@@ -24,12 +24,33 @@ spec:
           name: http
           protocol: TCP
         env:
+        # Server configuration
         - name: ROUTER_PORT
           value: "8090"
-        - name: NOETL_BASE_URL
-          value: "http://noetl-server.noetl.svc.cluster.local:8082"
         - name: RUST_LOG
           value: "info,gateway=debug"
+        # NoETL backend
+        - name: NOETL_BASE_URL
+          value: "http://noetl.noetl.svc.cluster.local:8082"
+        # NATS messaging
+        - name: NATS_URL
+          value: "nats://noetl:noetl@nats.nats.svc.cluster.local:4222"
+        - name: NATS_UPDATES_SUBJECT_PREFIX
+          value: "playbooks.executions."
+        - name: NATS_CALLBACK_SUBJECT_PREFIX
+          value: "noetl.callbacks"
+        # CORS
+        - name: CORS_ALLOWED_ORIGINS
+          value: "http://localhost:8080,http://localhost:8090,http://localhost:3000,https://gateway.mestumre.dev"
+        # Auth playbooks - configurable paths
+        - name: AUTH_PLAYBOOK_LOGIN
+          value: "api_integration/auth0/auth0_login"
+        - name: AUTH_PLAYBOOK_VALIDATE_SESSION
+          value: "api_integration/auth0/auth0_validate_session"
+        - name: AUTH_PLAYBOOK_CHECK_ACCESS
+          value: "api_integration/auth0/check_playbook_access"
+        - name: AUTH_PLAYBOOK_TIMEOUT_SECS
+          value: "60"
         resources:
           requests:
             memory: "128Mi"

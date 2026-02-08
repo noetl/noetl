@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 use crate::error::AppResult;
-use crate::playbook::types::{Step, ToolCall, ToolSpec};
+use crate::playbook::types::{Step, ToolCall, ToolDefinition, ToolSpec};
 use crate::template::TemplateRenderer;
 
 /// Command to be executed by a worker.
@@ -97,8 +97,8 @@ impl CommandBuilder {
         context: &HashMap<String, serde_json::Value>,
         metadata: Option<&serde_json::Value>,
     ) -> AppResult<Command> {
-        // Render the tool configuration
-        let tool_command = self.build_tool_command(&step.tool, context)?;
+        // Build tool command based on definition type
+        let tool_command = self.build_tool_from_definition(&step.tool, context)?;
 
         Ok(Command {
             command_id,
@@ -131,8 +131,8 @@ impl CommandBuilder {
         iter_context.insert("_index".to_string(), serde_json::json!(iterator.index));
         iter_context.insert("_total".to_string(), serde_json::json!(iterator.total));
 
-        // Render the tool configuration with iterator context
-        let tool_command = self.build_tool_command(&step.tool, &iter_context)?;
+        // Build tool command from definition with iterator context
+        let tool_command = self.build_tool_from_definition(&step.tool, &iter_context)?;
 
         Ok(Command {
             command_id,
@@ -147,7 +147,34 @@ impl CommandBuilder {
         })
     }
 
-    /// Build a tool command from a tool spec.
+    /// Build a tool command from a tool definition (single or pipeline).
+    fn build_tool_from_definition(
+        &self,
+        tool: &ToolDefinition,
+        context: &HashMap<String, serde_json::Value>,
+    ) -> AppResult<ToolCommand> {
+        match tool {
+            ToolDefinition::Single(spec) => self.build_tool_command(spec, context),
+            ToolDefinition::Pipeline(tasks) => {
+                // For pipelines, create a task_sequence tool command
+                // The worker will execute each task in sequence
+                let pipeline_config = serde_json::to_value(tasks).ok();
+                let config = if let Some(cfg) = pipeline_config {
+                    Some(self.renderer.render_value(&cfg, context)?)
+                } else {
+                    None
+                };
+
+                Ok(ToolCommand {
+                    kind: "task_sequence".to_string(),
+                    config,
+                    timeout: None,
+                })
+            }
+        }
+    }
+
+    /// Build a tool command from a single tool spec.
     fn build_tool_command(
         &self,
         tool: &ToolSpec,
@@ -280,10 +307,12 @@ mod tests {
         let step = Step {
             step: "test_step".to_string(),
             desc: None,
+            spec: None,
+            when: None,
             args: None,
             vars: None,
             r#loop: None,
-            tool: ToolSpec {
+            tool: ToolDefinition::Single(ToolSpec {
                 kind: ToolKind::Http,
                 auth: None,
                 libs: None,
@@ -292,10 +321,14 @@ mod tests {
                 url: Some("https://{{ host }}/api".to_string()),
                 method: Some("GET".to_string()),
                 query: None,
+                command: None,
                 connection: None,
+                params: None,
+                headers: None,
+                eval: None,
+                output_select: None,
                 extra: HashMap::new(),
-            },
-            case: None,
+            }),
             next: None,
         };
 
@@ -323,10 +356,12 @@ mod tests {
         let step = Step {
             step: "process_item".to_string(),
             desc: None,
+            spec: None,
+            when: None,
             args: None,
             vars: None,
             r#loop: None,
-            tool: ToolSpec {
+            tool: ToolDefinition::Single(ToolSpec {
                 kind: ToolKind::Python,
                 auth: None,
                 libs: None,
@@ -335,10 +370,14 @@ mod tests {
                 url: None,
                 method: None,
                 query: None,
+                command: None,
                 connection: None,
+                params: None,
+                headers: None,
+                eval: None,
+                output_select: None,
                 extra: HashMap::new(),
-            },
-            case: None,
+            }),
             next: None,
         };
 
@@ -372,5 +411,77 @@ mod tests {
 
         assert_eq!(command.tool.kind, "noop");
         assert!(command.tool.config.is_none());
+    }
+
+    #[test]
+    fn test_build_pipeline_command() {
+        let builder = CommandBuilder::new();
+
+        // Create a pipeline with multiple tasks
+        let mut fetch_task = HashMap::new();
+        fetch_task.insert(
+            "fetch".to_string(),
+            ToolSpec {
+                kind: ToolKind::Http,
+                auth: None,
+                libs: None,
+                args: None,
+                code: None,
+                url: Some("https://api.example.com".to_string()),
+                method: Some("GET".to_string()),
+                query: None,
+                command: None,
+                connection: None,
+                params: None,
+                headers: None,
+                eval: None,
+                output_select: None,
+                extra: HashMap::new(),
+            },
+        );
+
+        let mut transform_task = HashMap::new();
+        transform_task.insert(
+            "transform".to_string(),
+            ToolSpec {
+                kind: ToolKind::Python,
+                auth: None,
+                libs: None,
+                args: None,
+                code: Some("result = {'processed': True}".to_string()),
+                url: None,
+                method: None,
+                query: None,
+                command: None,
+                connection: None,
+                params: None,
+                headers: None,
+                eval: None,
+                output_select: None,
+                extra: HashMap::new(),
+            },
+        );
+
+        let step = Step {
+            step: "pipeline_step".to_string(),
+            desc: None,
+            spec: None,
+            when: None,
+            args: None,
+            vars: None,
+            r#loop: None,
+            tool: ToolDefinition::Pipeline(vec![fetch_task, transform_task]),
+            next: None,
+        };
+
+        let context = HashMap::new();
+
+        let command = builder
+            .build_command(1, 2, 3, 4, &step, &context, None)
+            .unwrap();
+
+        assert_eq!(command.step_name, "pipeline_step");
+        assert_eq!(command.tool.kind, "task_sequence");
+        assert!(command.tool.config.is_some());
     }
 }

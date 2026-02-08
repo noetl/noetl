@@ -1,4 +1,4 @@
-apiVersion: noetl.io/v2
+apiVersion: noetl.io/v10
 kind: Playbook
 metadata:
   name: github_metrics
@@ -16,26 +16,30 @@ workflow:
     desc: Start GitHub Metrics Workflow
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args: {}
       code: |
         result = {"status": "initialized", "message": "Starting GitHub metrics workflow"}
     next:
-      - step: fetch_github_repo
-  
+      spec:
+        mode: exclusive
+      arcs:
+        - step: fetch_github_repo
+
   - step: fetch_github_repo
     desc: Fetch GitHub repository information
     tool:
       kind: http
       method: GET
-      url: '{{ workload.api_base_url }}/repos/{{ workload.repository }}'
+      url: '{{ api_base_url }}/repos/{{ repository }}'
       headers:
         User-Agent: NoETL GitHub Metrics/1.0
         Accept: application/vnd.github.v3+json
     next:
-      - step: extract_repo_metrics
-  
+      spec:
+        mode: exclusive
+      arcs:
+        - step: extract_repo_metrics
+
   - step: extract_repo_metrics
     desc: Extract and calculate repository metrics
     tool:
@@ -44,7 +48,7 @@ workflow:
         -- Create a table from the GitHub repository data
         DROP TABLE IF EXISTS repo_metrics;
         CREATE TABLE repo_metrics AS
-        SELECT 
+        SELECT
           '{{ fetch_github_repo.data.name }}' AS name,
           '{{ fetch_github_repo.data.full_name }}' AS full_name,
           {{ fetch_github_repo.data.stargazers_count }} AS stars,
@@ -53,21 +57,21 @@ workflow:
           '{{ fetch_github_repo.data.created_at }}'::TIMESTAMP AS created_date,
           '{{ fetch_github_repo.data.updated_at }}'::TIMESTAMP AS last_updated,
           {{ fetch_github_repo.data.stargazers_count }} + {{ fetch_github_repo.data.forks_count }} AS total_engagement,
-          CASE 
+          CASE
             WHEN {{ fetch_github_repo.data.stargazers_count }} > 100000 THEN 'Extremely Popular'
             WHEN {{ fetch_github_repo.data.stargazers_count }} > 50000 THEN 'Very Popular'
             WHEN {{ fetch_github_repo.data.stargazers_count }} > 10000 THEN 'Popular'
             WHEN {{ fetch_github_repo.data.stargazers_count }} > 1000 THEN 'Well Known'
             ELSE 'Growing'
           END AS popularity_tier;
-        
+
         -- Show the metrics
         SELECT * FROM repo_metrics;
-        
+
         -- Calculate additional stats
         DROP TABLE IF EXISTS repo_stats;
         CREATE TABLE repo_stats AS
-        SELECT 
+        SELECT
           name,
           stars,
           forks,
@@ -77,21 +81,24 @@ workflow:
           DATE_DIFF('day', created_date, CURRENT_DATE) AS days_since_creation,
           DATE_DIFF('day', last_updated, CURRENT_DATE) AS days_since_update
         FROM repo_metrics;
-        
+
         -- Show the calculated stats
         SELECT * FROM repo_stats;
     next:
-      - step: store_in_postgres
-  
+      spec:
+        mode: exclusive
+      arcs:
+        - step: store_in_postgres
+
   - step: store_in_postgres
     desc: Store repository analysis in PostgreSQL
     tool:
       kind: postgres
-      auth: '{{ workload.pg_auth }}'
+      auth: '{{ pg_auth }}'
       command: |
         -- Drop table if it exists
         DROP TABLE IF EXISTS github_repo_analysis;
-        
+
         -- Create table for GitHub repository analysis
         CREATE TABLE github_repo_analysis (
           id SERIAL PRIMARY KEY,
@@ -107,7 +114,7 @@ workflow:
           days_since_update INTEGER,
           analysis_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
-        
+
         -- Insert sample data (hardcoded to ensure it works)
         INSERT INTO github_repo_analysis (
           repo_name, full_name, stars, forks, primary_language,
@@ -126,13 +133,16 @@ workflow:
           1
         );
     next:
-      - step: query_and_analyze
-  
+      spec:
+        mode: exclusive
+      arcs:
+        - step: query_and_analyze
+
   - step: query_and_analyze
     desc: Query the stored data and perform final analysis
     tool:
       kind: postgres
-      auth: '{{ workload.pg_auth }}'
+      auth: '{{ pg_auth }}'
       command: |
         -- Get the complete analysis with timestamps converted to strings
         SELECT
@@ -150,14 +160,15 @@ workflow:
         ORDER BY analysis_date DESC
         LIMIT 1;
     next:
-      - step: end
-  
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
+
   - step: end
     desc: End of GitHub metrics workflow
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args: {}
       code: |
         result = {"status": "completed"}

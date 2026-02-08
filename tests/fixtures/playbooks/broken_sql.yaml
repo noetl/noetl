@@ -13,30 +13,30 @@ workflow:
     desc: Start data transfer pipeline
     tool:
       kind: python
-      auth: {}
-      libs: {}
-      args: {}
       code: |
             return {"status": "initialized"}
     next:
-      - step: verify_pg_data
+      spec:
+        mode: exclusive
+      arcs:
+        - step: verify_pg_data
   - step: verify_pg_data
     desc: Verify data was transferred to PostgreSQL
     tool:
       kind: postgres
-      auth: "{{ workload.pg_auth }}"
+      auth: "{{ pg_auth }}"
       command: |
-        SELECT 
+        SELECT
           COUNT(*) as row_count,
         FROM patient_info;
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
   - step: end
     desc: End data transfer test pipeline
     tool:
       kind: python
-      auth: {}
-      libs: {}
-      args: {}
       code: |
             return {"status": "completed"}

@@ -1,4 +1,4 @@
-apiVersion: noetl.io/v2
+apiVersion: noetl.io/v10
 kind: Playbook
 metadata:
   name: save_storage_simple_test
@@ -19,55 +19,46 @@ workflow:
     desc: "Setup test tables"
     tool:
       kind: python
-      auth: {}
-      libs: {}
-      args: {}
       code: |
         result = {"status": "initialized"}
-    
-    case:
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          next:
-            - step: create_tables
-  
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: create_tables
+
   - step: create_tables
     desc: "Create required test tables"
     tool:
       kind: playbook
       path: tests/fixtures/playbooks/save_storage_test/create_tables
       args:
-        pg_auth: "{{ workload.pg_auth }}"
-    
-    case:
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          next:
-            - step: truncate_tables
-  
+        pg_auth: "{{ pg_auth }}"
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: truncate_tables
+
   - step: truncate_tables
     desc: "Clear test data from previous runs"
     tool:
       kind: postgres
-      auth: "{{ workload.pg_auth }}"
+      auth: "{{ pg_auth }}"
       command: |
         TRUNCATE TABLE simple_test_flat;
         TRUNCATE TABLE simple_test_nested;
-    
-    case:
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          next:
-            - step: event_test
-  
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: event_test
+
   # Test 1: Event log storage (default)
   - step: event_test
     desc: "Test event log storage (simplest form)"
     tool:
       kind: python
-      auth: {}
-      libs: {}
-      args: {}
       code: |
         result = {
             "status": "success",
@@ -77,114 +68,100 @@ workflow:
                 "test_id": "evt_001"
             }
         }
-    
-    case:
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          - sink:
-              tool:
-                kind: event_log
-                data: "{{ response }}"
-          - next:
-              - step: postgres_flat_test
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: postgres_flat_test
 
   # Test 2: Postgres flat structure
   - step: postgres_flat_test
-    desc: "Test postgres sink with flat structure"
+    desc: "Test postgres save with flat structure"
     tool:
-      kind: python
-      auth: {}
-      libs: {}
-      args: {}
-      code: |
-        result = {
-            "status": "success", 
-            "data": {
-                "record_id": 100,
-                "description": "Postgres flat structure test",
-                "source_step": "postgres_flat_test"
+      - generate_data:
+          kind: python
+          code: |
+            result = {
+                "status": "success",
+                "data": {
+                    "record_id": 100,
+                    "description": "Postgres flat structure test",
+                    "source_step": "postgres_flat_test"
+                }
             }
-        }
-    
-    case:
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          - sink:
-              tool:
-                kind: postgres
-                auth: "{{ workload.pg_auth }}"
-                statement: |
-                  INSERT INTO simple_test_flat (test_id, test_name, test_value, storage_type, test_execution)
-                  VALUES (
-                    '{{ response.record_id }}',
-                    '{{ response.description }}',
-                    42,
-                    'flat',
-                    '{{ execution_id }}'
-                  )
-                  ON CONFLICT (test_id) DO UPDATE SET
-                    test_name = EXCLUDED.test_name,
-                    test_value = EXCLUDED.test_value,
-                    storage_type = EXCLUDED.storage_type,
-                    test_execution = EXCLUDED.test_execution;
-          - next:
-              - step: postgres_nested_test
+      - save_flat:
+          kind: postgres
+          auth: "{{ pg_auth }}"
+          command: |
+            INSERT INTO simple_test_flat (test_id, test_name, test_value, storage_type, test_execution)
+            VALUES (
+              '{{ generate_data.data.record_id }}',
+              '{{ generate_data.data.description }}',
+              42,
+              'flat',
+              '{{ execution_id }}'
+            )
+            ON CONFLICT (test_id) DO UPDATE SET
+              test_name = EXCLUDED.test_name,
+              test_value = EXCLUDED.test_value,
+              storage_type = EXCLUDED.storage_type,
+              test_execution = EXCLUDED.test_execution;
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: postgres_nested_test
 
   # Test 3: Postgres nested structure
   - step: postgres_nested_test
     desc: "Test postgres save with nested structure"
     tool:
-      kind: python
-      auth: {}
-      libs:
-        json: json
-      args:
-        test_data_value: "{{ workload.test_data.value }}"
-      code: |
-        # Receive test_data_value as an argument
-        test_data = {
-            "value": test_data_value,
-            "nested_indicator": True,
-            "test_type": "nested_structure"
-        }
-        
-        result = {
-            "test_type": "nested_structure",
-            "nested_id": 200,
-            "test_data_json": json.dumps(test_data)
-        }
-    
-    case:
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          - sink:
-              tool:
-                kind: postgres
-                auth: "{{ workload.pg_auth }}"
-                statement: |
-                  INSERT INTO simple_test_nested (test_id, test_name, test_data, storage_type, test_execution)
-                  VALUES (
-                    '{{ response.nested_id }}',
-                    'nested_structure_test',
-                    '{{ response.test_data_json }}'::jsonb,
-                    'nested',
-                    '{{ execution_id }}'
-                  )
-                  ON CONFLICT (test_id) DO UPDATE SET
-                    test_name = EXCLUDED.test_name,
-                    test_data = EXCLUDED.test_data,
-                    storage_type = EXCLUDED.storage_type,
-                    test_execution = EXCLUDED.test_execution;
-          - next:
-              - step: end
+      - generate_nested:
+          kind: python
+          libs:
+            json: json
+          args:
+            test_data_value: "{{ test_data.value }}"
+          code: |
+            # Receive test_data_value as an argument
+            test_data = {
+                "value": test_data_value,
+                "nested_indicator": True,
+                "test_type": "nested_structure"
+            }
+
+            result = {
+                "test_type": "nested_structure",
+                "nested_id": 200,
+                "test_data_json": json.dumps(test_data)
+            }
+      - save_nested:
+          kind: postgres
+          auth: "{{ pg_auth }}"
+          command: |
+            INSERT INTO simple_test_nested (test_id, test_name, test_data, storage_type, test_execution)
+            VALUES (
+              '{{ generate_nested.nested_id }}',
+              'nested_structure_test',
+              '{{ generate_nested.test_data_json }}'::jsonb,
+              'nested',
+              '{{ execution_id }}'
+            )
+            ON CONFLICT (test_id) DO UPDATE SET
+              test_name = EXCLUDED.test_name,
+              test_data = EXCLUDED.test_data,
+              storage_type = EXCLUDED.storage_type,
+              test_execution = EXCLUDED.test_execution;
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: "Test completion"
     tool:
       kind: python
-      auth: {}
-      libs: {}
-      args: {}
       code: |
         result = {
             "status": "success",

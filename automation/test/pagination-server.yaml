@@ -18,78 +18,78 @@ workflow:
       cmds:
         - echo "Pagination Server Automation - Action '{{ workload.action }}'"
     next:
-      - when: "{{ workload.action }} == build"
-        then:
-          - step: build_image
-        args: {}
-      - when: "{{ workload.action }} == load"
-        then:
-          - step: load_image
-        args: {}
-      - when: "{{ workload.action }} == deploy"
-        then:
-          - step: deploy_server
-        args: {}
-      - when: "{{ workload.action }} == full"
-        then:
-          - step: build_image
-        args: {}
-      - when: "{{ workload.action }} == status"
-        then:
-          - step: check_status
-        args: {}
-      - when: "{{ workload.action }} == logs"
-        then:
-          - step: show_logs
-        args: {}
-      - when: "{{ workload.action }} == test"
-        then:
-          - step: test_endpoints
-        args: {}
-      - when: "{{ workload.action }} == undeploy"
-        then:
-          - step: undeploy_server
-        args: {}
+      - step: build_image
+        when: "{{ workload.action == 'build' }}"
+      - step: load_image
+        when: "{{ workload.action == 'load' }}"
+      - step: deploy_server
+        when: "{{ workload.action == 'deploy' }}"
+      - step: build_image
+        when: "{{ workload.action == 'full' }}"
+      - step: check_status
+        when: "{{ workload.action == 'status' }}"
+      - step: show_logs
+        when: "{{ workload.action == 'logs' }}"
+      - step: test_endpoints
+        when: "{{ workload.action == 'test' }}"
+      - step: undeploy_server
+        when: "{{ workload.action == 'undeploy' }}"
       - step: show_help
 
   # Direct step aliases for positional argument support
   - step: status
     desc: Alias for check_status
+    tool:
+      kind: noop
     next:
       - step: check_status
 
   - step: build
     desc: Alias for build_image
+    tool:
+      kind: noop
     next:
       - step: build_image
 
   - step: load
     desc: Alias for load_image
+    tool:
+      kind: noop
     next:
       - step: load_image
 
   - step: deploy
     desc: Alias for deploy_server
+    tool:
+      kind: noop
     next:
       - step: deploy_server
 
   - step: full
     desc: Full deployment workflow
+    tool:
+      kind: noop
     next:
       - step: build_image
 
   - step: logs
     desc: Alias for show_logs
+    tool:
+      kind: noop
     next:
       - step: show_logs
 
   - step: test
     desc: Alias for test_endpoints
+    tool:
+      kind: noop
     next:
       - step: test_endpoints
 
   - step: undeploy
     desc: Alias for undeploy_server
+    tool:
+      kind: noop
     next:
       - step: undeploy_server
 
@@ -105,11 +105,9 @@ workflow:
           docker build -t local/test-server:$IMAGE_TAG -f docker/test-server/Dockerfile .
           docker tag local/test-server:$IMAGE_TAG local/test-server:latest
           echo "Built test-server:$IMAGE_TAG"
-    case:
-      - when: "{{ workload.action }} == full"
-        then:
-          - step: load_image
     next:
+      - step: load_image
+        when: "{{ workload.action == 'full' }}"
       - step: end
 
   - step: load_image
@@ -121,11 +119,9 @@ workflow:
           echo ""
           echo "Loading pagination server image to kind cluster..."
           kind load docker-image local/test-server:latest --name noetl
-    case:
-      - when: "{{ workload.action }} == full"
-        then:
-          - step: deploy_server
     next:
+      - step: deploy_server
+        when: "{{ workload.action == 'full' }}"
       - step: end
 
   - step: deploy_server
@@ -142,11 +138,9 @@ workflow:
           echo "Waiting for pagination test server to be ready..."
           kubectl wait --for=condition=ready pod -l app=paginated-api -n test-server --timeout=60s || true
           kubectl get pods -n test-server
-    case:
-      - when: "{{ workload.action }} == full"
-        then:
-          - step: check_status
     next:
+      - step: check_status
+        when: "{{ workload.action == 'full' }}"
       - step: end
 
   - step: check_status
@@ -250,3 +244,5 @@ workflow:
 
   - step: end
     desc: End workflow
+    tool:
+      kind: noop

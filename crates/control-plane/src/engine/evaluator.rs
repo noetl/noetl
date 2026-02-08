@@ -1,7 +1,12 @@
-//! Condition evaluation for workflow transitions.
+//! Condition evaluation for workflow transitions (Canonical Format).
 //!
-//! Evaluates Jinja2-style conditions and case/when/then logic
+//! Evaluates Jinja2-style conditions and next[].when logic
 //! for workflow transition decisions.
+//!
+//! Canonical format:
+//! - step.when: transition enable guard (evaluated before step runs)
+//! - next[].when: conditional routing (evaluated after step completes)
+//! - No case/when/then blocks
 
 use std::collections::HashMap;
 
@@ -59,7 +64,27 @@ impl EvaluationResult {
     }
 }
 
-/// Condition evaluator for workflow transitions.
+/// Next transition evaluation mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum NextMode {
+    /// First matching when condition wins (default).
+    #[default]
+    Exclusive,
+    /// All matching when conditions fire.
+    Inclusive,
+}
+
+impl NextMode {
+    /// Parse from string.
+    pub fn from_str(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "inclusive" => NextMode::Inclusive,
+            _ => NextMode::Exclusive,
+        }
+    }
+}
+
+/// Condition evaluator for workflow transitions (canonical format).
 pub struct ConditionEvaluator {
     renderer: TemplateRenderer,
 }
@@ -87,19 +112,46 @@ impl ConditionEvaluator {
         self.renderer.evaluate_condition(condition, context)
     }
 
-    /// Evaluate transition logic for a step.
+    /// Evaluate step enable guard (step.when).
     ///
-    /// Returns the next step(s) to execute based on the step's `next` configuration.
-    pub fn evaluate_next(
+    /// Returns true if the step should execute, false if it should be skipped.
+    /// If no when guard is present, returns true (step always executes).
+    pub fn evaluate_step_when(
         &self,
         step: &Step,
-        _context: &HashMap<String, serde_json::Value>,
+        context: &HashMap<String, serde_json::Value>,
+    ) -> AppResult<bool> {
+        match &step.when {
+            Some(when_expr) => self.evaluate_condition(when_expr, context),
+            None => Ok(true), // No guard = always execute
+        }
+    }
+
+    /// Evaluate next transitions with optional when conditions (canonical format).
+    ///
+    /// Supports two evaluation modes via step.spec.next_mode:
+    /// - exclusive (default): First matching when condition wins
+    /// - inclusive: All matching when conditions fire
+    ///
+    /// Entries without a when condition always match.
+    pub fn evaluate_next_transitions(
+        &self,
+        step: &Step,
+        context: &HashMap<String, serde_json::Value>,
     ) -> AppResult<Vec<EvaluationResult>> {
         let mut results = Vec::new();
 
+        // Determine next_mode
+        let next_mode = step
+            .spec
+            .as_ref()
+            .and_then(|s| s.next_mode.as_ref())
+            .map(|m| NextMode::from_str(m))
+            .unwrap_or_default();
+
         match &step.next {
             Some(NextSpec::Single(next_step)) => {
-                // Single next: always transition
+                // Single next: always transition (no condition)
                 results.push(EvaluationResult::matched(next_step, None));
             }
             Some(NextSpec::List(next_steps)) => {
@@ -108,14 +160,58 @@ impl ConditionEvaluator {
                     results.push(EvaluationResult::matched(next_step, None));
                 }
             }
+            Some(NextSpec::Router(router)) => {
+                // Canonical v10 format: router with spec and arcs
+                // Determine mode from router spec (overrides step-level next_mode)
+                let router_mode = router
+                    .spec
+                    .as_ref()
+                    .and_then(|s| s.mode.as_ref())
+                    .map(|m| NextMode::from_str(m))
+                    .unwrap_or(next_mode);
+
+                for arc in &router.arcs {
+                    // Evaluate when condition if present
+                    let should_transition = match &arc.when {
+                        Some(when_expr) => self.evaluate_condition(when_expr, context)?,
+                        None => true, // No condition = always matches
+                    };
+
+                    if should_transition {
+                        let with_params = arc
+                            .args
+                            .as_ref()
+                            .map(|args| serde_json::to_value(args).unwrap_or(serde_json::Value::Null));
+                        results.push(EvaluationResult::matched(&arc.step, with_params));
+
+                        // In exclusive mode, first match wins
+                        if router_mode == NextMode::Exclusive {
+                            break;
+                        }
+                    }
+                }
+            }
             Some(NextSpec::Targets(targets)) => {
-                // Targets with optional args
+                // Legacy canonical format: targets with optional when conditions
                 for target in targets {
-                    let with_params = target
-                        .args
-                        .as_ref()
-                        .map(|args| serde_json::to_value(args).unwrap_or(serde_json::Value::Null));
-                    results.push(EvaluationResult::matched(&target.step, with_params));
+                    // Evaluate when condition if present
+                    let should_transition = match &target.when {
+                        Some(when_expr) => self.evaluate_condition(when_expr, context)?,
+                        None => true, // No condition = always matches
+                    };
+
+                    if should_transition {
+                        let with_params = target
+                            .args
+                            .as_ref()
+                            .map(|args| serde_json::to_value(args).unwrap_or(serde_json::Value::Null));
+                        results.push(EvaluationResult::matched(&target.step, with_params));
+
+                        // In exclusive mode, first match wins
+                        if next_mode == NextMode::Exclusive {
+                            break;
+                        }
+                    }
                 }
             }
             None => {
@@ -126,36 +222,18 @@ impl ConditionEvaluator {
         Ok(results)
     }
 
-    /// Evaluate a step's case/when/then logic.
+    /// Evaluate transition logic for a step (structural next, no conditions).
     ///
-    /// The CaseEntry has `when` (condition) and `then` (actions) fields.
-    /// Actions can contain `next` directives for transitions.
-    pub fn evaluate_case_entries(
+    /// Returns the next step(s) to execute based on the step's `next` configuration.
+    /// This is for backwards compatibility - use evaluate_next_transitions for
+    /// canonical format with conditional routing.
+    pub fn evaluate_next(
         &self,
         step: &Step,
         context: &HashMap<String, serde_json::Value>,
-    ) -> AppResult<Option<EvaluationResult>> {
-        let case_entries = match &step.case {
-            Some(entries) => entries,
-            None => return Ok(None),
-        };
-
-        for entry in case_entries {
-            // Evaluate the when condition
-            if self.evaluate_condition(&entry.when, context)? {
-                // Find the next step from the then actions
-                for action in &entry.then {
-                    if let Some(next_obj) = action.get("next") {
-                        if let Some(next_step) = next_obj.get("step").and_then(|v| v.as_str()) {
-                            let args = next_obj.get("args").cloned();
-                            return Ok(Some(EvaluationResult::matched(next_step, args)));
-                        }
-                    }
-                }
-            }
-        }
-
-        Ok(None)
+    ) -> AppResult<Vec<EvaluationResult>> {
+        // Delegate to the canonical evaluation method
+        self.evaluate_next_transitions(step, context)
     }
 
     /// Evaluate a loop condition.
@@ -202,25 +280,6 @@ impl ConditionEvaluator {
             ))),
         }
     }
-}
-
-/// Entry in a case/when block (for standalone use).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CaseWhenEntry {
-    /// Value to match against the case expression.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub value: Option<String>,
-    /// Condition to evaluate (alternative to value matching).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub condition: Option<String>,
-    /// Whether this is the default case.
-    #[serde(default)]
-    pub is_default: bool,
-    /// Step to transition to if matched.
-    pub then_step: String,
-    /// Parameters to pass to the next step.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub with_params: Option<serde_json::Value>,
 }
 
 #[cfg(test)]
@@ -287,5 +346,14 @@ mod tests {
         let result = EvaluationResult::error("something went wrong");
         assert!(!result.matched);
         assert_eq!(result.error, Some("something went wrong".to_string()));
+    }
+
+    #[test]
+    fn test_next_mode_parsing() {
+        assert_eq!(NextMode::from_str("exclusive"), NextMode::Exclusive);
+        assert_eq!(NextMode::from_str("inclusive"), NextMode::Inclusive);
+        assert_eq!(NextMode::from_str("EXCLUSIVE"), NextMode::Exclusive);
+        assert_eq!(NextMode::from_str("INCLUSIVE"), NextMode::Inclusive);
+        assert_eq!(NextMode::from_str("unknown"), NextMode::Exclusive); // default
     }
 }

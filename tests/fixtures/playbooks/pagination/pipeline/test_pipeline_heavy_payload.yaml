@@ -1,0 +1,229 @@
+# NoETL Canonical v10 Playbook
+# Heavy payload task sequence test for load testing result storage and threading.
+
+apiVersion: noetl.io/v10
+kind: Playbook
+metadata:
+  name: test_pipeline_heavy_payload
+  path: tests/pagination/pipeline/heavy
+  description: |
+    Heavy payload task sequence test for load testing result storage and threading.
+
+    Tests:
+    - Large HTTP responses (configurable KB per item)
+    - Result externalization to NATS KV/Object Store
+    - _prev threading with large data
+    - Memory-efficient task sequence execution
+
+workload:
+  api_url: "http://paginated-api.test-server.svc.cluster.local:5555"
+  payload_kb_per_item: 50
+  page_size: 5
+  max_pages: 3
+  current_page: 1
+  pages_processed: 0
+  total_bytes_processed: 0
+
+workflow:
+  - step: start
+    desc: Initialize heavy payload test
+    tool:
+      kind: python
+      code: |
+        result = {
+          "status": "initialized",
+          "test": "heavy_payload_task_sequence",
+          "config": {
+            "payload_kb_per_item": {{ payload_kb_per_item }},
+            "page_size": {{ page_size }},
+            "estimated_kb_per_page": {{ payload_kb_per_item }} * {{ page_size }}
+          }
+        }
+    set_ctx:
+      current_page: "{{ workload.current_page }}"
+      pages_processed: "{{ workload.pages_processed }}"
+      total_bytes_processed: "{{ workload.total_bytes_processed }}"
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: fetch_heavy_page
+
+  - step: fetch_heavy_page
+    desc: Task sequence for heavy payload processing
+    tool:
+      - fetch:
+          kind: http
+          url: "{{ api_url }}/api/v1/heavy"
+          method: GET
+          params:
+            page: "{{ ctx.current_page }}"
+            pageSize: "{{ page_size }}"
+            payload_kb: "{{ payload_kb_per_item }}"
+          output_select:
+            strategy: size_threshold
+            threshold_kb: 100
+          spec:
+            policy:
+              rules:
+                - when: "{{ outcome.error.retryable }}"
+                  then:
+                    do: retry
+                    attempts: 3
+                    backoff: exponential
+                    delay: 2.0
+                - when: "{{ outcome.status == 'error' }}"
+                  then:
+                    do: fail
+                - else:
+                    then:
+                      do: continue
+
+      - process:
+          kind: python
+          args:
+            http_response: "{{ _prev }}"
+            page_num: "{{ ctx.current_page }}"
+          code: |
+            import sys
+
+            response_body = http_response.get('data', {})
+            items = response_body.get('data', [])
+            paging = response_body.get('paging', {})
+            meta = response_body.get('meta', {})
+
+            total_payload_size = sum(
+                len(item.get('payload', '')) for item in items
+            )
+
+            summaries = []
+            for item in items:
+                summaries.append({
+                    'id': item['id'],
+                    'name': item['name'],
+                    'score': item['score'],
+                    'category': item.get('category', 'unknown'),
+                    'payload_size_kb': len(item.get('payload', '')) // 1024
+                })
+
+            result = {
+                'page': page_num,
+                'items_count': len(items),
+                'total_payload_kb': total_payload_size // 1024,
+                'has_more': paging.get('hasMore', False),
+                'summaries': summaries,
+                'meta': meta
+            }
+          spec:
+            policy:
+              rules:
+                - when: "{{ outcome.status == 'error' }}"
+                  then:
+                    do: continue
+                - else:
+                    then:
+                      do: continue
+
+      - summarize:
+          kind: python
+          args:
+            processed: "{{ _prev }}"
+          code: |
+            result = {
+                'page': processed['page'],
+                'items_processed': processed['items_count'],
+                'payload_kb': processed['total_payload_kb'],
+                'has_more': processed['has_more'],
+                'status': 'processed'
+            }
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: update_progress
+
+  - step: update_progress
+    desc: Update progress and check continuation
+    tool:
+      kind: python
+      args:
+        result: "{{ fetch_heavy_page }}"
+        current_page: "{{ ctx.current_page }}"
+        max_pages: "{{ max_pages }}"
+        total_bytes: "{{ ctx.total_bytes_processed }}"
+      code: |
+        has_more = result.get('has_more', False) if isinstance(result, dict) else False
+        payload_kb = result.get('payload_kb', 0) if isinstance(result, dict) else 0
+
+        should_continue = has_more and int(current_page) < int(max_pages)
+
+        result = {
+          "current_page": current_page,
+          "payload_kb_this_page": payload_kb,
+          "total_bytes_processed": int(total_bytes) + (payload_kb * 1024),
+          "has_more": has_more,
+          "should_continue": should_continue,
+          "reason": "more pages available" if should_continue else "limit reached or no more pages"
+        }
+      spec:
+        policy:
+          rules:
+            - else:
+                then:
+                  do: continue
+                  set_ctx:
+                    current_page: "{{ (ctx.current_page | int) + 1 }}"
+                    pages_processed: "{{ (ctx.pages_processed | int) + 1 }}"
+                    total_bytes_processed: "{{ update_progress.total_bytes_processed }}"
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: fetch_heavy_page
+          when: "{{ update_progress.should_continue == true }}"
+        - step: final_report
+          when: "{{ update_progress.should_continue != true }}"
+
+  - step: final_report
+    desc: Generate test summary
+    tool:
+      kind: python
+      args:
+        pages_processed: "{{ ctx.pages_processed }}"
+        total_bytes: "{{ ctx.total_bytes_processed }}"
+        payload_kb_per_item: "{{ payload_kb_per_item }}"
+        page_size: "{{ page_size }}"
+      code: |
+        total_kb = int(total_bytes) // 1024
+        total_mb = total_kb / 1024
+
+        result = {
+          "status": "ok",
+          "summary": {
+            "pages_processed": int(pages_processed),
+            "total_data_processed_kb": total_kb,
+            "total_data_processed_mb": round(total_mb, 2),
+            "avg_kb_per_page": total_kb // max(1, int(pages_processed)),
+            "config": {
+              "payload_kb_per_item": int(payload_kb_per_item),
+              "page_size": int(page_size)
+            }
+          },
+          "features_tested": [
+            "Heavy HTTP responses with configurable payload",
+            "Result externalization via output_select",
+            "_prev threading with large data",
+            "spec.policy.rules flow control",
+            "Memory-efficient data processing"
+          ]
+        }
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
+
+  - step: end
+    desc: Test complete
+    tool:
+      kind: noop

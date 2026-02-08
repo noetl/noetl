@@ -15,14 +15,36 @@ Complete guide for configuring Auth0 authentication with the NoETL Gateway.
 
 ## Overview
 
-The NoETL Gateway uses Auth0 for user authentication via the OAuth2/OIDC implicit flow:
+The NoETL Gateway uses Auth0 for user authentication via the OAuth2/OIDC implicit flow, with NATS K/V providing fast session caching:
+
+### Authentication Flow
 
 1. User clicks "Login with Auth0" on the gateway UI
 2. Browser redirects to Auth0 Universal Login
 3. User authenticates (email/password, social, etc.)
 4. Auth0 redirects back with an ID token
-5. Gateway validates token and creates a session via NoETL playbook
-6. User receives a session token for subsequent API calls
+5. Gateway calls `auth0_login` playbook via NoETL
+6. Playbook validates token, creates user/session in PostgreSQL
+7. Playbook caches session in NATS K/V (`sessions` bucket)
+8. User receives a session token for subsequent API calls
+
+### Session Validation (Subsequent Requests)
+
+```
+Gateway Request → Check NATS K/V → Cache Hit? → Use cached session (sub-ms)
+                                 → Cache Miss? → Call playbook → Refresh cache
+```
+
+1. Gateway checks NATS K/V for cached session (sub-millisecond lookup)
+2. **Cache hit:** Use cached session data immediately
+3. **Cache miss:** Call `auth0_validate_session` playbook
+4. Playbook validates from PostgreSQL (source of truth) and refreshes cache
+
+**Benefits:**
+- Sub-millisecond session lookups from NATS K/V
+- Reduced load on NoETL server and PostgreSQL
+- PostgreSQL remains source of truth
+- Automatic cache refresh on validation
 
 ## Auth0 Account Setup
 
@@ -183,6 +205,8 @@ CREATE TABLE IF NOT EXISTS auth.sessions (
 
 ### Required Credentials
 
+#### PostgreSQL Credential
+
 Create a PostgreSQL credential for the auth schema:
 
 ```bash
@@ -204,6 +228,32 @@ EOF
 # Register credential
 noetl register credential -f tests/fixtures/credentials/pg_auth.json
 ```
+
+#### NATS Credential (for Session Caching)
+
+Create a NATS credential for K/V session storage:
+
+```bash
+# Create credential file
+cat > tests/fixtures/credentials/nats_credential.json << 'EOF'
+{
+  "name": "nats_credential",
+  "type": "nats",
+  "description": "NATS JetStream credential for K/V Store session management",
+  "tags": ["nats", "jetstream", "kv", "sessions", "auth0"],
+  "data": {
+    "nats_url": "nats://nats.nats.svc.cluster.local:4222",
+    "nats_user": "noetl",
+    "nats_password": "noetl"
+  }
+}
+EOF
+
+# Register credential
+noetl register credential -f tests/fixtures/credentials/nats_credential.json
+```
+
+The auth0 playbooks use `nats_credential` to cache sessions in the NATS K/V `sessions` bucket for fast gateway lookups.
 
 ## Auth0 Customization
 

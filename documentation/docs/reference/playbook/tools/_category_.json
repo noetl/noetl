@@ -1,0 +1,8 @@
+{
+  "label": "Tool Configuration",
+  "position": 3,
+  "link": {
+    "type": "generated-index",
+    "description": "Configuration reference for all supported tools in NoETL playbooks."
+  }
+}

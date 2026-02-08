@@ -1,13 +1,13 @@
-apiVersion: noetl.io/v2
+apiVersion: noetl.io/v10
 kind: Playbook
 metadata:
   name: provision_auth_schema
   path: api_integration/auth0/provision_auth_schema
   description: |
     Provision authentication schema and tables in demo_noetl database.
-    
+
     Creates auth schema with tables: users, roles, permissions, sessions, audit_log, etc.
-    
+
     Prerequisites:
     - PostgreSQL database accessible
     - Admin credentials registered as 'pg_k8s'
@@ -17,33 +17,30 @@ metadata:
     - provisioning
 
 workload:
-  db_credential: pg_k8s
+  db_credential: pg_auth
 
 workflow:
   - step: start
     desc: Begin auth schema provisioning
     tool:
       kind: python
-      auth: {}
-      libs: {}
-      args: {}
       code: |
         result = {"status": "initialized"}
-    case:
-      - when: "{{ event.name == 'step.exit' }}"
-        then:
-          next:
-            - step: provision_schema
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: provision_schema
 
   - step: provision_schema
     desc: Execute SQL to create auth schema and tables
     tool:
       kind: postgres
-      auth: "{{ workload.db_credential }}"
+      auth: "{{ db_credential }}"
       command: |
         -- Create auth schema
         CREATE SCHEMA IF NOT EXISTS auth;
-        
+
         -- Create users table
         CREATE TABLE IF NOT EXISTS auth.users (
           user_id SERIAL PRIMARY KEY,
@@ -56,7 +53,7 @@ workflow:
           updated_at TIMESTAMP DEFAULT NOW(),
           last_login_at TIMESTAMP
         );
-        
+
         -- Create roles table
         CREATE TABLE IF NOT EXISTS auth.roles (
           role_id SERIAL PRIMARY KEY,
@@ -64,7 +61,7 @@ workflow:
           description TEXT,
           created_at TIMESTAMP DEFAULT NOW()
         );
-        
+
         -- Create permissions table
         CREATE TABLE IF NOT EXISTS auth.permissions (
           permission_id SERIAL PRIMARY KEY,
@@ -72,7 +69,7 @@ workflow:
           description TEXT,
           created_at TIMESTAMP DEFAULT NOW()
         );
-        
+
         -- Create user_roles junction table
         CREATE TABLE IF NOT EXISTS auth.user_roles (
           user_role_id SERIAL PRIMARY KEY,
@@ -82,7 +79,7 @@ workflow:
           expires_at TIMESTAMP,
           UNIQUE(user_id, role_id)
         );
-        
+
         -- Create role_permissions junction table
         CREATE TABLE IF NOT EXISTS auth.role_permissions (
           role_permission_id SERIAL PRIMARY KEY,
@@ -90,7 +87,7 @@ workflow:
           permission_id INTEGER REFERENCES auth.permissions(permission_id) ON DELETE CASCADE,
           UNIQUE(role_id, permission_id)
         );
-        
+
         -- Create sessions table
         CREATE TABLE IF NOT EXISTS auth.sessions (
           session_id SERIAL PRIMARY KEY,
@@ -105,7 +102,7 @@ workflow:
           ip_address INET,
           user_agent TEXT
         );
-        
+
         -- Create audit_log table
         CREATE TABLE IF NOT EXISTS auth.audit_log (
           log_id SERIAL PRIMARY KEY,
@@ -120,7 +117,7 @@ workflow:
           user_agent TEXT,
           created_at TIMESTAMP DEFAULT NOW()
         );
-        
+
         -- Create playbook_permissions table
         CREATE TABLE IF NOT EXISTS auth.playbook_permissions (
           permission_id SERIAL PRIMARY KEY,
@@ -136,7 +133,7 @@ workflow:
             playbook_path IS NOT NULL OR allow_pattern IS NOT NULL
           )
         );
-        
+
         -- Create indexes
         CREATE INDEX IF NOT EXISTS idx_users_auth0_id ON auth.users(auth0_id);
         CREATE INDEX IF NOT EXISTS idx_users_email ON auth.users(email);
@@ -144,7 +141,7 @@ workflow:
         CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON auth.sessions(user_id);
         CREATE INDEX IF NOT EXISTS idx_audit_log_user_id ON auth.audit_log(user_id);
         CREATE INDEX IF NOT EXISTS idx_audit_log_created_at ON auth.audit_log(created_at);
-        
+
         -- Seed default roles
         INSERT INTO auth.roles (role_name, description) VALUES
           ('admin', 'Administrator with full access'),
@@ -152,7 +149,7 @@ workflow:
           ('analyst', 'Analyst with read-only access'),
           ('viewer', 'Viewer with limited read access')
         ON CONFLICT (role_name) DO NOTHING;
-        
+
         -- Seed default permissions
         INSERT INTO auth.permissions (permission_name, description) VALUES
           ('playbook:execute', 'Execute playbooks'),
@@ -163,7 +160,7 @@ workflow:
           ('credential:read', 'Read credentials'),
           ('credential:write', 'Manage credentials')
         ON CONFLICT (permission_name) DO NOTHING;
-        
+
         -- Grant permissions to roles
         INSERT INTO auth.role_permissions (role_id, permission_id)
         SELECT r.role_id, p.permission_id
@@ -171,66 +168,59 @@ workflow:
         CROSS JOIN auth.permissions p
         WHERE r.role_name = 'admin'
         ON CONFLICT DO NOTHING;
-        
+
         INSERT INTO auth.role_permissions (role_id, permission_id)
         SELECT r.role_id, p.permission_id
         FROM auth.roles r
         CROSS JOIN auth.permissions p
-        WHERE r.role_name = 'developer' 
+        WHERE r.role_name = 'developer'
           AND p.permission_name IN ('playbook:execute', 'playbook:view', 'catalog:read')
         ON CONFLICT DO NOTHING;
-        
+
         SELECT 'Auth schema provisioned successfully' as result;
-    case:
-      - when: "{{ event.name == 'step.exit' and response is defined }}"
-        then:
-          next:
-            - step: verify_schema
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: verify_schema
 
   - step: verify_schema
     desc: Verify auth schema was created successfully
     tool:
       kind: postgres
-      auth: "{{ workload.db_credential }}"
+      auth: "{{ db_credential }}"
       command: |
-        SELECT 
+        SELECT
           (SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'auth') as table_count,
           (SELECT COUNT(*) FROM auth.roles) as role_count,
           (SELECT COUNT(*) FROM auth.permissions) as permission_count;
-    case:
-      - when: "{{ event.name == 'step.exit' and response is defined }}"
-        then:
-          next:
-            - step: success
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: success
 
   - step: success
     desc: Schema provisioned successfully
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args:
-        verification: "{{ verify_schema }}"
+        verification: "{{ verify_schema.command_0.rows[0] }}"
       code: |
-        def main(verification):
-            """Log successful provisioning."""
-            return {
-                "status": "success",
-                "message": "Auth schema provisioned successfully",
-                "details": verification
-            }
-    case:
-      - when: "{{ event.name == 'step.exit' }}"
-        then:
-          next:
-            - step: end
+        result = {
+            "status": "success",
+            "message": "Auth schema provisioned successfully",
+            "details": verification
+        }
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: Complete provisioning workflow
     tool:
       kind: python
-      auth: {}
-      libs: {}
-      args: {}
       code: |
         result = {"status": "complete"}

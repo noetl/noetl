@@ -7,9 +7,7 @@ Provides REST endpoints for:
 - Custom database queries (example: weather alerts)
 """
 
-from typing import Any, Optional
-from fastapi import APIRouter, Request, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, HTTPException
 from noetl.core.logger import setup_logger
 from .schema import (
     PostgresExecuteRequest,
@@ -155,58 +153,3 @@ async def get_last_weather_alert_summary(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ============================================================================
-# Legacy JSON Request Support (for backward compatibility)
-# ============================================================================
-
-@router.post("/postgres/execute/legacy", response_class=JSONResponse)
-async def execute_postgres_legacy(
-    request: Request,
-    query: Optional[str] = None,
-    query_base64: Optional[str] = None,
-    procedure: Optional[str] = None,
-    parameters: Any = None,
-    schema: Optional[str] = None,
-    connection_string: Optional[str] = None
-):
-    """
-    Legacy endpoint that accepts raw JSON or query parameters.
-    
-    **Deprecated**: Use POST /postgres/execute with typed request instead.
-    
-    This endpoint maintains backward compatibility with existing clients that
-    send either JSON body or query parameters.
-    """
-    try:
-        # Try to parse JSON body first
-        try:
-            body = await request.json()
-        except Exception:
-            body = {}
-        
-        # Merge query params with body (query params take precedence)
-        typed_request = PostgresExecuteRequest(
-            query=query or body.get("query"),
-            query_base64=query_base64 or body.get("query_base64"),
-            procedure=procedure or body.get("procedure"),
-            parameters=parameters or body.get("parameters"),
-            db_schema=schema or body.get("schema"),
-            connection_string=connection_string or body.get("connection_string")
-        )
-        
-        response = await DatabaseService.execute_postgres(typed_request)
-        
-        # Return as plain JSON for legacy compatibility
-        return JSONResponse(content=response.model_dump())
-        
-    except HTTPException as e:
-        return JSONResponse(
-            content={"status": "error", "error": e.detail},
-            status_code=e.status_code
-        )
-    except Exception as e:
-        logger.exception(f"Error in legacy database endpoint: {e}")
-        return JSONResponse(
-            content={"status": "error", "error": str(e)},
-            status_code=500
-        )

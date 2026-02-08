@@ -35,33 +35,50 @@ def add_b64encode_filter(env: Environment) -> Environment:
         env.filters['b64encode'] = lambda s: base64.b64encode(s.encode('utf-8')).decode('utf-8') if isinstance(s, str) else base64.b64encode(str(s).encode('utf-8')).decode('utf-8')
     
     # Provide a tojson filter for templates that need JSON stringification
-    if 'tojson' not in env.filters:
-        def tojson_filter(obj):
-            """Custom tojson filter that unwraps TaskResultProxy objects and handles Undefined."""
-            from jinja2 import Undefined
-            
-            # Handle Jinja2 Undefined objects
-            if isinstance(obj, Undefined):
-                return 'null'
-            
-            # Recursively unwrap TaskResultProxy objects
-            def unwrap_proxies(value):
-                """Recursively unwrap all TaskResultProxy objects in nested structures."""
-                if hasattr(value, '_data'):
-                    # TaskResultProxy - unwrap and recurse
+    # Always update the filter to ensure latest code is used
+    def tojson_filter(obj):
+        """Custom tojson filter that unwraps TaskResultProxy objects and handles Undefined."""
+        from jinja2 import Undefined
+
+        # Handle Jinja2 Undefined objects
+        if isinstance(obj, Undefined):
+            return 'null'
+
+        # Recursively unwrap TaskResultProxy objects
+        def unwrap_proxies(value):
+            """Recursively unwrap all TaskResultProxy objects in nested structures."""
+            value_type = type(value).__name__
+            logger.debug(f"[TOJSON] unwrap_proxies: value_type={value_type}")
+
+            # Check for TaskResultProxy by class name (handles multiple class definitions)
+            if value_type == 'TaskResultProxy':
+                logger.debug(f"[TOJSON] Found TaskResultProxy, extracting _data")
+                # Access _data directly via object's __dict__ to avoid __getattr__
+                if hasattr(value, '__dict__') and '_data' in value.__dict__:
+                    return unwrap_proxies(value.__dict__['_data'])
+                elif hasattr(value, '_data'):
                     return unwrap_proxies(value._data)
-                elif isinstance(value, dict):
-                    # Recursively unwrap dict values
-                    return {k: unwrap_proxies(v) for k, v in value.items()}
-                elif isinstance(value, (list, tuple)):
-                    # Recursively unwrap list/tuple items
-                    return type(value)(unwrap_proxies(item) for item in value)
                 else:
-                    return value
-            
-            obj = unwrap_proxies(obj)
-            return json.dumps(obj, cls=DateTimeEncoder)
-        env.filters['tojson'] = tojson_filter
+                    # Fallback: try to convert to string
+                    logger.warning(f"[TOJSON] Could not extract _data from TaskResultProxy, using str()")
+                    return str(value)
+            elif hasattr(value, '_data') and not isinstance(value, (dict, list, tuple, str, int, float, bool, type(None))):
+                # Other proxy-like objects with _data attribute
+                logger.debug(f"[TOJSON] Found proxy-like object with _data, extracting")
+                return unwrap_proxies(value._data)
+            elif isinstance(value, dict):
+                # Recursively unwrap dict values
+                return {k: unwrap_proxies(v) for k, v in value.items()}
+            elif isinstance(value, (list, tuple)):
+                # Recursively unwrap list/tuple items
+                return type(value)(unwrap_proxies(item) for item in value)
+            else:
+                return value
+
+        obj = unwrap_proxies(obj)
+        logger.debug(f"[TOJSON] After unwrap, obj type={type(obj).__name__}")
+        return json.dumps(obj, cls=DateTimeEncoder)
+    env.filters['tojson'] = tojson_filter
     
     # Provide encrypt_secret filter for caching sensitive data
     if 'encrypt_secret' not in env.filters:
@@ -166,7 +183,13 @@ def render_template(env: Environment, template: Any, context: Dict, rules: Dict 
                             return self._data[key]
                         except Exception as e:
                             raise KeyError(key) from e
-                    
+
+                    def get(self, key, default=None):
+                        """Support dict-like .get() method for Jinja2 templates."""
+                        if isinstance(self._data, dict):
+                            return self._data.get(key, default)
+                        return default
+
                     def __str__(self):
                         """Return JSON string representation when TaskResultProxy is rendered directly in Jinja2"""
                         import json
@@ -232,6 +255,12 @@ def render_template(env: Environment, template: Any, context: Dict, rules: Dict 
                 if strict_keys:
                     raise
                 return template
+
+            # Check if the original template used tojson filter - if so, respect the string output
+            # The user explicitly requested JSON string format, don't parse it back to dict
+            if '| tojson' in template or '|tojson' in template:
+                logger.debug(f"render_template: Template uses tojson filter, returning string as-is: {rendered[:100]}...")
+                return rendered
 
             if (rendered.startswith('[') and rendered.endswith(']')) or \
                     (rendered.startswith('{') and rendered.endswith('}')):

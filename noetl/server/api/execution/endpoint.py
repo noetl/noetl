@@ -14,7 +14,9 @@ from .schema import (
     CancelExecutionRequest,
     CancelExecutionResponse,
     FinalizeExecutionRequest,
-    FinalizeExecutionResponse
+    FinalizeExecutionResponse,
+    CleanupStuckExecutionsRequest,
+    CleanupStuckExecutionsResponse
 )
 
 # V2 engine fallback
@@ -524,3 +526,101 @@ async def get_execution(
             "has_prev": page > 1
         }
     }
+
+
+@router.post("/executions/cleanup", response_model=CleanupStuckExecutionsResponse)
+async def cleanup_stuck_executions(request: CleanupStuckExecutionsRequest = Body(...)):
+    """
+    Clean up stuck executions that have no terminal event.
+    
+    Marks executions as CANCELLED if they:
+    - Have a 'playbook.initialized' event
+    - Are older than specified minutes (default: 5)
+    - Have no terminal event (playbook.completed, playbook.failed, execution.cancelled)
+    
+    This is useful for cleaning up executions interrupted by server restarts.
+    """
+    logger.info(
+        f"Cleanup stuck executions request: older_than_minutes={request.older_than_minutes}, "
+        f"dry_run={request.dry_run}"
+    )
+    
+    async with get_pool_connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cursor:
+            # Find stuck executions
+            await cursor.execute("""
+                SELECT DISTINCT 
+                    e1.execution_id,
+                    e1.catalog_id
+                FROM event e1
+                WHERE e1.event_type = 'playbook.initialized'
+                  AND e1.created_at < NOW() - INTERVAL '%s minutes'
+                  AND NOT EXISTS (
+                    SELECT 1 FROM event e2 
+                    WHERE e2.execution_id = e1.execution_id 
+                      AND e2.event_type IN ('playbook.completed', 'playbook.failed', 'execution.cancelled')
+                  )
+                ORDER BY e1.execution_id
+            """, (request.older_than_minutes,))
+            
+            stuck_executions = await cursor.fetchall()
+            execution_ids = [str(ex['execution_id']) for ex in stuck_executions]
+            
+            if request.dry_run:
+                logger.info(f"[DRY RUN] Would cancel {len(execution_ids)} stuck executions")
+                return CleanupStuckExecutionsResponse(
+                    cancelled_count=len(execution_ids),
+                    execution_ids=execution_ids,
+                    message=f"[DRY RUN] Would cancel {len(execution_ids)} stuck executions older than {request.older_than_minutes} minutes"
+                )
+            
+            if not stuck_executions:
+                return CleanupStuckExecutionsResponse(
+                    cancelled_count=0,
+                    execution_ids=[],
+                    message=f"No stuck executions found older than {request.older_than_minutes} minutes"
+                )
+            
+            # Insert cancellation events
+            for execution in stuck_executions:
+                execution_id = execution['execution_id']
+                catalog_id = execution['catalog_id']
+                
+                # Get next event_id for this execution
+                await cursor.execute("""
+                    SELECT COALESCE(MAX(event_id), 0) + 1 as next_event_id
+                    FROM event
+                    WHERE execution_id = %s
+                """, (execution_id,))
+                
+                result = await cursor.fetchone()
+                next_event_id = result['next_event_id']
+                
+                # Insert cancellation event
+                await cursor.execute("""
+                    INSERT INTO event (
+                        execution_id, catalog_id, event_id, event_type, status, context, created_at
+                    ) VALUES (
+                        %s, %s, %s, 'execution.cancelled', 'CANCELLED', %s, NOW()
+                    )
+                """, (
+                    execution_id,
+                    catalog_id,
+                    next_event_id,
+                    Json({
+                        "reason": f"Cleaned up stuck execution (older than {request.older_than_minutes} minutes)",
+                        "auto_cancelled": True,
+                        "cleanup_api": True
+                    })
+                ))
+            
+            await conn.commit()
+            
+            logger.info(f"Cancelled {len(execution_ids)} stuck executions")
+            
+            return CleanupStuckExecutionsResponse(
+                cancelled_count=len(execution_ids),
+                execution_ids=execution_ids,
+                message=f"Successfully cancelled {len(execution_ids)} stuck executions older than {request.older_than_minutes} minutes"
+            )
+

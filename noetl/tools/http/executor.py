@@ -110,8 +110,10 @@ async def execute_http_task(
         logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Rendered data={data_map}")
 
         # Direct params/payload (alternative to data.query/data.body)
+        # Also support 'body' key as an alias for 'payload' (common pattern)
         params = render_template(jinja_env, task_config.get('params', {}), context)
-        payload = render_template(jinja_env, task_config.get('payload', {}), context)
+        raw_payload = task_config.get('payload') or task_config.get('body')
+        payload = render_template(jinja_env, raw_payload or {}, context)
 
         # Apply runtime overrides from task_with (e.g., pagination retry params)
         if isinstance(task_with, dict):

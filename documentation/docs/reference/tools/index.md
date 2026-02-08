@@ -1,152 +1,107 @@
 ---
 sidebar_position: 0
-title: Tools Overview
-description: Overview of all available NoETL action tools
+title: Tools Overview (Canonical v10)
+description: Overview of NoETL tool kinds and how to use them inside canonical v10 step pipelines
 ---
 
-# NoETL Tools Reference
+# NoETL Tools Reference (Canonical v10)
 
-NoETL provides a set of action tools that execute specific tasks within workflows. Each tool is designed for a particular type of operation, from HTTP requests to database queries to container execution.
+NoETL tools are executed as **tasks** inside a canonical step pipeline (`step.tool`).
 
-## Available Tools
+Canonical v10 reminders:
+- A step is: admission policy (`step.spec.policy.admit`) + ordered task pipeline (`step.tool`) + router (`step.next` arcs).
+- Task outcome handling is done via `task.spec.policy.rules` (no legacy `eval`/`expr`).
+- Large outputs are reference-first (ResultRef/ManifestRef patterns).
 
-| Tool | Description | Use Case |
+See `documentation/docs/reference/dsl/noetl_step_spec.md` for the full DSL model.
+
+---
+
+## Available tool kinds
+
+| Kind | Description | Use case |
 |------|-------------|----------|
-| [HTTP](/docs/reference/tools/http) | Make HTTP/REST API requests | API integrations, webhooks |
-| [PostgreSQL](/docs/reference/tools/postgres) | Execute PostgreSQL queries | OLTP databases, data storage |
-| [Python](/docs/reference/tools/python) | Run Python code | Data transformation, custom logic |
-| [DuckDB](/docs/reference/tools/duckdb) | Analytics with DuckDB | Data analysis, ETL, cloud storage |
-| [Snowflake](/docs/reference/tools/snowflake) | Query Snowflake data warehouse | Data warehouse operations |
-| [Container](/docs/reference/tools/container) | Run scripts in Kubernetes | Complex workloads, custom environments |
-| [GCS](/docs/reference/tools/gcs) | Upload files to Google Cloud Storage | File storage, data export |
-| [DuckLake](/docs/reference/tools/ducklake) | Lakehouse queries | Unified analytics |
+| `http` | HTTP requests | APIs, webhooks, polling |
+| `postgres` | PostgreSQL commands/queries | OLTP + result storage |
+| `python` | Inline Python execution | transforms, custom logic |
+| `duckdb` | DuckDB queries | analytics, local joins |
+| `snowflake` | Snowflake queries | warehouse operations |
+| `container` | Job/container execution | heavy deps, isolation |
+| `gcs` | Google Cloud Storage | export/import artifacts |
+| `ducklake` | Lakehouse queries | unified analytics |
+| `nats` | JetStream/KV/Object Store | state, messaging, artifacts |
 
-## Tool Selection Guide
+---
 
-### API & Web Operations
+## Canonical usage pattern
 
-- **HTTP**: REST API calls, webhooks, external service integration
-- **GCS**: Cloud storage file uploads
-
-### Database Operations
-
-- **PostgreSQL**: Transactional workloads, application databases
-- **Snowflake**: Data warehouse queries, analytics at scale
-- **DuckDB**: Local analytics, cloud storage queries, cross-source joins
-- **DuckLake**: Lakehouse architecture, unified data access
-
-### Code Execution
-
-- **Python**: Data transformation, custom logic, simple scripts
-- **Container**: Complex dependencies, isolated environments, GPU workloads
-
-## Common Patterns
-
-### Basic Tool Usage
+### Basic task in a pipeline
 
 ```yaml
-- step: my_step
-  tool: http
-  method: GET
-  endpoint: "https://api.example.com/data"
+- step: fetch_ping
+  tool:
+    - call:
+        kind: http
+        method: GET
+        url: "{{ workload.api_url }}/ping"
+        spec:
+          policy:
+            rules:
+              - when: "{{ outcome.status == 'error' }}"
+                then: { do: fail }
+              - else:
+                  then: { do: break }
 ```
 
-### With Authentication
+### With routing
 
 ```yaml
-- step: secure_query
-  tool: postgres
-  auth:
-    type: postgres
-    credential: production_db
-  query: "SELECT * FROM users"
+next:
+  spec: { mode: exclusive }
+  arcs:
+    - step: end
+      when: "{{ event.name == 'step.done' }}"
 ```
 
-### With Variable Extraction
+### With authentication
 
-```yaml
-- step: fetch_data
-  tool: http
-  method: GET
-  endpoint: "https://api.example.com/users"
-  vars:
-    user_count: "{{ result.data.total }}"
-    first_user: "{{ result.data.users[0] }}"
-```
+Canonical approach:
+- declare required credentials under root `keychain`
+- reference credentials by name in tasks (for example `auth: pg_k8s`)
 
-### With External Script
+See `documentation/docs/reference/auth_and_keychain_reference.md`.
 
-```yaml
-- step: run_script
-  tool: python
-  script:
-    uri: gs://scripts/transform.py
-    source:
-      type: gcs
-      auth: gcp_service_account
-```
+---
 
-## Authentication
+## Outcome envelope (canonical)
 
-All tools support the unified authentication system:
+Each task produces an `outcome`:
+- `outcome.status`: `"ok"` or `"error"`
+- `outcome.result`: success output (small inline payload or reference)
+- `outcome.error`: structured error (`kind` required; `retryable` recommended)
+- `outcome.meta`: timing/attempt metadata
 
-```yaml
-auth:
-  type: <service_type>    # postgres, snowflake, gcs, s3, http, etc.
-  credential: <name>      # Reference to registered credential
-```
+Policies (`task.spec.policy.rules`) evaluate over `outcome`.
 
-See [Authentication Reference](/docs/reference/auth_and_keychain_reference) for details.
+---
 
-## Response Format
+## Template namespaces
 
-All tools return a standardized response structure:
+Common namespaces available in templates:
+- `workload.*` (immutable merged input)
+- `keychain.*` (resolved credentials; read-only)
+- `ctx.*` (execution-scoped mutable context)
+- `iter.*` (iteration-scoped mutable context; loops only)
+- `args.*` (token payload / arc inscription)
+- pipeline locals: `_prev`, `_task`, `_attempt`, `outcome` (policy evaluation)
+- routing: `event` (boundary event; `next.arcs[].when`)
 
-```json
-{
-  "id": "task-uuid",
-  "status": "success",
-  "data": {
-    // Tool-specific result data
-  }
-}
-```
+---
 
-On error:
+## See also
 
-```json
-{
-  "id": "task-uuid",
-  "status": "error",
-  "error": "Error message",
-  "data": {}
-}
-```
-
-## Template Support
-
-All tools support Jinja2 templating in string values:
-
-```yaml
-- step: dynamic_request
-  tool: http
-  endpoint: "{{ workload.base_url }}/{{ vars.resource_id }}"
-  headers:
-    Authorization: "Bearer {{ keychain.api_token }}"
-```
-
-### Available Context Variables
-
-| Variable | Description |
-|----------|-------------|
-| `workload.*` | Global workflow variables |
-| `vars.*` | Variables from previous steps |
-| `keychain.*` | Resolved credentials |
-| `<step_name>.*` | Results from specific steps |
-| `execution_id` | Current execution ID |
-
-## See Also
-
-- [DSL Specification](/docs/reference/dsl/spec) - Complete playbook syntax
-- [Authentication](/docs/reference/auth_and_keychain_reference) - Credential management
-- [Retry Configuration](/docs/reference/dsl/unified_retry) - Error handling
+- `documentation/docs/reference/dsl/spec.md`
+- `documentation/docs/reference/dsl/runtime_events.md`
+- `documentation/docs/reference/dsl/runtime_results.md`
+- `documentation/docs/reference/retry_mechanism_v2.md`
+- `documentation/docs/reference/pagination_v2.md`

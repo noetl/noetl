@@ -24,34 +24,20 @@ workflow:
       cmds:
         - echo "Worker Pool Deployment - Action '{{ workload.action }}'"
     next:
-      - when: "{{ workload.action }} == build"
-        then:
-          - step: build_image
-        args: {}
-      - when: "{{ workload.action }} == push"
-        then:
-          - step: push_image
-        args: {}
-      - when: "{{ workload.action }} == deploy"
-        then:
-          - step: deploy_helm
-        args: {}
-      - when: "{{ workload.action }} == all"
-        then:
-          - step: build_image
-        args: {}
-      - when: "{{ workload.action }} == status"
-        then:
-          - step: status
-        args: {}
-      - when: "{{ workload.action }} == logs"
-        then:
-          - step: logs
-        args: {}
-      - when: "{{ workload.action }} == help"
-        then:
-          - step: show_help
-        args: {}
+      - step: build_image
+        when: "{{ workload.action == 'build' }}"
+      - step: push_image
+        when: "{{ workload.action == 'push' }}"
+      - step: deploy_helm
+        when: "{{ workload.action == 'deploy' }}"
+      - step: build_image
+        when: "{{ workload.action == 'all' }}"
+      - step: status
+        when: "{{ workload.action == 'status' }}"
+      - step: logs
+        when: "{{ workload.action == 'logs' }}"
+      - step: show_help
+        when: "{{ workload.action == 'help' }}"
       - step: show_help
 
   - step: build_image
@@ -86,10 +72,8 @@ workflow:
           echo $IMAGE_TAG > .worker_pool_last_build_tag.txt
           echo "Build complete: $IMAGE"
     next:
-      - when: "{{ workload.action }} == all"
-        then:
-          - step: push_image
-        args: {}
+      - step: push_image
+        when: "{{ workload.action == 'all' }}"
       - step: end
 
   - step: push_image
@@ -115,10 +99,8 @@ workflow:
 
           echo "Push complete"
     next:
-      - when: "{{ workload.action }} == all"
-        then:
-          - step: deploy_helm
-        args: {}
+      - step: deploy_helm
+        when: "{{ workload.action == 'all' }}"
       - step: end
 
   - step: deploy_helm
@@ -222,3 +204,5 @@ workflow:
 
   - step: end
     desc: Done
+    tool:
+      kind: noop

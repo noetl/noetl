@@ -1,0 +1,105 @@
+apiVersion: noetl.io/v10
+kind: Playbook
+metadata:
+  name: test_pipeline_simple
+  path: tests/pagination/pipeline/simple
+  description: Simple task sequence test with fetch -> transform -> validate
+
+workload:
+  api_url: "http://paginated-api.test-server.svc.cluster.local:5555"
+
+workflow:
+  - step: start
+    desc: Initialize test
+    tool:
+      kind: python
+      code: |
+        result = {"status": "starting task sequence test"}
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: run_pipeline
+
+  - step: run_pipeline
+    desc: Execute fetch -> transform -> validate task sequence
+    tool:
+      - fetch:
+          kind: http
+          url: "{{ api_url }}/api/v1/assessments"
+          method: GET
+          params:
+            page: 1
+            pageSize: 5
+          spec:
+            policy:
+              rules:
+                - when: "{{ outcome.error.retryable }}"
+                  then:
+                    do: retry
+                    attempts: 3
+                    backoff: linear
+                    delay: 1.0
+                - when: "{{ outcome.status == 'error' }}"
+                  then:
+                    do: fail
+                - else:
+                    then:
+                      do: continue
+
+      - transform:
+          kind: python
+          args:
+            http_response: "{{ _prev }}"
+          code: |
+            response_body = http_response.get('data', {})
+            items = response_body.get('data', [])
+            result = {
+              'count': len(items),
+              'ids': [i['id'] for i in items],
+              'has_more': response_body.get('paging', {}).get('hasMore', False)
+            }
+
+      - validate:
+          kind: python
+          args:
+            transformed: "{{ _prev }}"
+          code: |
+            assert transformed['count'] == 5, f"Expected 5 items, got {transformed['count']}"
+            assert transformed['ids'] == [1, 2, 3, 4, 5], f"Expected [1,2,3,4,5], got {transformed['ids']}"
+            result = {
+              'status': 'passed',
+              'message': 'Task sequence executed successfully',
+              'items_processed': transformed['count']
+            }
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: report_result
+
+  - step: report_result
+    desc: Report test result
+    tool:
+      kind: python
+      args:
+        pipeline_result: "{{ run_pipeline }}"
+      code: |
+        status = pipeline_result.get('status', 'unknown') if isinstance(pipeline_result, dict) else 'unknown'
+        result = {
+          'test': 'pipeline_simple',
+          'status': status,
+          'pipeline_result': pipeline_result
+        }
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
+
+  - step: end
+    desc: Test complete
+    tool:
+      kind: python
+      code: |
+        result = {"status": "complete"}

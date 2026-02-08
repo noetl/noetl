@@ -10,6 +10,7 @@ pub mod types;
 
 pub use parser::{extract_kind, extract_metadata, parse_playbook, validate_playbook};
 pub use types::{
-    CaseEntry, Command, KeychainDef, Loop, LoopMode, Metadata, NextSpec, NextTarget, Playbook,
-    Step, ToolCall, ToolKind, ToolSpec, WorkbookTask,
+    CanonicalNextTarget, Command, EvalCondition, EvalElse, EvalEntry, KeychainDef, Loop, LoopMode,
+    LoopSpec, Metadata, NextSpec, Playbook, Step, StepSpec, ToolCall, ToolDefinition, ToolKind,
+    ToolSpec, WorkbookTask,
 };

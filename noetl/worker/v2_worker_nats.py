@@ -24,6 +24,26 @@ from noetl.core.logging_context import LoggingContext
 from noetl.core.logger import setup_logger
 logger = setup_logger(__name__, include_location=True)
 
+# Pre-import tool executors at module level to avoid 5s cold-start delay
+# These were previously imported inside _execute_tool() causing slow first execution
+from noetl.tools import http, postgres, duckdb, python
+from noetl.tools.http import execute_http_task
+from noetl.tools.postgres import execute_postgres_task
+from noetl.tools.duckdb import execute_duckdb_task
+from noetl.tools.snowflake import execute_snowflake_task
+from noetl.tools.gcs import execute_gcs_task
+from noetl.tools.transfer import execute_transfer_action
+from noetl.tools.transfer.snowflake_transfer import execute_snowflake_transfer_action
+from noetl.tools.script import execute_script_task
+from noetl.core.secrets import execute_secrets_task
+from noetl.core.workflow.workbook import execute_workbook_task
+from noetl.core.workflow.playbook import execute_playbook_task
+from noetl.tools.python import execute_python_task_async
+from jinja2 import Environment, BaseLoader
+from noetl.worker.keychain_resolver import populate_keychain_context
+from noetl.worker.case_evaluator import CaseEvaluator, build_eval_context
+from noetl.worker.result_handler import ResultHandler, is_result_ref
+
 
 # Module-level template cache for worker - avoids compiling same templates repeatedly
 class _WorkerTemplateCache:
@@ -357,73 +377,105 @@ class V2Worker:
     async def _handle_command_notification(self, notification: dict):
         """
         Handle command notification from NATS (Event-Driven).
-        
+
         Notification contains: {execution_id, event_id, command_id, step, server_url}
-        
-        Event-driven flow:
-        1. Check if command already claimed
-        2. Attempt atomic claim via command.claimed event
-        3. If claim succeeds, fetch command details and execute
-        4. If claim fails, another worker got it - silently skip
+
+        Optimized flow using single /api/commands/{event_id}/claim endpoint:
+        1. Call claim endpoint (atomically claims + fetches + checks cancellation)
+        2. If claim succeeds, execute command
+        3. If claim fails (409), another worker got it - silently skip
         """
-        with LoggingContext(logger, notification=notification, execution_id = notification.get("execution_id")):
+        import time
+        t_total_start = time.perf_counter()
+
+        with LoggingContext(logger, notification=notification, execution_id=notification.get("execution_id")):
             try:
                 execution_id = notification["execution_id"]
                 event_id = notification["event_id"]
                 command_id = notification["command_id"]
                 step = notification["step"]
                 server_url = notification["server_url"]
-                
+
                 logger.info(f"[EVENT] Worker {self.worker_id} received notification: exec={execution_id}, command={command_id}, step={step}")
-                
-                # Check if execution has been cancelled before claiming
-                if await self._check_execution_cancelled(server_url, execution_id):
-                    logger.info(f"[CANCEL] Execution {execution_id} cancelled - skipping command {command_id}")
+
+                # Single atomic call: claim + cancel check + fetch command details
+                t_claim_start = time.perf_counter()
+                command = await self._claim_and_fetch_command(server_url, event_id)
+                t_claim_end = time.perf_counter()
+                logger.info(f"[PERF] claim_and_fetch took {(t_claim_end - t_claim_start)*1000:.1f}ms")
+
+                if command is None:
+                    # Already claimed by another worker or cancelled - skip silently
                     return
-                
-                # Attempt to claim the command atomically
-                claimed = await self._claim_command(server_url, execution_id, command_id)
-                
-                if not claimed:
-                    logger.info(f"[EVENT] Command {command_id} already claimed by another worker - skipping")
-                    return
-                
+
                 logger.info(f"[EVENT] Worker {self.worker_id} claimed command {command_id}")
-                
-                # Check again after claiming (in case cancellation happened during claim)
-                if await self._check_execution_cancelled(server_url, execution_id):
-                    logger.info(f"[CANCEL] Execution {execution_id} cancelled after claim - aborting command {command_id}")
-                    await self._emit_event(
-                        server_url, execution_id, step, "command.cancelled",
-                        {"command_id": command_id, "reason": "Execution cancelled"},
-                        actionable=False, informative=True
-                    )
-                    return
-                
-                # Fetch command details from command.issued event
-                command = await self._fetch_command_details(server_url, event_id)
-                
-                if not command:
-                    logger.error(f"[EVENT] Failed to fetch command details for event_id={event_id}")
-                    await self._emit_command_failed(server_url, execution_id, command_id, step, "Failed to fetch command details")
-                    return
-                
+
                 # Execute the command
-                import time
                 t_command_start = time.perf_counter()
                 await self._execute_command(command, server_url, command_id)
                 t_command_end = time.perf_counter()
-                logger.info(f"[PERF] _execute_command for {step} took {t_command_end - t_command_start:.4f}s")
-                
+                logger.info(f"[PERF] _execute_command for {step} took {(t_command_end - t_command_start)*1000:.1f}ms")
+
+                # Total time
+                t_total_end = time.perf_counter()
+                logger.info(f"[PERF] TOTAL command handling for {step} took {(t_total_end - t_total_start)*1000:.1f}ms")
+
             except Exception as e:
                 logger.exception(f"Error handling command notification: {e}")
     
+    async def _claim_and_fetch_command(self, server_url: str, event_id: int) -> Optional[dict]:
+        """
+        Atomically claim a command and fetch its details in a single call.
+
+        Uses POST /api/commands/{event_id}/claim which:
+        1. Checks if execution is cancelled
+        2. Acquires advisory lock
+        3. Checks if already claimed
+        4. Inserts command.claimed event
+        5. Returns command details
+
+        Returns command dict if claim successful, None if already claimed/cancelled.
+        """
+        try:
+            response = await self._http_client.post(
+                f"{server_url.rstrip('/')}/api/commands/{event_id}/claim",
+                json={"worker_id": self.worker_id}
+            )
+
+            if response.status_code == 200:
+                data = response.json()
+                logger.info(f"[CLAIM] Successfully claimed command for event_id={event_id}")
+                return {
+                    "execution_id": data["execution_id"],
+                    "node_id": data["node_id"],
+                    "node_name": data["node_name"],
+                    "action": data["action"],
+                    "context": data["context"],
+                    "meta": data["meta"]
+                }
+            elif response.status_code == 409:
+                # Already claimed or cancelled - expected in multi-worker setup
+                logger.info(f"[CLAIM] Command for event_id={event_id} already claimed or cancelled, skipping")
+                return None
+            elif response.status_code == 404:
+                logger.error(f"[CLAIM] Command not found for event_id={event_id}")
+                return None
+            else:
+                logger.warning(f"[CLAIM] Failed to claim command event_id={event_id}: {response.status_code} - {response.text}")
+                return None
+
+        except Exception as e:
+            logger.error(f"[CLAIM] Error claiming command event_id={event_id}: {e}")
+            return None
+
     async def _claim_command(self, server_url: str, execution_id: int, command_id: str) -> bool:
         """
+        DEPRECATED: Use _claim_and_fetch_command instead.
+
         Atomically claim a command by emitting command.claimed event.
-        
+
         Server checks if command is already claimed - returns 409 Conflict if so.
-        
+
         Returns True if this worker successfully claimed the command.
         """
         try:
@@ -444,7 +496,7 @@ class V2Worker:
                     "worker_id": self.worker_id
                 }
             )
-            
+
             if response.status_code == 200:
                 logger.info(f"[EVENT] Successfully claimed command {command_id}")
                 return True
@@ -455,7 +507,7 @@ class V2Worker:
             else:
                 logger.warning(f"[EVENT] Failed to claim command {command_id}: {response.status_code}")
                 return False
-                
+
         except Exception as e:
             logger.error(f"[EVENT] Error claiming command {command_id}: {e}")
             return False
@@ -557,13 +609,13 @@ class V2Worker:
     ) -> dict | None:
         """
         Enhanced case evaluation with explicit event context.
-        
+
         Evaluates case conditions against:
         - Event context (event.name == 'call.done' or 'call.error')
         - Data context (response.status_code, result.field, error, etc.)
-        
+
         This allows case blocks to handle both success and error scenarios:
-        
+
         case:
           - when: "{{ event.name == 'call.error' and response.status_code == 429 }}"
             then:
@@ -571,8 +623,9 @@ class V2Worker:
                 delay: "{{ response.headers.get('Retry-After', 60) }}"
           - when: "{{ event.name == 'call.done' }}"
             then:
-              sink: ...
-        
+              next:
+                - step: process_data
+
         Args:
             case_blocks: List of case conditions
             response: Tool response/result
@@ -582,9 +635,9 @@ class V2Worker:
             step: Step name
             event_name: Event name ('call.done' or 'call.error')
             error: Optional error message for call.error events
-            
+
         Returns:
-            Action dict {type: 'next'|'retry'|'sink', details: {...}} or None
+            Action dict {type: 'next'|'retry', details: {...}} or None
         """
         from jinja2 import Environment
         
@@ -642,7 +695,12 @@ class V2Worker:
                     condition_result = template.render(eval_context)
                     
                     # Parse boolean result (Jinja2 returns string)
-                    matches = condition_result.strip().lower() in ['true', '1', 'yes']
+                    # Jinja2's `and` operator returns the actual value, not "True/False"
+                    # e.g., {{ cond1 and some_string }} returns the string if truthy
+                    # So we evaluate truthiness: non-empty strings that aren't falsy values
+                    result_stripped = condition_result.strip()
+                    result_lower = result_stripped.lower()
+                    matches = bool(result_stripped) and result_lower not in ['false', '0', 'no', 'none', '']
                     
                     logger.info(f"[CASE-EVAL] Case {idx} condition: {when_condition[:100]}... = {matches}")
                     
@@ -656,7 +714,7 @@ class V2Worker:
                     # Normalize then_block to list of action dicts
                     # then_block can be: dict, list of dicts, or list with 'next' key
                     if isinstance(then_block, dict):
-                        # Single dict - could be {next: [...]} or {sink: ...} etc
+                        # Single dict - could be {next: [...]} or named task etc
                         if 'next' in then_block:
                             # Special case: {next: [...]} format
                             then_action_list = [then_block]
@@ -667,21 +725,19 @@ class V2Worker:
                         then_action_list = then_block
                     else:
                         then_action_list = []
-                    
-                    # Process actions in order: sink, then routing (retry/next)
-                    has_sink = False
+
+                    # Process actions: routing (retry/next/set)
+                    # Note: named inline tasks are now handled by server
                     has_retry = False
                     has_next = False
                     retry_config = None
                     next_steps = None
                     set_config = None
-                    
+
                     for action in then_action_list:
                         if not isinstance(action, dict):
                             continue
-                        
-                        if 'sink' in action:
-                            has_sink = True
+
                         if 'retry' in action:
                             has_retry = True
                             # Get raw retry config (may contain Jinja2 templates)
@@ -720,20 +776,7 @@ class V2Worker:
                             next_steps = action['next']
                         if 'set' in action:
                             set_config = action['set']
-                    
-                    # Execute sink first if present (semantic order: sink → retry/next)
-                    if has_sink:
-                        logger.info(f"[CASE-EVAL] Case {idx} has sink action - executing via _execute_case_sinks")
-                        await self._execute_case_sinks(
-                            [case],
-                            response,
-                            render_context,
-                            server_url,
-                            execution_id,
-                            step,
-                            event_name="call.done"
-                        )
-                    
+
                     # Handle retry locally in the worker (don't send to server)
                     if has_retry:
                         logger.info(f"[CASE-EVAL] Case {idx} triggered retry - returning retry action for local handling")
@@ -761,11 +804,7 @@ class V2Worker:
                             'case_index': idx,
                             'triggered_by': event_name
                         }
-                    
-                    # Sink executed but no routing action - continue normal flow
-                    if has_sink:
-                        return None
-                    
+
                     # Successfully evaluated - break retry loop
                     break
                     
@@ -809,14 +848,14 @@ class V2Worker:
     ) -> dict | None:
         """
         Hybrid case evaluation: Worker-side evaluation with both event and data context.
-        
+
         Evaluates case conditions against:
         - Event context (event.name, event.type, etc.)
         - Data context (response.status_code, result.field, error, etc.)
-        
-        Returns action to take: {type: 'next'|'retry'|'sink', details: {...}}
-        If no case matches or only sink actions, returns None.
-        
+
+        Returns action to take: {type: 'next'|'retry', details: {...}}
+        If no case matches, returns None.
+
         NOTE: This is a backward-compatible wrapper. New code should use
         _evaluate_case_blocks_with_event for explicit event context.
         """
@@ -876,13 +915,13 @@ class V2Worker:
     ) -> dict | None:
         """
         Hybrid case evaluation: Worker-side evaluation with both event and data context.
-        
+
         Evaluates case conditions against:
         - Event context (event.name, event.type, etc.)
         - Data context (response.status_code, result.field, error, etc.)
-        
-        Returns action to take: {type: 'next'|'retry'|'sink', details: {...}}
-        If no case matches or only sink actions, returns None.
+
+        Returns action to take: {type: 'next'|'retry', details: {...}}
+        If no case matches, returns None.
         """
         from jinja2 import Environment
         
@@ -932,7 +971,12 @@ class V2Worker:
                     condition_result = template.render(eval_context)
                     
                     # Parse boolean result (Jinja2 returns string)
-                    matches = condition_result.strip().lower() in ['true', '1', 'yes']
+                    # Jinja2's `and` operator returns the actual value, not "True/False"
+                    # e.g., {{ cond1 and some_string }} returns the string if truthy
+                    # So we evaluate truthiness: non-empty strings that aren't falsy values
+                    result_stripped = condition_result.strip()
+                    result_lower = result_stripped.lower()
+                    matches = bool(result_stripped) and result_lower not in ['false', '0', 'no', 'none', '']
                     
                     logger.info(f"[CASE-EVAL] Case {idx} condition: {when_condition[:100]}... = {matches}")
                     
@@ -963,22 +1007,6 @@ class V2Worker:
                             'config': retry_config,
                             'case_index': idx
                         }
-                    
-                    # Check for sink action (handled separately)
-                    if 'sink' in then_actions:
-                        logger.info(f"[CASE-EVAL] Case {idx} has sink action - will execute via _execute_case_sinks")
-                        # Execute sink immediately
-                        await self._execute_case_sinks(
-                            [case],
-                            response,
-                            render_context,
-                            server_url,
-                            execution_id,
-                            step,
-                            event_name=event_name
-                        )
-                        # Return None to continue normal flow (sink doesn't affect routing)
-                        return None
                     
                     # Successfully evaluated - break retry loop
                     break
@@ -1012,253 +1040,6 @@ class V2Worker:
         logger.info(f"[CASE-EVAL] No matching case with routing action found")
         return None
     
-    async def _execute_case_sinks(
-        self,
-        case_blocks: list,
-        response: Any,
-        render_context: dict,
-        server_url: str,
-        execution_id: int,
-        step: str,
-        event_name: str = "call.done"
-    ):
-        """
-        Execute sinks from case blocks immediately after tool execution.
-        
-        Evaluates case conditions against response and executes matching sinks.
-        Reports sink execution back to server via events.
-        """
-        import asyncio
-        from jinja2 import Environment
-        from noetl.tools.postgres import execute_postgres_task
-        
-        # Check if case_blocks provided
-        if not case_blocks or not isinstance(case_blocks, list):
-            return
-        
-        logger.info(f"[SINK] Checking {len(case_blocks)} case blocks for sinks")
-        
-        # Create Jinja environment for condition evaluation
-        jinja_env = Environment()
-        
-        # Build evaluation context with response
-        # Support both call.done and step.exit event names in conditions
-        # The engine uses step.exit for post-step sinks, so we provide both
-        
-        # Extract result from response for template access
-        # Keep response structure intact so templates can access result.data
-        # (HTTP responses are {id, status, data: [...]})
-        
-        eval_context = {
-            **render_context,
-            'response': response,
-            'result': response,  # Keep full response structure for {{ result.data }} access
-            'this': response,    # Add this for {{ this }} (full response)
-            'event': {'name': event_name},
-            'error': response.get('error') if isinstance(response, dict) else None
-        }
-        
-        # Check each case block
-        for idx, case in enumerate(case_blocks):
-            if not isinstance(case, dict):
-                continue
-                
-            when_condition = case.get('when')
-            then_block = case.get('then')
-            
-            if not when_condition or not then_block:
-                continue
-            
-            # Normalize then_block to list format (supports both dict and list)
-            then_actions = then_block if isinstance(then_block, list) else [then_block]
-            
-            # Look for sink in any of the then actions
-            sink_config = None
-            collect_config = None
-            retry_config = None
-            
-            for action in then_actions:
-                if not isinstance(action, dict):
-                    continue
-                if 'sink' in action:
-                    sink_config = action['sink']
-                if 'collect' in action:
-                    collect_config = action['collect']
-                if 'retry' in action:
-                    retry_config = action['retry']
-            
-            # Skip if no sink to execute (we only care about sinks here)
-            if not sink_config:
-                continue
-            
-            logger.info(f"[SINK] Case block {idx} has sink, evaluating condition: {when_condition}")
-            logger.info(f"[SINK] eval_context keys: {list(eval_context.keys())}")
-            logger.info(f"[SINK] event.name: {eval_context.get('event', {}).get('name', 'NOT_FOUND')}")
-            logger.info(f"[SINK] response defined: {'response' in eval_context}, response: {eval_context.get('response', 'NOT_FOUND')}")
-            
-            # Evaluate condition
-            try:
-                # when_condition is already a Jinja2 template (e.g., "{{ event.name == 'step.exit' }}")
-                # so render it directly without wrapping it again - use cached template for performance
-                template = _template_cache.get_or_compile(when_condition)
-                result = template.render(eval_context)
-                # Result should be a boolean or string that evaluates to boolean
-                if isinstance(result, bool):
-                    condition_met = result
-                elif isinstance(result, str):
-                    condition_met = result.lower() in ('true', '1', 'yes')
-                else:
-                    condition_met = bool(result)
-                
-                logger.info(f"[SINK] Condition result: {result} -> {condition_met}")
-                
-                if not condition_met:
-                    continue
-                
-                # Condition met - execute in semantic order: collect → sink → retry
-                # Note: collect and retry are handled by server/engine, we only execute sink
-                
-                logger.info(f"[SINK] Executing sink for case {idx}")
-                
-                # Extract sink type for events
-                sink_tool = sink_config.get('tool', {})
-                if isinstance(sink_tool, str):
-                    sink_kind = sink_tool
-                    sink_table = None
-                else:
-                    sink_kind = sink_tool.get('kind', 'unknown')
-                    sink_table = sink_tool.get('table')
-                
-                # Emit sink.start event
-                await self._emit_event(
-                    server_url,
-                    execution_id,
-                    f"{step}.sink",
-                    "sink.start",
-                    {
-                        "case_index": idx,
-                        "sink_type": sink_kind,
-                        "sink_table": sink_table
-                    },
-                    actionable=False,
-                    informative=True
-                )
-                
-                # Use the centralized sink executor instead of postgres-only handling
-                from noetl.core.storage import execute_sink_task
-                
-                # Build sink task config for execute_sink_task
-                # The sink config is already structured under 'tool:' key
-                sink_task_config = {
-                    'sink': sink_config  # Pass the entire sink configuration
-                }
-                
-                logger.info(f"[SINK] Delegating to execute_sink_task with config: {sink_task_config}")
-                logger.info(f"[SINK] Context keys: {list(eval_context.keys()) if isinstance(eval_context, dict) else type(eval_context)}")
-                logger.info(f"[SINK] Workload in context: {'workload' in eval_context}")
-                
-                # Execute sink via centralized executor (supports all tool types)
-                loop = asyncio.get_running_loop()
-                sink_result = await loop.run_in_executor(
-                    None,
-                    lambda: execute_sink_task(
-                        sink_task_config,
-                        eval_context,
-                        jinja_env,
-                        None  # task_with - not needed for case sinks
-                    )
-                )
-                
-                logger.info(f"[SINK] Sink executed successfully: {sink_result}")
-                
-                # Extract summary from sink result
-                sink_summary = self._extract_sink_summary(sink_result, sink_kind, sink_table)
-                
-                # Emit sink.done event with summary
-                await self._emit_event(
-                    server_url,
-                    execution_id,
-                    f"{step}.sink",
-                    "sink.done",
-                    {
-                        "case_index": idx,
-                        "sink_type": sink_kind,
-                        "summary": sink_summary,
-                        "has_collect": collect_config is not None,
-                        "has_retry": retry_config is not None
-                    },
-                    actionable=False,
-                    informative=True
-                )
-                    
-            except Exception as e:
-                logger.error(f"[SINK] Error executing sink for case {idx}: {e}", exc_info=True)
-                
-                # Emit sink.error event
-                await self._emit_event(
-                    server_url,
-                    execution_id,
-                    f"{step}.sink",
-                    "sink.error",
-                    {
-                        "case_index": idx,
-                        "sink_type": sink_config.get('tool', {}).get('kind', 'unknown') if isinstance(sink_config.get('tool'), dict) else sink_config.get('tool', 'unknown'),
-                        "error": str(e)
-                    },
-                    actionable=False,
-                    informative=True
-                )
-    
-    def _extract_sink_summary(
-        self,
-        sink_result: dict,
-        sink_kind: str,
-        sink_table: Optional[str] = None
-    ) -> dict:
-        """
-        Extract summary information from sink result.
-        
-        Args:
-            sink_result: Result from execute_sink_task
-            sink_kind: Sink type (postgres, duckdb, http, etc.)
-            sink_table: Optional table name
-            
-        Returns:
-            Dictionary with summary information
-        """
-        summary = {
-            "sink_type": sink_kind,
-            "table": sink_table,
-            "status": sink_result.get('status', 'unknown')
-        }
-        
-        # Extract rows_affected from result data
-        if isinstance(sink_result, dict):
-            result_data = sink_result.get('data', {})
-            result_meta = sink_result.get('meta', {})
-            
-            # Try to extract row count from various places
-            if isinstance(result_data, dict):
-                # Check for saved/rows_affected in data
-                summary['rows_affected'] = (
-                    result_data.get('rows_affected') or
-                    result_data.get('saved') or
-                    result_data.get('row_count') or
-                    result_meta.get('rows_affected', 0)
-                )
-                
-                # Extract execution time if available
-                if 'execution_time' in result_data:
-                    summary['execution_time'] = result_data['execution_time']
-                elif 'elapsed' in result_data:
-                    summary['execution_time'] = result_data['elapsed']
-            
-            # Add any additional metadata
-            if isinstance(result_meta, dict):
-                summary['tool_info'] = result_meta.get('tool_info', {})
-        
-        return summary
-    
     async def _execute_command(self, command: dict, server_url: str, command_id: str = None):
         """Execute a command and emit events."""
         execution_id = command["execution_id"]
@@ -1273,6 +1054,15 @@ class V2Worker:
         args = context.get("args", {})
         render_context = context.get("render_context", {})  # Full render context from engine
         case_blocks = context.get("case")  # Case blocks from server for immediate execution
+        spec = context.get("spec")  # Step behavior spec (case_mode, eval_mode)
+
+        # Extract case evaluation settings from spec
+        case_mode = "exclusive"  # Default: first match wins (XOR-split)
+        eval_mode = "on_entry"   # Default: evaluate once
+        if spec:
+            case_mode = spec.get("case_mode", "exclusive")
+            eval_mode = spec.get("eval_mode", "on_entry")
+            logger.info(f"[SPEC] Step '{step}' has spec: case_mode={case_mode}, eval_mode={eval_mode}")
         
         # CRITICAL: Merge tool_config.args with top-level args
         # In V2 DSL, step args are often defined within the tool block
@@ -1287,13 +1077,23 @@ class V2Worker:
             logger.debug(f"Args config: using_top_level | args={args}")
         
         logger.info(f"[EVENT] Executing {step} (tool={tool_kind}) for execution {execution_id}" + (f" command={command_id}" if command_id else ""))
-        
-        # Ensure execution_id is in render_context for keychain resolution
+
+        # Extract catalog_id from meta (where server stores it)
+        meta = command.get("meta", {})
+        catalog_id = meta.get("catalog_id")
+
+        # Ensure execution_id and catalog_id are in render_context for keychain resolution
         if "execution_id" not in render_context:
             render_context["execution_id"] = execution_id
+        if catalog_id and "catalog_id" not in render_context:
+            render_context["catalog_id"] = catalog_id
+            logger.info(f"[KEYCHAIN] Added catalog_id={catalog_id} to render_context for step {step}")
         
         try:
+            import time
+
             # Emit command.started event (for event-driven tracking)
+            t_events_start = time.perf_counter()
             if command_id:
                 await self._emit_event(
                     server_url,
@@ -1302,7 +1102,7 @@ class V2Worker:
                     "command.started",
                     {"command_id": command_id, "worker_id": self.worker_id}
                 )
-            
+
             # Emit step.enter event
             await self._emit_event(
                 server_url,
@@ -1311,16 +1111,52 @@ class V2Worker:
                 "step.enter",
                 {"status": "started"}
             )
-            
+            t_events_end = time.perf_counter()
+            logger.info(f"[PERF] emit_initial_events (command.started + step.enter) took {(t_events_end - t_events_start)*1000:.1f}ms")
+
             # Execute tool
-            import time
             t_tool_start = time.perf_counter()
             response = await self._execute_tool(tool_kind, tool_config, args, step, render_context, case_blocks=case_blocks)
             t_tool_end = time.perf_counter()
-            logger.info(f"[PERF] Tool execution for {step} took {t_tool_end - t_tool_start:.4f}s")
-            
-            # Note: _internal_data will be cleaned up later (after case sink execution)
-            # We keep it in response temporarily so sinks can access the full data
+            logger.info(f"[PERF] Tool execution for {step} took {(t_tool_end - t_tool_start)*1000:.1f}ms")
+
+            # Process result through ResultHandler for large result externalization
+            # This implements output_select pattern: large results stored externally,
+            # small extracted fields available in render_context for templating
+            # Skip for artifact.get since it's meant to provide full data inline for next step
+            t_result_start = time.perf_counter()
+            skip_result_processing = tool_kind == "artifact" and tool_config.get("action") == "get"
+            if skip_result_processing:
+                logger.debug(f"[RESULT] Step {step}: skipping result processing (artifact.get)")
+                response_for_events = response
+            else:
+                try:
+                    result_handler = ResultHandler(execution_id=execution_id)
+                    # Get output config from tool_config if present
+                    output_config = tool_config.get("result", {})
+                    processed_response = await result_handler.process_result(
+                        step_name=step,
+                        result=response,
+                        output_config=output_config
+                    )
+                    # If result was externalized, use processed version
+                    if is_result_ref(processed_response):
+                        logger.info(
+                            f"[RESULT] Step {step}: externalized large result | "
+                            f"store={processed_response.get('_store', 'unknown')} | "
+                            f"size={processed_response.get('_size_bytes', 0)}b"
+                        )
+                        # Keep original response for case evaluation, but mark for external storage
+                        response_for_events = processed_response
+                    else:
+                        response_for_events = response
+                except Exception as result_err:
+                    logger.warning(f"[RESULT] Failed to process result for {step}: {result_err}")
+                    response_for_events = response
+            t_result_end = time.perf_counter()
+            logger.debug(f"[PERF] Result processing for {step} took {(t_result_end - t_result_start)*1000:.1f}ms")
+
+            # Note: _internal_data will be cleaned up before emitting final events
             
             # CRITICAL: Log case blocks at INFO level for debugging
             logger.info(f"[CASE-CHECK] After tool execution for step: {step} | case_blocks present: {case_blocks is not None} | type: {type(case_blocks)}")
@@ -1340,11 +1176,17 @@ class V2Worker:
             
             # Check if tool returned error status FIRST (before case evaluation)
             # This allows case blocks to handle errors via call.error event
+            # NOTE: task_sequence returns status="failed", other tools use status="error"
             tool_error = None
             error_response = None
             if isinstance(response, dict):
-                if response.get('status') == 'error':
-                    tool_error = response.get('error', 'Tool returned error status')
+                if response.get('status') in ('error', 'failed'):
+                    # Extract error from either 'error' dict (task_sequence) or 'error' string (other tools)
+                    error_val = response.get('error')
+                    if isinstance(error_val, dict):
+                        tool_error = error_val.get('message', str(error_val))
+                    else:
+                        tool_error = error_val or 'Tool returned error status'
                     error_response = response
                 # Also check nested data errors (for tools that return {data: {...}})
                 elif isinstance(response.get('data'), dict):
@@ -1356,24 +1198,52 @@ class V2Worker:
             
             # HYBRID CASE EVALUATION: Worker-side evaluation with both event and data context
             # Evaluate case blocks for BOTH success (call.done) and error (call.error) scenarios
+            # Uses CaseEvaluator with proper exclusive/inclusive mode support
             case_action = None
             if case_blocks:
-                logger.info(f"[CASE-CHECK] Evaluating case blocks for {step} | has_error={tool_error is not None}")
-                
+                logger.info(f"[CASE-CHECK] Evaluating case blocks for {step} | mode={case_mode} | has_error={tool_error is not None}")
+
                 # Build evaluation context based on success or error
                 eval_event_name = "call.error" if tool_error else "call.done"
                 eval_response = error_response if tool_error else response
-                
-                case_action = await self._evaluate_case_blocks_with_event(
-                    case_blocks,
-                    eval_response,
-                    render_context,
-                    server_url,
-                    execution_id,
-                    step,
+
+                # Build evaluation context with all necessary data
+                eval_context = build_eval_context(
+                    render_context=render_context,
+                    response=eval_response,
+                    step=step,
                     event_name=eval_event_name,
                     error=tool_error
                 )
+
+                # Create evaluator with step's case_mode (default: exclusive)
+                evaluator = CaseEvaluator(case_mode=case_mode, eval_mode=eval_mode)
+                eval_result = evaluator.evaluate(case_blocks, eval_context, eval_event_name)
+
+                # Convert routing action to legacy format for compatibility
+                if eval_result.routing_action:
+                    ra = eval_result.routing_action
+                    if ra.type == "next":
+                        case_action = {
+                            'type': 'next',
+                            'steps': ra.config.get('steps', []),
+                            'case_index': ra.case_index,
+                            'triggered_by': ra.triggered_by
+                        }
+                    elif ra.type == "retry":
+                        case_action = {
+                            'type': 'retry',
+                            'config': ra.config,
+                            'case_index': ra.case_index,
+                            'triggered_by': ra.triggered_by
+                        }
+                    elif ra.type == "set":
+                        case_action = {
+                            'type': 'set',
+                            'config': ra.config,
+                            'case_index': ra.case_index,
+                            'triggered_by': ra.triggered_by
+                        }
                 
                 # If case action resulted in routing (next/retry), report and handle
                 if case_action and case_action.get('type') in ['next', 'retry']:
@@ -1510,45 +1380,47 @@ class V2Worker:
             
             # Tool succeeded - emit success events with error recovery
             try:
-                # Clean up _internal_data and data before emitting events (sink-driven pattern)
+                # Clean up _internal_data and data before emitting events
                 # This prevents large payloads from being stored in events/NATS
                 if isinstance(response, dict):
                     response_data = response.get('data', {})
                     if isinstance(response_data, dict):
-                        # Remove _internal_data (actual response for sink execution)
+                        # Remove _internal_data (full response data)
                         internal_data = response_data.pop('_internal_data', None)
                         # Also remove 'data' field which is a duplicate for backwards compat
                         response_data.pop('data', None)
-                        
+
                         if internal_data:
                             logger.info(
-                                f"[SINK-DRIVEN] Removed _internal_data and data before event emission | "
+                                f"[CLEANUP] Removed _internal_data and data before event emission | "
                                 f"payload_size_reduction: ~{len(str(internal_data))} bytes"
                             )
-                            logger.info(f"[SINK-DRIVEN] Response now contains only reference: {response_data.get('data_reference', {})}")
+                            logger.info(f"[CLEANUP] Response now contains only reference: {response_data.get('data_reference', {})}")
                 
                 # Emit call.done event - ACTIONABLE so server evaluates routing
+                # Use response_for_events which may have externalized large results
                 await self._emit_event(
                     server_url,
                     execution_id,
                     step,
                     "call.done",
-                    {"response": response},
+                    {"response": response_for_events},
                     actionable=True,  # Server should evaluate next/case routing
                     informative=True
                 )
-                
-                # Emit step.exit event
+
+                # Emit step.exit event with processed result
+                # If result was externalized, this contains _ref + output_select fields
                 await self._emit_event(
                     server_url,
                     execution_id,
                     step,
                     "step.exit",
-                    {"result": response, "status": "completed"},
+                    {"result": response_for_events, "status": "completed"},
                     actionable=True,  # Server evaluates routing
                     informative=True
                 )
-                
+
                 # Emit command.completed event (for event-driven tracking)
                 if command_id:
                     await self._emit_event(
@@ -1559,7 +1431,7 @@ class V2Worker:
                         {
                             "command_id": command_id,
                             "worker_id": self.worker_id,
-                            "result": response
+                            "result": response_for_events
                         },
                         actionable=False,  # Informational only
                         informative=True
@@ -1657,35 +1529,9 @@ class V2Worker:
             args: Tool arguments
             step: Step name
             render_context: Full render context with workload, step results, etc.
-            case_blocks: Optional case blocks for sink-driven result references
+            case_blocks: Optional case blocks for result references
         """
-        import time
-        t_imports_start = time.perf_counter()
-        # Import tool executors
-        from noetl.tools import (
-            http,
-            postgres,
-            duckdb,
-            python,
-        )
-        from noetl.tools.http import execute_http_task
-        from noetl.tools.postgres import execute_postgres_task
-        from noetl.tools.duckdb import execute_duckdb_task
-        from noetl.tools.snowflake import execute_snowflake_task
-        from noetl.tools.gcs import execute_gcs_task
-        from noetl.tools.transfer import execute_transfer_action
-        from noetl.tools.transfer.snowflake_transfer import execute_snowflake_transfer_action
-        from noetl.tools.script import execute_script_task
-        from noetl.core.secrets import execute_secrets_task
-        from noetl.core.storage import execute_sink_task
-        from noetl.core.workflow.workbook import execute_workbook_task
-        from noetl.core.workflow.playbook import execute_playbook_task
-        # Import async version of Python executor
-        from noetl.tools.python import execute_python_task_async
-        from jinja2 import Environment, BaseLoader
-        from noetl.worker.keychain_resolver import populate_keychain_context
-        t_imports_end = time.perf_counter()
-        logger.info(f"[PERF] _execute_tool imports took {t_imports_end - t_imports_start:.4f}s")
+        # Tool executors are pre-imported at module level for fast execution
         
         # Use render_context from engine (includes workload, step results, execution_id, etc.)
         # This allows plugins to render Jinja2 templates with full state
@@ -1707,6 +1553,7 @@ class V2Worker:
         # This scans the config for {{ keychain.* }} references and populates context['keychain']
         catalog_id = context.get('catalog_id')
         execution_id = context.get('execution_id')
+        logger.info(f"[KEYCHAIN-DEBUG] Step {step}: catalog_id={catalog_id}, execution_id={execution_id}, tool_kind={tool_kind}")
         if catalog_id:
             # Combine config and args into single dict for scanning
             task_config_combined = {**config, **args}
@@ -1746,7 +1593,11 @@ class V2Worker:
         # Plugins use different field names than V2 DSL
         # For workbook tool, preserve 'name' field from config (it's the workbook action name)
         # For other tools, add 'name' as step name for logging
-        task_config = {**config, "args": args}
+        task_config = {**config}
+        # Merge args: config["args"] (from pipeline tool spec) + args parameter
+        # This preserves tool args from pipeline while allowing parameter override
+        config_args = config.get("args", {})
+        task_config["args"] = {**config_args, **args} if config_args or args else {}
         if "name" not in config:
             task_config["name"] = step
         
@@ -1769,7 +1620,7 @@ class V2Worker:
             
         elif tool_kind == "http":
             # Check if retry config has pagination/success-driven repeats (next_call or collect)
-            # If so, use execute_with_retry which handles per-iteration sinks
+            # If so, use execute_with_retry which handles per-iteration retries
             retry_config = config.get('retry') if isinstance(config, dict) else None
             has_pagination_retry = False
             if isinstance(retry_config, list):
@@ -1781,12 +1632,12 @@ class V2Worker:
                         if isinstance(then_block, dict) and (has_next_call or has_collect):
                             has_pagination_retry = True
                             break
-            
+
             logger.debug(f"HTTP TOOL: config_keys={list(config.keys()) if isinstance(config, dict) else 'not dict'} | retry={retry_config is not None} | policies={len(retry_config) if isinstance(retry_config, list) else 0} | has_pagination={has_pagination_retry}")
-            
+
             if has_pagination_retry:
-                logger.info("HTTP tool using execute_with_retry for pagination sink support")
-                # Use retry-aware executor which handles per-iteration sinks
+                logger.info("HTTP tool using execute_with_retry for pagination support")
+                # Use retry-aware executor which handles per-iteration retries
                 from noetl.core.runtime.retry import execute_with_retry
                 
                 # Create executor function that wraps async execute_http_task
@@ -1806,7 +1657,7 @@ class V2Worker:
                             )
                             return future.result()
                 
-                # Execute with retry handler (supports per-iteration sinks)
+                # Execute with retry handler (supports pagination)
                 result = execute_with_retry(
                     http_executor,
                     task_config,
@@ -1829,29 +1680,8 @@ class V2Worker:
                 # - Auth resolution and credential caching
                 # - Template rendering
                 # - Response processing
-                
-                # Extract sink_config from case_blocks if present
-                sink_config = None
-                if case_blocks and isinstance(case_blocks, list):
-                    for case in case_blocks:
-                        if not isinstance(case, dict):
-                            continue
-                        then_block = case.get('then')
-                        if not then_block:
-                            continue
-                        # Normalize then_block to list
-                        then_actions = then_block if isinstance(then_block, list) else [then_block]
-                        # Look for sink in any then action
-                        for action in then_actions:
-                            if isinstance(action, dict) and 'sink' in action:
-                                sink_config = action['sink']
-                                logger.info(f"[SINK-DRIVEN] Extracted sink config from case blocks: {sink_config.get('tool', {}).get('kind')}")
-                                break
-                        if sink_config:
-                            break
-                
                 task_with = args  # Plugin uses 'task_with' for rendered params
-                result = await execute_http_task(task_config, context, jinja_env, task_with, sink_config=sink_config)
+                result = await execute_http_task(task_config, context, jinja_env, task_with)
                 # Check if plugin returned error status
                 if isinstance(result, dict) and result.get('status') == 'error':
                     # Keep error response intact (worker needs status field to detect error)
@@ -1961,20 +1791,7 @@ class V2Worker:
                 # Keep error response intact (worker needs status field to detect error)
                 return result
             return result.get('data', result) if isinstance(result, dict) else result
-            
-        elif tool_kind == "sink":
-            # Use plugin's execute_sink_task (sync function - run in executor)
-            loop = asyncio.get_running_loop()
-            result = await loop.run_in_executor(
-                None,
-                lambda: execute_sink_task(task_config, context, jinja_env)
-            )
-            # Check if plugin returned error status
-            if isinstance(result, dict) and result.get('status') == 'error':
-                # Keep error response intact (worker needs status field to detect error)
-                return result
-            return result.get('data', result) if isinstance(result, dict) else result
-            
+
         elif tool_kind == "workbook":
             # Call async execute_workbook_task directly (don't use executor for async functions)
             result = await execute_workbook_task(task_config, context, jinja_env, args)
@@ -2015,7 +1832,99 @@ class V2Worker:
             # Script loading is now handled by python plugin via 'script' field
             # This is a legacy fallback
             return await self._execute_script(config, args)
-            
+
+        elif tool_kind == "nats":
+            # NATS tool for K/V Store, Object Store, and JetStream operations
+            from noetl.tools.nats import execute_nats_task
+            task_with = {**config, **args}
+            result = await execute_nats_task(task_config, context, jinja_env, task_with)
+            # Check if plugin returned error status
+            if isinstance(result, dict) and result.get('status') == 'error':
+                return result
+            return result.get('data', result) if isinstance(result, dict) else result
+
+        elif tool_kind == "artifact":
+            # Artifact tool for loading/storing externalized results
+            from noetl.tools.artifact.executor import execute_artifact_get, execute_artifact_put
+            task_with = {**config, **args}
+            action = config.get('action', 'get')
+            loop = asyncio.get_running_loop()
+            if action == 'get':
+                result = await loop.run_in_executor(
+                    None, execute_artifact_get, task_config, context, jinja_env, task_with, None
+                )
+            elif action == 'put':
+                result = await loop.run_in_executor(
+                    None, execute_artifact_put, task_config, context, jinja_env, task_with, None
+                )
+            else:
+                raise ValueError(f"Unknown artifact action: {action}")
+            if isinstance(result, dict) and result.get('status') == 'error':
+                return result
+            return result.get('data', result) if isinstance(result, dict) else result
+
+        elif tool_kind == "task_sequence":
+            # Task sequence execution - run labeled tasks with tool.eval flow control
+            from noetl.worker.task_sequence_executor import TaskSequenceExecutor
+
+            # Create task sequence executor with tool execution callback
+            async def execute_task_tool(kind: str, config: dict, ctx: dict) -> Any:
+                """Execute a single tool within the task sequence."""
+                return await self._execute_tool(kind, config, {}, step, ctx)
+
+            def render_template_str(template: str, ctx: dict) -> Any:
+                """Render a single Jinja2 template string, parsing JSON results back to objects."""
+                import json
+                try:
+                    rendered = jinja_env.from_string(template).render(**ctx)
+                    # If result looks like JSON (dict or list), parse it back to object
+                    # This allows {{ outcome.result }} to return the actual dict, not a string
+                    if isinstance(rendered, str):
+                        stripped = rendered.strip()
+                        if (stripped.startswith('{') and stripped.endswith('}')) or \
+                           (stripped.startswith('[') and stripped.endswith(']')):
+                            try:
+                                return json.loads(stripped)
+                            except json.JSONDecodeError:
+                                pass
+                    return rendered
+                except Exception as e:
+                    logger.warning(f"[TASK_SEQ] Template render error: {e}")
+                    return template
+
+            def render_dict_templates(data: dict, ctx: dict) -> dict:
+                """Recursively render templates in a dict."""
+                from noetl.core.dsl.render import render_template as recursive_render
+                return recursive_render(jinja_env, data, ctx)
+
+            executor = TaskSequenceExecutor(
+                tool_executor=execute_task_tool,
+                render_template=render_template_str,
+                render_dict=render_dict_templates,
+            )
+
+            # Extract tasks and remaining actions from config
+            tasks = task_config.get("tasks", [])
+            remaining_actions = task_config.get("remaining_actions", [])
+
+            # Execute the task sequence
+            seq_result = await executor.execute(
+                tasks=tasks,
+                base_context=context,
+            )
+
+            # Include remaining actions in result for engine to process
+            if remaining_actions and seq_result.get("status") != "failed":
+                seq_result["remaining_actions"] = remaining_actions
+
+            return seq_result
+
+        elif tool_kind == "noop":
+            # No-operation tool - used for case-driven steps that don't need tool execution
+            # Returns empty result, step logic is driven by case conditions
+            logger.debug(f"[NOOP] Step '{step}' - no-op execution")
+            return {"status": "noop", "step": step}
+
         else:
             raise NotImplementedError(f"Tool kind '{tool_kind}' not implemented")
     
@@ -2284,83 +2193,7 @@ class V2Worker:
             return {"value": value}
         else:
             raise NotImplementedError(f"Secret provider '{provider}' not implemented")
-    
-    async def _execute_sink(self, config: dict, args: dict) -> Any:
-        """Persist data to storage backend."""
-        backend = config.get("backend", "postgres")
-        table = config.get("table")
-        data = config.get("data")
-        connection = config.get("connection")
-        
-        if not table:
-            raise ValueError("Sink execution requires 'table' in config")
-        if not data:
-            raise ValueError("Sink execution requires 'data' in config")
-        
-        if backend == "postgres":
-            # Use postgres plugin to insert data
-            from noetl.core.common import get_pgdb_connection
-            import psycopg
-            
-            conn_params = get_pgdb_connection()
-            async with await psycopg.AsyncConnection.connect(**conn_params) as conn:
-                async with conn.cursor() as cur:
-                    # Normalize data to list of dicts
-                    rows = data if isinstance(data, list) else [data]
-                    
-                    if not rows:
-                        return {"status": "ok", "rows_inserted": 0}
-                    
-                    # Get column names from first row
-                    columns = list(rows[0].keys())
-                    placeholders = ", ".join(["%s"] * len(columns))
-                    columns_str = ", ".join(columns)
-                    
-                    # Build INSERT statement
-                    query = f"INSERT INTO {table} ({columns_str}) VALUES ({placeholders})"
-                    
-                    # Execute for each row
-                    for row in rows:
-                        values = [row.get(col) for col in columns]
-                        await cur.execute(query, values)
-                    
-                    return {"status": "ok", "rows_inserted": len(rows)}
-        
-        elif backend == "duckdb":
-            # Use duckdb to insert data
-            import duckdb
-            
-            # Create connection
-            db_path = config.get("database", ":memory:")
-            conn = duckdb.connect(db_path)
-            
-            try:
-                # Normalize data
-                rows = data if isinstance(data, list) else [data]
-                
-                if not rows:
-                    return {"status": "ok", "rows_inserted": 0}
-                
-                # Get column names
-                columns = list(rows[0].keys())
-                placeholders = ", ".join(["?"] * len(columns))
-                columns_str = ", ".join(columns)
-                
-                # Build INSERT statement
-                query = f"INSERT INTO {table} ({columns_str}) VALUES ({placeholders})"
-                
-                # Execute for each row
-                for row in rows:
-                    values = [row.get(col) for col in columns]
-                    conn.execute(query, values)
-                
-                return {"status": "ok", "rows_inserted": len(rows)}
-            finally:
-                conn.close()
-        
-        else:
-            raise NotImplementedError(f"Sink backend '{backend}' not implemented")
-    
+
     async def _execute_container(self, config: dict, args: dict) -> Any:
         """Execute code in a container (Kubernetes Job)."""
         raise NotImplementedError(
@@ -2428,35 +2261,41 @@ class V2Worker:
         if correlation:
             event_data["correlation"] = correlation
         
+        import time
+        t_emit_start = time.perf_counter()
+
         from noetl.core.config import get_worker_settings
         worker_settings = get_worker_settings()
-        
+
         max_retries = 3
-        base_delay = 0.5
-        
+        base_delay = 0.05  # Fast retry: 50ms instead of 500ms
+
         for attempt in range(max_retries):
             try:
+                t_http_start = time.perf_counter()
                 logger.info(f"[HTTP] POST {event_url} - Event: {name} for {step} (execution {execution_id}) - Attempt {attempt + 1}/{max_retries}")
-                
+
                 response = await self._http_client.post(
                     event_url,
                     json=event_data,
                     timeout=worker_settings.http_event_timeout
                 )
                 response.raise_for_status()
-                
-                logger.info(f"[HTTP] Event {name} sent successfully - Status: {response.status_code}")
+
+                t_http_end = time.perf_counter()
+                logger.info(f"[PERF] emit_event({name}) HTTP took {(t_http_end - t_http_start)*1000:.1f}ms - Status: {response.status_code}")
                 return  # Success - exit retry loop
-                
+
             except Exception as e:
                 is_last_attempt = (attempt == max_retries - 1)
-                
+
                 if is_last_attempt:
-                    logger.error(f"[HTTP] Failed to emit event {name} after {max_retries} attempts: {e}", exc_info=True)
+                    t_emit_end = time.perf_counter()
+                    logger.error(f"[HTTP] Failed to emit event {name} after {max_retries} attempts ({(t_emit_end - t_emit_start)*1000:.1f}ms total): {e}", exc_info=True)
                     raise RuntimeError(f"Event emission failed after {max_retries} retries: {e}") from e
                 else:
-                    delay = base_delay * (2 ** attempt)  # Exponential backoff
-                    logger.warning(f"[HTTP] Event {name} emission failed (attempt {attempt + 1}/{max_retries}): {e}. Retrying in {delay}s...")
+                    delay = base_delay * (2 ** attempt)  # Fast exponential backoff: 50ms, 100ms, 200ms
+                    logger.warning(f"[HTTP] Event {name} emission failed (attempt {attempt + 1}/{max_retries}): {e}. Retrying in {delay*1000:.0f}ms...")
                     await asyncio.sleep(delay)
 
 

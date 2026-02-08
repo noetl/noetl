@@ -16,13 +16,13 @@ workflow:
     desc: Start workflow
     tool:
       kind: python
-      auth: {}
-      libs: {}
-      args: {}
       code: |
         result = {"status": "initialized"}
     next:
-      - step: test_data
+      spec:
+        mode: exclusive
+      arcs:
+        - step: test_data
 
 
   - step: test_data
@@ -33,12 +33,12 @@ workflow:
         pg_db:
           source: credential
           tool: postgres
-          key: "{{ workload.pg_auth }}"
+          key: "{{ pg_auth }}"
         gcs_secret:
           source: credential
           tool: hmac
           key: gcs_hmac_local
-          scope: gs://{{ workload.gcs_bucket }}
+          scope: gs://{{ gcs_bucket }}
       commands: |
         INSTALL httpfs;
         LOAD httpfs;
@@ -46,9 +46,12 @@ workflow:
         CREATE TABLE test_data AS
         SELECT 'test data' AS message, '{{ execution_id }}' AS id;
 
-        COPY test_data TO 'gs://{{ workload.gcs_bucket }}/fixture/{{ workload.upload_file }}' (FORMAT PARQUET);
+        COPY test_data TO 'gs://{{ gcs_bucket }}/fixture/{{ upload_file }}' (FORMAT PARQUET);
     next:
-      - step: download_file
+      spec:
+        mode: exclusive
+      arcs:
+        - step: download_file
 
   - step: download_file
     desc: Read the file back and upload under a different name
@@ -58,29 +61,29 @@ workflow:
         pg_db:
           source: credential
           tool: postgres
-          key: "{{ workload.pg_auth }}"
+          key: "{{ pg_auth }}"
         gcs_secret:
           source: credential
           tool: hmac
           key: gcs_hmac_local
-          scope: gs://{{ workload.gcs_bucket }}
+          scope: gs://{{ gcs_bucket }}
       commands: |
         INSTALL httpfs;
         LOAD httpfs;
 
         CREATE TABLE downloaded_data AS
-        SELECT * FROM 'gs://{{ workload.gcs_bucket }}/fixture/{{ workload.upload_file }}';
+        SELECT * FROM 'gs://{{ gcs_bucket }}/fixture/{{ upload_file }}';
 
-        COPY downloaded_data TO '{{ workload.download_file }}' (FORMAT PARQUET);
+        COPY downloaded_data TO '{{ download_file }}' (FORMAT PARQUET);
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: Done
     tool:
       kind: python
-      auth: {}
-      libs: {}
-      args: {}
       code: |
         result = {"status": "completed"}

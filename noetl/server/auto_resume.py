@@ -69,9 +69,9 @@ async def get_execution_status(execution_id: int) -> str:
 
 async def get_last_execution() -> Optional[Dict[str, Any]]:
     """
-    Get the most recent execution overall (across all playbooks).
+    Get the most recent execution that might be interrupted (within last 5 minutes).
 
-    Returns the single most recent execution, or None if no executions found.
+    Only returns executions from the last 5 minutes to avoid restarting old jobs.
     Returns: {execution_id, path, catalog_id, created_at}
     """
     async with get_pool_connection() as conn:
@@ -85,6 +85,7 @@ async def get_last_execution() -> Optional[Dict[str, Any]]:
                 FROM noetl.event e
                 JOIN noetl.catalog c ON c.catalog_id = e.catalog_id
                 WHERE e.event_type = 'playbook.initialized'
+                  AND e.created_at > NOW() - INTERVAL '5 minutes'
                 ORDER BY e.created_at DESC
                 LIMIT 1
             """)
@@ -92,62 +93,93 @@ async def get_last_execution() -> Optional[Dict[str, Any]]:
             return await cur.fetchone()
 
 
-async def resume_execution(execution_id: int, path: str, catalog_id: int) -> bool:
+async def mark_execution_cancelled(execution_id: int, reason: str = "Server restart") -> bool:
     """
-    Resume an interrupted execution by restarting the playbook.
-
-    For interrupted executions (pod restart), we simply restart the playbook
-    from the beginning. This is simpler and more reliable than trying to
-    resume from the middle, especially for workflows with loops and iterators.
+    Mark an execution as cancelled due to server interruption.
 
     Args:
-        execution_id: The interrupted execution ID (for logging)
+        execution_id: The execution to cancel
+        reason: Cancellation reason
+
+    Returns:
+        True if marked successfully, False otherwise
+    """
+    try:
+        async with get_pool_connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute("""
+                    INSERT INTO noetl.event (
+                        execution_id, event_type, status, payload, created_at
+                    ) VALUES (
+                        %s, 'execution.cancelled', 'CANCELLED', %s, NOW()
+                    )
+                """, (execution_id, {"reason": reason, "auto_cancelled": True}))
+                await conn.commit()
+
+        logger.info(f"[AUTO-RESUME] Marked execution {execution_id} as CANCELLED")
+        return True
+
+    except Exception as e:
+        logger.error(f"[AUTO-RESUME] Failed to mark execution {execution_id} as cancelled: {e}")
+        return False
+
+
+async def resume_execution(execution_id: int, path: str, catalog_id: int) -> bool:
+    """
+    Resume an interrupted execution by marking it cancelled and optionally restarting.
+
+    IMPORTANT: We do NOT automatically restart playbooks anymore. Instead, we mark
+    interrupted executions as CANCELLED to clean up the state. Users can manually
+    restart if needed.
+
+    Args:
+        execution_id: The interrupted execution ID
         path: Playbook path
         catalog_id: Catalog ID of the playbook
 
     Returns:
-        True if restart was triggered successfully, False otherwise
+        True if cancellation was successful, False otherwise
     """
     try:
-        # Import here to avoid circular dependency
-        from noetl.server.api.v2 import execute, ExecuteRequest
+        logger.info(f"[AUTO-RESUME] Marking interrupted execution {execution_id} ({path}) as CANCELLED")
 
-        logger.info(f"[AUTO-RESUME] Restarting interrupted execution {execution_id} for playbook: {path}")
-
-        # Create execute request
-        request = ExecuteRequest(
-            path=path,
-            payload={}  # Use default workload from playbook
+        # Mark the old execution as cancelled instead of leaving it stuck
+        success = await mark_execution_cancelled(
+            execution_id,
+            reason="Server restart - execution was interrupted"
         )
 
-        # Restart the playbook from the beginning
-        # This is simpler than trying to resume from the middle
-        result = await execute(request)
+        if success:
+            logger.info(f"[AUTO-RESUME] Successfully cancelled interrupted execution {execution_id}")
+        else:
+            logger.warning(f"[AUTO-RESUME] Failed to cancel interrupted execution {execution_id}")
 
-        logger.info(f"[AUTO-RESUME] Successfully restarted playbook {path} with new execution {result.execution_id}")
-        return True
+        return success
 
     except Exception as e:
-        logger.error(f"[AUTO-RESUME] Failed to restart playbook {path}: {e}", exc_info=True)
+        logger.error(f"[AUTO-RESUME] Failed to handle interrupted execution {execution_id}: {e}", exc_info=True)
         return False
 
 
 async def resume_interrupted_executions():
     """
-    Check for interrupted executions and automatically resume them.
+    Clean up interrupted executions on server restart.
 
     This is called on server startup to recover from pod restarts.
-    Only checks the most recent execution overall - if it's in 'running' state,
-    restarts it.
+    Checks the most recent execution (within last 5 minutes) - if it's in 'running' state,
+    marks it as CANCELLED to prevent stuck executions.
+
+    NOTE: Playbooks are NOT automatically restarted. Users must manually re-execute
+    if needed. This prevents duplicate executions and state confusion.
     """
     try:
-        logger.info("[AUTO-RESUME] Checking for interrupted executions...")
+        logger.info("[AUTO-RESUME] Checking for interrupted executions (last 5 minutes)...")
 
-        # Get the most recent execution
+        # Get the most recent execution (within 5 minutes)
         last_execution = await get_last_execution()
 
         if not last_execution:
-            logger.info("[AUTO-RESUME] No executions found")
+            logger.info("[AUTO-RESUME] No recent executions found (last 5 minutes)")
             return
 
         execution_id = last_execution['execution_id']
@@ -160,13 +192,13 @@ async def resume_interrupted_executions():
         logger.info(f"[AUTO-RESUME] Last execution {execution_id} ({path}): status={status}")
 
         if status == "running":
-            # This execution was interrupted - restart it
-            logger.info(f"[AUTO-RESUME] Restarting interrupted execution {execution_id}")
+            # This execution was interrupted - mark it as cancelled
+            logger.info(f"[AUTO-RESUME] Cancelling interrupted execution {execution_id}")
             success = await resume_execution(execution_id, path, catalog_id)
             if success:
-                logger.info("[AUTO-RESUME] Successfully restarted interrupted playbook")
+                logger.info("[AUTO-RESUME] Successfully cancelled interrupted execution")
             else:
-                logger.warning("[AUTO-RESUME] Failed to restart interrupted playbook")
+                logger.warning("[AUTO-RESUME] Failed to cancel interrupted execution")
         else:
             # Already completed or failed - nothing to do
             logger.info(f"[AUTO-RESUME] Last execution already {status}, no action needed")

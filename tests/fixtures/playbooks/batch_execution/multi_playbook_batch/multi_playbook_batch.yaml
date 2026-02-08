@@ -22,19 +22,21 @@ workload:
   pg_user: demo
   pg_password: demo
   pg_db: demo_noetl
+
 workflow:
   - step: start
     desc: Start Multiple Playbook Batch Workflow
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args: {}
       code: |
         result = {"status": "initialized", "message": "Starting batch workflow"}
     next:
-      - step: run_http_test
-  
+      spec:
+        mode: exclusive
+      arcs:
+        - step: run_http_test
+
   - step: run_http_test
     desc: Run HTTP test playbook
     tool:
@@ -44,44 +46,53 @@ workflow:
         url: https://httpbin.org/get
         method: GET
     next:
-      - step: run_weather_processing
-        args:
-          http_result: '{{ run_http_test }}'
-  
+      spec:
+        mode: exclusive
+      arcs:
+        - step: run_weather_processing
+          args:
+            http_result: '{{ run_http_test }}'
+
   - step: run_weather_processing
     desc: Run weather processing playbook
     tool:
       kind: playbook
       path: tests/fixtures/playbooks/control_flow_workbook
       payload:
-        cities: '{{ workload.cities }}'
-        base_url: '{{ workload.base_url }}'
-        temperature_threshold: '{{ workload.temperature_threshold }}'
+        cities: '{{ cities }}'
+        base_url: '{{ base_url }}'
+        temperature_threshold: '{{ temperature_threshold }}'
     next:
-      - step: run_data_transformation
-        args:
-          weather_result: '{{ run_weather_processing }}'
-  
+      spec:
+        mode: exclusive
+      arcs:
+        - step: run_data_transformation
+          args:
+            weather_result: '{{ run_weather_processing }}'
+
   - step: run_data_transformation
     desc: Run data transformation playbook
     tool:
       kind: playbook
       path: tests/fixtures/playbooks/duckdb_gcs_workload_identity/workload_identity
       payload:
-        baseFilePath: '{{ workload.baseFilePath }}'
-        bucket: '{{ workload.bucket }}'
-        pg_host: '{{ workload.pg_host }}'
-        pg_port: '{{ workload.pg_port }}'
-        pg_user: '{{ workload.pg_user }}'
-        pg_password: '{{ workload.pg_password }}'
-        pg_db: '{{ workload.pg_db }}'
+        baseFilePath: '{{ baseFilePath }}'
+        bucket: '{{ bucket }}'
+        pg_host: '{{ pg_host }}'
+        pg_port: '{{ pg_port }}'
+        pg_user: '{{ pg_user }}'
+        pg_password: '{{ pg_password }}'
+        pg_db: '{{ pg_db }}'
     next:
-      - step: store_results
+      spec:
+        mode: exclusive
+      arcs:
+        - step: store_results
+
   - step: store_results
     desc: Store the results from all playbooks
     tool:
       kind: python
-      auth: {}
       libs:
         duckdb: duckdb
         json: json
@@ -90,28 +101,28 @@ workflow:
         http_result: '{{ run_http_test }}'
         weather_result: '{{ run_weather_processing }}'
         data_result: '{{ run_data_transformation }}'
-        pg_host: '{{ workload.pg_host }}'
-        pg_port: '{{ workload.pg_port }}'
-        pg_user: '{{ workload.pg_user }}'
-        pg_password: '{{ workload.pg_password }}'
-        pg_db: '{{ workload.pg_db }}'
+        pg_host: '{{ pg_host }}'
+        pg_port: '{{ pg_port }}'
+        pg_user: '{{ pg_user }}'
+        pg_password: '{{ pg_password }}'
+        pg_db: '{{ pg_db }}'
         execution_id: '{{ job.uuid }}'
       code: |
         # Convert results to JSON strings
         http_json = json.dumps(http_result) if isinstance(http_result, dict) else str(http_result)
         weather_json = json.dumps(weather_result) if isinstance(weather_result, dict) else str(weather_result)
         data_json = json.dumps(data_result) if isinstance(data_result, dict) else str(data_result)
-        
+
         # Create DuckDB connection
         conn = duckdb.connect()
-        
+
         try:
             # Install and load required extensions
             conn.execute("INSTALL postgres")
             conn.execute("LOAD postgres")
             conn.execute("INSTALL json")
             conn.execute("LOAD json")
-            
+
             # Attach Postgres database
             attach_query = f"ATTACH 'dbname={pg_db} user={pg_user} password={pg_password} host={pg_host} port={pg_port}' AS postgres_db (TYPE postgres)"
             try:
@@ -119,7 +130,7 @@ workflow:
             except Exception as e:
                 if "already attached" not in str(e):
                     raise e
-            
+
             # Create local DuckDB table
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS playbook_batch_results (
@@ -131,7 +142,7 @@ workflow:
                     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
-            
+
             # Insert into local DuckDB table
             current_time_ms = int(time.time() * 1000)
             conn.execute("""
@@ -139,7 +150,7 @@ workflow:
                     id, execution_id, http_result, weather_result, data_result
                 ) VALUES (?, ?, ?, ?, ?)
             """, [current_time_ms, execution_id, http_json, weather_json, data_json])
-            
+
             # Create Postgres table
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS postgres_db.playbook_batch_results (
@@ -151,25 +162,25 @@ workflow:
                     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
-            
+
             # Insert into Postgres table
             conn.execute("""
                 INSERT INTO postgres_db.playbook_batch_results (
                     id, execution_id, http_result, weather_result, data_result
                 ) VALUES (?, ?, ?, ?, ?)
             """, [current_time_ms + 1, execution_id, http_json, weather_json, data_json])
-            
+
             # Verify insertion
             query_result = conn.execute("SELECT COUNT(*) FROM playbook_batch_results").fetchone()
             total_records = query_result[0] if query_result else 0
-            
+
             result = {
                 "status": "success",
                 "message": "Batch results stored successfully",
                 "total_records": total_records,
                 "execution_id": execution_id
             }
-            
+
         except Exception as e:
             result = {
                 "status": "error",
@@ -179,14 +190,15 @@ workflow:
         finally:
             conn.close()
     next:
-      - step: end
-  
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
+
   - step: end
     desc: End of batch workflow
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args: {}
       code: |
         result = {"status": "completed"}

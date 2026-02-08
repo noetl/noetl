@@ -1,4 +1,4 @@
-apiVersion: noetl.io/v2
+apiVersion: noetl.io/v10
 kind: Playbook
 metadata:
   name: get_auth0_token
@@ -6,14 +6,14 @@ metadata:
   description: |
     Get Auth0 access token using Resource Owner Password Grant.
     Retrieves Auth0 client secret from NoETL credential table.
-    
+
     Input:
       - username: Auth0 user email
       - password: Auth0 user password
       - auth0_domain: Auth0 tenant domain (default: mestumre-development.us.auth0.com)
       - client_id: Auth0 application client ID (default: Jqop7YoaiZalLHdBRo5ScNQ1RJhbhbDN)
       - auth0_credential: Credential key for Auth0 client secret (default: auth0_client)
-    
+
     Output:
       - access_token: Auth0 access token
       - token_type: Token type (Bearer)
@@ -29,66 +29,57 @@ workload:
   auth0_domain: "{{ auth0_domain | default('mestumre-development.us.auth0.com') }}"
   client_id: "{{ client_id | default('Jqop7YoaiZalLHdBRo5ScNQ1RJhbhbDN') }}"
   auth0_credential: "{{ auth0_credential | default('auth0_client') }}"
-  # API Audience options:
-  # - https://DOMAIN/me/ - My Account API (user authentication, default)
-  # - https://DOMAIN/api/v2/ - Management API (admin operations)
-  # - omit for just OpenID/OAuth scopes
   audience: "{{ audience | default('https://' + auth0_domain | default('mestumre-development.us.auth0.com') + '/me/') }}"
 
 keychain:
   - name: auth0_credentials
     kind: credential
     scope: global
-    credential: "{{ workload.auth0_credential }}"
+    credential: "{{ auth0_credential }}"
 
 workflow:
   - step: start
     desc: Begin token acquisition
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args: {}
       code: |
         result = {"status": "initialized"}
-    case:
-      - when: "{{ event.name == 'step.exit' }}"
-        then:
-          next:
-            - step: get_token
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: get_token
 
   - step: get_token
     desc: Get access token from Auth0
     tool:
       kind: http
       method: POST
-      endpoint: "https://{{ workload.auth0_domain }}/oauth/token"
+      endpoint: "https://{{ auth0_domain }}/oauth/token"
       headers:
         Content-Type: "application/json"
       payload:
         grant_type: "password"
-        username: "{{ workload.username }}"
-        password: "{{ workload.password }}"
-        audience: "{{ workload.audience }}"
-        client_id: "{{ workload.client_id }}"
+        username: "{{ username }}"
+        password: "{{ password }}"
+        audience: "{{ audience }}"
+        client_id: "{{ client_id }}"
         client_secret: "{{ keychain.auth0_credentials.client_secret }}"
         scope: "openid profile email"
-    case:
-      - when: "{{ event.name == 'step.exit' and response.status == 200 }}"
-        then:
-          next:
-            - step: success
-      - when: "{{ event.name == 'step.exit' and response.status != 200 }}"
-        then:
-          next:
-            - step: error
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: success
+          when: "{{ response.status_code == 200 }}"
+        - step: error
+          when: "{{ response.status_code != 200 }}"
 
   - step: success
     desc: Return token
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args:
         access_token: "{{ get_token.data.access_token }}"
         token_type: "{{ get_token.data.token_type }}"
@@ -101,20 +92,18 @@ workflow:
             "token_type": token_type,
             "expires_in": expires_in
         }
-    case:
-      - when: "{{ event.name == 'step.exit' }}"
-        then:
-          next:
-            - step: end
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: error
     desc: Token acquisition failed
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args:
-        status: "{{ get_token.status }}"
+        status: "{{ get_token.status_code }}"
         error: "{{ get_token.data }}"
       code: |
         # Arguments injected: status, error
@@ -123,18 +112,16 @@ workflow:
             "http_status": status,
             "error": error
         }
-    case:
-      - when: "{{ event.name == 'step.exit' }}"
-        then:
-          next:
-            - step: end
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: Complete
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args: {}
       code: |
         result = {"status": "complete"}

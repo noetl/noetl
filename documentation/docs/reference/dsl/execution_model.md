@@ -1,409 +1,348 @@
 ---
 sidebar_position: 6
-title: Execution Model
-description: Event-sourced execution model with control plane and data plane architecture
+title: Execution Model (Canonical)
+description: Event-sourced execution model with control plane and data plane architecture (Petri-net canonical runtime)
 ---
 
-# NoETL DSL & Event-Sourced Execution Model (Control Plane / Data Plane)
+# NoETL DSL & Event-Sourced Execution Model (Control Plane / Data Plane) — Canonical (Updated)
 
 ## Abstract
-NoETL is a declarative orchestration system for APIs, databases, scripts, and agentic workflows, built around **event sourcing**: every meaningful state transition is emitted as an immutable event and persisted for replay, observability, and AI/optimization. The same model extends naturally to **quantum computation orchestration** (parameter sweeps, job submission, polling, result capture, provenance).
+NoETL is a declarative orchestration system for APIs, databases, scripts, and agentic workflows, built around **event sourcing**: every meaningful state transition is emitted as an immutable event and persisted for replay, observability, and optimization. The same execution model extends to **quantum computation orchestration** (parameter sweeps, job submission, polling, result capture, provenance).
 
-This document specifies:
-- The **NoETL DSL** (Playbook → Workflow → Step → Tool)
-- The **control plane vs data plane** split (server orchestration vs worker execution)
-- The **event model** and state reconstruction rules
-- Semantics of **loop**, **retry**, **sink**, **case**, and **next**
-- Quantum-oriented execution patterns
+This document specifies the **canonical execution model** aligned with the latest DSL decisions:
+- Root playbook sections (`metadata`, `keychain`, `executor`, `workload`, `workflow`, `workbook`)
+- Runtime scopes (`workload`, `ctx`, `iter`, pipeline locals)
+- **Petri-net semantics** (token → step transition → next arcs)
+- Control plane vs data plane responsibilities
+- Ordered pipeline execution (`step.tool`)
+- Task-level control via **`task.spec.policy.rules`** (no legacy `eval`, no `expr`)
+- Loop scheduling (server) with iteration execution (worker)
+- Reference-first result storage (no special “sink” kind)
 
 ---
 
 ## 1) Architecture overview
-NoETL follows an event-driven, distributed worker model where all execution emits structured events for observability. ([noetl.dev](https://noetl.dev/?utm_source=chatgpt.com))
+
+NoETL follows an event-driven, distributed worker model where **all execution emits structured events** for replay, observability, and optimization.
 
 ### 1.1 Components
+
 - **Server (control plane)**
-  - API endpoints (start execution, receive events, query variables/results)
-  - Validates playbooks and dependencies
-  - Maintains execution state by **replaying events**
-  - Issues work **commands** to the queue
-  - Decides routing (`next`, `case`) and fan-out/fan-in (`loop`)
+  - API endpoints (start execution, receive events, query executions)
+  - Resolves and validates playbooks
+  - Persists the append-only **event log**
+  - Evaluates **step admission** via `step.spec.policy.admit.rules` (no `step.when`)
+  - Evaluates **routing** via `step.next.arcs[].when`
+  - Schedules step runs and (optionally distributed) loop iterations
+  - Enforces payload/reference policies (max payload bytes, reference-first)
 
 - **Worker pool (data plane)**
-  - Claims commands from the queue
-  - Executes tools (http/python/postgres/duckdb/workbook/etc.)
-  - Performs local side effects (e.g., `sink`)
-  - Reports results back to server as events
+  - Pure background worker pool (**no HTTP endpoints**)
+  - Claims step-run commands (and/or iteration-run commands) from queue
+  - Executes the step pipeline (`step.tool`) deterministically
+  - Applies **task policies** (`task.spec.policy.rules`) for retry/jump/break/fail/continue
+  - Emits task/step/loop-iteration events back to server
 
 - **Queue / pubsub** (commonly NATS)
-  - Distributes commands to workers
-  - Can store loop snapshots / state
+  - Distributes run commands to workers
+  - May be used for leases/coordination (implementation-defined)
 
 - **Event Log**
-  - Append-only event store used for replay
-  - Exportable to observability stores (e.g., ClickHouse)
+  - Append-only event store used for replay and audit
+  - Exportable to analytics/observability stores (ClickHouse, OTEL, etc.)
 
-### 1.2 High-level sequence
+### 1.2 High-level sequence (canonical)
+
 ```
-Client → Server API: PlaybookExecutionRequested
-Server → Event Log: request received
-Server: validate + resolve playbook + build workload/context
-Server → Queue: command.issued (start step)
-Worker → Queue: command.claimed
-Worker: execute tool (+ retry/pagination) + optional sink
-Worker → Server API: step.enter/call.done/step.exit (+ sink.*)
-Server → Event Log: persist events
-Server: evaluate routing (case/next), loop progress, retry re-issue
-Server → Queue: next command(s) or workflow completion
+Client → Server API: playbook.execution.requested
+Server → Event Log: request persisted
+Server: validate + resolve + merge workload + init ctx
+Server: evaluate start step admission (admit.rules)
+Server → Queue: step.run.enqueued (token enters transition)
+
+Worker → Queue: step.run.claimed
+Worker → Server: task.* + iteration.* + step.* events (with outcomes / references)
+Server → Event Log: persist worker events
+Server: evaluate next.arcs routing on terminal boundary events
+Server → Queue: enqueue next step.run(s) OR complete workflow
 ```
 
 ---
 
 ## 2) Domain model (entities)
 
-### 2.1 Playbook
-A **Playbook** is the top-level document that defines workload inputs, a workbook library, and a workflow (step graph). The DSL is a YAML/JSON document validated against a schema; steps coordinate execution using `tool`, `loop`, `vars`, `case`, and `next`. ([noetl.dev](https://noetl.dev/docs/reference/dsl/spec))
+### 2.1 Playbook (root structure)
+A **Playbook** is the top-level YAML document. **Root sections are limited** to:
+
+- `apiVersion`, `kind`
+- `metadata`
+- `keychain` (optional but recommended)
+- `executor` (optional)
+- `workload`
+- `workflow`
+- `workbook` (optional)
+
+> Root-level `vars` MUST NOT exist.
 
 ### 2.2 Workflow
-A **Workflow** is the ordered (or graph-like) set of steps. A conventional entry point is step named `start`, and a conventional terminal step is `end`. ([noetl.dev](https://noetl.dev/docs/reference/dsl/spec))
+A **Workflow** is a list of steps that form a directed graph via `next` **arcs**.
+Conventions:
+- entry routing is via admission + explicit arcs (see §7)
+- termination occurs when no runnable tokens remain
 
-### 2.3 Step
-A **Step** is a coordinator that may:
-- Execute a **Tool** (`tool:`)
-- Repeat execution over a collection (`loop:`)
-- Persist derived values (`vars:`)
-- Route conditionally (`case:`)
-- Route by default (`next:`)
+### 2.3 Step (Petri-net transition)
+A **Step** is a Petri-net transition:
+- **Admission gate**: `step.spec.policy.admit` (server-side)
+- **Firing**: `step.tool` ordered pipeline (worker-side)
+- **Outgoing arcs**: `step.next.arcs[]` (server-side routing)
 
-This “step widget” structure is the core unit of orchestration. ([noetl.dev](https://noetl.dev/docs/reference/dsl/spec))
+There is **no** `step.when` field in the canonical model.
 
-### 2.4 Tool
-A **Tool** is the execution primitive. Common tool kinds include `workbook`, `python`, `http`, `postgres`, `duckdb`, `playbook`, `secrets`, etc. ([noetl.dev](https://noetl.dev/docs/reference/dsl/spec))
+### 2.4 Tool / Task
+A **Task** is a labeled tool invocation in the pipeline.
+A **Tool kind** is an execution primitive (`http`, `postgres`, `duckdb`, `python`, `secrets`, etc.).
+
+All runtime knobs are expressed under `task.spec` (with `spec` merge precedence).
 
 ### 2.5 Loop
-`loop:` is a **step-level attribute (not a tool kind)** that modifies how the step executes. It iterates over `in:` using an `iterator:` variable, with a selectable execution mode. Loop state is managed via NATS KV snapshots. ([noetl.dev](https://noetl.dev/docs/features/iterator))
+`loop` is a step modifier that repeats the step pipeline over a collection:
+- `loop.in`: collection expression
+- `loop.iterator`: iterator binding in `iter.<iterator>`
+- `loop.spec.mode`: `sequential` (default) or `parallel`
+- optional: `loop.spec.policy.exec: distributed|local` (placement intent)
 
-### 2.6 Case
-`case:` provides **event-driven conditional routing**. It evaluates conditions (`when:`) against runtime state (event, response/error, variables, workload, etc.) and applies actions in `then:` (e.g., `next`, `sink`, `set`). ([noetl.dev](https://noetl.dev/docs/reference/dsl/spec))
+Loop scheduling is **server-owned**; iteration execution is **worker-owned** (see §6).
 
-### 2.7 Next
-`next:` is the **default routing** when no `case` rule intercepts. It can be a single step or list of steps (and may carry `args` per edge). ([noetl.dev](https://noetl.dev/docs/reference/dsl/spec))
-
-### 2.8 Context
-“Context” is the runtime evaluation environment for templates and tools:
-- `workload.*` (global inputs)
-- `vars.*` (persisted transient variables)
-- prior step results (namespaced by step)
-- loop iterator variables (e.g., `city`, `current_item`)
-
-### 2.9 Workload
-Workload is the playbook’s “input surface.” At execution start:
-1) the playbook’s workload block is evaluated
-2) it is merged with the **execution request payload**
-3) the merged object becomes `workload` in template context
-
-### 2.10 Variable
-Variables are derived and persisted values (often from `vars:` blocks) stored in a transient store and referenced as `{{ vars.name }}` in later steps. The design includes a dedicated transient table and REST API access patterns. ([noetl.dev](https://noetl.dev/docs/reference/dsl/spec))
-
-### 2.11 Workbook
-A workbook is a library of reusable tasks that can be invoked via a `workbook` tool kind. ([noetl.dev](https://noetl.dev/docs/reference/dsl/spec))
+### 2.6 Next (arcs)
+`next` is a routing **router object**:
+- `next.spec.mode`: exclusive|inclusive (fan-out control)
+- `next.arcs[]`: each arc has `when` guard + `args` inscription payload
 
 ---
 
-## 3) DSL specification (practical schema)
+## 3) Runtime scopes (state model)
 
-### 3.1 Playbook structure
-Typical top-level blocks:
-- `apiVersion`, `kind`
-- `metadata` (name/path/version/description)
-- `workload` (inputs; merged with run payload)
-- `keychain` (auth material references)
-- `workbook` (reusable named tasks)
-- `workflow` (steps)
+NoETL separates immutable input from mutable execution state and local iteration state.
 
-### 3.2 Step structure
-A step can contain:
-- `tool:` (required except conventional `start`/`end`) ([noetl.dev](https://noetl.dev/docs/reference/dsl/spec))
-- `loop:`: `{ in, iterator, mode }` ([noetl.dev](https://noetl.dev/docs/features/iterator))
-- `vars:`: variable extraction/persistence ([noetl.dev](https://noetl.dev/docs/reference/dsl/variables_feature_design))
-- `retry:`: unified retry/pagination/polling with optional per-iteration sink ([noetl.dev](https://noetl.dev/docs/reference/dsl/unified_retry))
-- `case:`: conditional actions triggered by events ([noetl.dev](https://noetl.dev/docs/reference/dsl/spec))
-- `next:`: default routing ([noetl.dev](https://noetl.dev/docs/reference/dsl/spec))
+### 3.1 `workload` (immutable)
+At execution start, the server builds **MergedWorkload** by merging:
+1) playbook `workload` defaults
+2) execution request payload overrides
 
----
+`workload` is then immutable for the execution instance.
 
-## 4) Event sourcing model
+### 3.2 `ctx` (execution scope, mutable)
+`ctx` is mutable state shared across steps within one execution:
+- progress counters
+- session state
+- references to externally stored results
 
-### 4.1 Why event sourcing here
-NoETL treats execution as a stream of immutable facts:
-- **Rebuildable state**: execution state is derived by replay
-- **Deterministic debugging**: “what happened?” becomes a query
-- **Audit/provenance**: critical for regulated workloads and quantum experiments
-- **Observability**: events can be exported to ClickHouse/OpenTelemetry
+**Persistence rule:** `ctx` updates MUST be recorded as event-sourced **patches** (not full snapshots).
 
-### 4.2 Event log schema
-A typical event store record includes:
-- `event_id` (unique)
-- `execution_id`
-- `event_type` / `event_name`
-- `status` (STARTED/COMPLETED/FAILED)
-- `step_name` (optional)
-- `payload` (JSON)
-- timestamps, duration, error message
+### 3.3 `iter` (iteration scope, mutable)
+If a step has a `loop`, each iteration has isolated `iter` scope:
+- `iter.<iterator>` binds current element
+- `iter.index`
+- `iter.*` holds pagination/streaming state (page, has_more, status codes, etc.)
 
-In ClickHouse, `observability.noetl_events` is designed to index by EventId/ExecutionId/EventType/Status, and includes step and duration/error fields. ([noetl.dev](https://noetl.dev/docs/reference/clickhouse_observability?utm_source=chatgpt.com))
+### 3.4 Nested loops
+Canonical addressing uses a parent chain:
+- `iter` is current iteration
+- `iter.parent` is outer iteration
+- `iter.parent.parent` for deeper nesting
 
-### 4.3 Canonical event taxonomy (recommended)
-Your list maps cleanly into a stable naming scheme:
+### 3.5 Pipeline locals
+Within a step pipeline (or within an iteration pipeline):
+- `_prev`: previous task output (canonical: previous task’s `outcome.result`)
+- `_task`: current task label
+- `_attempt`: attempt counter for current task
 
-**Execution lifecycle**
-- `playbook.execution.requested` (PlaybookExecutionRequested)
-- `playbook.request.evaluated` (PlaybookRequestEvaluated)
-- `workflow.started` / `workflow.finished`
-- `playbook.paused` / `playbook.processed`
-
-**Step & tool**
-- `step.started` / `step.finished`
-- `tool.started` / `tool.finished`
-
-**Loop**
-- `loop.started` / `loop.iteration.started` / `loop.iteration.finished` / `loop.finished`
-
-**Case & routing**
-- `case.started` / `case.evaluated`
-- `next.evaluated`
-
-**Retry**
-- `retry.started` / `retry.processed`
-
-**Sink**
-- `sink.started` / `sink.processed`
-
-### 4.4 What’s *derived* vs *stored*
-- Stored: events only (facts)
-- Derived: current step, pending commands, loop progress, retry attempt counters
+### 3.6 Read/write guidance (canonical)
+- Reads commonly use: token `args` → `ctx` → `iter` → `workload`
+- Writes:
+  - iteration-local: `set_iter`
+  - cross-step: `set_ctx` (restricted for parallel loops until reducers/atomics exist)
 
 ---
 
-## 5) Control plane vs data plane responsibilities
+## 4) Canonical step execution
 
-### 5.1 Server (control plane)
-The server is responsible for:
-1) **Accept execution request** and append `playbook.execution.requested`
-2) **Validate** playbook, referenced workbook tasks, secrets, and tools
-3) **Build initial workload/context** (workload merge + template evaluation)
-4) **Choose entry step** (convention: `start`) and issue initial command(s)
-5) **Persist all incoming worker events** to the event log
-6) **Rebuild execution state** by replay
-7) **Decide orchestration**:
-   - Evaluate `case` rules that cause routing
-   - Follow `next` edges
-   - Expand `loop` (fan-out), detect completion (fan-in)
-   - Re-issue commands for `retry` (or delegate policy to worker for tool-level pagination)
+### 4.1 Canonical step form
+A canonical step contains:
+- `spec` (step knobs + step policies)
+- optional `loop`
+- `tool` pipeline (ordered list of labeled tasks)
+- `next` router (arcs)
 
-### 5.2 Worker (data plane)
-Workers are responsible for:
-1) **Claim command** (idempotent claim)
-2) **Render templates** with provided context/vars
-3) **Execute tool** (http/python/postgres/duckdb/workbook/etc.)
-4) **Apply unified retry** for tool-level retries, pagination, and polling
-5) **Execute sink/side effects** when instructed (often per iteration)
-6) **Report** step/tool/sink outcomes back to server as events
+There is **no canonical need** for special step-level constructs like `case`, `retry`, or `sink`:
+- retry/pagination/polling = task policy rules
+- sink = just a storage tool task that returns a reference
 
-> Key rule: the worker *executes*; the server *decides the graph*.
+### 4.2 Fan-out mode belongs to `next` (not step spec)
+Routing fan-out is controlled by:
+- `next.spec.mode: exclusive|inclusive` (default exclusive)
 
 ---
 
-## 6) Loop semantics
+## 5) Tool execution and task-level flow control (policy)
 
-### 6.1 DSL
-Loop is declared at step level:
-```yaml
-- step: process_items
-  tool: { kind: python, ... }
-  loop:
-    in: "{{ workload.items }}"
-    iterator: current_item
-    mode: sequential   # or parallel
-```
-([noetl.dev](https://noetl.dev/docs/features/iterator))
+### 5.1 Tool `outcome`
+Each tool invocation produces exactly one final `outcome` envelope:
+- `outcome.status`: `ok|error`
+- `outcome.result`: success output (or a reference)
+- `outcome.error`: error object with stable fields (`kind`, `retryable`, etc.)
+- `outcome.meta`: duration, attempt, trace ids
 
-### 6.2 Execution semantics
-- Server evaluates `loop.in` into a collection.
-- Server creates a loop-instance state object (stored in NATS KV snapshots). ([noetl.dev](https://noetl.dev/docs/features/iterator))
-- For each element, server issues a command with:
-  - iterator variable bound (e.g., `current_item`)
-  - loop index/counters
-  - step/tool config
+### 5.2 Tool runtime policy (`task.spec`)
+All runtime knobs are under `task.spec`:
+- timeouts, pooling, internal retry (optional)
+- sandbox/resource hints
+- kind-specific knobs
 
-**Sequential mode**
-- Issue next item only after current iteration completes
+### 5.3 Task policy (`task.spec.policy.rules`) — pipeline control
+`task.spec.policy.rules` is an ordered rule list mapping `outcome` to a directive:
 
-**Parallel mode**
-- Issue N commands concurrently
-- Fan-in occurs when all iterations report completion
+- `continue`: advance to next task
+- `retry`: rerun current task (bounded attempts, backoff)
+- `jump`: jump to another task label (pagination/routing inside pipeline)
+- `break`: end the pipeline successfully (iteration done / step done)
+- `fail`: end the pipeline with failure (iteration failed / step failed)
 
-### 6.3 Loop + sink
-A canonical pattern is to sink per iteration using a `case` rule triggered on step completion:
-```yaml
-case:
-  - when: "{{ event.name == 'step.exit' and response is defined }}"
-    then:
-      sink:
-        tool:
-          kind: postgres
-          auth: "{{ workload.pg_auth }}"
-          table: processed_records
-```
-([noetl.dev](https://noetl.dev/docs/features/iterator))
+Default behavior if task policy omitted:
+- ok → continue
+- error → fail
 
-### 6.4 Nested loops
-NoETL encourages nested iteration by composing steps (outer loop step writes vars, inner loop step loops over vars): ([noetl.dev](https://noetl.dev/docs/features/iterator))
+Task policy supports scoped writes:
+- `set_iter` (iteration-local; preferred in loops)
+- `set_ctx` (execution-scoped patch; restricted in parallel loops)
+
+> Note: any legacy `eval`, `expr`, `set_vars`, or step-local `vars` are non-canonical in this model.
 
 ---
 
-## 7) Unified retry semantics
-The unified retry system expresses **error retry** + **success retry** (pagination/polling) declaratively and works across tools. It also supports per-iteration sinks and collection strategies. ([noetl.dev](https://noetl.dev/docs/reference/dsl/unified_retry))
+## 6) Loop semantics (canonical)
 
-### 7.1 Pagination / polling pattern
-- `when:` decides whether to continue
-- `next_call:` mutates request inputs (params/url/args)
-- `collect:` defines merge strategy (append/replace) and optional target var
-- Optional: `per_iteration.sink` for writing each page/iteration immediately ([noetl.dev](https://noetl.dev/docs/reference/dsl/unified_retry))
+### 6.1 Server schedules iterations; worker executes them
+If `step.loop` is present:
+- **Server** expands the loop into iteration run commands (or a single command with loop plan), respecting `loop.spec.mode` and `max_in_flight`.
+- **Worker(s)** execute the step pipeline for each iteration under isolated `iter` scope.
 
-### 7.2 Loop integration
-Retry composes with `loop` for “loop over endpoints, paginate each endpoint.” ([noetl.dev](https://noetl.dev/docs/reference/dsl/unified_retry))
+### 6.2 Sequential vs parallel
+- `sequential`: process one iteration at a time (stable order)
+- `parallel`: process multiple iterations concurrently (bounded by `max_in_flight`)
 
----
+### 6.3 Parallel safety
+In `parallel` mode:
+- `set_iter` is always safe (iteration isolated)
+- `set_ctx` must be restricted until reducers/atomics exist (implementation must document the chosen rule):
+  - write-once per key
+  - append-only
+  - reject conflicting writes
 
-## 8) Variables (`vars:`) semantics
-
-### 8.1 DSL behavior
-The `vars` block extracts values from the **current step result** after execution and persists them:
-- Accessible later via `{{ vars.name }}`
-- Stored in a transient table with metadata
-- Readable via REST API endpoints (`GET /api/vars/{execution_id}` etc.) ([noetl.dev](https://noetl.dev/docs/reference/dsl/variables_feature_design))
-
-### 8.2 Template namespaces (practical)
-- `workload.*` — merged execution inputs
-- `vars.*` — persisted derived values
-- `result` — current step result in the `vars:` block ([noetl.dev](https://noetl.dev/docs/reference/dsl/variables_feature_design))
-
----
-
-## 9) `case`, `next`, and `sink` semantics
-
-### 9.1 `next:` as default routing
-`next` is the baseline edge list—where execution goes when no higher-priority rule intercepts. ([noetl.dev](https://noetl.dev/docs/reference/dsl/spec))
-
-### 9.2 `case:` as event-driven routing + side effects
-`case` enables conditional logic tied to execution events (e.g., step exit, tool error). A `case` rule contains:
-- `when:` a Jinja2 condition evaluated against runtime state ([noetl.dev](https://noetl.dev/docs/reference/dsl/spec))
-- `then:` actions:
-  - `next:` route to step(s)
-  - `sink:` persist data
-  - `set:` set ephemeral values
-
-### 9.3 `sink:` as a shortcut
-In practice, `sink` is often “case-on-step-exit” with a well-known pattern (see Loop + sink example). ([noetl.dev](https://noetl.dev/docs/features/iterator))
-
-### 9.4 Where evaluation happens
-- **Server-side decisions** (routing/graph changes): `case.then.next`, default `next`, loop scheduling, workflow completion
-- **Worker-side side effects**: `sink` execution, tool execution, retry/pagination/polling
+### 6.4 Loop lifecycle events
+Server must persist loop lifecycle boundaries:
+- `loop.started`
+- `loop.iteration.started`
+- `loop.iteration.done` / `loop.iteration.failed`
+- `loop.done`
 
 ---
 
-## 10) Quantum computation orchestration: how NoETL fits
+## 7) Routing (next router) and token creation
 
-Quantum workloads look like distributed API-driven workflows with strict provenance. NoETL’s model fits naturally:
+### 7.1 Server routing responsibility
+Upon receiving a terminal step event (`step.done`, `step.failed`, or `loop.done`), the server:
+1) loads the step definition
+2) evaluates `next.arcs[].when` guards
+3) applies `next.spec.mode`
+4) enqueues zero or more new step-run tokens/commands
 
-### 10.1 Tool mapping
-- `http` → vendor/job APIs (submit, status, fetch results)
-- `python` → circuit generation, compilation, post-processing
-- `postgres/duckdb` → metadata, metrics, experiment tables
-- `secrets` → QPU credentials / tokens
-- `workbook` → reusable “submit_job”, “poll_job”, “decode_results” tasks
-
-### 10.2 Core patterns
-**A) Parameter sweep (fan-out loop)**
-- `loop.in` over parameter grid (angles, noise models, backends)
-- `mode: parallel` for throughput, bounded by worker pool
-
-**B) Async job polling (unified retry)**
-- submit returns `job_id` → store in `vars`
-- `retry` polls status until complete, with bounded attempts
-
-**C) Provenance (event log + vars)**
-Record in events and/or vars:
-- circuit hash, compiler version, backend, shot count, seed
-- timestamps (submit/start/finish), error class, retry counters
-
-**D) Result sinks**
-- per-iteration sink to store each experiment result immediately
-- store large payloads out-of-band (object store), sink pointers + metadata
-
-### 10.3 Quantum-specific conformance recommendations
-- **Idempotency**: submission step must be safe to retry (e.g., deterministic client token) or guarded by `vars.job_id` existence.
-- **Determinism**: embed versioned toolchain metadata in events.
-- **Resource-aware pools**: tag worker pools by backend type (simulator vs QPU) and route commands accordingly.
+### 7.2 Token payload (`next.arcs[].args`)
+`next.arcs[].args` is the canonical cross-step payload (Petri-net arc inscription).
+It becomes the input `args` available to the downstream step admission and runtime templates.
 
 ---
 
-## 11) Implementation notes (aligning names with the codebase)
-To keep the mental model crisp:
-- **Server** is the **control plane** module: orchestration + API endpoints.
-- **Worker** is the **data plane** module: background worker pool, no HTTP API.
-- **CLI** manages lifecycle of server + worker pools.
+## 8) Event sourcing model
+
+### 8.1 Why event sourcing
+- rebuildable state by replay
+- deterministic debugging and audit/provenance
+- observability exports
+- AI-assisted optimization
+
+### 8.2 Minimum event set (recommended)
+
+**Server:**
+- `playbook.execution.requested`
+- `playbook.request.evaluated`
+- `workflow.started`
+- `token.enqueued` / `step.scheduled`
+- `next.evaluated` / `next.fired`
+- `workflow.finished`
+- `playbook.processed`
+
+**Worker:**
+- `step.started`
+- `task.started`
+- `task.done` (includes `outcome` or references)
+- `step.done` / `step.failed`
+- `loop.iteration.*` (when iteration executed)
+
+### 8.3 Reference-first event payloads
+Events SHOULD NOT carry large result bodies.
+Store bulk results externally and emit references.
 
 ---
 
-## 12) Appendix: quick examples
+## 9) Results & storage (reference-first)
 
-### A) Loop + sink (per item)
-```yaml
-- step: process_and_save
-  tool:
-    kind: python
-    args:
-      record: "{{ current_record }}"
-    code: |
-      result = {"processed_id": record["id"], "status": "complete"}
-  loop:
-    in: "{{ workload.records }}"
-    iterator: current_record
-    mode: parallel
-  case:
-    - when: "{{ event.name == 'step.exit' and response is defined }}"
-      then:
-        sink:
-          tool:
-            kind: postgres
-            auth: "{{ workload.pg_auth }}"
-            table: processed_records
-  next:
-    - step: end
-```
-([noetl.dev](https://noetl.dev/docs/features/iterator))
+### 9.1 Default rule
+- Event log contains metadata and references.
+- Large payloads go to external storage:
+  - Postgres tables
+  - object store (S3/GCS)
+  - NATS object store (if adopted)
+  - vector stores, etc.
 
-### B) Pagination + per-page sink
-```yaml
-retry:
-  - when: "{{ response.data.nextCursor is not none }}"
-    then:
-      max_attempts: 100
-      next_call:
-        params:
-          cursor: "{{ response.data.nextCursor }}"
-      collect:
-        strategy: append
-        path: data.results
-      per_iteration:
-        sink:
-          tool:
-            kind: postgres
-            auth: pg_k8s
-            table: raw_data
-            mode: insert
-```
-([noetl.dev](https://noetl.dev/docs/reference/dsl/unified_retry))
+### 9.2 “Sink” is a pipeline pattern
+A “sink” is simply a storage tool task executed in the pipeline that returns a reference.
+No special DSL keyword is required.
 
+---
+
+## 10) Quantum computation orchestration (canonical fit)
+
+Quantum workloads map naturally to:
+- loop-driven parameter sweeps (`loop` with `parallel` bounded by capacity)
+- tool tasks for submit/poll/fetch (task policy for retry/jump/break)
+- provenance via event log and immutable `workload`
+- result references stored in external stores and referenced via events/ctx patches
+
+---
+
+## 11) Implementation alignment (repository layout)
+
+Assumptions used by this documentation:
+- **Worker (`worker.py`)**: pure background worker pool with no HTTP endpoints
+- **Server (`server.py`)**: orchestration + API endpoints
+- **CLI (`clictl.py`)**: manages worker pools and server lifecycle
+
+---
+
+## 12) Migration notes (from older docs)
+
+Non-canonical constructs in older docs:
+- step-level `retry:` blocks
+- step-level `case:` used to execute pipelines
+- step-level `sink:` shortcut blocks
+- playbook-root `vars:`
+- step-local `vars:`
+- `step.when`
+- legacy `eval:` / `expr:`
+
+Canonical replacements:
+- Task-level `task.spec.policy.rules` for retry/jump/break/fail/continue
+- Storage as ordinary tool tasks returning references
+- Step admission via `step.spec.policy.admit.rules`
+- Routing via `next.spec` + `next.arcs[]`

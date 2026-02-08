@@ -1,6 +1,11 @@
 # Cloud Build ignore file
 # This file specifies which files to exclude when uploading to Cloud Build
 
+# Explicitly include needed directories
+!docker/
+!noetl/
+!crates/
+
 # Git files
 .git/
 .gitignore

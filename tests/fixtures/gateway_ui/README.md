@@ -78,15 +78,45 @@ In production, serve these files with:
 - **Object Storage** - S3 + CloudFront, GCS, Azure Blob
 - **Vercel/Netlify** - Serverless static hosting
 
-Then update `API_BASE` in `auth.js` to point to your gateway URL.
+Then update `env.js` to point to your gateway URL.
 
 ## Configuration
 
-Update the API base URL if your gateway runs on a different port:
+The Gateway UI uses `env.js` for environment-specific configuration. It automatically detects your environment:
 
-In `auth.js`:
+| Environment | Gateway URL | Detection |
+|-------------|-------------|-----------|
+| **local** | `http://localhost:8080` | Default for localhost |
+| **kind** | `http://localhost:30080` | Port >= 30000 (NodePort) |
+| **gke** | `https://gateway.mestumre.dev` | mestumre.dev or noetl.io hostname |
+
+### Manual Override
+
+Override the environment via URL parameter:
+```
+http://localhost:8090/login.html?env=kind
+http://localhost:8090/login.html?env=gke
+http://localhost:8090/login.html?env=local
+```
+
+### Custom Configuration
+
+Edit `env.js` to add custom environments or change defaults:
 ```javascript
-const API_BASE = window.location.origin; // Or 'http://localhost:8090'
+const configs = {
+  local: {
+    name: 'Local Development',
+    gatewayUrl: 'http://localhost:8080',  // Change port here
+  },
+  kind: {
+    name: 'Kind Kubernetes Cluster',
+    gatewayUrl: 'http://localhost:30080', // Kind NodePort
+  },
+  gke: {
+    name: 'GKE Production',
+    gatewayUrl: 'https://gateway.mestumre.dev',  // Or your domain
+  }
+};
 ```
 
 ## Gateway Integration
@@ -98,13 +128,48 @@ The UI communicates with these Gateway endpoints:
 - `POST /api/auth/check-access` - Permission checking
 - `POST /graphql` - Protected GraphQL endpoint (requires authentication)
 
+### Session Caching with NATS K/V
+
+The Gateway uses NATS K/V as a fast session cache to avoid calling NoETL playbooks for every request:
+
+```
+┌─────────┐     ┌─────────┐     ┌──────────────┐     ┌──────────┐
+│   UI    │────▶│ Gateway │────▶│ NATS K/V     │     │ NoETL    │
+└─────────┘     └────┬────┘     │ (sessions)   │     │ Server   │
+                     │          └──────────────┘     └──────────┘
+                     │                 │                   │
+                     │  1. Check cache │                   │
+                     │◀────────────────│                   │
+                     │                                     │
+                     │  2. Cache miss? Call playbook       │
+                     │─────────────────────────────────────▶
+```
+
+**Flow:**
+1. **Login:** Gateway calls `auth0_login` playbook → creates session in Postgres + NATS K/V cache
+2. **Subsequent requests:** Gateway checks NATS K/V directly (sub-millisecond)
+3. **Cache miss:** Gateway calls `auth0_validate_session` → refreshes NATS K/V cache
+
+This provides fast session lookups while keeping Postgres as the source of truth.
+
 ## Testing Flow
 
-1. **Start Gateway**: `cd gateway && cargo run --release`
-2. **Start UI server**: `cd tests/fixtures/gateway_ui && python3 -m http.server 8080`
-3. **Open browser**: `http://localhost:8080/login.html`
+### Local Development
+1. **Start Gateway**: `cd crates/gateway && cargo run --release`
+2. **Start UI server**: `cd tests/fixtures/gateway_ui && python3 -m http.server 8090`
+3. **Open browser**: `http://localhost:8090/login.html`
 4. **Login**: Use Auth0 token or test session token
-5. **Test flight search**: Query flights on main page
+
+### Kind Kubernetes Cluster
+1. **Deploy to Kind**: See documentation/docs/development/kind_kubernetes.md
+2. **Start UI server**: `cd tests/fixtures/gateway_ui && python3 -m http.server 8090`
+3. **Open browser**: `http://localhost:8090/login.html?env=kind`
+4. **Gateway endpoint**: `http://localhost:30080` (via NodePort)
+
+### GKE Production
+1. **Deploy to GKE**: See documentation for GKE deployment
+2. **Open browser**: `https://your-domain.com/login.html`
+3. **Gateway endpoint**: Auto-detected from hostname
 
 ## Creating Test Session
 

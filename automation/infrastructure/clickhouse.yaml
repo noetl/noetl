@@ -18,106 +18,54 @@ workflow:
       cmds:
         - echo "ClickHouse Automation - Action '{{ workload.action }}'"
     next:
-      - when: "{{ workload.action }} == deploy"
-        then:
-          - step: deploy_clickhouse
-        args: {}
-      - when: "{{ workload.action }} == undeploy"
-        then:
-          - step: undeploy_clickhouse
-        args: {}
-      - when: "{{ workload.action }} == status"
-        then:
-          - step: check_status
-        args: {}
-      - when: "{{ workload.action }} == health"
-        then:
-          - step: check_health
-        args: {}
-      - when: "{{ workload.action }} == test"
-        then:
-          - step: test_clickhouse
-        args: {}
-      - when: "{{ workload.action }} == connect"
-        then:
-          - step: connect_cli
-        args: {}
-      - when: "{{ workload.action }} == query"
-        then:
-          - step: execute_query
-        args: {}
-      - when: "{{ workload.action }} == logs"
-        then:
-          - step: view_logs
-        args: {}
-      - when: "{{ workload.action }} == logs-operator"
-        then:
-          - step: view_operator_logs
-        args: {}
-      - when: "{{ workload.action }} == logs-mcp"
-        then:
-          - step: view_mcp_logs
-        args: {}
-      - when: "{{ workload.action }} == port-forward"
-        then:
-          - step: port_forward
-        args: {}
-      - when: "{{ workload.action }} == port-forward-mcp"
-        then:
-          - step: port_forward_mcp
-        args: {}
-      - when: "{{ workload.action }} == restart"
-        then:
-          - step: restart_cluster
-        args: {}
-      - when: "{{ workload.action }} == restart-operator"
-        then:
-          - step: restart_operator
-        args: {}
-      - when: "{{ workload.action }} == restart-mcp"
-        then:
-          - step: restart_mcp
-        args: {}
-      - when: "{{ workload.action }} == clean-data"
-        then:
-          - step: clean_data
-        args: {}
-      - when: "{{ workload.action }} == optimize"
-        then:
-          - step: optimize_tables
-        args: {}
-      - when: "{{ workload.action }} == deploy-cluster"
-        then:
-          - step: deploy_cluster
-        args: {}
-      - when: "{{ workload.action }} == deploy-crds"
-        then:
-          - step: deploy_crds
-        args: {}
-      - when: "{{ workload.action }} == deploy-namespace"
-        then:
-          - step: deploy_namespace
-        args: {}
-      - when: "{{ workload.action }} == deploy-operator"
-        then:
-          - step: deploy_operator
-        args: {}
-      - when: "{{ workload.action }} == deploy-schema"
-        then:
-          - step: deploy_schema
-        args: {}
-      - when: "{{ workload.action }} == deploy-grafana-datasource"
-        then:
-          - step: deploy_grafana_datasource
-        args: {}
-      - when: "{{ workload.action }} == deploy-mcp-server"
-        then:
-          - step: deploy_mcp_server
-        args: {}
-      - when: "{{ workload.action }} == help"
-        then:
-          - step: show_help
-        args: {}
+      - step: deploy_clickhouse
+        when: "{{ workload.action == 'deploy' }}"
+      - step: undeploy_clickhouse
+        when: "{{ workload.action == 'undeploy' }}"
+      - step: check_status
+        when: "{{ workload.action == 'status' }}"
+      - step: check_health
+        when: "{{ workload.action == 'health' }}"
+      - step: test_clickhouse
+        when: "{{ workload.action == 'test' }}"
+      - step: connect_cli
+        when: "{{ workload.action == 'connect' }}"
+      - step: execute_query
+        when: "{{ workload.action == 'query' }}"
+      - step: view_logs
+        when: "{{ workload.action == 'logs' }}"
+      - step: view_operator_logs
+        when: "{{ workload.action == 'logs-operator' }}"
+      - step: view_mcp_logs
+        when: "{{ workload.action == 'logs-mcp' }}"
+      - step: port_forward
+        when: "{{ workload.action == 'port-forward' }}"
+      - step: port_forward_mcp
+        when: "{{ workload.action == 'port-forward-mcp' }}"
+      - step: restart_cluster
+        when: "{{ workload.action == 'restart' }}"
+      - step: restart_operator
+        when: "{{ workload.action == 'restart-operator' }}"
+      - step: restart_mcp
+        when: "{{ workload.action == 'restart-mcp' }}"
+      - step: clean_data
+        when: "{{ workload.action == 'clean-data' }}"
+      - step: optimize_tables
+        when: "{{ workload.action == 'optimize' }}"
+      - step: deploy_cluster
+        when: "{{ workload.action == 'deploy-cluster' }}"
+      - step: deploy_crds
+        when: "{{ workload.action == 'deploy-crds' }}"
+      - step: deploy_namespace
+        when: "{{ workload.action == 'deploy-namespace' }}"
+      - step: deploy_operator
+        when: "{{ workload.action == 'deploy-operator' }}"
+      - step: deploy_schema
+        when: "{{ workload.action == 'deploy-schema' }}"
+      - step: deploy_grafana_datasource
+        when: "{{ workload.action == 'deploy-grafana-datasource' }}"
+      - step: deploy_mcp_server
+        when: "{{ workload.action == 'deploy-mcp-server' }}"
       - step: show_help
 
   - step: deploy_clickhouse
@@ -130,26 +78,11 @@ workflow:
           echo "Deploying complete ClickHouse observability stack..."
           kubectl apply -f ci/manifests/clickhouse/namespace.yaml
           echo "✓ ClickHouse namespace created"
-          kubectl apply -f ci/manifests/clickhouse/crds.yaml
-          echo "✓ ClickHouse CRDs deployed"
-          sleep 2
-          kubectl apply -f ci/manifests/clickhouse/operator.yaml
-          echo "✓ ClickHouse operator deployed"
-          echo "Waiting for operator to be ready..."
-          kubectl wait --for=condition=available --timeout=120s deployment/clickhouse-operator -n clickhouse || true
-          sleep 5
-          kubectl apply -f ci/manifests/clickhouse/clickhouse-cluster.yaml
-          echo "✓ ClickHouse cluster deployed"
-          echo "Waiting for ClickHouse to be ready (this may take 2-3 minutes)..."
-          for i in {1..60}; do
-            if kubectl get pods -n clickhouse -l clickhouse.altinity.com/chi=noetl-clickhouse 2>/dev/null | grep -q "Running"; then
-              echo "✓ ClickHouse pod is running"
-              break
-            fi
-            echo "Waiting for ClickHouse pod... ($i/60)"
-            sleep 5
-          done
-          sleep 10
+          kubectl apply -f ci/manifests/clickhouse/clickhouse-simple.yaml
+          echo "✓ ClickHouse simple deployment created"
+          echo "Waiting for ClickHouse to be ready..."
+          kubectl wait --for=condition=ready --timeout=180s pod/clickhouse-0 -n clickhouse || true
+          echo "✓ ClickHouse pod is running"
           kubectl apply -f ci/manifests/clickhouse/observability-schema.yaml
           echo "✓ Observability schema ConfigMap created"
           echo "Schema will be initialized on first connection"
@@ -214,7 +147,7 @@ workflow:
           echo ""
           echo "ClickHouse Cluster Health:"
           echo "=========================="
-          POD=$(kubectl get pods -n clickhouse -l clickhouse.altinity.com/chi=noetl-clickhouse -o jsonpath='{.items[0].metadata.name}')
+          POD=$(kubectl get pods -n clickhouse -l app=clickhouse -o jsonpath='{.items[0].metadata.name}')
           if [ -n "$POD" ]; then
             kubectl exec -n clickhouse $POD -- clickhouse-client --query="SELECT hostName(), version(), uptime() FORMAT Vertical"
           else
@@ -609,3 +542,5 @@ workflow:
 
   - step: end
     desc: End workflow
+    tool:
+      kind: noop

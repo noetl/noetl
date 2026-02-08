@@ -19,10 +19,13 @@ NoETL uses a server-worker architecture for distributed workflow execution.
 Rust-based API gateway for external clients:
 - Exposes GraphQL API for playbook execution
 - Provides REST API for Auth0 authentication (`/api/auth/*`)
-- Session validation middleware
+- Session validation middleware with NATS K/V caching
 - Pure gateway design - no direct database connections
 - All data access through Control Plane API
+- NATS K/V for fast session lookups (sub-millisecond)
 - Future: WebSocket subscriptions via NATS for live updates
+
+**Session Caching:** Gateway checks NATS K/V for cached sessions before calling auth playbooks. On cache miss, playbooks validate from PostgreSQL and refresh the cache.
 
 ### NoETL Control Plane
 

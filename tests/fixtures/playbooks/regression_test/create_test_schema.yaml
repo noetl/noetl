@@ -14,24 +14,25 @@ workflow:
     desc: "Start schema creation"
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args: {}
       code: |
         result = {"status": "initialized"}
     next:
-      - step: create_test_results_table
+      spec:
+        mode: exclusive
+      arcs:
+        - step: create_test_results_table
 
   - step: create_test_results_table
     desc: "Create table for storing test execution results"
     tool:
       kind: postgres
-      auth: "{{ workload.pg_auth }}"
+      auth: "{{ pg_auth }}"
       command: |
         CREATE SCHEMA IF NOT EXISTS noetl_test;
-        
+
         DROP TABLE IF EXISTS noetl_test.regression_results CASCADE;
-        
+
         CREATE TABLE noetl_test.regression_results (
           test_run_id BIGINT NOT NULL,
           test_timestamp TIMESTAMP NOT NULL DEFAULT NOW(),
@@ -50,26 +51,29 @@ workflow:
           test_passed BOOLEAN NOT NULL,
           PRIMARY KEY (test_run_id, playbook_name)
         );
-        
+
         CREATE INDEX idx_test_results_run ON noetl_test.regression_results(test_run_id);
         CREATE INDEX idx_test_results_passed ON noetl_test.regression_results(test_passed);
         CREATE INDEX idx_test_results_playbook ON noetl_test.regression_results(playbook_name);
-        
+
         COMMENT ON TABLE noetl_test.regression_results IS 'Regression test results for all playbooks';
         COMMENT ON COLUMN noetl_test.regression_results.test_run_id IS 'Unique ID for test run (use execution_id of master test)';
         COMMENT ON COLUMN noetl_test.regression_results.validation_passed IS 'Whether validation rules passed';
         COMMENT ON COLUMN noetl_test.regression_results.test_passed IS 'Overall test pass/fail';
     next:
-      - step: create_test_summary_table
+      spec:
+        mode: exclusive
+      arcs:
+        - step: create_test_summary_table
 
   - step: create_test_summary_table
     desc: "Create table for test run summaries"
     tool:
       kind: postgres
-      auth: "{{ workload.pg_auth }}"
+      auth: "{{ pg_auth }}"
       command: |
         DROP TABLE IF EXISTS noetl_test.regression_summary CASCADE;
-        
+
         CREATE TABLE noetl_test.regression_summary (
           test_run_id BIGINT PRIMARY KEY,
           test_timestamp TIMESTAMP NOT NULL DEFAULT NOW(),
@@ -84,21 +88,24 @@ workflow:
           test_config JSONB,
           CONSTRAINT check_test_counts CHECK (total_tests = passed_tests + failed_tests + skipped_tests)
         );
-        
+
         CREATE INDEX idx_test_summary_timestamp ON noetl_test.regression_summary(test_timestamp);
-        
+
         COMMENT ON TABLE noetl_test.regression_summary IS 'Summary of regression test runs';
     next:
-      - step: create_expected_results_table
+      spec:
+        mode: exclusive
+      arcs:
+        - step: create_expected_results_table
 
   - step: create_expected_results_table
     desc: "Create table for storing expected results (baseline)"
     tool:
       kind: postgres
-      auth: "{{ workload.pg_auth }}"
+      auth: "{{ pg_auth }}"
       command: |
         DROP TABLE IF EXISTS noetl_test.expected_results CASCADE;
-        
+
         CREATE TABLE noetl_test.expected_results (
           playbook_name VARCHAR(255) PRIMARY KEY,
           playbook_path VARCHAR(500) NOT NULL,
@@ -112,19 +119,20 @@ workflow:
           baseline_execution_id BIGINT,
           notes TEXT
         );
-        
+
         CREATE INDEX idx_expected_results_path ON noetl_test.expected_results(playbook_path);
-        
+
         COMMENT ON TABLE noetl_test.expected_results IS 'Expected results baseline for playbooks';
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: "Schema creation completed"
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args: {}
       code: |
         result = {

@@ -27,16 +27,15 @@ workload:
 
   # Processing delay per item (seconds) - set to 0 for max speed
   processing_delay: 0
+  loop_results: []
 
 workflow:
   - step: start
     desc: Initialize the heavy load test
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args:
-        item_count: "{{ workload.item_count }}"
+        item_count: "{{ item_count }}"
       code: |
         import time
 
@@ -62,86 +61,105 @@ workflow:
             "start_time": time.time()
         }
         print(f"Initialized with {len(items)} items to process")
-    next: process_items
+    set_ctx:
+      loop_results: "{{ workload.loop_results }}"
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: process_items
 
   - step: process_items
     desc: Loop over items and process each one (heavy load simulation)
     loop:
+      spec:
+        mode: sequential
       in: "{{ start.items }}"
       iterator: item
-      mode: sequential
     tool:
-      kind: python
-      auth: {}
-      libs: {}
-      args:
-        item: "{{ item }}"
-        padding_size: "{{ workload.result_padding_size }}"
-        delay: "{{ workload.processing_delay }}"
-      code: |
-        import time
-        import hashlib
+      - process_item:
+          kind: python
+          args:
+            item: "{{ iter.item }}"
+            padding_size: "{{ result_padding_size }}"
+            delay: "{{ processing_delay }}"
+            loop_results: "{{ ctx.loop_results }}"
+          code: |
+            import time
+            import hashlib
 
-        # Simulate processing delay if configured
-        if float(delay) > 0:
-            time.sleep(float(delay))
+            # Simulate processing delay if configured
+            if float(delay) > 0:
+                time.sleep(float(delay))
 
-        # Simulate computation - create a hash of the item
-        item_str = str(item)
-        item_hash = hashlib.md5(item_str.encode()).hexdigest()
+            # Simulate computation - create a hash of the item
+            item_str = str(item)
+            item_hash = hashlib.md5(item_str.encode()).hexdigest()
 
-        # Create result with configurable padding to test result size handling
-        padding = "x" * int(padding_size)
+            # Create result with configurable padding to test result size handling
+            padding = "x" * int(padding_size)
 
-        # Simulate a realistic result payload
-        result = {
-            "item_id": item["id"],
-            "item_name": item["name"],
-            "category": item["category"],
-            "priority": item["priority"],
-            "processed": True,
-            "hash": item_hash,
-            "computed_value": item["data"]["field_b"] * 2,
-            "is_even": item["data"]["field_c"],
-            "processing_metadata": {
-                "timestamp": time.time(),
-                "worker": "heavy_load_test",
-                "padding": padding  # Configurable payload size
+            # Simulate a realistic result payload
+            item_result = {
+                "item_id": item["id"],
+                "item_name": item["name"],
+                "category": item["category"],
+                "priority": item["priority"],
+                "processed": True,
+                "hash": item_hash,
+                "computed_value": item["data"]["field_b"] * 2,
+                "is_even": item["data"]["field_c"],
+                "processing_metadata": {
+                    "timestamp": time.time(),
+                    "worker": "heavy_load_test",
+                    "padding": padding  # Configurable payload size
+                }
             }
-        }
 
-        # Log progress every 10 items
-        if item["id"] % 10 == 0:
-            print(f"Processed item {item['id']}: {item['name']}")
-    case:
-      # On loop completion, proceed to aggregation
-      - when: "{{ event.name == 'loop.done' }}"
-        then:
-          next:
-            - step: aggregate_results
-              args:
-                loop_result: "{{ result }}"
+            # Collect result
+            loop_results.append(item_result)
+
+            # Log progress every 10 items
+            if item["id"] % 10 == 0:
+                print(f"Processed item {item['id']}: {item['name']}")
+
+            result = {
+                "item_result": item_result,
+                "loop_results": loop_results
+            }
+          spec:
+            policy:
+              rules:
+                - else:
+                    do: continue
+                    set_ctx:
+                      loop_results: "{{ outcome.result.loop_results }}"
+
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: aggregate_results
+          args:
+            loop_results: "{{ ctx.loop_results }}"
 
   - step: aggregate_results
     desc: Aggregate all loop results and compute statistics
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args:
-        loop_result: "{{ args.loop_result }}"
+        loop_results: "{{ args.loop_results }}"
         start_time: "{{ start.start_time }}"
       code: |
         import time
 
         # Extract results from loop aggregation
-        results = loop_result.get("results", [])
-        stats = loop_result.get("stats", {})
+        results = loop_results if loop_results else []
 
         # Compute aggregation statistics
         total_items = len(results)
-        successful = stats.get("success", total_items)
-        failed = stats.get("failed", 0)
+        successful = total_items
+        failed = 0
 
         # Compute derived metrics
         categories = {}
@@ -200,17 +218,19 @@ workflow:
         }
 
         print(f"Aggregation complete: {total_items} items in {processing_time:.2f}s ({items_per_second:.2f} items/sec)")
-    next: validate_results
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: validate_results
 
   - step: validate_results
     desc: Validate that the test completed successfully
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args:
         aggregation: "{{ aggregate_results }}"
-        expected_count: "{{ workload.item_count }}"
+        expected_count: "{{ item_count }}"
       code: |
         # Validate test results
         summary = aggregation.get("summary", {})
@@ -258,14 +278,16 @@ workflow:
             status = "PASS" if v["passed"] else "FAIL"
             print(f"  [{status}] {v['check']}: {v['message']}")
         print(f"{'='*60}\n")
-    next: end
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: End of heavy load test
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args:
         validation: "{{ validate_results }}"
       code: |

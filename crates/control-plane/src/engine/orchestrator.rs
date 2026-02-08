@@ -442,18 +442,21 @@ fn value_to_hashmap(value: &serde_json::Value) -> HashMap<String, serde_json::Va
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::playbook::types::{Metadata, NextSpec, ToolKind, ToolSpec};
+    use crate::playbook::types::{Metadata, NextSpec, ToolDefinition, ToolKind, ToolSpec};
     use chrono::Utc;
 
     fn make_step(name: &str, next: Option<&str>) -> Step {
         Step {
             step: name.to_string(),
             desc: None,
+            spec: None,
+            when: None,
             args: None,
             vars: None,
             r#loop: None,
-            tool: ToolSpec {
+            tool: ToolDefinition::Single(ToolSpec {
                 kind: ToolKind::Python,
+                eval: None,
                 auth: None,
                 libs: None,
                 args: None,
@@ -461,10 +464,13 @@ mod tests {
                 url: None,
                 method: None,
                 query: None,
+                command: None,
                 connection: None,
+                params: None,
+                headers: None,
+                output_select: None,
                 extra: HashMap::new(),
-            },
-            case: None,
+            }),
             next: next.map(|n| NextSpec::Single(n.to_string())),
         }
     }
@@ -516,6 +522,7 @@ mod tests {
                 extra: HashMap::new(),
             },
             workload: None,
+            vars: None,
             keychain: None,
             workbook: None,
             workflow: vec![

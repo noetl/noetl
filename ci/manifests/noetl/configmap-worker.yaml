@@ -21,8 +21,6 @@ data:
   NOETL_DISABLE_METRICS: "true"
   NOETL_VICTORIALOGS_URL: "http://vmlogs-single-server.vmlogs.svc.cluster.local:9428"
   NOETL_LOG_FORMAT: ""
-  # Skip Polars CPU check (running under ARM64 emulation on Apple Silicon)
-  POLARS_SKIP_CPU_CHECK: "1"
   # NATS Configuration for worker command distribution
   NATS_URL: "nats://noetl:noetl@nats.nats.svc.cluster.local:4222"
   NATS_USER: "noetl"
@@ -32,5 +30,17 @@ data:
   NATS_SUBJECT: "noetl.commands"
   # Keychain cache refresh threshold (15 minutes - prevents expiration during long loops)
   NOETL_KEYCHAIN_REFRESH_THRESHOLD: "900"
-  # Skip slow library validation in QEMU environments
-  NOETL_SKIP_LIB_VALIDATION: "true"
+  # Result Storage Configuration (output_select pattern)
+  # Threshold for inline vs external storage (64KB default)
+  NOETL_INLINE_MAX_BYTES: "65536"
+  # Preview size for large results
+  NOETL_PREVIEW_MAX_BYTES: "1024"
+  # Default storage tier: kv, object, s3, gcs
+  NOETL_DEFAULT_STORAGE_TIER: "kv"
+  # S3/MinIO configuration (optional - for large blob storage)
+  # S3_ENDPOINT_URL: ""
+  NOETL_S3_BUCKET: "noetl-results"
+  NOETL_S3_REGION: "us-east-1"
+  # GCS configuration
+  NOETL_GCS_BUCKET: "noetl-demo-output"
+  NOETL_GCS_PREFIX: "results/"

@@ -1,6 +1,6 @@
 [workspace]
 members = [
-    "crates/noetlctl",
+    "crates/noetl",
     "crates/gateway",
     "crates/control-plane",
     "crates/tools",

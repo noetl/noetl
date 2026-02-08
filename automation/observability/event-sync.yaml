@@ -24,30 +24,18 @@ workflow:
       cmds:
         - echo "Event Sync Automation - Action '{{ workload.action }}'"
     next:
-      - when: "{{ workload.action }} == sync"
-        then:
-          - step: detect_clickhouse_pod
-        args: {}
-      - when: "{{ workload.action }} == sync-recent"
-        then:
-          - step: detect_clickhouse_pod
-        args: {}
-      - when: "{{ workload.action }} == count"
-        then:
-          - step: count_events
-        args: {}
-      - when: "{{ workload.action }} == verify"
-        then:
-          - step: verify_sync
-        args: {}
-      - when: "{{ workload.action }} == analyze-gaps"
-        then:
-          - step: analyze_event_gaps
-        args: {}
-      - when: "{{ workload.action }} == analyze-slow"
-        then:
-          - step: analyze_slow_executions
-        args: {}
+      - step: detect_clickhouse_pod
+        when: "{{ workload.action == 'sync' }}"
+      - step: detect_clickhouse_pod
+        when: "{{ workload.action == 'sync-recent' }}"
+      - step: count_events
+        when: "{{ workload.action == 'count' }}"
+      - step: verify_sync
+        when: "{{ workload.action == 'verify' }}"
+      - step: analyze_event_gaps
+        when: "{{ workload.action == 'analyze-gaps' }}"
+      - step: analyze_slow_executions
+        when: "{{ workload.action == 'analyze-slow' }}"
       - step: show_help
 
   - step: detect_clickhouse_pod
@@ -545,3 +533,5 @@ workflow:
 
   - step: end
     desc: End workflow
+    tool:
+      kind: noop

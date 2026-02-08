@@ -53,7 +53,7 @@ if python -m noetl.server --help >/dev/null 2>&1; then
     echo "  ✓ UI assets exist at noetl/core/ui/"
 else
     echo "  ✗ Python module or UI assets missing"
-    echo "  Run: task setup-local-dev"
+    echo "  Run: ./scripts/setup_local_dev.sh"
     exit 1
 fi
 echo
@@ -62,7 +62,7 @@ echo "===================================="
 echo "Summary: Rust CLI is working correctly"
 echo
 echo "To start the server:"
-echo "  1. Stop K8s cluster if running: task kind:local:cluster-delete"
+echo "  1. Stop K8s cluster if running: kind delete cluster --name noetl"
 echo "  2. Start local server: ./bin/noetl server start"
 echo "  3. Check status: curl http://localhost:8082/health"
 echo "  4. Stop server: ./bin/noetl server stop"

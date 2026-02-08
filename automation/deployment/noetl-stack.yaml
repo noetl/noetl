@@ -26,30 +26,18 @@ workflow:
       cmds:
         - echo "NoETL Stack Deployment - Action '{{ workload.action }}'"
     next:
-      - when: "{{ workload.action }} == deploy"
-        then:
-          - step: check_prerequisites
-        args: {}
-      - when: "{{ workload.action }} == upgrade"
-        then:
-          - step: helm_upgrade
-        args: {}
-      - when: "{{ workload.action }} == status"
-        then:
-          - step: status
-        args: {}
-      - when: "{{ workload.action }} == logs"
-        then:
-          - step: logs
-        args: {}
-      - when: "{{ workload.action }} == destroy"
-        then:
-          - step: destroy
-        args: {}
-      - when: "{{ workload.action }} == help"
-        then:
-          - step: show_help
-        args: {}
+      - step: check_prerequisites
+        when: "{{ workload.action == 'deploy' }}"
+      - step: helm_upgrade
+        when: "{{ workload.action == 'upgrade' }}"
+      - step: status
+        when: "{{ workload.action == 'status' }}"
+      - step: logs
+        when: "{{ workload.action == 'logs' }}"
+      - step: destroy
+        when: "{{ workload.action == 'destroy' }}"
+      - step: show_help
+        when: "{{ workload.action == 'help' }}"
       - step: show_help
 
   - step: check_prerequisites
@@ -307,3 +295,5 @@ workflow:
 
   - step: end
     desc: Done
+    tool:
+      kind: noop

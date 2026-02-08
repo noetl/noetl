@@ -11,52 +11,47 @@ workflow:
   - step: start
     desc: Start workflow
     tool:
-      kind: python
-      auth: {}
-      libs: {}
-      args: {}
-      code: |
-            return {"status": "initialized"}
-    
-    case:
-      - when: "{{ event.name == 'step.exit' }}"
-        then:
-          next:
-            - step: use_vars
-              args:
-                test_var: "{{ workload.initial_value }}"
-                computed: 200
+      - init:
+          kind: python
+          code: |
+            result = {"status": "initialized"}
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: use_vars
+          args:
+            test_var: "{{ initial_value }}"
+            computed: 200
 
   - step: use_vars
     desc: Test that variables from data block are available
     tool:
-      kind: python
-      auth: {}
-      libs: {}
-      args: {}
-      code: |
-            # These should be available from the data block in next
-            test_var = {{ test_var }}
-            computed = {{ computed }}
+      - compute:
+          kind: python
+          args:
+            test_var: "{{ args.test_var }}"
+            computed: "{{ args.computed }}"
+          code: |
+            # These should be available from the args passed via next
+            test_var = input_data.get('test_var', 0)
+            computed = input_data.get('computed', 0)
             result = test_var + computed
             print(f"test_var={test_var}, computed={computed}, result={result}")
             assert test_var == 100, f"Expected test_var=100, got {test_var}"
             assert computed == 200, f"Expected computed=200, got {computed}"
             assert result == 300, f"Expected result=300, got {result}"
-            return {"status": "success", "result": result}
-    
-    case:
-      - when: "{{ event.name == 'step.exit' and response is defined }}"
-        then:
-          next:
-            - step: end
+            result = {"status": "success", "result": result}
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: End workflow
     tool:
-      kind: python
-      auth: {}
-      libs: {}
-      args: {}
-      code: |
-            return {"status": "complete"}
+      - complete:
+          kind: python
+          code: |
+            result = {"status": "complete"}

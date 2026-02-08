@@ -38,18 +38,13 @@ NoETL is a workflow automation framework for data processing and MLOps orchestra
 
 ## Development Workflows
 
-**Command Restriction:**
-- Do not use `task` commands. Use direct CLI equivalents (for example, `./bin/noetl ...` or `noetl ...`) instead.
-
 **Setup & Testing:**
 ```bash
-task bring-all                                      # Complete K8s dev environment (build + deploy all components)
-task deploy-postgres                                # Deploy PostgreSQL to kind cluster
-task deploy-noetl                                   # Deploy NoETL server and workers
-task observability:activate-all                     # Deploy ClickHouse, Qdrant, NATS
-task pagination-server:test:pagination-server:full  # Deploy pagination test server
-task test:regression:full                           # Complete regression test suite (setup + run)
-task test-*-full                                    # Integration tests (register credentials, playbook, execute)
+noetl run automation/boot.yaml                                   # Complete K8s dev environment (build + deploy all)
+noetl run automation/infrastructure/postgres.yaml --set action=deploy    # Deploy PostgreSQL
+noetl run automation/development/noetl.yaml --set action=deploy          # Deploy NoETL server and workers
+noetl run automation/observability/all.yaml --set action=deploy          # Deploy ClickHouse, Qdrant, NATS
+noetl run automation/test/pagination-server.yaml --set action=full       # Deploy pagination test server
 ```
 
 **Local Development (Rust CLI Recommended):**
@@ -71,13 +66,10 @@ noetl worker stop              # Stop worker
 noetl db init                  # Initialize database schema
 noetl db validate              # Validate database schema
 
-# Legacy task commands (still available)
-task docker-build-noetl              # Build NoETL container image
-task kind-create-cluster             # Create kind Kubernetes cluster
-task test-cluster-health             # Check cluster health and endpoints
-task clear-all-cache                 # Clear local file cache
-task observability:status-all        # Check all observability services
-task observability:health-all        # Health check all services
+# Automation playbook commands
+noetl run automation/boot.yaml                   # Full K8s dev environment bootstrap
+noetl run automation/destroy.yaml                # Destroy cluster and resources
+noetl run automation/infrastructure/gateway.yaml --set action=status  # Check gateway
 ```
 
 ## Project-Specific Patterns
@@ -282,11 +274,11 @@ See `tests/fixtures/playbooks/script_execution/` and `docs/script_attribute_desi
 - `noetl/tools/` - All action type implementations
 
 **Development Infrastructure:**
-- `taskfile.yml` - Main task automation with included taskfiles for tests and monitoring
-- `ci/taskfile/` - Specialized taskfiles for testing, troubleshooting, and observability
-- `ci/taskfile/test-server.yml` - Pagination test server lifecycle management
+- `automation/` - NoETL playbooks for infrastructure management
+- `automation/boot.yaml` - Full K8s environment bootstrap
+- `automation/destroy.yaml` - Cluster teardown
+- `automation/infrastructure/` - Individual service playbooks (postgres, gateway, nats, etc.)
 - `ci/kind/config.yaml` - **Kind cluster configuration with NodePort mappings** (DO NOT use port-forward, ports are permanently mapped here)
-- `tests/taskfile/noetltest.yml` - Test task definitions
 - `docker/` - Container build scripts for all components
 - `docker/test-server/` - Pagination test server Dockerfile
 - `ci/manifests/test-server/` - Kubernetes manifests for test server
@@ -294,10 +286,9 @@ See `tests/fixtures/playbooks/script_execution/` and `docs/script_attribute_desi
 - `tests/fixtures/servers/paginated_api.py` - FastAPI pagination test server
 
 **Testing:**
-- Follow `test-*-full` pattern for integration tests (e.g., `task test-control-flow-workbook-full`)
 - Use `tests/fixtures/playbooks/` for test scenarios
-- Register test credentials with `task register-test-credentials`
-- Check cluster health with `task test-cluster-health`
+- Register test credentials with `noetl register credential --directory tests/fixtures/credentials/`
+- Check cluster health with `curl http://localhost:8082/api/health`
 
 ## Configuration
 
@@ -366,9 +357,10 @@ See `tests/fixtures/playbooks/script_execution/` and `docs/script_attribute_desi
 - **NATS JetStream**: Messaging and key-value store for event-driven workflows
   - Access: Client (NodePort 30422), Monitoring (NodePort 30822)
   - Features: Stream persistence, KV store, credentials (noetl/noetl)
-- **Commands**: 
-  - `task observability:activate-all` / `task observability:deactivate-all`
-  - Individual: `task clickhouse:deploy`, `task qdrant:deploy`, `task nats:deploy`
+- **Commands**:
+  - `noetl run automation/infrastructure/clickhouse.yaml --set action=deploy`
+  - `noetl run automation/infrastructure/qdrant.yaml --set action=deploy`
+  - `noetl run automation/infrastructure/nats.yaml --set action=deploy`
 - **Documentation**: See `docs/observability_services.md` for complete guide
 
 **Test Infrastructure:**
@@ -376,10 +368,10 @@ See `tests/fixtures/playbooks/script_execution/` and `docs/script_attribute_desi
   - Access: ClusterIP (paginated-api.test-server.svc.cluster.local:5555), NodePort (localhost:30555)
   - Endpoints: `/api/v1/assessments` (page-based), `/api/v1/users` (offset-based), `/api/v1/events` (cursor-based), `/api/v1/flaky` (retry testing)
   - Commands:
-    - Deploy: `task pagination-server:test:pagination-server:full`
-    - Status: `task pagination-server:test:pagination-server:status`
-    - Test: `task pagination-server:test:pagination-server:test`
-    - Logs: `task pagination-server:test:pagination-server:logs`
+    - Deploy: `noetl run automation/test/pagination-server.yaml --set action=full`
+    - Status: `noetl run automation/test/pagination-server.yaml --set action=status`
+    - Test: `noetl run automation/test/pagination-server.yaml --set action=test`
+    - Logs: `kubectl logs -n test-server -l app=paginated-api`
   - Configuration: `ci/manifests/test-server/`, `docker/test-server/Dockerfile`
 
 **Timezone Configuration** (CRITICAL):

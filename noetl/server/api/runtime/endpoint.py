@@ -9,10 +9,8 @@ Provides REST endpoints for:
 
 from typing import Optional
 from fastapi import APIRouter, Request, HTTPException
-from fastapi.responses import JSONResponse
 from noetl.core.logger import setup_logger
 from .schema import (
-    RuntimeRegistrationRequest,
     WorkerPoolRegistrationRequest,
     RuntimeRegistrationResponse,
     RuntimeDeregistrationRequest,
@@ -205,104 +203,3 @@ async def list_worker_pools(
         )
 
 
-# ============================================================================
-# Generic Runtime Component Endpoints
-# ============================================================================
-
-@router.post("/runtime/register", response_model=RuntimeRegistrationResponse)
-async def register_runtime_component(request: RuntimeRegistrationRequest) -> RuntimeRegistrationResponse:
-    """
-    Register a runtime component (server, worker_pool, broker, etc.) in the runtime registry.
-    
-    **Request Body**:
-    ```json
-    {
-        "name": "api-server-01",
-        "kind": "server_api",
-        "runtime": "python",
-        "uri": "http://localhost:8082",
-        "status": "ready",
-        "pid": 12345,
-        "hostname": "api-node-1"
-    }
-    ```
-    
-    **Required Fields**:
-    - `name`: Component name
-    - `kind`: Component type (server_api, broker, worker_pool, etc.)
-    - `uri`: Required for server_api and broker, optional for worker_pool
-    """
-    try:
-        return await RuntimeService.register_component(request)
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception(f"Error registering runtime component: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.delete("/runtime/deregister", response_model=RuntimeRegistrationResponse)
-async def deregister_runtime_component(request: Request) -> RuntimeRegistrationResponse:
-    """
-    Deregister a runtime component by name and component_type (marks as offline).
-    
-    **Request Body**:
-    ```json
-    {
-        "name": "api-server-01",
-        "component_type": "server_api"
-    }
-    ```
-    """
-    try:
-        body = await request.json()
-        deregister_request = RuntimeDeregistrationRequest(**body)
-        return await RuntimeService.deregister_component(deregister_request)
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception(f"Error deregistering runtime component: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# ============================================================================
-# Broker Endpoints (Placeholder - Future Implementation)
-# ============================================================================
-
-@router.post("/broker/register", response_class=JSONResponse)
-async def register_broker(request: Request):
-    """
-    Register a broker component (placeholder for future implementation).
-    
-    Currently returns a simple acknowledgment. Will be implemented with
-    proper broker management in future versions.
-    """
-    body = await request.json()
-    logger.info(f"register_broker: {body}")
-    return JSONResponse(content={"status": "registered", "payload": body})
-
-
-@router.post("/broker/heartbeat", response_class=JSONResponse)
-async def heartbeat_broker(request: Request):
-    """
-    Broker heartbeat endpoint (placeholder for future implementation).
-    """
-    body = await request.json()
-    # logger.info(f"heartbeat_broker: {body}")
-    return JSONResponse(content={"status": "ok"})
-
-
-@router.get("/brokers", response_class=JSONResponse)
-async def list_brokers(status: Optional[str] = None):
-    """
-    List brokers (placeholder for future implementation).
-    """
-    return JSONResponse(content={"items": [], "status": status})
-
-
-@router.delete("/broker/deregister", response_class=JSONResponse)
-async def deregister_broker(request: Request):
-    """
-    Deregister a broker (placeholder for future implementation).
-    """
-    return JSONResponse(content={"status": "deregistered"})

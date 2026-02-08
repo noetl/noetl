@@ -10,7 +10,6 @@ DEFAULT_DEMANDS: Dict[str, Dict[str, int]] = {
     "http": {"http_pool": 1},
     "postgres": {"pg_pool": 1},
     "duckdb": {"duckdb_host": 1},
-    'sink': {"pg_pool": 1},
 }
 
 

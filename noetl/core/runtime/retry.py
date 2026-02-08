@@ -227,12 +227,8 @@ def _execute_with_pagination(
     max_attempts = then_config.get('max_attempts', 100)
     next_call_config = then_config.get('next_call', {})
     
-    # FIXED: Check for sink in both per_iteration AND directly in then block
+    # Get per-iteration config (sink handling has been removed)
     per_iteration_config = then_config.get('per_iteration', {})
-    if 'sink' in then_config and 'sink' not in per_iteration_config:
-        # Sink defined directly in then block - move to per_iteration for execution
-        per_iteration_config['sink'] = then_config['sink']
-        logger.info("Sink found in then block - will execute per pagination iteration")
     
     accumulated = None
     iteration = 0
@@ -518,21 +514,12 @@ def _execute_per_iteration_effects(
     context: Dict[str, Any],
     jinja_env: Environment
 ):
-    """Execute per-iteration side effects (sink, etc.)."""
+    """Execute per-iteration side effects.
+
+    Note: Sink functionality has been removed. Use inline task commands instead.
+    """
     if 'sink' in per_iteration_config:
-        logger.info(f"Executing per-iteration sink for iteration {iteration}")
-        
-        sink_context = dict(context)
-        sink_context['page'] = {'data': page_data}
-        sink_context['response'] = response
-        sink_context['_retry'] = {'index': iteration, 'count': context.get('_retry', {}).get('count', iteration)}
-        
-        from noetl.core.storage import execute_sink_task
-        sink_config = per_iteration_config['sink']
-        
-        try:
-            sink_result = execute_sink_task(sink_config, sink_context, jinja_env)
-            if sink_result.get('status') != 'success':
-                logger.error(f"Per-iteration sink failed: {sink_result.get('error')}")
-        except Exception as e:
-            logger.error(f"Per-iteration sink raised exception: {e}")
+        logger.warning(
+            f"Deprecated: 'sink' in per-iteration config is no longer supported. "
+            f"Use inline task commands in playbook case conditions instead."
+        )

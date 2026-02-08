@@ -1,0 +1,33 @@
+# Gateway Configuration Example (YAML)
+#
+# Alternative to TOML format.
+# Set GATEWAY_CONFIG=/path/to/config.yaml to use.
+
+server:
+  port: 8090
+  bind: "0.0.0.0"
+  # public_url: "https://gateway.example.com"
+
+noetl:
+  base_url: "http://localhost:8082"
+  timeout_secs: 120
+
+nats:
+  url: "nats://127.0.0.1:4222"
+  # username: "noetl"
+  # password: "secret"
+  updates_subject_prefix: "playbooks.executions."
+  callback_subject_prefix: "noetl.callbacks"
+
+cors:
+  allowed_origins:
+    - "http://localhost:8080"
+    - "http://localhost:8090"
+    - "http://localhost:3000"
+  allow_credentials: true
+
+auth_playbooks:
+  login: "api_integration/auth0/auth0_login"
+  validate_session: "api_integration/auth0/auth0_validate_session"
+  check_access: "api_integration/auth0/check_playbook_access"
+  timeout_secs: 60

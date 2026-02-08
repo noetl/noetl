@@ -7,65 +7,55 @@ metadata:
 
 workload:
   test_value: "hello"
-  
+
 workflow:
   - step: start
     desc: Start step with Python action - should execute first
     tool:
-      kind: python
-      auth: {}
-      libs: {}
-      args:
-        input_data: "{{ workload }}"
-      code: |
-        result = {
-            'status': 'success',
-            'message': 'Start step executed with action type',
-            'data': {'executed': True, 'input': input_data}
-        }
-    
-    case:
-      - when: "{{ event.name == 'step.exit' and response is defined }}"
-        then:
-          result:
-            from: response
-          next:
-            - step: process
-              args:
-                from_start: "{{ response.data.executed }}"
-  
+      - init_action:
+          kind: python
+          args:
+            input_data: "{{ workload }}"
+          code: |
+            result = {
+                'status': 'success',
+                'message': 'Start step executed with action type',
+                'data': {'executed': True, 'input': input_data}
+            }
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: process
+          args:
+            from_start: "{{ start.data.executed }}"
+
   - step: process
     desc: Process step - executed after start
     tool:
-      kind: python
-      auth: {}
-      libs: {}
-      args:
-        from_start: "{{ start.data.executed }}"
-      code: |
-        result = {
-            'status': 'success',
-            'message': 'Process step executed',
-            'data': {
-                'from_start': from_start,
-                'processed': True
+      - process_action:
+          kind: python
+          args:
+            from_start: "{{ args.from_start | default(start.data.executed) }}"
+          code: |
+            result = {
+                'status': 'success',
+                'message': 'Process step executed',
+                'data': {
+                    'from_start': from_start,
+                    'processed': True
+                }
             }
-        }
-    
-    case:
-      - when: "{{ event.name == 'step.exit' and response is defined }}"
-        then:
-          result:
-            from: response
-          next:
-            - step: end
-        
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
+
   - step: end
     desc: End step - aggregator (no action type)
     tool:
-      kind: python
-      auth: {}
-      libs: {}
-      args: {}
-      code: |
-        result = {"status": "complete"}
+      - complete:
+          kind: python
+          code: |
+            result = {"status": "complete"}

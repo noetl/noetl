@@ -17,22 +17,17 @@ workflow:
       kind: shell
       cmds:
         - echo "Target is '{{ target }}'"
-    case:
-      - when: "{{ target }} == help"
-        then:
-          - step: show_help
-      - when: "{{ target }} == bootstrap"
-        then:
-          - step: bootstrap
-      - when: "{{ target }} == destroy"
-        then:
-          - step: destroy
-      - when: "{{ target }} == dev"
-        then:
-          - step: quick_dev
-        else:
-          - step: unknown_target
-  
+    next:
+      - step: show_help
+        when: "{{ target == 'help' }}"
+      - step: bootstrap
+        when: "{{ target == 'bootstrap' }}"
+      - step: destroy
+        when: "{{ target == 'destroy' }}"
+      - step: quick_dev
+        when: "{{ target == 'dev' }}"
+      - step: unknown_target
+
   - step: show_help
     desc: Display available automation targets
     tool:
@@ -60,7 +55,7 @@ workflow:
           echo ""
     next:
       - step: end
-  
+
   - step: bootstrap
     desc: Run complete bootstrap workflow
     tool:
@@ -68,7 +63,7 @@ workflow:
       path: setup/bootstrap.yaml
     next:
       - step: end
-  
+
   - step: destroy
     desc: Run destroy workflow
     tool:
@@ -76,7 +71,7 @@ workflow:
       path: setup/destroy.yaml
     next:
       - step: end
-  
+
   - step: quick_dev
     desc: Quick development cycle
     tool:
@@ -85,7 +80,7 @@ workflow:
         - echo "Quick dev workflow not yet implemented"
     next:
       - step: end
-  
+
   - step: unknown_target
     desc: Handle unknown target
     tool:
@@ -97,6 +92,8 @@ workflow:
           exit 1
     next:
       - step: end
-  
+
   - step: end
     desc: Workflow complete
+    tool:
+      kind: noop

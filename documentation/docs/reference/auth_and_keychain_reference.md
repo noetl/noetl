@@ -57,7 +57,7 @@ Use names that clearly indicate they are references, not actual credentials:
 
 ### Usage in Playbooks
 
-#### V2 DSL Format
+#### Canonical v10 format
 
 ```yaml
 workload:
@@ -65,17 +65,20 @@ workload:
   gcp_auth: google_oauth
   
 workflow:
-- step: query_database
-  tool:
-    kind: postgres
-    auth: "{{ workload.pg_auth }}"
-    command: SELECT * FROM users
-    
-- step: fetch_secret
-  tool:
-    kind: http
-    auth: "{{ workload.gcp_auth }}"
-    endpoint: https://secretmanager.googleapis.com/v1/...
+  - step: query_database
+    tool:
+      - query:
+          kind: postgres
+          auth: "{{ workload.pg_auth }}"
+          command: "SELECT * FROM users"
+
+  - step: fetch_secret
+    tool:
+      - get_secret:
+          kind: http
+          auth: "{{ workload.gcp_auth }}"
+          method: GET
+          url: "https://secretmanager.googleapis.com/v1/..."
 ```
 
 ### Credential Storage
@@ -119,7 +122,7 @@ CREATE TABLE noetl.credential (
 When a tool uses `auth: "{{ workload.pg_auth }}"`, the worker:
 
 1. Extracts the auth reference name (`pg_local`)
-2. Calls credential API: `GET /api/credential/{credential_key}`
+2. Calls credential API: `GET /api/credentials/{identifier}?include_data=true`
 3. Receives decrypted credential data
 4. Uses credentials to connect to the target service
 
@@ -277,27 +280,30 @@ Reference keychain entries using Jinja2 templates:
 
 ```yaml
 workflow:
-- step: call_api
-  tool:
-    kind: http
-    endpoint: https://api.example.com/data
-    headers:
-      Authorization: "Bearer {{ keychain.service_token.access_token }}"
-    params:
-      limit: 100
-      
-- step: translate_text
-  tool:
-    kind: http
-    method: POST
-    endpoint: https://api.openai.com/v1/chat/completions
-    headers:
-      Authorization: "Bearer {{ keychain.openai_token.api_key }}"
-    payload:
-      model: gpt-4
-      messages:
-        - role: user
-          content: "Translate to French: {{ previous_step.result }}"
+  - step: call_api
+    tool:
+      - call:
+          kind: http
+          method: GET
+          url: "https://api.example.com/data"
+          headers:
+            Authorization: "Bearer {{ keychain.service_token.access_token }}"
+          params:
+            limit: 100
+
+  - step: translate_text
+    tool:
+      - translate:
+          kind: http
+          method: POST
+          url: "https://api.openai.com/v1/chat/completions"
+          headers:
+            Authorization: "Bearer {{ keychain.openai_token.api_key }}"
+          body:
+            model: gpt-4
+            messages:
+              - role: user
+                content: "Translate to French: {{ workload.text }}"
 ```
 
 ---
@@ -1058,21 +1064,22 @@ GET /api/keychain/catalog/{catalog_id}
 
 ### Credential API Endpoints
 
-Base URL: `http://noetl.noetl.svc.cluster.local:8080/api/credential`
+Base URL: `http://<server>:8082/api`
 
-#### Get Credential by Key
+#### Get Credential (by id or name)
 
 ```http
-GET /api/credential/{credential_key}
+GET /api/credentials/{identifier}
+GET /api/credentials/{identifier}?include_data=true
 ```
 
 **Response:**
 
 ```json
 {
-  "credential_id": 123,
-  "credential_key": "pg_local",
-  "credential_type": "postgres",
+  "id": "123",
+  "name": "pg_local",
+  "type": "postgres",
   "data": {
     "db_host": "localhost",
     "db_port": 5432,
@@ -1087,247 +1094,109 @@ GET /api/credential/{credential_key}
 
 ---
 
-## Playbook Examples
+## Playbook Examples (Canonical v10)
 
-### Example 1: Multi-Service Integration with OAuth
+These examples:
+- use `url` (HTTP tool) instead of legacy `endpoint`
+- avoid `payload.*` (execution-request inputs merge into `workload`)
+- pass nested-playbook inputs via token `args` (from `next.arcs[].args` or a `kind: playbook` task)
+
+### Example 1: API key from keychain (secret manager) → HTTP call
 
 ```yaml
 apiVersion: noetl.io/v2
 kind: Playbook
 metadata:
-  name: travel_booking_api
-  path: integrations/travel_booking
+  name: openai_example
+  path: examples/openai_example
 
 workload:
-  pg_auth: pg_local
-  gcp_auth: google_oauth
-  amadeus_key_path: projects/123/secrets/amadeus-key/versions/latest
-  amadeus_secret_path: projects/123/secrets/amadeus-secret/versions/latest
-  openai_key_path: projects/123/secrets/openai-key/versions/latest
+  prompt: "Translate to French: hello"
 
 keychain:
-  # Fetch static credentials from GCP Secret Manager
-  - name: amadeus_credentials
-    kind: secret_manager
-    provider: gcp
-    scope: global
-    auth: "{{ workload.gcp_auth }}"
-    map:
-      client_id: '{{ workload.amadeus_key_path }}'
-      client_secret: '{{ workload.amadeus_secret_path }}'
-  
-  # Fetch OpenAI API key
   - name: openai_token
     kind: secret_manager
-    provider: gcp
     scope: global
-    auth: "{{ workload.gcp_auth }}"
+    auth: google_oauth
     map:
-      api_key: '{{ workload.openai_key_path }}'
-  
-  # Get OAuth token with auto-renewal
-  - name: amadeus_token
+      api_key: "projects/123/secrets/openai-key/versions/latest"
+
+workflow:
+  - step: call_openai
+    tool:
+      - chat:
+          kind: http
+          method: POST
+          url: "https://api.openai.com/v1/chat/completions"
+          headers:
+            Authorization: "Bearer {{ keychain.openai_token.api_key }}"
+          body:
+            model: gpt-4
+            messages:
+              - role: user
+                content: "{{ workload.prompt }}"
+```
+
+### Example 2: OAuth2 token in keychain → HTTP call
+
+```yaml
+keychain:
+  - name: oauth_client
+    kind: secret_manager
+    scope: global
+    auth: google_oauth
+    map:
+      client_id: "projects/123/secrets/client-id/versions/latest"
+      client_secret: "projects/123/secrets/client-secret/versions/latest"
+
+  - name: service_token
     kind: oauth2
     scope: global
     auto_renew: true
-    endpoint: https://test.api.amadeus.com/v1/security/oauth2/token
+    endpoint: https://auth.example.com/oauth/token
     method: POST
     headers:
       Content-Type: application/x-www-form-urlencoded
     data:
       grant_type: client_credentials
-      client_id: '{{ keychain.amadeus_credentials.client_id }}'
-      client_secret: '{{ keychain.amadeus_credentials.client_secret }}'
+      client_id: "{{ keychain.oauth_client.client_id }}"
+      client_secret: "{{ keychain.oauth_client.client_secret }}"
 
 workflow:
-- step: search_flights
-  tool:
-    kind: http
-    method: GET
-    endpoint: https://test.api.amadeus.com/v2/shopping/flight-offers
-    headers:
-      Authorization: "Bearer {{ keychain.amadeus_token.access_token }}"
-    params:
-      originLocationCode: SFO
-      destinationLocationCode: JFK
-      departureDate: 2026-03-15
-      adults: 1
-  next:
-  - step: translate_results
-
-- step: translate_results
-  tool:
-    kind: http
-    method: POST
-    endpoint: https://api.openai.com/v1/chat/completions
-    headers:
-      Authorization: "Bearer {{ keychain.openai_token.api_key }}"
-    payload:
-      model: gpt-4
-      messages:
-      - role: system
-        content: Summarize flight options in French
-      - role: user
-        content: "{{ search_flights.data }}"
-  next:
-  - step: save_results
-
-- step: save_results
-  tool:
-    kind: postgres
-    auth: "{{ workload.pg_auth }}"
-    command: |
-      INSERT INTO flight_searches (search_data, translation, created_at)
-      VALUES (%s, %s, NOW())
-    args:
-      - "{{ search_flights }}"
-      - "{{ translate_results }}"
-  next:
-  - step: end
-
-- step: end
-  desc: Workflow complete
+  - step: call_api
+    tool:
+      - call:
+          kind: http
+          method: GET
+          url: "https://api.example.com/data"
+          headers:
+            Authorization: "Bearer {{ keychain.service_token.access_token }}"
 ```
 
-### Example 2: Local Scope for User Sessions
+### Example 3: Parent → child playbook (args payload)
 
 ```yaml
-apiVersion: noetl.io/v2
-kind: Playbook
-metadata:
-  name: user_data_export
-  path: users/data_export
-
-workload:
-  pg_auth: pg_local
-  user_email: "{{ payload.email }}"
-  user_password: "{{ payload.password }}"
-
-keychain:
-  # User-specific session token (local scope)
-  - name: user_session
-    kind: oauth2
-    scope: local
-    ttl_seconds: 1800  # 30 minutes
-    endpoint: https://api.example.com/v1/auth/login
-    method: POST
-    headers:
-      Content-Type: application/json
-    data:
-      email: "{{ workload.user_email }}"
-      password: "{{ workload.user_password }}"
-
+# Parent playbook
 workflow:
-- step: fetch_user_profile
-  tool:
-    kind: http
-    endpoint: https://api.example.com/v1/users/me
-    headers:
-      Authorization: "Bearer {{ keychain.user_session.access_token }}"
-  next:
-  - step: fetch_user_orders
+  - step: run_child
+    tool:
+      - child:
+          kind: playbook
+          path: orchestration/child_playbook
+          args:
+            dataset_name: dataset_a
+            project_token: "{{ keychain.project_context.project_token }}"
 
-- step: fetch_user_orders
-  tool:
-    kind: http
-    endpoint: https://api.example.com/v1/users/me/orders
-    headers:
-      Authorization: "Bearer {{ keychain.user_session.access_token }}"
-  next:
-  - step: export_to_database
-
-- step: export_to_database
-  tool:
-    kind: postgres
-    auth: "{{ workload.pg_auth }}"
-    command: |
-      INSERT INTO user_exports (user_id, profile, orders, exported_at)
-      VALUES (%s, %s, %s, NOW())
-    args:
-      - "{{ fetch_user_profile.data.user_id }}"
-      - "{{ fetch_user_profile }}"
-      - "{{ fetch_user_orders }}"
-  next:
-  - step: end
-
-- step: end
-  desc: Export complete
-```
-
-### Example 3: Shared Scope for Multi-Level Orchestration
-
-```yaml
-apiVersion: noetl.io/v2
-kind: Playbook
-metadata:
-  name: orchestration_parent
-  path: orchestration/parent
-
-workload:
-  gcp_auth: google_oauth
-  project_id: "{{ payload.project_id }}"
-
-keychain:
-  # Project-level context shared with all child playbooks
-  - name: project_context
-    kind: http
-    scope: shared
-    ttl_seconds: 7200  # 2 hours
-    endpoint: https://api.example.com/v1/projects/initialize
-    method: POST
-    headers:
-      Content-Type: application/json
-    data:
-      project_id: "{{ workload.project_id }}"
-      timestamp: "{{ job.uuid }}"
-
+# Child playbook
 workflow:
-- step: process_dataset_a
-  tool:
-    kind: playbook
-    path: orchestration/child_playbook
-    args:
-      dataset_name: dataset_a
-      project_token: "{{ keychain.project_context.project_token }}"
-  next:
-  - step: process_dataset_b
-
-- step: process_dataset_b
-  tool:
-    kind: playbook
-    path: orchestration/child_playbook
-    args:
-      dataset_name: dataset_b
-      project_token: "{{ keychain.project_context.project_token }}"
-  next:
-  - step: end
-
-- step: end
-  desc: All datasets processed
-```
-
-**Child Playbook:**
-
-```yaml
-apiVersion: noetl.io/v2
-kind: Playbook
-metadata:
-  name: orchestration_child
-  path: orchestration/child_playbook
-
-workflow:
-- step: fetch_data
-  tool:
-    kind: http
-    endpoint: "https://api.example.com/v1/datasets/{{ payload.dataset_name }}"
-    headers:
-      Authorization: "Bearer {{ payload.project_token }}"
-      # Note: project_token inherited from parent via keychain.project_context
-  next:
-  - step: end
-
-- step: end
-  desc: Dataset processed
+  - step: fetch_data
+    tool:
+      - fetch:
+          kind: http
+          method: GET
+          url: "https://api.example.com/v1/datasets/{{ args.dataset_name }}"
+          headers:
+            Authorization: "Bearer {{ args.project_token }}"
 ```
 
 ---

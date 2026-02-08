@@ -14,6 +14,8 @@ workload:
 workflow:
   - step: start
     desc: "Parent playbook that calls child playbooks"
+    tool:
+      kind: noop
     next:
       - step: call_build
 
@@ -40,3 +42,6 @@ workflow:
       - step: end
 
   - step: end
+    desc: End workflow
+    tool:
+      kind: noop

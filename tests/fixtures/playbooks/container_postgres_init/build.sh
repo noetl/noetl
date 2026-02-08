@@ -41,7 +41,7 @@ if ! kind get clusters | grep -q "^${CLUSTER_NAME}$"; then
     echo "Available clusters:"
     kind get clusters
     echo ""
-    echo "Create cluster with: task kind-create-cluster"
+    echo "Create cluster with: noetl run automation/boot.yaml"
     exit 1
 fi
 echo "✓ Cluster exists"
@@ -68,9 +68,7 @@ echo "Build and load completed successfully!"
 echo "==================================================="
 echo ""
 echo "Next steps:"
-echo "  1. Register playbook: task test:container:register"
-echo "  2. Execute playbook: task test:container:execute"
-echo "  3. Verify results: task test:container:verify"
-echo ""
-echo "Or run full test: task test:container:full"
+echo "  1. Register playbook: noetl register playbook tests/fixtures/playbooks/container_postgres_init/"
+echo "  2. Execute playbook: noetl execute test/container/postgres_init"
+echo "  3. Verify results: Check execution status in NoETL API"
 echo ""

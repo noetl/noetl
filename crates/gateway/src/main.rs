@@ -20,15 +20,27 @@ use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing_subscriber::EnvFilter;
 
 mod auth;
+mod callbacks;
+mod config;
+mod connection_hub;
 mod graphql;
 mod noetl_client;
 mod proxy;
+mod request_store;
 mod result_ext;
+mod session_cache;
+mod sse;
 
+use crate::callbacks::CallbackManager;
+use crate::config::GatewayConfig;
+use crate::connection_hub::ConnectionHub;
 use crate::graphql::schema::{AppSchema, MutationRoot, QueryRoot};
 use crate::noetl_client::NoetlClient;
 use crate::proxy::ProxyState;
+use crate::request_store::RequestStore;
 use crate::result_ext::ResultExt;
+use crate::session_cache::SessionCache;
+use crate::sse::SseState;
 
 #[ctor::ctor]
 fn init() {
@@ -43,33 +55,109 @@ fn init() {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let port: u16 = std::env::var("ROUTER_PORT")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(8090);
-    let noetl_base = std::env::var("NOETL_BASE_URL").unwrap_or_else(|_| "http://localhost:8083".to_string());
-    let nats_url = std::env::var("NATS_URL").unwrap_or_else(|_| "nats://127.0.0.1:4222".to_string());
-    let subject_prefix =
-        std::env::var("NATS_UPDATES_SUBJECT_PREFIX").unwrap_or_else(|_| "playbooks.executions.".to_string());
+    // Load configuration from file and/or environment variables
+    let config = GatewayConfig::load().log("Failed to load gateway configuration")?;
 
-    let noetl = NoetlClient::new(noetl_base.clone());
+    // Log configuration summary
+    tracing::info!("Gateway configuration loaded:");
+    tracing::info!("  Server: {}:{}", config.server.bind, config.server.port);
+    tracing::info!("  NoETL: {}", config.noetl.base_url);
+    tracing::info!("  NATS: {}", config.nats.url);
+    tracing::info!("  Auth playbooks:");
+    tracing::info!("    login: {}", config.auth_playbooks.login);
+    tracing::info!("    validate_session: {}", config.auth_playbooks.validate_session);
+    tracing::info!("    check_access: {}", config.auth_playbooks.check_access);
+    tracing::info!("    timeout: {}s", config.auth_playbooks.timeout_secs);
+
+    let noetl = NoetlClient::new(config.noetl.base_url.clone());
     let noetl_arc = Arc::new(noetl);
 
+    // Callback manager using NATS pub/sub
+    let callback_manager = Arc::new(CallbackManager::new(Some(config.nats.callback_subject_prefix.clone())));
+
+    // Start NATS callback listener
+    callbacks::start_nats_listener(&config.nats.url, callback_manager.clone())
+        .await
+        .log("Failed to start NATS callback listener")?;
+
+    // Initialize session cache using NATS K/V (optional - degrades gracefully)
+    let session_cache = Arc::new(SessionCache::new(
+        config.nats.session_bucket.clone(),
+        config.nats.session_cache_ttl_secs,
+    ));
+    let cache_enabled = session_cache
+        .connect(&config.nats.url)
+        .await
+        .unwrap_or(false);
+    if cache_enabled {
+        tracing::info!(
+            "Session cache enabled: bucket={}, ttl={}s",
+            config.nats.session_bucket,
+            config.nats.session_cache_ttl_secs
+        );
+    } else {
+        tracing::warn!(
+            "Session cache disabled (NATS K/V unavailable) - all validations will use playbooks"
+        );
+    }
+
+    // Initialize connection hub for SSE/WebSocket connections
+    let connection_hub = Arc::new(ConnectionHub::new());
+
+    // Initialize request store for pending playbook callbacks (optional - degrades gracefully)
+    let request_store = Arc::new(RequestStore::new(
+        config.nats.request_bucket.clone(),
+        config.nats.request_ttl_secs,
+    ));
+    let request_store_enabled = request_store
+        .connect(&config.nats.url)
+        .await
+        .unwrap_or(false);
+    if request_store_enabled {
+        tracing::info!(
+            "Request store enabled: bucket={}, ttl={}s",
+            config.nats.request_bucket,
+            config.nats.request_ttl_secs
+        );
+    } else {
+        tracing::warn!(
+            "Request store disabled (NATS K/V unavailable) - async callbacks will not work"
+        );
+    }
+
+    // SSE state for real-time callbacks
+    let sse_state = Arc::new(SseState {
+        connection_hub: connection_hub.clone(),
+        request_store: request_store.clone(),
+        session_cache: session_cache.clone(),
+        heartbeat_interval_secs: config.transport.heartbeat_interval_secs,
+    });
+
+    // Combined auth state with configurable playbook paths and session cache
+    let auth_state = Arc::new(auth::AuthState {
+        noetl: noetl_arc.clone(),
+        callbacks: callback_manager.clone(),
+        playbook_config: config.auth_playbooks.clone(),
+        session_cache: session_cache.clone(),
+    });
+
     // Proxy state for forwarding requests to NoETL
-    let proxy_state = Arc::new(ProxyState::new(noetl_base.clone()));
+    let proxy_state = Arc::new(ProxyState::new(config.noetl.base_url.clone()));
+
+    // Wrap config in Arc for sharing with GraphQL context
+    let config_arc = Arc::new(config.clone());
 
     let schema: AppSchema = Schema::build(QueryRoot, MutationRoot, async_graphql::EmptySubscription)
         .data(noetl_arc.clone())
         .data(proxy_state.clone())
+        .data(request_store.clone())
+        .data(config_arc.clone())
         .finish();
 
-    // CORS configuration - read allowed origins from env var (comma-separated)
-    // Example: CORS_ALLOWED_ORIGINS=http://localhost:8090,http://gateway.mestumre.dev
-    let cors_origins_str = std::env::var("CORS_ALLOWED_ORIGINS")
-        .unwrap_or_else(|_| "http://localhost:8080,http://localhost:8090,http://localhost:3000".to_string());
-
-    let allowed_origins: Vec<axum::http::HeaderValue> = cors_origins_str
-        .split(',')
+    // CORS configuration
+    let cors_origins_str = config.cors_origins_string();
+    let allowed_origins: Vec<axum::http::HeaderValue> = config.cors.allowed_origins
+        .iter()
         .filter_map(|s| s.trim().parse().ok())
         .collect();
 
@@ -85,7 +173,7 @@ async fn main() -> anyhow::Result<()> {
             HeaderName::from_static("x-user-id"),
             HeaderName::from_static("x-request-id"),
         ])
-        .allow_credentials(true);
+        .allow_credentials(config.cors.allow_credentials);
 
     // Public routes (no auth required)
     let public_routes = Router::new()
@@ -93,13 +181,22 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/auth/login", post(auth::login))
         .route("/api/auth/validate", post(auth::validate_session))
         .route("/api/auth/check-access", post(auth::check_access))
-        .with_state(noetl_arc.clone());
+        // Internal callback endpoint for workers to deliver results via HTTP
+        .route("/api/internal/callback", post(auth::internal_callback))
+        .with_state(auth_state.clone());
+
+    // SSE routes for real-time callbacks (auth via query param)
+    let sse_routes = Router::new()
+        .route("/events", get(sse::sse_handler))
+        .route("/api/internal/callback/async", post(sse::callback_handler))
+        .route("/api/internal/progress", post(sse::progress_handler))
+        .with_state(sse_state.clone());
 
     // Protected GraphQL routes (auth required)
     let graphql_routes = Router::new()
         .route("/graphql", get(graphiql).post_service(GraphQL::new(schema.clone())))
         .route_layer(middleware::from_fn_with_state(
-            noetl_arc.clone(),
+            auth_state.clone(),
             auth::middleware::auth_middleware,
         ))
         .with_state(());
@@ -113,7 +210,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/noetl/{*path}", delete(proxy::proxy_delete))
         .route("/noetl/{*path}", patch(proxy::proxy_patch))
         .route_layer(middleware::from_fn_with_state(
-            noetl_arc.clone(),
+            auth_state.clone(),
             auth::middleware::auth_middleware,
         ))
         .with_state(proxy_state);
@@ -121,13 +218,17 @@ async fn main() -> anyhow::Result<()> {
     // Main gateway app
     let app = Router::new()
         .merge(public_routes)
+        .merge(sse_routes)
         .merge(graphql_routes)
         .merge(proxy_routes)
         .layer(cors);
 
-    let addr = SocketAddr::from(([0, 0, 0, 0], port));
-    tracing::info!(%addr, noetl_base, "starting gateway server http://localhost:{}", port);
+    let addr = SocketAddr::from(([0, 0, 0, 0], config.server.port));
+    tracing::info!(%addr, noetl_base = %config.noetl.base_url, "starting gateway server http://localhost:{}", config.server.port);
     tracing::info!("Auth endpoints: POST /api/auth/login, POST /api/auth/validate, POST /api/auth/check-access");
+    tracing::info!("Internal endpoint: POST /api/internal/callback (for worker callbacks)");
+    tracing::info!("SSE endpoint: GET /events?session_token=xxx (real-time callbacks)");
+    tracing::info!("Async callback: POST /api/internal/callback/async (for async playbook results)");
     tracing::info!("Protected GraphQL: POST /graphql (requires authentication)");
     tracing::info!("Protected Proxy: /noetl/* -> NoETL /api/* (requires authentication)");
 

@@ -96,3 +96,5 @@ workflow:
 
   - step: end
     desc: Done
+    tool:
+      kind: noop

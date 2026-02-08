@@ -18,26 +18,16 @@ workflow:
       cmds:
         - echo "Gateway UI Automation - Action '{{ workload.action }}'"
     next:
-      - when: "{{ workload.action }} == deploy"
-        then:
-          - step: deploy_ui
-        args: {}
-      - when: "{{ workload.action }} == logs"
-        then:
-          - step: view_logs
-        args: {}
-      - when: "{{ workload.action }} == update"
-        then:
-          - step: update_ui
-        args: {}
-      - when: "{{ workload.action }} == status"
-        then:
-          - step: check_status
-        args: {}
-      - when: "{{ workload.action }} == help"
-        then:
-          - step: show_help
-        args: {}
+      - step: deploy_ui
+        when: "{{ workload.action == 'deploy' }}"
+      - step: view_logs
+        when: "{{ workload.action == 'logs' }}"
+      - step: update_ui
+        when: "{{ workload.action == 'update' }}"
+      - step: check_status
+        when: "{{ workload.action == 'status' }}"
+      - step: show_help
+        when: "{{ workload.action == 'help' }}"
       - step: show_help
 
   - step: deploy_ui
@@ -147,3 +137,5 @@ workflow:
 
   - step: end
     desc: End workflow
+    tool:
+      kind: noop

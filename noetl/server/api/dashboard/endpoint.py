@@ -9,7 +9,6 @@ Provides REST endpoints for:
 """
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import JSONResponse
 from noetl.core.logger import setup_logger
 from .schema import (
     DashboardStatsResponse,
@@ -134,41 +133,3 @@ async def api_health() -> HealthCheckResponse:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ============================================================================
-# Legacy JSON Response Support (for backward compatibility)
-# ============================================================================
-
-@router.get("/dashboard/stats/legacy", response_class=JSONResponse)
-async def get_dashboard_stats_legacy():
-    """
-    Legacy endpoint that returns plain JSON response.
-    
-    **Deprecated**: Use GET /dashboard/stats with typed response instead.
-    """
-    try:
-        response = await DashboardService.get_dashboard_stats()
-        return JSONResponse(content=response.model_dump())
-    except Exception as e:
-        logger.exception(f"Error in legacy dashboard stats endpoint: {e}")
-        return JSONResponse(
-            content={"status": "error", "error": str(e)},
-            status_code=500
-        )
-
-
-@router.get("/dashboard/widgets/legacy", response_class=JSONResponse)
-async def get_dashboard_widgets_legacy():
-    """
-    Legacy endpoint that returns plain JSON response.
-    
-    **Deprecated**: Use GET /dashboard/widgets with typed response instead.
-    """
-    try:
-        response = await DashboardService.get_dashboard_widgets()
-        return JSONResponse(content=response.model_dump())
-    except Exception as e:
-        logger.exception(f"Error in legacy dashboard widgets endpoint: {e}")
-        return JSONResponse(
-            content={"widgets": []},
-            status_code=500
-        )

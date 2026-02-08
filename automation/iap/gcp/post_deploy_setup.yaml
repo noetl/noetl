@@ -25,22 +25,17 @@ workflow:
       kind: shell
       cmds:
         - echo "Post-Deployment Setup - Action '{{ workload.action }}'"
-    case:
-      - when: "{{ workload.action }} == setup"
-        then:
-          - step: setup_postgres
-      - when: "{{ workload.action }} == setup-postgres"
-        then:
-          - step: setup_postgres
-      - when: "{{ workload.action }} == setup-clickhouse"
-        then:
-          - step: setup_clickhouse
-      - when: "{{ workload.action }} == register-credentials"
-        then:
-          - step: register_credentials
-      - when: "{{ workload.action }} == verify"
-        then:
-          - step: verify_setup
+    next:
+      - step: setup_postgres
+        when: "{{ workload.action == 'setup' }}"
+      - step: setup_postgres
+        when: "{{ workload.action == 'setup-postgres' }}"
+      - step: setup_clickhouse
+        when: "{{ workload.action == 'setup-clickhouse' }}"
+      - step: register_credentials
+        when: "{{ workload.action == 'register-credentials' }}"
+      - step: verify_setup
+        when: "{{ workload.action == 'verify' }}"
       - step: show_help
 
   - step: setup_postgres
@@ -305,3 +300,5 @@ workflow:
 
   - step: end
     desc: Workflow complete
+    tool:
+      kind: noop

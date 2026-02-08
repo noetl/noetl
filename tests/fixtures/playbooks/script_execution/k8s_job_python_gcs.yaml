@@ -1,4 +1,4 @@
-apiVersion: noetl.io/v2
+apiVersion: noetl.io/v10
 kind: Playbook
 metadata:
   name: k8s_job_python_gcs
@@ -21,26 +21,27 @@ workflow:
     desc: Start Kubernetes job workflow
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args: {}
       code: |
         result = {"status": "initialized", "message": "Starting K8s job workflow"}
     next:
-      - step: run_script_as_k8s_job
+      spec:
+        mode: exclusive
+      arcs:
+        - step: run_script_as_k8s_job
 
   - step: run_script_as_k8s_job
     desc: Execute Python script from GCS as Kubernetes job
     tool:
       kind: script
       script:
-        uri: "{{ workload.gcs_script_uri }}"
+        uri: "{{ gcs_script_uri }}"
         source:
           type: gcs
-          auth: "{{ workload.gcp_credential }}"
+          auth: "{{ gcp_credential }}"
       args:
-        input_file: "{{ workload.input_data }}"
-        output_bucket: "{{ workload.output_bucket }}"
+        input_file: "{{ input_data }}"
+        output_bucket: "{{ output_bucket }}"
         mode: "batch"
       job:
         image: python:3.11-slim
@@ -58,16 +59,18 @@ workflow:
         env:
           # Service account JSON from keychain - access nested field
           GCP_SERVICE_ACCOUNT_JSON: "{{ keychain.gcp_sa.service_account_json | tojson }}"
-          GCS_BUCKET: "{{ workload.output_bucket }}"
+          GCS_BUCKET: "{{ output_bucket }}"
           GCP_PROJECT: noetl-demo-19700101
     next:
-      - step: verify_result
+      spec:
+        mode: exclusive
+      arcs:
+        - step: verify_result
 
   - step: verify_result
     desc: Verify job completed successfully and show details
     tool:
       kind: python
-      auth: {}
       libs:
         json: json
       args:
@@ -78,11 +81,11 @@ workflow:
         print("=" * 80)
         print(json.dumps(job_result, indent=2))
         print("=" * 80)
-        
+
         status = job_result.get('status')
         if status != 'completed':
             raise Exception(f"Job failed with status: {status}")
-        
+
         # Check if data was written to GCS
         output = job_result.get('output', '')
         if 'wrote_to_gcs": true' in output.lower() or 'successfully wrote to' in output.lower():
@@ -91,7 +94,7 @@ workflow:
             print("⚠ WARNING: Data may not have been written to GCS")
             print("Check logs with:")
             print(f"  {job_result.get('kubectl_logs', 'N/A')}")
-        
+
         result = {
             "status": "verified",
             "job_name": job_result.get('job_name'),
@@ -102,14 +105,15 @@ workflow:
             "kubectl_describe": job_result.get('kubectl_describe')
         }
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: End workflow
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args: {}
       code: |
         result = {"status": "complete"}

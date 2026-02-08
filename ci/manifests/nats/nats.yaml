@@ -10,17 +10,26 @@ data:
   nats.conf: |
     port: 4222
     http_port: 8222
-    
+
     jetstream {
       store_dir: /data/jetstream
       max_memory_store: 1GB
       max_file_store: 5GB
     }
-    
-    # Simple authentication for development
-    authorization {
-      user: noetl
-      password: noetl
+
+    # Account-based authentication with JetStream permissions
+    accounts {
+      $SYS {
+        users: [
+          { user: sys, password: sys }
+        ]
+      }
+      NOETL {
+        jetstream: enabled
+        users: [
+          { user: noetl, password: noetl }
+        ]
+      }
     }
 ---
 apiVersion: v1

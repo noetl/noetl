@@ -23,9 +23,9 @@ workflow:
     tool:
       kind: python
       args:
-        credential_name: "{{ workload.credential_name }}"
-        override_gateway_url: "{{ workload.gateway_url }}"
-        override_base_url: "{{ workload.base_url }}"
+        credential_name: "{{ credential_name }}"
+        override_gateway_url: "{{ gateway_url }}"
+        override_base_url: "{{ base_url }}"
       code: |
         from noetl.worker.secrets import fetch_credential_by_key
 
@@ -54,21 +54,27 @@ workflow:
           'base_url': base_url,
         }
     next:
-      - step: get_futures
+      spec:
+        mode: exclusive
+      arcs:
+        - step: get_futures
 
   - step: get_futures
     desc: Resolve futures contracts for symbol
     tool:
       kind: http
       method: GET
-      url: "{{ start.base_url }}/trsrv/futures?symbols={{ workload.symbol }}&exchange={{ workload.exchange }}"
+      url: "{{ start.base_url }}/trsrv/futures?symbols={{ symbol }}&exchange={{ exchange }}"
       follow_redirects: true
       headers:
         Content-Type: application/json
         User-Agent: NoETL/2.0
       verify_ssl: false
     next:
-      - step: pick_contract
+      spec:
+        mode: exclusive
+      arcs:
+        - step: pick_contract
 
   - step: pick_contract
     desc: Pick futures contract
@@ -76,8 +82,8 @@ workflow:
       kind: python
       args:
         response: "{{ get_futures }}"
-        symbol: "{{ workload.symbol }}"
-        index: "{{ workload.contract_index }}"
+        symbol: "{{ symbol }}"
+        index: "{{ contract_index }}"
       code: |
         data = response.get('data', {})
         if not isinstance(data, dict):
@@ -97,21 +103,27 @@ workflow:
                     "conid": contract.get("conid"),
                 }
     next:
-      - step: get_history
+      spec:
+        mode: exclusive
+      arcs:
+        - step: get_history
 
   - step: get_history
     desc: Fetch historical data
     tool:
       kind: http
       method: GET
-      url: "{{ start.base_url }}/iserver/marketdata/history?conid={{ pick_contract.conid }}&period={{ workload.period }}&bar={{ workload.bar }}{% if workload.start_time %}&startTime={{ workload.start_time }}{% endif %}"
+      url: "{{ start.base_url }}/iserver/marketdata/history?conid={{ pick_contract.conid }}&period={{ period }}&bar={{ bar }}{% if start_time %}&startTime={{ start_time }}{% endif %}"
       follow_redirects: true
       headers:
         Content-Type: application/json
         User-Agent: NoETL/2.0
       verify_ssl: false
     next:
-      - step: summarize
+      spec:
+        mode: exclusive
+      arcs:
+        - step: summarize
 
   - step: summarize
     desc: Summarize historical data
@@ -133,7 +145,10 @@ workflow:
             "sample": bars[:5],
         }
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: Done

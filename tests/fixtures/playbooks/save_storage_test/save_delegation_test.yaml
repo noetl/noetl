@@ -1,4 +1,4 @@
-apiVersion: noetl.io/v2
+apiVersion: noetl.io/v10
 kind: Playbook
 metadata:
   name: save_storage_delegation_test
@@ -15,154 +15,144 @@ workflow:
     desc: "Setup test tables"
     tool:
       kind: python
-      auth: {}
-      libs: {}
-      args: {}
       code: |
         result = {"status": "initialized"}
-    
-    case:
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          next:
-            - step: create_tables
-  
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: create_tables
+
   - step: create_tables
     desc: "Create required test tables"
     tool:
       kind: playbook
       path: tests/fixtures/playbooks/save_storage_test/create_tables
       args:
-        pg_auth: "{{ workload.pg_auth }}"
-    
-    case:
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          next:
-            - step: truncate_tables
-  
+        pg_auth: "{{ pg_auth }}"
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: truncate_tables
+
   - step: truncate_tables
     desc: "Clear test data from previous runs"
     tool:
       kind: postgres
-      auth: "{{ workload.pg_auth }}"
+      auth: "{{ pg_auth }}"
       command: |
         TRUNCATE TABLE simple_test_flat CASCADE;
-    
-    case:
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          next:
-            - step: event_test
-  
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: event_test
+
   # Test 1: Event storage (default)
   - step: event_test
     desc: "Test event storage delegation"
     tool:
       kind: python
-      auth: {}
-      libs: {}
-      args: {}
       code: |
         # Simple function that doesn't need input_data parameter
         result = {
             "test": "event_storage",
             "message": "Event storage delegation working"
         }
-    
-    case:
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          sink:
-            tool:
-              kind: event_log
-              data: "{{ response }}"
-          next:
-            - step: postgres_test
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: postgres_test
 
   # Test 2: Postgres storage delegation
-  - step: postgres_test  
+  - step: postgres_test
     desc: "Test postgres storage delegation"
     tool:
-      kind: python
-      auth: {}
-      libs: {}
-      args: {}
-      code: |
-        result = {
-            "test": "postgres_storage", 
-            "message": "Postgres storage delegation working",
-            "value": 123
-        }
-    
-    case:
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          sink:
-            tool:
-              kind: postgres
-              auth: "{{ workload.pg_auth }}"
-              table: simple_test_flat
-              args:
-                test_id: "delegation_test"
-                test_name: "{{ response.test }}"
-                test_value: "{{ response.value }}"
-                storage_type: "delegation"
-                test_execution: "{{ execution_id }}"
-          next:
-            - step: duckdb_test
+      - generate_data:
+          kind: python
+          code: |
+            result = {
+                "test": "postgres_storage",
+                "message": "Postgres storage delegation working",
+                "value": 123
+            }
+      - save_postgres:
+          kind: postgres
+          auth: "{{ pg_auth }}"
+          command: |
+            INSERT INTO simple_test_flat (test_id, test_name, test_value, storage_type, test_execution)
+            VALUES (
+              'delegation_test',
+              '{{ generate_data.test }}',
+              {{ generate_data.value }},
+              'delegation',
+              '{{ execution_id }}'
+            )
+            ON CONFLICT (test_id) DO UPDATE SET
+              test_name = EXCLUDED.test_name,
+              test_value = EXCLUDED.test_value,
+              storage_type = EXCLUDED.storage_type,
+              test_execution = EXCLUDED.test_execution;
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: duckdb_test
 
   # Test 3: DuckDB storage delegation
   - step: duckdb_test
     desc: "Test duckdb storage delegation"
     tool:
-      kind: python
-      auth: {}
-      libs: {}
-      args: {}
-      code: |
-        result = {
-            "test": "duckdb_storage",
-            "message": "DuckDB storage delegation working"
-        }
-    
-    case:
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          sink:
-            tool:
-              kind: duckdb
-              commands: |
-                CREATE OR REPLACE TABLE test_duckdb AS 
-                SELECT 'delegation_test' as test_type, 'duckdb_working' as status;
-                SELECT * FROM test_duckdb;
-          next:
-            - step: http_test
+      - generate_data:
+          kind: python
+          code: |
+            result = {
+                "test": "duckdb_storage",
+                "message": "DuckDB storage delegation working"
+            }
+      - save_duckdb:
+          kind: duckdb
+          commands: |
+            CREATE OR REPLACE TABLE test_duckdb AS
+            SELECT 'delegation_test' as test_type, 'duckdb_working' as status;
+            SELECT * FROM test_duckdb;
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: http_test
 
-  # Test 4: HTTP storage delegation  
+  # Test 4: HTTP storage delegation
   - step: http_test
     desc: "Test http storage delegation"
     tool:
+      - generate_data:
+          kind: python
+          code: |
+            result = {
+                "test": "http_storage",
+                "message": "HTTP storage delegation working"
+            }
+      - send_webhook:
+          kind: http
+          method: POST
+          url: "https://httpbin.org/post"
+          headers:
+            Content-Type: "application/json"
+          body:
+            test: "{{ generate_data.test }}"
+            message: "{{ generate_data.message }}"
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
+
+  - step: end
+    desc: "Complete delegation test"
+    tool:
       kind: python
-      auth: {}
-      libs: {}
-      args: {}
       code: |
-        result = {
-            "test": "http_storage",
-            "message": "HTTP storage delegation working"
-        }
-    
-    case:
-      - when: "{{ event.name == 'call.done' }}"
-        then:
-          sink:
-            tool:
-              kind: http
-              endpoint: "https://httpbin.org/post"
-              method: POST
-              headers:
-                Content-Type: "application/json"
-              payload:
-                test: "{{ response.test }}"
-                message: "{{ response.message }}"
+        result = {"status": "complete"}

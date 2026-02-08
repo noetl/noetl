@@ -19,82 +19,84 @@ workflow:
   - step: start
     desc: Process numbers with loop
     loop:
-      in: "{{ workload.numbers }}"
+      spec:
+        mode: sequential
+      in: "{{ numbers }}"
       iterator: "num"
-      mode: "sequential"
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args: {}
       code: |
             num = input_data.get('num')
             loop_index = input_data.get('loop_index', 0)
-            
+
             print(f"[LOOP] Processing number {num} at index {loop_index}")
-            
+
             result = num * 2
             print(f"[LOOP] Result: {result}")
-            
+
             return {"number": num, "doubled": result, "index": loop_index}
     args:
       num: "{{ num }}"
       loop_index: "{{ loop_index }}"
     next:
-      - step: process
+      spec:
+        mode: exclusive
+      arcs:
+        - step: process
 
   - step: process
     desc: Analyze loop results
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args: {}
       code: |
             print(f"[PROCESS] Loop completed, analyzing results")
             print(f"[PROCESS] Input data type: {type(input_data).__name__}")
-            
+
             # In a real scenario, we'd collect loop results
             # For now, just verify the step runs after loop completes
-            
+
             numbers = [1, 2, 3, 4, 5]
             total = sum(numbers)
             doubled_sum = sum(n * 2 for n in numbers)
-            
+
             print(f"[PROCESS] Original sum: {total}")
             print(f"[PROCESS] Doubled sum: {doubled_sum}")
-            
+
             return {
                 "original_sum": total,
                 "doubled_sum": doubled_sum,
                 "count": len(numbers)
             }
     next:
-      - step: user_loop
+      spec:
+        mode: exclusive
+      arcs:
+        - step: user_loop
 
   - step: user_loop
     desc: Process users with loop
     loop:
-      in: "{{ workload.users }}"
+      spec:
+        mode: sequential
+      in: "{{ users }}"
       iterator: "user"
-      mode: "sequential"
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args: {}
       code: |
             user = input_data.get('user', {})
             loop_index = input_data.get('loop_index', 0)
-            
+
             name = user.get('name', 'unknown')
             age = user.get('age', 0)
-            
+
             print(f"[USER_LOOP] Processing user {name} (age {age}) at index {loop_index}")
-            
+
             category = "senior" if age >= 30 else "junior"
             print(f"[USER_LOOP] Category: {category}")
-            
+
             return {
                 "name": name,
                 "age": age,
@@ -105,81 +107,83 @@ workflow:
       user: "{{ user }}"
       loop_index: "{{ loop_index }}"
     next:
-      - step: verify
+      spec:
+        mode: exclusive
+      arcs:
+        - step: verify
 
   - step: verify
     desc: Verify loop execution
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args: {}
       code: |
             print(f"[VERIFY] Verifying loop test results")
-            
+
             process_result = input_data.get('process_result', {})
-            
+
             if isinstance(process_result, str):
                 import json, ast
                 try:
                     process_result = json.loads(process_result)
                 except:
                     process_result = ast.literal_eval(process_result)
-            
+
             original_sum = process_result.get('original_sum', 0)
             doubled_sum = process_result.get('doubled_sum', 0)
             count = process_result.get('count', 0)
-            
+
             print(f"[VERIFY] Processed {count} numbers")
             print(f"[VERIFY] Original sum: {original_sum}")
             print(f"[VERIFY] Doubled sum: {doubled_sum}")
-            
+
             # Expected: 1+2+3+4+5 = 15, doubled = 30
             expected_sum = 15
             expected_doubled = 30
-            
+
             verification = {
                 "status": "passed" if original_sum == expected_sum and doubled_sum == expected_doubled else "failed",
                 "original_sum": original_sum,
                 "doubled_sum": doubled_sum,
                 "count": count
             }
-            
+
             print(f"[VERIFY] Verification: {verification['status']}")
             return verification
     args:
       process_result: "{{ process }}"
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: Complete the test
     tool:
       kind: python
-      auth: {}
-      libs: {}
       args: {}
       code: |
             print(f"[END] Loop test completed successfully!")
-            
+
             verify_result = input_data.get('verify_result', {})
-            
+
             if isinstance(verify_result, str):
                 import json, ast
                 try:
                     verify_result = json.loads(verify_result)
                 except:
                     verify_result = ast.literal_eval(verify_result)
-            
+
             status = verify_result.get('status', 'unknown')
             original_sum = verify_result.get('original_sum', 0)
             doubled_sum = verify_result.get('doubled_sum', 0)
             count = verify_result.get('count', 0)
-            
+
             print(f"[END] Verification status: {status}")
             print(f"[END] Processed {count} numbers")
             print(f"[END] Original sum: {original_sum}, Doubled sum: {doubled_sum}")
-            
-            return {"status": "completed", "test_passed": status == "passed"}
+
+            return {"status": "ok", "test_passed": status == "passed"}
     args:
       verify_result: "{{ verify }}"

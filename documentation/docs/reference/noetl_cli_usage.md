@@ -1,3 +1,9 @@
+---
+sidebar_position: 10
+title: CLI Reference
+description: Complete guide for the NoETL command-line interface including all commands and runtime modes
+---
+
 # NoETL Command Line Interface (CLI) Guide
 
 This guide provides detailed instructions for using the NoETL command-line interface.

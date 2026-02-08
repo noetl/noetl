@@ -18,50 +18,28 @@ workflow:
       cmds:
         - echo "NATS Automation - Action '{{ workload.action }}'"
     next:
-      - when: "{{ workload.action }} == deploy"
-        then:
-          - step: deploy_nats
-        args: {}
-      - when: "{{ workload.action }} == undeploy"
-        then:
-          - step: undeploy_nats
-        args: {}
-      - when: "{{ workload.action }} == status"
-        then:
-          - step: check_status
-        args: {}
-      - when: "{{ workload.action }} == health"
-        then:
-          - step: check_health
-        args: {}
-      - when: "{{ workload.action }} == logs"
-        then:
-          - step: show_logs
-        args: {}
-      - when: "{{ workload.action }} == streams"
-        then:
-          - step: list_streams
-        args: {}
-      - when: "{{ workload.action }} == monitoring"
-        then:
-          - step: show_monitoring
-        args: {}
-      - when: "{{ workload.action }} == connect"
-        then:
-          - step: test_connection
-        args: {}
-      - when: "{{ workload.action }} == test"
-        then:
-          - step: run_tests
-        args: {}
-      - when: "{{ workload.action }} == restart"
-        then:
-          - step: restart_nats
-        args: {}
-      - when: "{{ workload.action }} == port-forward"
-        then:
-          - step: setup_port_forward
-        args: {}
+      - step: deploy_nats
+        when: "{{ workload.action == 'deploy' }}"
+      - step: undeploy_nats
+        when: "{{ workload.action == 'undeploy' }}"
+      - step: check_status
+        when: "{{ workload.action == 'status' }}"
+      - step: check_health
+        when: "{{ workload.action == 'health' }}"
+      - step: show_logs
+        when: "{{ workload.action == 'logs' }}"
+      - step: list_streams
+        when: "{{ workload.action == 'streams' }}"
+      - step: show_monitoring
+        when: "{{ workload.action == 'monitoring' }}"
+      - step: test_connection
+        when: "{{ workload.action == 'connect' }}"
+      - step: run_tests
+        when: "{{ workload.action == 'test' }}"
+      - step: restart_nats
+        when: "{{ workload.action == 'restart' }}"
+      - step: setup_port_forward
+        when: "{{ workload.action == 'port-forward' }}"
       - step: show_help
 
   - step: deploy_nats
@@ -274,6 +252,4 @@ workflow:
   - step: end
     desc: End workflow
     tool:
-      kind: shell
-      cmds:
-        - echo ""
+      kind: noop
