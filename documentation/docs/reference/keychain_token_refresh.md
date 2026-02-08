@@ -146,8 +146,8 @@ Emit non-sensitive operational metrics/logs:
 - token age/TTL distribution at time of use (bucketed)
 
 Example safe messages:
-- “AUTH: refresh performed for credential X (ttl=120s<threshold=300s)”
-- “AUTH: refresh failed for credential X (provider timeout); retrying…”
+- `AUTH: refresh performed for credential X (ttl=120s < threshold=300s)`
+- `AUTH: refresh failed for credential X (provider timeout); retrying…`
 
 ---
 

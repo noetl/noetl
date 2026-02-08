@@ -1,0 +1,8 @@
+{
+  "label": "Playbook Reference",
+  "position": 2,
+  "link": {
+    "type": "generated-index",
+    "description": "Detailed reference for playbook components including workflow, workload, steps, and tools."
+  }
+}

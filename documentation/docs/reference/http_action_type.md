@@ -1,3 +1,9 @@
+---
+sidebar_position: 12
+title: HTTP Action Details
+description: HTTP tool usage and configuration in NoETL Canonical v10 playbooks
+---
+
 # HTTP in NoETL (Canonical v10)
 
 This page previously documented legacy HTTP shapes such as:

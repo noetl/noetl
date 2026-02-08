@@ -42,7 +42,7 @@ See also:
 
 ### 1.2 Reference-first rule
 A task output is either:
-- **inline** (only if size <= cap), OR
+- **inline** (only if size is less than or equal to the cap), OR
 - stored externally with a **ResultRef** (preferred).
 
 The event log stores: metadata + ResultRef + extracted fields + preview.

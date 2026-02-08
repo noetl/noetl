@@ -1,3 +1,9 @@
+---
+sidebar_position: 2
+title: Step Specification (v10)
+description: Canonical v10 step specification including policies, routing, loops, and spec layering
+---
+
 # NoETL Canonical Step Spec (v10)
 
 > **Canonical v10 update (latest decisions):**

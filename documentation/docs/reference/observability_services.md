@@ -1,3 +1,9 @@
+---
+sidebar_position: 15
+title: Observability Services
+description: Complete guide for ClickHouse, Qdrant, and NATS integration in NoETL infrastructure
+---
+
 # NoETL Observability Services
 
 Complete guide for ClickHouse, Qdrant, and NATS integration in NoETL infrastructure.
