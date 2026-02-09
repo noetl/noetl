@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.8.1](https://github.com/noetl/noetl/compare/v2.8.0...v2.8.1) (2026-02-09)
+
+### Bug Fixes
+
+* convert single tool steps with policy rules to task sequence format for enhanced control flow ([7607a01](https://github.com/noetl/noetl/commit/7607a011ac0cf4c113f49adbebd4769dafcddde4))
+* enhance command step handling for task sequences with metadata support ([29f9425](https://github.com/noetl/noetl/commit/29f94258734275514759704bb13602ba0ee87dd4))
+* enhance PostgreSQL connection pool initialization for improved concurrency support ([5fec0e1](https://github.com/noetl/noetl/commit/5fec0e15e560936281749ae19f785061d45b83a2))
+* enhance task sequence execution with context mutation and loop handling ([7a288f1](https://github.com/noetl/noetl/commit/7a288f1ed19eb12679f856a25b65689ca277c342))
+* improve template rendering with fallback to ast.literal_eval for Python repr format ([4230428](https://github.com/noetl/noetl/commit/4230428b809ba4551cb798f6643d891a766759b6))
+* streamline PostgreSQL auth configuration in pagination test playbook ([dad7bb5](https://github.com/noetl/noetl/commit/dad7bb5c4fad33a841423ef5735f27b7342fd1c4))
+* unwrap single-task sequence results for backward compatibility with templates ([e5ad99d](https://github.com/noetl/noetl/commit/e5ad99df00ead852fb915739ffb0e174f9aefc52))
+
 ## [2.8.0](https://github.com/noetl/noetl/compare/v2.7.5...v2.8.0) (2026-02-08)
 
 ### Features
