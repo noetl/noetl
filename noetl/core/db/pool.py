@@ -26,15 +26,20 @@ async def init_pool(conninfo: str):
     """
     Initialize the global AsyncConnectionPool with dict_row as default.
     Safe to call multiple times.
+
+    Pool sizing for concurrent execution support:
+    - min_size=2: Keep warm connections ready
+    - max_size=20: Handle burst of concurrent playbook executions
+    - timeout=30: Allow time during high load (regression tests run 50+ playbooks)
     """
     global _pool
     async with _lock:
         if _pool is None:
             _pool = AsyncConnectionPool(
                 conninfo,
-                min_size=1,
-                max_size=5,
-                timeout=10,
+                min_size=2,
+                max_size=20,
+                timeout=30,
                 max_lifetime=1800.0,
                 max_idle=300.0,
                 kwargs={"row_factory": dict_row},
