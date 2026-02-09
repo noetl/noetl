@@ -362,8 +362,8 @@ function connectSSE() {
             executionId: params.executionId,
             requestId: requestId,
             status: params.status,
-            // Support both camelCase (from playbooks) and snake_case (legacy)
-            textOutput: params.data?.textOutput || params.data?.text_output || params.data?.result || JSON.stringify(params.data),
+            // Support multiple field names for text output from playbooks
+            textOutput: params.data?.textOutput || params.data?.text_output || params.data?.summary || params.data?.result || JSON.stringify(params.data),
             data: params.data
           });
         }

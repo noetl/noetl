@@ -27,9 +27,7 @@ workflow:
     desc: Start loop + pagination test with sink to Postgres
     tool:
       kind: postgres
-      auth:
-        type: postgres
-        credential: pg_k8s
+      auth: pg_k8s
       query: |
         CREATE TABLE IF NOT EXISTS pagination_test_results (
           id SERIAL PRIMARY KEY,
@@ -62,6 +60,8 @@ workflow:
         endpoints: "{{ endpoints }}"
         endpoint_index: "{{ ctx.current_endpoint_index }}"
       code: |
+        # Convert to int - may be string from template rendering
+        endpoint_index = int(endpoint_index) if isinstance(endpoint_index, str) else endpoint_index
         if endpoint_index < len(endpoints):
             current = endpoints[endpoint_index]
             result = {
@@ -115,9 +115,7 @@ workflow:
 
       - save_page:
           kind: postgres
-          auth:
-            type: postgres
-            credential: pg_k8s
+          auth: pg_k8s
           query: |
             INSERT INTO pagination_test_results (execution_id, endpoint_name, iteration_index, page_number, items, items_count, has_more)
             VALUES (
@@ -148,7 +146,7 @@ workflow:
       - check_pagination:
           kind: python
           args:
-            http_response: "{{ fetch_page.fetch }}"
+            http_response: "{{ fetch }}"
           code: |
             paging = http_response.get('data', {}).get('paging', {})
             result = {
@@ -162,9 +160,9 @@ workflow:
         mode: exclusive
       arcs:
         - step: fetch_page
-          when: "{{ fetch_page.has_more == true }}"
+          when: "{{ fetch_page.results.check_pagination.has_more == true }}"
         - step: next_endpoint
-          when: "{{ fetch_page.has_more != true }}"
+          when: "{{ fetch_page.results.check_pagination.has_more != true }}"
 
   - step: next_endpoint
     desc: Move to next endpoint in the loop
@@ -184,9 +182,7 @@ workflow:
     desc: Validate loop + pagination results from Postgres table
     tool:
       kind: postgres
-      auth:
-        type: postgres
-        credential: pg_k8s
+      auth: pg_k8s
       query: |
         SELECT
           endpoint_name,
@@ -294,9 +290,7 @@ workflow:
     desc: Clean up test data from Postgres
     tool:
       kind: postgres
-      auth:
-        type: postgres
-        credential: pg_k8s
+      auth: pg_k8s
       query: |
         DELETE FROM pagination_test_results WHERE execution_id = {{ execution_id }};
         SELECT 'Cleaned up test data' as message;

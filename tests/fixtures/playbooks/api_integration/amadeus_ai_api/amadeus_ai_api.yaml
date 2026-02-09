@@ -360,6 +360,29 @@ workflow:
     next:
       spec: { mode: exclusive }
       arcs:
+        - step: send_callback
+          when: "{{ request_id }}"
+        - step: end
+          when: "{{ not request_id }}"
+
+  - step: send_callback
+    desc: Send success callback to gateway (async endpoint for SSE delivery)
+    tool:
+      kind: http
+      method: POST
+      url: "{{ gateway_url }}/api/internal/callback/async"
+      headers:
+        Content-Type: application/json
+      data:
+        request_id: "{{ request_id }}"
+        status: "COMPLETED"
+        data:
+          execution_id: "{{ execution_id }}"
+          query: "{{ workload.query }}"
+          summary: "{{ extract_summary.summary_text | default('No summary available') }}"
+    next:
+      spec: { mode: exclusive }
+      arcs:
         - step: end
 
   - step: end

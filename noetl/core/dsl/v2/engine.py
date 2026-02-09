@@ -1893,10 +1893,24 @@ class ControlFlowEngine:
             tool_config = {k: v for k, v in tool_dict.items() if k != "kind"}
             tool_kind = step.tool.kind
 
-            # NOTE: step.result removed in v10 - output config is now in tool.output or tool.spec.policy
+            # Check if single tool has spec.policy.rules - if so, convert to task sequence
+            # This enables retry/control flow for single-tool steps
+            spec = tool_config.get("spec", {})
+            policy = spec.get("policy", {}) if isinstance(spec, dict) else {}
+            policy_rules = policy.get("rules", []) if isinstance(policy, dict) else []
 
-            # Render Jinja2 templates in tool config
-            tool_config = recursive_render(self.jinja_env, tool_config, context)
+            if policy_rules:
+                # Convert single tool to task sequence format so policy rules work
+                task_label = f"{step.step}_task"
+                pipeline = [{task_label: tool_dict}]
+                tool_kind = "task_sequence"
+                tool_config = {"tasks": pipeline}
+                logger.info(f"[PIPELINE] Converted single tool with policy rules to task sequence for step '{step.step}'")
+            else:
+                # NOTE: step.result removed in v10 - output config is now in tool.output or tool.spec.policy
+
+                # Render Jinja2 templates in tool config
+                tool_config = recursive_render(self.jinja_env, tool_config, context)
 
         # Extract next targets for conditional routing (canonical v10 format)
         next_targets = None
@@ -1934,9 +1948,13 @@ class ControlFlowEngine:
         command_spec = CommandSpec(next_mode=next_mode)
         logger.debug(f"[SPEC] Step '{step.step}': next_mode={next_mode} (from next.spec.mode)")
 
+        # For pipeline (task sequence) steps, use :task_sequence suffix in step name
+        # This enables the engine to detect task sequence completion and sync ctx variables
+        command_step = f"{step.step}:task_sequence" if pipeline else step.step
+
         command = Command(
             execution_id=state.execution_id,
-            step=step.step,
+            step=command_step,
             tool=ToolCall(
                 kind=tool_kind,
                 config=tool_config
@@ -1947,7 +1965,11 @@ class ControlFlowEngine:
             next_targets=next_targets,
             spec=command_spec,
             attempt=1,
-            priority=0
+            priority=0,
+            metadata={
+                "task_sequence": True,
+                "parent_step": step.step,
+            } if pipeline else {}
         )
 
         return command
@@ -2058,28 +2080,137 @@ class ControlFlowEngine:
             parent_step = event.step.rsplit(":", 1)[0]
             response_data = event.payload.get("response", event.payload)
 
-            # Store task sequence result under the parent step name
-            state.mark_step_completed(parent_step, response_data)
-            logger.info(f"[TASK_SEQ] Stored task sequence result for parent step '{parent_step}'")
+            # Extract ctx variables from task sequence result and merge into execution state
+            # This syncs set_ctx mutations from task policy rules back to the server
+            task_ctx = response_data.get("ctx", {})
+            if task_ctx and isinstance(task_ctx, dict):
+                for key, value in task_ctx.items():
+                    state.variables[key] = value
+                    logger.info(f"[TASK_SEQ] Synced ctx variable '{key}' from task sequence to execution state")
 
-            # Process remaining actions from task sequence result (next, etc.)
-            remaining_actions = response_data.get("remaining_actions", [])
-            if remaining_actions:
-                logger.info(f"[TASK_SEQ] Processing remaining actions: {remaining_actions}")
-                seq_commands = await self._process_then_actions(
-                    remaining_actions, state, event
-                )
-                commands.extend(seq_commands)
-                logger.info(f"[TASK_SEQ] Generated {len(seq_commands)} commands from remaining actions")
+            # Get parent step definition for loop handling
+            parent_step_def = state.get_step(parent_step)
+
+            # Process step-level set_ctx for task sequence steps
+            # This must happen BEFORE next transitions are evaluated so updated variables are available
+            if parent_step_def and parent_step_def.set_ctx:
+                # Get render context with the task sequence result available
+                context = state.get_render_context(event)
+                logger.info(f"[SET_CTX] Processing step-level set_ctx for task sequence {parent_step}: {list(parent_step_def.set_ctx.keys())}")
+                for key, value_template in parent_step_def.set_ctx.items():
+                    try:
+                        if isinstance(value_template, str) and "{{" in value_template:
+                            rendered_value = self._render_template(value_template, context)
+                        else:
+                            rendered_value = value_template
+                        state.variables[key] = rendered_value
+                        logger.info(f"[SET_CTX] Set {key} = {rendered_value}")
+                    except Exception as e:
+                        logger.error(f"[SET_CTX] Failed to render {key}: {e}")
+
+            # Handle loop iteration tracking for task sequence steps
+            if parent_step_def and parent_step_def.loop and parent_step in state.loop_state:
+                loop_state = state.loop_state[parent_step]
+                if not loop_state.get("aggregation_finalized", False):
+                    # Add iteration result to loop aggregation
+                    failed = response_data.get("status", "").upper() == "FAILED"
+                    iteration_result = response_data.get("results", response_data)
+                    state.add_loop_result(parent_step, iteration_result, failed=failed)
+                    logger.info(f"[TASK_SEQ] Added iteration result to loop aggregation for {parent_step}")
+
+                    # Sync completed count to NATS K/V
+                    try:
+                        nats_cache = await get_nats_cache()
+                        loop_event_id = loop_state.get("event_id")
+                        new_count = await nats_cache.increment_loop_completed(
+                            str(state.execution_id),
+                            parent_step,
+                            event_id=str(loop_event_id) if loop_event_id else None
+                        )
+                        if new_count >= 0:
+                            logger.info(f"[TASK_SEQ-LOOP] Incremented loop count in NATS K/V for {parent_step}: {new_count}")
+
+                        # Check if loop is done
+                        collection = loop_state.get("collection", [])
+                        if new_count >= len(collection):
+                            # Loop done - mark completed and create loop.done event
+                            loop_state["completed"] = True
+                            loop_state["aggregation_finalized"] = True
+                            logger.info(f"[TASK_SEQ-LOOP] Loop completed for {parent_step}: {new_count}/{len(collection)}")
+
+                            # Get aggregated result
+                            loop_aggregation = state.get_loop_aggregation(parent_step)
+                            state.mark_step_completed(parent_step, loop_aggregation)
+
+                            # Evaluate next transitions with loop.done event
+                            loop_done_event = Event(
+                                execution_id=event.execution_id,
+                                step=parent_step,
+                                name="loop.done",
+                                payload={
+                                    "status": "completed",
+                                    "iterations": new_count,
+                                    "result": loop_aggregation
+                                }
+                            )
+                            loop_done_commands = await self._evaluate_next_transitions(state, parent_step_def, loop_done_event)
+                            commands.extend(loop_done_commands)
+                            logger.info(f"[TASK_SEQ-LOOP] Generated {len(loop_done_commands)} commands from loop.done")
+                        else:
+                            # More iterations - create next command
+                            logger.info(f"[TASK_SEQ-LOOP] Creating next iteration command for {parent_step}: {new_count}/{len(collection)}")
+                            next_cmd = await self._create_command_for_step(state, parent_step_def, {})
+                            if next_cmd:
+                                commands.append(next_cmd)
+
+                    except Exception as e:
+                        logger.error(f"[TASK_SEQ-LOOP] Error handling loop: {e}", exc_info=True)
+            else:
+                # Not in loop - store task sequence result under the parent step name
+                # For single-task sequences (e.g., single tool with policy rules), unwrap the result
+                # to maintain backward compatibility with templates like {{ step.data }}
+                results = response_data.get("results", {})
+                if len(results) == 1:
+                    # Single task - merge its result at top level for backward compatibility
+                    single_task_result = list(results.values())[0]
+                    if isinstance(single_task_result, dict):
+                        # Merge single task result at top level while preserving original structure
+                        unwrapped_data = {**single_task_result, **response_data}
+                        state.mark_step_completed(parent_step, unwrapped_data)
+                        logger.info(f"[TASK_SEQ] Stored unwrapped single-task result for parent step '{parent_step}'")
+                    else:
+                        state.mark_step_completed(parent_step, response_data)
+                        logger.info(f"[TASK_SEQ] Stored task sequence result for parent step '{parent_step}'")
+                else:
+                    state.mark_step_completed(parent_step, response_data)
+                    logger.info(f"[TASK_SEQ] Stored task sequence result for parent step '{parent_step}'")
+
+                # Process remaining actions from task sequence result (next, etc.)
+                remaining_actions = response_data.get("remaining_actions", [])
+                if remaining_actions:
+                    logger.info(f"[TASK_SEQ] Processing remaining actions: {remaining_actions}")
+                    seq_commands = await self._process_then_actions(
+                        remaining_actions, state, event
+                    )
+                    commands.extend(seq_commands)
+                    logger.info(f"[TASK_SEQ] Generated {len(seq_commands)} commands from remaining actions")
+                else:
+                    # No remaining actions - evaluate next transitions for parent step
+                    next_commands = await self._evaluate_next_transitions(state, parent_step_def, event)
+                    commands.extend(next_commands)
+                    logger.info(f"[TASK_SEQ] Generated {len(next_commands)} commands from next transitions")
 
             return commands
 
-        step_def = state.get_step(event.step)
+        # Strip :task_sequence suffix when looking up step definition
+        # Task sequence steps have event.step like "fetch_page:task_sequence" but are defined as "fetch_page"
+        step_name = event.step.replace(":task_sequence", "") if event.step.endswith(":task_sequence") else event.step
+        step_def = state.get_step(step_name)
         if not step_def:
-            logger.error(f"Step not found: {event.step}")
+            logger.error(f"Step not found: {step_name} (original: {event.step})")
             return commands
-        
-        # Update current step
+
+        # Update current step (use original event.step to track task sequence state)
         state.set_current_step(event.step)
         
         # PRE-PROCESSING: Identify if a retry is triggered by worker eval rules
@@ -2104,6 +2235,24 @@ class ControlFlowEngine:
 
         # Get render context AFTER storing call.done response
         context = state.get_render_context(event)
+
+        # Process step-level set_ctx BEFORE evaluating next transitions
+        # This ensures variables set by set_ctx are available in routing conditions
+        if event.name == "call.done" and step_def.set_ctx:
+            logger.info(f"[SET_CTX] Processing step-level set_ctx for {event.step}: {list(step_def.set_ctx.keys())}")
+            for key, value_template in step_def.set_ctx.items():
+                try:
+                    # Render the value template with current context (including step result)
+                    if isinstance(value_template, str) and "{{" in value_template:
+                        rendered_value = self._render_template(value_template, context)
+                    else:
+                        rendered_value = value_template
+                    state.variables[key] = rendered_value
+                    logger.info(f"[SET_CTX] Set {key} = {rendered_value}")
+                except Exception as e:
+                    logger.error(f"[SET_CTX] Failed to render {key}: {e}")
+            # Refresh context after set_ctx to include new variables
+            context = state.get_render_context(event)
 
         # Evaluate next[].when transitions ONCE and store results
         # This allows us to detect retries before deciding whether to aggregate results
