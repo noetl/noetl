@@ -69,6 +69,7 @@ const sidebars: SidebarsConfig = {
           items: [
             'reference/dsl/spec',
             'reference/dsl/playbook_structure',
+            'reference/dsl/mental_model',
             'reference/dsl/execution_model',
             'reference/dsl/formal_specification',
             'reference/dsl/runtime_events',
