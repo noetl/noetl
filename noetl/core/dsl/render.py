@@ -162,8 +162,9 @@ def render_template(env: Environment, template: Any, context: Dict, rules: Dict 
                 custom_context = render_ctx.copy()
 
                 class TaskResultProxy:
-                    def __init__(self, data):
+                    def __init__(self, data, name=""):
                         self._data = data
+                        self._name = name
 
                     def __getattr__(self, name):
                         if name == 'data' and name not in self._data:
@@ -206,7 +207,7 @@ def render_template(env: Environment, template: Any, context: Dict, rules: Dict 
                         continue
                     if isinstance(value, dict):
                         # Always allow '.result' addressing for dict-like step results
-                        custom_context[key] = TaskResultProxy(value)
+                        custom_context[key] = TaskResultProxy(value, name=key)
                     elif isinstance(value, list):
                         # Provide a minimal wrapper so {{ step.result | length }} works for list-like results
                         custom_context[key] = {'result': value}

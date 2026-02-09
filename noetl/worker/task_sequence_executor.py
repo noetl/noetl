@@ -290,7 +290,8 @@ class TaskSequenceExecutor:
                 "iter": merged_iter,  # Merged iteration vars
             }
 
-            # Debug: Log iter keys for troubleshooting
+            # Debug: Log context keys for troubleshooting
+            logger.info(f"[TASK_SEQ] Task '{task_name}': base_context ctx keys={list(base_context.get('ctx', {}).keys())}, task_seq ctx keys={list(task_seq_dict.get('ctx', {}).keys())}, merged_ctx keys={list(merged_ctx.keys())}")
             logger.info(f"[TASK_SEQ] Task '{task_name}': base_context iter keys={list(base_context.get('iter', {}).keys())}, task_seq iter keys={list(task_seq_dict.get('iter', {}).keys())}, merged_iter keys={list(merged_iter.keys())}")
 
             # Execute tool and build outcome
@@ -300,6 +301,9 @@ class TaskSequenceExecutor:
                 config_to_render = {k: v for k, v in tool_config.items() if k not in ("kind", "spec", "output")}
                 rendered_config = self.render_dict(config_to_render, render_ctx)
 
+                # Debug: Log rendered command for postgres tasks
+                if tool_kind == "postgres" and "command" in rendered_config:
+                    logger.info(f"[TASK_SEQ] Task '{task_name}' rendered command: {rendered_config.get('command', '')[:200]}")
                 logger.info(f"[TASK_SEQ] Executing task '{task_name}' (kind={tool_kind}, attempt={ctx._attempt})")
 
                 result = await self.tool_executor(tool_kind, rendered_config, render_ctx)
