@@ -1875,6 +1875,7 @@ class V2Worker:
             def render_template_str(template: str, ctx: dict) -> Any:
                 """Render a single Jinja2 template string, parsing JSON results back to objects."""
                 import json
+                import ast
                 try:
                     rendered = jinja_env.from_string(template).render(**ctx)
                     # If result looks like JSON (dict or list), parse it back to object
@@ -1886,7 +1887,12 @@ class V2Worker:
                             try:
                                 return json.loads(stripped)
                             except json.JSONDecodeError:
-                                pass
+                                # Fallback to ast.literal_eval for Python repr format (single quotes)
+                                # This handles {{ outcome.result }} which renders as "{'key': 'value'}"
+                                try:
+                                    return ast.literal_eval(stripped)
+                                except (ValueError, SyntaxError):
+                                    pass
                     return rendered
                 except Exception as e:
                     logger.warning(f"[TASK_SEQ] Template render error: {e}")

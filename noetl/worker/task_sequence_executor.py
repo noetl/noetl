@@ -290,6 +290,9 @@ class TaskSequenceExecutor:
                 "iter": merged_iter,  # Merged iteration vars
             }
 
+            # Debug: Log iter keys for troubleshooting
+            logger.info(f"[TASK_SEQ] Task '{task_name}': base_context iter keys={list(base_context.get('iter', {}).keys())}, task_seq iter keys={list(task_seq_dict.get('iter', {}).keys())}, merged_iter keys={list(merged_iter.keys())}")
+
             # Execute tool and build outcome
             start_time = time.monotonic()
             try:
@@ -379,13 +382,14 @@ class TaskSequenceExecutor:
                     if isinstance(value, str) and "{{" in value:
                         try:
                             rendered_iter[key] = self.render_template(value, eval_ctx)
+                            logger.info(f"[TASK_SEQ] Rendered set_iter.{key}: {type(rendered_iter[key]).__name__}")
                         except Exception as e:
                             logger.warning(f"[TASK_SEQ] Error rendering set_iter.{key}: {e}")
                             rendered_iter[key] = value
                     else:
                         rendered_iter[key] = value
                 ctx.set_iter_vars(rendered_iter)
-                logger.debug(f"[TASK_SEQ] Set iter vars: {list(rendered_iter.keys())}")
+                logger.info(f"[TASK_SEQ] Applied set_iter: {list(rendered_iter.keys())}, ctx.iter now has: {list(ctx.iter.keys())}")
 
             # Apply control action
             if action.action == "continue":
@@ -573,8 +577,18 @@ class TaskSequenceExecutor:
                 continue
 
             try:
-                rendered = self.render_template(condition, render_ctx)
-                if rendered.lower() in ("true", "1", "yes"):
+                # Handle boolean conditions directly (YAML parses `true` as bool)
+                if isinstance(condition, bool):
+                    matches = condition
+                else:
+                    rendered = self.render_template(condition, render_ctx)
+                    # Handle boolean results from template rendering
+                    if isinstance(rendered, bool):
+                        matches = rendered
+                    else:
+                        matches = str(rendered).lower() in ("true", "1", "yes")
+
+                if matches:
                     if "then" not in rule:
                         raise ValueError(
                             f"Policy rule with 'when' must have 'then' block in v10. "
