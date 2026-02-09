@@ -2167,8 +2167,23 @@ class ControlFlowEngine:
                         logger.error(f"[TASK_SEQ-LOOP] Error handling loop: {e}", exc_info=True)
             else:
                 # Not in loop - store task sequence result under the parent step name
-                state.mark_step_completed(parent_step, response_data)
-                logger.info(f"[TASK_SEQ] Stored task sequence result for parent step '{parent_step}'")
+                # For single-task sequences (e.g., single tool with policy rules), unwrap the result
+                # to maintain backward compatibility with templates like {{ step.data }}
+                results = response_data.get("results", {})
+                if len(results) == 1:
+                    # Single task - merge its result at top level for backward compatibility
+                    single_task_result = list(results.values())[0]
+                    if isinstance(single_task_result, dict):
+                        # Merge single task result at top level while preserving original structure
+                        unwrapped_data = {**single_task_result, **response_data}
+                        state.mark_step_completed(parent_step, unwrapped_data)
+                        logger.info(f"[TASK_SEQ] Stored unwrapped single-task result for parent step '{parent_step}'")
+                    else:
+                        state.mark_step_completed(parent_step, response_data)
+                        logger.info(f"[TASK_SEQ] Stored task sequence result for parent step '{parent_step}'")
+                else:
+                    state.mark_step_completed(parent_step, response_data)
+                    logger.info(f"[TASK_SEQ] Stored task sequence result for parent step '{parent_step}'")
 
                 # Process remaining actions from task sequence result (next, etc.)
                 remaining_actions = response_data.get("remaining_actions", [])
