@@ -1881,8 +1881,12 @@ class ControlFlowEngine:
         if isinstance(step.tool, list):
             # Pipeline: list of labeled tasks
             # Each item is {label: {kind: ..., args: ..., eval: ...}}
-            pipeline = recursive_render(self.jinja_env, step.tool, context)
-            logger.info(f"[PIPELINE] Step '{step.step}' has pipeline with {len(pipeline)} tasks")
+            # IMPORTANT: Do NOT pre-render pipeline templates here!
+            # Task sequences may have templates that depend on variables set by earlier tasks
+            # (e.g., set_ctx from policy rules). The worker's task_sequence_executor
+            # will render templates at execution time with the proper context.
+            pipeline = step.tool  # Pass raw list, worker renders at execution time
+            logger.info(f"[PIPELINE] Step '{step.step}' has pipeline with {len(pipeline)} tasks (deferred rendering)")
 
             # For pipeline steps, use task_sequence as tool kind
             tool_kind = "task_sequence"
