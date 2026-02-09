@@ -741,6 +741,12 @@ class Step(BaseModel):
         description="Next router with spec and arcs"
     )
 
+    # Step-level context mutation (processed after tool completes)
+    set_ctx: Optional[dict[str, Any]] = Field(
+        None,
+        description="Variables to set in execution context after step completes"
+    )
+
     # NOTE: Legacy fields (output, result, vars) removed in v10
     # Use tool.output for output config, ctx/iter via policy for variables
 

@@ -62,6 +62,8 @@ workflow:
         endpoints: "{{ endpoints }}"
         endpoint_index: "{{ ctx.current_endpoint_index }}"
       code: |
+        # Convert to int - may be string from template rendering
+        endpoint_index = int(endpoint_index) if isinstance(endpoint_index, str) else endpoint_index
         if endpoint_index < len(endpoints):
             current = endpoints[endpoint_index]
             result = {
@@ -148,7 +150,7 @@ workflow:
       - check_pagination:
           kind: python
           args:
-            http_response: "{{ fetch_page.fetch }}"
+            http_response: "{{ fetch }}"
           code: |
             paging = http_response.get('data', {}).get('paging', {})
             result = {
@@ -162,9 +164,9 @@ workflow:
         mode: exclusive
       arcs:
         - step: fetch_page
-          when: "{{ fetch_page.has_more == true }}"
+          when: "{{ fetch_page.results.check_pagination.has_more == true }}"
         - step: next_endpoint
-          when: "{{ fetch_page.has_more != true }}"
+          when: "{{ fetch_page.results.check_pagination.has_more != true }}"
 
   - step: next_endpoint
     desc: Move to next endpoint in the loop

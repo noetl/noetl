@@ -65,7 +65,7 @@ workflow:
         result = {"status": "routing_to_parallel"}
     next:
       spec:
-        mode: parallel
+        mode: inclusive
       arcs:
         - step: hot_task_a
         - step: hot_task_b

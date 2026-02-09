@@ -274,10 +274,20 @@ class TaskSequenceExecutor:
 
             # Build context for template rendering
             # Spread task results at top level so {{ task_name }} works (not just {{ results.task_name }})
+            # IMPORTANT: Merge ctx dicts properly instead of overriding
+            # base_context["ctx"] contains execution variables (current_endpoint, etc.)
+            # ctx.ctx contains task sequence mutations (from set_ctx in policy rules)
+            # We need both available for template rendering
+            task_seq_dict = ctx.to_dict()
+            merged_ctx = {**base_context.get("ctx", {}), **task_seq_dict.get("ctx", {})}
+            merged_iter = {**base_context.get("iter", {}), **task_seq_dict.get("iter", {})}
+
             render_ctx = {
                 **base_context,
                 **ctx.results,  # Task results at root level: {{ amadeus_search }}
-                **ctx.to_dict(),  # Also under 'results' for explicit access: {{ results.amadeus_search }}
+                **task_seq_dict,  # Pipeline-local vars: _prev, _task, _attempt, outcome, results
+                "ctx": merged_ctx,  # Merged execution ctx + task sequence ctx
+                "iter": merged_iter,  # Merged iteration vars
             }
 
             # Execute tool and build outcome
@@ -333,7 +343,18 @@ class TaskSequenceExecutor:
                 logger.warning(f"[TASK_SEQ] Task '{task_name}' failed: {error_info.message}")
 
             # Evaluate policy rules (strict v10)
-            eval_ctx = {**render_ctx, **ctx.to_dict()}
+            # Update render_ctx with latest task sequence state (outcome, _prev, etc.)
+            # but preserve the merged ctx/iter from render_ctx
+            latest_task_dict = ctx.to_dict()
+            eval_ctx = {
+                **render_ctx,
+                "_task": latest_task_dict["_task"],
+                "_prev": latest_task_dict["_prev"],
+                "_attempt": latest_task_dict["_attempt"],
+                "outcome": latest_task_dict["outcome"],
+                "results": latest_task_dict["results"],
+                # Keep merged ctx and iter from render_ctx (don't override with empty task seq ctx)
+            }
             action = self._evaluate_policy_rules(policy_rules, eval_ctx, ctx.outcome)
 
             # Apply set_ctx
