@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.8.2](https://github.com/noetl/noetl/compare/v2.8.1...v2.8.2) (2026-02-09)
+
+### Bug Fixes
+
+* enhance task result handling and logging for improved context management ([aaba409](https://github.com/noetl/noetl/commit/aaba40998cd4c3e6728ab5d9419a84b4bdd6f390))
+
 ## [2.8.1](https://github.com/noetl/noetl/compare/v2.8.0...v2.8.1) (2026-02-09)
 
 ### Bug Fixes
