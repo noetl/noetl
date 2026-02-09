@@ -1934,9 +1934,13 @@ class ControlFlowEngine:
         command_spec = CommandSpec(next_mode=next_mode)
         logger.debug(f"[SPEC] Step '{step.step}': next_mode={next_mode} (from next.spec.mode)")
 
+        # For pipeline (task sequence) steps, use :task_sequence suffix in step name
+        # This enables the engine to detect task sequence completion and sync ctx variables
+        command_step = f"{step.step}:task_sequence" if pipeline else step.step
+
         command = Command(
             execution_id=state.execution_id,
-            step=step.step,
+            step=command_step,
             tool=ToolCall(
                 kind=tool_kind,
                 config=tool_config
@@ -1947,7 +1951,11 @@ class ControlFlowEngine:
             next_targets=next_targets,
             spec=command_spec,
             attempt=1,
-            priority=0
+            priority=0,
+            metadata={
+                "task_sequence": True,
+                "parent_step": step.step,
+            } if pipeline else {}
         )
 
         return command
