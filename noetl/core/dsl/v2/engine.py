@@ -1893,10 +1893,24 @@ class ControlFlowEngine:
             tool_config = {k: v for k, v in tool_dict.items() if k != "kind"}
             tool_kind = step.tool.kind
 
-            # NOTE: step.result removed in v10 - output config is now in tool.output or tool.spec.policy
+            # Check if single tool has spec.policy.rules - if so, convert to task sequence
+            # This enables retry/control flow for single-tool steps
+            spec = tool_config.get("spec", {})
+            policy = spec.get("policy", {}) if isinstance(spec, dict) else {}
+            policy_rules = policy.get("rules", []) if isinstance(policy, dict) else []
 
-            # Render Jinja2 templates in tool config
-            tool_config = recursive_render(self.jinja_env, tool_config, context)
+            if policy_rules:
+                # Convert single tool to task sequence format so policy rules work
+                task_label = f"{step.step}_task"
+                pipeline = [{task_label: tool_dict}]
+                tool_kind = "task_sequence"
+                tool_config = {"tasks": pipeline}
+                logger.info(f"[PIPELINE] Converted single tool with policy rules to task sequence for step '{step.step}'")
+            else:
+                # NOTE: step.result removed in v10 - output config is now in tool.output or tool.spec.policy
+
+                # Render Jinja2 templates in tool config
+                tool_config = recursive_render(self.jinja_env, tool_config, context)
 
         # Extract next targets for conditional routing (canonical v10 format)
         next_targets = None
