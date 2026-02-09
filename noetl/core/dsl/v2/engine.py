@@ -2091,6 +2091,23 @@ class ControlFlowEngine:
             # Get parent step definition for loop handling
             parent_step_def = state.get_step(parent_step)
 
+            # Process step-level set_ctx for task sequence steps
+            # This must happen BEFORE next transitions are evaluated so updated variables are available
+            if parent_step_def and parent_step_def.set_ctx:
+                # Get render context with the task sequence result available
+                context = state.get_render_context(event)
+                logger.info(f"[SET_CTX] Processing step-level set_ctx for task sequence {parent_step}: {list(parent_step_def.set_ctx.keys())}")
+                for key, value_template in parent_step_def.set_ctx.items():
+                    try:
+                        if isinstance(value_template, str) and "{{" in value_template:
+                            rendered_value = self._render_template(value_template, context)
+                        else:
+                            rendered_value = value_template
+                        state.variables[key] = rendered_value
+                        logger.info(f"[SET_CTX] Set {key} = {rendered_value}")
+                    except Exception as e:
+                        logger.error(f"[SET_CTX] Failed to render {key}: {e}")
+
             # Handle loop iteration tracking for task sequence steps
             if parent_step_def and parent_step_def.loop and parent_step in state.loop_state:
                 loop_state = state.loop_state[parent_step]
@@ -2170,12 +2187,15 @@ class ControlFlowEngine:
 
             return commands
 
-        step_def = state.get_step(event.step)
+        # Strip :task_sequence suffix when looking up step definition
+        # Task sequence steps have event.step like "fetch_page:task_sequence" but are defined as "fetch_page"
+        step_name = event.step.replace(":task_sequence", "") if event.step.endswith(":task_sequence") else event.step
+        step_def = state.get_step(step_name)
         if not step_def:
-            logger.error(f"Step not found: {event.step}")
+            logger.error(f"Step not found: {step_name} (original: {event.step})")
             return commands
-        
-        # Update current step
+
+        # Update current step (use original event.step to track task sequence state)
         state.set_current_step(event.step)
         
         # PRE-PROCESSING: Identify if a retry is triggered by worker eval rules
