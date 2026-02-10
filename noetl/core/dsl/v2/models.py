@@ -753,7 +753,17 @@ class Step(BaseModel):
     @field_validator("tool", mode="before")
     @classmethod
     def normalize_tool(cls, v):
-        """Normalize tool field - accept both single and list formats."""
+        """
+        Normalize tool field - accept both single and list formats.
+
+        Supported formats:
+        1. Single tool: { kind: "http", ... }
+        2. Canonical pipeline (named): [{ name: "task_name", kind: "http", ... }, ...]
+        3. Unnamed pipeline: [{ kind: "http", ... }, ...] - synthetic names generated
+
+        NOT supported (removed):
+        - Syntactic sugar: { task_label: { kind: ... } }
+        """
         if v is None:
             return None
 
@@ -761,23 +771,30 @@ class Step(BaseModel):
         if isinstance(v, dict) and "kind" in v:
             return v
 
-        # Pipeline format: tool: [- label: {kind: ...}]
+        # Pipeline format
         if isinstance(v, list):
             for i, task in enumerate(v):
                 if not isinstance(task, dict):
                     raise ValueError(f"tool[{i}] must be an object")
-                if len(task) != 1:
-                    raise ValueError(
-                        f"tool[{i}] must have exactly one key (the task label). Got: {list(task.keys())}"
-                    )
-                label, config = next(iter(task.items()))
-                if not isinstance(config, dict):
-                    raise ValueError(f"tool[{i}].{label} must be an object")
-                if "kind" not in config:
-                    raise ValueError(f"tool[{i}].{label} must have 'kind' field")
+
+                # Canonical format: { name: "...", kind: "...", ... }
+                if "name" in task and "kind" in task:
+                    continue  # Valid canonical format
+
+                # Unnamed task format: { kind: "...", ... } (no name field)
+                if "kind" in task and "name" not in task:
+                    continue  # Valid unnamed format
+
+                # Invalid format - syntactic sugar is no longer supported
+                raise ValueError(
+                    f"tool[{i}] must be either:\n"
+                    f"  1. Canonical: {{ name: 'task_name', kind: 'http', ... }}\n"
+                    f"  2. Unnamed: {{ kind: 'http', ... }}\n"
+                    f"Got: {list(task.keys())}"
+                )
             return v
 
-        raise ValueError("tool must be an object with 'kind' or a list of labeled tasks")
+        raise ValueError("tool must be an object with 'kind' or a list of tasks")
 
     @field_validator("next", mode="before")
     @classmethod

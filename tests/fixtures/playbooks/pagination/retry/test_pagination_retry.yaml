@@ -1,136 +1,109 @@
-apiVersion: noetl.io/v10
+apiVersion: noetl.io/v2
 kind: Playbook
 metadata:
   name: test_pagination_retry
   path: tests/pagination/retry/retry
   description: Pagination with retry for failed requests
-
 workload:
-  api_url: "http://paginated-api.test-server.svc.cluster.local:5555"
+  api_url: http://paginated-api.test-server.svc.cluster.local:5555
   current_page: 1
   page_size: 10
   collected_data: []
-
 workflow:
-  - step: start
-    desc: Fetch data with retry on failures
-    tool:
-      kind: python
-      code: |
-        result = {"status": "initialized"}
-    set_ctx:
-      current_page: "{{ workload.current_page }}"
-      page_size: "{{ workload.page_size }}"
-      collected_data: "{{ workload.collected_data }}"
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: fetch_with_retry
+- step: start
+  desc: Fetch data with retry on failures
+  tool:
+    kind: python
+    code: 'result = {"status": "initialized"}
 
-  - step: fetch_with_retry
-    desc: Pagination with automatic retry on page 2
-    tool:
-      - fetch:
-          kind: http
-          url: "{{ api_url }}/api/v1/flaky"
-          method: GET
-          params:
-            page: "{{ ctx.current_page }}"
-            fail_on: "2"
-          spec:
-            policy:
-              rules:
-                - when: "{{ outcome.error.status in [500, 502, 503] }}"
-                  then:
-                    do: retry
-                    attempts: 3
-                    backoff: exponential
-                    delay: 0.5
-                - when: "{{ outcome.error.retryable }}"
-                  then:
-                    do: retry
-                    attempts: 3
-                    backoff: linear
-                    delay: 1.0
-                - when: "{{ outcome.status == 'error' }}"
-                  then:
-                    do: fail
-                - else:
-                    then:
-                      do: continue
+      '
+  set_ctx:
+    current_page: '{{ workload.current_page }}'
+    page_size: '{{ workload.page_size }}'
+    collected_data: '{{ workload.collected_data }}'
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: fetch_with_retry
+- step: fetch_with_retry
+  desc: Pagination with automatic retry on page 2
+  tool:
+  - name: fetch
+    kind: http
+    url: '{{ api_url }}/api/v1/flaky'
+    method: GET
+    params:
+      page: '{{ ctx.current_page }}'
+      fail_on: '2'
+    spec:
+      policy:
+        rules:
+        - when: '{{ outcome.error.status in [500, 502, 503] }}'
+          then:
+            do: retry
+            attempts: 3
+            backoff: exponential
+            delay: 0.5
+        - when: '{{ outcome.error.retryable }}'
+          then:
+            do: retry
+            attempts: 3
+            backoff: linear
+            delay: 1.0
+        - when: '{{ outcome.status == ''error'' }}'
+          then:
+            do: fail
+        - else:
+            then:
+              do: continue
+  - name: collect
+    kind: python
+    args:
+      http_response: '{{ _prev }}'
+      existing_data: '{{ ctx.collected_data }}'
+    code: "response_body = http_response.get('data', {})\nitems = response_body.get('data',\
+      \ [])\npaging = response_body.get('paging', {})\n\n# Append new items to existing\
+      \ collected data\ncollected = existing_data if isinstance(existing_data, list)\
+      \ else []\ncollected.extend(items)\n\nresult = {\n    'collected_data': collected,\n\
+      \    'has_more': paging.get('hasMore', False),\n    'current_page': paging.get('page',\
+      \ 1)\n}\n"
+  set_ctx:
+    collected_data: '{{ fetch_with_retry.collected_data }}'
+    current_page: '{{ (ctx.current_page | int) + 1 }}'
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: fetch_with_retry
+      when: '{{ fetch_with_retry.has_more == true }}'
+    - step: validate_results
+      when: '{{ fetch_with_retry.has_more != true }}'
+- step: validate_results
+  desc: Validate retry succeeded
+  tool:
+    kind: python
+    args:
+      input_data: '{{ ctx.collected_data }}'
+    code: "# Check we got all items despite failures - handle server wrapping\nraw_data\
+      \ = input_data\n\n# Unwrap if server wrapped in {'value': ...}\nif isinstance(raw_data,\
+      \ dict) and 'value' in raw_data:\n    data = raw_data['value']\nelif isinstance(raw_data,\
+      \ dict) and 'data' in raw_data:\n    data = raw_data['data']\nelif isinstance(raw_data,\
+      \ list):\n    data = raw_data\nelse:\n    data = []\n\nprint(f\"Total items\
+      \ fetched (with retry): {len(data)}\")\n\n# Note: This will fail on page 2 unless\
+      \ retry is working\n# With retry, should get all 35 items\nassert len(data)\
+      \ >= 10, f\"Expected at least 10 items, got {len(data)}\"\n\nresult = {\n  \
+      \  'status': 'success',\n    'total_items': len(data),\n    'retry_worked':\
+      \ len(data) == 35\n}\n"
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: end
+- step: end
+  desc: Workflow complete
+  tool:
+    kind: python
+    code: 'result = {"status": "complete"}
 
-      - collect:
-          kind: python
-          args:
-            http_response: "{{ _prev }}"
-            existing_data: "{{ ctx.collected_data }}"
-          code: |
-            response_body = http_response.get('data', {})
-            items = response_body.get('data', [])
-            paging = response_body.get('paging', {})
-
-            # Append new items to existing collected data
-            collected = existing_data if isinstance(existing_data, list) else []
-            collected.extend(items)
-
-            result = {
-                'collected_data': collected,
-                'has_more': paging.get('hasMore', False),
-                'current_page': paging.get('page', 1)
-            }
-    set_ctx:
-      collected_data: "{{ fetch_with_retry.collected_data }}"
-      current_page: "{{ (ctx.current_page | int) + 1 }}"
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: fetch_with_retry
-          when: "{{ fetch_with_retry.has_more == true }}"
-        - step: validate_results
-          when: "{{ fetch_with_retry.has_more != true }}"
-
-  - step: validate_results
-    desc: Validate retry succeeded
-    tool:
-      kind: python
-      args:
-        input_data: "{{ ctx.collected_data }}"
-      code: |
-        # Check we got all items despite failures - handle server wrapping
-        raw_data = input_data
-
-        # Unwrap if server wrapped in {'value': ...}
-        if isinstance(raw_data, dict) and 'value' in raw_data:
-            data = raw_data['value']
-        elif isinstance(raw_data, dict) and 'data' in raw_data:
-            data = raw_data['data']
-        elif isinstance(raw_data, list):
-            data = raw_data
-        else:
-            data = []
-
-        print(f"Total items fetched (with retry): {len(data)}")
-
-        # Note: This will fail on page 2 unless retry is working
-        # With retry, should get all 35 items
-        assert len(data) >= 10, f"Expected at least 10 items, got {len(data)}"
-
-        result = {
-            'status': 'success',
-            'total_items': len(data),
-            'retry_worked': len(data) == 35
-        }
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: end
-
-  - step: end
-    desc: Workflow complete
-    tool:
-      kind: python
-      code: |
-        result = {"status": "complete"}
+      '

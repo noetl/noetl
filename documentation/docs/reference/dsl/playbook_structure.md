@@ -16,6 +16,10 @@ Canonical runtime principles (v10):
 
 > **Non-canonical removals:** There is **no** playbook-root `vars`, **no** `step.when`, **no** tool-level `eval/expr`, and **no** `step.spec.next_mode`. Use `spec.policy` and `next.spec` instead.
 
+> **Task format:** Tasks use the canonical format with explicit `name:` field (e.g., `{ name: "task_name", kind: "http", ... }`).
+> Tasks without names get synthetic labels (`task_0`, `task_1`, ...).
+> See [Step Specification](./step_spec.md#7-tasks-and-tool-list-shapes-must) for details.
+
 ---
 
 ## 1) Overview
@@ -75,43 +79,43 @@ workflow:
   - step: fetch_transform_store
     desc: Fetch → transform → store
     tool:
-      - fetch_page:
-          kind: http
-          method: GET
-          url: "{{ workload.api_url }}/data"
-          params:
-            page: 1
-            pageSize: "{{ workload.page_size }}"
-          spec:
-            timeout: { connect: 5, read: 15 }
-            policy:
-              rules:
-                - when: "{{ outcome.status == 'error' and outcome.http.status in [429,500,502,503,504] }}"
-                  then: { do: retry, attempts: 5, backoff: exponential, delay: 2 }
-                - when: "{{ outcome.status == 'error' }}"
-                  then: { do: fail }
-                - else:
-                    then: { do: continue }
+      - name: fetch_page
+        kind: http
+        method: GET
+        url: "{{ workload.api_url }}/data"
+        params:
+          page: 1
+          pageSize: "{{ workload.page_size }}"
+        spec:
+          timeout: { connect: 5, read: 15 }
+          policy:
+            rules:
+              - when: "{{ outcome.status == 'error' and outcome.http.status in [429,500,502,503,504] }}"
+                then: { do: retry, attempts: 5, backoff: exponential, delay: 2 }
+              - when: "{{ outcome.status == 'error' }}"
+                then: { do: fail }
+              - else:
+                  then: { do: continue }
 
-      - transform:
-          kind: python
-          args: { data: "{{ _prev }}" }
-          code: |
-            result = {"items": data}
+      - name: transform
+        kind: python
+        args: { data: "{{ _prev }}" }
+        code: |
+          result = {"items": data}
 
-      - store:
-          kind: postgres
-          auth: pg_k8s
-          command: "INSERT INTO ..."
-          spec:
-            policy:
-              rules:
-                - when: "{{ outcome.status == 'error' and outcome.pg.code in ['40001','40P01'] }}"
-                  then: { do: retry, attempts: 5, backoff: exponential, delay: 2 }
-                - when: "{{ outcome.status == 'error' }}"
-                  then: { do: fail }
-                - else:
-                    then: { do: continue }
+      - name: store
+        kind: postgres
+        auth: pg_k8s
+        command: "INSERT INTO ..."
+        spec:
+          policy:
+            rules:
+              - when: "{{ outcome.status == 'error' and outcome.pg.code in ['40001','40P01'] }}"
+                then: { do: retry, attempts: 5, backoff: exponential, delay: 2 }
+              - when: "{{ outcome.status == 'error' }}"
+                then: { do: fail }
+              - else:
+                  then: { do: continue }
 
     next:
       spec: { mode: exclusive }
@@ -122,8 +126,8 @@ workflow:
   - step: end
     desc: Terminal transition
     tool:
-      - done:
-          kind: noop
+      - name: done
+        kind: noop
 ```
 
 ---
@@ -255,9 +259,9 @@ A step may define `loop` to repeat its pipeline over a collection.
     in: "{{ workload.endpoints }}"
     iterator: endpoint
   tool:
-    - fetch:
-        kind: http
-        url: "{{ workload.api_url }}{{ iter.endpoint.path }}"
+    - name: fetch
+      kind: http
+      url: "{{ workload.api_url }}{{ iter.endpoint.path }}"
 ```
 
 In `parallel` loop mode:
@@ -305,35 +309,35 @@ workbook:
 
 ### 9.1 Retry (task policy)
 ```yaml
-- fetch:
-    kind: http
-    url: "{{ workload.api_url }}/data"
-    spec:
-      policy:
-        rules:
-          - when: "{{ outcome.status == 'error' and outcome.http.status in [429,500,502,503,504] }}"
-            then: { do: retry, attempts: 10, backoff: exponential, delay: 2 }
-          - when: "{{ outcome.status == 'error' }}"
-            then: { do: fail }
-          - else:
-              then: { do: continue }
+- name: fetch
+  kind: http
+  url: "{{ workload.api_url }}/data"
+  spec:
+    policy:
+      rules:
+        - when: "{{ outcome.status == 'error' and outcome.http.status in [429,500,502,503,504] }}"
+          then: { do: retry, attempts: 10, backoff: exponential, delay: 2 }
+        - when: "{{ outcome.status == 'error' }}"
+          then: { do: fail }
+        - else:
+            then: { do: continue }
 ```
 
 ### 9.2 Pagination (jump + iter state)
 ```yaml
-- paginate:
-    kind: noop
-    spec:
-      policy:
-        rules:
-          - when: "{{ iter.has_more == true }}"
-            then:
-              do: jump
-              to: fetch_page
-              set_iter:
-                page: "{{ (iter.page | int) + 1 }}"
-          - else:
-              then: { do: break }
+- name: paginate
+  kind: noop
+  spec:
+    policy:
+      rules:
+        - when: "{{ iter.has_more == true }}"
+          then:
+            do: jump
+            to: fetch_page
+            set_iter:
+              page: "{{ (iter.page | int) + 1 }}"
+        - else:
+            then: { do: break }
 ```
 
 ### 9.3 “Sink” (pattern, not a tool kind)

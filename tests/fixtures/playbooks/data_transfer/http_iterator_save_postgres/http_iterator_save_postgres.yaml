@@ -1,205 +1,153 @@
-apiVersion: noetl.io/v10
+apiVersion: noetl.io/v2
 kind: Playbook
 metadata:
   name: http_iterator_save_postgres
   path: tests/fixtures/playbooks/data_transfer/http_iterator_save_postgres
-  description: "Test HTTP calls in iterator with save to Postgres - validates loop execution with storage"
-
+  description: Test HTTP calls in iterator with save to Postgres - validates loop
+    execution with storage
 workload:
   pg_auth: pg_k8s
   test_cities:
-    - name: "London"
-      lat: 51.5074
-      lon: -0.1278
-    - name: "Paris"
-      lat: 48.8566
-      lon: 2.3522
-    - name: "Berlin"
-      lat: 52.5200
-      lon: 13.4050
-
+  - name: London
+    lat: 51.5074
+    lon: -0.1278
+  - name: Paris
+    lat: 48.8566
+    lon: 2.3522
+  - name: Berlin
+    lat: 52.52
+    lon: 13.405
 workflow:
-  - step: start
-    desc: Start HTTP iterator save test
-    tool:
-      kind: python
-      args: {}
-      code: |
-        result = {"status": "initialized"}
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: create_table
+- step: start
+  desc: Start HTTP iterator save test
+  tool:
+    kind: python
+    args: {}
+    code: 'result = {"status": "initialized"}
 
-  - step: create_table
-    desc: Create table for HTTP iterator results
-    tool:
-      kind: postgres
-      auth: "{{ pg_auth }}"
-      command: |
-        CREATE TABLE IF NOT EXISTS public.http_iterator_save_test (
-          id TEXT PRIMARY KEY,
-          execution_id TEXT NOT NULL,
-          city_name TEXT NOT NULL,
-          temperature NUMERIC,
-          latitude NUMERIC,
-          longitude NUMERIC,
-          http_status INTEGER,
-          created_at TIMESTAMPTZ DEFAULT NOW()
-        );
+      '
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: create_table
+- step: create_table
+  desc: Create table for HTTP iterator results
+  tool:
+    kind: postgres
+    auth: '{{ pg_auth }}'
+    command: "CREATE TABLE IF NOT EXISTS public.http_iterator_save_test (\n  id TEXT\
+      \ PRIMARY KEY,\n  execution_id TEXT NOT NULL,\n  city_name TEXT NOT NULL,\n\
+      \  temperature NUMERIC,\n  latitude NUMERIC,\n  longitude NUMERIC,\n  http_status\
+      \ INTEGER,\n  created_at TIMESTAMPTZ DEFAULT NOW()\n);\n\n-- Clean up any previous\
+      \ test data for this execution\nDELETE FROM public.http_iterator_save_test\n\
+      WHERE execution_id = '{{ execution_id }}';\n"
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: fetch_weather_data
+- step: fetch_weather_data
+  desc: Fetch weather data for multiple cities using iterator with HTTP and save
+  tool:
+  - name: fetch_weather
+    kind: http
+    method: GET
+    url: https://api.open-meteo.com/v1/forecast
+    headers:
+      Accept: application/json
+    params:
+      latitude: '{{ city.lat }}'
+      longitude: '{{ city.lon }}'
+      current: temperature_2m
+  - name: save_weather
+    kind: postgres
+    auth: '{{ pg_auth }}'
+    command: "INSERT INTO public.http_iterator_save_test (id, execution_id, city_name,\
+      \ temperature, latitude, longitude, http_status)\nVALUES (\n  '{{ execution_id\
+      \ }}:{{ city.name }}',\n  '{{ execution_id }}',\n  '{{ city.name }}',\n  {{\
+      \ fetch_weather.data.current.temperature_2m | default(0) }},\n  {{ city.lat\
+      \ }},\n  {{ city.lon }},\n  {{ fetch_weather.status_code | default(0) }}\n)\n\
+      ON CONFLICT (id) DO UPDATE SET\n  temperature = EXCLUDED.temperature,\n  http_status\
+      \ = EXCLUDED.http_status,\n  created_at = NOW();\n"
+    spec:
+      policy:
+        rules:
+        - when: '{{ outcome.status == ''error'' }}'
+          then:
+            do: continue
+        - else:
+            then:
+              do: continue
+  loop:
+    in: '{{ test_cities }}'
+    iterator: city
+    spec:
+      mode: sequential
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: verify_results
+- step: verify_results
+  desc: Verify all records were saved
+  tool:
+    kind: postgres
+    auth: '{{ pg_auth }}'
+    command: "SELECT\n  COUNT(*) as total_records,\n  COUNT(DISTINCT city_name) as\
+      \ unique_cities,\n  AVG(temperature) as avg_temperature,\n  MIN(created_at)\
+      \ as first_insert,\n  MAX(created_at) as last_insert\nFROM public.http_iterator_save_test\n\
+      WHERE execution_id = '{{ execution_id }}';\n"
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: show_details
+- step: show_details
+  desc: Show detailed results
+  tool:
+    kind: postgres
+    auth: '{{ pg_auth }}'
+    command: "SELECT\n  city_name,\n  temperature,\n  latitude,\n  longitude,\n  http_status,\n\
+      \  created_at\nFROM public.http_iterator_save_test\nWHERE execution_id = '{{\
+      \ execution_id }}'\nORDER BY city_name;\n"
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: validate_data
+- step: validate_data
+  desc: Validate that all cities have data
+  tool:
+    kind: python
+    args:
+      verify_results: '{{ verify_results }}'
+    code: "\"\"\"Validate that all expected cities have data saved.\"\"\"\n# Get verification\
+      \ results - verify_results is already the dict with command_0\nverify_result\
+      \ = verify_results.get('command_0', {}).get('rows', [{}])[0]\ntotal_records\
+      \ = verify_result.get('total_records', 0)\nunique_cities = verify_result.get('unique_cities',\
+      \ 0)\n\n# Expected counts\nexpected_cities = 3\n\n# Validation checks\nchecks\
+      \ = {\n    'total_records_match': total_records == expected_cities,\n    'unique_cities_match':\
+      \ unique_cities == expected_cities,\n    'all_cities_saved': total_records >=\
+      \ expected_cities\n}\n\nall_valid = all(checks.values())\n\nresult = {\n   \
+      \ 'status': 'success' if all_valid else 'failed',\n    'validation': checks,\n\
+      \    'counts': {\n        'expected': expected_cities,\n        'actual_total':\
+      \ total_records,\n        'actual_unique': unique_cities\n    },\n    'message':\
+      \ f'Validation {\"passed\" if all_valid else \"FAILED\"}: {total_records} records\
+      \ saved for {unique_cities} cities'\n}\n\n# Raise exception on validation failure\
+      \ so execution reports FAILED\nif not all_valid:\n    raise ValueError(f\"Validation\
+      \ FAILED: {total_records} records saved for {unique_cities} cities (expected\
+      \ {expected_cities})\")\n"
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: end
+- step: end
+  desc: Test completed
+  tool:
+    kind: python
+    args: {}
+    code: 'result = {"status": "completed"}
 
-        -- Clean up any previous test data for this execution
-        DELETE FROM public.http_iterator_save_test
-        WHERE execution_id = '{{ execution_id }}';
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: fetch_weather_data
-
-  - step: fetch_weather_data
-    desc: Fetch weather data for multiple cities using iterator with HTTP and save
-    tool:
-      - fetch_weather:
-          kind: http
-          method: GET
-          url: "https://api.open-meteo.com/v1/forecast"
-          headers:
-            Accept: application/json
-          params:
-            latitude: "{{ city.lat }}"
-            longitude: "{{ city.lon }}"
-            current: temperature_2m
-      - save_weather:
-          kind: postgres
-          auth: "{{ pg_auth }}"
-          command: |
-            INSERT INTO public.http_iterator_save_test (id, execution_id, city_name, temperature, latitude, longitude, http_status)
-            VALUES (
-              '{{ execution_id }}:{{ city.name }}',
-              '{{ execution_id }}',
-              '{{ city.name }}',
-              {{ fetch_weather.data.current.temperature_2m | default(0) }},
-              {{ city.lat }},
-              {{ city.lon }},
-              {{ fetch_weather.status_code | default(0) }}
-            )
-            ON CONFLICT (id) DO UPDATE SET
-              temperature = EXCLUDED.temperature,
-              http_status = EXCLUDED.http_status,
-              created_at = NOW();
-          spec:
-            policy:
-              rules:
-                - when: "{{ outcome.status == 'error' }}"
-                  then:
-                    do: continue
-                - else:
-                    then:
-                      do: continue
-    loop:
-      in: "{{ test_cities }}"
-      iterator: city
-      spec:
-        mode: sequential
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: verify_results
-
-  - step: verify_results
-    desc: Verify all records were saved
-    tool:
-      kind: postgres
-      auth: "{{ pg_auth }}"
-      command: |
-        SELECT
-          COUNT(*) as total_records,
-          COUNT(DISTINCT city_name) as unique_cities,
-          AVG(temperature) as avg_temperature,
-          MIN(created_at) as first_insert,
-          MAX(created_at) as last_insert
-        FROM public.http_iterator_save_test
-        WHERE execution_id = '{{ execution_id }}';
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: show_details
-
-  - step: show_details
-    desc: Show detailed results
-    tool:
-      kind: postgres
-      auth: "{{ pg_auth }}"
-      command: |
-        SELECT
-          city_name,
-          temperature,
-          latitude,
-          longitude,
-          http_status,
-          created_at
-        FROM public.http_iterator_save_test
-        WHERE execution_id = '{{ execution_id }}'
-        ORDER BY city_name;
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: validate_data
-
-  - step: validate_data
-    desc: Validate that all cities have data
-    tool:
-      kind: python
-      args:
-        verify_results: "{{ verify_results }}"
-      code: |
-        """Validate that all expected cities have data saved."""
-        # Get verification results - verify_results is already the dict with command_0
-        verify_result = verify_results.get('command_0', {}).get('rows', [{}])[0]
-        total_records = verify_result.get('total_records', 0)
-        unique_cities = verify_result.get('unique_cities', 0)
-
-        # Expected counts
-        expected_cities = 3
-
-        # Validation checks
-        checks = {
-            'total_records_match': total_records == expected_cities,
-            'unique_cities_match': unique_cities == expected_cities,
-            'all_cities_saved': total_records >= expected_cities
-        }
-
-        all_valid = all(checks.values())
-
-        result = {
-            'status': 'success' if all_valid else 'failed',
-            'validation': checks,
-            'counts': {
-                'expected': expected_cities,
-                'actual_total': total_records,
-                'actual_unique': unique_cities
-            },
-            'message': f'Validation {"passed" if all_valid else "FAILED"}: {total_records} records saved for {unique_cities} cities'
-        }
-
-        # Raise exception on validation failure so execution reports FAILED
-        if not all_valid:
-            raise ValueError(f"Validation FAILED: {total_records} records saved for {unique_cities} cities (expected {expected_cities})")
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: end
-
-  - step: end
-    desc: Test completed
-    tool:
-      kind: python
-      args: {}
-      code: |
-        result = {"status": "completed"}
+      '

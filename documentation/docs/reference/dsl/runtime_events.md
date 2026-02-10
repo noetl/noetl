@@ -1,7 +1,7 @@
 ---
 sidebar_position: 3
 title: Runtime Event Model (Canonical v10)
-description: Canonical event taxonomy and event envelope specification for NoETL execution (aligned with noetl_step_spec)
+description: Canonical event taxonomy and event envelope specification for NoETL execution (aligned with step_spec)
 ---
 
 # NoETL Runtime Event Model — Canonical v10
@@ -15,7 +15,7 @@ It is aligned to **NoETL Canonical Step Spec (v10)**:
 - **Tools are executed as pipeline `tasks`** (task labels), each producing a single final `outcome`
 - Routing is server-side via **Petri-net arcs**: `step.next.spec` + `step.next.arcs[]`
 
-> Related docs: [NoETL Canonical Step Spec (v10)](./noetl_step_spec), [DSL Specification (Canonical)](./spec), [Result Storage (Canonical v10)](../result_storage_canonical_v10).
+> Related docs: [NoETL Canonical Step Spec (v10)](./step_spec), [DSL Specification (Canonical)](./spec), [Result Storage (Canonical v10)](../result_storage_canonical_v10).
 
 ---
 

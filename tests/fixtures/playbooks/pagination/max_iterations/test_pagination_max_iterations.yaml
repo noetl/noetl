@@ -1,134 +1,109 @@
-apiVersion: noetl.io/v10
+apiVersion: noetl.io/v2
 kind: Playbook
 metadata:
   name: test_pagination_max_iterations
   path: tests/pagination/max_iterations/max_iterations
   description: Test max_iterations safety limit
-
 workload:
-  api_url: "http://paginated-api.test-server.svc.cluster.local:5555"
+  api_url: http://paginated-api.test-server.svc.cluster.local:5555
   current_page: 1
   page_size: 10
   max_iterations: 2
   iteration_count: 0
   collected_data: []
-
 workflow:
-  - step: start
-    desc: Test max_iterations limit
-    tool:
-      kind: python
-      code: |
-        result = {"status": "initialized"}
-    set_ctx:
-      current_page: "{{ workload.current_page }}"
-      page_size: "{{ workload.page_size }}"
-      max_iterations: "{{ workload.max_iterations }}"
-      iteration_count: "{{ workload.iteration_count }}"
-      collected_data: "{{ workload.collected_data }}"
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: fetch_with_limit
+- step: start
+  desc: Test max_iterations limit
+  tool:
+    kind: python
+    code: 'result = {"status": "initialized"}
 
-  - step: fetch_with_limit
-    desc: Pagination stops at max_iterations
-    tool:
-      - fetch:
-          kind: http
-          url: "{{ api_url }}/api/v1/assessments"
-          method: GET
-          params:
-            page: "{{ ctx.current_page }}"
-            pageSize: "{{ ctx.page_size }}"
-          spec:
-            policy:
-              rules:
-                - when: "{{ outcome.error.retryable }}"
-                  then:
-                    do: retry
-                    attempts: 3
-                    backoff: linear
-                    delay: 1.0
-                - when: "{{ outcome.status == 'error' }}"
-                  then:
-                    do: fail
-                - else:
-                    then:
-                      do: continue
+      '
+  set_ctx:
+    current_page: '{{ workload.current_page }}'
+    page_size: '{{ workload.page_size }}'
+    max_iterations: '{{ workload.max_iterations }}'
+    iteration_count: '{{ workload.iteration_count }}'
+    collected_data: '{{ workload.collected_data }}'
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: fetch_with_limit
+- step: fetch_with_limit
+  desc: Pagination stops at max_iterations
+  tool:
+  - name: fetch
+    kind: http
+    url: '{{ api_url }}/api/v1/assessments'
+    method: GET
+    params:
+      page: '{{ ctx.current_page }}'
+      pageSize: '{{ ctx.page_size }}'
+    spec:
+      policy:
+        rules:
+        - when: '{{ outcome.error.retryable }}'
+          then:
+            do: retry
+            attempts: 3
+            backoff: linear
+            delay: 1.0
+        - when: '{{ outcome.status == ''error'' }}'
+          then:
+            do: fail
+        - else:
+            then:
+              do: continue
+  - name: collect
+    kind: python
+    args:
+      http_response: '{{ _prev }}'
+      existing_data: '{{ ctx.collected_data }}'
+    code: "response_body = http_response.get('data', {})\nitems = response_body.get('data',\
+      \ [])\npaging = response_body.get('paging', {})\n\n# Append new items to existing\
+      \ collected data\ncollected = existing_data if isinstance(existing_data, list)\
+      \ else []\ncollected.extend(items)\n\nresult = {\n    'collected_data': collected,\n\
+      \    'has_more': paging.get('hasMore', False),\n    'current_page': paging.get('page',\
+      \ 1)\n}\n"
+  set_ctx:
+    collected_data: '{{ fetch_with_limit.collected_data }}'
+    current_page: '{{ (ctx.current_page | int) + 1 }}'
+    iteration_count: '{{ (ctx.iteration_count | int) + 1 }}'
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: fetch_with_limit
+      when: '{{ fetch_with_limit.has_more == true and (ctx.iteration_count | int)
+        < (ctx.max_iterations | int) }}'
+    - step: validate_results
+      when: '{{ fetch_with_limit.has_more != true or (ctx.iteration_count | int) >=
+        (ctx.max_iterations | int) }}'
+- step: validate_results
+  desc: Validate limited results
+  tool:
+    kind: python
+    args:
+      input_data: '{{ ctx.collected_data }}'
+    code: "# Should only get 2 pages = 20 items (not all 35) - handle server wrapping\n\
+      raw_data = input_data\n\n# Unwrap if server wrapped in {'value': ...}\nif isinstance(raw_data,\
+      \ dict) and 'value' in raw_data:\n    data = raw_data['value']\nelif isinstance(raw_data,\
+      \ dict) and 'data' in raw_data:\n    data = raw_data['data']\nelif isinstance(raw_data,\
+      \ list):\n    data = raw_data\nelse:\n    data = []\n\nprint(f\"Total items\
+      \ fetched (limited): {len(data)}\")\n\n# Validate max_iterations worked\nassert\
+      \ len(data) == 20, f\"Expected 20 items (2 pages), got {len(data)}\"\n\nresult\
+      \ = {\n    'status': 'success',\n    'total_items': len(data),\n    'max_iterations_worked':\
+      \ True\n}\n"
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: end
+- step: end
+  desc: Workflow complete
+  tool:
+    kind: python
+    code: 'result = {"status": "complete"}
 
-      - collect:
-          kind: python
-          args:
-            http_response: "{{ _prev }}"
-            existing_data: "{{ ctx.collected_data }}"
-          code: |
-            response_body = http_response.get('data', {})
-            items = response_body.get('data', [])
-            paging = response_body.get('paging', {})
-
-            # Append new items to existing collected data
-            collected = existing_data if isinstance(existing_data, list) else []
-            collected.extend(items)
-
-            result = {
-                'collected_data': collected,
-                'has_more': paging.get('hasMore', False),
-                'current_page': paging.get('page', 1)
-            }
-    set_ctx:
-      collected_data: "{{ fetch_with_limit.collected_data }}"
-      current_page: "{{ (ctx.current_page | int) + 1 }}"
-      iteration_count: "{{ (ctx.iteration_count | int) + 1 }}"
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: fetch_with_limit
-          when: "{{ fetch_with_limit.has_more == true and (ctx.iteration_count | int) < (ctx.max_iterations | int) }}"
-        - step: validate_results
-          when: "{{ fetch_with_limit.has_more != true or (ctx.iteration_count | int) >= (ctx.max_iterations | int) }}"
-
-  - step: validate_results
-    desc: Validate limited results
-    tool:
-      kind: python
-      args:
-        input_data: "{{ ctx.collected_data }}"
-      code: |
-        # Should only get 2 pages = 20 items (not all 35) - handle server wrapping
-        raw_data = input_data
-
-        # Unwrap if server wrapped in {'value': ...}
-        if isinstance(raw_data, dict) and 'value' in raw_data:
-            data = raw_data['value']
-        elif isinstance(raw_data, dict) and 'data' in raw_data:
-            data = raw_data['data']
-        elif isinstance(raw_data, list):
-            data = raw_data
-        else:
-            data = []
-
-        print(f"Total items fetched (limited): {len(data)}")
-
-        # Validate max_iterations worked
-        assert len(data) == 20, f"Expected 20 items (2 pages), got {len(data)}"
-
-        result = {
-            'status': 'success',
-            'total_items': len(data),
-            'max_iterations_worked': True
-        }
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: end
-
-  - step: end
-    desc: Workflow complete
-    tool:
-      kind: python
-      code: |
-        result = {"status": "complete"}
+      '

@@ -3,128 +3,86 @@ kind: Playbook
 metadata:
   name: v2_duckdb_test
   path: test/v2/duckdb
-
 workload:
-  test_message: "Testing V2 DuckDB tool"
-
+  test_message: Testing V2 DuckDB tool
 workflow:
-  - step: start
-    desc: Create table, insert data, and query in one step
-    tool:
-      - run_query:
-          kind: duckdb
-          database: ":memory:"
-          query: |
-            CREATE TABLE users (id INTEGER, name VARCHAR, age INTEGER);
-            INSERT INTO users VALUES (1, 'Alice', 30), (2, 'Bob', 25), (3, 'Charlie', 35);
-            SELECT name, age FROM users WHERE age >= 30 ORDER BY age;
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: process
+- step: start
+  desc: Create table, insert data, and query in one step
+  tool:
+  - name: run_query
+    kind: duckdb
+    database: ':memory:'
+    query: 'CREATE TABLE users (id INTEGER, name VARCHAR, age INTEGER);
 
-  - step: process
-    desc: Process query results
-    tool:
-      - process_results:
-          kind: python
-          args:
-            query_results: "{{ start }}"
-          code: |
-            print(f"[PROCESS] Processing DuckDB query results")
-            print(f"[PROCESS] Input data type: {type(input_data).__name__}")
+      INSERT INTO users VALUES (1, ''Alice'', 30), (2, ''Bob'', 25), (3, ''Charlie'',
+      35);
 
-            # Extract query results from args
-            query_results = input_data.get('query_results', []) if isinstance(input_data, dict) else input_data
+      SELECT name, age FROM users WHERE age >= 30 ORDER BY age;
 
-            if isinstance(query_results, list):
-                print(f"[PROCESS] Found {len(query_results)} users")
-
-                total_age = sum(row.get('age', 0) for row in query_results)
-                avg_age = total_age / len(query_results) if query_results else 0
-
-                for row in query_results:
-                    name = row.get('name', 'unknown')
-                    age = row.get('age', 0)
-                    print(f"[PROCESS]   {name}: {age} years old")
-
-                return {
-                    "status": "success",
-                    "total_users": len(query_results),
-                    "average_age": avg_age,
-                    "users": query_results
-                }
-
-            return {"status": "error", "message": "Invalid query result format"}
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: verify
-
-  - step: verify
-    desc: Verify results
-    tool:
-      - verify_results:
-          kind: python
-          args:
-            process_result: "{{ process }}"
-          code: |
-            print(f"[VERIFY] Verifying DuckDB test results")
-
-            process_result = input_data.get('process_result', {})
-
-            if isinstance(process_result, str):
-                import json, ast
-                try:
-                    process_result = json.loads(process_result)
-                except:
-                    process_result = ast.literal_eval(process_result)
-
-            total_users = process_result.get('total_users', 0)
-            avg_age = process_result.get('average_age', 0)
-
-            print(f"[VERIFY] Total users: {total_users}")
-            print(f"[VERIFY] Average age: {avg_age}")
-
-            verification = {
-                "verified": total_users == 2,
-                "avg_age": avg_age,
-                "status": "passed" if total_users == 2 else "failed"
-            }
-
-            print(f"[VERIFY] Verification: {verification['status']}")
-            return verification
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: end
-
-  - step: end
-    desc: Complete the test
-    tool:
-      - complete:
-          kind: python
-          args:
-            verify_result: "{{ verify }}"
-          code: |
-            print(f"[END] DuckDB test completed successfully!")
-
-            verify_result = input_data.get('verify_result', {})
-
-            if isinstance(verify_result, str):
-                import json, ast
-                try:
-                    verify_result = json.loads(verify_result)
-                except:
-                    verify_result = ast.literal_eval(verify_result)
-
-            status = verify_result.get('status', 'unknown')
-            avg_age = verify_result.get('avg_age', 0)
-
-            print(f"[END] Verification status: {status}")
-            print(f"[END] Average age: {avg_age}")
-
-            return {"status": "completed", "test_passed": status == "passed"}
+      '
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: process
+- step: process
+  desc: Process query results
+  tool:
+  - name: process_results
+    kind: python
+    args:
+      query_results: '{{ start }}'
+    code: "print(f\"[PROCESS] Processing DuckDB query results\")\nprint(f\"[PROCESS]\
+      \ Input data type: {type(input_data).__name__}\")\n\n# Extract query results\
+      \ from args\nquery_results = input_data.get('query_results', []) if isinstance(input_data,\
+      \ dict) else input_data\n\nif isinstance(query_results, list):\n    print(f\"\
+      [PROCESS] Found {len(query_results)} users\")\n\n    total_age = sum(row.get('age',\
+      \ 0) for row in query_results)\n    avg_age = total_age / len(query_results)\
+      \ if query_results else 0\n\n    for row in query_results:\n        name = row.get('name',\
+      \ 'unknown')\n        age = row.get('age', 0)\n        print(f\"[PROCESS]  \
+      \ {name}: {age} years old\")\n\n    return {\n        \"status\": \"success\"\
+      ,\n        \"total_users\": len(query_results),\n        \"average_age\": avg_age,\n\
+      \        \"users\": query_results\n    }\n\nreturn {\"status\": \"error\", \"\
+      message\": \"Invalid query result format\"}\n"
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: verify
+- step: verify
+  desc: Verify results
+  tool:
+  - name: verify_results
+    kind: python
+    args:
+      process_result: '{{ process }}'
+    code: "print(f\"[VERIFY] Verifying DuckDB test results\")\n\nprocess_result =\
+      \ input_data.get('process_result', {})\n\nif isinstance(process_result, str):\n\
+      \    import json, ast\n    try:\n        process_result = json.loads(process_result)\n\
+      \    except:\n        process_result = ast.literal_eval(process_result)\n\n\
+      total_users = process_result.get('total_users', 0)\navg_age = process_result.get('average_age',\
+      \ 0)\n\nprint(f\"[VERIFY] Total users: {total_users}\")\nprint(f\"[VERIFY] Average\
+      \ age: {avg_age}\")\n\nverification = {\n    \"verified\": total_users == 2,\n\
+      \    \"avg_age\": avg_age,\n    \"status\": \"passed\" if total_users == 2 else\
+      \ \"failed\"\n}\n\nprint(f\"[VERIFY] Verification: {verification['status']}\"\
+      )\nreturn verification\n"
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: end
+- step: end
+  desc: Complete the test
+  tool:
+  - name: complete
+    kind: python
+    args:
+      verify_result: '{{ verify }}'
+    code: "print(f\"[END] DuckDB test completed successfully!\")\n\nverify_result\
+      \ = input_data.get('verify_result', {})\n\nif isinstance(verify_result, str):\n\
+      \    import json, ast\n    try:\n        verify_result = json.loads(verify_result)\n\
+      \    except:\n        verify_result = ast.literal_eval(verify_result)\n\nstatus\
+      \ = verify_result.get('status', 'unknown')\navg_age = verify_result.get('avg_age',\
+      \ 0)\n\nprint(f\"[END] Verification status: {status}\")\nprint(f\"[END] Average\
+      \ age: {avg_age}\")\n\nreturn {\"status\": \"completed\", \"test_passed\": status\
+      \ == \"passed\"}\n"

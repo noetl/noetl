@@ -1,111 +1,91 @@
 apiVersion: noetl.io/v2
 kind: Playbook
-
 metadata:
   name: iterator_save_test
   path: tests/fixtures/playbooks/iterator_save_test/iterator_save_test
-
 workload:
   pg_auth: pg_local
   items:
-    - name: "item1"
-      value: 100
-    - name: "item2"
-      value: 200
-    - name: "item3"
-      value: 300
-
+  - name: item1
+    value: 100
+  - name: item2
+    value: 200
+  - name: item3
+    value: 300
 workflow:
-  - step: start
-    desc: Start test
-    tool:
-      kind: python
-      code: |
-        result = {"status": "initialized"}
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: create_table
+- step: start
+  desc: Start test
+  tool:
+    kind: python
+    code: 'result = {"status": "initialized"}
 
-  - step: create_table
-    desc: Create test table
-    tool:
-      kind: postgres
-      auth: "{{ pg_auth }}"
-      command: |
-        CREATE TABLE IF NOT EXISTS public.iterator_save_test (
-          id TEXT PRIMARY KEY,
-          execution_id TEXT,
-          item_name TEXT,
-          item_value INTEGER,
-          created_at TIMESTAMPTZ DEFAULT now()
-        );
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: process_items
+      '
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: create_table
+- step: create_table
+  desc: Create test table
+  tool:
+    kind: postgres
+    auth: '{{ pg_auth }}'
+    command: "CREATE TABLE IF NOT EXISTS public.iterator_save_test (\n  id TEXT PRIMARY\
+      \ KEY,\n  execution_id TEXT,\n  item_name TEXT,\n  item_value INTEGER,\n  created_at\
+      \ TIMESTAMPTZ DEFAULT now()\n);\n"
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: process_items
+- step: process_items
+  desc: Process items with sink
+  loop:
+    spec:
+      mode: sequential
+    in: '{{ items }}'
+    iterator: item
+  tool:
+  - name: process_item
+    kind: python
+    args:
+      item: '{{ iter.item }}'
+    code: "result = {\n    'item_name': item.get('name', 'unknown'),\n    'item_value':\
+      \ item.get('value', 0)\n}\n"
+    spec:
+      policy:
+        rules:
+        - when: true
+          then:
+            do: continue
+            set_iter:
+              processed_item: '{{ outcome.result }}'
+  - name: save_item
+    kind: postgres
+    auth: '{{ pg_auth }}'
+    command: "INSERT INTO public.iterator_save_test (id, execution_id, item_name,\
+      \ item_value)\nVALUES (\n  '{{ execution_id }}:{{ iter.processed_item.item_name\
+      \ }}',\n  '{{ execution_id }}',\n  '{{ iter.processed_item.item_name }}',\n\
+      \  {{ iter.processed_item.item_value }}\n)\nON CONFLICT (id) DO UPDATE SET\n\
+      \  item_value = EXCLUDED.item_value,\n  created_at = now();\n"
+    spec:
+      policy:
+        rules:
+        - when: '{{ outcome.status == ''error'' }}'
+          then:
+            do: fail
+        - when: true
+          then:
+            do: continue
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: end
+- step: end
+  desc: End test
+  tool:
+    kind: python
+    code: 'result = {"status": "complete"}
 
-  - step: process_items
-    desc: Process items with sink
-    loop:
-      spec:
-        mode: sequential
-      in: "{{ items }}"
-      iterator: item
-    tool:
-      - process_item:
-          kind: python
-          args:
-            item: "{{ iter.item }}"
-          code: |
-            result = {
-                'item_name': item.get('name', 'unknown'),
-                'item_value': item.get('value', 0)
-            }
-          spec:
-            policy:
-              rules:
-                - when: true
-                  then:
-                    do: continue
-                    set_iter:
-                      processed_item: "{{ outcome.result }}"
-
-      - save_item:
-          kind: postgres
-          auth: "{{ pg_auth }}"
-          command: |
-            INSERT INTO public.iterator_save_test (id, execution_id, item_name, item_value)
-            VALUES (
-              '{{ execution_id }}:{{ iter.processed_item.item_name }}',
-              '{{ execution_id }}',
-              '{{ iter.processed_item.item_name }}',
-              {{ iter.processed_item.item_value }}
-            )
-            ON CONFLICT (id) DO UPDATE SET
-              item_value = EXCLUDED.item_value,
-              created_at = now();
-          spec:
-            policy:
-              rules:
-                - when: "{{ outcome.status == 'error' }}"
-                  then:
-                    do: fail
-                - when: true
-                  then:
-                    do: continue
-
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: end
-
-  - step: end
-    desc: End test
-    tool:
-      kind: python
-      code: |
-        result = {"status": "complete"}
+      '

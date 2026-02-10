@@ -13,7 +13,7 @@ Canonical v10 treats retry as **task outcome policy**, not a special step-level 
 - Tool implementations MAY still offer internal retry knobs under `task.spec`, but canonical orchestration retry is policy-driven so it remains deterministic and observable.
 
 Related canonical docs:
-- `documentation/docs/reference/dsl/noetl_step_spec.md`
+- `documentation/docs/reference/dsl/step_spec.md`
 - `documentation/docs/reference/dsl/spec.md`
 
 ---

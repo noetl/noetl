@@ -252,21 +252,91 @@ Canonical addressing rule:
 
 ## 7. Tasks and tool list shapes (MUST)
 
-`step.tool` supports:
-1) **single task object**
-2) **list of tasks**
-3) **list of named task maps** (canonical recommended)
+`step.tool` supports two task formats, all normalized to the canonical internal form.
 
-Canonical normalization converts everything into:
+### 7.1 Canonical format (recommended)
+
+The canonical format uses explicit `name:` field for task identification:
+
 ```yaml
 tool:
-  - label1: { kind: ... }
-  - label2: { kind: ... }
+  - name: init_iter
+    kind: noop
+    spec:
+      policy:
+        rules:
+          - else:
+              then: { do: continue, set_iter: { page: 1 } }
+
+  - name: fetch_page
+    kind: http
+    method: GET
+    url: "{{ workload.api_url }}"
+    spec:
+      policy:
+        rules:
+          - when: "{{ outcome.status == 'error' }}"
+            then: { do: retry, attempts: 5 }
+          - else:
+              then: { do: continue }
 ```
 
-### 7.1 How policy applies across shapes
+**Why canonical:**
+- UI/tooling friendly (structured data, no dynamic keys)
+- JSON Schema validation straightforward
+- Consistent with industry patterns (Kubernetes, GitHub Actions)
+- No ambiguity between task name and task properties
+- Easier programmatic manipulation
+
+### 7.2 Unnamed task list
+
+Tasks without explicit names get synthetic labels (`task_0`, `task_1`, ...):
+
+```yaml
+tool:
+  - kind: http
+    url: "..."
+  - kind: python
+    code: "..."
+```
+
+### 7.3 Single tool object (shorthand)
+
+For steps with a single tool, the list wrapper can be omitted:
+
+```yaml
+tool:
+  kind: http
+  method: GET
+  url: "{{ api_url }}"
+```
+
+### 7.4 Normalization (engine internal)
+
+All formats are normalized to the canonical internal representation:
+
+```yaml
+# Internal normalized form
+tool:
+  - name: <task_name>
+    kind: <tool_kind>
+    ... # other task properties
+```
+
+**Normalization rules:**
+1. `{ name: "X", kind: "Y", ... }` → kept as-is (canonical)
+2. `{ kind: "Y", ... }` (no name) → `{ name: "task_N", kind: "Y", ... }`
+3. Single `{ kind: "Y" }` (not in list) → `[{ name: "<step>_task", kind: "Y", ... }]`
+
+**NOT supported:**
+- Syntactic sugar `{ task_name: { kind: ... } }` format is **removed** — use canonical format with `name:` field instead.
+
+### 7.5 How policy applies across shapes
 - Policy is always applied **per task** (after that task produces `outcome`).
-- If tasks are unnamed, compiler MUST generate stable labels (`task_1`, `task_2`, …) for `jump` targets and event correlation.
+- Task names (explicit or synthetic) are used for:
+  - `jump` targets in policy rules
+  - Event correlation and logging
+  - Result access in templates (`{{ task_name.data }}`)
 
 ---
 
@@ -365,89 +435,89 @@ This supports:
         exec: distributed   # optional intent
 
   tool:
-    - init_iter:
-        kind: noop
-        spec:
-          policy:
-            rules:
-              - else:
-                  then:
-                    do: continue
-                    set_iter: { page: 1, has_more: true }
-
-    - fetch_page:
-        kind: http
-        method: GET
-        url: "{{ workload.api_url }}{{ iter.endpoint.path }}"
-        params:
-          page: "{{ iter.page }}"
-          pageSize: "{{ iter.endpoint.page_size }}"
-        spec:
-          timeout: { connect: 5, read: 15 }
-          policy:
-            rules:
-              - when: "{{ outcome.status == 'error' and outcome.http.status in [429,500,502,503,504] }}"
-                then: { do: retry, attempts: 10, backoff: exponential, delay: 2.0 }
-              - when: "{{ outcome.status == 'error' and outcome.http.status in [401,403] }}"
-                then: { do: fail }
-              - else:
-                  then:
-                    do: continue
-                    set_iter:
-                      http_status: "{{ outcome.http.status | default(200) }}"
-                      has_more: "{{ outcome.result.data.paging.hasMore | default(false) }}"
-                      page: "{{ outcome.result.data.paging.page | default(iter.page) }}"
-                      items: "{{ outcome.result.data.data | default([]) }}"
-
-    - route_by_status:
-        kind: noop
-        spec:
-          policy:
-            rules:
-              - when: "{{ iter.http_status == 404 }}"
-                then: { do: jump, to: store_404 }
-              - else:
-                  then: { do: jump, to: store_200 }
-
-    - store_200:
-        kind: postgres
-        auth: pg_k8s
-        command: "INSERT INTO results_ok (...)"
-        spec:
-          policy:
-            rules:
-              - when: "{{ outcome.status == 'error' and outcome.pg.code in ['40001','40P01'] }}"
-                then: { do: retry, attempts: 5, backoff: exponential, delay: 2.0 }
-              - when: "{{ outcome.status == 'error' }}"
-                then: { do: fail }
-              - else:
-                  then: { do: jump, to: paginate }
-
-    - store_404:
-        kind: postgres
-        auth: pg_k8s
-        command: "INSERT INTO results_not_found (...)"
-        spec:
-          policy:
-            rules:
-              - when: "{{ outcome.status == 'error' }}"
-                then: { do: fail }
-              - else:
-                  then: { do: jump, to: paginate }
-
-    - paginate:
-        kind: noop
-        spec:
-          policy:
-            rules:
-              - when: "{{ iter.has_more == true }}"
+    - name: init_iter
+      kind: noop
+      spec:
+        policy:
+          rules:
+            - else:
                 then:
-                  do: jump
-                  to: fetch_page
+                  do: continue
+                  set_iter: { page: 1, has_more: true }
+
+    - name: fetch_page
+      kind: http
+      method: GET
+      url: "{{ workload.api_url }}{{ iter.endpoint.path }}"
+      params:
+        page: "{{ iter.page }}"
+        pageSize: "{{ iter.endpoint.page_size }}"
+      spec:
+        timeout: { connect: 5, read: 15 }
+        policy:
+          rules:
+            - when: "{{ outcome.status == 'error' and outcome.http.status in [429,500,502,503,504] }}"
+              then: { do: retry, attempts: 10, backoff: exponential, delay: 2.0 }
+            - when: "{{ outcome.status == 'error' and outcome.http.status in [401,403] }}"
+              then: { do: fail }
+            - else:
+                then:
+                  do: continue
                   set_iter:
-                    page: "{{ (iter.page | int) + 1 }}"
-              - else:
-                  then: { do: break }
+                    http_status: "{{ outcome.http.status | default(200) }}"
+                    has_more: "{{ outcome.result.data.paging.hasMore | default(false) }}"
+                    page: "{{ outcome.result.data.paging.page | default(iter.page) }}"
+                    items: "{{ outcome.result.data.data | default([]) }}"
+
+    - name: route_by_status
+      kind: noop
+      spec:
+        policy:
+          rules:
+            - when: "{{ iter.http_status == 404 }}"
+              then: { do: jump, to: store_404 }
+            - else:
+                then: { do: jump, to: store_200 }
+
+    - name: store_200
+      kind: postgres
+      auth: pg_k8s
+      command: "INSERT INTO results_ok (...)"
+      spec:
+        policy:
+          rules:
+            - when: "{{ outcome.status == 'error' and outcome.pg.code in ['40001','40P01'] }}"
+              then: { do: retry, attempts: 5, backoff: exponential, delay: 2.0 }
+            - when: "{{ outcome.status == 'error' }}"
+              then: { do: fail }
+            - else:
+                then: { do: jump, to: paginate }
+
+    - name: store_404
+      kind: postgres
+      auth: pg_k8s
+      command: "INSERT INTO results_not_found (...)"
+      spec:
+        policy:
+          rules:
+            - when: "{{ outcome.status == 'error' }}"
+              then: { do: fail }
+            - else:
+                then: { do: jump, to: paginate }
+
+    - name: paginate
+      kind: noop
+      spec:
+        policy:
+          rules:
+            - when: "{{ iter.has_more == true }}"
+              then:
+                do: jump
+                to: fetch_page
+                set_iter:
+                  page: "{{ (iter.page | int) + 1 }}"
+            - else:
+                then: { do: break }
 
   next:
     spec:

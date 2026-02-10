@@ -13,7 +13,7 @@ Canonical v10 reminders:
 - Task outcome handling is done via `task.spec.policy.rules` (no legacy `eval`/`expr`).
 - Large outputs are reference-first (ResultRef/ManifestRef patterns).
 
-See `documentation/docs/reference/dsl/noetl_step_spec.md` for the full DSL model.
+See `documentation/docs/reference/dsl/step_spec.md` for the full DSL model.
 
 ---
 

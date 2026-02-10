@@ -50,4 +50,4 @@ workflow:
 
 ## References
 - `documentation/docs/reference/dsl/playbook_structure.md`
-- `documentation/docs/reference/dsl/noetl_step_spec.md`
+- `documentation/docs/reference/dsl/step_spec.md`

@@ -3,63 +3,52 @@ kind: Playbook
 metadata:
   name: test_large_result_extraction
   path: tests/large_result_extraction_test
-  description: |
-    Simple test for large result externalization and field extraction.
+  description: 'Simple test for large result externalization and field extraction.
+
 
     Verifies that:
+
     1. Results > 64KB are stored externally
+
     2. Extracted fields are available in templates
+
     3. _ref pointer is available for lazy loading
 
+    '
 workload:
-  # Generate ~100KB of data (exceeds 64KB threshold)
   item_count: 500
   item_data_size: 200
-
 workflow:
-  # Generate large result (must start with 'start' step)
-  - step: start
-    tool:
-      - generate_data:
-          kind: python
-          args:
-            count: "{{ item_count }}"
-            data_size: "{{ item_data_size }}"
-          code: |
-            items = [{"id": i, "data": "A" * data_size, "active": True} for i in range(count)]
-            result = {
-                "status": "ok",
-                "count": len(items),
-                "items": items,
-                "metadata": {"generated_by": "test"}
-            }
-    result:
-      output_select:
-        - status
-        - count
-        - metadata
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: check_extraction
-
-  # Verify extraction works
-  - step: check_extraction
-    tool:
-      - verify:
-          kind: python
-          args:
-            status: "{{ start.status }}"
-            count: "{{ start.count }}"
-            has_ref: "{{ start._ref is defined }}"
-            has_preview: "{{ start._preview is defined }}"
-          code: |
-            result = {
-                "extraction_success": status == "ok" and count == 500,
-                "externalized": has_ref,
-                "preview_available": has_preview,
-                "status": status,
-                "count": count,
-                "test_passed": status == "ok" and has_ref
-            }
+- step: start
+  tool:
+  - name: generate_data
+    kind: python
+    args:
+      count: '{{ item_count }}'
+      data_size: '{{ item_data_size }}'
+    code: "items = [{\"id\": i, \"data\": \"A\" * data_size, \"active\": True} for\
+      \ i in range(count)]\nresult = {\n    \"status\": \"ok\",\n    \"count\": len(items),\n\
+      \    \"items\": items,\n    \"metadata\": {\"generated_by\": \"test\"}\n}\n"
+  result:
+    output_select:
+    - status
+    - count
+    - metadata
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: check_extraction
+- step: check_extraction
+  tool:
+  - name: verify
+    kind: python
+    args:
+      status: '{{ start.status }}'
+      count: '{{ start.count }}'
+      has_ref: '{{ start._ref is defined }}'
+      has_preview: '{{ start._preview is defined }}'
+    code: "result = {\n    \"extraction_success\": status == \"ok\" and count == 500,\n\
+      \    \"externalized\": has_ref,\n    \"preview_available\": has_preview,\n \
+      \   \"status\": status,\n    \"count\": count,\n    \"test_passed\": status\
+      \ == \"ok\" and has_ref\n}\n"
