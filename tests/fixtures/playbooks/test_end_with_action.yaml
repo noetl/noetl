@@ -4,65 +4,50 @@ metadata:
   name: test_end_with_action
   path: tests/control-flow/end_with_action
   description: Test end step with action type that aggregates and executes cleanup
-
 workload:
   cleanup_required: true
-
 workflow:
-  - step: start
-    desc: Entry point router
-    tool:
-      - init:
-          kind: python
-          code: |
-            result = {"status": "initialized"}
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: process_data
+- step: start
+  desc: Entry point router
+  tool:
+  - name: init
+    kind: python
+    code: 'result = {"status": "initialized"}
 
-  - step: process_data
-    desc: Process data
-    tool:
-      - process:
-          kind: python
-          code: |
-            result = {
-                'status': 'success',
-                'data': {
-                    'records_processed': 100,
-                    'temp_table': 'temp_session_12345'
-                }
-            }
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: end
-          args:
-            input_data:
-              temp_table: "{{ process_data.data.temp_table }}"
-              cleanup_required: "{{ cleanup_required }}"
-
-  - step: end
-    desc: End step with cleanup action
-    tool:
-      - cleanup:
-          kind: python
-          args:
-            input_data:
-              temp_table: "{{ args.input_data.temp_table | default(process_data.data.temp_table) }}"
-              cleanup_required: "{{ args.input_data.cleanup_required | default(cleanup_required) }}"
-          code: |
-            temp_table = input_data.get('temp_table', 'unknown')
-            cleanup = input_data.get('cleanup_required', False)
-
-            result = {
-                'status': 'completed',
-                'message': f'Cleanup performed on {temp_table}' if cleanup else 'No cleanup needed',
-                'data': {
-                    'cleaned_up': cleanup,
-                    'table': temp_table
-                }
-            }
+      '
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: process_data
+- step: process_data
+  desc: Process data
+  tool:
+  - name: process
+    kind: python
+    code: "result = {\n    'status': 'success',\n    'data': {\n        'records_processed':\
+      \ 100,\n        'temp_table': 'temp_session_12345'\n    }\n}\n"
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: end
+      args:
+        input_data:
+          temp_table: '{{ process_data.data.temp_table }}'
+          cleanup_required: '{{ cleanup_required }}'
+- step: end
+  desc: End step with cleanup action
+  tool:
+  - name: cleanup
+    kind: python
+    args:
+      input_data:
+        temp_table: '{{ args.input_data.temp_table | default(process_data.data.temp_table)
+          }}'
+        cleanup_required: '{{ args.input_data.cleanup_required | default(cleanup_required)
+          }}'
+    code: "temp_table = input_data.get('temp_table', 'unknown')\ncleanup = input_data.get('cleanup_required',\
+      \ False)\n\nresult = {\n    'status': 'completed',\n    'message': f'Cleanup\
+      \ performed on {temp_table}' if cleanup else 'No cleanup needed',\n    'data':\
+      \ {\n        'cleaned_up': cleanup,\n        'table': temp_table\n    }\n}\n"

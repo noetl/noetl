@@ -1,314 +1,229 @@
-apiVersion: noetl.io/v10
+apiVersion: noetl.io/v2
 kind: Playbook
 metadata:
   name: test_pagination_pipeline_v2
   path: tests/pagination/pipeline_v2
-  description: |
-    Task sequence pagination test demonstrating tool.spec.policy.rules flow control.
+  description: 'Task sequence pagination test demonstrating tool.spec.policy.rules
+    flow control.
 
-    Uses labeled tasks in tool: pipeline with tool.spec.policy.rules: for per-task flow control:
-    - _prev threads data between tasks (like Clojure's ->)
+
+    Uses labeled tasks in tool: pipeline with tool.spec.policy.rules: for per-task
+    flow control:
+
+    - _prev threads data between tasks (like Clojure''s ->)
+
     - tool.spec.policy.rules: provides per-task error handling
+
     - Retry, jump, fail, break, continue control actions
+
     - outcome object for accessing execution results
 
+    '
 workload:
-  api_url: "http://paginated-api.test-server.svc.cluster.local:5555"
-  db_host: "postgres.postgres.svc.cluster.local"
+  api_url: http://paginated-api.test-server.svc.cluster.local:5555
+  db_host: postgres.postgres.svc.cluster.local
   db_port: 5432
-  db_name: "noetl"
-  db_user: "noetl"
-  db_password: "noetl"
+  db_name: noetl
+  db_user: noetl
+  db_password: noetl
   current_page: 1
   page_size: 10
   total_fetched: 0
   all_pages_done: false
-
 workflow:
-  - step: start
-    desc: Initialize pagination test with tool.spec.policy.rules flow control
-    tool:
-      kind: python
-      code: |
-        result = {
-          "status": "initialized",
-          "message": "Starting pagination test with tool.spec.policy.rules flow control"
-        }
-    set_ctx:
-      current_page: "{{ workload.current_page }}"
-      page_size: "{{ workload.page_size }}"
-      total_fetched: "{{ workload.total_fetched }}"
-      all_pages_done: "{{ workload.all_pages_done }}"
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: create_test_table
+- step: start
+  desc: Initialize pagination test with tool.spec.policy.rules flow control
+  tool:
+    kind: python
+    code: "result = {\n  \"status\": \"initialized\",\n  \"message\": \"Starting pagination\
+      \ test with tool.spec.policy.rules flow control\"\n}\n"
+  set_ctx:
+    current_page: '{{ workload.current_page }}'
+    page_size: '{{ workload.page_size }}'
+    total_fetched: '{{ workload.total_fetched }}'
+    all_pages_done: '{{ workload.all_pages_done }}'
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: create_test_table
+- step: create_test_table
+  desc: Create test table for storing fetched data
+  tool:
+    kind: postgres
+    credential: test_postgres
+    query: "DROP TABLE IF EXISTS pagination_test_v2_results;\nCREATE TABLE pagination_test_v2_results\
+      \ (\n  id SERIAL PRIMARY KEY,\n  assessment_id INTEGER NOT NULL,\n  assessment_name\
+      \ VARCHAR(255),\n  score INTEGER,\n  transformed_at TIMESTAMP DEFAULT NOW(),\n\
+      \  page_number INTEGER,\n  batch_id VARCHAR(36)\n);\n"
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: fetch_transform_store
+- step: fetch_transform_store
+  desc: 'Task sequence: fetch page -> transform data -> store to DB
 
-  - step: create_test_table
-    desc: Create test table for storing fetched data
-    tool:
-      kind: postgres
-      credential: test_postgres
-      query: |
-        DROP TABLE IF EXISTS pagination_test_v2_results;
-        CREATE TABLE pagination_test_v2_results (
-          id SERIAL PRIMARY KEY,
-          assessment_id INTEGER NOT NULL,
-          assessment_name VARCHAR(255),
-          score INTEGER,
-          transformed_at TIMESTAMP DEFAULT NOW(),
-          page_number INTEGER,
-          batch_id VARCHAR(36)
-        );
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: fetch_transform_store
+    Demonstrates tool.spec.policy.rules flow control per task
 
-  - step: fetch_transform_store
-    desc: |
-      Task sequence: fetch page -> transform data -> store to DB
-      Demonstrates tool.spec.policy.rules flow control per task
-    tool:
-      - fetch:
-          kind: http
-          url: "{{ api_url }}/api/v1/assessments"
-          method: GET
-          params:
-            page: "{{ ctx.current_page }}"
-            pageSize: "{{ ctx.page_size }}"
-          spec:
-            policy:
-              rules:
-                - when: "{{ outcome.error.kind == 'rate_limit' }}"
-                  then:
-                    do: retry
-                    attempts: 10
-                    delay: 5.0
-                - when: "{{ outcome.error.retryable }}"
-                  then:
-                    do: retry
-                    attempts: 5
-                    backoff: exponential
-                    delay: 1.0
-                - when: "{{ outcome.status == 'error' }}"
-                  then:
-                    do: fail
-                - else:
-                    then:
-                      do: continue
-
-      - transform:
-          kind: python
-          args:
-            http_response: "{{ _prev }}"
-            page_num: "{{ ctx.current_page }}"
-            execution_id: "{{ execution_id }}"
-          code: |
-            import json
-            from datetime import datetime
-
-            response_body = http_response.get('data', {})
-            items = response_body.get('data', [])
-            paging = response_body.get('paging', {})
-
-            transformed = []
-            for item in items:
-                transformed.append({
-                    'assessment_id': item['id'],
-                    'assessment_name': item['name'].upper(),
-                    'score': item['score'] * 10,
-                    'page_number': page_num,
-                    'batch_id': execution_id[:8]
-                })
-
-            result = {
-                'items': transformed,
-                'count': len(transformed),
-                'has_more': paging.get('hasMore', False),
-                'current_page': paging.get('page', page_num),
-                'total': paging.get('total', 0)
-            }
-          spec:
-            policy:
-              rules:
-                - when: "{{ outcome.status == 'error' }}"
-                  then:
-                    do: continue
-                - else:
-                    then:
-                      do: continue
-
-      - store:
-          kind: python
-          args:
-            data: "{{ _prev }}"
-            db_host: "{{ db_host }}"
-            db_port: "{{ db_port }}"
-            db_name: "{{ db_name }}"
-            db_user: "{{ db_user }}"
-            db_password: "{{ db_password }}"
-          libs:
-            - psycopg2-binary
-          code: |
-            import psycopg2
-
-            conn = psycopg2.connect(
-                host=db_host,
-                port=db_port,
-                dbname=db_name,
-                user=db_user,
-                password=db_password
-            )
-
-            cursor = conn.cursor()
-
-            inserted = 0
-            for item in data['items']:
-                cursor.execute('''
-                    INSERT INTO pagination_test_v2_results
-                    (assessment_id, assessment_name, score, page_number, batch_id)
-                    VALUES (%s, %s, %s, %s, %s)
-                ''', (
-                    item['assessment_id'],
-                    item['assessment_name'],
-                    item['score'],
-                    item['page_number'],
-                    item['batch_id']
-                ))
-                inserted += 1
-
-            conn.commit()
-            cursor.close()
-            conn.close()
-
-            result = {
-                'stored': inserted,
-                'has_more': data['has_more'],
-                'current_page': data['current_page'],
-                'total': data['total']
-            }
-          spec:
-            policy:
-              rules:
-                - when: "{{ outcome.error.retryable }}"
-                  then:
-                    do: retry
-                    attempts: 3
-                    backoff: linear
-                    delay: 2.0
-                - when: "{{ outcome.status == 'error' }}"
-                  then:
-                    do: fail
-                - else:
-                    then:
-                      do: continue
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: check_pagination
-
-  - step: check_pagination
-    desc: Check if more pages to fetch
-    tool:
-      kind: python
-      args:
-        pipeline_result: "{{ fetch_transform_store }}"
-        current_page: "{{ ctx.current_page }}"
-        total_fetched: "{{ ctx.total_fetched }}"
-      code: |
-        has_more = pipeline_result.get('has_more', False) if isinstance(pipeline_result, dict) else False
-
-        result = {
-          "has_more": has_more,
-          "current_page": current_page,
-          "total_fetched": total_fetched,
-          "action": "continue" if has_more else "complete"
-        }
-    set_ctx:
-      current_page: "{{ (ctx.current_page | int) + 1 }}"
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: fetch_transform_store
-          when: "{{ check_pagination.has_more == true }}"
-        - step: validate_results
-          when: "{{ check_pagination.has_more != true }}"
-
-  - step: validate_results
-    desc: Validate all data was fetched and stored correctly
-    tool:
-      kind: postgres
-      credential: test_postgres
-      query: |
-        SELECT
-          COUNT(*) as total_records,
-          COUNT(DISTINCT page_number) as total_pages,
-          MIN(assessment_id) as min_id,
-          MAX(assessment_id) as max_id,
-          AVG(score) as avg_score
-        FROM pagination_test_v2_results
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: final_report
-
-  - step: final_report
-    desc: Generate final test report
-    tool:
-      kind: python
-      args:
-        validation: "{{ validate_results }}"
-        pages_processed: "{{ ctx.current_page }}"
-        total_fetched: "{{ ctx.total_fetched }}"
-      code: |
-        if isinstance(validation, list) and len(validation) > 0:
-            stats = validation[0]
-        else:
-            stats = validation or {}
-
-        total_records = stats.get('total_records', 0)
-        total_pages = stats.get('total_pages', 0)
-        min_id = stats.get('min_id', 0)
-        max_id = stats.get('max_id', 0)
-        avg_score = stats.get('avg_score', 0)
-
-        expected_items = 35
-        success = total_records == expected_items
-
-        result = {
-          "status": "success" if success else "failed",
-          "summary": {
-            "total_records_stored": total_records,
-            "expected_records": expected_items,
-            "pages_processed": total_pages,
-            "id_range": f"{min_id} - {max_id}",
-            "avg_score": round(float(avg_score), 2) if avg_score else 0
-          },
-          "features_tested": [
-            "Labeled tasks in tool: pipeline",
-            "tool.spec.policy.rules: per-task flow control",
-            "_prev data threading between tasks",
-            "outcome object for result/error inspection",
-            "Retry with exponential backoff",
-            "Control actions: continue, retry, fail"
-          ]
-        }
-
-        if not success:
-            result["error"] = f"Expected {expected_items} records, got {total_records}"
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: end
-
-  - step: end
-    desc: Test complete
-    tool:
-      kind: noop
+    '
+  tool:
+  - name: fetch
+    kind: http
+    url: '{{ api_url }}/api/v1/assessments'
+    method: GET
+    params:
+      page: '{{ ctx.current_page }}'
+      pageSize: '{{ ctx.page_size }}'
+    spec:
+      policy:
+        rules:
+        - when: '{{ outcome.error.kind == ''rate_limit'' }}'
+          then:
+            do: retry
+            attempts: 10
+            delay: 5.0
+        - when: '{{ outcome.error.retryable }}'
+          then:
+            do: retry
+            attempts: 5
+            backoff: exponential
+            delay: 1.0
+        - when: '{{ outcome.status == ''error'' }}'
+          then:
+            do: fail
+        - else:
+            then:
+              do: continue
+  - name: transform
+    kind: python
+    args:
+      http_response: '{{ _prev }}'
+      page_num: '{{ ctx.current_page }}'
+      execution_id: '{{ execution_id }}'
+    code: "import json\nfrom datetime import datetime\n\nresponse_body = http_response.get('data',\
+      \ {})\nitems = response_body.get('data', [])\npaging = response_body.get('paging',\
+      \ {})\n\ntransformed = []\nfor item in items:\n    transformed.append({\n  \
+      \      'assessment_id': item['id'],\n        'assessment_name': item['name'].upper(),\n\
+      \        'score': item['score'] * 10,\n        'page_number': page_num,\n  \
+      \      'batch_id': execution_id[:8]\n    })\n\nresult = {\n    'items': transformed,\n\
+      \    'count': len(transformed),\n    'has_more': paging.get('hasMore', False),\n\
+      \    'current_page': paging.get('page', page_num),\n    'total': paging.get('total',\
+      \ 0)\n}\n"
+    spec:
+      policy:
+        rules:
+        - when: '{{ outcome.status == ''error'' }}'
+          then:
+            do: continue
+        - else:
+            then:
+              do: continue
+  - name: store
+    kind: python
+    args:
+      data: '{{ _prev }}'
+      db_host: '{{ db_host }}'
+      db_port: '{{ db_port }}'
+      db_name: '{{ db_name }}'
+      db_user: '{{ db_user }}'
+      db_password: '{{ db_password }}'
+    libs:
+    - psycopg2-binary
+    code: "import psycopg2\n\nconn = psycopg2.connect(\n    host=db_host,\n    port=db_port,\n\
+      \    dbname=db_name,\n    user=db_user,\n    password=db_password\n)\n\ncursor\
+      \ = conn.cursor()\n\ninserted = 0\nfor item in data['items']:\n    cursor.execute('''\n\
+      \        INSERT INTO pagination_test_v2_results\n        (assessment_id, assessment_name,\
+      \ score, page_number, batch_id)\n        VALUES (%s, %s, %s, %s, %s)\n    ''',\
+      \ (\n        item['assessment_id'],\n        item['assessment_name'],\n    \
+      \    item['score'],\n        item['page_number'],\n        item['batch_id']\n\
+      \    ))\n    inserted += 1\n\nconn.commit()\ncursor.close()\nconn.close()\n\n\
+      result = {\n    'stored': inserted,\n    'has_more': data['has_more'],\n   \
+      \ 'current_page': data['current_page'],\n    'total': data['total']\n}\n"
+    spec:
+      policy:
+        rules:
+        - when: '{{ outcome.error.retryable }}'
+          then:
+            do: retry
+            attempts: 3
+            backoff: linear
+            delay: 2.0
+        - when: '{{ outcome.status == ''error'' }}'
+          then:
+            do: fail
+        - else:
+            then:
+              do: continue
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: check_pagination
+- step: check_pagination
+  desc: Check if more pages to fetch
+  tool:
+    kind: python
+    args:
+      pipeline_result: '{{ fetch_transform_store }}'
+      current_page: '{{ ctx.current_page }}'
+      total_fetched: '{{ ctx.total_fetched }}'
+    code: "has_more = pipeline_result.get('has_more', False) if isinstance(pipeline_result,\
+      \ dict) else False\n\nresult = {\n  \"has_more\": has_more,\n  \"current_page\"\
+      : current_page,\n  \"total_fetched\": total_fetched,\n  \"action\": \"continue\"\
+      \ if has_more else \"complete\"\n}\n"
+  set_ctx:
+    current_page: '{{ (ctx.current_page | int) + 1 }}'
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: fetch_transform_store
+      when: '{{ check_pagination.has_more == true }}'
+    - step: validate_results
+      when: '{{ check_pagination.has_more != true }}'
+- step: validate_results
+  desc: Validate all data was fetched and stored correctly
+  tool:
+    kind: postgres
+    credential: test_postgres
+    query: "SELECT\n  COUNT(*) as total_records,\n  COUNT(DISTINCT page_number) as\
+      \ total_pages,\n  MIN(assessment_id) as min_id,\n  MAX(assessment_id) as max_id,\n\
+      \  AVG(score) as avg_score\nFROM pagination_test_v2_results\n"
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: final_report
+- step: final_report
+  desc: Generate final test report
+  tool:
+    kind: python
+    args:
+      validation: '{{ validate_results }}'
+      pages_processed: '{{ ctx.current_page }}'
+      total_fetched: '{{ ctx.total_fetched }}'
+    code: "if isinstance(validation, list) and len(validation) > 0:\n    stats = validation[0]\n\
+      else:\n    stats = validation or {}\n\ntotal_records = stats.get('total_records',\
+      \ 0)\ntotal_pages = stats.get('total_pages', 0)\nmin_id = stats.get('min_id',\
+      \ 0)\nmax_id = stats.get('max_id', 0)\navg_score = stats.get('avg_score', 0)\n\
+      \nexpected_items = 35\nsuccess = total_records == expected_items\n\nresult =\
+      \ {\n  \"status\": \"success\" if success else \"failed\",\n  \"summary\": {\n\
+      \    \"total_records_stored\": total_records,\n    \"expected_records\": expected_items,\n\
+      \    \"pages_processed\": total_pages,\n    \"id_range\": f\"{min_id} - {max_id}\"\
+      ,\n    \"avg_score\": round(float(avg_score), 2) if avg_score else 0\n  },\n\
+      \  \"features_tested\": [\n    \"Labeled tasks in tool: pipeline\",\n    \"\
+      tool.spec.policy.rules: per-task flow control\",\n    \"_prev data threading\
+      \ between tasks\",\n    \"outcome object for result/error inspection\",\n  \
+      \  \"Retry with exponential backoff\",\n    \"Control actions: continue, retry,\
+      \ fail\"\n  ]\n}\n\nif not success:\n    result[\"error\"] = f\"Expected {expected_items}\
+      \ records, got {total_records}\"\n"
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: end
+- step: end
+  desc: Test complete
+  tool:
+    kind: noop

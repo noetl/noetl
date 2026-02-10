@@ -1905,8 +1905,9 @@ class ControlFlowEngine:
 
             if policy_rules:
                 # Convert single tool to task sequence format so policy rules work
+                # Use canonical format: { name: "task_label", kind: "...", ... }
                 task_label = f"{step.step}_task"
-                pipeline = [{task_label: tool_dict}]
+                pipeline = [{"name": task_label, **tool_dict}]
                 tool_kind = "task_sequence"
                 tool_config = {"tasks": pipeline}
                 logger.info(f"[PIPELINE] Converted single tool with policy rules to task sequence for step '{step.step}'")
@@ -2263,8 +2264,12 @@ class ControlFlowEngine:
         # IMPORTANT: Only process on call.done/call.error to avoid duplicate command generation
         # step.exit should NOT trigger next evaluation because the worker already emits call.done
         # which triggers next evaluation and generates transition commands
+        # CRITICAL: For loop steps, skip next evaluation on call.done - the next transition
+        # will be evaluated on loop.done event after all iterations complete. This prevents
+        # fan-out where each loop iteration triggers the next step independently.
         next_commands = []
-        if event.name in ("call.done", "call.error"):
+        is_loop_step = step_def.loop is not None and event.step in state.loop_state
+        if event.name in ("call.done", "call.error") and not is_loop_step:
             next_commands = await self._evaluate_next_transitions(state, step_def, event)
             
         # Identify retry commands (commands targeting the same step are retries)
@@ -2363,8 +2368,13 @@ class ControlFlowEngine:
                     logger.info(f"Loop aggregation already finalized for {event.step}, skipping result storage")
             elif not is_retrying:
                 # Not in loop or loop done - store as normal step result
-                state.mark_step_completed(event.step, event.payload["result"])
-                logger.debug(f"Stored result for step {event.step} in state")
+                # SKIP for task sequence steps - the task sequence handler already stored
+                # the properly unwrapped result on call.done event
+                if event.step.endswith(":task_sequence"):
+                    logger.debug(f"Skipping step.exit result storage for task sequence step {event.step} (already handled on call.done)")
+                else:
+                    state.mark_step_completed(event.step, event.payload["result"])
+                    logger.debug(f"Stored result for step {event.step} in state")
         
         # Note: call.done response was stored earlier (before next evaluation) to ensure
         # it's available in render_context when creating commands for subsequent steps

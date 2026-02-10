@@ -3,55 +3,62 @@ kind: Playbook
 metadata:
   name: test_args_passing
   path: tests/test_args_passing
-
 workload:
   initial_value: 100
-
 workflow:
-  - step: start
-    desc: Start workflow
-    tool:
-      - init:
-          kind: python
-          code: |
-            result = {"status": "initialized"}
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: use_vars
-          args:
-            test_var: "{{ initial_value }}"
-            computed: 200
+- step: start
+  desc: Start workflow
+  tool:
+  - name: init
+    kind: python
+    code: 'result = {"status": "initialized"}
 
-  - step: use_vars
-    desc: Test that variables from data block are available
-    tool:
-      - compute:
-          kind: python
-          args:
-            test_var: "{{ args.test_var }}"
-            computed: "{{ args.computed }}"
-          code: |
-            # These should be available from the args passed via next
-            test_var = input_data.get('test_var', 0)
-            computed = input_data.get('computed', 0)
-            result = test_var + computed
-            print(f"test_var={test_var}, computed={computed}, result={result}")
-            assert test_var == 100, f"Expected test_var=100, got {test_var}"
-            assert computed == 200, f"Expected computed=200, got {computed}"
-            assert result == 300, f"Expected result=300, got {result}"
-            result = {"status": "success", "result": result}
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: end
+      '
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: use_vars
+      args:
+        test_var: '{{ initial_value }}'
+        computed: 200
+- step: use_vars
+  desc: Test that variables from data block are available
+  tool:
+  - name: compute
+    kind: python
+    args:
+      test_var: '{{ args.test_var }}'
+      computed: '{{ args.computed }}'
+    code: '# These should be available from the args passed via next
 
-  - step: end
-    desc: End workflow
-    tool:
-      - complete:
-          kind: python
-          code: |
-            result = {"status": "complete"}
+      test_var = input_data.get(''test_var'', 0)
+
+      computed = input_data.get(''computed'', 0)
+
+      result = test_var + computed
+
+      print(f"test_var={test_var}, computed={computed}, result={result}")
+
+      assert test_var == 100, f"Expected test_var=100, got {test_var}"
+
+      assert computed == 200, f"Expected computed=200, got {computed}"
+
+      assert result == 300, f"Expected result=300, got {result}"
+
+      result = {"status": "success", "result": result}
+
+      '
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: end
+- step: end
+  desc: End workflow
+  tool:
+  - name: complete
+    kind: python
+    code: 'result = {"status": "complete"}
+
+      '

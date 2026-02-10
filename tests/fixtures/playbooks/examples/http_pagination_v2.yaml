@@ -1,4 +1,4 @@
-apiVersion: noetl.io/v10
+apiVersion: noetl.io/v2
 kind: Playbook
 metadata:
   name: http_pagination_v2
@@ -7,127 +7,129 @@ metadata:
     category: example
     version: v10
     pattern: pagination
-
 workload:
-  api_url: "https://api.example.com"
+  api_url: https://api.example.com
   page_size: 100
   current_page: 1
   all_pages: []
-
 workflow:
-  - step: start
-    desc: "Initialize pagination workflow"
-    tool:
-      kind: python
-      spec:
-        code: |
-          result = {"status": "initialized"}
-    set_ctx:
-      current_page: "{{ workload.current_page }}"
-      all_pages: "{{ workload.all_pages }}"
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: fetch_paginated
+- step: start
+  desc: Initialize pagination workflow
+  tool:
+    kind: python
+    spec:
+      code: 'result = {"status": "initialized"}
 
-  - step: fetch_paginated
-    desc: "Fetch data with pagination using tool.spec.policy.rules flow control"
-    tool:
-      - init:
-          kind: noop
-          spec:
-            policy:
-              rules:
-                - else:
-                    do: continue
-                    set_iter: { page: 1, has_more: true, items: [] }
+        '
+  set_ctx:
+    current_page: '{{ workload.current_page }}'
+    all_pages: '{{ workload.all_pages }}'
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: fetch_paginated
+- step: fetch_paginated
+  desc: Fetch data with pagination using tool.spec.policy.rules flow control
+  tool:
+  - name: init
+    kind: noop
+    spec:
+      policy:
+        rules:
+        - else:
+            do: continue
+            set_iter:
+              page: 1
+              has_more: true
+              items: []
+  - name: fetch_page
+    kind: http
+    spec:
+      method: GET
+      endpoint: '{{ api_url }}/data'
+      params:
+        page: '{{ iter.page }}'
+        pageSize: '{{ page_size }}'
+      policy:
+        rules:
+        - when: '{{ outcome.status == ''error'' and outcome.http.status in [500, 502,
+            503] }}'
+          then:
+            do: retry
+            attempts: 3
+            backoff: exponential
+            delay: 0.5
+        - when: '{{ outcome.status == ''error'' }}'
+          then:
+            do: fail
+        - else:
+            do: continue
+            set_iter:
+              has_more: '{{ outcome.result.data.paging.hasMore | default(false) }}'
+              page: '{{ outcome.result.data.paging.page | default(iter.page) }}'
+              items: '{{ outcome.result.data.items | default([]) }}'
+  - name: collect_items
+    kind: python
+    spec:
+      args:
+        items: '{{ iter.items }}'
+        all_pages: '{{ ctx.all_pages }}'
+      code: '# Extend collection with new items
 
-      - fetch_page:
-          kind: http
-          spec:
-            method: GET
-            endpoint: "{{ api_url }}/data"
-            params:
-              page: "{{ iter.page }}"
-              pageSize: "{{ page_size }}"
-            policy:
-              rules:
-                - when: "{{ outcome.status == 'error' and outcome.http.status in [500, 502, 503] }}"
-                  then:
-                    do: retry
-                    attempts: 3
-                    backoff: exponential
-                    delay: 0.5
-                - when: "{{ outcome.status == 'error' }}"
-                  then:
-                    do: fail
-                - else:
-                    do: continue
-                    set_iter:
-                      has_more: "{{ outcome.result.data.paging.hasMore | default(false) }}"
-                      page: "{{ outcome.result.data.paging.page | default(iter.page) }}"
-                      items: "{{ outcome.result.data.items | default([]) }}"
+        all_pages.extend(items)
 
-      - collect_items:
-          kind: python
-          spec:
-            args:
-              items: "{{ iter.items }}"
-              all_pages: "{{ ctx.all_pages }}"
-            code: |
-              # Extend collection with new items
-              all_pages.extend(items)
-              result = {"all_pages": all_pages, "count": len(all_pages)}
-            policy:
-              rules:
-                - else:
-                    do: continue
-                    set_ctx:
-                      all_pages: "{{ outcome.result.all_pages }}"
+        result = {"all_pages": all_pages, "count": len(all_pages)}
 
-      - paginate:
-          kind: noop
-          spec:
-            policy:
-              rules:
-                - when: "{{ iter.has_more == true }}"
-                  then:
-                    do: jump
-                    to: fetch_page
-                    set_iter:
-                      page: "{{ (iter.page | int) + 1 }}"
-                - else:
-                    do: break
+        '
+      policy:
+        rules:
+        - else:
+            do: continue
+            set_ctx:
+              all_pages: '{{ outcome.result.all_pages }}'
+  - name: paginate
+    kind: noop
+    spec:
+      policy:
+        rules:
+        - when: '{{ iter.has_more == true }}'
+          then:
+            do: jump
+            to: fetch_page
+            set_iter:
+              page: '{{ (iter.page | int) + 1 }}'
+        - else:
+            do: break
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: process_results
+      args:
+        items: '{{ ctx.all_pages }}'
+- step: process_results
+  desc: Process collected results
+  tool:
+    kind: python
+    spec:
+      args:
+        items: '{{ args.items }}'
+      code: 'print(f"Processing {len(items)} items")
 
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: process_results
-          args:
-            items: "{{ ctx.all_pages }}"
+        result = {"count": len(items), "status": "processed"}
 
-  - step: process_results
-    desc: "Process collected results"
-    tool:
-      kind: python
-      spec:
-        args:
-          items: "{{ args.items }}"
-        code: |
-          print(f"Processing {len(items)} items")
-          result = {"count": len(items), "status": "processed"}
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: end
+        '
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: end
+- step: end
+  desc: End workflow
+  tool:
+    kind: python
+    spec:
+      code: 'result = {"status": "complete"}
 
-  - step: end
-    desc: "End workflow"
-    tool:
-      kind: python
-      spec:
-        code: |
-          result = {"status": "complete"}
+        '

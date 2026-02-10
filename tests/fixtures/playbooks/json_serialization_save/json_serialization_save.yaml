@@ -41,47 +41,47 @@ workflow:
   - step: save_dict_to_jsonb
     desc: Save a Python dict to JSONB column (triggers bug)
     tool:
-      - generate_data:
-          kind: python
-          args:
-            input_data: {}
-          code: |
-            # Return a dict that will be saved to JSONB
-            result = {
-                "data": {
-                    "string_field": "test_value",
-                    "number_field": 42,
-                    "nested_object": {
-                        "key1": "value1",
-                        "key2": "value2"
-                    },
-                    "array_field": [1, 2, 3, 4, 5]
-                }
-            }
-          spec:
-            policy:
-              rules:
-                - when: true
-                  then:
-                    do: continue
-                    set_ctx:
-                      json_data: "{{ outcome.result.data }}"
+      - name: generate_data
+        kind: python
+        args:
+          input_data: {}
+        code: |
+          # Return a dict that will be saved to JSONB
+          result = {
+              "data": {
+                  "string_field": "test_value",
+                  "number_field": 42,
+                  "nested_object": {
+                      "key1": "value1",
+                      "key2": "value2"
+                  },
+                  "array_field": [1, 2, 3, 4, 5]
+              }
+          }
+        spec:
+          policy:
+            rules:
+              - when: true
+                then:
+                  do: continue
+                  set_ctx:
+                    json_data: "{{ outcome.result.data }}"
 
-      - save_json:
-          kind: postgres
-          auth: "{{ pg_auth }}"
-          command: |
-            INSERT INTO public.json_bug_test (id, payload)
-            VALUES (1, '{{ ctx.json_data | tojson | replace("'", "''") }}'::jsonb)
-          spec:
-            policy:
-              rules:
-                - when: "{{ outcome.status == 'error' }}"
-                  then:
-                    do: fail
-                - when: true
-                  then:
-                    do: continue
+      - name: save_json
+        kind: postgres
+        auth: "{{ pg_auth }}"
+        command: |
+          INSERT INTO public.json_bug_test (id, payload)
+          VALUES (1, '{{ ctx.json_data | tojson | replace("'", "''") }}'::jsonb)
+        spec:
+          policy:
+            rules:
+              - when: "{{ outcome.status == 'error' }}"
+                then:
+                  do: fail
+              - when: true
+                then:
+                  do: continue
 
     next:
       spec:

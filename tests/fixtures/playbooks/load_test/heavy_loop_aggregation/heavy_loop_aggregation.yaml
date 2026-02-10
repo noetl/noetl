@@ -3,297 +3,181 @@ kind: Playbook
 metadata:
   name: heavy_loop_aggregation_test
   path: load_test/heavy_loop_aggregation
-  version: "2.0"
-  description: |
-    Heavy load test for loop handling and result aggregation.
+  version: '2.0'
+  description: 'Heavy load test for loop handling and result aggregation.
+
 
     This playbook tests the NATS K/V refactoring by:
+
     1. Processing a large number of items (configurable, default 100)
+
     2. Each iteration produces a result with meaningful data
+
     3. Results are aggregated at the end
+
     4. Validates that NATS K/V stores only counts, not results
 
+
     The test should complete successfully without hitting NATS 1MB limit
+
     because results are stored in event table, not NATS K/V.
 
+    '
 workload:
-  # Number of items to process - can be increased for stress testing
-  # Each item simulates processing with a result payload
   item_count: 100
-
-  # Simulate different result sizes (bytes of padding per result)
-  # Set higher to test larger result payloads
   result_padding_size: 100
-
-  # Processing delay per item (seconds) - set to 0 for max speed
   processing_delay: 0
   loop_results: []
-
 workflow:
-  - step: start
-    desc: Initialize the heavy load test
-    tool:
-      kind: python
+- step: start
+  desc: Initialize the heavy load test
+  tool:
+    kind: python
+    args:
+      item_count: '{{ item_count }}'
+    code: "import time\n\n# Generate a list of items to process\nitems = []\nfor i\
+      \ in range(int(item_count)):\n    items.append({\n        \"id\": i,\n     \
+      \   \"name\": f\"item_{i:04d}\",\n        \"category\": f\"category_{i % 10}\"\
+      ,\n        \"priority\": i % 5,\n        \"data\": {\n            \"field_a\"\
+      : f\"value_a_{i}\",\n            \"field_b\": i * 100,\n            \"field_c\"\
+      : i % 2 == 0\n        }\n    })\n\nresult = {\n    \"status\": \"initialized\"\
+      ,\n    \"total_items\": len(items),\n    \"items\": items,\n    \"start_time\"\
+      : time.time()\n}\nprint(f\"Initialized with {len(items)} items to process\"\
+      )\n"
+  set_ctx:
+    loop_results: '{{ workload.loop_results }}'
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: process_items
+- step: process_items
+  desc: Loop over items and process each one (heavy load simulation)
+  loop:
+    spec:
+      mode: sequential
+    in: '{{ start.items }}'
+    iterator: item
+  tool:
+  - name: process_item
+    kind: python
+    args:
+      item: '{{ iter.item }}'
+      padding_size: '{{ result_padding_size }}'
+      delay: '{{ processing_delay }}'
+      loop_results: '{{ ctx.loop_results }}'
+    code: "import time\nimport hashlib\n\n# Simulate processing delay if configured\n\
+      if float(delay) > 0:\n    time.sleep(float(delay))\n\n# Simulate computation\
+      \ - create a hash of the item\nitem_str = str(item)\nitem_hash = hashlib.md5(item_str.encode()).hexdigest()\n\
+      \n# Create result with configurable padding to test result size handling\npadding\
+      \ = \"x\" * int(padding_size)\n\n# Simulate a realistic result payload\nitem_result\
+      \ = {\n    \"item_id\": item[\"id\"],\n    \"item_name\": item[\"name\"],\n\
+      \    \"category\": item[\"category\"],\n    \"priority\": item[\"priority\"\
+      ],\n    \"processed\": True,\n    \"hash\": item_hash,\n    \"computed_value\"\
+      : item[\"data\"][\"field_b\"] * 2,\n    \"is_even\": item[\"data\"][\"field_c\"\
+      ],\n    \"processing_metadata\": {\n        \"timestamp\": time.time(),\n  \
+      \      \"worker\": \"heavy_load_test\",\n        \"padding\": padding  # Configurable\
+      \ payload size\n    }\n}\n\n# Collect result\nloop_results.append(item_result)\n\
+      \n# Log progress every 10 items\nif item[\"id\"] % 10 == 0:\n    print(f\"Processed\
+      \ item {item['id']}: {item['name']}\")\n\nresult = {\n    \"item_result\": item_result,\n\
+      \    \"loop_results\": loop_results\n}\n"
+    spec:
+      policy:
+        rules:
+        - else:
+            do: continue
+            set_ctx:
+              loop_results: '{{ outcome.result.loop_results }}'
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: aggregate_results
       args:
-        item_count: "{{ item_count }}"
-      code: |
-        import time
-
-        # Generate a list of items to process
-        items = []
-        for i in range(int(item_count)):
-            items.append({
-                "id": i,
-                "name": f"item_{i:04d}",
-                "category": f"category_{i % 10}",
-                "priority": i % 5,
-                "data": {
-                    "field_a": f"value_a_{i}",
-                    "field_b": i * 100,
-                    "field_c": i % 2 == 0
-                }
-            })
-
-        result = {
-            "status": "initialized",
-            "total_items": len(items),
-            "items": items,
-            "start_time": time.time()
-        }
-        print(f"Initialized with {len(items)} items to process")
-    set_ctx:
-      loop_results: "{{ workload.loop_results }}"
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: process_items
-
-  - step: process_items
-    desc: Loop over items and process each one (heavy load simulation)
-    loop:
-      spec:
-        mode: sequential
-      in: "{{ start.items }}"
-      iterator: item
-    tool:
-      - process_item:
-          kind: python
-          args:
-            item: "{{ iter.item }}"
-            padding_size: "{{ result_padding_size }}"
-            delay: "{{ processing_delay }}"
-            loop_results: "{{ ctx.loop_results }}"
-          code: |
-            import time
-            import hashlib
-
-            # Simulate processing delay if configured
-            if float(delay) > 0:
-                time.sleep(float(delay))
-
-            # Simulate computation - create a hash of the item
-            item_str = str(item)
-            item_hash = hashlib.md5(item_str.encode()).hexdigest()
-
-            # Create result with configurable padding to test result size handling
-            padding = "x" * int(padding_size)
-
-            # Simulate a realistic result payload
-            item_result = {
-                "item_id": item["id"],
-                "item_name": item["name"],
-                "category": item["category"],
-                "priority": item["priority"],
-                "processed": True,
-                "hash": item_hash,
-                "computed_value": item["data"]["field_b"] * 2,
-                "is_even": item["data"]["field_c"],
-                "processing_metadata": {
-                    "timestamp": time.time(),
-                    "worker": "heavy_load_test",
-                    "padding": padding  # Configurable payload size
-                }
-            }
-
-            # Collect result
-            loop_results.append(item_result)
-
-            # Log progress every 10 items
-            if item["id"] % 10 == 0:
-                print(f"Processed item {item['id']}: {item['name']}")
-
-            result = {
-                "item_result": item_result,
-                "loop_results": loop_results
-            }
-          spec:
-            policy:
-              rules:
-                - else:
-                    do: continue
-                    set_ctx:
-                      loop_results: "{{ outcome.result.loop_results }}"
-
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: aggregate_results
-          args:
-            loop_results: "{{ ctx.loop_results }}"
-
-  - step: aggregate_results
-    desc: Aggregate all loop results and compute statistics
-    tool:
-      kind: python
-      args:
-        loop_results: "{{ args.loop_results }}"
-        start_time: "{{ start.start_time }}"
-      code: |
-        import time
-
-        # Extract results from loop aggregation
-        results = loop_results if loop_results else []
-
-        # Compute aggregation statistics
-        total_items = len(results)
-        successful = total_items
-        failed = 0
-
-        # Compute derived metrics
-        categories = {}
-        priorities = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0}
-        even_count = 0
-        total_computed = 0
-
-        for r in results:
-            # Count by category
-            cat = r.get("category", "unknown")
-            categories[cat] = categories.get(cat, 0) + 1
-
-            # Count by priority
-            pri = r.get("priority", 0)
-            if pri in priorities:
-                priorities[pri] += 1
-
-            # Count even items
-            if r.get("is_even", False):
-                even_count += 1
-
-            # Sum computed values
-            total_computed += r.get("computed_value", 0)
-
-        # Calculate processing time
-        end_time = time.time()
-        processing_time = end_time - float(start_time)
-        items_per_second = total_items / processing_time if processing_time > 0 else 0
-
-        result = {
-            "status": "aggregation_complete",
-            "summary": {
-                "total_processed": total_items,
-                "successful": successful,
-                "failed": failed,
-                "success_rate": (successful / total_items * 100) if total_items > 0 else 0
-            },
-            "metrics": {
-                "by_category": categories,
-                "by_priority": priorities,
-                "even_items": even_count,
-                "odd_items": total_items - even_count,
-                "total_computed_value": total_computed,
-                "average_computed_value": total_computed / total_items if total_items > 0 else 0
-            },
-            "performance": {
-                "processing_time_seconds": round(processing_time, 2),
-                "items_per_second": round(items_per_second, 2)
-            },
-            "test_validation": {
-                "loop_completed": True,
-                "results_aggregated": True,
-                "nats_kv_limit_respected": True,
-                "message": f"Successfully processed {total_items} items with aggregation"
-            }
-        }
-
-        print(f"Aggregation complete: {total_items} items in {processing_time:.2f}s ({items_per_second:.2f} items/sec)")
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: validate_results
-
-  - step: validate_results
-    desc: Validate that the test completed successfully
-    tool:
-      kind: python
-      args:
-        aggregation: "{{ aggregate_results }}"
-        expected_count: "{{ item_count }}"
-      code: |
-        # Validate test results
-        summary = aggregation.get("summary", {})
-        total_processed = summary.get("total_processed", 0)
-        expected = int(expected_count)
-
-        validations = []
-        all_passed = True
-
-        # Check item count matches
-        if total_processed == expected:
-            validations.append({"check": "item_count", "passed": True, "message": f"Processed {total_processed} items as expected"})
-        else:
-            validations.append({"check": "item_count", "passed": False, "message": f"Expected {expected} items, got {total_processed}"})
-            all_passed = False
-
-        # Check success rate
-        success_rate = summary.get("success_rate", 0)
-        if success_rate == 100:
-            validations.append({"check": "success_rate", "passed": True, "message": "100% success rate"})
-        else:
-            validations.append({"check": "success_rate", "passed": False, "message": f"Success rate {success_rate}% (expected 100%)"})
-            all_passed = False
-
-        # Check aggregation completed
-        test_validation = aggregation.get("test_validation", {})
-        if test_validation.get("loop_completed") and test_validation.get("results_aggregated"):
-            validations.append({"check": "aggregation", "passed": True, "message": "Loop and aggregation completed"})
-        else:
-            validations.append({"check": "aggregation", "passed": False, "message": "Loop or aggregation failed"})
-            all_passed = False
-
-        result = {
-            "status": "validated" if all_passed else "validation_failed",
-            "all_checks_passed": all_passed,
-            "validations": validations,
-            "performance": aggregation.get("performance", {}),
-            "final_message": "Heavy load loop test PASSED" if all_passed else "Heavy load loop test FAILED"
-        }
-
-        print(f"\n{'='*60}")
-        print(f"HEAVY LOAD LOOP TEST: {'PASSED' if all_passed else 'FAILED'}")
-        print(f"{'='*60}")
-        for v in validations:
-            status = "PASS" if v["passed"] else "FAIL"
-            print(f"  [{status}] {v['check']}: {v['message']}")
-        print(f"{'='*60}\n")
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: end
-
-  - step: end
-    desc: End of heavy load test
-    tool:
-      kind: python
-      args:
-        validation: "{{ validate_results }}"
-      code: |
-        result = {
-            "status": "completed",
-            "test_name": "heavy_loop_aggregation",
-            "test_result": validation.get("status"),
-            "all_passed": validation.get("all_checks_passed", False)
-        }
+        loop_results: '{{ ctx.loop_results }}'
+- step: aggregate_results
+  desc: Aggregate all loop results and compute statistics
+  tool:
+    kind: python
+    args:
+      loop_results: '{{ args.loop_results }}'
+      start_time: '{{ start.start_time }}'
+    code: "import time\n\n# Extract results from loop aggregation\nresults = loop_results\
+      \ if loop_results else []\n\n# Compute aggregation statistics\ntotal_items =\
+      \ len(results)\nsuccessful = total_items\nfailed = 0\n\n# Compute derived metrics\n\
+      categories = {}\npriorities = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0}\neven_count = 0\n\
+      total_computed = 0\n\nfor r in results:\n    # Count by category\n    cat =\
+      \ r.get(\"category\", \"unknown\")\n    categories[cat] = categories.get(cat,\
+      \ 0) + 1\n\n    # Count by priority\n    pri = r.get(\"priority\", 0)\n    if\
+      \ pri in priorities:\n        priorities[pri] += 1\n\n    # Count even items\n\
+      \    if r.get(\"is_even\", False):\n        even_count += 1\n\n    # Sum computed\
+      \ values\n    total_computed += r.get(\"computed_value\", 0)\n\n# Calculate\
+      \ processing time\nend_time = time.time()\nprocessing_time = end_time - float(start_time)\n\
+      items_per_second = total_items / processing_time if processing_time > 0 else\
+      \ 0\n\nresult = {\n    \"status\": \"aggregation_complete\",\n    \"summary\"\
+      : {\n        \"total_processed\": total_items,\n        \"successful\": successful,\n\
+      \        \"failed\": failed,\n        \"success_rate\": (successful / total_items\
+      \ * 100) if total_items > 0 else 0\n    },\n    \"metrics\": {\n        \"by_category\"\
+      : categories,\n        \"by_priority\": priorities,\n        \"even_items\"\
+      : even_count,\n        \"odd_items\": total_items - even_count,\n        \"\
+      total_computed_value\": total_computed,\n        \"average_computed_value\"\
+      : total_computed / total_items if total_items > 0 else 0\n    },\n    \"performance\"\
+      : {\n        \"processing_time_seconds\": round(processing_time, 2),\n     \
+      \   \"items_per_second\": round(items_per_second, 2)\n    },\n    \"test_validation\"\
+      : {\n        \"loop_completed\": True,\n        \"results_aggregated\": True,\n\
+      \        \"nats_kv_limit_respected\": True,\n        \"message\": f\"Successfully\
+      \ processed {total_items} items with aggregation\"\n    }\n}\n\nprint(f\"Aggregation\
+      \ complete: {total_items} items in {processing_time:.2f}s ({items_per_second:.2f}\
+      \ items/sec)\")\n"
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: validate_results
+- step: validate_results
+  desc: Validate that the test completed successfully
+  tool:
+    kind: python
+    args:
+      aggregation: '{{ aggregate_results }}'
+      expected_count: '{{ item_count }}'
+    code: "# Validate test results\nsummary = aggregation.get(\"summary\", {})\ntotal_processed\
+      \ = summary.get(\"total_processed\", 0)\nexpected = int(expected_count)\n\n\
+      validations = []\nall_passed = True\n\n# Check item count matches\nif total_processed\
+      \ == expected:\n    validations.append({\"check\": \"item_count\", \"passed\"\
+      : True, \"message\": f\"Processed {total_processed} items as expected\"})\n\
+      else:\n    validations.append({\"check\": \"item_count\", \"passed\": False,\
+      \ \"message\": f\"Expected {expected} items, got {total_processed}\"})\n   \
+      \ all_passed = False\n\n# Check success rate\nsuccess_rate = summary.get(\"\
+      success_rate\", 0)\nif success_rate == 100:\n    validations.append({\"check\"\
+      : \"success_rate\", \"passed\": True, \"message\": \"100% success rate\"})\n\
+      else:\n    validations.append({\"check\": \"success_rate\", \"passed\": False,\
+      \ \"message\": f\"Success rate {success_rate}% (expected 100%)\"})\n    all_passed\
+      \ = False\n\n# Check aggregation completed\ntest_validation = aggregation.get(\"\
+      test_validation\", {})\nif test_validation.get(\"loop_completed\") and test_validation.get(\"\
+      results_aggregated\"):\n    validations.append({\"check\": \"aggregation\",\
+      \ \"passed\": True, \"message\": \"Loop and aggregation completed\"})\nelse:\n\
+      \    validations.append({\"check\": \"aggregation\", \"passed\": False, \"message\"\
+      : \"Loop or aggregation failed\"})\n    all_passed = False\n\nresult = {\n \
+      \   \"status\": \"validated\" if all_passed else \"validation_failed\",\n  \
+      \  \"all_checks_passed\": all_passed,\n    \"validations\": validations,\n \
+      \   \"performance\": aggregation.get(\"performance\", {}),\n    \"final_message\"\
+      : \"Heavy load loop test PASSED\" if all_passed else \"Heavy load loop test\
+      \ FAILED\"\n}\n\nprint(f\"\\n{'='*60}\")\nprint(f\"HEAVY LOAD LOOP TEST: {'PASSED'\
+      \ if all_passed else 'FAILED'}\")\nprint(f\"{'='*60}\")\nfor v in validations:\n\
+      \    status = \"PASS\" if v[\"passed\"] else \"FAIL\"\n    print(f\"  [{status}]\
+      \ {v['check']}: {v['message']}\")\nprint(f\"{'='*60}\\n\")\n"
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: end
+- step: end
+  desc: End of heavy load test
+  tool:
+    kind: python
+    args:
+      validation: '{{ validate_results }}'
+    code: "result = {\n    \"status\": \"completed\",\n    \"test_name\": \"heavy_loop_aggregation\"\
+      ,\n    \"test_result\": validation.get(\"status\"),\n    \"all_passed\": validation.get(\"\
+      all_checks_passed\", False)\n}\n"

@@ -1,136 +1,104 @@
-apiVersion: noetl.io/v10
+apiVersion: noetl.io/v2
 kind: Playbook
 metadata:
   name: test_vars_block
   path: vars_test/test_vars_block
   description: Test vars block for extracting variables from step results
-
 workload:
-  greeting: "Hello"
-
+  greeting: Hello
 workflow:
-  - step: start
-    desc: Start execution
-    tool:
-      - start_task:
-          kind: python
-          args: {}
-          code: |
-            result = {"status": "initialized"}
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: fetch_data
+- step: start
+  desc: Start execution
+  tool:
+  - name: start_task
+    kind: python
+    args: {}
+    code: 'result = {"status": "initialized"}
 
-  - step: fetch_data
-    desc: Simulate fetching data and extract vars
-    tool:
-      - fetch_data_task:
-          kind: python
-          args: {}
-          code: |
-            # Simulate fetching data from a database
-            result = {
-                "status": "success",
-                "users": [
-                    {"user_id": 123, "email": "alice@example.com", "name": "Alice"},
-                    {"user_id": 456, "email": "bob@example.com", "name": "Bob"}
-                ],
-                "metadata": {
-                    "count": 2,
-                    "source": "test_db"
-                }
-            }
-          spec:
-            policy:
-              rules:
-                - else:
-                    then:
-                      do: continue
-                      set_ctx:
-                        first_user_id: "{{ outcome.response.users[0].user_id }}"
-                        first_email: "{{ outcome.response.users[0].email }}"
-                        user_count: "{{ outcome.response.metadata.count }}"
-                        data_source: "{{ outcome.response.metadata.source }}"
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: use_extracted_vars
+      '
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: fetch_data
+- step: fetch_data
+  desc: Simulate fetching data and extract vars
+  tool:
+  - name: fetch_data_task
+    kind: python
+    args: {}
+    code: "# Simulate fetching data from a database\nresult = {\n    \"status\": \"\
+      success\",\n    \"users\": [\n        {\"user_id\": 123, \"email\": \"alice@example.com\"\
+      , \"name\": \"Alice\"},\n        {\"user_id\": 456, \"email\": \"bob@example.com\"\
+      , \"name\": \"Bob\"}\n    ],\n    \"metadata\": {\n        \"count\": 2,\n \
+      \       \"source\": \"test_db\"\n    }\n}\n"
+    spec:
+      policy:
+        rules:
+        - else:
+            then:
+              do: continue
+              set_ctx:
+                first_user_id: '{{ outcome.response.users[0].user_id }}'
+                first_email: '{{ outcome.response.users[0].email }}'
+                user_count: '{{ outcome.response.metadata.count }}'
+                data_source: '{{ outcome.response.metadata.source }}'
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: use_extracted_vars
+- step: use_extracted_vars
+  desc: Use variables that were extracted by vars block
+  tool:
+  - name: use_vars_task
+    kind: python
+    args:
+      first_user_id: '{{ ctx.first_user_id }}'
+      first_email: '{{ ctx.first_email }}'
+      user_count: '{{ ctx.user_count }}'
+      data_source: '{{ ctx.data_source }}'
+    code: "# This step receives vars extracted from previous step\nresult = {\n  \
+      \  \"status\": \"success\",\n    \"message\": f\"Processing user {first_user_id}\
+      \ ({first_email})\",\n    \"total_users\": user_count,\n    \"source\": data_source,\n\
+      \    \"values_received\": {\n        \"first_user_id\": first_user_id,\n   \
+      \     \"first_email\": first_email,\n        \"user_count\": user_count,\n \
+      \       \"data_source\": data_source\n    }\n}\n"
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: verify_vars
+- step: verify_vars
+  desc: Verify all vars were extracted and used correctly
+  tool:
+  - name: verify_task
+    kind: python
+    args:
+      first_user_id: '{{ ctx.first_user_id }}'
+      first_email: '{{ ctx.first_email }}'
+      user_count: '{{ ctx.user_count }}'
+      data_source: '{{ ctx.data_source }}'
+    code: "# Verify vars via template args (no direct API access)\nchecks = {\n  \
+      \  \"first_user_id_correct\": first_user_id == 123,\n    \"first_email_correct\"\
+      : first_email == \"alice@example.com\",\n    \"user_count_correct\": user_count\
+      \ == 2,\n    \"data_source_correct\": data_source == \"test_db\"\n}\n\nall_passed\
+      \ = all(checks.values())\n\nresult = {\n    \"status\": \"success\" if all_passed\
+      \ else \"failed\",\n    \"checks\": checks,\n    \"received_values\": {\n  \
+      \      \"first_user_id\": first_user_id,\n        \"first_email\": first_email,\n\
+      \        \"user_count\": user_count,\n        \"data_source\": data_source\n\
+      \    }\n}\n"
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: end
+- step: end
+  desc: End execution
+  tool:
+  - name: end_task
+    kind: python
+    args: {}
+    code: 'result = {"status": "complete"}
 
-  - step: use_extracted_vars
-    desc: Use variables that were extracted by vars block
-    tool:
-      - use_vars_task:
-          kind: python
-          args:
-            first_user_id: "{{ ctx.first_user_id }}"
-            first_email: "{{ ctx.first_email }}"
-            user_count: "{{ ctx.user_count }}"
-            data_source: "{{ ctx.data_source }}"
-          code: |
-            # This step receives vars extracted from previous step
-            result = {
-                "status": "success",
-                "message": f"Processing user {first_user_id} ({first_email})",
-                "total_users": user_count,
-                "source": data_source,
-                "values_received": {
-                    "first_user_id": first_user_id,
-                    "first_email": first_email,
-                    "user_count": user_count,
-                    "data_source": data_source
-                }
-            }
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: verify_vars
-
-  - step: verify_vars
-    desc: Verify all vars were extracted and used correctly
-    tool:
-      - verify_task:
-          kind: python
-          args:
-            first_user_id: "{{ ctx.first_user_id }}"
-            first_email: "{{ ctx.first_email }}"
-            user_count: "{{ ctx.user_count }}"
-            data_source: "{{ ctx.data_source }}"
-          code: |
-            # Verify vars via template args (no direct API access)
-            checks = {
-                "first_user_id_correct": first_user_id == 123,
-                "first_email_correct": first_email == "alice@example.com",
-                "user_count_correct": user_count == 2,
-                "data_source_correct": data_source == "test_db"
-            }
-
-            all_passed = all(checks.values())
-
-            result = {
-                "status": "success" if all_passed else "failed",
-                "checks": checks,
-                "received_values": {
-                    "first_user_id": first_user_id,
-                    "first_email": first_email,
-                    "user_count": user_count,
-                    "data_source": data_source
-                }
-            }
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: end
-
-  - step: end
-    desc: End execution
-    tool:
-      - end_task:
-          kind: python
-          args: {}
-          code: |
-            result = {"status": "complete"}
+      '

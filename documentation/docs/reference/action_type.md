@@ -1,6 +1,6 @@
 # NoETL Tool Tasks Guide (Canonical v10)
 
-This page aligns “task/action” documentation to **Canonical v10** (see `documentation/docs/reference/dsl/noetl_step_spec.md`).
+This page aligns “task/action” documentation to **Canonical v10** (see `documentation/docs/reference/dsl/step_spec.md`).
 
 In Canonical v10:
 - A step executes an ordered **pipeline** of tool tasks under `step.tool`.

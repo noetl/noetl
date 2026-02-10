@@ -1,7 +1,7 @@
 # NoETL Canonical v10 Playbook
 # Test DuckLake distributed DuckDB with PostgreSQL metastore.
 
-apiVersion: noetl.io/v10
+apiVersion: noetl.io/v2
 kind: Playbook
 metadata:
   name: ducklake_test

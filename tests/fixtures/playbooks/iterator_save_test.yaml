@@ -1,92 +1,73 @@
 apiVersion: noetl.io/v2
 kind: Playbook
-
 metadata:
   name: iterator_save_test
   path: tests/iterator_save_test
-
 workload:
   pg_auth: pg_k8s
   items:
-    - name: "item1"
-      value: 100
-    - name: "item2"
-      value: 200
-    - name: "item3"
-      value: 300
-
+  - name: item1
+    value: 100
+  - name: item2
+    value: 200
+  - name: item3
+    value: 300
 workflow:
-  - step: start
-    desc: Start test
-    tool:
-      kind: python
-      code: |
-        result = {"status": "initialized"}
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: create_table
+- step: start
+  desc: Start test
+  tool:
+    kind: python
+    code: 'result = {"status": "initialized"}
 
-  - step: create_table
-    desc: Create test table
-    tool:
-      kind: postgres
-      credential: "{{ pg_auth }}"
-      query: |
-        CREATE TABLE IF NOT EXISTS public.iterator_save_test (
-          id TEXT PRIMARY KEY,
-          execution_id TEXT,
-          item_name TEXT,
-          item_value INTEGER,
-          created_at TIMESTAMPTZ DEFAULT now()
-        );
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: process_items
+      '
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: create_table
+- step: create_table
+  desc: Create test table
+  tool:
+    kind: postgres
+    credential: '{{ pg_auth }}'
+    query: "CREATE TABLE IF NOT EXISTS public.iterator_save_test (\n  id TEXT PRIMARY\
+      \ KEY,\n  execution_id TEXT,\n  item_name TEXT,\n  item_value INTEGER,\n  created_at\
+      \ TIMESTAMPTZ DEFAULT now()\n);\n"
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: process_items
+- step: process_items
+  desc: Process items with pipeline to transform and save
+  loop:
+    spec:
+      mode: sequential
+    in: '{{ items }}'
+    iterator: item
+  tool:
+  - name: transform
+    kind: python
+    args:
+      item: '{{ item }}'
+    code: "result = {\n    'item_name': item.get('name', 'unknown'),\n    'item_value':\
+      \ item.get('value', 0)\n}\n"
+  - name: save_item
+    kind: postgres
+    credential: '{{ pg_auth }}'
+    query: "INSERT INTO public.iterator_save_test (id, execution_id, item_name, item_value)\n\
+      VALUES (\n  '{{ execution_id }}:{{ _prev.item_name }}',\n  '{{ execution_id\
+      \ }}',\n  '{{ _prev.item_name }}',\n  {{ _prev.item_value }}\n)\nON CONFLICT\
+      \ (id) DO UPDATE SET\n  item_value = EXCLUDED.item_value,\n  created_at = now();\n"
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: end
+- step: end
+  desc: End test
+  tool:
+    kind: python
+    code: 'result = {"status": "complete"}
 
-  - step: process_items
-    desc: Process items with pipeline to transform and save
-    loop:
-      spec:
-        mode: sequential
-      in: "{{ items }}"
-      iterator: item
-    tool:
-      - transform:
-          kind: python
-          args:
-            item: "{{ item }}"
-          code: |
-            result = {
-                'item_name': item.get('name', 'unknown'),
-                'item_value': item.get('value', 0)
-            }
-      - save_item:
-          kind: postgres
-          credential: "{{ pg_auth }}"
-          query: |
-            INSERT INTO public.iterator_save_test (id, execution_id, item_name, item_value)
-            VALUES (
-              '{{ execution_id }}:{{ _prev.item_name }}',
-              '{{ execution_id }}',
-              '{{ _prev.item_name }}',
-              {{ _prev.item_value }}
-            )
-            ON CONFLICT (id) DO UPDATE SET
-              item_value = EXCLUDED.item_value,
-              created_at = now();
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: end
-
-  - step: end
-    desc: End test
-    tool:
-      kind: python
-      code: |
-        result = {"status": "complete"}
+      '

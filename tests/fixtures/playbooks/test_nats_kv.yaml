@@ -5,9 +5,8 @@ metadata:
   path: test_nats_kv
   description: Test NATS K/V Store operations
   tags:
-    - test
-    - nats
-
+  - test
+  - nats
 workload:
   nats_credential: nats_credential
   bucket: sessions
@@ -17,73 +16,71 @@ workload:
     user_id: 1
     email: test@example.com
     display_name: Test User
-    expires_at: "2026-01-31T23:59:59Z"
+    expires_at: '2026-01-31T23:59:59Z'
     is_active: true
-
 workflow:
-  - step: start
-    desc: Begin NATS K/V test
-    tool:
-      - init:
-          kind: python
-          code: |
-            result = {"status": "initialized"}
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: kv_put
+- step: start
+  desc: Begin NATS K/V test
+  tool:
+  - name: init
+    kind: python
+    code: 'result = {"status": "initialized"}
 
-  - step: kv_put
-    desc: Put a test value in NATS K/V
-    tool:
-      - put_value:
-          kind: nats
-          auth: "{{ nats_credential }}"
-          operation: kv_put
-          bucket: "{{ bucket }}"
-          key: "{{ test_key }}"
-          value: "{{ test_value }}"
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: kv_get
+      '
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: kv_put
+- step: kv_put
+  desc: Put a test value in NATS K/V
+  tool:
+  - name: put_value
+    kind: nats
+    auth: '{{ nats_credential }}'
+    operation: kv_put
+    bucket: '{{ bucket }}'
+    key: '{{ test_key }}'
+    value: '{{ test_value }}'
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: kv_get
+- step: kv_get
+  desc: Get the value back from NATS K/V
+  tool:
+  - name: get_value
+    kind: nats
+    auth: '{{ nats_credential }}'
+    operation: kv_get
+    bucket: '{{ bucket }}'
+    key: '{{ test_key }}'
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: kv_delete
+- step: kv_delete
+  desc: Delete the test value
+  tool:
+  - name: delete_value
+    kind: nats
+    auth: '{{ nats_credential }}'
+    operation: kv_delete
+    bucket: '{{ bucket }}'
+    key: '{{ test_key }}'
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: end
+- step: end
+  desc: Test complete
+  tool:
+  - name: complete
+    kind: python
+    code: 'result = {"status": "complete", "message": "NATS K/V operations tested
+      successfully"}
 
-  - step: kv_get
-    desc: Get the value back from NATS K/V
-    tool:
-      - get_value:
-          kind: nats
-          auth: "{{ nats_credential }}"
-          operation: kv_get
-          bucket: "{{ bucket }}"
-          key: "{{ test_key }}"
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: kv_delete
-
-  - step: kv_delete
-    desc: Delete the test value
-    tool:
-      - delete_value:
-          kind: nats
-          auth: "{{ nats_credential }}"
-          operation: kv_delete
-          bucket: "{{ bucket }}"
-          key: "{{ test_key }}"
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: end
-
-  - step: end
-    desc: Test complete
-    tool:
-      - complete:
-          kind: python
-          code: |
-            result = {"status": "complete", "message": "NATS K/V operations tested successfully"}
+      '

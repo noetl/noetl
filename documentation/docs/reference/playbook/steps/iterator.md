@@ -9,4 +9,4 @@ Canonical v10 expresses iteration as a **step modifier**, not a step type:
 ## See also
 - Loop iteration guide: `documentation/docs/reference/iterator_v3.md`
 - Pagination pattern: `documentation/docs/reference/pagination_v2.md`
-- Step spec: `documentation/docs/reference/dsl/noetl_step_spec.md`
+- Step spec: `documentation/docs/reference/dsl/step_spec.md`

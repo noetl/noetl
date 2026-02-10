@@ -1,4 +1,4 @@
-apiVersion: noetl.io/v10
+apiVersion: noetl.io/v2
 kind: Playbook
 metadata:
   name: k8s_job_python_gcs

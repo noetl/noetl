@@ -1,152 +1,120 @@
-apiVersion: noetl.io/v10
+apiVersion: noetl.io/v2
 kind: Playbook
 metadata:
   name: test_transient
   path: test/transient
-  description: Test variable functionality using declarative patterns (no await, no internal APIs)
-
+  description: Test variable functionality using declarative patterns (no await, no
+    internal APIs)
 workload:
   execution_id: '{{ job.uuid }}'
   initial_value: 100
-
 workflow:
-  - step: start
-    desc: Test transient functionality
-    tool:
-      - start_task:
-          kind: python
-          args: {}
-          code: |
-            result = {"status": "initialized"}
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: test_set_var
+- step: start
+  desc: Test transient functionality
+  tool:
+  - name: start_task
+    kind: python
+    args: {}
+    code: 'result = {"status": "initialized"}
 
-  - step: test_set_var
-    desc: Set initial variables using policy rules
-    tool:
-      - set_vars_task:
-          kind: python
-          args: {}
-          code: |
-            # Return values that will be extracted via policy rules
-            result = {
-                "status": "success",
-                "counter": 0,
-                "status_var": "initialized",
-                "config": {"timeout": 30, "retries": 3}
-            }
-          spec:
-            policy:
-              rules:
-                - else:
-                    then:
-                      do: continue
-                      set_ctx:
-                        counter: "{{ outcome.result.counter }}"
-                        status_var: "{{ outcome.result.status_var }}"
-                        config: "{{ outcome.result.config }}"
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: test_get_var
+      '
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: test_set_var
+- step: test_set_var
+  desc: Set initial variables using policy rules
+  tool:
+  - name: set_vars_task
+    kind: python
+    args: {}
+    code: "# Return values that will be extracted via policy rules\nresult = {\n \
+      \   \"status\": \"success\",\n    \"counter\": 0,\n    \"status_var\": \"initialized\"\
+      ,\n    \"config\": {\"timeout\": 30, \"retries\": 3}\n}\n"
+    spec:
+      policy:
+        rules:
+        - else:
+            then:
+              do: continue
+              set_ctx:
+                counter: '{{ outcome.result.counter }}'
+                status_var: '{{ outcome.result.status_var }}'
+                config: '{{ outcome.result.config }}'
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: test_get_var
+- step: test_get_var
+  desc: Retrieve and verify variables via template args
+  tool:
+  - name: get_vars_task
+    kind: python
+    args:
+      counter: '{{ ctx.counter }}'
+      status_var: '{{ ctx.status_var }}'
+      config: '{{ ctx.config }}'
+    code: "# Verify variables received via args\nresult = {\n    \"status\": \"success\"\
+      ,\n    \"data\": {\n        \"counter\": counter,\n        \"status_var\": status_var,\n\
+      \        \"config\": config,\n        \"verification\": {\n            \"counter_correct\"\
+      : counter == 0,\n            \"status_correct\": status_var == \"initialized\"\
+      ,\n            \"config_correct\": config == {\"timeout\": 30, \"retries\":\
+      \ 3}\n        }\n    }\n}\n"
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: test_update_var
+- step: test_update_var
+  desc: Update variable values
+  tool:
+  - name: update_vars_task
+    kind: python
+    args: {}
+    code: "# Return updated values\nresult = {\n    \"status\": \"success\",\n   \
+      \ \"counter\": 1,\n    \"status_var\": \"processing\"\n}\n"
+    spec:
+      policy:
+        rules:
+        - else:
+            then:
+              do: continue
+              set_ctx:
+                counter: '{{ outcome.result.counter }}'
+                status_var: '{{ outcome.result.status_var }}'
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: verify_updates
+- step: verify_updates
+  desc: Verify updated values
+  tool:
+  - name: verify_task
+    kind: python
+    args:
+      counter: '{{ ctx.counter }}'
+      status_var: '{{ ctx.status_var }}'
+      config: '{{ ctx.config }}'
+    code: "# Verify updated values\nresult = {\n    \"status\": \"success\",\n   \
+      \ \"verification\": {\n        \"counter_updated\": counter == 1,\n        \"\
+      status_updated\": status_var == \"processing\",\n        \"config_preserved\"\
+      : config == {\"timeout\": 30, \"retries\": 3}\n    },\n    \"all_checks_passed\"\
+      : (\n        counter == 1 and\n        status_var == \"processing\" and\n  \
+      \      config == {\"timeout\": 30, \"retries\": 3}\n    )\n}\n"
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: end
+- step: end
+  desc: End workflow
+  tool:
+  - name: end_task
+    kind: python
+    args: {}
+    code: 'result = {"status": "complete"}
 
-  - step: test_get_var
-    desc: Retrieve and verify variables via template args
-    tool:
-      - get_vars_task:
-          kind: python
-          args:
-            counter: "{{ ctx.counter }}"
-            status_var: "{{ ctx.status_var }}"
-            config: "{{ ctx.config }}"
-          code: |
-            # Verify variables received via args
-            result = {
-                "status": "success",
-                "data": {
-                    "counter": counter,
-                    "status_var": status_var,
-                    "config": config,
-                    "verification": {
-                        "counter_correct": counter == 0,
-                        "status_correct": status_var == "initialized",
-                        "config_correct": config == {"timeout": 30, "retries": 3}
-                    }
-                }
-            }
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: test_update_var
-
-  - step: test_update_var
-    desc: Update variable values
-    tool:
-      - update_vars_task:
-          kind: python
-          args: {}
-          code: |
-            # Return updated values
-            result = {
-                "status": "success",
-                "counter": 1,
-                "status_var": "processing"
-            }
-          spec:
-            policy:
-              rules:
-                - else:
-                    then:
-                      do: continue
-                      set_ctx:
-                        counter: "{{ outcome.result.counter }}"
-                        status_var: "{{ outcome.result.status_var }}"
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: verify_updates
-
-  - step: verify_updates
-    desc: Verify updated values
-    tool:
-      - verify_task:
-          kind: python
-          args:
-            counter: "{{ ctx.counter }}"
-            status_var: "{{ ctx.status_var }}"
-            config: "{{ ctx.config }}"
-          code: |
-            # Verify updated values
-            result = {
-                "status": "success",
-                "verification": {
-                    "counter_updated": counter == 1,
-                    "status_updated": status_var == "processing",
-                    "config_preserved": config == {"timeout": 30, "retries": 3}
-                },
-                "all_checks_passed": (
-                    counter == 1 and
-                    status_var == "processing" and
-                    config == {"timeout": 30, "retries": 3}
-                )
-            }
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: end
-
-  - step: end
-    desc: End workflow
-    tool:
-      - end_task:
-          kind: python
-          args: {}
-          code: |
-            result = {"status": "complete"}
+      '

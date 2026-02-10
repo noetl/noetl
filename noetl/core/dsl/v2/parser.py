@@ -162,12 +162,13 @@ class DSLParser:
         Validate that data uses canonical v10 structure.
         Reject all deprecated patterns.
         """
-        # Check apiVersion
+        # Check apiVersion - accept both v2 and v10 (canonical naming convention)
         api_version = data.get("apiVersion", "")
-        if api_version != "noetl.io/v2":
+        valid_versions = ("noetl.io/v2", "noetl.io/v10")
+        if api_version not in valid_versions:
             raise ValueError(
                 f"Invalid apiVersion: {api_version}. "
-                "v2 playbooks must use 'apiVersion: noetl.io/v2'"
+                f"Playbooks must use one of: {valid_versions}"
             )
 
         # Check kind
@@ -200,17 +201,24 @@ class DSLParser:
             self._validate_step_v10(step_data, all_task_labels)
 
     def _collect_task_labels(self, step_data: dict[str, Any]) -> set[str]:
-        """Collect all task labels in a step for jump validation."""
+        """
+        Collect all task labels in a step for jump validation.
+
+        Supported formats:
+        1. Canonical (named): { name: "task_name", kind: "http", ... }
+        2. Unnamed: { kind: "http", ... } - synthetic name task_N
+        """
         labels = set()
         tool_data = step_data.get("tool")
         if isinstance(tool_data, list):
             for i, task_def in enumerate(tool_data):
-                if isinstance(task_def, dict) and len(task_def) == 1:
-                    label = next(iter(task_def.keys()))
-                    labels.add(label)
-                else:
-                    # Generate label for unnamed tasks
-                    labels.add(f"task_{i + 1}")
+                if isinstance(task_def, dict):
+                    # Canonical format: { name: "task_name", kind: ... }
+                    if "name" in task_def and "kind" in task_def:
+                        labels.add(task_def["name"])
+                    # Unnamed format: { kind: ... }
+                    elif "kind" in task_def and "name" not in task_def:
+                        labels.add(f"task_{i}")
         return labels
 
     def _validate_step_v10(self, step_data: dict[str, Any], all_task_labels: set[str]):
@@ -300,6 +308,13 @@ class DSLParser:
     def _validate_tool_pipeline_v10(self, pipeline: list, step_name: str, all_task_labels: set[str]):
         """
         Validate tool pipeline (list of labeled tasks) in v10 format.
+
+        Supported formats:
+        1. Canonical (named): { name: "task_name", kind: "http", ... }
+        2. Unnamed: { kind: "http", ... } - synthetic name task_N
+
+        NOT supported (removed):
+        - Syntactic sugar: { task_label: { kind: ... } }
         """
         if not pipeline:
             raise ValueError(
@@ -314,24 +329,31 @@ class DSLParser:
                     f"Step '{step_name}': tool[{i}] must be an object"
                 )
 
-            if len(task_def) != 1:
+            # Determine format and extract label + config
+            # Canonical format: { name: "task_name", kind: "http", ... }
+            # Unnamed format: { kind: "http", ... }
+            if "name" in task_def and "kind" in task_def:
+                # Canonical format
+                label = task_def["name"]
+                task_config = {k: v for k, v in task_def.items() if k != "name"}
+            elif "kind" in task_def and "name" not in task_def:
+                # Unnamed format - assign synthetic label
+                label = f"task_{i}"
+                task_config = task_def
+            else:
+                # Invalid format - syntactic sugar is no longer supported
                 raise ValueError(
-                    f"Step '{step_name}': tool[{i}] must have exactly one key (the task label). "
+                    f"Step '{step_name}': tool[{i}] must be either:\n"
+                    f"  1. Canonical: {{ name: 'task_name', kind: 'http', ... }}\n"
+                    f"  2. Unnamed: {{ kind: 'http', ... }}\n"
                     f"Got: {list(task_def.keys())}"
                 )
-
-            label, task_config = next(iter(task_def.items()))
 
             if label in seen_labels:
                 raise ValueError(
                     f"Step '{step_name}': Duplicate task label '{label}'"
                 )
             seen_labels.add(label)
-
-            if not isinstance(task_config, dict):
-                raise ValueError(
-                    f"Step '{step_name}': tool[{i}].{label} must be an object"
-                )
 
             if "kind" not in task_config:
                 raise ValueError(

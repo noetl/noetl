@@ -7,7 +7,7 @@ NoETL is an event-sourced orchestration system with a strict control-plane / dat
 - **CLI**: manages server/worker lifecycle and provides operational commands.
 
 Canonical v10 DSL details live under:
-- `documentation/docs/reference/dsl/noetl_step_spec.md`
+- `documentation/docs/reference/dsl/step_spec.md`
 - `documentation/docs/reference/dsl/spec.md`
 - `documentation/docs/reference/dsl/execution_model.md`
 

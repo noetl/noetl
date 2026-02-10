@@ -10,7 +10,7 @@ The NoETL Domain-Specific Language (DSL) defines how playbooks are structured an
 
 ## Start Here
 
-- [NoETL Canonical Step Spec (v10)](./noetl_step_spec) - Latest decisions (policies, routing, loops, spec layering)
+- [NoETL Canonical Step Spec (v10)](./step_spec) - Latest decisions (policies, routing, loops, spec layering)
 - [DSL Specification (Canonical)](./spec) - Normative playbook/step schema + semantics
 - [DSL Specification (Detailed)](./dsl_specification) - Full technical walkthrough
 - [Formal Specification (Canonical)](./formal_specification) - Normative execution model and grammar notes

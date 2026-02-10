@@ -3,170 +3,153 @@ kind: Playbook
 metadata:
   name: v2_actions_test
   path: test/v2/actions
-
 workload:
-  test_message: "Testing V2 actions: call, retry, sink"
+  test_message: 'Testing V2 actions: call, retry, sink'
   max_retries: 2
-  numbers: [10, 20, 30]
-
+  numbers:
+  - 10
+  - 20
+  - 30
 workflow:
-  # Start: Process data and store in variable
-  - step: start
-    desc: Initialize data processing
-    tool:
-      - init:
-          kind: python
-          code: |
-            print(f"[START] Processing initial data")
-            data = {"count": 0, "sum": 0, "items": []}
-            return data
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: process_loop
+- step: start
+  desc: Initialize data processing
+  tool:
+  - name: init
+    kind: python
+    code: 'print(f"[START] Processing initial data")
 
-  # Loop through numbers and collect results
-  - step: process_loop
-    desc: Loop through numbers and double them
-    loop:
-      spec:
-        mode: sequential
-      in: "{{ numbers }}"
-      iterator: num
-    tool:
-      - double_number:
-          kind: python
-          args:
-            num: "{{ iter.num }}"
-          code: |
-            num = input_data.get('num')
-            print(f"[LOOP] Processing {num}")
-            result = num * 2
-            return {"original": num, "doubled": result}
-          spec:
-            policy:
-              rules:
-                - when: "{{ true }}"
-                  then:
-                    do: continue
-                    set_iter:
-                      loop_result: "{{ outcome.result }}"
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: aggregate
+      data = {"count": 0, "sum": 0, "items": []}
 
-  # Aggregate loop results
-  - step: aggregate
-    desc: Sum all doubled values
-    tool:
-      - aggregate_results:
-          kind: python
-          args:
-            loop_results: "{{ ctx.loop_results | default([]) }}"
-          code: |
-            results = input_data.get('loop_results', [])
-            print(f"[AGGREGATE] Processing {len(results)} results")
+      return data
 
-            total = sum(item['doubled'] for item in results)
-            original_sum = sum(item['original'] for item in results)
+      '
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: process_loop
+- step: process_loop
+  desc: Loop through numbers and double them
+  loop:
+    spec:
+      mode: sequential
+    in: '{{ numbers }}'
+    iterator: num
+  tool:
+  - name: double_number
+    kind: python
+    args:
+      num: '{{ iter.num }}'
+    code: 'num = input_data.get(''num'')
 
-            return {
-                "count": len(results),
-                "original_sum": original_sum,
-                "doubled_sum": total
-            }
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: helper
-          when: "{{ aggregate.count > 0 }}"
-          args:
-            message: "Aggregate completed with {{ aggregate.count }} items"
-            data: "{{ aggregate }}"
-        - step: test_secrets
+      print(f"[LOOP] Processing {num}")
 
-  # Helper step (called by aggregate)
-  - step: helper
-    desc: Helper step to demonstrate call action
-    tool:
-      - helper_action:
-          kind: python
-          args:
-            message: "{{ args.message | default('No message') }}"
-            data: "{{ args.data | default({}) }}"
-          code: |
-            message = input_data.get('message', 'No message')
-            data = input_data.get('data', {})
-            print(f"[HELPER] {message}")
-            print(f"[HELPER] Data: {data}")
-            return {"helper_called": True, "message": message}
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: verify
+      result = num * 2
 
-  # Test secrets tool
-  - step: test_secrets
-    desc: Fetch secret from environment
-    tool:
-      - fetch_secret:
-          kind: secrets
-          provider: "env"
-          name: "TEST_SECRET"
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: verify
+      return {"original": num, "doubled": result}
 
-  # Verify results
-  - step: verify
-    desc: Verify all actions completed
-    tool:
-      - verify_actions:
-          kind: python
-          args:
-            aggregate: "{{ aggregate | default({}) }}"
-            helper: "{{ helper | default({}) }}"
-          code: |
-            print("[VERIFY] All actions completed successfully")
+      '
+    spec:
+      policy:
+        rules:
+        - when: '{{ true }}'
+          then:
+            do: continue
+            set_iter:
+              loop_result: '{{ outcome.result }}'
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: aggregate
+- step: aggregate
+  desc: Sum all doubled values
+  tool:
+  - name: aggregate_results
+    kind: python
+    args:
+      loop_results: '{{ ctx.loop_results | default([]) }}'
+    code: "results = input_data.get('loop_results', [])\nprint(f\"[AGGREGATE] Processing\
+      \ {len(results)} results\")\n\ntotal = sum(item['doubled'] for item in results)\n\
+      original_sum = sum(item['original'] for item in results)\n\nreturn {\n    \"\
+      count\": len(results),\n    \"original_sum\": original_sum,\n    \"doubled_sum\"\
+      : total\n}\n"
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: helper
+      when: '{{ aggregate.count > 0 }}'
+      args:
+        message: Aggregate completed with {{ aggregate.count }} items
+        data: '{{ aggregate }}'
+    - step: test_secrets
+- step: helper
+  desc: Helper step to demonstrate call action
+  tool:
+  - name: helper_action
+    kind: python
+    args:
+      message: '{{ args.message | default(''No message'') }}'
+      data: '{{ args.data | default({}) }}'
+    code: 'message = input_data.get(''message'', ''No message'')
 
-            # Check if we have the expected data
-            aggregate_result = input_data.get('aggregate', {})
-            helper_result = input_data.get('helper', {})
+      data = input_data.get(''data'', {})
 
-            success = (
-                aggregate_result.get('count', 0) == 3 and
-                aggregate_result.get('doubled_sum', 0) == 120 and
-                helper_result.get('helper_called', False)
-            )
+      print(f"[HELPER] {message}")
 
-            return {
-                "success": success,
-                "aggregate": aggregate_result,
-                "helper": helper_result,
-                "message": "All tests passed!" if success else "Some tests failed"
-            }
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: end
+      print(f"[HELPER] Data: {data}")
 
-  # End step
-  - step: end
-    desc: Workflow complete
-    tool:
-      - complete:
-          kind: python
-          args:
-            verify: "{{ verify }}"
-          code: |
-            verify_result = input_data.get('verify', {})
-            print(f"[END] {verify_result.get('message', 'Complete')}")
-            return {"status": "completed", "success": verify_result.get('success', False)}
+      return {"helper_called": True, "message": message}
+
+      '
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: verify
+- step: test_secrets
+  desc: Fetch secret from environment
+  tool:
+  - name: TEST_SECRET
+    kind: secrets
+    provider: env
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: verify
+- step: verify
+  desc: Verify all actions completed
+  tool:
+  - name: verify_actions
+    kind: python
+    args:
+      aggregate: '{{ aggregate | default({}) }}'
+      helper: '{{ helper | default({}) }}'
+    code: "print(\"[VERIFY] All actions completed successfully\")\n\n# Check if we\
+      \ have the expected data\naggregate_result = input_data.get('aggregate', {})\n\
+      helper_result = input_data.get('helper', {})\n\nsuccess = (\n    aggregate_result.get('count',\
+      \ 0) == 3 and\n    aggregate_result.get('doubled_sum', 0) == 120 and\n    helper_result.get('helper_called',\
+      \ False)\n)\n\nreturn {\n    \"success\": success,\n    \"aggregate\": aggregate_result,\n\
+      \    \"helper\": helper_result,\n    \"message\": \"All tests passed!\" if success\
+      \ else \"Some tests failed\"\n}\n"
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: end
+- step: end
+  desc: Workflow complete
+  tool:
+  - name: complete
+    kind: python
+    args:
+      verify: '{{ verify }}'
+    code: 'verify_result = input_data.get(''verify'', {})
+
+      print(f"[END] {verify_result.get(''message'', ''Complete'')}")
+
+      return {"status": "completed", "success": verify_result.get(''success'', False)}
+
+      '

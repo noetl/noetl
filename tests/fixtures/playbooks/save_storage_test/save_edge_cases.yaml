@@ -1,280 +1,173 @@
-apiVersion: noetl.io/v10
+apiVersion: noetl.io/v2
 kind: Playbook
 metadata:
   name: save_edge_cases
   path: tests/fixtures/playbooks/save_storage_test/save_edge_cases
-  description: "Test playbook for save storage edge cases and error scenarios"
-
+  description: Test playbook for save storage edge cases and error scenarios
 workload:
   pg_auth: pg_local
   test_scenarios:
-    - "mixed_data_types"
-    - "large_payload"
-    - "special_characters"
-    - "empty_data"
-
+  - mixed_data_types
+  - large_payload
+  - special_characters
+  - empty_data
 workflow:
-  # Setup: Create tables
-  - step: start
-    desc: "Create test tables for edge cases"
-    tool:
-      kind: postgres
-      auth: "{{ pg_auth }}"
-      command: |
-        -- Create table for mixed data types test
-        CREATE TABLE IF NOT EXISTS test_mixed_types (
-          execution_id VARCHAR,
-          string_field VARCHAR,
-          integer_field INTEGER,
-          float_field DOUBLE PRECISION,
-          boolean_field BOOLEAN,
-          null_field VARCHAR,
-          datetime_field VARCHAR,
-          list_field TEXT,
-          dict_field TEXT,
-          decimal_field DOUBLE PRECISION
-        );
+- step: start
+  desc: Create test tables for edge cases
+  tool:
+    kind: postgres
+    auth: '{{ pg_auth }}'
+    command: "-- Create table for mixed data types test\nCREATE TABLE IF NOT EXISTS\
+      \ test_mixed_types (\n  execution_id VARCHAR,\n  string_field VARCHAR,\n  integer_field\
+      \ INTEGER,\n  float_field DOUBLE PRECISION,\n  boolean_field BOOLEAN,\n  null_field\
+      \ VARCHAR,\n  datetime_field VARCHAR,\n  list_field TEXT,\n  dict_field TEXT,\n\
+      \  decimal_field DOUBLE PRECISION\n);\n\n-- Create table for special characters\
+      \ test\nCREATE TABLE IF NOT EXISTS test_special_chars (\n  execution_id VARCHAR,\n\
+      \  quotes VARCHAR,\n  unicode TEXT,\n  sql_injection TEXT,\n  newlines TEXT,\n\
+      \  backslashes TEXT,\n  json_string TEXT\n);\n"
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: test_mixed_types
+- step: test_mixed_types
+  desc: Test save with mixed data types
+  tool:
+  - name: generate_mixed
+    kind: python
+    libs:
+      datetime:
+        from: datetime
+        import: datetime
+      Decimal:
+        from: decimal
+        import: Decimal
+    args:
+      input_data: {}
+    code: "mixed_data = {\n  \"string_field\": \"test_string\",\n  \"integer_field\"\
+      : 12345,\n  \"float_field\": 3.14159,\n  \"boolean_field\": True,\n  \"null_field\"\
+      : None,\n  \"datetime_field\": datetime.now().isoformat(),\n  \"list_field\"\
+      : [1, 2, 3, \"mixed\", True],\n  \"dict_field\": {\"nested\": \"value\", \"\
+      count\": 42},\n  \"decimal_field\": float(Decimal(\"99.99\"))\n}\n\nresult =\
+      \ mixed_data\n"
+  - name: save_mixed_types
+    kind: postgres
+    auth: '{{ pg_auth }}'
+    command: "INSERT INTO test_mixed_types (\n  execution_id, string_field, integer_field,\
+      \ float_field,\n  boolean_field, null_field, datetime_field, list_field,\n \
+      \ dict_field, decimal_field\n) VALUES (\n  '{{ execution_id }}',\n  '{{ generate_mixed.string_field\
+      \ }}',\n  {{ generate_mixed.integer_field }},\n  {{ generate_mixed.float_field\
+      \ }},\n  {% if generate_mixed.boolean_field %}true{% else %}false{% endif %},\n\
+      \  {% if generate_mixed.null_field is none %}NULL{% else %}'{{ generate_mixed.null_field\
+      \ }}'{% endif %},\n  '{{ generate_mixed.datetime_field }}',\n  '{{ generate_mixed.list_field\
+      \ | tojson | replace(\"'\", \"''\") }}',\n  '{{ generate_mixed.dict_field |\
+      \ tojson | replace(\"'\", \"''\") }}',\n  {{ generate_mixed.decimal_field }}\n\
+      )\n"
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: test_special_characters
+- step: test_special_characters
+  desc: Test save with special characters and unicode
+  tool:
+  - name: generate_special
+    kind: python
+    args:
+      input_data: '{{ test_mixed_types }}'
+    code: "special_data = {\n    \"quotes\": \"This has 'single' and \\\"double\\\"\
+      \ quotes\",\n    \"unicode\": \"Unicode: alphabetagammadeltaepsilon, zhongwen,\
+      \ rocketstar\",\n    \"sql_injection\": \"'; DROP TABLE test; --\",\n    \"\
+      newlines\": \"Line 1\\nLine 2\\r\\nLine 3\",\n    \"backslashes\": \"C:\\\\\
+      path\\\\to\\\\file\",\n    \"json_string\": '{\"embedded\": \"json\", \"value\"\
+      : 123}'\n}\n\nresult = special_data\n"
+  - name: save_special_chars
+    kind: postgres
+    auth: '{{ pg_auth }}'
+    command: "INSERT INTO test_special_chars (execution_id, quotes, unicode, sql_injection,\
+      \ newlines, backslashes, json_string)\nVALUES (\n  '{{ execution_id }}',\n \
+      \ '{{ generate_special.quotes | replace(\"'\", \"''\") }}',\n  '{{ generate_special.unicode\
+      \ | replace(\"'\", \"''\") }}',\n  '{{ generate_special.sql_injection | replace(\"\
+      '\", \"''\") }}',\n  '{{ generate_special.newlines | replace(\"'\", \"''\")\
+      \ }}',\n  '{{ generate_special.backslashes | replace(\"'\", \"''\") }}',\n \
+      \ '{{ generate_special.json_string | replace(\"'\", \"''\") }}'\n)\n"
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: test_empty_data
+- step: test_empty_data
+  desc: Test save with empty and null data
+  tool:
+    kind: python
+    args:
+      input_data: '{{ test_special_characters }}'
+    code: "empty_scenarios = {\n    \"empty_string\": \"\",\n    \"empty_list\": [],\n\
+      \    \"empty_dict\": {},\n    \"zero_value\": 0,\n    \"false_value\": False,\n\
+      \    \"none_value\": None\n}\n\nresult = empty_scenarios\n"
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: test_large_payload
+- step: test_large_payload
+  desc: Test save with large data payload
+  tool:
+  - name: generate_large
+    kind: python
+    args:
+      input_data: '{{ test_empty_data }}'
+    code: "# Generate moderately large dataset\nlarge_data = {\n    \"metadata\":\
+      \ {\n        \"test_type\": \"large_payload\",\n        \"record_count\": 100\n\
+      \    },\n    \"records\": []\n}\n\nfor i in range(100):\n    record = {\n  \
+      \      \"id\": i + 1,\n        \"name\": f\"Test Record {i + 1}\",\n       \
+      \ \"description\": f\"This is a test record with ID {i + 1} \" * 5,  # Repeat\
+      \ for size\n        \"data_field\": f\"data_value_{i}\",\n        \"large_text\"\
+      : \"Lorem ipsum dolor sit amet \" * 20  # Large text field\n    }\n    large_data[\"\
+      records\"].append(record)\n\nresult = large_data\n"
+  - name: save_large_payload
+    kind: duckdb
+    commands: "-- Create table for large dataset\nCREATE OR REPLACE TABLE test_large_payload\
+      \ (\n  test_type VARCHAR,\n  record_count INTEGER,\n  execution_id VARCHAR,\n\
+      \  created_at TIMESTAMP\n);\n\n-- Insert test record\nINSERT INTO test_large_payload\n\
+      VALUES ('large_payload_test', {{ generate_large.metadata.record_count }}, '{{\
+      \ execution_id }}', NOW());\n\n-- Query results\nSELECT * FROM test_large_payload\
+      \ WHERE execution_id = '{{ execution_id }}';\n"
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: test_error_recovery
+- step: test_error_recovery
+  desc: Test save error handling and recovery
+  tool:
+    kind: python
+    code: "# Data that might cause issues but should be handled gracefully\npotentially_problematic\
+      \ = {\n    \"valid_field\": \"this should work\",\n    \"test_execution\": \"\
+      completed\",\n    \"recovery_test\": True\n}\n\nresult = potentially_problematic\n"
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: test_completion_summary
+- step: test_completion_summary
+  desc: Summarize edge case testing results
+  tool:
+    kind: python
+    code: "summary = {\n    \"edge_case_tests_completed\": [\n        \"mixed_data_types\"\
+      ,\n        \"special_characters_unicode\",\n        \"empty_null_data\",\n \
+      \       \"large_payload\",\n        \"error_recovery\"\n    ],\n    \"storage_types_tested\"\
+      : [\n        \"postgres\",\n        \"python\",\n        \"duckdb\",\n     \
+      \   \"http\"\n    ],\n    \"test_status\": \"completed\"\n}\n\nresult = summary\n"
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: end
+- step: end
+  desc: Edge case testing completed
+  tool:
+    kind: python
+    code: 'result = {"status": "complete"}
 
-        -- Create table for special characters test
-        CREATE TABLE IF NOT EXISTS test_special_chars (
-          execution_id VARCHAR,
-          quotes VARCHAR,
-          unicode TEXT,
-          sql_injection TEXT,
-          newlines TEXT,
-          backslashes TEXT,
-          json_string TEXT
-        );
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: test_mixed_types
-
-  # Test mixed data types
-  - step: test_mixed_types
-    desc: "Test save with mixed data types"
-    tool:
-      - generate_mixed:
-          kind: python
-          libs:
-            datetime:
-              from: datetime
-              import: datetime
-            Decimal:
-              from: decimal
-              import: Decimal
-          args:
-            input_data: {}
-          code: |
-            mixed_data = {
-              "string_field": "test_string",
-              "integer_field": 12345,
-              "float_field": 3.14159,
-              "boolean_field": True,
-              "null_field": None,
-              "datetime_field": datetime.now().isoformat(),
-              "list_field": [1, 2, 3, "mixed", True],
-              "dict_field": {"nested": "value", "count": 42},
-              "decimal_field": float(Decimal("99.99"))
-            }
-
-            result = mixed_data
-      - save_mixed_types:
-          kind: postgres
-          auth: "{{ pg_auth }}"
-          command: |
-            INSERT INTO test_mixed_types (
-              execution_id, string_field, integer_field, float_field,
-              boolean_field, null_field, datetime_field, list_field,
-              dict_field, decimal_field
-            ) VALUES (
-              '{{ execution_id }}',
-              '{{ generate_mixed.string_field }}',
-              {{ generate_mixed.integer_field }},
-              {{ generate_mixed.float_field }},
-              {% if generate_mixed.boolean_field %}true{% else %}false{% endif %},
-              {% if generate_mixed.null_field is none %}NULL{% else %}'{{ generate_mixed.null_field }}'{% endif %},
-              '{{ generate_mixed.datetime_field }}',
-              '{{ generate_mixed.list_field | tojson | replace("'", "''") }}',
-              '{{ generate_mixed.dict_field | tojson | replace("'", "''") }}',
-              {{ generate_mixed.decimal_field }}
-            )
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: test_special_characters
-
-  # Test special characters and unicode
-  - step: test_special_characters
-    desc: "Test save with special characters and unicode"
-    tool:
-      - generate_special:
-          kind: python
-          args:
-            input_data: "{{ test_mixed_types }}"
-          code: |
-            special_data = {
-                "quotes": "This has 'single' and \"double\" quotes",
-                "unicode": "Unicode: alphabetagammadeltaepsilon, zhongwen, rocketstar",
-                "sql_injection": "'; DROP TABLE test; --",
-                "newlines": "Line 1\nLine 2\r\nLine 3",
-                "backslashes": "C:\\path\\to\\file",
-                "json_string": '{"embedded": "json", "value": 123}'
-            }
-
-            result = special_data
-      - save_special_chars:
-          kind: postgres
-          auth: "{{ pg_auth }}"
-          command: |
-            INSERT INTO test_special_chars (execution_id, quotes, unicode, sql_injection, newlines, backslashes, json_string)
-            VALUES (
-              '{{ execution_id }}',
-              '{{ generate_special.quotes | replace("'", "''") }}',
-              '{{ generate_special.unicode | replace("'", "''") }}',
-              '{{ generate_special.sql_injection | replace("'", "''") }}',
-              '{{ generate_special.newlines | replace("'", "''") }}',
-              '{{ generate_special.backslashes | replace("'", "''") }}',
-              '{{ generate_special.json_string | replace("'", "''") }}'
-            )
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: test_empty_data
-
-  # Test empty and null data scenarios
-  - step: test_empty_data
-    desc: "Test save with empty and null data"
-    tool:
-      kind: python
-      args:
-        input_data: "{{ test_special_characters }}"
-      code: |
-        empty_scenarios = {
-            "empty_string": "",
-            "empty_list": [],
-            "empty_dict": {},
-            "zero_value": 0,
-            "false_value": False,
-            "none_value": None
-        }
-
-        result = empty_scenarios
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: test_large_payload
-
-  # Test large payload handling
-  - step: test_large_payload
-    desc: "Test save with large data payload"
-    tool:
-      - generate_large:
-          kind: python
-          args:
-            input_data: "{{ test_empty_data }}"
-          code: |
-            # Generate moderately large dataset
-            large_data = {
-                "metadata": {
-                    "test_type": "large_payload",
-                    "record_count": 100
-                },
-                "records": []
-            }
-
-            for i in range(100):
-                record = {
-                    "id": i + 1,
-                    "name": f"Test Record {i + 1}",
-                    "description": f"This is a test record with ID {i + 1} " * 5,  # Repeat for size
-                    "data_field": f"data_value_{i}",
-                    "large_text": "Lorem ipsum dolor sit amet " * 20  # Large text field
-                }
-                large_data["records"].append(record)
-
-            result = large_data
-      - save_large_payload:
-          kind: duckdb
-          commands: |
-            -- Create table for large dataset
-            CREATE OR REPLACE TABLE test_large_payload (
-              test_type VARCHAR,
-              record_count INTEGER,
-              execution_id VARCHAR,
-              created_at TIMESTAMP
-            );
-
-            -- Insert test record
-            INSERT INTO test_large_payload
-            VALUES ('large_payload_test', {{ generate_large.metadata.record_count }}, '{{ execution_id }}', NOW());
-
-            -- Query results
-            SELECT * FROM test_large_payload WHERE execution_id = '{{ execution_id }}';
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: test_error_recovery
-
-  # Test error recovery scenarios
-  - step: test_error_recovery
-    desc: "Test save error handling and recovery"
-    tool:
-      kind: python
-      code: |
-        # Data that might cause issues but should be handled gracefully
-        potentially_problematic = {
-            "valid_field": "this should work",
-            "test_execution": "completed",
-            "recovery_test": True
-        }
-
-        result = potentially_problematic
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: test_completion_summary
-
-  # Final summary
-  - step: test_completion_summary
-    desc: "Summarize edge case testing results"
-    tool:
-      kind: python
-      code: |
-        summary = {
-            "edge_case_tests_completed": [
-                "mixed_data_types",
-                "special_characters_unicode",
-                "empty_null_data",
-                "large_payload",
-                "error_recovery"
-            ],
-            "storage_types_tested": [
-                "postgres",
-                "python",
-                "duckdb",
-                "http"
-            ],
-            "test_status": "completed"
-        }
-
-        result = summary
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: end
-
-  # End
-  - step: end
-    desc: "Edge case testing completed"
-    tool:
-      kind: python
-      code: |
-        result = {"status": "complete"}
+      '

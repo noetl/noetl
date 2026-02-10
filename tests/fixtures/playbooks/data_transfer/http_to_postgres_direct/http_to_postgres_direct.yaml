@@ -1,124 +1,117 @@
-apiVersion: noetl.io/v10
+apiVersion: noetl.io/v2
 kind: Playbook
 metadata:
   name: http_to_postgres_direct
   path: tests/fixtures/playbooks/data_transfer/http_to_postgres_direct
-
 workload:
-  api_url: "https://jsonplaceholder.typicode.com/posts"
+  api_url: https://jsonplaceholder.typicode.com/posts
   pg_auth: pg_local
-
 workflow:
-  - step: start
-    desc: Start workflow
-    tool:
-      kind: python
-      args: {}
-      code: |
-        result = {"status": "initialized"}
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: create_table
+- step: start
+  desc: Start workflow
+  tool:
+    kind: python
+    args: {}
+    code: 'result = {"status": "initialized"}
 
-  - step: create_table
-    desc: Create table for storing HTTP data
-    tool:
-      kind: postgres
-      auth: "{{ pg_auth }}"
-      command: |
-        CREATE TABLE IF NOT EXISTS public.http_to_postgres_direct (
-          id SERIAL PRIMARY KEY,
-          data JSONB NOT NULL,
-          fetched_at TIMESTAMPTZ DEFAULT NOW()
-        );
+      '
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: create_table
+- step: create_table
+  desc: Create table for storing HTTP data
+  tool:
+    kind: postgres
+    auth: '{{ pg_auth }}'
+    command: "CREATE TABLE IF NOT EXISTS public.http_to_postgres_direct (\n  id SERIAL\
+      \ PRIMARY KEY,\n  data JSONB NOT NULL,\n  fetched_at TIMESTAMPTZ DEFAULT NOW()\n\
+      );\n\nTRUNCATE TABLE public.http_to_postgres_direct;\n"
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: fetch_and_store
+- step: fetch_and_store
+  desc: Fetch HTTP data and store in PostgreSQL
+  tool:
+  - name: fetch_posts
+    kind: http
+    method: GET
+    url: '{{ api_url }}'
+    spec:
+      policy:
+        rules:
+        - when: '{{ outcome.http.status in [500, 502, 503] }}'
+          then:
+            do: retry
+            attempts: 3
+            backoff: exponential
+            delay: 0.5
+        - when: '{{ outcome.status == ''error'' }}'
+          then:
+            do: fail
+        - else:
+            then:
+              do: continue
+  - name: save_posts
+    kind: postgres
+    auth: '{{ pg_auth }}'
+    command: '{% for item in fetch_posts.data %}
 
-        TRUNCATE TABLE public.http_to_postgres_direct;
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: fetch_and_store
+      INSERT INTO public.http_to_postgres_direct (data) VALUES (''{{ item | tojson
+      | replace("''", "''''") }}''::jsonb);
 
-  - step: fetch_and_store
-    desc: Fetch HTTP data and store in PostgreSQL
-    tool:
-      - fetch_posts:
-          kind: http
-          method: GET
-          url: "{{ api_url }}"
-          spec:
-            policy:
-              rules:
-                - when: "{{ outcome.http.status in [500, 502, 503] }}"
-                  then:
-                    do: retry
-                    attempts: 3
-                    backoff: exponential
-                    delay: 0.5
-                - when: "{{ outcome.status == 'error' }}"
-                  then:
-                    do: fail
-                - else:
-                    then:
-                      do: continue
-      - save_posts:
-          kind: postgres
-          auth: "{{ pg_auth }}"
-          command: |
-            {% for item in fetch_posts.data %}
-            INSERT INTO public.http_to_postgres_direct (data) VALUES ('{{ item | tojson | replace("'", "''") }}'::jsonb);
-            {% endfor %}
-          spec:
-            policy:
-              rules:
-                - when: "{{ outcome.status == 'error' }}"
-                  then:
-                    do: continue
-                - else:
-                    then:
-                      do: continue
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: show_count
+      {% endfor %}
 
-  - step: show_count
-    desc: Verify record count
-    tool:
-      kind: postgres
-      auth: "{{ pg_auth }}"
-      command: |
-        SELECT COUNT(*) as records FROM public.http_to_postgres_direct;
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: validate_count
+      '
+    spec:
+      policy:
+        rules:
+        - when: '{{ outcome.status == ''error'' }}'
+          then:
+            do: continue
+        - else:
+            then:
+              do: continue
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: show_count
+- step: show_count
+  desc: Verify record count
+  tool:
+    kind: postgres
+    auth: '{{ pg_auth }}'
+    command: 'SELECT COUNT(*) as records FROM public.http_to_postgres_direct;
 
-  - step: validate_count
-    desc: Fail if no rows stored
-    tool:
-      kind: python
-      args:
-        show_count: "{{ show_count }}"
-      code: |
-        count = int(show_count.get('command_0', {}).get('rows', [{}])[0].get('records', 0))
-        if count == 0:
-            raise ValueError("No rows stored in http_to_postgres_direct")
-        result = {"status": "ok", "records": count}
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: end
+      '
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: validate_count
+- step: validate_count
+  desc: Fail if no rows stored
+  tool:
+    kind: python
+    args:
+      show_count: '{{ show_count }}'
+    code: "count = int(show_count.get('command_0', {}).get('rows', [{}])[0].get('records',\
+      \ 0))\nif count == 0:\n    raise ValueError(\"No rows stored in http_to_postgres_direct\"\
+      )\nresult = {\"status\": \"ok\", \"records\": count}\n"
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: end
+- step: end
+  desc: End workflow
+  tool:
+    kind: python
+    args: {}
+    code: 'result = {"status": "completed"}
 
-  - step: end
-    desc: End workflow
-    tool:
-      kind: python
-      args: {}
-      code: |
-        result = {"status": "completed"}
+      '

@@ -23,7 +23,7 @@ Prefer `auth:` references so the runtime can inject credentials into tools witho
 - `iter.*` — mutable iteration-scoped state (non-secret)
 - `args.*` — token payload from `next.arcs[].args`
 
-See `documentation/docs/reference/variables_v2.md` and `documentation/docs/reference/dsl/noetl_step_spec.md`.
+See `documentation/docs/reference/variables_v2.md` and `documentation/docs/reference/dsl/step_spec.md`.
 
 ---
 

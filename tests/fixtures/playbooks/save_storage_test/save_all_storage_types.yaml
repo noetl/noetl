@@ -1,421 +1,264 @@
-apiVersion: noetl.io/v10
+apiVersion: noetl.io/v2
 kind: Playbook
 metadata:
   name: save_all_storage_types_test
   path: tests/fixtures/playbooks/save_storage_test/save_all_storage_types
-  description: "Comprehensive test playbook covering all save storage types with data flow between steps"
-
+  description: Comprehensive test playbook covering all save storage types with data
+    flow between steps
 workload:
   pg_auth: pg_local
-  test_name: "save_storage_comprehensive_test"
+  test_name: save_storage_comprehensive_test
   base_data:
-    test_id: "save_test_{{ execution_id }}"
-    timestamp: "{{ now() }}"
-    test_phase: "initialization"
-
+    test_id: save_test_{{ execution_id }}
+    timestamp: '{{ now() }}'
+    test_phase: initialization
 workbook:
-  # Generate initial test data
-  - name: generate_test_data
-    tool:
-      kind: python
-      libs:
-        json: json
-        datetime:
-          from: datetime
-          import: datetime
-      code: |
-        # Generate comprehensive test dataset
-        test_data = {
-            "execution_id": context.get("execution_id", "unknown"),
-            "test_suite": "save_storage_types",
-            "generated_at": datetime.now().isoformat(),
-            "sample_records": [
-                {"id": 1, "name": "Alice", "department": "Engineering", "salary": 75000},
-                {"id": 2, "name": "Bob", "department": "Marketing", "salary": 65000},
-                {"id": 3, "name": "Carol", "department": "Sales", "salary": 70000}
-            ],
-            "metadata": {
-                "record_count": 3,
-                "test_type": "comprehensive_save_test",
-                "validation_key": "save_test_validation"
-            }
-        }
-
-        print(f"Generated test data with {len(test_data['sample_records'])} records")
-        result = {"status": "success", "data": test_data}
-
-  # Transform data for postgres storage
-  - name: prepare_postgres_data
-    tool:
-      kind: python
-      code: |
-        # Extract records and prepare for postgres INSERT
-        # Get data from previous step via context
-        source_data = context.get("generate_data", {}).get("data", {})
-        records = source_data.get("sample_records", [])
-
-        # Add postgres-specific fields
-        postgres_data = []
-        for record in records:
-            postgres_record = record.copy()
-            postgres_record["storage_type"] = "postgres"
-            postgres_record["test_execution"] = source_data.get("execution_id", "unknown")
-            postgres_data.append(postgres_record)
-
-        postgres_result = {
-            "postgres_records": postgres_data,
-            "table_name": "test_employees",
-            "operation": "insert_or_upsert"
-        }
-
-        print(f"Prepared {len(postgres_data)} records for postgres storage")
-        result = {"status": "success", "data": postgres_result}
-
-  # Prepare data for DuckDB analytics
-  - name: prepare_duckdb_analytics
-    tool:
-      kind: python
-      libs:
-        json: json
-      code: |
-        # Get postgres results and create analytics dataset
-        postgres_result = context.get("test_flat_postgres_save", {}).get("data", {})
-
-        analytics_data = {
-            "source_table": "test_employees",
-            "analysis_type": "department_summary",
-            "query_params": {
-                "min_salary": 60000,
-                "target_departments": ["Engineering", "Marketing", "Sales"]
-            },
-            "expected_aggregations": ["COUNT", "AVG", "MAX", "MIN"]
-        }
-
-        print(f"Prepared analytics configuration for DuckDB")
-        result = {"status": "success", "data": analytics_data}
-
-  # Prepare HTTP API payload
-  - name: prepare_http_payload
-    tool:
-      kind: python
-      args:
-        input_data: "{{ test_duckdb_analytics }}"
-      code: |
-        # Simulate API payload preparation
-        duckdb_result = input_data.get("data", {})
-
-        api_payload = {
-            "webhook_type": "test_completion",
-            "test_results": {
-                "postgres_status": "completed",
-                "duckdb_status": "completed",
-                "total_records_processed": 3,
-                "test_execution_id": "{{ execution_id }}"
-            },
-            "notification": {
-                "message": "Save storage test completed successfully",
-                "priority": "info",
-                "timestamp": "{{ now() }}"
-            }
-        }
-
-        print(f"Prepared HTTP payload for webhook notification")
-        result = {"status": "success", "data": api_payload}
-
+- name: generate_test_data
+  tool:
+    kind: python
+    libs:
+      json: json
+      datetime:
+        from: datetime
+        import: datetime
+    code: "# Generate comprehensive test dataset\ntest_data = {\n    \"execution_id\"\
+      : context.get(\"execution_id\", \"unknown\"),\n    \"test_suite\": \"save_storage_types\"\
+      ,\n    \"generated_at\": datetime.now().isoformat(),\n    \"sample_records\"\
+      : [\n        {\"id\": 1, \"name\": \"Alice\", \"department\": \"Engineering\"\
+      , \"salary\": 75000},\n        {\"id\": 2, \"name\": \"Bob\", \"department\"\
+      : \"Marketing\", \"salary\": 65000},\n        {\"id\": 3, \"name\": \"Carol\"\
+      , \"department\": \"Sales\", \"salary\": 70000}\n    ],\n    \"metadata\": {\n\
+      \        \"record_count\": 3,\n        \"test_type\": \"comprehensive_save_test\"\
+      ,\n        \"validation_key\": \"save_test_validation\"\n    }\n}\n\nprint(f\"\
+      Generated test data with {len(test_data['sample_records'])} records\")\nresult\
+      \ = {\"status\": \"success\", \"data\": test_data}\n"
+- name: prepare_postgres_data
+  tool:
+    kind: python
+    code: "# Extract records and prepare for postgres INSERT\n# Get data from previous\
+      \ step via context\nsource_data = context.get(\"generate_data\", {}).get(\"\
+      data\", {})\nrecords = source_data.get(\"sample_records\", [])\n\n# Add postgres-specific\
+      \ fields\npostgres_data = []\nfor record in records:\n    postgres_record =\
+      \ record.copy()\n    postgres_record[\"storage_type\"] = \"postgres\"\n    postgres_record[\"\
+      test_execution\"] = source_data.get(\"execution_id\", \"unknown\")\n    postgres_data.append(postgres_record)\n\
+      \npostgres_result = {\n    \"postgres_records\": postgres_data,\n    \"table_name\"\
+      : \"test_employees\",\n    \"operation\": \"insert_or_upsert\"\n}\n\nprint(f\"\
+      Prepared {len(postgres_data)} records for postgres storage\")\nresult = {\"\
+      status\": \"success\", \"data\": postgres_result}\n"
+- name: prepare_duckdb_analytics
+  tool:
+    kind: python
+    libs:
+      json: json
+    code: "# Get postgres results and create analytics dataset\npostgres_result =\
+      \ context.get(\"test_flat_postgres_save\", {}).get(\"data\", {})\n\nanalytics_data\
+      \ = {\n    \"source_table\": \"test_employees\",\n    \"analysis_type\": \"\
+      department_summary\",\n    \"query_params\": {\n        \"min_salary\": 60000,\n\
+      \        \"target_departments\": [\"Engineering\", \"Marketing\", \"Sales\"\
+      ]\n    },\n    \"expected_aggregations\": [\"COUNT\", \"AVG\", \"MAX\", \"MIN\"\
+      ]\n}\n\nprint(f\"Prepared analytics configuration for DuckDB\")\nresult = {\"\
+      status\": \"success\", \"data\": analytics_data}\n"
+- name: prepare_http_payload
+  tool:
+    kind: python
+    args:
+      input_data: '{{ test_duckdb_analytics }}'
+    code: "# Simulate API payload preparation\nduckdb_result = input_data.get(\"data\"\
+      , {})\n\napi_payload = {\n    \"webhook_type\": \"test_completion\",\n    \"\
+      test_results\": {\n        \"postgres_status\": \"completed\",\n        \"duckdb_status\"\
+      : \"completed\",\n        \"total_records_processed\": 3,\n        \"test_execution_id\"\
+      : \"{{ execution_id }}\"\n    },\n    \"notification\": {\n        \"message\"\
+      : \"Save storage test completed successfully\",\n        \"priority\": \"info\"\
+      ,\n        \"timestamp\": \"{{ now() }}\"\n    }\n}\n\nprint(f\"Prepared HTTP\
+      \ payload for webhook notification\")\nresult = {\"status\": \"success\", \"\
+      data\": api_payload}\n"
 workflow:
-  # Start: Route to initialization
-  - step: start
-    desc: "Initialize comprehensive save storage test"
-    tool:
-      kind: python
-      code: |
-        result = {"status": "initialized"}
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: initialize_test_data
+- step: start
+  desc: Initialize comprehensive save storage test
+  tool:
+    kind: python
+    code: 'result = {"status": "initialized"}
 
-  # Initialize test data
-  - step: initialize_test_data
-    desc: "Generate initial test data"
-    tool:
-      kind: python
-      libs:
-        json: json
-        datetime:
-          from: datetime
-          import: datetime
-      code: |
-        # Generate comprehensive test dataset
-        test_data = {
-            "execution_id": context.get("execution_id", "unknown"),
-            "test_suite": "save_storage_types",
-            "generated_at": datetime.now().isoformat(),
-            "sample_records": [
-                {"id": 1, "name": "Alice", "department": "Engineering", "salary": 75000},
-                {"id": 2, "name": "Bob", "department": "Marketing", "salary": 65000},
-                {"id": 3, "name": "Carol", "department": "Sales", "salary": 70000}
-            ],
-            "metadata": {
-                "record_count": 3,
-                "test_type": "comprehensive_save_test",
-                "validation_key": "save_test_validation"
-            }
-        }
+      '
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: initialize_test_data
+- step: initialize_test_data
+  desc: Generate initial test data
+  tool:
+    kind: python
+    libs:
+      json: json
+      datetime:
+        from: datetime
+        import: datetime
+    code: "# Generate comprehensive test dataset\ntest_data = {\n    \"execution_id\"\
+      : context.get(\"execution_id\", \"unknown\"),\n    \"test_suite\": \"save_storage_types\"\
+      ,\n    \"generated_at\": datetime.now().isoformat(),\n    \"sample_records\"\
+      : [\n        {\"id\": 1, \"name\": \"Alice\", \"department\": \"Engineering\"\
+      , \"salary\": 75000},\n        {\"id\": 2, \"name\": \"Bob\", \"department\"\
+      : \"Marketing\", \"salary\": 65000},\n        {\"id\": 3, \"name\": \"Carol\"\
+      , \"department\": \"Sales\", \"salary\": 70000}\n    ],\n    \"metadata\": {\n\
+      \        \"record_count\": 3,\n        \"test_type\": \"comprehensive_save_test\"\
+      ,\n        \"validation_key\": \"save_test_validation\"\n    }\n}\n\nprint(f\"\
+      Generated test data with {len(test_data['sample_records'])} records\")\nresult\
+      \ = {\"status\": \"success\", \"data\": test_data}\n"
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: test_flat_postgres_save
+- step: test_flat_postgres_save
+  desc: Test postgres save with flat storage structure
+  tool:
+  - name: generate_data
+    kind: python
+    args:
+      input: '{{ start }}'
+    code: "# Simple pass-through to test flat save structure\nresult = {\n    \"status\"\
+      : \"success\",\n    \"data\": {\n        \"message\": \"Flat postgres save test\
+      \ data\",\n        \"test_type\": \"flat_structure\"\n    }\n}\n"
+  - name: save_flat
+    kind: postgres
+    auth: '{{ pg_auth }}'
+    command: "INSERT INTO simple_test_flat (test_id, test_name, test_value, storage_type,\
+      \ test_execution)\nVALUES (\n  '{{ execution_id }}',\n  'Test Employee Flat',\n\
+      \  55000,\n  'flat_structure',\n  '{{ execution_id }}'\n)\nON CONFLICT (test_id)\
+      \ DO UPDATE SET\n  test_name = EXCLUDED.test_name,\n  test_value = EXCLUDED.test_value,\n\
+      \  storage_type = EXCLUDED.storage_type,\n  test_execution = EXCLUDED.test_execution;\n"
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: test_nested_postgres_save
+- step: test_nested_postgres_save
+  desc: Test postgres save with nested storage structure and upsert
+  tool:
+  - name: generate_data
+    kind: python
+    args:
+      input: '{{ test_flat_postgres_save }}'
+    code: "# Simple pass-through to test nested save structure\nresult = {\n    \"\
+      status\": \"success\",\n    \"data\": {\n        \"message\": \"Nested postgres\
+      \ save test data\",\n        \"test_type\": \"nested_structure\"\n    }\n}\n"
+  - name: save_nested
+    kind: postgres
+    auth: '{{ pg_auth }}'
+    command: "INSERT INTO simple_test_nested (test_id, test_name, test_data, storage_type,\
+      \ test_execution)\nVALUES (\n  '{{ execution_id }}_nested',\n  'Test Employee\
+      \ Nested',\n  '{\"value\": 58000, \"type\": \"nested_structure\", \"meta\":\
+      \ {\"test_phase\": \"save_test\"}}'::jsonb,\n  'nested_structure',\n  '{{ execution_id\
+      \ }}'\n)\nON CONFLICT (test_id) DO UPDATE SET\n  test_name = EXCLUDED.test_name,\n\
+      \  test_data = EXCLUDED.test_data,\n  storage_type = EXCLUDED.storage_type,\n\
+      \  test_execution = EXCLUDED.test_execution;\n"
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: test_postgres_statement_save
+- step: test_postgres_statement_save
+  desc: Test postgres save with custom SQL statement
+  tool:
+  - name: generate_data
+    kind: python
+    args:
+      input_data: '{{ test_nested_postgres_save }}'
+    code: "result = {\n    \"status\": \"success\",\n    \"data\": {\n        \"summary_type\"\
+      : \"department_stats\",\n        \"execution_id\": input_data.get(\"execution_id\"\
+      , \"unknown\")\n    }\n}\n"
+  - name: save_summary
+    kind: postgres
+    auth: '{{ pg_auth }}'
+    command: "INSERT INTO test_summary (summary_type, total_records, avg_value, test_execution,\
+      \ created_at)\nSELECT\n  '{{ generate_data.data.summary_type }}' as summary_type,\n\
+      \  COUNT(*) as total_records,\n  AVG(test_value) as avg_value,\n  '{{ generate_data.data.execution_id\
+      \ }}' as test_execution,\n  NOW() as created_at\nFROM simple_test_flat\nWHERE\
+      \ test_execution = '{{ generate_data.data.execution_id }}'\n"
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: test_python_save
+- step: test_python_save
+  desc: Test python storage with custom processing code
+  tool:
+    kind: python
+    args:
+      input_data: '{{ test_postgres_statement_save }}'
+    code: "result = {\n    \"status\": \"success\",\n    \"data\": {\n        \"processed_records\"\
+      : 3,\n        \"validation_status\": \"passed\",\n        \"next_phase\": \"\
+      analytics\"\n    }\n}\n"
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: test_duckdb_save
+- step: test_duckdb_save
+  desc: Test DuckDB storage with analytics queries
+  tool:
+  - name: generate_data
+    kind: python
+    args:
+      input: '{{ test_python_save }}'
+    code: "result = {\n    \"status\": \"success\",\n    \"data\": {\n        \"analysis_type\"\
+      : \"department_summary\",\n        \"test_type\": \"duckdb_analytics\"\n   \
+      \ }\n}\n"
+  - name: save_analytics
+    kind: duckdb
+    commands: "-- Create analytics table\nCREATE OR REPLACE TABLE test_analytics AS\n\
+      SELECT\n  'duckdb_analytics' as analysis_type,\n  '{{ generate_data.data.analysis_type\
+      \ }}' as specific_analysis,\n  COUNT(*) as record_count,\n  '{{ execution_id\
+      \ }}' as test_execution,\n  NOW() as analysis_timestamp;\n\n-- Insert analysis\
+      \ results\nINSERT INTO test_analytics\nSELECT\n  'summary_stats' as analysis_type,\n\
+      \  'execution_summary' as specific_analysis,\n  1 as record_count,\n  '{{ execution_id\
+      \ }}' as test_execution,\n  NOW() as analysis_timestamp;\n\n-- Return results\n\
+      SELECT * FROM test_analytics WHERE test_execution = '{{ execution_id }}';\n"
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: test_http_save
+- step: test_http_save
+  desc: Test HTTP storage with webhook notification
+  tool:
+    kind: python
+    args:
+      input: '{{ test_duckdb_save }}'
+    code: "result = {\n    \"status\": \"success\",\n    \"data\": {\n        \"webhook_type\"\
+      : \"test_completion\",\n        \"test_type\": \"http_webhook\"\n    }\n}\n"
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: test_completion
+- step: test_completion
+  desc: Complete save storage comprehensive test
+  tool:
+    kind: python
+    libs:
+      json: json
+    args:
+      input_data: '{{ test_http_save }}'
+    code: "summary = {\n    \"test_suite\": \"save_storage_comprehensive\",\n    \"\
+      execution_id\": input_data.get(\"execution_id\", \"unknown\"),\n    \"storage_types_tested\"\
+      : [\n        \"event_log\",\n        \"postgres_flat_structure\",\n        \"\
+      postgres_nested_structure\",\n        \"postgres_custom_statement\",\n     \
+      \   \"python_custom_code\",\n        \"duckdb_analytics\",\n        \"http_webhook\"\
+      \n    ],\n    \"test_status\": \"completed\",\n    \"total_save_operations\"\
+      : 7,\n    \"validation\": \"All save storage types successfully tested\"\n}\n\
+      \nprint(f\"TEST COMPLETION SUMMARY:\")\nprint(json.dumps(summary, indent=2))\n\
+      \nresult = {\"status\": \"success\", \"data\": summary}\n"
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: end
+- step: end
+  desc: Save storage comprehensive test completed successfully
+  tool:
+    kind: python
+    code: 'result = {"status": "complete"}
 
-        print(f"Generated test data with {len(test_data['sample_records'])} records")
-        result = {"status": "success", "data": test_data}
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: test_flat_postgres_save
-
-  # Test 1: Flat structure postgres save
-  - step: test_flat_postgres_save
-    desc: "Test postgres save with flat storage structure"
-    tool:
-      - generate_data:
-          kind: python
-          args:
-            input: "{{ start }}"
-          code: |
-            # Simple pass-through to test flat save structure
-            result = {
-                "status": "success",
-                "data": {
-                    "message": "Flat postgres save test data",
-                    "test_type": "flat_structure"
-                }
-            }
-      - save_flat:
-          kind: postgres
-          auth: "{{ pg_auth }}"
-          command: |
-            INSERT INTO simple_test_flat (test_id, test_name, test_value, storage_type, test_execution)
-            VALUES (
-              '{{ execution_id }}',
-              'Test Employee Flat',
-              55000,
-              'flat_structure',
-              '{{ execution_id }}'
-            )
-            ON CONFLICT (test_id) DO UPDATE SET
-              test_name = EXCLUDED.test_name,
-              test_value = EXCLUDED.test_value,
-              storage_type = EXCLUDED.storage_type,
-              test_execution = EXCLUDED.test_execution;
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: test_nested_postgres_save
-
-  # Test 2: Nested structure postgres save with upsert
-  - step: test_nested_postgres_save
-    desc: "Test postgres save with nested storage structure and upsert"
-    tool:
-      - generate_data:
-          kind: python
-          args:
-            input: "{{ test_flat_postgres_save }}"
-          code: |
-            # Simple pass-through to test nested save structure
-            result = {
-                "status": "success",
-                "data": {
-                    "message": "Nested postgres save test data",
-                    "test_type": "nested_structure"
-                }
-            }
-      - save_nested:
-          kind: postgres
-          auth: "{{ pg_auth }}"
-          command: |
-            INSERT INTO simple_test_nested (test_id, test_name, test_data, storage_type, test_execution)
-            VALUES (
-              '{{ execution_id }}_nested',
-              'Test Employee Nested',
-              '{"value": 58000, "type": "nested_structure", "meta": {"test_phase": "save_test"}}'::jsonb,
-              'nested_structure',
-              '{{ execution_id }}'
-            )
-            ON CONFLICT (test_id) DO UPDATE SET
-              test_name = EXCLUDED.test_name,
-              test_data = EXCLUDED.test_data,
-              storage_type = EXCLUDED.storage_type,
-              test_execution = EXCLUDED.test_execution;
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: test_postgres_statement_save
-
-  # Test 3: Postgres with custom SQL statement
-  - step: test_postgres_statement_save
-    desc: "Test postgres save with custom SQL statement"
-    tool:
-      - generate_data:
-          kind: python
-          args:
-            input_data: "{{ test_nested_postgres_save }}"
-          code: |
-            result = {
-                "status": "success",
-                "data": {
-                    "summary_type": "department_stats",
-                    "execution_id": input_data.get("execution_id", "unknown")
-                }
-            }
-      - save_summary:
-          kind: postgres
-          auth: "{{ pg_auth }}"
-          command: |
-            INSERT INTO test_summary (summary_type, total_records, avg_value, test_execution, created_at)
-            SELECT
-              '{{ generate_data.data.summary_type }}' as summary_type,
-              COUNT(*) as total_records,
-              AVG(test_value) as avg_value,
-              '{{ generate_data.data.execution_id }}' as test_execution,
-              NOW() as created_at
-            FROM simple_test_flat
-            WHERE test_execution = '{{ generate_data.data.execution_id }}'
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: test_python_save
-
-  # Test 4: Python storage (custom code execution)
-  - step: test_python_save
-    desc: "Test python storage with custom processing code"
-    tool:
-      kind: python
-      args:
-        input_data: "{{ test_postgres_statement_save }}"
-      code: |
-        result = {
-            "status": "success",
-            "data": {
-                "processed_records": 3,
-                "validation_status": "passed",
-                "next_phase": "analytics"
-            }
-        }
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: test_duckdb_save
-
-  # Test 5: DuckDB storage with analytics
-  - step: test_duckdb_save
-    desc: "Test DuckDB storage with analytics queries"
-    tool:
-      - generate_data:
-          kind: python
-          args:
-            input: "{{ test_python_save }}"
-          code: |
-            result = {
-                "status": "success",
-                "data": {
-                    "analysis_type": "department_summary",
-                    "test_type": "duckdb_analytics"
-                }
-            }
-      - save_analytics:
-          kind: duckdb
-          commands: |
-            -- Create analytics table
-            CREATE OR REPLACE TABLE test_analytics AS
-            SELECT
-              'duckdb_analytics' as analysis_type,
-              '{{ generate_data.data.analysis_type }}' as specific_analysis,
-              COUNT(*) as record_count,
-              '{{ execution_id }}' as test_execution,
-              NOW() as analysis_timestamp;
-
-            -- Insert analysis results
-            INSERT INTO test_analytics
-            SELECT
-              'summary_stats' as analysis_type,
-              'execution_summary' as specific_analysis,
-              1 as record_count,
-              '{{ execution_id }}' as test_execution,
-              NOW() as analysis_timestamp;
-
-            -- Return results
-            SELECT * FROM test_analytics WHERE test_execution = '{{ execution_id }}';
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: test_http_save
-
-  # Test 6: HTTP storage (webhook/API call)
-  - step: test_http_save
-    desc: "Test HTTP storage with webhook notification"
-    tool:
-      kind: python
-      args:
-        input: "{{ test_duckdb_save }}"
-      code: |
-        result = {
-            "status": "success",
-            "data": {
-                "webhook_type": "test_completion",
-                "test_type": "http_webhook"
-            }
-        }
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: test_completion
-
-  # Final step: Test completion summary
-  - step: test_completion
-    desc: "Complete save storage comprehensive test"
-    tool:
-      kind: python
-      libs:
-        json: json
-      args:
-        input_data: "{{ test_http_save }}"
-      code: |
-        summary = {
-            "test_suite": "save_storage_comprehensive",
-            "execution_id": input_data.get("execution_id", "unknown"),
-            "storage_types_tested": [
-                "event_log",
-                "postgres_flat_structure",
-                "postgres_nested_structure",
-                "postgres_custom_statement",
-                "python_custom_code",
-                "duckdb_analytics",
-                "http_webhook"
-            ],
-            "test_status": "completed",
-            "total_save_operations": 7,
-            "validation": "All save storage types successfully tested"
-        }
-
-        print(f"TEST COMPLETION SUMMARY:")
-        print(json.dumps(summary, indent=2))
-
-        result = {"status": "success", "data": summary}
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: end
-
-  # End step
-  - step: end
-    desc: "Save storage comprehensive test completed successfully"
-    tool:
-      kind: python
-      code: |
-        result = {"status": "complete"}
+      '

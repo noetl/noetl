@@ -15,25 +15,32 @@ Features:
 
 NO BACKWARD COMPATIBILITY - v10 patterns only.
 
+Task formats supported:
+1. Canonical (named): { name: "task_name", kind: "http", ... }
+2. Unnamed: { kind: "http", ... } - synthetic name generated as task_N
+
+NOT supported (removed):
+- Syntactic sugar: { task_name: { kind: ... } } - REMOVED
+
 Canonical v10 usage in playbooks:
     - step: fetch_and_transform
       tool:
-        - fetch:
-            kind: http
-            url: "..."
-            spec:
-              policy:
-                rules:
-                  - when: "{{ outcome.status == 'error' and outcome.error.retryable }}"
-                    then: { do: retry, attempts: 5, backoff: exponential, delay: 1.0 }
-                  - when: "{{ outcome.status == 'error' }}"
-                    then: { do: fail }
-                  - else:
-                      then: { do: continue }
-        - transform:
-            kind: python
-            args: { data: "{{ _prev }}" }
-            code: "..."
+        - name: fetch
+          kind: http
+          url: "..."
+          spec:
+            policy:
+              rules:
+                - when: "{{ outcome.status == 'error' and outcome.error.retryable }}"
+                  then: { do: retry, attempts: 5, backoff: exponential, delay: 1.0 }
+                - when: "{{ outcome.status == 'error' }}"
+                  then: { do: fail }
+                - else:
+                    then: { do: continue }
+        - name: transform
+          kind: python
+          args: { data: "{{ _prev }}" }
+          code: "..."
       next:
         arcs:
           - step: continue
@@ -482,38 +489,81 @@ class TaskSequenceExecutor:
         """
         Parse task list into task definitions (strict v10 - no legacy support).
 
-        REJECTS: eval (must use spec.policy.rules)
+        Supports two formats:
+        1. Canonical (named): { name: "X", kind: "Y", ... }
+        2. Unnamed: { kind: "Y", ... } - synthetic name generated as task_N
+
+        REJECTS:
+        - eval (must use spec.policy.rules)
+        - Syntactic sugar format { task_name: { kind: ... } } - REMOVED
         """
         parsed = []
-        for task_def in tasks:
+
+        for idx, task_def in enumerate(tasks):
             if not isinstance(task_def, dict):
+                raise ValueError(f"Task at index {idx} must be a dict, got {type(task_def).__name__}")
+
+            # Canonical format: { name: "X", kind: "Y", ... }
+            if "name" in task_def and "kind" in task_def:
+                name = task_def["name"]
+                config = {k: v for k, v in task_def.items() if k != "name"}
+
+                # STRICT v10: Reject eval
+                if "eval" in config:
+                    raise ValueError(
+                        f"Task '{name}': 'eval' is not allowed in v10. "
+                        "Use 'spec.policy.rules' for outcome handling."
+                    )
+
+                # Get policy rules from spec.policy.rules
+                policy_rules = []
+                if "spec" in config and isinstance(config["spec"], dict):
+                    spec = config["spec"]
+                    if "policy" in spec and isinstance(spec["policy"], dict):
+                        policy = spec["policy"]
+                        policy_rules = policy.get("rules", [])
+
+                parsed.append({
+                    "name": name,
+                    "config": config,
+                    "policy_rules": policy_rules,
+                })
                 continue
 
-            for name, config in task_def.items():
-                if name in ("next", "vars", "collect", "emit", "set"):
-                    continue
+            # Unnamed task with kind: { kind: "Y", ... } - assign synthetic name
+            if "kind" in task_def and "name" not in task_def:
+                name = f"task_{idx}"
+                config = task_def
 
-                if isinstance(config, dict) and "kind" in config:
-                    # STRICT v10: Reject eval
-                    if "eval" in config:
-                        raise ValueError(
-                            f"Task '{name}': 'eval' is not allowed in v10. "
-                            "Use 'spec.policy.rules' for outcome handling."
-                        )
+                # STRICT v10: Reject eval
+                if "eval" in config:
+                    raise ValueError(
+                        f"Task '{name}': 'eval' is not allowed in v10. "
+                        "Use 'spec.policy.rules' for outcome handling."
+                    )
 
-                    # Get policy rules from spec.policy.rules
-                    policy_rules = []
-                    if "spec" in config and isinstance(config["spec"], dict):
-                        spec = config["spec"]
-                        if "policy" in spec and isinstance(spec["policy"], dict):
-                            policy = spec["policy"]
-                            policy_rules = policy.get("rules", [])
+                # Get policy rules from spec.policy.rules
+                policy_rules = []
+                if "spec" in config and isinstance(config["spec"], dict):
+                    spec = config["spec"]
+                    if "policy" in spec and isinstance(spec["policy"], dict):
+                        policy = spec["policy"]
+                        policy_rules = policy.get("rules", [])
 
-                    parsed.append({
-                        "name": name,
-                        "config": config,
-                        "policy_rules": policy_rules,
-                    })
+                parsed.append({
+                    "name": name,
+                    "config": config,
+                    "policy_rules": policy_rules,
+                })
+                continue
+
+            # Invalid format - syntactic sugar { task_name: { kind: ... } } is no longer supported
+            raise ValueError(
+                f"Task at index {idx}: Invalid format. Must be either:\n"
+                f"  1. Canonical: {{ name: 'task_name', kind: 'http', ... }}\n"
+                f"  2. Unnamed: {{ kind: 'http', ... }}\n"
+                f"Got: {list(task_def.keys())}"
+            )
 
         return parsed
 
@@ -680,21 +730,28 @@ def is_task_sequence(tool_list: Any) -> bool:
     """
     Check if a tool list contains labeled tool tasks (task sequence).
 
-    A task sequence is detected when the list contains items
-    that are labeled tasks with kind configs (not reserved actions).
+    A task sequence is detected when the list contains items that are tasks.
+    Supports two formats:
+    1. Canonical (named): { name: "X", kind: "Y", ... }
+    2. Unnamed: { kind: "Y", ... }
+
+    NOT supported (removed):
+    - Syntactic sugar: { task_name: { kind: ... } }
     """
     if not isinstance(tool_list, list):
         return False
 
-    reserved_actions = {"next", "vars", "collect", "emit", "set", "pipe"}
-
     for item in tool_list:
         if not isinstance(item, dict):
             continue
-        for key, value in item.items():
-            if key not in reserved_actions and isinstance(value, dict):
-                if "kind" in value:
-                    return True
+
+        # Canonical format: { name: "X", kind: "Y", ... }
+        if "name" in item and "kind" in item:
+            return True
+
+        # Unnamed format: { kind: "Y", ... } (no name field, but has kind)
+        if "kind" in item and "name" not in item:
+            return True
 
     return False
 
@@ -703,24 +760,33 @@ def extract_task_sequence(tool_list: list[dict]) -> tuple[list[dict], list[dict]
     """
     Extract task sequence and remaining actions from a tool list.
 
+    Supports two formats:
+    1. Canonical (named): { name: "X", kind: "Y", ... }
+    2. Unnamed: { kind: "Y", ... }
+
+    NOT supported (removed):
+    - Syntactic sugar: { task_name: { kind: ... } }
+
     Returns:
         (task_list, remaining_actions)
     """
     tasks = []
     remaining = []
-    reserved_actions = {"next", "vars", "collect", "emit", "set"}
 
     for item in tool_list:
         if not isinstance(item, dict):
             continue
 
         is_task = False
-        for key, value in item.items():
-            if key not in reserved_actions and isinstance(value, dict):
-                if "kind" in value:
-                    tasks.append(item)
-                    is_task = True
-                    break
+
+        # Canonical format: { name: "X", kind: "Y", ... }
+        if "name" in item and "kind" in item:
+            tasks.append(item)
+            is_task = True
+        # Unnamed format: { kind: "Y", ... }
+        elif "kind" in item and "name" not in item:
+            tasks.append(item)
+            is_task = True
 
         if not is_task:
             remaining.append(item)

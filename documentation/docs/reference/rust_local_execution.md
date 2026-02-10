@@ -29,7 +29,7 @@ noetl exec ./playbook.yaml -r local --dry-run
 - **One conditional keyword:** `when` (no legacy `eval`/`expr`/`case`)
 
 Canonical references:
-- `documentation/docs/reference/dsl/noetl_step_spec.md`
+- `documentation/docs/reference/dsl/step_spec.md`
 - `documentation/docs/reference/dsl/playbook_structure.md`
 - `documentation/docs/reference/dsl/implement_agent_instructions.md`
 

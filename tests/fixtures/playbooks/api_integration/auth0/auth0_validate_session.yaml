@@ -1,170 +1,140 @@
-apiVersion: noetl.io/v10
+apiVersion: noetl.io/v2
 kind: Playbook
 metadata:
   name: auth0_validate_session
   path: api_integration/auth0/auth0_validate_session
-  description: |
-    Validate NoETL session token and refresh NATS cache.
-
-    Flow:
-      1. Validates session in Postgres (source of truth)
-      2. If valid, caches/refreshes session in NATS K/V
-      3. Sends callback to gateway with validation result
-
-    Gateway Integration:
-      - Gateway first checks NATS K/V for cached session
-      - If cache miss, gateway calls this playbook
-      - Playbook validates from Postgres and repopulates NATS cache
-      - Gateway can then fetch session from NATS K/V
-
-    Input:
-      - session_token: NoETL session token
-      - request_id: Gateway request ID for callback
-
-    Output (via callback):
-      - valid: Boolean (true if session is valid)
-      - user: User details (user_id, email, display_name)
-      - expires_at: Session expiration timestamp
-      - message: Validation result message
+  description: "Validate NoETL session token and refresh NATS cache.\n\nFlow:\n  1.\
+    \ Validates session in Postgres (source of truth)\n  2. If valid, caches/refreshes\
+    \ session in NATS K/V\n  3. Sends callback to gateway with validation result\n\
+    \nGateway Integration:\n  - Gateway first checks NATS K/V for cached session\n\
+    \  - If cache miss, gateway calls this playbook\n  - Playbook validates from Postgres\
+    \ and repopulates NATS cache\n  - Gateway can then fetch session from NATS K/V\n\
+    \nInput:\n  - session_token: NoETL session token\n  - request_id: Gateway request\
+    \ ID for callback\n\nOutput (via callback):\n  - valid: Boolean (true if session\
+    \ is valid)\n  - user: User details (user_id, email, display_name)\n  - expires_at:\
+    \ Session expiration timestamp\n  - message: Validation result message\n"
   tags:
-    - auth0
-    - validation
-    - nats
-    - gateway
-
+  - auth0
+  - validation
+  - nats
+  - gateway
 workload:
-  # Input parameters - provided by execution request
-  session_token: ""
-  # Configuration
+  session_token: ''
   db_credential: pg_auth
   nats_credential: nats_credential
-  # NATS K/V bucket for session cache
   session_bucket: sessions
-  request_id: ""
-  gateway_url: "http://gateway.gateway.svc.cluster.local:8090"
-
+  request_id: ''
+  gateway_url: http://gateway.gateway.svc.cluster.local:8090
 workflow:
-  - step: start
-    desc: Lookup and validate session from Postgres (source of truth)
-    tool:
-      kind: postgres
-      auth: "{{ db_credential }}"
-      command: |
-        SELECT
-          s.session_id,
-          s.session_token,
-          s.user_id,
-          s.expires_at,
-          s.is_active,
-          u.email,
-          u.display_name,
-          u.is_active as user_is_active,
-          CASE
-            WHEN s.expires_at < NOW() THEN false
-            WHEN NOT s.is_active THEN false
-            WHEN NOT u.is_active THEN false
-            ELSE true
-          END as session_valid
-        FROM auth.sessions s
-        JOIN auth.users u ON s.user_id = u.user_id
-        WHERE s.session_token = '{{ session_token }}';
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: cache_session
-          when: "{{ start.command_0.rows | length > 0 and start.command_0.rows[0].session_valid }}"
-        - step: send_invalid_callback
-          when: "{{ request_id and (start.command_0.rows | length == 0 or not start.command_0.rows[0].session_valid) }}"
-        - step: end
-          when: "{{ not request_id and (start.command_0.rows | length == 0 or not start.command_0.rows[0].session_valid) }}"
+- step: start
+  desc: Lookup and validate session from Postgres (source of truth)
+  tool:
+    kind: postgres
+    auth: '{{ db_credential }}'
+    command: "SELECT\n  s.session_id,\n  s.session_token,\n  s.user_id,\n  s.expires_at,\n\
+      \  s.is_active,\n  u.email,\n  u.display_name,\n  u.is_active as user_is_active,\n\
+      \  CASE\n    WHEN s.expires_at < NOW() THEN false\n    WHEN NOT s.is_active\
+      \ THEN false\n    WHEN NOT u.is_active THEN false\n    ELSE true\n  END as session_valid\n\
+      FROM auth.sessions s\nJOIN auth.users u ON s.user_id = u.user_id\nWHERE s.session_token\
+      \ = '{{ session_token }}';\n"
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: cache_session
+      when: '{{ start.command_0.rows | length > 0 and start.command_0.rows[0].session_valid
+        }}'
+    - step: send_invalid_callback
+      when: '{{ request_id and (start.command_0.rows | length == 0 or not start.command_0.rows[0].session_valid)
+        }}'
+    - step: end
+      when: '{{ not request_id and (start.command_0.rows | length == 0 or not start.command_0.rows[0].session_valid)
+        }}'
+- step: cache_session
+  desc: Cache valid session in NATS K/V for fast gateway lookups
+  tool:
+    kind: nats
+    auth: '{{ nats_credential }}'
+    operation: kv_put
+    bucket: '{{ session_bucket }}'
+    key: '{{ start.command_0.rows[0].session_token }}'
+    value:
+      session_token: '{{ start.command_0.rows[0].session_token }}'
+      user_id: '{{ start.command_0.rows[0].user_id }}'
+      email: '{{ start.command_0.rows[0].email }}'
+      display_name: '{{ start.command_0.rows[0].display_name }}'
+      expires_at: '{{ start.command_0.rows[0].expires_at }}'
+      is_active: true
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: send_success_callback
+- step: send_success_callback
+  desc: Send success callback to gateway
+  tool:
+  - name: prepare
+    kind: python
+    code: 'result = {"status": "callback_ready"}
 
-  - step: cache_session
-    desc: Cache valid session in NATS K/V for fast gateway lookups
-    tool:
-      kind: nats
-      auth: "{{ nats_credential }}"
-      operation: kv_put
-      bucket: "{{ session_bucket }}"
-      key: "{{ start.command_0.rows[0].session_token }}"
-      value:
-        session_token: "{{ start.command_0.rows[0].session_token }}"
-        user_id: "{{ start.command_0.rows[0].user_id }}"
-        email: "{{ start.command_0.rows[0].email }}"
-        display_name: "{{ start.command_0.rows[0].display_name }}"
-        expires_at: "{{ start.command_0.rows[0].expires_at }}"
-        is_active: true
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: send_success_callback
-
-  - step: send_success_callback
-    desc: Send success callback to gateway
-    tool:
-      - prepare:
-          kind: python
-          code: |
-            result = {"status": "callback_ready"}
-      - send_callback:
-          kind: http
-          method: POST
-          url: "{{ gateway_url }}/api/internal/callback"
-          headers:
-            Content-Type: application/json
-          data:
-            request_id: "{{ request_id }}"
-            status: "success"
-            data:
-              valid: true
-              user:
-                user_id: "{{ start.command_0.rows[0].user_id }}"
-                email: "{{ start.command_0.rows[0].email }}"
-                display_name: "{{ start.command_0.rows[0].display_name }}"
-              expires_at: "{{ start.command_0.rows[0].expires_at }}"
-              message: "Session is valid"
-          spec:
-            policy:
-              rules:
-                - when: "{{ outcome.status == 'error' }}"
-                  then:
-                    do: continue
-                - else:
-                    then:
-                      do: continue
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: end
-          when: "{{ request_id }}"
-        - step: end
-          when: "{{ not request_id }}"
-
-  - step: send_invalid_callback
-    desc: Send invalid session callback to gateway
-    tool:
-      kind: http
-      method: POST
-      url: "{{ gateway_url }}/api/internal/callback"
-      headers:
-        Content-Type: application/json
+      '
+  - name: send_callback
+    kind: http
+    method: POST
+    url: '{{ gateway_url }}/api/internal/callback'
+    headers:
+      Content-Type: application/json
+    data:
+      request_id: '{{ request_id }}'
+      status: success
       data:
-        request_id: "{{ request_id }}"
-        status: "success"
-        data:
-          valid: false
-          message: "Session not found or expired"
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: end
+        valid: true
+        user:
+          user_id: '{{ start.command_0.rows[0].user_id }}'
+          email: '{{ start.command_0.rows[0].email }}'
+          display_name: '{{ start.command_0.rows[0].display_name }}'
+        expires_at: '{{ start.command_0.rows[0].expires_at }}'
+        message: Session is valid
+    spec:
+      policy:
+        rules:
+        - when: '{{ outcome.status == ''error'' }}'
+          then:
+            do: continue
+        - else:
+            then:
+              do: continue
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: end
+      when: '{{ request_id }}'
+    - step: end
+      when: '{{ not request_id }}'
+- step: send_invalid_callback
+  desc: Send invalid session callback to gateway
+  tool:
+    kind: http
+    method: POST
+    url: '{{ gateway_url }}/api/internal/callback'
+    headers:
+      Content-Type: application/json
+    data:
+      request_id: '{{ request_id }}'
+      status: success
+      data:
+        valid: false
+        message: Session not found or expired
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: end
+- step: end
+  desc: Complete
+  tool:
+    kind: python
+    code: 'result = {"status": "complete"}
 
-  - step: end
-    desc: Complete
-    tool:
-      kind: python
-      code: |
-        result = {"status": "complete"}
+      '

@@ -1,7 +1,7 @@
 # NoETL DSL Mental Model (Conceptual “ER”)
 
 This document is a **conceptual model** distilled from the Canonical v10 DSL reference:
-- https://noetl.dev/docs/reference/dsl/noetl_step_spec
+- https://noetl.dev/docs/reference/dsl/step_spec
 - https://github.com/noetl/noetl/tree/master/documentation/docs/reference/dsl
 
 It describes **how the YAML objects relate**, how they become **runtime instances**, and how **events + result references** make execution durable.

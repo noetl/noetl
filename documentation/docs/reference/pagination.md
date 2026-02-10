@@ -22,7 +22,7 @@ If you need high parallelism and ordered paging:
 
 For the full canonical walkthrough + example, see:
 - `documentation/docs/reference/dsl/pagination.md`
-- `documentation/docs/reference/dsl/noetl_step_spec.md`
+- `documentation/docs/reference/dsl/step_spec.md`
 
 ---
 

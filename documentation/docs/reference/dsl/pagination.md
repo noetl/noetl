@@ -10,6 +10,9 @@ This document describes the **Canonical v10** pagination patterns:
 - **Outer fan-out** via `step.loop` (often parallel/distributed)
 - **Inner ordered pagination stream** within one iteration lease using task policy (`jump`/`break`)
 
+> **Task format:** Tasks use the canonical format with explicit `name:` field (e.g., `{ name: "task_name", kind: "http", ... }`).
+> See [Step Specification](./step_spec.md#7-tasks-and-tool-list-shapes-must) for details.
+
 - **No** `eval:` blocks
 - **No** `expr:` keyword
 - **No** `step.when`
@@ -140,100 +143,100 @@ This example:
     iterator: endpoint
 
   tool:
-    - init_iter:
-        kind: noop
-        spec:
-          policy:
-            rules:
-              - else:
-                  then:
-                    do: continue
-                    set_iter:
-                      page: 1
-                      has_more: true
-
-    - fetch_page:
-        kind: http
-        method: GET
-        url: "{{ workload.api_url }}{{ iter.endpoint.path }}"
-        params:
-          page: "{{ iter.page }}"
-          pageSize: "{{ iter.endpoint.page_size }}"
-        spec:
-          timeout: { connect: 5, read: 15 }
-          policy:
-            rules:
-              # transient retry (rate limit / gateway / service unavailable)
-              - when: "{{ outcome.status == 'error' and outcome.http.status in [429,500,502,503,504] }}"
-                then: { do: retry, attempts: 10, backoff: exponential, delay: 2.0 }
-
-              # permanent fail (auth)
-              - when: "{{ outcome.status == 'error' and outcome.http.status in [401,403] }}"
-                then: { do: fail }
-
-              # on success, capture status + paging fields for routing and pagination
-              - else:
-                  then:
-                    do: continue
-                    set_iter:
-                      http_status: "{{ outcome.http.status | default(200) }}"
-                      has_more: "{{ outcome.result.data.paging.hasMore | default(false) }}"
-                      page: "{{ outcome.result.data.paging.page | default(iter.page) }}"
-                      items: "{{ outcome.result.data.data | default([]) }}"
-
-    - route_by_status:
-        kind: noop
-        spec:
-          policy:
-            rules:
-              - when: "{{ iter.http_status == 404 }}"
-                then: { do: jump, to: store_404 }
-              - else:
-                  then: { do: jump, to: store_200 }
-
-    - store_200:
-        kind: postgres
-        auth: pg_k8s
-        command: |
-          INSERT INTO results_ok (execution_id, endpoint, page, items, items_count)
-          VALUES (...)
-        spec:
-          policy:
-            rules:
-              - when: "{{ outcome.status == 'error' and outcome.pg.code in ['40001','40P01'] }}"
-                then: { do: retry, attempts: 5, backoff: exponential, delay: 2.0 }
-              - when: "{{ outcome.status == 'error' }}"
-                then: { do: fail }
-              - else:
-                  then: { do: jump, to: paginate }
-
-    - store_404:
-        kind: postgres
-        auth: pg_k8s
-        command: |
-          INSERT INTO results_not_found (execution_id, endpoint, page)
-          VALUES (...)
-        spec:
-          policy:
-            rules:
-              - when: "{{ outcome.status == 'error' }}"
-                then: { do: fail }
-              - else:
-                  then: { do: jump, to: paginate }
-
-    - paginate:
-        kind: noop
-        spec:
-          policy:
-            rules:
-              - when: "{{ iter.has_more == true }}"
+    - name: init_iter
+      kind: noop
+      spec:
+        policy:
+          rules:
+            - else:
                 then:
-                  do: jump
-                  to: fetch_page
+                  do: continue
                   set_iter:
-                    page: "{{ (iter.page | int) + 1 }}"
-              - else:
-                  then: { do: break }
+                    page: 1
+                    has_more: true
+
+    - name: fetch_page
+      kind: http
+      method: GET
+      url: "{{ workload.api_url }}{{ iter.endpoint.path }}"
+      params:
+        page: "{{ iter.page }}"
+        pageSize: "{{ iter.endpoint.page_size }}"
+      spec:
+        timeout: { connect: 5, read: 15 }
+        policy:
+          rules:
+            # transient retry (rate limit / gateway / service unavailable)
+            - when: "{{ outcome.status == 'error' and outcome.http.status in [429,500,502,503,504] }}"
+              then: { do: retry, attempts: 10, backoff: exponential, delay: 2.0 }
+
+            # permanent fail (auth)
+            - when: "{{ outcome.status == 'error' and outcome.http.status in [401,403] }}"
+              then: { do: fail }
+
+            # on success, capture status + paging fields for routing and pagination
+            - else:
+                then:
+                  do: continue
+                  set_iter:
+                    http_status: "{{ outcome.http.status | default(200) }}"
+                    has_more: "{{ outcome.result.data.paging.hasMore | default(false) }}"
+                    page: "{{ outcome.result.data.paging.page | default(iter.page) }}"
+                    items: "{{ outcome.result.data.data | default([]) }}"
+
+    - name: route_by_status
+      kind: noop
+      spec:
+        policy:
+          rules:
+            - when: "{{ iter.http_status == 404 }}"
+              then: { do: jump, to: store_404 }
+            - else:
+                then: { do: jump, to: store_200 }
+
+    - name: store_200
+      kind: postgres
+      auth: pg_k8s
+      command: |
+        INSERT INTO results_ok (execution_id, endpoint, page, items, items_count)
+        VALUES (...)
+      spec:
+        policy:
+          rules:
+            - when: "{{ outcome.status == 'error' and outcome.pg.code in ['40001','40P01'] }}"
+              then: { do: retry, attempts: 5, backoff: exponential, delay: 2.0 }
+            - when: "{{ outcome.status == 'error' }}"
+              then: { do: fail }
+            - else:
+                then: { do: jump, to: paginate }
+
+    - name: store_404
+      kind: postgres
+      auth: pg_k8s
+      command: |
+        INSERT INTO results_not_found (execution_id, endpoint, page)
+        VALUES (...)
+      spec:
+        policy:
+          rules:
+            - when: "{{ outcome.status == 'error' }}"
+              then: { do: fail }
+            - else:
+                then: { do: jump, to: paginate }
+
+    - name: paginate
+      kind: noop
+      spec:
+        policy:
+          rules:
+            - when: "{{ iter.has_more == true }}"
+              then:
+                do: jump
+                to: fetch_page
+                set_iter:
+                  page: "{{ (iter.page | int) + 1 }}"
+            - else:
+                then: { do: break }
 
   next:
     spec: { mode: exclusive }
@@ -256,19 +259,19 @@ This example:
 You can extend `route_by_status` for multiple stores:
 
 ```yaml
-- route_by_status:
-    kind: noop
-    spec:
-      policy:
-        rules:
-          - when: "{{ iter.http_status == 404 }}"
-            then: { do: jump, to: store_404 }
-          - when: "{{ iter.http_status == 409 }}"
-            then: { do: jump, to: store_conflict }
-          - when: "{{ iter.http_status in [500,502,503,504] }}"
-            then: { do: jump, to: store_server_error }
-          - else:
-              then: { do: jump, to: store_200 }
+- name: route_by_status
+  kind: noop
+  spec:
+    policy:
+      rules:
+        - when: "{{ iter.http_status == 404 }}"
+          then: { do: jump, to: store_404 }
+        - when: "{{ iter.http_status == 409 }}"
+          then: { do: jump, to: store_conflict }
+        - when: "{{ iter.http_status in [500,502,503,504] }}"
+          then: { do: jump, to: store_server_error }
+        - else:
+            then: { do: jump, to: store_200 }
 ```
 
 This keeps “if/else” logic **inside policy**, using **only `when`**.
@@ -302,19 +305,19 @@ However, you can model a “while/until” concept by convention inside the `pag
 Example (until):
 
 ```yaml
-- paginate:
-    kind: noop
-    spec:
-      policy:
-        rules:
-          - when: "{{ iter.has_more != true }}"
-            then: { do: break }
-          - else:
-              then:
-                do: jump
-                to: fetch_page
-                set_iter:
-                  page: "{{ (iter.page | int) + 1 }}"
+- name: paginate
+  kind: noop
+  spec:
+    policy:
+      rules:
+        - when: "{{ iter.has_more != true }}"
+          then: { do: break }
+        - else:
+            then:
+              do: jump
+              to: fetch_page
+              set_iter:
+                page: "{{ (iter.page | int) + 1 }}"
 ```
 
 (If you later add first-class `while/until`, compile it down to this policy form.)

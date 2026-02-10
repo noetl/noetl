@@ -10,8 +10,9 @@
 # - Outcome status uses "ok" | "error" (not "success")
 # - Variables: `ctx` (execution-scoped) and `iter` (iteration-scoped)
 # - Direct access to workload values (no {{ workload.xxx }})
+# - Task names use explicit `name:` field (canonical format)
 
-apiVersion: noetl.io/v10
+apiVersion: noetl.io/v2
 kind: Playbook
 metadata:
   name: v10_canonical_example
@@ -106,44 +107,44 @@ workflow:
           when: "{{ event.name == 'call.done' }}"
 
   # ==========================================================================
-  # Step 3: Tool pipeline with labeled tasks
+  # Step 3: Tool pipeline with labeled tasks (canonical name: format)
   # ==========================================================================
   - step: process_data
     desc: Process data with task pipeline
     tool:
-      # Pipeline: list of labeled tasks
-      - validate:
-          kind: python
-          args:
-            data: "{{ fetch_data.data }}"
-          code: |
-            if not data:
-                result = {"status": "error", "message": "No data to validate"}
-            else:
-                result = {"status": "ok", "valid": True, "count": len(data)}
-          spec:
-            policy:
-              rules:
-                - when: "{{ outcome.result.status == 'error' }}"
-                  then: { do: fail }
-                - else:
-                    then: { do: continue }
+      # Pipeline: list of tasks with explicit name: field (canonical format)
+      - name: validate
+        kind: python
+        args:
+          data: "{{ fetch_data.data }}"
+        code: |
+          if not data:
+              result = {"status": "error", "message": "No data to validate"}
+          else:
+              result = {"status": "ok", "valid": True, "count": len(data)}
+        spec:
+          policy:
+            rules:
+              - when: "{{ outcome.result.status == 'error' }}"
+                then: { do: fail }
+              - else:
+                  then: { do: continue }
 
-      - transform:
-          kind: python
-          args:
-            # _prev contains previous task's result
-            prev: "{{ _prev }}"
-          code: |
-            result = {"transformed": True, "items": prev.get("count", 0)}
-          spec:
-            policy:
-              rules:
-                - else:
-                    then:
-                      do: continue
-                      set_ctx:
-                        transform_done: true
+      - name: transform
+        kind: python
+        args:
+          # _prev contains previous task's result
+          prev: "{{ _prev }}"
+        code: |
+          result = {"transformed": True, "items": prev.get("count", 0)}
+        spec:
+          policy:
+            rules:
+              - else:
+                  then:
+                    do: continue
+                    set_ctx:
+                      transform_done: true
     next:
       spec:
         mode: exclusive

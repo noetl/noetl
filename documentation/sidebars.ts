@@ -76,7 +76,7 @@ const sidebars: SidebarsConfig = {
             'reference/dsl/runtime_results',
             'reference/dsl/pagination',
             'reference/dsl/dsl_specification',
-            'reference/dsl/noetl_step_spec',
+            'reference/dsl/step_spec',
             'reference/dsl/dsl_analysis_and_evaluation',
             'reference/dsl/workflow_patterns_comparison',
           ],

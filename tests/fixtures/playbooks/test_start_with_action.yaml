@@ -4,58 +4,46 @@ metadata:
   name: test_start_with_action
   path: tests/control-flow/start_with_action
   description: Test start step with action type that executes then routes
-
 workload:
-  test_value: "hello"
-
+  test_value: hello
 workflow:
-  - step: start
-    desc: Start step with Python action - should execute first
-    tool:
-      - init_action:
-          kind: python
-          args:
-            input_data: "{{ workload }}"
-          code: |
-            result = {
-                'status': 'success',
-                'message': 'Start step executed with action type',
-                'data': {'executed': True, 'input': input_data}
-            }
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: process
-          args:
-            from_start: "{{ start.data.executed }}"
+- step: start
+  desc: Start step with Python action - should execute first
+  tool:
+  - name: init_action
+    kind: python
+    args:
+      input_data: '{{ workload }}'
+    code: "result = {\n    'status': 'success',\n    'message': 'Start step executed\
+      \ with action type',\n    'data': {'executed': True, 'input': input_data}\n\
+      }\n"
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: process
+      args:
+        from_start: '{{ start.data.executed }}'
+- step: process
+  desc: Process step - executed after start
+  tool:
+  - name: process_action
+    kind: python
+    args:
+      from_start: '{{ args.from_start | default(start.data.executed) }}'
+    code: "result = {\n    'status': 'success',\n    'message': 'Process step executed',\n\
+      \    'data': {\n        'from_start': from_start,\n        'processed': True\n\
+      \    }\n}\n"
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: end
+- step: end
+  desc: End step - aggregator (no action type)
+  tool:
+  - name: complete
+    kind: python
+    code: 'result = {"status": "complete"}
 
-  - step: process
-    desc: Process step - executed after start
-    tool:
-      - process_action:
-          kind: python
-          args:
-            from_start: "{{ args.from_start | default(start.data.executed) }}"
-          code: |
-            result = {
-                'status': 'success',
-                'message': 'Process step executed',
-                'data': {
-                    'from_start': from_start,
-                    'processed': True
-                }
-            }
-    next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: end
-
-  - step: end
-    desc: End step - aggregator (no action type)
-    tool:
-      - complete:
-          kind: python
-          code: |
-            result = {"status": "complete"}
+      '
