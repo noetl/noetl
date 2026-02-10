@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.8.3](https://github.com/noetl/noetl/compare/v2.8.2...v2.8.3) (2026-02-10)
+
+### Bug Fixes
+
+* Refactor playbook variable handling and update DSL to v2 ([84e77b0](https://github.com/noetl/noetl/commit/84e77b0df054881b68d94b0d141f5465bae723ba))
+
 ## [2.8.2](https://github.com/noetl/noetl/compare/v2.8.1...v2.8.2) (2026-02-09)
 
 ### Bug Fixes
