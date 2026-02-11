@@ -18,29 +18,32 @@ workflow:
       cmds:
         - echo "JupyterLab Automation - Action '{{ workload.action }}'"
     next:
-      - step: deploy_jupyterlab
-        when: "{{ workload.action == 'deploy' }}"
-      - step: undeploy_jupyterlab
-        when: "{{ workload.action == 'undeploy' }}"
-      - step: full_deployment
-        when: "{{ workload.action == 'full' }}"
-      - step: check_status
-        when: "{{ workload.action == 'status' }}"
-      - step: view_logs
-        when: "{{ workload.action == 'logs' }}"
-      - step: port_forward
-        when: "{{ workload.action == 'port-forward' }}"
-      - step: restart_deployment
-        when: "{{ workload.action == 'restart' }}"
-      - step: open_shell
-        when: "{{ workload.action == 'shell' }}"
-      - step: test_deployment
-        when: "{{ workload.action == 'test' }}"
-      - step: update_notebook
-        when: "{{ workload.action == 'update-notebook' }}"
-      - step: show_help
-        when: "{{ workload.action == 'help' }}"
-      - step: show_help
+      spec:
+        mode: exclusive
+      arcs:
+        - step: deploy_jupyterlab
+          when: "{{ workload.action == 'deploy' }}"
+        - step: undeploy_jupyterlab
+          when: "{{ workload.action == 'undeploy' }}"
+        - step: full_deployment
+          when: "{{ workload.action == 'full' }}"
+        - step: check_status
+          when: "{{ workload.action == 'status' }}"
+        - step: view_logs
+          when: "{{ workload.action == 'logs' }}"
+        - step: port_forward
+          when: "{{ workload.action == 'port-forward' }}"
+        - step: restart_deployment
+          when: "{{ workload.action == 'restart' }}"
+        - step: open_shell
+          when: "{{ workload.action == 'shell' }}"
+        - step: test_deployment
+          when: "{{ workload.action == 'test' }}"
+        - step: update_notebook
+          when: "{{ workload.action == 'update-notebook' }}"
+        - step: show_help
+          when: "{{ workload.action == 'help' }}"
+        - step: show_help
 
   - step: deploy_jupyterlab
     desc: Deploy JupyterLab to kind cluster
@@ -67,7 +70,10 @@ workflow:
           echo "    - /work/notebooks/regression_dashboard.ipynb"
           echo "    - /work/notebooks/pagination_loop_test.ipynb"
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: undeploy_jupyterlab
     desc: Remove JupyterLab from kind cluster
@@ -83,7 +89,10 @@ workflow:
           kubectl delete configmap jupyterlab-notebooks -n noetl --ignore-not-found=true
           echo "✓ JupyterLab removed"
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: full_deployment
     desc: Complete JupyterLab deployment workflow
@@ -136,7 +145,10 @@ workflow:
           echo "  3. Monitor test execution and view results"
           echo "========================================="
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: check_status
     desc: Check JupyterLab deployment status
@@ -156,7 +168,10 @@ workflow:
           echo "Pods"
           kubectl get pods -n noetl -l app=jupyterlab -o wide || echo "  No pods found"
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: view_logs
     desc: View JupyterLab logs
@@ -169,7 +184,10 @@ workflow:
           echo "================"
           kubectl logs -n noetl -l app=jupyterlab --tail=100 -f
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: port_forward
     desc: Port-forward JupyterLab service to localhost
@@ -182,7 +200,10 @@ workflow:
           echo "Access at http://localhost:30888 (token noetl)"
           kubectl port-forward -n noetl service/jupyterlab 8888:8888
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: restart_deployment
     desc: Restart JupyterLab deployment
@@ -196,7 +217,10 @@ workflow:
           kubectl rollout status deployment/jupyterlab -n noetl
           echo "✓ JupyterLab restarted"
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: open_shell
     desc: Open shell in JupyterLab pod
@@ -209,7 +233,10 @@ workflow:
           POD_NAME=$(kubectl get pod -n noetl -l app=jupyterlab -o jsonpath='{.items[0].metadata.name}')
           kubectl exec -it -n noetl $POD_NAME -- /bin/bash
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: test_deployment
     desc: Test JupyterLab deployment
@@ -229,7 +256,10 @@ workflow:
           kubectl exec -n noetl $POD_NAME -- python -c "import psycopg, duckdb, polars, pyarrow, plotly; print('✓ All packages installed')" || echo "✗ Package installation failed"
           echo "✓ JupyterLab deployment test completed"
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: update_notebook
     desc: Update notebook in ConfigMap and restart
@@ -248,7 +278,10 @@ workflow:
           kubectl rollout status deployment/jupyterlab -n noetl
           echo "✓ Notebook updated and JupyterLab restarted"
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: show_help
     desc: Display available actions
@@ -294,7 +327,10 @@ workflow:
           echo "  noetl run automation/infrastructure/jupyterlab.yaml --set action=port-forward"
           echo ""
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: End workflow

@@ -16,8 +16,11 @@ workflow:
     tool:
       kind: noop
     next:
-      - step: try_postgres
-  
+      spec:
+        mode: exclusive
+      arcs:
+        - step: try_postgres
+
   - step: try_postgres
     desc: "Attempt to use postgres tool (unsupported in local mode)"
     tool:
@@ -27,8 +30,11 @@ workflow:
         credential: my_db
       query: "{{ workload.query }}"
     next:
-      - step: try_python
-  
+      spec:
+        mode: exclusive
+      arcs:
+        - step: try_python
+
   - step: try_python
     desc: "Attempt to use python tool (unsupported in local mode)"
     tool:
@@ -37,16 +43,22 @@ workflow:
         result = {"message": "Hello from Python"}
         print(result)
     next:
-      - step: try_duckdb
-  
+      spec:
+        mode: exclusive
+      arcs:
+        - step: try_duckdb
+
   - step: try_duckdb
     desc: "Attempt to use duckdb tool (unsupported in local mode)"
     tool:
       kind: duckdb
       query: "SELECT 1 as test"
     next:
-      - step: use_shell
-  
+      spec:
+        mode: exclusive
+      arcs:
+        - step: use_shell
+
   - step: use_shell
     desc: "Use supported shell tool"
     tool:
@@ -54,7 +66,10 @@ workflow:
       cmds:
         - "echo 'Shell tool works in local mode!'"
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: End workflow

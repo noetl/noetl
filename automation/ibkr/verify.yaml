@@ -92,7 +92,10 @@ workflow:
           sys.exit(0 if ok else 2)
           PY
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: Done

@@ -13,7 +13,10 @@ workflow:
     tool:
       kind: noop
     next:
-      - step: deploy
+      spec:
+        mode: exclusive
+      arcs:
+        - step: deploy
 
   - step: deploy
     desc: "Deploy to environment"
@@ -24,7 +27,10 @@ workflow:
         - "echo 'Target environment: {{ workload.target_env }}'"
         - "echo 'Deployment completed successfully'"
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: End workflow

@@ -24,21 +24,24 @@ workflow:
       cmds:
         - echo "Worker Pool Deployment - Action '{{ workload.action }}'"
     next:
-      - step: build_image
-        when: "{{ workload.action == 'build' }}"
-      - step: push_image
-        when: "{{ workload.action == 'push' }}"
-      - step: deploy_helm
-        when: "{{ workload.action == 'deploy' }}"
-      - step: build_image
-        when: "{{ workload.action == 'all' }}"
-      - step: status
-        when: "{{ workload.action == 'status' }}"
-      - step: logs
-        when: "{{ workload.action == 'logs' }}"
-      - step: show_help
-        when: "{{ workload.action == 'help' }}"
-      - step: show_help
+      spec:
+        mode: exclusive
+      arcs:
+        - step: build_image
+          when: "{{ workload.action == 'build' }}"
+        - step: push_image
+          when: "{{ workload.action == 'push' }}"
+        - step: deploy_helm
+          when: "{{ workload.action == 'deploy' }}"
+        - step: build_image
+          when: "{{ workload.action == 'all' }}"
+        - step: status
+          when: "{{ workload.action == 'status' }}"
+        - step: logs
+          when: "{{ workload.action == 'logs' }}"
+        - step: show_help
+          when: "{{ workload.action == 'help' }}"
+        - step: show_help
 
   - step: build_image
     desc: Build the Worker Pool Docker image
@@ -72,9 +75,12 @@ workflow:
           echo $IMAGE_TAG > .worker_pool_last_build_tag.txt
           echo "Build complete: $IMAGE"
     next:
-      - step: push_image
-        when: "{{ workload.action == 'all' }}"
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: push_image
+          when: "{{ workload.action == 'all' }}"
+        - step: end
 
   - step: push_image
     desc: Push the Worker Pool Docker image to registry
@@ -99,9 +105,12 @@ workflow:
 
           echo "Push complete"
     next:
-      - step: deploy_helm
-        when: "{{ workload.action == 'all' }}"
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: deploy_helm
+          when: "{{ workload.action == 'all' }}"
+        - step: end
 
   - step: deploy_helm
     desc: Deploy Worker Pool using Helm
@@ -139,7 +148,10 @@ workflow:
           echo ""
           echo "Deployment complete"
     next:
-      - step: status
+      spec:
+        mode: exclusive
+      arcs:
+        - step: status
 
   - step: status
     desc: Show Worker Pool status
@@ -158,7 +170,10 @@ workflow:
           echo "Recent Events:"
           kubectl get events -n {{ workload.namespace }} --sort-by='.lastTimestamp' | tail -10
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: logs
     desc: Show Worker Pool logs
@@ -171,7 +186,10 @@ workflow:
           echo "================="
           kubectl logs -n {{ workload.namespace }} -l app=noetl-worker-pool --tail=100 --all-containers
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: show_help
     desc: Display available actions
@@ -200,7 +218,10 @@ workflow:
           echo "  --set tag=<tag>            - Image tag (default: git-sha-timestamp)"
           echo "  --set namespace=<ns>       - Kubernetes namespace (default: noetl)"
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: Done

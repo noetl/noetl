@@ -18,17 +18,20 @@ workflow:
       cmds:
         - echo "Gateway UI Automation - Action '{{ workload.action }}'"
     next:
-      - step: deploy_ui
-        when: "{{ workload.action == 'deploy' }}"
-      - step: view_logs
-        when: "{{ workload.action == 'logs' }}"
-      - step: update_ui
-        when: "{{ workload.action == 'update' }}"
-      - step: check_status
-        when: "{{ workload.action == 'status' }}"
-      - step: show_help
-        when: "{{ workload.action == 'help' }}"
-      - step: show_help
+      spec:
+        mode: exclusive
+      arcs:
+        - step: deploy_ui
+          when: "{{ workload.action == 'deploy' }}"
+        - step: view_logs
+          when: "{{ workload.action == 'logs' }}"
+        - step: update_ui
+          when: "{{ workload.action == 'update' }}"
+        - step: check_status
+          when: "{{ workload.action == 'status' }}"
+        - step: show_help
+          when: "{{ workload.action == 'help' }}"
+        - step: show_help
 
   - step: deploy_ui
     desc: Deploy Gateway UI to Kubernetes
@@ -44,7 +47,10 @@ workflow:
           kubectl apply -f ci/manifests/gateway/service-ui.yaml
           echo "Gateway UI deployed at http://localhost:8080"
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: view_logs
     desc: Show Gateway UI logs
@@ -57,7 +63,10 @@ workflow:
           echo "================"
           kubectl logs -n gateway -l app=gateway-ui --tail=100 -f
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: update_ui
     desc: Regenerate and deploy updated Gateway UI files
@@ -73,7 +82,10 @@ workflow:
           kubectl rollout status deployment/gateway-ui -n gateway --timeout=30s
           echo "✅ Gateway UI updated at http://localhost:8080"
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: check_status
     desc: Check Gateway UI deployment status
@@ -94,7 +106,10 @@ workflow:
           echo "=== Gateway UI ConfigMaps ==="
           kubectl get configmap -n default | grep gateway-ui 2>/dev/null || echo "No Gateway UI ConfigMaps found"
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: show_help
     desc: Display available actions
@@ -133,7 +148,10 @@ workflow:
           echo "Gateway UI Location: tests/fixtures/gateway_ui"
           echo ""
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: End workflow

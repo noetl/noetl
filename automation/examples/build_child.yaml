@@ -13,7 +13,10 @@ workflow:
     tool:
       kind: noop
     next:
-      - step: build_image
+      spec:
+        mode: exclusive
+      arcs:
+        - step: build_image
 
   - step: build_image
     desc: "Build Docker image"
@@ -24,7 +27,10 @@ workflow:
         - "echo 'Build environment: {{ workload.build_env }}'"
         - "echo 'Build completed successfully'"
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: End workflow

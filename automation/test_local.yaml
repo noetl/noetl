@@ -17,7 +17,10 @@ workflow:
     tool:
       kind: noop
     next:
-      - step: echo_message
+      spec:
+        mode: exclusive
+      arcs:
+        - step: echo_message
 
   - step: echo_message
     desc: "Echo a message"
@@ -25,7 +28,10 @@ workflow:
       kind: shell
       cmds: "echo '{{ workload.message }}'"
     next:
-      - step: list_files
+      spec:
+        mode: exclusive
+      arcs:
+        - step: list_files
 
   - step: list_files
     desc: "List current directory"
@@ -36,7 +42,10 @@ workflow:
         - "ls -la | head -10"
         - "echo 'Done listing files'"
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: "End the workflow"

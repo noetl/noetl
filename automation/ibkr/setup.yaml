@@ -22,7 +22,10 @@ workflow:
         - "cd /Users/akuksin/projects/noetl/noetl && if command -v uv >/dev/null 2>&1; then uv pip install -e '.[ibkr]'; else python -m pip install -e '.[ibkr]'; fi"
         - "python -m playwright install chromium"
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: Done

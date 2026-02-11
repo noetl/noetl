@@ -19,7 +19,10 @@ workflow:
       cmds:
         - echo "Starting complete NoETL environment setup..."
     next:
-      - step: boot_cluster
+      spec:
+        mode: exclusive
+      arcs:
+        - step: boot_cluster
 
   - step: boot_cluster
     desc: Boot NoETL Kubernetes cluster
@@ -31,7 +34,10 @@ workflow:
           cd {{ workload.repo_root }}
           noetl run boot
     next:
-      - step: setup_tradedb
+      spec:
+        mode: exclusive
+      arcs:
+        - step: setup_tradedb
 
   - step: setup_tradedb
     desc: Setup TradeDB database and schema
@@ -39,7 +45,10 @@ workflow:
       kind: playbook
       path: submodules/IQT/automation/tradedb_setup.yaml
     next:
-      - step: setup_ibkr
+      spec:
+        mode: exclusive
+      arcs:
+        - step: setup_ibkr
 
   - step: setup_ibkr
     desc: Build and deploy IBKR Client Portal Gateway
@@ -47,7 +56,10 @@ workflow:
       kind: playbook
       path: automation/ibkr/setup_full.yaml
     next:
-      - step: summary
+      spec:
+        mode: exclusive
+      arcs:
+        - step: summary
 
   - step: summary
     desc: Show environment summary
@@ -75,7 +87,10 @@ workflow:
           kubectl get pods -A | grep -E "noetl|gateway|ibkr" | grep -v "kube-system"
           echo ""
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: Done

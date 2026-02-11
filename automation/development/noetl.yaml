@@ -20,22 +20,23 @@ workflow:
       kind: shell
       cmds:
         - echo "NoETL Deploy Automation - Action '{{ workload.action }}'"
-    spec:
-      next_mode: exclusive
     next:
-      - step: build_image
-        when: "{{ workload.action == 'build' }}"
-      - step: load_image
-        when: "{{ workload.action == 'load' }}"
-      - step: deploy_noetl
-        when: "{{ workload.action == 'deploy' }}"
-      - step: build_image
-        when: "{{ workload.action == 'redeploy' }}"
-      - step: status
-        when: "{{ workload.action == 'status' }}"
-      - step: show_help
-        when: "{{ workload.action == 'help' }}"
-      - step: show_help
+      spec:
+        mode: exclusive
+      arcs:
+        - step: build_image
+          when: "{{ workload.action == 'build' }}"
+        - step: load_image
+          when: "{{ workload.action == 'load' }}"
+        - step: deploy_noetl
+          when: "{{ workload.action == 'deploy' }}"
+        - step: build_image
+          when: "{{ workload.action == 'redeploy' }}"
+        - step: status
+          when: "{{ workload.action == 'status' }}"
+        - step: show_help
+          when: "{{ workload.action == 'help' }}"
+        - step: show_help
 
   - step: build_image
     desc: Build NoETL Docker image
@@ -54,9 +55,12 @@ workflow:
           echo ""
           echo "Build complete: {{ workload.registry }}/{{ workload.image_name }}:$IMAGE_TAG"
     next:
-      - step: load_image
-        when: "{{ workload.action == 'redeploy' }}"
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: load_image
+          when: "{{ workload.action == 'redeploy' }}"
+        - step: end
 
   - step: load_image
     desc: Load Docker image into kind cluster
@@ -77,9 +81,12 @@ workflow:
           echo ""
           echo "Image loaded successfully"
     next:
-      - step: deploy_noetl
-        when: "{{ workload.action == 'redeploy' }}"
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: deploy_noetl
+          when: "{{ workload.action == 'redeploy' }}"
+        - step: end
 
   - step: deploy_noetl
     desc: Deploy NoETL server and workers
@@ -116,7 +123,10 @@ workflow:
           echo "Waiting for NoETL workers..."
           kubectl wait --for=condition=ready pod -l app=noetl-worker -n noetl --timeout=90s || echo "Warning: NoETL workers not ready"
     next:
-      - step: status
+      spec:
+        mode: exclusive
+      arcs:
+        - step: status
 
   - step: status
     desc: Show NoETL pod and service status
@@ -130,7 +140,10 @@ workflow:
           echo ""
           kubectl get svc -n noetl
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: show_help
     desc: Display available actions
@@ -160,7 +173,10 @@ workflow:
           echo "  # Just deploy (after manual build)"
           echo "  noetl run automation/development/noetl.yaml --set action=deploy"
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: Done

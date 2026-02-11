@@ -15,7 +15,10 @@ workflow:
       cmds:
         - echo "Starting environment destroy..."
     next:
-      - step: kill_port_forwards
+      spec:
+        mode: exclusive
+      arcs:
+        - step: kill_port_forwards
 
   - step: kill_port_forwards
     desc: Kill kubectl port-forward processes
@@ -29,7 +32,10 @@ workflow:
           sleep 2
           echo "OK Port-forward processes terminated"
     next:
-      - step: delete_cluster
+      spec:
+        mode: exclusive
+      arcs:
+        - step: delete_cluster
 
   - step: delete_cluster
     desc: Delete kind cluster
@@ -42,8 +48,11 @@ workflow:
           # Give Docker Desktop time to release ports after cluster deletion
           sleep 3
     next:
-      - step: cleanup_docker
-  
+      spec:
+        mode: exclusive
+      arcs:
+        - step: cleanup_docker
+
   - step: cleanup_docker
     desc: Clean up Docker resources
     tool:
@@ -54,8 +63,11 @@ workflow:
           docker image prune --all --force
           docker volume prune --force || echo "Docker cleanup skipped or failed"
     next:
-      - step: clear_cache
-  
+      spec:
+        mode: exclusive
+      arcs:
+        - step: clear_cache
+
   - step: clear_cache
     desc: Clear cache directories
     tool:
@@ -67,8 +79,11 @@ workflow:
           rm -rf ci/kind/cache/noetl-logs/*
           echo "✓ All cache directories cleared" || echo "Cache clear skipped or failed"
     next:
-      - step: clear_noetl_data
-  
+      spec:
+        mode: exclusive
+      arcs:
+        - step: clear_noetl_data
+
   - step: clear_noetl_data
     desc: Clear NoETL data
     tool:
@@ -76,8 +91,11 @@ workflow:
       cmds:
         - rm -rf ci/kind/cache/noetl-data/* || echo "Data clear skipped or failed"
     next:
-      - step: summary
-  
+      spec:
+        mode: exclusive
+      arcs:
+        - step: summary
+
   - step: summary
     desc: Show destruction summary
     tool:
@@ -101,8 +119,11 @@ workflow:
           echo "  osascript -e 'quit app \"Docker\"' && sleep 5 && open -a Docker"
           echo ""
     next:
-      - step: end
-  
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
+
   - step: end
     desc: End destroy workflow
     tool:

@@ -18,57 +18,60 @@ workflow:
       cmds:
         - echo "VictoriaMetrics Monitoring Automation - Action '{{ workload.action }}'"
     next:
-      - step: deploy_monitoring
-        when: "{{ workload.action == 'deploy' }}"
-      - step: undeploy_monitoring
-        when: "{{ workload.action == 'undeploy' }}"
-      - step: check_status
-        when: "{{ workload.action == 'status' }}"
-      - step: get_grafana_creds
-        when: "{{ workload.action == 'grafana-creds' }}"
-      - step: add_helm_repos
-        when: "{{ workload.action == 'add-helm-repos' }}"
-      - step: add_vector_helm_repo
-        when: "{{ workload.action == 'add-vector-helm-repo' }}"
-      - step: add_victoriametrics_helm_repo
-        when: "{{ workload.action == 'add-victoriametrics-helm-repo' }}"
-      - step: add_metrics_server_helm_repo
-        when: "{{ workload.action == 'add-metrics-server-helm-repo' }}"
-      - step: deploy_metrics_server
-        when: "{{ workload.action == 'deploy-metrics-server' }}"
-      - step: remove_metrics_server
-        when: "{{ workload.action == 'remove-metrics-server' }}"
-      - step: deploy_vmstack_operator
-        when: "{{ workload.action == 'deploy-vmstack-operator' }}"
-      - step: remove_vmstack_operator
-        when: "{{ workload.action == 'remove-vmstack-operator' }}"
-      - step: deploy_vmstack
-        when: "{{ workload.action == 'deploy-vmstack' }}"
-      - step: remove_vmstack
-        when: "{{ workload.action == 'remove-vmstack' }}"
-      - step: deploy_stack
-        when: "{{ workload.action == 'deploy-stack' }}"
-      - step: deploy_dashboards
-        when: "{{ workload.action == 'deploy-dashboards' }}"
-      - step: remove_dashboards
-        when: "{{ workload.action == 'remove-dashboards' }}"
-      - step: deploy_exporter
-        when: "{{ workload.action == 'deploy-exporter' }}"
-      - step: remove_exporter
-        when: "{{ workload.action == 'remove-exporter' }}"
-      - step: deploy_noetl_scrape
-        when: "{{ workload.action == 'deploy-noetl-scrape' }}"
-      - step: remove_noetl_scrape
-        when: "{{ workload.action == 'remove-noetl-scrape' }}"
-      - step: deploy_vector
-        when: "{{ workload.action == 'deploy-vector' }}"
-      - step: remove_vector
-        when: "{{ workload.action == 'remove-vector' }}"
-      - step: deploy_vmlogs
-        when: "{{ workload.action == 'deploy-vmlogs' }}"
-      - step: remove_vmlogs
-        when: "{{ workload.action == 'remove-vmlogs' }}"
-      - step: show_help
+      spec:
+        mode: exclusive
+      arcs:
+        - step: deploy_monitoring
+          when: "{{ workload.action == 'deploy' }}"
+        - step: undeploy_monitoring
+          when: "{{ workload.action == 'undeploy' }}"
+        - step: check_status
+          when: "{{ workload.action == 'status' }}"
+        - step: get_grafana_creds
+          when: "{{ workload.action == 'grafana-creds' }}"
+        - step: add_helm_repos
+          when: "{{ workload.action == 'add-helm-repos' }}"
+        - step: add_vector_helm_repo
+          when: "{{ workload.action == 'add-vector-helm-repo' }}"
+        - step: add_victoriametrics_helm_repo
+          when: "{{ workload.action == 'add-victoriametrics-helm-repo' }}"
+        - step: add_metrics_server_helm_repo
+          when: "{{ workload.action == 'add-metrics-server-helm-repo' }}"
+        - step: deploy_metrics_server
+          when: "{{ workload.action == 'deploy-metrics-server' }}"
+        - step: remove_metrics_server
+          when: "{{ workload.action == 'remove-metrics-server' }}"
+        - step: deploy_vmstack_operator
+          when: "{{ workload.action == 'deploy-vmstack-operator' }}"
+        - step: remove_vmstack_operator
+          when: "{{ workload.action == 'remove-vmstack-operator' }}"
+        - step: deploy_vmstack
+          when: "{{ workload.action == 'deploy-vmstack' }}"
+        - step: remove_vmstack
+          when: "{{ workload.action == 'remove-vmstack' }}"
+        - step: deploy_stack
+          when: "{{ workload.action == 'deploy-stack' }}"
+        - step: deploy_dashboards
+          when: "{{ workload.action == 'deploy-dashboards' }}"
+        - step: remove_dashboards
+          when: "{{ workload.action == 'remove-dashboards' }}"
+        - step: deploy_exporter
+          when: "{{ workload.action == 'deploy-exporter' }}"
+        - step: remove_exporter
+          when: "{{ workload.action == 'remove-exporter' }}"
+        - step: deploy_noetl_scrape
+          when: "{{ workload.action == 'deploy-noetl-scrape' }}"
+        - step: remove_noetl_scrape
+          when: "{{ workload.action == 'remove-noetl-scrape' }}"
+        - step: deploy_vector
+          when: "{{ workload.action == 'deploy-vector' }}"
+        - step: remove_vector
+          when: "{{ workload.action == 'remove-vector' }}"
+        - step: deploy_vmlogs
+          when: "{{ workload.action == 'deploy-vmlogs' }}"
+        - step: remove_vmlogs
+          when: "{{ workload.action == 'remove-vmlogs' }}"
+        - step: show_help
 
   - step: deploy_monitoring
     desc: Deploy complete VictoriaMetrics monitoring stack
@@ -139,7 +142,10 @@ workflow:
           # Deploy dashboards
           kubectl apply -f ci/manifests/grafana-dashboards
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: undeploy_monitoring
     desc: Remove VictoriaMetrics monitoring stack
@@ -177,7 +183,10 @@ workflow:
           # Uninstall Metrics Server
           helm uninstall metrics-server -n metrics-server --ignore-not-found || true
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: check_status
     desc: Check monitoring stack deployment status
@@ -201,7 +210,10 @@ workflow:
           echo "=== Services ==="
           kubectl get svc -n vm-stack 2>/dev/null || echo "No services in vm-stack namespace"
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: get_grafana_creds
     desc: Get Grafana admin credentials
@@ -224,7 +236,10 @@ workflow:
           echo ""
           echo "Grafana URL: http://localhost:30300 (via NodePort)"
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: add_helm_repos
     desc: Add all monitoring helm repositories
@@ -250,7 +265,10 @@ workflow:
           helm repo add metrics-server https://kubernetes-sigs.github.io/metrics-server/
           helm repo update
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: add_vector_helm_repo
     desc: Add Vector helm repository
@@ -263,7 +281,10 @@ workflow:
           helm repo add vector https://helm.vector.dev
           helm repo update
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: add_victoriametrics_helm_repo
     desc: Add VictoriaMetrics helm repository
@@ -276,7 +297,10 @@ workflow:
           helm repo add vm https://victoriametrics.github.io/helm-charts/
           helm repo update
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: add_metrics_server_helm_repo
     desc: Add Metrics Server helm repository
@@ -289,7 +313,10 @@ workflow:
           helm repo add metrics-server https://kubernetes-sigs.github.io/metrics-server/
           helm repo update
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: deploy_metrics_server
     desc: Deploy Metrics Server
@@ -309,7 +336,10 @@ workflow:
             --timeout 5m \
             --wait --wait-for-jobs
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: remove_metrics_server
     desc: Remove Metrics Server
@@ -325,7 +355,10 @@ workflow:
 
           helm uninstall metrics-server -n metrics-server
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: deploy_vmstack_operator
     desc: Deploy VictoriaMetrics operator
@@ -345,7 +378,10 @@ workflow:
             --timeout 5m \
             --wait --wait-for-jobs
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: remove_vmstack_operator
     desc: Remove VictoriaMetrics operator
@@ -361,7 +397,10 @@ workflow:
 
           helm uninstall vmoperator -n vmoperator
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: deploy_vmstack
     desc: Deploy VictoriaMetrics stack
@@ -381,7 +420,10 @@ workflow:
             --timeout 5m \
             --wait --wait-for-jobs
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: remove_vmstack
     desc: Remove VictoriaMetrics stack
@@ -397,7 +439,10 @@ workflow:
 
           helm uninstall vmstack -n vmstack
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: deploy_stack
     desc: Deploy VictoriaMetrics monitoring stack
@@ -465,7 +510,10 @@ workflow:
           # Deploy dashboards
           kubectl apply -f ci/manifests/grafana-dashboards
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: deploy_dashboards
     desc: Deploy NoETL and Postgres Grafana dashboards
@@ -481,7 +529,10 @@ workflow:
 
           kubectl apply -f ci/manifests/grafana-dashboards
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: remove_dashboards
     desc: Remove NoETL and Postgres Grafana dashboards
@@ -497,7 +548,10 @@ workflow:
 
           kubectl delete -f ci/manifests/grafana-dashboards
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: deploy_exporter
     desc: Deploy postgres-exporter and VMScrape
@@ -515,7 +569,10 @@ workflow:
           sleep 2
           kubectl apply -f ci/manifests/postgres-exporter
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: remove_exporter
     desc: Remove postgres-exporter and VMScrape
@@ -531,7 +588,10 @@ workflow:
 
           kubectl delete -f ci/manifests/postgres-exporter/
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: deploy_noetl_scrape
     desc: Deploy VMServiceScrape for NoETL
@@ -549,7 +609,10 @@ workflow:
           sleep 2
           kubectl apply -f ci/manifests/noetl-scrape/
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: remove_noetl_scrape
     desc: Remove VMServiceScrape for NoETL
@@ -565,7 +628,10 @@ workflow:
 
           kubectl delete -f ci/manifests/noetl-scrape/
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: deploy_vector
     desc: Deploy Vector log collector
@@ -585,7 +651,10 @@ workflow:
             --timeout 5m \
             --wait --wait-for-jobs
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: remove_vector
     desc: Remove Vector log collector
@@ -601,7 +670,10 @@ workflow:
 
           helm uninstall vector -n vector
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: deploy_vmlogs
     desc: Deploy VictoriaLogs
@@ -621,7 +693,10 @@ workflow:
             --timeout 5m \
             --wait --wait-for-jobs
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: remove_vmlogs
     desc: Remove VictoriaLogs
@@ -637,7 +712,10 @@ workflow:
 
           helm uninstall vmlogs -n vmlogs
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: show_help
     desc: Display available actions
@@ -699,7 +777,10 @@ workflow:
           echo "  noetl run automation/infrastructure/monitoring.yaml --set action=status"
           echo ""
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: End workflow

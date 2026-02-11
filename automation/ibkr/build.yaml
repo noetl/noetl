@@ -21,7 +21,10 @@ workflow:
     tool:
       kind: noop
     next:
-      - step: setup_dir
+      spec:
+        mode: exclusive
+      arcs:
+        - step: setup_dir
 
   - step: setup_dir
     desc: Create build directory
@@ -29,7 +32,10 @@ workflow:
       kind: shell
       cmds: "mkdir -p /Users/akuksin/projects/noetl/noetl/docker/ibkr-gateway"
     next:
-      - step: download
+      spec:
+        mode: exclusive
+      arcs:
+        - step: download
 
   - step: download
     desc: Download IBKR Client Portal Gateway
@@ -37,7 +43,10 @@ workflow:
       kind: shell
       cmds: "cd /Users/akuksin/projects/noetl/noetl/docker/ibkr-gateway && if [ -d root ]; then echo Already_downloaded; else curl -L -o gw.zip https://download2.interactivebrokers.com/portal/clientportal.gw.zip && unzip -o gw.zip && rm gw.zip; fi"
     next:
-      - step: dockerfile
+      spec:
+        mode: exclusive
+      arcs:
+        - step: dockerfile
 
   - step: dockerfile
     desc: Create Dockerfile
@@ -45,7 +54,10 @@ workflow:
       kind: shell
       cmds: "cp /Users/akuksin/projects/noetl/noetl/docker/ibkr-gateway/Dockerfile.template /Users/akuksin/projects/noetl/noetl/docker/ibkr-gateway/Dockerfile 2>/dev/null || echo 'Using existing Dockerfile'"
     next:
-      - step: build
+      spec:
+        mode: exclusive
+      arcs:
+        - step: build
 
   - step: build
     desc: Build Docker image
@@ -53,7 +65,10 @@ workflow:
       kind: shell
       cmds: "cd /Users/akuksin/projects/noetl/noetl/docker/ibkr-gateway && docker build -t ibkr-client-portal:latest ."
     next:
-      - step: load
+      spec:
+        mode: exclusive
+      arcs:
+        - step: load
 
   - step: load
     desc: Load image to kind cluster
@@ -63,7 +78,10 @@ workflow:
         - "kind load docker-image ibkr-client-portal:latest --name noetl || echo kind_not_available"
         - "echo Build_complete_Image_ibkr-client-portal:latest"
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: Done

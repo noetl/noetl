@@ -26,19 +26,22 @@ workflow:
       cmds:
         - echo "NoETL Stack Deployment - Action '{{ workload.action }}'"
     next:
-      - step: check_prerequisites
-        when: "{{ workload.action == 'deploy' }}"
-      - step: helm_upgrade
-        when: "{{ workload.action == 'upgrade' }}"
-      - step: status
-        when: "{{ workload.action == 'status' }}"
-      - step: logs
-        when: "{{ workload.action == 'logs' }}"
-      - step: destroy
-        when: "{{ workload.action == 'destroy' }}"
-      - step: show_help
-        when: "{{ workload.action == 'help' }}"
-      - step: show_help
+      spec:
+        mode: exclusive
+      arcs:
+        - step: check_prerequisites
+          when: "{{ workload.action == 'deploy' }}"
+        - step: helm_upgrade
+          when: "{{ workload.action == 'upgrade' }}"
+        - step: status
+          when: "{{ workload.action == 'status' }}"
+        - step: logs
+          when: "{{ workload.action == 'logs' }}"
+        - step: destroy
+          when: "{{ workload.action == 'destroy' }}"
+        - step: show_help
+          when: "{{ workload.action == 'help' }}"
+        - step: show_help
 
   - step: check_prerequisites
     desc: Check deployment prerequisites
@@ -69,7 +72,10 @@ workflow:
 
           echo "Prerequisites OK"
     next:
-      - step: create_namespace
+      spec:
+        mode: exclusive
+      arcs:
+        - step: create_namespace
 
   - step: create_namespace
     desc: Create namespace if not exists
@@ -81,7 +87,10 @@ workflow:
           echo "Creating namespace {{ workload.namespace }}..."
           kubectl create namespace {{ workload.namespace }} --dry-run=client -o yaml | kubectl apply -f -
     next:
-      - step: helm_deploy
+      spec:
+        mode: exclusive
+      arcs:
+        - step: helm_deploy
 
   - step: helm_deploy
     desc: Deploy NoETL stack via Helm
@@ -128,7 +137,10 @@ workflow:
           echo ""
           echo "Deployment initiated"
     next:
-      - step: wait_for_pods
+      spec:
+        mode: exclusive
+      arcs:
+        - step: wait_for_pods
 
   - step: helm_upgrade
     desc: Upgrade existing NoETL deployment
@@ -147,7 +159,10 @@ workflow:
 
           echo "Upgrade complete"
     next:
-      - step: status
+      spec:
+        mode: exclusive
+      arcs:
+        - step: status
 
   - step: wait_for_pods
     desc: Wait for all pods to be ready
@@ -186,7 +201,10 @@ workflow:
           echo ""
           echo "All pods check complete"
     next:
-      - step: status
+      spec:
+        mode: exclusive
+      arcs:
+        - step: status
 
   - step: status
     desc: Show NoETL stack status
@@ -214,7 +232,10 @@ workflow:
           echo "Deployments:"
           kubectl get deployments -n {{ workload.namespace }}
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: logs
     desc: Show NoETL logs
@@ -237,7 +258,10 @@ workflow:
           echo "======================================="
           kubectl logs -n {{ workload.namespace }} -l app=noetl-worker-pool --tail=30 2>/dev/null || echo "No worker-pool logs"
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: destroy
     desc: Destroy NoETL stack
@@ -255,7 +279,10 @@ workflow:
           echo "Stack destroyed. PVCs may still exist."
           kubectl get pvc -n {{ workload.namespace }}
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: show_help
     desc: Display available actions
@@ -291,7 +318,10 @@ workflow:
           echo "  # Deploy with only Rust workers"
           echo "  noetl run automation/deployment/noetl-stack.yaml --set action=deploy --set enable_python_workers=false"
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: Done

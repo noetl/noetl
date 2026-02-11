@@ -16,7 +16,10 @@ workflow:
     tool:
       kind: noop
     next:
-      - step: fetch_user
+      spec:
+        mode: exclusive
+      arcs:
+        - step: fetch_user
 
   - step: fetch_user
     desc: "Get user data"
@@ -27,7 +30,10 @@ workflow:
     vars:
       user_data: "{{ fetch_user.result }}"
     next:
-      - step: fetch_posts
+      spec:
+        mode: exclusive
+      arcs:
+        - step: fetch_posts
 
   - step: fetch_posts
     desc: "Get user posts"
@@ -40,7 +46,10 @@ workflow:
     vars:
       posts_data: "{{ fetch_posts.result }}"
     next:
-      - step: display_results
+      spec:
+        mode: exclusive
+      arcs:
+        - step: display_results
 
   - step: display_results
     desc: "Display fetched data"
@@ -53,7 +62,10 @@ workflow:
         - "echo 'Posts data fetched successfully'"
         - "echo '{{ vars.posts_data }}' | head -c 200"
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: End workflow

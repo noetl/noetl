@@ -132,15 +132,18 @@ workflow:
       resource_id: "{{ workload.project_id }}/{{ workload.region }}/{{ workload.cluster_name }}"
       state_bucket: "{{ workload.state_bucket if workload.state_bucket else workload.project_id + '-noetl-state' }}"
     next:
-      - step: enable_apis
-        when: "{{ workload.action == 'create' }}"
-      - step: check_existing
-        when: "{{ workload.action == 'deploy' }}"
-      - step: delete_cluster
-        when: "{{ workload.action == 'destroy' }}"
-      - step: plan_changes
-        when: "{{ workload.action == 'plan' }}"
-      - step: show_help
+      spec:
+        mode: exclusive
+      arcs:
+        - step: enable_apis
+          when: "{{ workload.action == 'create' }}"
+        - step: check_existing
+          when: "{{ workload.action == 'deploy' }}"
+        - step: delete_cluster
+          when: "{{ workload.action == 'destroy' }}"
+        - step: plan_changes
+          when: "{{ workload.action == 'plan' }}"
+        - step: show_help
 
   - step: show_help
     desc: Show available actions
@@ -193,7 +196,10 @@ workflow:
           echo "  - NoETL Server and Workers"
           echo "  - NoETL Gateway"
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: check_existing
     desc: Check if cluster already exists
@@ -206,9 +212,12 @@ workflow:
     vars:
       cluster_status: "{{ result.status }}"
     next:
-      - step: get_cluster_details
-        when: "{{ vars.cluster_status == 200 }}"
-      - step: deploy_cluster_not_found
+      spec:
+        mode: exclusive
+      arcs:
+        - step: get_cluster_details
+          when: "{{ vars.cluster_status == 200 }}"
+        - step: deploy_cluster_not_found
 
   - step: cluster_exists_info
     desc: Cluster already exists
@@ -223,7 +232,10 @@ workflow:
           echo "To update the cluster, use action=update (not yet implemented)"
           echo "To delete the cluster, use action=destroy"
     next:
-      - step: update_state
+      spec:
+        mode: exclusive
+      arcs:
+        - step: update_state
 
   - step: enable_apis
     desc: Enable required GCP APIs
@@ -235,7 +247,10 @@ workflow:
           gcloud services enable container.googleapis.com --project {{ workload.project_id }}
           echo "Container API enabled."
     next:
-      - step: create_cluster
+      spec:
+        mode: exclusive
+      arcs:
+        - step: create_cluster
 
   - step: create_cluster
     desc: Create GKE Autopilot cluster
@@ -278,9 +293,12 @@ workflow:
       operation_name: "{{ result.body.name | default('') }}"
       create_status: "{{ result.status }}"
     next:
-      - step: wait_for_operation
-        when: "{{ vars.create_status == 200 }}"
-      - step: create_error
+      spec:
+        mode: exclusive
+      arcs:
+        - step: wait_for_operation
+          when: "{{ vars.create_status == 200 }}"
+        - step: create_error
 
   - step: create_error
     desc: Handle cluster creation error
@@ -299,7 +317,10 @@ workflow:
           echo "  - CIDR range conflicts"
           exit 1
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: deploy_cluster_not_found
     desc: Cluster not found for deploy action
@@ -312,7 +333,10 @@ workflow:
           echo "Action 'deploy' requires an existing cluster. Use action=create first."
           exit 1
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: wait_for_operation
     desc: Wait for cluster creation to complete
@@ -374,7 +398,10 @@ workflow:
         region: "{{ workload.region }}"
         operation_name: "{{ vars.operation_name }}"
     next:
-      - step: get_cluster_details
+      spec:
+        mode: exclusive
+      arcs:
+        - step: get_cluster_details
 
   - step: get_cluster_details
     desc: Get created cluster details
@@ -389,16 +416,22 @@ workflow:
       cluster_endpoint: "{{ result.body.endpoint | default('') }}"
       cluster_status: "{{ result.body.status | default('UNKNOWN') }}"
     next:
-      - step: maybe_deploy_stack
+      spec:
+        mode: exclusive
+      arcs:
+        - step: maybe_deploy_stack
 
   - step: maybe_deploy_stack
     desc: Deploy NoETL stack if requested
     tool:
       kind: noop
     next:
-      - step: configure_kubecontext
-        when: "{{ workload.deploy_stack == true or workload.action == 'deploy' }}"
-      - step: save_state
+      spec:
+        mode: exclusive
+      arcs:
+        - step: configure_kubecontext
+          when: "{{ workload.deploy_stack == true or workload.action == 'deploy' }}"
+        - step: save_state
 
   - step: configure_kubecontext
     desc: Configure kubectl context for the GKE cluster
@@ -412,7 +445,10 @@ workflow:
             --project {{ workload.project_id }}
           kubectl config current-context
     next:
-      - step: validate_deploy_inputs
+      spec:
+        mode: exclusive
+      arcs:
+        - step: validate_deploy_inputs
 
   - step: validate_deploy_inputs
     desc: Validate Helm deployment inputs
@@ -429,7 +465,10 @@ workflow:
             exit 1
           fi
     next:
-      - step: add_helm_repos
+      spec:
+        mode: exclusive
+      arcs:
+        - step: add_helm_repos
 
   - step: add_helm_repos
     desc: Add Helm repositories
@@ -442,7 +481,10 @@ workflow:
           helm repo add bitnami https://charts.bitnami.com/bitnami
           helm repo update
     next:
-      - step: deploy_postgres_helm
+      spec:
+        mode: exclusive
+      arcs:
+        - step: deploy_postgres_helm
 
   - step: deploy_postgres_helm
     desc: Deploy PostgreSQL via Helm
@@ -468,16 +510,22 @@ workflow:
             --set global.security.allowInsecureImages={{ workload.postgres_allow_insecure_images | lower }}
           kubectl wait --for=condition=ready pod -l app.kubernetes.io/instance={{ workload.postgres_release_name }} -n {{ workload.postgres_namespace }} --timeout=180s
     next:
-      - step: maybe_init_noetl_schema
+      spec:
+        mode: exclusive
+      arcs:
+        - step: maybe_init_noetl_schema
 
   - step: maybe_init_noetl_schema
     desc: Initialize NoETL schema if enabled
     tool:
       kind: noop
     next:
-      - step: init_noetl_schema
-        when: "{{ workload.init_noetl_schema == true }}"
-      - step: deploy_nats_helm
+      spec:
+        mode: exclusive
+      arcs:
+        - step: init_noetl_schema
+          when: "{{ workload.init_noetl_schema == true }}"
+        - step: deploy_nats_helm
 
   - step: init_noetl_schema
     desc: Initialize NoETL schema in PostgreSQL
@@ -504,7 +552,10 @@ workflow:
           kubectl exec -n {{ workload.postgres_namespace }} "$POSTGRES_POD" -- /bin/sh -c "PGPASSWORD={{ workload.postgres_password }} psql -U postgres -d {{ workload.postgres_database }} -c \"CREATE SCHEMA IF NOT EXISTS noetl\""
           kubectl exec -i -n {{ workload.postgres_namespace }} "$POSTGRES_POD" -- /bin/sh -c "PGPASSWORD={{ workload.postgres_password }} psql -U postgres -d {{ workload.postgres_database }}" < {{ workload.noetl_schema_path }}
     next:
-      - step: deploy_nats_helm
+      spec:
+        mode: exclusive
+      arcs:
+        - step: deploy_nats_helm
 
   - step: deploy_nats_helm
     desc: Deploy NATS JetStream via Helm
@@ -525,16 +576,22 @@ workflow:
             --set 'config.merge.authorization.users[0].password={{ workload.nats_password }}'
           kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=nats -n {{ workload.nats_namespace }} --timeout=180s
     next:
-      - step: maybe_deploy_clickhouse
+      spec:
+        mode: exclusive
+      arcs:
+        - step: maybe_deploy_clickhouse
 
   - step: maybe_deploy_clickhouse
     desc: Deploy ClickHouse if enabled
     tool:
       kind: noop
     next:
-      - step: deploy_clickhouse
-        when: "{{ workload.clickhouse_enabled == true }}"
-      - step: deploy_noetl_helm
+      spec:
+        mode: exclusive
+      arcs:
+        - step: deploy_clickhouse
+          when: "{{ workload.clickhouse_enabled == true }}"
+        - step: deploy_noetl_helm
 
   - step: deploy_clickhouse
     desc: Deploy ClickHouse for observability
@@ -687,7 +744,10 @@ workflow:
           kubectl wait --for=condition=ready pod -l app=clickhouse -n {{ workload.clickhouse_namespace }} --timeout=180s || true
           echo "ClickHouse deployed."
     next:
-      - step: deploy_noetl_helm
+      spec:
+        mode: exclusive
+      arcs:
+        - step: deploy_noetl_helm
 
   - step: deploy_noetl_helm
     desc: Deploy NoETL server and workers via Helm
@@ -723,7 +783,10 @@ workflow:
           kubectl wait --for=condition=ready pod -l app=noetl-server -n {{ workload.noetl_namespace }} --timeout=180s || true
           kubectl wait --for=condition=ready pod -l app=noetl-worker -n {{ workload.noetl_namespace }} --timeout=180s || true
     next:
-      - step: deploy_gateway_helm
+      spec:
+        mode: exclusive
+      arcs:
+        - step: deploy_gateway_helm
 
   - step: deploy_gateway_helm
     desc: Deploy NoETL Gateway via Helm
@@ -749,7 +812,10 @@ workflow:
             --set-string ingress.annotations.kubernetes\.io/ingress\.allow-http={{ workload.gateway_ingress_allow_http | lower }}
           kubectl wait --for=condition=ready pod -l app=gateway -n {{ workload.gateway_namespace }} --timeout=180s || true
     next:
-      - step: save_state
+      spec:
+        mode: exclusive
+      arcs:
+        - step: save_state
 
   - step: save_state
     desc: Save cluster state to DuckDB
@@ -792,7 +858,10 @@ workflow:
           updated_at = CURRENT_TIMESTAMP,
           last_sync_at = CURRENT_TIMESTAMP;
     next:
-      - step: print_success
+      spec:
+        mode: exclusive
+      arcs:
+        - step: print_success
 
   - step: update_state
     desc: Update state for existing cluster
@@ -829,7 +898,10 @@ workflow:
           updated_at = CURRENT_TIMESTAMP,
           last_sync_at = CURRENT_TIMESTAMP;
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: print_success
     desc: Print success message
@@ -856,7 +928,10 @@ workflow:
           echo "State saved to: {{ workload.state_database }}"
           echo ""
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: delete_cluster
     desc: Delete GKE Autopilot cluster
@@ -870,11 +945,14 @@ workflow:
       delete_status: "{{ result.status }}"
       delete_operation: "{{ result.body.name | default('') }}"
     next:
-      - step: wait_delete
-        when: "{{ vars.delete_status == 200 }}"
-      - step: cluster_not_found
-        when: "{{ vars.delete_status == 404 }}"
-      - step: delete_error
+      spec:
+        mode: exclusive
+      arcs:
+        - step: wait_delete
+          when: "{{ vars.delete_status == 200 }}"
+        - step: cluster_not_found
+          when: "{{ vars.delete_status == 404 }}"
+        - step: delete_error
 
   - step: cluster_not_found
     desc: Cluster doesn't exist
@@ -886,7 +964,10 @@ workflow:
           echo "Cluster '{{ workload.cluster_name }}' not found in project '{{ workload.project_id }}'"
           echo "Nothing to delete."
     next:
-      - step: remove_from_state
+      spec:
+        mode: exclusive
+      arcs:
+        - step: remove_from_state
 
   - step: delete_error
     desc: Handle delete error
@@ -899,7 +980,10 @@ workflow:
           echo "Status: {{ vars.delete_status }}"
           exit 1
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: wait_delete
     desc: Wait for cluster deletion to complete
@@ -956,7 +1040,10 @@ workflow:
         region: "{{ workload.region }}"
         delete_operation: "{{ vars.delete_operation }}"
     next:
-      - step: remove_from_state
+      spec:
+        mode: exclusive
+      arcs:
+        - step: remove_from_state
 
   - step: remove_from_state
     desc: Remove cluster from state
@@ -982,7 +1069,10 @@ workflow:
 
         SELECT 'Resource removed from state' as message;
     next:
-      - step: print_delete_success
+      spec:
+        mode: exclusive
+      arcs:
+        - step: print_delete_success
 
   - step: print_delete_success
     desc: Print delete success message
@@ -1002,7 +1092,10 @@ workflow:
           echo "Resource removed from state database."
           echo ""
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: plan_changes
     desc: Plan changes without applying
@@ -1022,7 +1115,10 @@ workflow:
           echo "  - Private Nodes:  {{ workload.enable_private_nodes }}"
           echo ""
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: Workflow complete

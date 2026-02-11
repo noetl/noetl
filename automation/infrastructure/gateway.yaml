@@ -18,29 +18,32 @@ workflow:
       cmds:
         - echo "Gateway Automation - Action '{{ workload.action }}'"
     next:
-      - step: build_image
-        when: "{{ workload.action == 'build-image' }}"
-      - step: load_image
-        when: "{{ workload.action == 'load-image' }}"
-      - step: deploy_gateway
-        when: "{{ workload.action == 'deploy' }}"
-      - step: deploy_all
-        when: "{{ workload.action == 'deploy-all' }}"
-      - step: remove_gateway
-        when: "{{ workload.action == 'remove' }}"
-      - step: redeploy_gateway
-        when: "{{ workload.action == 'redeploy' }}"
-      - step: restart_gateway
-        when: "{{ workload.action == 'restart' }}"
-      - step: check_status
-        when: "{{ workload.action == 'status' }}"
-      - step: view_logs
-        when: "{{ workload.action == 'logs' }}"
-      - step: test_gateway
-        when: "{{ workload.action == 'test' }}"
-      - step: show_help
-        when: "{{ workload.action == 'help' }}"
-      - step: show_help
+      spec:
+        mode: exclusive
+      arcs:
+        - step: build_image
+          when: "{{ workload.action == 'build-image' }}"
+        - step: load_image
+          when: "{{ workload.action == 'load-image' }}"
+        - step: deploy_gateway
+          when: "{{ workload.action == 'deploy' }}"
+        - step: deploy_all
+          when: "{{ workload.action == 'deploy-all' }}"
+        - step: remove_gateway
+          when: "{{ workload.action == 'remove' }}"
+        - step: redeploy_gateway
+          when: "{{ workload.action == 'redeploy' }}"
+        - step: restart_gateway
+          when: "{{ workload.action == 'restart' }}"
+        - step: check_status
+          when: "{{ workload.action == 'status' }}"
+        - step: view_logs
+          when: "{{ workload.action == 'logs' }}"
+        - step: test_gateway
+          when: "{{ workload.action == 'test' }}"
+        - step: show_help
+          when: "{{ workload.action == 'help' }}"
+        - step: show_help
 
   - step: build_image
     desc: Build Gateway Docker image and load into kind
@@ -55,7 +58,10 @@ workflow:
           kind load docker-image noetl-gateway:latest --name noetl
           echo "Gateway image built and loaded into kind cluster"
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: load_image
     desc: Load Gateway image into kind cluster
@@ -74,7 +80,10 @@ workflow:
             exit 1
           fi
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: deploy_gateway
     desc: Deploy Gateway API to Kubernetes
@@ -89,7 +98,10 @@ workflow:
           kubectl apply -f ci/manifests/gateway/service.yaml
           echo "Gateway API deployed at http://localhost:8090"
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: deploy_all
     desc: Build and deploy Gateway API and UI to Kubernetes
@@ -111,7 +123,10 @@ workflow:
           kubectl apply -f ci/manifests/gateway/service-ui.yaml
           echo "Gateway UI deployed at http://localhost:8080"
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: remove_gateway
     desc: Remove Gateway from Kubernetes
@@ -123,7 +138,10 @@ workflow:
           echo "Removing Gateway from Kubernetes..."
           kubectl delete namespace gateway --ignore-not-found=true
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: redeploy_gateway
     desc: Rebuild and redeploy Gateway
@@ -139,7 +157,10 @@ workflow:
         - kubectl rollout restart deployment/gateway -n gateway
         - kubectl rollout status deployment/gateway -n gateway --timeout=60s
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: restart_gateway
     desc: Restart Gateway pods
@@ -152,7 +173,10 @@ workflow:
           kubectl rollout restart deployment/gateway -n gateway
           kubectl rollout restart deployment/gateway-ui -n gateway
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: check_status
     desc: Check Gateway deployment status
@@ -165,7 +189,10 @@ workflow:
           echo "=========================="
           kubectl get all -n gateway
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: view_logs
     desc: Show Gateway logs
@@ -178,7 +205,10 @@ workflow:
           echo "============="
           kubectl logs -n gateway -l app=gateway --tail=100 -f
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: test_gateway
     desc: Test Gateway endpoints
@@ -191,7 +221,10 @@ workflow:
           curl -s http://localhost:8090/graphql | head -20 || echo "Gateway not responding"
           curl -s http://localhost:8080/health || echo "Gateway UI not responding"
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: show_help
     desc: Display available actions
@@ -240,7 +273,10 @@ workflow:
           echo "Gateway Location: crates/gateway"
           echo ""
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: End workflow

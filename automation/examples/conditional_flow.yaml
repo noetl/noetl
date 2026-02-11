@@ -17,11 +17,14 @@ workflow:
     tool:
       kind: noop
     next:
-      - step: prod_setup
-        when: "{{ workload.environment == 'production' }}"
-      - step: staging_setup
-        when: "{{ workload.environment == 'staging' }}"
-      - step: dev_setup
+      spec:
+        mode: exclusive
+      arcs:
+        - step: prod_setup
+          when: "{{ workload.environment == 'production' }}"
+        - step: staging_setup
+          when: "{{ workload.environment == 'staging' }}"
+        - step: dev_setup
 
   - step: prod_setup
     desc: "Production environment setup"
@@ -32,7 +35,10 @@ workflow:
         - "echo 'High availability: enabled'"
         - "echo 'Replicas: 5'"
     next:
-      - step: check_deploy
+      spec:
+        mode: exclusive
+      arcs:
+        - step: check_deploy
 
   - step: staging_setup
     desc: "Staging environment setup"
@@ -42,7 +48,10 @@ workflow:
         - "echo 'Setting up STAGING environment'"
         - "echo 'Replicas: 2'"
     next:
-      - step: check_deploy
+      spec:
+        mode: exclusive
+      arcs:
+        - step: check_deploy
 
   - step: dev_setup
     desc: "Development environment setup"
@@ -52,17 +61,23 @@ workflow:
         - "echo 'Setting up DEVELOPMENT environment'"
         - "echo 'Debug mode: enabled'"
     next:
-      - step: check_deploy
+      spec:
+        mode: exclusive
+      arcs:
+        - step: check_deploy
 
   - step: check_deploy
     desc: "Check if deployment should proceed"
     tool:
       kind: noop
     next:
-      - step: deploy_app
-        when: "{{ workload.deploy == 'true' }}"
-      - step: skip_deploy
-        when: "{{ workload.deploy != 'true' }}"
+      spec:
+        mode: exclusive
+      arcs:
+        - step: deploy_app
+          when: "{{ workload.deploy == 'true' }}"
+        - step: skip_deploy
+          when: "{{ workload.deploy != 'true' }}"
 
   - step: deploy_app
     desc: "Deploy application"
@@ -72,7 +87,10 @@ workflow:
         - "echo 'Deploying application to {{ workload.environment }}...'"
         - "echo 'Deployment complete'"
     next:
-      - step: verify_deployment
+      spec:
+        mode: exclusive
+      arcs:
+        - step: verify_deployment
 
   - step: verify_deployment
     desc: "Verify deployment"
@@ -82,7 +100,10 @@ workflow:
         - "echo 'Verifying deployment...'"
         - "echo 'Health check: OK'"
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: skip_deploy
     desc: "Skip deployment"
@@ -91,7 +112,10 @@ workflow:
       cmds:
         - "echo 'Deployment skipped (deploy flag is false)'"
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: "End of workflow"

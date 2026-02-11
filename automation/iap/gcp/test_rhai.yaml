@@ -91,7 +91,10 @@ workflow:
         region: "{{ workload.region }}"
         retry_interval: "{{ workload.retry_interval }}"
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: Done

@@ -17,7 +17,10 @@ workflow:
     tool:
       kind: noop
     next:
-      - step: call_build
+      spec:
+        mode: exclusive
+      arcs:
+        - step: call_build
 
   - step: call_build
     desc: "Call build playbook"
@@ -28,7 +31,10 @@ workflow:
         image_tag: "{{ workload.version }}"
         build_env: "{{ workload.environment }}"
     next:
-      - step: call_deploy
+      spec:
+        mode: exclusive
+      arcs:
+        - step: call_deploy
 
   - step: call_deploy
     desc: "Call deploy playbook"
@@ -39,7 +45,10 @@ workflow:
         image_tag: "{{ workload.version }}"
         target_env: "{{ workload.environment }}"
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: End workflow

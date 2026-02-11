@@ -18,23 +18,26 @@ workflow:
       cmds:
         - echo "Kind Cluster Automation - Action '{{ workload.action }}'"
     next:
-      - step: create_cluster
-        when: "{{ workload.action == 'create' }}"
-      - step: delete_cluster
-        when: "{{ workload.action == 'delete' }}"
-      - step: list_clusters
-        when: "{{ workload.action == 'list' }}"
-      - step: load_image
-        when: "{{ workload.action == 'image-load' }}"
-      - step: list_images
-        when: "{{ workload.action == 'images-list' }}"
-      - step: check_status
-        when: "{{ workload.action == 'status' }}"
-      - step: set_context
-        when: "{{ workload.action == 'context-set' }}"
-      - step: show_help
-        when: "{{ workload.action == 'help' }}"
-      - step: show_help
+      spec:
+        mode: exclusive
+      arcs:
+        - step: create_cluster
+          when: "{{ workload.action == 'create' }}"
+        - step: delete_cluster
+          when: "{{ workload.action == 'delete' }}"
+        - step: list_clusters
+          when: "{{ workload.action == 'list' }}"
+        - step: load_image
+          when: "{{ workload.action == 'image-load' }}"
+        - step: list_images
+          when: "{{ workload.action == 'images-list' }}"
+        - step: check_status
+          when: "{{ workload.action == 'status' }}"
+        - step: set_context
+          when: "{{ workload.action == 'context-set' }}"
+        - step: show_help
+          when: "{{ workload.action == 'help' }}"
+        - step: show_help
 
   - step: create_cluster
     desc: Create Kind Kubernetes cluster
@@ -46,7 +49,10 @@ workflow:
           echo "Creating Kind cluster 'noetl'..."
           kind create cluster --config=ci/kind/config.yaml
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: delete_cluster
     desc: Delete Kind Kubernetes cluster
@@ -58,7 +64,10 @@ workflow:
           echo "Deleting Kind cluster 'noetl'..."
           kind delete cluster --name=noetl
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: list_clusters
     desc: List all Kind clusters
@@ -71,7 +80,10 @@ workflow:
           echo "=============="
           kind get clusters
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: load_image
     desc: Load NoETL image to Kind cluster
@@ -84,7 +96,10 @@ workflow:
           IMAGE_TAG=$(cat .noetl_last_build_tag.txt)
           kind load docker-image local/noetl:$IMAGE_TAG --name noetl
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: list_images
     desc: List images in Kind cluster
@@ -97,7 +112,10 @@ workflow:
           echo "======================="
           docker exec -it noetl-control-plane crictl images
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: check_status
     desc: Check Kind cluster status
@@ -122,7 +140,10 @@ workflow:
           echo "=== Cluster Nodes ==="
           kubectl get nodes --context kind-noetl 2>/dev/null || echo "No nodes (cluster not running)"
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: set_context
     desc: Set kubectl context to kind-noetl cluster
@@ -134,7 +155,10 @@ workflow:
           echo "Setting kubectl context to kind-noetl..."
           kubectl config use-context kind-noetl
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: show_help
     desc: Display available actions
@@ -174,7 +198,10 @@ workflow:
           echo "  noetl run automation/infrastructure/kind.yaml --set action=list"
           echo ""
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: End workflow

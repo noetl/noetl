@@ -53,13 +53,16 @@ workflow:
       resource_id: "{{ workload.project_id }}/{{ workload.region }}/{{ workload.repository_id }}"
       state_bucket: "{{ workload.state_bucket if workload.state_bucket else workload.project_id + '-noetl-state' }}"
     next:
-      - step: check_existing
-        when: "{{ workload.action == 'create' }}"
-      - step: delete_repo
-        when: "{{ workload.action == 'destroy' }}"
-      - step: plan_changes
-        when: "{{ workload.action == 'plan' }}"
-      - step: show_help
+      spec:
+        mode: exclusive
+      arcs:
+        - step: check_existing
+          when: "{{ workload.action == 'create' }}"
+        - step: delete_repo
+          when: "{{ workload.action == 'destroy' }}"
+        - step: plan_changes
+          when: "{{ workload.action == 'plan' }}"
+        - step: show_help
 
   - step: show_help
     desc: Show available actions
@@ -87,7 +90,10 @@ workflow:
           echo "    --set action=create \\"
           echo "    --set project_id=noetl-demo-19700101"
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: check_existing
     desc: Check if repository exists
@@ -100,9 +106,12 @@ workflow:
     vars:
       repo_status: "{{ result.status }}"
     next:
-      - step: repo_exists_info
-        when: "{{ vars.repo_status == 200 }}"
-      - step: enable_api
+      spec:
+        mode: exclusive
+      arcs:
+        - step: repo_exists_info
+          when: "{{ vars.repo_status == 200 }}"
+        - step: enable_api
 
   - step: repo_exists_info
     desc: Repository already exists
@@ -113,7 +122,10 @@ workflow:
           echo ""
           echo "Repository '{{ workload.repository_id }}' already exists in project '{{ workload.project_id }}'"
     next:
-      - step: update_state
+      spec:
+        mode: exclusive
+      arcs:
+        - step: update_state
 
   - step: enable_api
     desc: Enable Artifact Registry API
@@ -125,7 +137,10 @@ workflow:
           gcloud services enable artifactregistry.googleapis.com --project {{ workload.project_id }}
           echo "Artifact Registry API enabled."
     next:
-      - step: create_repo
+      spec:
+        mode: exclusive
+      arcs:
+        - step: create_repo
 
   - step: create_repo
     desc: Create repository
@@ -145,9 +160,12 @@ workflow:
     vars:
       create_status: "{{ result.status }}"
     next:
-      - step: save_state
-        when: "{{ vars.create_status == 200 }}"
-      - step: create_error
+      spec:
+        mode: exclusive
+      arcs:
+        - step: save_state
+          when: "{{ vars.create_status == 200 }}"
+        - step: create_error
 
   - step: create_error
     desc: Handle repository creation error
@@ -173,9 +191,12 @@ workflow:
     vars:
       delete_status: "{{ result.status }}"
     next:
-      - step: remove_from_state
-        when: "{{ vars.delete_status == 200 }}"
-      - step: delete_error
+      spec:
+        mode: exclusive
+      arcs:
+        - step: remove_from_state
+          when: "{{ vars.delete_status == 200 }}"
+        - step: delete_error
 
   - step: save_state
     desc: Save repository state to DuckDB
@@ -215,7 +236,10 @@ workflow:
           updated_at = CURRENT_TIMESTAMP,
           last_sync_at = CURRENT_TIMESTAMP;
     next:
-      - step: print_success
+      spec:
+        mode: exclusive
+      arcs:
+        - step: print_success
 
   - step: update_state
     desc: Update repository state
@@ -262,7 +286,10 @@ workflow:
       commands: |
         DELETE FROM resources WHERE resource_id = '{{ vars.resource_id }}';
     next:
-      - step: print_delete_success
+      spec:
+        mode: exclusive
+      arcs:
+        - step: print_delete_success
 
   - step: delete_error
     desc: Handle delete error
@@ -322,7 +349,10 @@ workflow:
           echo "Plan:"
           echo "- Create repository '{{ workload.repository_id }}' in {{ workload.project_id }}/{{ workload.region }}"
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: Workflow complete

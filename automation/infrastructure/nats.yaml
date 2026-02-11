@@ -18,29 +18,32 @@ workflow:
       cmds:
         - echo "NATS Automation - Action '{{ workload.action }}'"
     next:
-      - step: deploy_nats
-        when: "{{ workload.action == 'deploy' }}"
-      - step: undeploy_nats
-        when: "{{ workload.action == 'undeploy' }}"
-      - step: check_status
-        when: "{{ workload.action == 'status' }}"
-      - step: check_health
-        when: "{{ workload.action == 'health' }}"
-      - step: show_logs
-        when: "{{ workload.action == 'logs' }}"
-      - step: list_streams
-        when: "{{ workload.action == 'streams' }}"
-      - step: show_monitoring
-        when: "{{ workload.action == 'monitoring' }}"
-      - step: test_connection
-        when: "{{ workload.action == 'connect' }}"
-      - step: run_tests
-        when: "{{ workload.action == 'test' }}"
-      - step: restart_nats
-        when: "{{ workload.action == 'restart' }}"
-      - step: setup_port_forward
-        when: "{{ workload.action == 'port-forward' }}"
-      - step: show_help
+      spec:
+        mode: exclusive
+      arcs:
+        - step: deploy_nats
+          when: "{{ workload.action == 'deploy' }}"
+        - step: undeploy_nats
+          when: "{{ workload.action == 'undeploy' }}"
+        - step: check_status
+          when: "{{ workload.action == 'status' }}"
+        - step: check_health
+          when: "{{ workload.action == 'health' }}"
+        - step: show_logs
+          when: "{{ workload.action == 'logs' }}"
+        - step: list_streams
+          when: "{{ workload.action == 'streams' }}"
+        - step: show_monitoring
+          when: "{{ workload.action == 'monitoring' }}"
+        - step: test_connection
+          when: "{{ workload.action == 'connect' }}"
+        - step: run_tests
+          when: "{{ workload.action == 'test' }}"
+        - step: restart_nats
+          when: "{{ workload.action == 'restart' }}"
+        - step: setup_port_forward
+          when: "{{ workload.action == 'port-forward' }}"
+        - step: show_help
 
   - step: deploy_nats
     desc: Deploy NATS JetStream
@@ -55,7 +58,10 @@ workflow:
         - kubectl wait --for=condition=ready pod -l app=nats -n nats --timeout=120s || echo "Timeout - check manually"
         - echo "✓ NATS JetStream deployed"
     next:
-      - step: check_status
+      spec:
+        mode: exclusive
+      arcs:
+        - step: check_status
 
   - step: undeploy_nats
     desc: Remove NATS JetStream
@@ -67,7 +73,10 @@ workflow:
         - kubectl delete -f ci/manifests/nats/namespace.yaml --ignore-not-found=true
         - echo "✓ NATS JetStream removed"
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: check_status
     desc: Check NATS deployment status
@@ -78,7 +87,10 @@ workflow:
         - kubectl get namespace nats 2>/dev/null || echo "Namespace not found"
         - kubectl get all -n nats 2>/dev/null || echo "No resources"
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: check_health
     desc: Check NATS health
@@ -96,7 +108,10 @@ workflow:
             exit 1
           fi
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: show_logs
     desc: Show NATS logs
@@ -106,7 +121,10 @@ workflow:
         - echo "=== NATS Logs (last 50 lines) ==="
         - kubectl logs -n nats -l app=nats --tail=50 || echo "No logs available"
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: list_streams
     desc: List NATS JetStream streams
@@ -122,7 +140,10 @@ workflow:
             echo "No NATS pod found"
           fi
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: show_monitoring
     desc: Show NATS monitoring dashboard
@@ -136,7 +157,10 @@ workflow:
           echo "Metrics:"
           curl -s http://localhost:30822/varz 2>/dev/null | python3 -m json.tool || echo "Unable to fetch metrics"
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: test_connection
     desc: Test NATS connection
@@ -155,7 +179,10 @@ workflow:
             exit 1
           fi
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: run_tests
     desc: Run NATS integration tests
@@ -178,7 +205,10 @@ workflow:
             exit 1
           fi
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: restart_nats
     desc: Restart NATS pod
@@ -192,7 +222,10 @@ workflow:
           kubectl wait --for=condition=ready pod -l app=nats -n nats --timeout=120s || echo "Timeout - check manually"
           echo "✓ NATS restarted"
     next:
-      - step: check_status
+      spec:
+        mode: exclusive
+      arcs:
+        - step: check_status
 
   - step: setup_port_forward
     desc: Setup port forwarding for NATS
@@ -208,7 +241,10 @@ workflow:
           echo "If you need local port forwarding, run:"
           echo "kubectl port-forward -n nats svc/nats 4222:4222"
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: show_help
     desc: Show available NATS actions
@@ -247,7 +283,10 @@ workflow:
           echo "  - Credentials: noetl/noetl"
           echo ""
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: End workflow
