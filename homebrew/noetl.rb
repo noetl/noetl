@@ -1,8 +1,8 @@
 class Noetl < Formula
   desc "NoETL workflow automation CLI - Execute playbooks locally or orchestrate distributed pipelines"
   homepage "https://noetl.io"
-  url "https://github.com/noetl/noetl/archive/refs/tags/v2.5.11.tar.gz"
-  sha256 "0667d252f8872cdce4ba07b738ad4491a05e0bed412aedd1d3a348dee6a0afb8"
+  url "https://github.com/noetl/noetl/archive/refs/tags/v2.8.3.tar.gz"
+  sha256 "82ad6b367c2d42402b559e2eea42c4434ec139683b5d45eb522c43030f16a0b3"
   license "MIT"
   head "https://github.com/noetl/noetl.git", branch: "master"
 

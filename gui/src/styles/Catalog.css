@@ -1,0 +1,86 @@
+/**
+ * Catalog.css
+ * Styles for the Catalog component
+ * Handles playbook listing, search, modals, and playbook cards
+ */
+
+/* ==========================================================================
+   Main Layout
+   ========================================================================== */
+
+.catalog-loading-content {
+    padding: 24px;
+    text-align: center;
+}
+
+.catalog-loading-text {
+    margin-top: 16px;
+}
+
+.catalog-error-content {
+    padding: 24px;
+}
+
+.catalog-main-content {
+    padding: 24px;
+}
+
+.catalog-space-vertical {
+    width: 100%;
+}
+
+/* ==========================================================================
+   Header
+   ========================================================================== */
+
+.catalog-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+}
+
+/* ==========================================================================
+   Playbook Cards
+   ========================================================================== */
+
+.catalog-playbooks-space {
+    width: 100%;
+}
+
+.catalog-playbook-card {
+    width: 100%;
+}
+
+.catalog-playbook-row {
+    width: 100%;
+}
+
+.catalog-playbook-title {
+    margin: 0;
+    margin-bottom: 4px;
+}
+
+.catalog-playbook-tag {
+    margin-left: 8px;
+}
+
+.catalog-playbook-actions {
+    margin-top: 4px;
+}
+
+/* ==========================================================================
+   Modal Content
+   ========================================================================== */
+
+.catalog-modal-space {
+    width: 100%;
+}
+
+.catalog-modal-textarea {
+    width: 100%;
+}
+
+.catalog-modal-pre {
+    width: 100%;
+}

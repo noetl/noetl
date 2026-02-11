@@ -19,7 +19,7 @@ workload:
   request_id: ""
   gateway_url: "http://gateway.gateway.svc.cluster.local:8090"
   api_url: "https://test.api.amadeus.com"
-  callback_url: ""
+  callback_url: ""x
 
 keychain:
   - name: openai_token

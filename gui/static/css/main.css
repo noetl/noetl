@@ -1,0 +1,101 @@
+/* ==========================================================================
+   Global & Body Styles
+   ========================================================================== */
+body {
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue",
+    Arial, sans-serif;
+  margin: 0;
+  padding: 0;
+  background-color: #f5f5f5;
+  color: rgba(0, 0, 0, 0.85);
+  line-height: 1.6;
+}
+
+/* ==========================================================================
+   ReactFlow Edge Styles - Solid Lines
+   ========================================================================== */
+.react-flow__edge-path,
+.react-flow__edge,
+.react-flow__edge.animated path,
+.react-flow__edge.animated,
+.react-flow__connection .animated,
+.react-flow__connection-line {
+    stroke-dasharray: 0 !important;
+}
+
+/* Override any animated edges */
+.react-flow__edge.animated path,
+.react-flow__edge.animated {
+    stroke-dasharray: 0 !important;
+    animation: none !important;
+}
+
+/* Override connection lines */
+.react-flow__connection .animated {
+    stroke-dasharray: 0 !important;
+    animation: none !important;
+}
+
+/* ==========================================================================
+   Layout Components - Used by main.tsx
+   ========================================================================== */
+.app-header {
+  background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
+  padding: 0 32px;
+  height: 64px;
+  margin: 24px 48px 0;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  border: 1px solid rgba(24, 144, 255, 0.08);
+}
+
+.header-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  position: relative;
+}
+
+.logo {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  color: #262626;
+  display: flex;
+  align-items: center;
+}
+
+.centered-menu {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  background: transparent;
+  border-bottom: none;
+  font-size: 16px;
+  display: flex;
+  font-weight: 500;
+}
+
+.centered-menu .ant-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 8px;
+  margin: 0 4px;
+  transition: all 0.3s ease;
+}
+
+.centered-menu .ant-menu-item:hover {
+  background-color: rgba(24, 144, 255, 0.06);
+}
+
+.centered-menu .ant-menu-item-selected {
+  background-color: rgba(24, 144, 255, 0.1) !important;
+  color: #1890ff !important;
+}

@@ -1,0 +1,93 @@
+.gateway-login-wrap,
+.gateway-assistant-wrap {
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  width: 100%;
+  min-height: 70vh;
+  padding: 12px 0;
+}
+
+.gateway-login-card {
+  width: 100%;
+  max-width: 520px;
+  border-radius: 12px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
+}
+
+.gateway-assistant-card {
+  width: 100%;
+  max-width: 980px;
+  border-radius: 12px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
+}
+
+.gateway-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.gateway-chat-log {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  height: 52vh;
+  min-height: 320px;
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid #f0f0f0;
+  border-radius: 8px;
+  background: #fafafa;
+}
+
+.gateway-chat-empty {
+  margin: auto;
+  text-align: center;
+}
+
+.gateway-message {
+  display: flex;
+  width: 100%;
+}
+
+.gateway-message.user {
+  justify-content: flex-end;
+}
+
+.gateway-message.assistant {
+  justify-content: flex-start;
+}
+
+.gateway-message-content {
+  max-width: min(80%, 760px);
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #ffffff;
+  border: 1px solid #f0f0f0;
+  white-space: pre-wrap;
+}
+
+.gateway-message.user .gateway-message-content {
+  background: #e6f4ff;
+  border-color: #b7ebff;
+}
+
+.gateway-message-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+@media (max-width: 768px) {
+  .gateway-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .gateway-message-content {
+    max-width: 95%;
+  }
+}
