@@ -1,0 +1,691 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: noetl_gke_fresh_stack
+  path: automation/gcp_gke/noetl-gke-fresh-stack
+  description: Fresh GKE provisioning and full NoETL stack deployment (NoETL + Gateway + GUI)
+  labels:
+    iap.noetl.io/provider: gcp
+    iap.noetl.io/category: fresh-deployment
+
+executor:
+  profile: local
+  version: noetl-runtime/1
+
+workload:
+  # Actions: provision, deploy, provision-deploy, status, destroy, help
+  action: help
+
+  # GCP / GKE
+  project_id: ""
+  region: us-central1
+  cluster_name: noetl-gke
+  release_channel: regular
+  create_artifact_registry: true
+  repository_id: noetl
+  delete_cluster_on_destroy: false
+
+  # Build controls
+  build_images: true
+  build_noetl_image: true
+  build_gateway_image: true
+  build_gui_image: true
+
+  # Optional explicit image repositories. If empty, defaults to Artifact Registry:
+  # {region}-docker.pkg.dev/{project_id}/{repository_id}/{image-name}
+  noetl_image_repository: ""
+  gateway_image_repository: ""
+  gui_image_repository: ""
+
+  noetl_image_tag: latest
+  gateway_image_tag: latest
+  gui_image_tag: latest
+
+  # Public hosts (used when ingress is enabled)
+  deploy_ingress: true
+  noetl_public_host: api.example.com
+  gateway_public_host: gateway.example.com
+  gui_public_host: gui.example.com
+  gui_gateway_public_url: https://gateway.example.com
+
+  # Core service settings
+  postgres_password: demo
+  noetl_password: noetl
+  nats_user: noetl
+  nats_password: noetl
+  deploy_clickhouse: true
+
+  # Storage
+  postgres_storage_size: 20Gi
+  nats_jetstream_file_size: 5Gi
+  clickhouse_storage_size: 10Gi
+
+  # NoETL settings
+  noetl_worker_replicas: 2
+  noetl_enable_worker_pool: false
+  noetl_data_persistence: false
+  noetl_logs_persistence: false
+
+  # Gateway settings
+  gateway_auth_bypass: "false"
+  gateway_cors_allowed_origins: "http://localhost:3001,https://gui.example.com,https://gateway.example.com"
+
+workflow:
+  - step: start
+    desc: Validate input and route action
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "========================================"
+          echo " NoETL GKE Fresh Stack Automation"
+          echo "========================================"
+          echo "Action:      {{ workload.action }}"
+          echo "Project:     {{ workload.project_id }}"
+          echo "Region:      {{ workload.region }}"
+          echo "Cluster:     {{ workload.cluster_name }}"
+          echo ""
+          if [ -z "{{ workload.project_id }}" ] && [ "{{ workload.action }}" != "help" ]; then
+            echo "ERROR: workload.project_id is required for action '{{ workload.action }}'"
+            exit 1
+          fi
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: show_help
+          when: "{{ workload.action == 'help' }}"
+        - step: verify_prerequisites
+          when: "{{ workload.action == 'provision' }}"
+        - step: verify_prerequisites
+          when: "{{ workload.action == 'deploy' }}"
+        - step: verify_prerequisites
+          when: "{{ workload.action == 'provision-deploy' }}"
+        - step: verify_prerequisites
+          when: "{{ workload.action == 'status' }}"
+        - step: verify_prerequisites
+          when: "{{ workload.action == 'destroy' }}"
+        - step: show_help
+
+  - step: show_help
+    desc: Show usage
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Usage:"
+          echo "  noetl run automation/gcp_gke/noetl_gke_fresh_stack.yaml \\"
+          echo "    --set action=<provision|deploy|provision-deploy|status|destroy> \\"
+          echo "    --set project_id=<gcp-project-id>"
+          echo ""
+          echo "Examples:"
+          echo "  # Provision cluster + deploy full stack"
+          echo "  noetl run automation/gcp_gke/noetl_gke_fresh_stack.yaml \\"
+          echo "    --set action=provision-deploy \\"
+          echo "    --set project_id=my-gcp-project \\"
+          echo "    --set gui_gateway_public_url=https://gateway.example.com \\"
+          echo "    --set noetl_public_host=api.example.com \\"
+          echo "    --set gateway_public_host=gateway.example.com \\"
+          echo "    --set gui_public_host=gui.example.com"
+          echo ""
+          echo "  # Deploy to existing cluster"
+          echo "  noetl run automation/gcp_gke/noetl_gke_fresh_stack.yaml \\"
+          echo "    --set action=deploy \\"
+          echo "    --set project_id=my-gcp-project \\"
+          echo "    --set build_images=false"
+          echo ""
+          echo "  # Destroy stack (and optionally cluster)"
+          echo "  noetl run automation/gcp_gke/noetl_gke_fresh_stack.yaml \\"
+          echo "    --set action=destroy \\"
+          echo "    --set project_id=my-gcp-project \\"
+          echo "    --set delete_cluster_on_destroy=true"
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
+
+  - step: verify_prerequisites
+    desc: Verify required local tooling
+    tool:
+      kind: shell
+      cmds:
+        - |
+          set -e
+          command -v gcloud >/dev/null 2>&1 || { echo "ERROR: gcloud is required"; exit 1; }
+          command -v kubectl >/dev/null 2>&1 || { echo "ERROR: kubectl is required"; exit 1; }
+          command -v helm >/dev/null 2>&1 || { echo "ERROR: helm is required"; exit 1; }
+          echo "Tooling check passed"
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: configure_gcloud
+
+  - step: configure_gcloud
+    desc: Set active project and enable required APIs
+    tool:
+      kind: shell
+      cmds:
+        - |
+          set -e
+          gcloud auth list --filter="status:ACTIVE" --format="value(account)" | grep -q . || {
+            echo "ERROR: No active gcloud account. Run: gcloud auth login"
+            exit 1
+          }
+          gcloud config set project {{ workload.project_id }}
+          gcloud services enable container.googleapis.com artifactregistry.googleapis.com cloudbuild.googleapis.com --project {{ workload.project_id }}
+          echo "gcloud configured for project {{ workload.project_id }}"
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: route_action
+
+  - step: route_action
+    desc: Route by action
+    tool:
+      kind: noop
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: maybe_create_artifact_registry
+          when: "{{ workload.action == 'provision' }}"
+        - step: maybe_create_artifact_registry
+          when: "{{ workload.action == 'provision-deploy' }}"
+        - step: configure_kubectl
+          when: "{{ workload.action == 'deploy' }}"
+        - step: configure_kubectl
+          when: "{{ workload.action == 'status' }}"
+        - step: configure_kubectl
+          when: "{{ workload.action == 'destroy' }}"
+        - step: show_help
+
+  - step: maybe_create_artifact_registry
+    desc: Create Artifact Registry repository if requested
+    tool:
+      kind: shell
+      cmds:
+        - |
+          set -e
+          if [ "{{ workload.create_artifact_registry }}" != "true" ]; then
+            echo "Skipping Artifact Registry creation"
+            exit 0
+          fi
+          gcloud artifacts repositories describe {{ workload.repository_id }} \
+            --location {{ workload.region }} \
+            --project {{ workload.project_id }} >/dev/null 2>&1 && {
+            echo "Artifact Registry '{{ workload.repository_id }}' already exists"
+            exit 0
+          }
+          gcloud artifacts repositories create {{ workload.repository_id }} \
+            --repository-format=docker \
+            --location={{ workload.region }} \
+            --project={{ workload.project_id }} \
+            --description="NoETL images for fresh GKE deployment"
+          echo "Artifact Registry created"
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: create_cluster
+
+  - step: create_cluster
+    desc: Create GKE Autopilot cluster
+    tool:
+      kind: shell
+      cmds:
+        - |
+          set -e
+          if gcloud container clusters describe {{ workload.cluster_name }} --region {{ workload.region }} --project {{ workload.project_id }} >/dev/null 2>&1; then
+            echo "Cluster {{ workload.cluster_name }} already exists"
+            exit 0
+          fi
+          gcloud container clusters create-auto {{ workload.cluster_name }} \
+            --region {{ workload.region }} \
+            --project {{ workload.project_id }} \
+            --release-channel {{ workload.release_channel }}
+          echo "Cluster created"
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: configure_kubectl
+
+  - step: configure_kubectl
+    desc: Configure kubectl context for cluster
+    tool:
+      kind: shell
+      cmds:
+        - |
+          set -e
+          if ! gcloud container clusters describe {{ workload.cluster_name }} --region {{ workload.region }} --project {{ workload.project_id }} >/dev/null 2>&1; then
+            if [ "{{ workload.action }}" = "destroy" ] && [ "{{ workload.delete_cluster_on_destroy }}" = "true" ]; then
+              echo "Cluster not found, skipping kubectl context setup for destroy path"
+              exit 0
+            fi
+            echo "ERROR: Cluster {{ workload.cluster_name }} does not exist"
+            exit 1
+          fi
+
+          gcloud container clusters get-credentials {{ workload.cluster_name }} \
+            --region {{ workload.region }} \
+            --project {{ workload.project_id }}
+          kubectl cluster-info
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: after_kube_context
+
+  - step: after_kube_context
+    desc: Continue based on action
+    tool:
+      kind: noop
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
+          when: "{{ workload.action == 'provision' }}"
+        - step: add_helm_repos
+          when: "{{ workload.action == 'deploy' }}"
+        - step: add_helm_repos
+          when: "{{ workload.action == 'provision-deploy' }}"
+        - step: check_status
+          when: "{{ workload.action == 'status' }}"
+        - step: destroy_stack
+          when: "{{ workload.action == 'destroy' }}"
+        - step: end
+
+  - step: add_helm_repos
+    desc: Add Helm repositories needed for dependencies
+    tool:
+      kind: shell
+      cmds:
+        - |
+          set -e
+          helm repo add bitnami https://charts.bitnami.com/bitnami || true
+          helm repo add nats https://nats-io.github.io/k8s/helm/charts/ || true
+          helm repo update
+          echo "Helm repositories updated"
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: maybe_build_images
+
+  - step: maybe_build_images
+    desc: Build and push images if requested
+    tool:
+      kind: shell
+      cmds:
+        - |
+          set -e
+          if [ "{{ workload.build_images }}" != "true" ]; then
+            echo "Skipping image builds (workload.build_images=false)"
+            exit 0
+          fi
+
+          REGISTRY="{{ workload.region }}-docker.pkg.dev/{{ workload.project_id }}/{{ workload.repository_id }}"
+          NOETL_IMAGE="{{ workload.noetl_image_repository }}"
+          GATEWAY_IMAGE="{{ workload.gateway_image_repository }}"
+          GUI_IMAGE="{{ workload.gui_image_repository }}"
+          [ -z "$NOETL_IMAGE" ] && NOETL_IMAGE="$REGISTRY/noetl"
+          [ -z "$GATEWAY_IMAGE" ] && GATEWAY_IMAGE="$REGISTRY/noetl-gateway"
+          [ -z "$GUI_IMAGE" ] && GUI_IMAGE="$REGISTRY/noetl-gui"
+
+          if [ "{{ workload.build_noetl_image }}" = "true" ]; then
+            echo "Building NoETL image -> $NOETL_IMAGE:{{ workload.noetl_image_tag }}"
+            gcloud builds submit \
+              --project {{ workload.project_id }} \
+              --tag "$NOETL_IMAGE:{{ workload.noetl_image_tag }}" \
+              -f docker/noetl/pip/Dockerfile \
+              .
+          fi
+
+          if [ "{{ workload.build_gateway_image }}" = "true" ]; then
+            echo "Building Gateway image -> $GATEWAY_IMAGE:{{ workload.gateway_image_tag }}"
+            gcloud builds submit \
+              --project {{ workload.project_id }} \
+              --tag "$GATEWAY_IMAGE:{{ workload.gateway_image_tag }}" \
+              -f crates/gateway/Dockerfile \
+              crates/gateway
+          fi
+
+          if [ "{{ workload.build_gui_image }}" = "true" ]; then
+            echo "Building GUI image -> $GUI_IMAGE:{{ workload.gui_image_tag }}"
+            gcloud builds submit \
+              --project {{ workload.project_id }} \
+              --tag "$GUI_IMAGE:{{ workload.gui_image_tag }}" \
+              --substitutions=_VITE_GATEWAY_URL={{ workload.gui_gateway_public_url }} \
+              -f automation/gcp_gke/assets/gui/Dockerfile \
+              .
+          fi
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: deploy_postgres
+
+  - step: deploy_postgres
+    desc: Deploy PostgreSQL
+    tool:
+      kind: shell
+      cmds:
+        - |
+          set -e
+          helm upgrade --install noetl-postgres bitnami/postgresql \
+            --namespace postgres \
+            --create-namespace \
+            --set auth.postgresPassword={{ workload.postgres_password }} \
+            --set auth.username=noetl \
+            --set auth.password={{ workload.noetl_password }} \
+            --set auth.database=noetl \
+            --set primary.persistence.enabled=true \
+            --set primary.persistence.size={{ workload.postgres_storage_size }} \
+            --set architecture=standalone
+
+          kubectl wait --for=condition=ready pod -l app.kubernetes.io/instance=noetl-postgres -n postgres --timeout=300s
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: init_noetl_schema
+
+  - step: init_noetl_schema
+    desc: Initialize NoETL schema in PostgreSQL
+    tool:
+      kind: shell
+      cmds:
+        - |
+          set -e
+          SCHEMA_FILE="noetl/database/ddl/postgres/schema_ddl.sql"
+          if [ ! -f "$SCHEMA_FILE" ]; then
+            echo "WARNING: Schema file not found: $SCHEMA_FILE"
+            echo "Skipping schema initialization"
+            exit 0
+          fi
+
+          POSTGRES_POD=$(kubectl get pods -n postgres -l app.kubernetes.io/instance=noetl-postgres -o jsonpath='{.items[0].metadata.name}')
+          if [ -z "$POSTGRES_POD" ]; then
+            echo "ERROR: PostgreSQL pod not found"
+            exit 1
+          fi
+
+          TABLE_EXISTS=$(kubectl exec -n postgres "$POSTGRES_POD" -- /bin/sh -c "PGPASSWORD={{ workload.postgres_password }} psql -U postgres -d noetl -tAc \"SELECT 1 FROM information_schema.tables WHERE table_schema='noetl' AND table_name='event'\"" 2>/dev/null || echo "")
+          if [ "$TABLE_EXISTS" = "1" ]; then
+            echo "NoETL schema already initialized"
+            exit 0
+          fi
+
+          kubectl exec -n postgres "$POSTGRES_POD" -- /bin/sh -c "PGPASSWORD={{ workload.postgres_password }} psql -U postgres -d noetl -c \"CREATE SCHEMA IF NOT EXISTS noetl\""
+          cat "$SCHEMA_FILE" | kubectl exec -i -n postgres "$POSTGRES_POD" -- /bin/sh -c "PGPASSWORD={{ workload.postgres_password }} psql -U postgres -d noetl"
+          kubectl exec -n postgres "$POSTGRES_POD" -- /bin/sh -c "PGPASSWORD={{ workload.postgres_password }} psql -U postgres -d noetl -c \"GRANT ALL ON SCHEMA noetl TO noetl; GRANT ALL ON ALL TABLES IN SCHEMA noetl TO noetl; GRANT ALL ON ALL SEQUENCES IN SCHEMA noetl TO noetl;\""
+          echo "NoETL schema initialized"
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: deploy_nats
+
+  - step: deploy_nats
+    desc: Deploy NATS with JetStream
+    tool:
+      kind: shell
+      cmds:
+        - |
+          set -e
+          helm upgrade --install nats nats/nats \
+            --namespace nats \
+            --create-namespace \
+            --set config.jetstream.enabled=true \
+            --set config.jetstream.fileStore.enabled=true \
+            --set config.jetstream.fileStore.pvc.size={{ workload.nats_jetstream_file_size }} \
+            --set config.jetstream.memoryStore.enabled=true \
+            --set config.jetstream.memoryStore.maxSize=1Gi \
+            --set 'config.merge.authorization.users[0].user={{ workload.nats_user }}' \
+            --set 'config.merge.authorization.users[0].password={{ workload.nats_password }}'
+          kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=nats -n nats --timeout=240s
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: maybe_deploy_clickhouse
+
+  - step: maybe_deploy_clickhouse
+    desc: Optionally deploy ClickHouse
+    tool:
+      kind: noop
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: deploy_clickhouse
+          when: "{{ workload.deploy_clickhouse == true }}"
+        - step: deploy_noetl
+
+  - step: deploy_clickhouse
+    desc: Deploy ClickHouse
+    tool:
+      kind: shell
+      cmds:
+        - |
+          set -e
+          helm upgrade --install clickhouse bitnami/clickhouse \
+            --namespace clickhouse \
+            --create-namespace \
+            --set shards=1 \
+            --set replicaCount=1 \
+            --set persistence.enabled=true \
+            --set persistence.size={{ workload.clickhouse_storage_size }}
+          kubectl wait --for=condition=ready pod -l app.kubernetes.io/instance=clickhouse -n clickhouse --timeout=300s || true
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: deploy_noetl
+
+  - step: deploy_noetl
+    desc: Deploy NoETL server and worker stack
+    tool:
+      kind: shell
+      cmds:
+        - |
+          set -e
+          REGISTRY="{{ workload.region }}-docker.pkg.dev/{{ workload.project_id }}/{{ workload.repository_id }}"
+          NOETL_IMAGE="{{ workload.noetl_image_repository }}"
+          [ -z "$NOETL_IMAGE" ] && NOETL_IMAGE="$REGISTRY/noetl"
+
+          INGRESS_ARGS=""
+          if [ "{{ workload.deploy_ingress }}" = "true" ]; then
+            INGRESS_ARGS="--set ingress.enabled=true --set ingress.className=gce --set ingress.host={{ workload.noetl_public_host }} --set ingress.managedCertificate.enabled=true --set ingress.managedCertificate.name=noetl-managed-cert"
+          fi
+
+          helm upgrade --install noetl ./automation/helm/noetl \
+            --namespace noetl \
+            --create-namespace \
+            --set namespace=noetl \
+            --set image.repository="$NOETL_IMAGE" \
+            --set image.tag={{ workload.noetl_image_tag }} \
+            --set worker.replicas={{ workload.noetl_worker_replicas }} \
+            --set workerPool.enabled={{ workload.noetl_enable_worker_pool }} \
+            --set persistence.data.enabled={{ workload.noetl_data_persistence }} \
+            --set persistence.logs.enabled={{ workload.noetl_logs_persistence }} \
+            --set config.server.POSTGRES_HOST=noetl-postgres-postgresql.postgres.svc.cluster.local \
+            --set config.server.POSTGRES_PORT=5432 \
+            --set config.server.NOETL_USER=noetl \
+            --set config.server.NOETL_POSTGRES_DB=noetl \
+            --set config.server.NATS_URL=nats://{{ workload.nats_user }}:{{ workload.nats_password }}@nats.nats.svc.cluster.local:4222 \
+            --set config.worker.NATS_URL=nats://{{ workload.nats_user }}:{{ workload.nats_password }}@nats.nats.svc.cluster.local:4222 \
+            --set secrets.postgresPassword={{ workload.postgres_password }} \
+            --set secrets.noetlPassword={{ workload.noetl_password }} \
+            $INGRESS_ARGS
+
+          kubectl rollout status deployment/noetl-server -n noetl --timeout=300s
+          kubectl rollout status deployment/noetl-worker -n noetl --timeout=300s
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: deploy_gateway
+
+  - step: deploy_gateway
+    desc: Deploy NoETL Gateway
+    tool:
+      kind: shell
+      cmds:
+        - |
+          set -e
+          REGISTRY="{{ workload.region }}-docker.pkg.dev/{{ workload.project_id }}/{{ workload.repository_id }}"
+          GATEWAY_IMAGE="{{ workload.gateway_image_repository }}"
+          [ -z "$GATEWAY_IMAGE" ] && GATEWAY_IMAGE="$REGISTRY/noetl-gateway"
+
+          INGRESS_ARGS=""
+          if [ "{{ workload.deploy_ingress }}" = "true" ]; then
+            INGRESS_ARGS="--set ingress.enabled=true --set ingress.className=gce --set ingress.host={{ workload.gateway_public_host }} --set ingress.managedCertificate.enabled=true --set ingress.managedCertificate.name=gateway-managed-cert"
+          fi
+
+          helm upgrade --install noetl-gateway ./automation/helm/gateway \
+            --namespace gateway \
+            --create-namespace \
+            --set namespace=gateway \
+            --set image.repository="$GATEWAY_IMAGE" \
+            --set image.tag={{ workload.gateway_image_tag }} \
+            --set service.type=ClusterIP \
+            --set env.noetlBaseUrl=http://noetl.noetl.svc.cluster.local:8082 \
+            --set env.natsUrl=nats://{{ workload.nats_user }}:{{ workload.nats_password }}@nats.nats.svc.cluster.local:4222 \
+            --set env.corsAllowedOrigins={{ workload.gateway_cors_allowed_origins }} \
+            --set env.authBypass={{ workload.gateway_auth_bypass }} \
+            $INGRESS_ARGS
+
+          kubectl rollout status deployment/gateway -n gateway --timeout=300s
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: deploy_gui
+
+  - step: deploy_gui
+    desc: Deploy NoETL GUI
+    tool:
+      kind: shell
+      cmds:
+        - |
+          set -e
+          REGISTRY="{{ workload.region }}-docker.pkg.dev/{{ workload.project_id }}/{{ workload.repository_id }}"
+          GUI_IMAGE="{{ workload.gui_image_repository }}"
+          [ -z "$GUI_IMAGE" ] && GUI_IMAGE="$REGISTRY/noetl-gui"
+
+          INGRESS_ARGS=""
+          if [ "{{ workload.deploy_ingress }}" = "true" ]; then
+            INGRESS_ARGS="--set ingress.enabled=true --set ingress.className=gce --set ingress.host={{ workload.gui_public_host }} --set ingress.managedCertificate.enabled=true --set ingress.managedCertificate.name=gui-managed-cert"
+          fi
+
+          helm upgrade --install noetl-gui ./automation/gcp_gke/helm/gui \
+            --namespace gui \
+            --create-namespace \
+            --set namespace=gui \
+            --set image.repository="$GUI_IMAGE" \
+            --set image.tag={{ workload.gui_image_tag }} \
+            $INGRESS_ARGS
+
+          kubectl rollout status deployment/gui -n gui --timeout=300s
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: check_status
+
+  - step: check_status
+    desc: Show deployment status
+    tool:
+      kind: shell
+      cmds:
+        - |
+          set +e
+          echo ""
+          echo "========== Cluster =========="
+          kubectl config current-context
+          echo ""
+          echo "========== Namespaces =========="
+          kubectl get ns | grep -E 'postgres|nats|clickhouse|noetl|gateway|gui'
+          echo ""
+          echo "========== Workloads =========="
+          kubectl get deploy -n noetl
+          kubectl get deploy -n gateway
+          kubectl get deploy -n gui
+          echo ""
+          echo "========== Services =========="
+          kubectl get svc -n noetl
+          kubectl get svc -n gateway
+          kubectl get svc -n gui
+          echo ""
+          echo "========== Ingress =========="
+          kubectl get ingress -n noetl
+          kubectl get ingress -n gateway
+          kubectl get ingress -n gui
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: maybe_destroy_cluster
+          when: "{{ workload.action == 'destroy' }}"
+        - step: end
+
+  - step: destroy_stack
+    desc: Uninstall deployed Helm releases
+    tool:
+      kind: shell
+      cmds:
+        - |
+          set +e
+          if ! kubectl cluster-info >/dev/null 2>&1; then
+            echo "Kubernetes context not available; skipping Helm uninstall phase"
+            exit 0
+          fi
+          helm uninstall noetl-gui -n gui --ignore-not-found
+          helm uninstall noetl-gateway -n gateway --ignore-not-found
+          helm uninstall noetl -n noetl --ignore-not-found
+          helm uninstall clickhouse -n clickhouse --ignore-not-found
+          helm uninstall nats -n nats --ignore-not-found
+          helm uninstall noetl-postgres -n postgres --ignore-not-found
+          kubectl delete namespace gui gateway noetl clickhouse nats postgres --ignore-not-found=true
+          echo "Stack uninstall completed"
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: maybe_destroy_cluster
+
+  - step: maybe_destroy_cluster
+    desc: Optionally delete GKE cluster
+    tool:
+      kind: shell
+      cmds:
+        - |
+          set +e
+          if [ "{{ workload.action }}" != "destroy" ]; then
+            exit 0
+          fi
+          if [ "{{ workload.delete_cluster_on_destroy }}" != "true" ]; then
+            echo "Skipping cluster deletion (workload.delete_cluster_on_destroy=false)"
+            exit 0
+          fi
+          gcloud container clusters delete {{ workload.cluster_name }} \
+            --region {{ workload.region }} \
+            --project {{ workload.project_id }} \
+            --quiet
+          echo "Cluster deletion requested"
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
+
+  - step: end
+    desc: End workflow
+    tool:
+      kind: noop

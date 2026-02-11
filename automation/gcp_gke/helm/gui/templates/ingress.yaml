@@ -1,0 +1,38 @@
+{{- if .Values.ingress.enabled }}
+{{- if .Values.ingress.managedCertificate.enabled }}
+apiVersion: networking.gke.io/v1
+kind: ManagedCertificate
+metadata:
+  name: {{ .Values.ingress.managedCertificate.name }}
+  namespace: {{ .Values.namespace }}
+spec:
+  domains:
+    - {{ .Values.ingress.host }}
+---
+{{- end }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: gui
+  namespace: {{ .Values.namespace }}
+  annotations:
+{{- if .Values.ingress.managedCertificate.enabled }}
+    networking.gke.io/managed-certificates: {{ .Values.ingress.managedCertificate.name }}
+{{- end }}
+{{- with .Values.ingress.annotations }}
+{{ toYaml . | indent 4 }}
+{{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  rules:
+    - host: {{ .Values.ingress.host }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: gui
+                port:
+                  number: {{ .Values.service.port }}
+{{- end }}
