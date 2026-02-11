@@ -31,11 +31,14 @@ workflow:
           export PGPORT={{ workload.pg_port }}
           export PGUSER="{{ workload.pg_user }}"
           export PGDATABASE="{{ workload.pg_database }}"
-          
+
           echo "Validating connection to $PGHOST:$PGPORT..."
           pg_isready -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE"
     next:
-      - step: drop_schema
+      spec:
+        mode: exclusive
+      arcs:
+        - step: drop_schema
 
   - step: drop_schema
     desc: Drop existing NoETL schema
@@ -47,11 +50,14 @@ workflow:
           export PGPORT={{ workload.pg_port }}
           export PGUSER="{{ workload.pg_user }}"
           export PGDATABASE="{{ workload.pg_database }}"
-          
+
           echo "Dropping schema {{ workload.noetl_schema }} if exists..."
           psql -v ON_ERROR_STOP=1 -c "DROP SCHEMA IF EXISTS {{ workload.noetl_schema }} CASCADE;"
     next:
-      - step: create_user
+      spec:
+        mode: exclusive
+      arcs:
+        - step: create_user
 
   - step: create_user
     desc: Ensure NoETL user exists
@@ -64,11 +70,14 @@ workflow:
           export PGUSER="{{ workload.pg_user }}"
           # Use postgres database for user creation if needed, or stick to configured one if permissions allow
           export PGDATABASE="{{ workload.pg_database }}"
-          
+
           echo "Creating user {{ workload.noetl_user }} if not exists..."
           psql -v ON_ERROR_STOP=1 -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = '{{ workload.noetl_user }}') THEN CREATE USER {{ workload.noetl_user }} WITH PASSWORD '{{ workload.noetl_password }}' LOGIN; END IF; END \$\$;"
     next:
-      - step: create_schema
+      spec:
+        mode: exclusive
+      arcs:
+        - step: create_schema
 
   - step: create_schema
     desc: Create fresh NoETL schema
@@ -80,11 +89,14 @@ workflow:
           export PGPORT={{ workload.pg_port }}
           export PGUSER="{{ workload.pg_user }}"
           export PGDATABASE="{{ workload.pg_database }}"
-          
+
           echo "Creating schema {{ workload.noetl_schema }}..."
           psql -v ON_ERROR_STOP=1 -c "CREATE SCHEMA {{ workload.noetl_schema }} AUTHORIZATION {{ workload.noetl_user }};"
     next:
-      - step: grant_privileges
+      spec:
+        mode: exclusive
+      arcs:
+        - step: grant_privileges
 
   - step: grant_privileges
     desc: Grant privileges to NoETL user
@@ -96,7 +108,7 @@ workflow:
           export PGPORT={{ workload.pg_port }}
           export PGUSER="{{ workload.pg_user }}"
           export PGDATABASE="{{ workload.pg_database }}"
-          
+
           echo "Granting privileges on schema {{ workload.noetl_schema }} to {{ workload.noetl_user }}..."
           psql -v ON_ERROR_STOP=1 -c "GRANT ALL PRIVILEGES ON SCHEMA {{ workload.noetl_schema }} TO {{ workload.noetl_user }};"
           psql -v ON_ERROR_STOP=1 -c "GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA {{ workload.noetl_schema }} TO {{ workload.noetl_user }};"
@@ -104,7 +116,10 @@ workflow:
           psql -v ON_ERROR_STOP=1 -c "ALTER DEFAULT PRIVILEGES IN SCHEMA {{ workload.noetl_schema }} GRANT ALL ON TABLES TO {{ workload.noetl_user }};"
           psql -v ON_ERROR_STOP=1 -c "ALTER DEFAULT PRIVILEGES IN SCHEMA {{ workload.noetl_schema }} GRANT ALL ON SEQUENCES TO {{ workload.noetl_user }};"
     next:
-      - step: apply_ddl
+      spec:
+        mode: exclusive
+      arcs:
+        - step: apply_ddl
 
   - step: apply_ddl
     desc: Apply NoETL DDL from schema_ddl.sql
@@ -120,7 +135,10 @@ workflow:
           echo "Applying schema DDL from noetl/database/ddl/postgres/schema_ddl.sql..."
           psql -v ON_ERROR_STOP=1 -f noetl/database/ddl/postgres/schema_ddl.sql
     next:
-      - step: complete
+      spec:
+        mode: exclusive
+      arcs:
+        - step: complete
 
   - step: complete
     desc: Schema rebuild complete

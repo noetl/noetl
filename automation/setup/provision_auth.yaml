@@ -38,13 +38,16 @@ workflow:
       cmds:
         - echo "Auth provisioning - action:{{ workload.action }}"
     next:
-      - step: check_status
-        when: "{{ workload.action == 'status' }}"
-      - step: drop_schema
-        when: "{{ workload.action == 'reset' }}"
-      - step: grant_admin_role
-        when: "{{ workload.action == 'grant_admin' }}"
-      - step: check_postgres_ready
+      spec:
+        mode: exclusive
+      arcs:
+        - step: check_status
+          when: "{{ workload.action == 'status' }}"
+        - step: drop_schema
+          when: "{{ workload.action == 'reset' }}"
+        - step: grant_admin_role
+          when: "{{ workload.action == 'grant_admin' }}"
+        - step: check_postgres_ready
 
   - step: check_postgres_ready
     desc: Verify PostgreSQL is running and accessible
@@ -58,7 +61,10 @@ workflow:
             pg_isready -h localhost -p 5432 -U {{ workload.postgres_user }}
           echo "OK PostgreSQL is ready"
     next:
-      - step: check_schema_exists
+      spec:
+        mode: exclusive
+      arcs:
+        - step: check_schema_exists
 
   - step: check_schema_exists
     desc: Check if auth schema already exists
@@ -77,9 +83,12 @@ workflow:
             echo "AUTH_SCHEMA_EXISTS=false"
           fi
     next:
-      - step: schema_already_exists
-        when: "{{ 'AUTH_SCHEMA_EXISTS=true' in check_schema_exists.stdout }}"
-      - step: run_provision_script
+      spec:
+        mode: exclusive
+      arcs:
+        - step: schema_already_exists
+          when: "{{ 'AUTH_SCHEMA_EXISTS=true' in check_schema_exists.stdout }}"
+        - step: run_provision_script
 
   - step: schema_already_exists
     desc: Auth schema already provisioned
@@ -101,7 +110,10 @@ workflow:
           echo "To reset auth schema:"
           echo "  noetl run automation/setup/provision_auth.yaml --set action=reset"
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: run_provision_script
     desc: Run auth schema provisioning SQL script
@@ -125,7 +137,10 @@ workflow:
           echo ""
           echo "OK Auth schema provisioned successfully"
     next:
-      - step: configure_auto_admin
+      spec:
+        mode: exclusive
+      arcs:
+        - step: configure_auto_admin
 
   - step: configure_auto_admin
     desc: Configure auto-admin email if specified
@@ -147,7 +162,10 @@ workflow:
             echo "No auto-admin email configured (use --set auto_admin_email=user@example.com)"
           fi
     next:
-      - step: verify_provisioning
+      spec:
+        mode: exclusive
+      arcs:
+        - step: verify_provisioning
 
   - step: verify_provisioning
     desc: Verify auth schema was created correctly
@@ -175,7 +193,10 @@ workflow:
           echo ""
           echo "OK Auth schema verification complete"
     next:
-      - step: grant_default_playbook_permissions
+      spec:
+        mode: exclusive
+      arcs:
+        - step: grant_default_playbook_permissions
 
   - step: grant_default_playbook_permissions
     desc: Grant wildcard playbook permissions to admin and developer roles
@@ -198,7 +219,10 @@ workflow:
           echo "  Pattern: % (all playbooks)"
           echo "  Permissions: execute, view, modify"
     next:
-      - step: summary
+      spec:
+        mode: exclusive
+      arcs:
+        - step: summary
 
   - step: drop_schema
     desc: Drop existing auth schema (reset action)
@@ -213,7 +237,10 @@ workflow:
             "DROP SCHEMA IF EXISTS auth CASCADE;"
           echo "OK Auth schema dropped"
     next:
-      - step: run_provision_script
+      spec:
+        mode: exclusive
+      arcs:
+        - step: run_provision_script
 
   - step: check_status
     desc: Check auth schema status
@@ -249,7 +276,10 @@ workflow:
             echo "  noetl run automation/setup/provision_auth.yaml"
           fi
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: summary
     desc: Show provisioning summary
@@ -291,7 +321,10 @@ workflow:
           echo "  Or use the dashboard User Management page to assign roles."
           echo ""
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: grant_admin_role
     desc: Grant admin role to specified user
@@ -352,7 +385,10 @@ workflow:
              WHERE u.email = '$EMAIL'
              ORDER BY r.role_name;"
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: Provisioning complete

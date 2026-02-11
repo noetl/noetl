@@ -19,21 +19,24 @@ workflow:
       cmds:
         - echo "Development Tools Setup - Action '{{ workload.action }}'"
     next:
-      - step: detect_os
-        when: "{{ workload.action == 'detect' }}"
-      - step: detect_and_setup
-        when: "{{ workload.action == 'setup' }}"
-      - step: detect_and_validate
-        when: "{{ workload.action == 'validate-install' }}"
-      - step: detect_and_validate_devtools
-        when: "{{ workload.action == 'validate-devtools' }}"
-      - step: detect_and_install_base
-        when: "{{ workload.action == 'install-base' }}"
-      - step: detect_and_install_devtools
-        when: "{{ workload.action == 'install-devtools' }}"
-      - step: show_help
-        when: "{{ workload.action == 'help' }}"
-      - step: show_help
+      spec:
+        mode: exclusive
+      arcs:
+        - step: detect_os
+          when: "{{ workload.action == 'detect' }}"
+        - step: detect_and_setup
+          when: "{{ workload.action == 'setup' }}"
+        - step: detect_and_validate
+          when: "{{ workload.action == 'validate-install' }}"
+        - step: detect_and_validate_devtools
+          when: "{{ workload.action == 'validate-devtools' }}"
+        - step: detect_and_install_base
+          when: "{{ workload.action == 'install-base' }}"
+        - step: detect_and_install_devtools
+          when: "{{ workload.action == 'install-devtools' }}"
+        - step: show_help
+          when: "{{ workload.action == 'help' }}"
+        - step: show_help
 
   - step: detect_os
     desc: Detect operating system and display information
@@ -96,7 +99,10 @@ workflow:
           echo "  Architecture: $(uname -m)"
           echo "  Shell: $SHELL"
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: detect_and_setup
     desc: Detect OS and run setup with appropriate tooling playbook
@@ -124,9 +130,12 @@ workflow:
       exports:
         - os_type
     next:
-      - step: run_macos_setup
-        when: "{{ os_type == 'macos' }}"
-      - step: run_linux_setup
+      spec:
+        mode: exclusive
+      arcs:
+        - step: run_macos_setup
+          when: "{{ os_type == 'macos' }}"
+        - step: run_linux_setup
 
   - step: run_macos_setup
     desc: Run macOS setup via tooling_macos.yaml
@@ -136,7 +145,10 @@ workflow:
       args:
         action: setup
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: run_linux_setup
     desc: Run Linux/WSL2 setup via tooling_linux.yaml
@@ -146,7 +158,10 @@ workflow:
       args:
         action: setup
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: detect_and_validate
     desc: Detect OS and run validation with appropriate tooling playbook
@@ -174,9 +189,12 @@ workflow:
       exports:
         - os_type
     next:
-      - step: run_macos_validate
-        when: "{{ os_type == 'macos' }}"
-      - step: run_linux_validate
+      spec:
+        mode: exclusive
+      arcs:
+        - step: run_macos_validate
+          when: "{{ os_type == 'macos' }}"
+        - step: run_linux_validate
 
   - step: run_macos_validate
     desc: Run macOS validation via tooling_macos.yaml
@@ -186,7 +204,10 @@ workflow:
       args:
         action: validate-install
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: run_linux_validate
     desc: Run Linux/WSL2 validation via tooling_linux.yaml
@@ -196,7 +217,10 @@ workflow:
       args:
         action: validate-install
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: detect_and_validate_devtools
     desc: Detect OS and validate dev tools
@@ -224,9 +248,12 @@ workflow:
       exports:
         - os_type
     next:
-      - step: run_macos_validate_devtools
-        when: "{{ os_type == 'macos' }}"
-      - step: run_linux_validate_devtools
+      spec:
+        mode: exclusive
+      arcs:
+        - step: run_macos_validate_devtools
+          when: "{{ os_type == 'macos' }}"
+        - step: run_linux_validate_devtools
 
   - step: run_macos_validate_devtools
     desc: Run macOS dev tools validation
@@ -236,7 +263,10 @@ workflow:
       args:
         action: validate-devtools
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: run_linux_validate_devtools
     desc: Run Linux/WSL2 dev tools validation
@@ -246,7 +276,10 @@ workflow:
       args:
         action: validate-devtools
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: detect_and_install_base
     desc: Detect OS and install base tools
@@ -274,9 +307,12 @@ workflow:
       exports:
         - os_type
     next:
-      - step: run_macos_install_base
-        when: "{{ os_type == 'macos' }}"
-      - step: run_linux_install_base
+      spec:
+        mode: exclusive
+      arcs:
+        - step: run_macos_install_base
+          when: "{{ os_type == 'macos' }}"
+        - step: run_linux_install_base
 
   - step: run_macos_install_base
     desc: Run macOS base tools installation
@@ -286,7 +322,10 @@ workflow:
       args:
         action: install-base
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: run_linux_install_base
     desc: Run Linux/WSL2 base tools installation
@@ -296,7 +335,10 @@ workflow:
       args:
         action: install-base
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: detect_and_install_devtools
     desc: Detect OS and install dev tools
@@ -324,9 +366,12 @@ workflow:
       exports:
         - os_type
     next:
-      - step: run_macos_install_devtools
-        when: "{{ os_type == 'macos' }}"
-      - step: run_linux_install_devtools
+      spec:
+        mode: exclusive
+      arcs:
+        - step: run_macos_install_devtools
+          when: "{{ os_type == 'macos' }}"
+        - step: run_linux_install_devtools
 
   - step: run_macos_install_devtools
     desc: Run macOS dev tools installation
@@ -336,7 +381,10 @@ workflow:
       args:
         action: install-devtools
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: run_linux_install_devtools
     desc: Run Linux/WSL2 dev tools installation
@@ -346,7 +394,10 @@ workflow:
       args:
         action: install-devtools
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: show_help
     desc: Display available actions
@@ -393,7 +444,10 @@ workflow:
           echo "  noetl run automation/development/tooling_linux.yaml --set action=<action>"
           echo ""
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: End workflow

@@ -18,7 +18,10 @@ workflow:
     tool:
       kind: noop
     next:
-      - step: namespace
+      spec:
+        mode: exclusive
+      arcs:
+        - step: namespace
 
   - step: namespace
     desc: Create namespace
@@ -26,7 +29,10 @@ workflow:
       kind: shell
       cmds: "kubectl create namespace ibkr --dry-run=client -o yaml | kubectl apply -f -"
     next:
-      - step: deploy
+      spec:
+        mode: exclusive
+      arcs:
+        - step: deploy
 
   - step: deploy
     desc: Deploy gateway using manifest
@@ -34,7 +40,10 @@ workflow:
       kind: shell
       cmds: "kubectl apply -f /Users/akuksin/projects/noetl/noetl/ci/manifests/ibkr-gateway/"
     next:
-      - step: wait
+      spec:
+        mode: exclusive
+      arcs:
+        - step: wait
 
   - step: wait
     desc: Wait for deployment
@@ -42,7 +51,10 @@ workflow:
       kind: shell
       cmds: "kubectl -n ibkr rollout status deployment/ibkr-client-portal --timeout=60s"
     next:
-      - step: status
+      spec:
+        mode: exclusive
+      arcs:
+        - step: status
 
   - step: status
     desc: Show deployment status
@@ -54,7 +66,10 @@ workflow:
         - "echo 'Gateway_URL: https://localhost:15000 (after kind cluster recreate)'"
         - "echo 'Gateway_internal: https://ibkr-client-portal.ibkr.svc.cluster.local:5000'"
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: Done

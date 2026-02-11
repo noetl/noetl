@@ -106,13 +106,16 @@ workflow:
       gateway_image: "{{ workload.region }}-docker.pkg.dev/{{ workload.project_id }}/{{ workload.repository_id }}/noetl-gateway"
       worker_image: "{{ workload.region }}-docker.pkg.dev/{{ workload.project_id }}/{{ workload.repository_id }}/noetl-worker"
     next:
-      - step: verify_gcloud
-        when: "{{ workload.action == 'deploy' }}"
-      - step: destroy_cluster
-        when: "{{ workload.action == 'destroy' }}"
-      - step: check_status
-        when: "{{ workload.action == 'status' }}"
-      - step: show_help
+      spec:
+        mode: exclusive
+      arcs:
+        - step: verify_gcloud
+          when: "{{ workload.action == 'deploy' }}"
+        - step: destroy_cluster
+          when: "{{ workload.action == 'destroy' }}"
+        - step: check_status
+          when: "{{ workload.action == 'status' }}"
+        - step: show_help
 
   - step: show_help
     desc: Show help
@@ -181,7 +184,10 @@ workflow:
           echo "    --set create_cluster=false \\"
           echo "    --set build_images=false"
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: verify_gcloud
     desc: Verify gcloud is configured
@@ -198,16 +204,22 @@ workflow:
           gcloud config set project {{ workload.project_id }}
           echo "Project set to: {{ workload.project_id }}"
     next:
-      - step: maybe_create_artifact_registry
+      spec:
+        mode: exclusive
+      arcs:
+        - step: maybe_create_artifact_registry
 
   - step: maybe_create_artifact_registry
     desc: Create Artifact Registry if enabled
     tool:
       kind: noop
     next:
-      - step: create_artifact_registry
-        when: "{{ workload.create_artifact_registry == true }}"
-      - step: maybe_build_images
+      spec:
+        mode: exclusive
+      arcs:
+        - step: create_artifact_registry
+          when: "{{ workload.create_artifact_registry == true }}"
+        - step: maybe_build_images
 
   - step: create_artifact_registry
     desc: Create Artifact Registry repository
@@ -230,16 +242,22 @@ workflow:
             echo "Repository created"
           }
     next:
-      - step: maybe_build_images
+      spec:
+        mode: exclusive
+      arcs:
+        - step: maybe_build_images
 
   - step: maybe_build_images
     desc: Build container images if enabled
     tool:
       kind: noop
     next:
-      - step: build_images
-        when: "{{ workload.build_images == true }}"
-      - step: maybe_create_cluster
+      spec:
+        mode: exclusive
+      arcs:
+        - step: build_images
+          when: "{{ workload.build_images == true }}"
+        - step: maybe_create_cluster
 
   - step: build_images
     desc: Build and push container images to Artifact Registry
@@ -499,16 +517,22 @@ workflow:
           echo "Images available in {{ vars.artifact_registry }}"
           gcloud artifacts docker images list {{ vars.artifact_registry }} --format="table(package,version)" 2>/dev/null || echo "(could not list images)"
     next:
-      - step: maybe_create_cluster
+      spec:
+        mode: exclusive
+      arcs:
+        - step: maybe_create_cluster
 
   - step: maybe_create_cluster
     desc: Create GKE cluster if enabled
     tool:
       kind: noop
     next:
-      - step: create_gke_cluster
-        when: "{{ workload.create_cluster == true }}"
-      - step: configure_kubectl
+      spec:
+        mode: exclusive
+      arcs:
+        - step: create_gke_cluster
+          when: "{{ workload.create_cluster == true }}"
+        - step: configure_kubectl
 
   - step: create_gke_cluster
     desc: Create GKE Autopilot cluster
@@ -533,7 +557,10 @@ workflow:
             echo "Cluster created"
           }
     next:
-      - step: configure_kubectl
+      spec:
+        mode: exclusive
+      arcs:
+        - step: configure_kubectl
 
   - step: configure_kubectl
     desc: Configure kubectl for GKE cluster
@@ -547,7 +574,10 @@ workflow:
             --project {{ workload.project_id }}
           kubectl cluster-info
     next:
-      - step: add_helm_repos
+      spec:
+        mode: exclusive
+      arcs:
+        - step: add_helm_repos
 
   - step: add_helm_repos
     desc: Add required Helm repositories
@@ -560,16 +590,22 @@ workflow:
           helm repo add nats https://nats-io.github.io/k8s/helm/charts/ || true
           helm repo update
     next:
-      - step: maybe_deploy_postgres
+      spec:
+        mode: exclusive
+      arcs:
+        - step: maybe_deploy_postgres
 
   - step: maybe_deploy_postgres
     desc: Deploy PostgreSQL if enabled
     tool:
       kind: noop
     next:
-      - step: deploy_postgres
-        when: "{{ workload.deploy_postgres == true }}"
-      - step: maybe_init_schema
+      spec:
+        mode: exclusive
+      arcs:
+        - step: deploy_postgres
+          when: "{{ workload.deploy_postgres == true }}"
+        - step: maybe_init_schema
 
   - step: deploy_postgres
     desc: Deploy PostgreSQL via Helm
@@ -591,16 +627,22 @@ workflow:
             --set architecture=standalone
           kubectl wait --for=condition=ready pod -l app.kubernetes.io/instance=postgres -n postgres --timeout=300s
     next:
-      - step: maybe_init_schema
+      spec:
+        mode: exclusive
+      arcs:
+        - step: maybe_init_schema
 
   - step: maybe_init_schema
     desc: Initialize NoETL schema if enabled (runs even if postgres already exists)
     tool:
       kind: noop
     next:
-      - step: init_noetl_schema
-        when: "{{ workload.init_noetl_schema == true }}"
-      - step: maybe_deploy_nats
+      spec:
+        mode: exclusive
+      arcs:
+        - step: init_noetl_schema
+          when: "{{ workload.init_noetl_schema == true }}"
+        - step: maybe_deploy_nats
 
   - step: init_noetl_schema
     desc: Initialize NoETL database schema (handles both local and remote postgres)
@@ -700,16 +742,22 @@ workflow:
             fi
           fi
     next:
-      - step: maybe_deploy_nats
+      spec:
+        mode: exclusive
+      arcs:
+        - step: maybe_deploy_nats
 
   - step: maybe_deploy_nats
     desc: Deploy NATS if enabled
     tool:
       kind: noop
     next:
-      - step: deploy_nats
-        when: "{{ workload.deploy_nats == true }}"
-      - step: maybe_deploy_clickhouse
+      spec:
+        mode: exclusive
+      arcs:
+        - step: deploy_nats
+          when: "{{ workload.deploy_nats == true }}"
+        - step: maybe_deploy_clickhouse
 
   - step: deploy_nats
     desc: Deploy NATS JetStream via Helm
@@ -730,16 +778,22 @@ workflow:
             --set 'config.merge.authorization.users[0].password=noetl'
           kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=nats -n nats --timeout=180s
     next:
-      - step: maybe_deploy_clickhouse
+      spec:
+        mode: exclusive
+      arcs:
+        - step: maybe_deploy_clickhouse
 
   - step: maybe_deploy_clickhouse
     desc: Deploy ClickHouse if enabled
     tool:
       kind: noop
     next:
-      - step: deploy_clickhouse
-        when: "{{ workload.deploy_clickhouse == true }}"
-      - step: maybe_deploy_noetl
+      spec:
+        mode: exclusive
+      arcs:
+        - step: deploy_clickhouse
+          when: "{{ workload.deploy_clickhouse == true }}"
+        - step: maybe_deploy_noetl
 
   - step: deploy_clickhouse
     desc: Deploy ClickHouse for observability
@@ -892,16 +946,22 @@ workflow:
           kubectl wait --for=condition=ready pod -l app=clickhouse -n clickhouse --timeout=180s || true
           echo "ClickHouse deployed."
     next:
-      - step: maybe_deploy_noetl
+      spec:
+        mode: exclusive
+      arcs:
+        - step: maybe_deploy_noetl
 
   - step: maybe_deploy_noetl
     desc: Deploy NoETL if enabled
     tool:
       kind: noop
     next:
-      - step: deploy_noetl
-        when: "{{ workload.deploy_noetl == true }}"
-      - step: maybe_deploy_gateway
+      spec:
+        mode: exclusive
+      arcs:
+        - step: deploy_noetl
+          when: "{{ workload.deploy_noetl == true }}"
+        - step: maybe_deploy_gateway
 
   - step: deploy_noetl
     desc: Deploy NoETL server and workers via Helm
@@ -926,7 +986,10 @@ workflow:
           kubectl wait --for=condition=ready pod -l app=noetl-server -n noetl --timeout=300s || true
           kubectl wait --for=condition=ready pod -l app=noetl-worker -n noetl --timeout=300s || true
     next:
-      - step: register_in_cluster_credentials
+      spec:
+        mode: exclusive
+      arcs:
+        - step: register_in_cluster_credentials
 
   - step: register_in_cluster_credentials
     desc: Register in-cluster credentials for NoETL workers
@@ -1051,16 +1114,22 @@ workflow:
             python3 -c "import sys, json; data = json.load(sys.stdin); [print(f\"  - {c['name']} ({c['type']})\") for c in data.get('items', [])]" 2>/dev/null || \
             echo "  (could not list credentials)"
     next:
-      - step: maybe_deploy_gateway
+      spec:
+        mode: exclusive
+      arcs:
+        - step: maybe_deploy_gateway
 
   - step: maybe_deploy_gateway
     desc: Deploy Gateway if enabled
     tool:
       kind: noop
     next:
-      - step: deploy_gateway
-        when: "{{ workload.deploy_gateway == true }}"
-      - step: print_success
+      spec:
+        mode: exclusive
+      arcs:
+        - step: deploy_gateway
+          when: "{{ workload.deploy_gateway == true }}"
+        - step: print_success
 
   - step: deploy_gateway
     desc: Deploy NoETL Gateway via Helm (public LoadBalancer or internal ClusterIP)
@@ -1128,7 +1197,10 @@ workflow:
             fi
           fi
     next:
-      - step: print_success
+      spec:
+        mode: exclusive
+      arcs:
+        - step: print_success
 
   - step: print_success
     desc: Print deployment success message
@@ -1190,7 +1262,10 @@ workflow:
           echo "  kubectl port-forward -n nats svc/nats 4222:4222"
           echo ""
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: check_status
     desc: Check deployment status
@@ -1208,7 +1283,10 @@ workflow:
           echo "Pods:"
           kubectl get pods -A | grep -E "postgres|nats|clickhouse|noetl|gateway" || echo "  (none found)"
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: destroy_cluster
     desc: Destroy GKE cluster
@@ -1223,7 +1301,10 @@ workflow:
             --quiet || echo "Cluster not found or already deleted"
           echo "Cluster destroyed"
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: Workflow complete

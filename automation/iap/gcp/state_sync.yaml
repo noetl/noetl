@@ -43,13 +43,16 @@ workflow:
       bucket_name: "{{ workload.state_bucket if workload.state_bucket else workload.project_id + '-noetl-state' }}"
       gcs_state_path: "gs://{{ vars.bucket_name }}/terraform/{{ workload.workspace }}/state.duckdb"
     next:
-      - step: push_state
-        when: "{{ workload.action == 'push' }}"
-      - step: pull_state
-        when: "{{ workload.action == 'pull' }}"
-      - step: sync_status
-        when: "{{ workload.action == 'status' }}"
-      - step: show_help
+      spec:
+        mode: exclusive
+      arcs:
+        - step: push_state
+          when: "{{ workload.action == 'push' }}"
+        - step: pull_state
+          when: "{{ workload.action == 'pull' }}"
+        - step: sync_status
+          when: "{{ workload.action == 'status' }}"
+        - step: show_help
 
   - step: show_help
     desc: Show available sync actions
@@ -70,7 +73,10 @@ workflow:
           echo "  --set create_snapshot=false Skip snapshot creation"
           echo "  --set workspace=production  Use different workspace"
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: sync_status
     desc: Check sync status
@@ -94,7 +100,10 @@ workflow:
           echo "Remote State:"
           echo "  GCS: {{ vars.gcs_state_path }}"
     next:
-      - step: check_remote_state
+      spec:
+        mode: exclusive
+      arcs:
+        - step: check_remote_state
 
   - step: check_remote_state
     desc: Check remote state in GCS
@@ -109,7 +118,10 @@ workflow:
       remote_size: "{{ result.body.size | default(0) }}"
       remote_updated: "{{ result.body.updated | default('N/A') }}"
     next:
-      - step: print_remote_status
+      spec:
+        mode: exclusive
+      arcs:
+        - step: print_remote_status
 
   - step: print_remote_status
     desc: Print remote state status
@@ -126,7 +138,10 @@ workflow:
           fi
           echo ""
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: push_state
     desc: Push local state to GCS
@@ -141,9 +156,12 @@ workflow:
           fi
           echo "Preparing to push state to GCS..."
     next:
-      - step: create_snapshot_before_push
-        when: "{{ workload.create_snapshot }}"
-      - step: do_push
+      spec:
+        mode: exclusive
+      arcs:
+        - step: create_snapshot_before_push
+          when: "{{ workload.create_snapshot }}"
+        - step: do_push
 
   - step: create_snapshot_before_push
     desc: Create snapshot before pushing
@@ -169,7 +187,10 @@ workflow:
 
         SELECT 'Snapshot created' as message;
     next:
-      - step: do_push
+      spec:
+        mode: exclusive
+      arcs:
+        - step: do_push
 
   - step: do_push
     desc: Upload state to GCS
@@ -196,7 +217,10 @@ workflow:
             echo "HTTP upload not yet implemented for binary files"
           fi
     next:
-      - step: push_success
+      spec:
+        mode: exclusive
+      arcs:
+        - step: push_success
 
   - step: push_success
     desc: Push completed successfully
@@ -213,7 +237,10 @@ workflow:
           echo "Remote: {{ vars.gcs_state_path }}"
           echo ""
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: pull_state
     desc: Pull remote state from GCS
@@ -231,9 +258,12 @@ workflow:
             echo ""
           fi
     next:
-      - step: backup_local_state
-        when: "{{ workload.create_snapshot }}"
-      - step: do_pull
+      spec:
+        mode: exclusive
+      arcs:
+        - step: backup_local_state
+          when: "{{ workload.create_snapshot }}"
+        - step: do_pull
 
   - step: backup_local_state
     desc: Backup local state before pulling
@@ -247,7 +277,10 @@ workflow:
             echo "Local state backed up to: $BACKUP_PATH"
           fi
     next:
-      - step: do_pull
+      spec:
+        mode: exclusive
+      arcs:
+        - step: do_pull
 
   - step: do_pull
     desc: Download state from GCS
@@ -269,7 +302,10 @@ workflow:
             echo "State pulled via HTTP"
           fi
     next:
-      - step: pull_success
+      spec:
+        mode: exclusive
+      arcs:
+        - step: pull_success
 
   - step: pull_success
     desc: Pull completed successfully
@@ -290,7 +326,10 @@ workflow:
             echo "State file size: $(ls -lh {{ workload.state_database }} | awk '{print $5}')"
           fi
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: Sync complete

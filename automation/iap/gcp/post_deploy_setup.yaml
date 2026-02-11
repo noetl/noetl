@@ -26,17 +26,20 @@ workflow:
       cmds:
         - echo "Post-Deployment Setup - Action '{{ workload.action }}'"
     next:
-      - step: setup_postgres
-        when: "{{ workload.action == 'setup' }}"
-      - step: setup_postgres
-        when: "{{ workload.action == 'setup-postgres' }}"
-      - step: setup_clickhouse
-        when: "{{ workload.action == 'setup-clickhouse' }}"
-      - step: register_credentials
-        when: "{{ workload.action == 'register-credentials' }}"
-      - step: verify_setup
-        when: "{{ workload.action == 'verify' }}"
-      - step: show_help
+      spec:
+        mode: exclusive
+      arcs:
+        - step: setup_postgres
+          when: "{{ workload.action == 'setup' }}"
+        - step: setup_postgres
+          when: "{{ workload.action == 'setup-postgres' }}"
+        - step: setup_clickhouse
+          when: "{{ workload.action == 'setup-clickhouse' }}"
+        - step: register_credentials
+          when: "{{ workload.action == 'register-credentials' }}"
+        - step: verify_setup
+          when: "{{ workload.action == 'verify' }}"
+        - step: show_help
 
   - step: setup_postgres
     desc: Setup PostgreSQL users, databases, and schemas
@@ -118,7 +121,10 @@ workflow:
           kubectl exec -n postgres "$POSTGRES_POD" -- /bin/sh -c "PGPASSWORD={{ workload.postgres_admin_password }} psql -U postgres -c '\\du'"
           kubectl exec -n postgres "$POSTGRES_POD" -- /bin/sh -c "PGPASSWORD={{ workload.postgres_admin_password }} psql -U postgres -c '\\l'"
     next:
-      - step: setup_clickhouse
+      spec:
+        mode: exclusive
+      arcs:
+        - step: setup_clickhouse
 
   - step: setup_clickhouse
     desc: Setup ClickHouse observability schema
@@ -168,7 +174,10 @@ workflow:
           kubectl exec -n clickhouse $POD -- clickhouse-client --query="SHOW DATABASES"
           kubectl exec -n clickhouse $POD -- clickhouse-client --query="SHOW TABLES FROM observability"
     next:
-      - step: register_credentials
+      spec:
+        mode: exclusive
+      arcs:
+        - step: register_credentials
 
   - step: register_credentials
     desc: Register credentials for GKE cluster access
@@ -193,7 +202,10 @@ workflow:
           echo ""
           echo "Credentials registered. List with: noetl list credentials"
     next:
-      - step: verify_setup
+      spec:
+        mode: exclusive
+      arcs:
+        - step: verify_setup
 
   - step: verify_setup
     desc: Verify all components are properly configured
@@ -260,7 +272,10 @@ workflow:
           echo " Verification Complete"
           echo "=========================================="
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: show_help
     desc: Show available actions and usage
@@ -296,7 +311,10 @@ workflow:
           echo "  noetl run automation/iap/gcp/post_deploy_setup.yaml --set action=verify"
           echo ""
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: Workflow complete

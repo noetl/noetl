@@ -18,19 +18,22 @@ workflow:
       cmds:
         - echo "PostgreSQL Automation - Action '{{ workload.action }}'"
     next:
-      - step: deploy_postgres
-        when: "{{ workload.action == 'deploy' }}"
-      - step: remove_postgres
-        when: "{{ workload.action == 'remove' }}"
-      - step: reset_schema
-        when: "{{ workload.action == 'schema-reset' }}"
-      - step: clear_cache
-        when: "{{ workload.action == 'clear-cache' }}"
-      - step: check_status
-        when: "{{ workload.action == 'status' }}"
-      - step: show_logs
-        when: "{{ workload.action == 'logs' }}"
-      - step: show_help
+      spec:
+        mode: exclusive
+      arcs:
+        - step: deploy_postgres
+          when: "{{ workload.action == 'deploy' }}"
+        - step: remove_postgres
+          when: "{{ workload.action == 'remove' }}"
+        - step: reset_schema
+          when: "{{ workload.action == 'schema-reset' }}"
+        - step: clear_cache
+          when: "{{ workload.action == 'clear-cache' }}"
+        - step: check_status
+          when: "{{ workload.action == 'status' }}"
+        - step: show_logs
+          when: "{{ workload.action == 'logs' }}"
+        - step: show_help
 
   - step: deploy_postgres
     desc: Deploy PostgreSQL to kind cluster
@@ -48,7 +51,10 @@ workflow:
             --dry-run=client -o yaml | kubectl apply -f -
           kubectl apply -f ci/manifests/postgres/
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: remove_postgres
     desc: Remove PostgreSQL from kind cluster
@@ -62,7 +68,10 @@ workflow:
           kubectl delete -f ci/manifests/postgres/
           kubectl delete configmap postgres-schema-ddl --namespace postgres
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: reset_schema
     desc: Reset NoETL system schema on Kubernetes Postgres
@@ -107,7 +116,10 @@ workflow:
             fi
           fi
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: clear_cache
     desc: Clear postgres data cache directory
@@ -119,7 +131,10 @@ workflow:
           echo "Clearing postgres cache directory..."
           rm -rf ci/kind/cache/pg-data/*
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: check_status
     desc: Check PostgreSQL deployment status
@@ -134,7 +149,10 @@ workflow:
           echo ""
           kubectl get svc -n postgres
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: show_logs
     desc: Show PostgreSQL logs
@@ -146,7 +164,10 @@ workflow:
           echo "PostgreSQL Logs:"
           kubectl logs -n postgres -l app=postgres --tail=50
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: show_help
     desc: Display available actions
@@ -175,7 +196,10 @@ workflow:
           echo "  noetl run automation/infrastructure/postgres.yaml --set action=schema-reset"
           echo ""
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: End workflow

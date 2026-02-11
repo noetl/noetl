@@ -15,7 +15,10 @@ workflow:
       kind: playbook
       path: setup/destroy.yaml
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: Done

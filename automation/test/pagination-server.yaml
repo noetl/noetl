@@ -18,23 +18,26 @@ workflow:
       cmds:
         - echo "Pagination Server Automation - Action '{{ workload.action }}'"
     next:
-      - step: build_image
-        when: "{{ workload.action == 'build' }}"
-      - step: load_image
-        when: "{{ workload.action == 'load' }}"
-      - step: deploy_server
-        when: "{{ workload.action == 'deploy' }}"
-      - step: build_image
-        when: "{{ workload.action == 'full' }}"
-      - step: check_status
-        when: "{{ workload.action == 'status' }}"
-      - step: show_logs
-        when: "{{ workload.action == 'logs' }}"
-      - step: test_endpoints
-        when: "{{ workload.action == 'test' }}"
-      - step: undeploy_server
-        when: "{{ workload.action == 'undeploy' }}"
-      - step: show_help
+      spec:
+        mode: exclusive
+      arcs:
+        - step: build_image
+          when: "{{ workload.action == 'build' }}"
+        - step: load_image
+          when: "{{ workload.action == 'load' }}"
+        - step: deploy_server
+          when: "{{ workload.action == 'deploy' }}"
+        - step: build_image
+          when: "{{ workload.action == 'full' }}"
+        - step: check_status
+          when: "{{ workload.action == 'status' }}"
+        - step: show_logs
+          when: "{{ workload.action == 'logs' }}"
+        - step: test_endpoints
+          when: "{{ workload.action == 'test' }}"
+        - step: undeploy_server
+          when: "{{ workload.action == 'undeploy' }}"
+        - step: show_help
 
   # Direct step aliases for positional argument support
   - step: status
@@ -42,56 +45,80 @@ workflow:
     tool:
       kind: noop
     next:
-      - step: check_status
+      spec:
+        mode: exclusive
+      arcs:
+        - step: check_status
 
   - step: build
     desc: Alias for build_image
     tool:
       kind: noop
     next:
-      - step: build_image
+      spec:
+        mode: exclusive
+      arcs:
+        - step: build_image
 
   - step: load
     desc: Alias for load_image
     tool:
       kind: noop
     next:
-      - step: load_image
+      spec:
+        mode: exclusive
+      arcs:
+        - step: load_image
 
   - step: deploy
     desc: Alias for deploy_server
     tool:
       kind: noop
     next:
-      - step: deploy_server
+      spec:
+        mode: exclusive
+      arcs:
+        - step: deploy_server
 
   - step: full
     desc: Full deployment workflow
     tool:
       kind: noop
     next:
-      - step: build_image
+      spec:
+        mode: exclusive
+      arcs:
+        - step: build_image
 
   - step: logs
     desc: Alias for show_logs
     tool:
       kind: noop
     next:
-      - step: show_logs
+      spec:
+        mode: exclusive
+      arcs:
+        - step: show_logs
 
   - step: test
     desc: Alias for test_endpoints
     tool:
       kind: noop
     next:
-      - step: test_endpoints
+      spec:
+        mode: exclusive
+      arcs:
+        - step: test_endpoints
 
   - step: undeploy
     desc: Alias for undeploy_server
     tool:
       kind: noop
     next:
-      - step: undeploy_server
+      spec:
+        mode: exclusive
+      arcs:
+        - step: undeploy_server
 
   - step: build_image
     desc: Build pagination test server Docker image
@@ -106,9 +133,12 @@ workflow:
           docker tag local/test-server:$IMAGE_TAG local/test-server:latest
           echo "Built test-server:$IMAGE_TAG"
     next:
-      - step: load_image
-        when: "{{ workload.action == 'full' }}"
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: load_image
+          when: "{{ workload.action == 'full' }}"
+        - step: end
 
   - step: load_image
     desc: Load pagination server image into kind cluster
@@ -120,9 +150,12 @@ workflow:
           echo "Loading pagination server image to kind cluster..."
           kind load docker-image local/test-server:latest --name noetl
     next:
-      - step: deploy_server
-        when: "{{ workload.action == 'full' }}"
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: deploy_server
+          when: "{{ workload.action == 'full' }}"
+        - step: end
 
   - step: deploy_server
     desc: Deploy pagination test server to Kubernetes
@@ -139,9 +172,12 @@ workflow:
           kubectl wait --for=condition=ready pod -l app=paginated-api -n test-server --timeout=60s || true
           kubectl get pods -n test-server
     next:
-      - step: check_status
-        when: "{{ workload.action == 'full' }}"
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: check_status
+          when: "{{ workload.action == 'full' }}"
+        - step: end
 
   - step: check_status
     desc: Check pagination server deployment status
@@ -161,7 +197,10 @@ workflow:
           echo "ClusterIP: http://paginated-api.test-server.svc.cluster.local:5555"
           echo "NodePort: http://localhost:30555"
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: show_logs
     desc: Show pagination server logs
@@ -173,7 +212,10 @@ workflow:
           echo "Pagination server logs:"
           kubectl logs -n test-server -l app=paginated-api --tail=100
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: test_endpoints
     desc: Test pagination server API endpoints
@@ -196,7 +238,10 @@ workflow:
           echo ""
           '
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: undeploy_server
     desc: Remove pagination server from Kubernetes
@@ -209,7 +254,10 @@ workflow:
           kubectl delete -f ci/manifests/test-server/deployment.yaml --ignore-not-found=true
           kubectl delete namespace test-server --ignore-not-found=true
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: show_help
     desc: Display available actions
@@ -240,7 +288,10 @@ workflow:
           echo "  noetl run automation/test/pagination-server.yaml --set action=test"
           echo ""
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: End workflow

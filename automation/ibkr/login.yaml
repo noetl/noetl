@@ -39,7 +39,10 @@ workflow:
       code: |
         result = {"status": "started"}
     next:
-      - step: login
+      spec:
+        mode: exclusive
+      arcs:
+        - step: login
 
   - step: login
     desc: Authenticate gateway via external script (K8s job)
@@ -75,7 +78,10 @@ workflow:
           IBKR_2FA_CODE: "{{ ib_paper.two_fa_code }}"
           PLAYWRIGHT_BROWSERS_PATH: "/ms-playwright"
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: Done

@@ -19,39 +19,42 @@ workflow:
       cmds:
         - echo "macOS Dev Tools Automation - Action '{{ workload.action }}'"
     next:
-      - step: setup_tools
-        when: "{{ workload.action == 'setup' }}"
-      - step: validate_install
-        when: "{{ workload.action == 'validate-install' }}"
-      - step: validate_devtools
-        when: "{{ workload.action == 'validate-devtools' }}"
-      - step: validate_docker
-        when: "{{ workload.action == 'validate-docker' }}"
-      - step: install_base
-        when: "{{ workload.action == 'install-base' }}"
-      - step: install_devtools
-        when: "{{ workload.action == 'install-devtools' }}"
-      - step: install_jq
-        when: "{{ workload.action == 'install-jq' }}"
-      - step: install_yq
-        when: "{{ workload.action == 'install-yq' }}"
-      - step: install_kind
-        when: "{{ workload.action == 'install-kind' }}"
-      - step: install_pyenv
-        when: "{{ workload.action == 'install-pyenv' }}"
-      - step: install_uv
-        when: "{{ workload.action == 'install-uv' }}"
-      - step: install_tfenv
-        when: "{{ workload.action == 'install-tfenv' }}"
-      - step: install_psql
-        when: "{{ workload.action == 'install-psql' }}"
-      - step: ensure_path
-        when: "{{ workload.action == 'ensure-path' }}"
-      - step: install_homebrew
-        when: "{{ workload.action == 'install-homebrew' }}"
-      - step: show_help
-        when: "{{ workload.action == 'help' }}"
-      - step: show_help
+      spec:
+        mode: exclusive
+      arcs:
+        - step: setup_tools
+          when: "{{ workload.action == 'setup' }}"
+        - step: validate_install
+          when: "{{ workload.action == 'validate-install' }}"
+        - step: validate_devtools
+          when: "{{ workload.action == 'validate-devtools' }}"
+        - step: validate_docker
+          when: "{{ workload.action == 'validate-docker' }}"
+        - step: install_base
+          when: "{{ workload.action == 'install-base' }}"
+        - step: install_devtools
+          when: "{{ workload.action == 'install-devtools' }}"
+        - step: install_jq
+          when: "{{ workload.action == 'install-jq' }}"
+        - step: install_yq
+          when: "{{ workload.action == 'install-yq' }}"
+        - step: install_kind
+          when: "{{ workload.action == 'install-kind' }}"
+        - step: install_pyenv
+          when: "{{ workload.action == 'install-pyenv' }}"
+        - step: install_uv
+          when: "{{ workload.action == 'install-uv' }}"
+        - step: install_tfenv
+          when: "{{ workload.action == 'install-tfenv' }}"
+        - step: install_psql
+          when: "{{ workload.action == 'install-psql' }}"
+        - step: ensure_path
+          when: "{{ workload.action == 'ensure-path' }}"
+        - step: install_homebrew
+          when: "{{ workload.action == 'install-homebrew' }}"
+        - step: show_help
+          when: "{{ workload.action == 'help' }}"
+        - step: show_help
 
   - step: setup_tools
     desc: Validate required tooling on macOS hosts
@@ -118,7 +121,10 @@ workflow:
           echo "Building noetlctl locally..."
           cargo build --release --manifest-path crates/noetlctl/Cargo.toml
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: validate_install
     desc: Validate required tools are installed
@@ -179,7 +185,10 @@ workflow:
           exit $fail
           '
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: validate_devtools
     desc: Validate optional dev tools available
@@ -208,7 +217,10 @@ workflow:
           done
           '
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: validate_docker
     desc: Validate Docker Desktop on macOS
@@ -225,7 +237,10 @@ workflow:
           docker info
           docker run --rm hello-world
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: install_homebrew
     desc: Install Homebrew package manager
@@ -252,7 +267,10 @@ workflow:
           brew --version
           '
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: install_base
     desc: Install basic CLI tools via Homebrew
@@ -284,7 +302,10 @@ workflow:
           echo "[OK] Base tools installed."
           '
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: install_devtools
     desc: Install yq, kind, pyenv, uv, tfenv, kubectl (aggregate)
@@ -384,7 +405,10 @@ workflow:
 
           '
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: install_jq
     desc: Install jq via Homebrew
@@ -403,7 +427,10 @@ workflow:
           jq --version
           '
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: install_yq
     desc: Install yq via Homebrew
@@ -422,7 +449,10 @@ workflow:
           yq --version
           '
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: install_kind
     desc: Install kind (Kubernetes in Docker) via Homebrew
@@ -441,7 +471,10 @@ workflow:
           kind --version
           '
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: install_pyenv
     desc: Install pyenv via Homebrew
@@ -477,7 +510,10 @@ workflow:
           echo "[INFO] Restart your shell or run: source $SHELL_RC"
           '
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: install_uv
     desc: Install uv (fast Python package manager)
@@ -497,7 +533,10 @@ workflow:
           uv --version || true
           '
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: install_tfenv
     desc: Install tfenv and latest Terraform via Homebrew
@@ -524,7 +563,10 @@ workflow:
           fi
           '
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: install_psql
     desc: Install PostgreSQL client tools (psql) via Homebrew
@@ -549,7 +591,10 @@ workflow:
           fi
           '
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: ensure_path
     desc: Ensure common tool paths are added to shell
@@ -588,7 +633,10 @@ workflow:
           echo "[INFO] If this is your first time adding these, restart your shell or: source $SHELL_RC"
           '
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: show_help
     desc: Display available actions
@@ -643,7 +691,10 @@ workflow:
           echo "  noetl run automation/development/tooling_macos.yaml --set action=validate-install"
           echo ""
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: End workflow

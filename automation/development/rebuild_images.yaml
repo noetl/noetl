@@ -1,0 +1,214 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: rebuild_images
+  path: automation/development/rebuild_images
+  description: Rebuild Docker images for correct architecture and load into kind
+
+executor:
+  profile: local
+  version: noetl-runtime/1
+
+workload:
+  registry: "local"
+  image_name: "noetl"
+
+workflow:
+  - step: start
+    desc: Start rebuild process
+    tool:
+      kind: shell
+      cmds:
+        - echo "Rebuilding Docker images for kind cluster..."
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: detect_architecture
+
+  - step: detect_architecture
+    desc: Detect platform architecture
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Detecting platform architecture..."
+          ARCH=$(uname -m)
+          if [ "$ARCH" = "arm64" ] || [ "$ARCH" = "aarch64" ]; then
+            PLATFORM="linux/arm64"
+            echo "Detected ARM64 architecture"
+          else
+            PLATFORM="linux/amd64"
+            echo "Detected AMD64 architecture"
+          fi
+          echo "$PLATFORM" > /tmp/build_platform.txt
+          echo "Will build for: $PLATFORM"
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: build_noetl_image
+
+  - step: build_noetl_image
+    desc: Build NoETL Docker image
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Building NoETL Docker image..."
+          PLATFORM=$(cat /tmp/build_platform.txt)
+          IMAGE_TAG=$(date +%Y-%m-%d-%H-%M)
+          echo "$IMAGE_TAG" > .noetl_last_build_tag.txt
+          IMAGE="{{ workload.registry }}/{{ workload.image_name }}:$IMAGE_TAG"
+          
+          echo "Building: $IMAGE"
+          echo "Platform: $PLATFORM"
+          
+          docker buildx build --load --platform $PLATFORM \
+            -t "$IMAGE" \
+            -f docker/noetl/dev/Dockerfile .
+          
+          echo "NoETL image built: $IMAGE"
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: build_gateway_image
+
+  - step: build_gateway_image
+    desc: Build Gateway Docker image
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Building Gateway Docker image..."
+          PLATFORM=$(cat /tmp/build_platform.txt)
+          
+          echo "Building: noetl-gateway:latest"
+          echo "Platform: $PLATFORM"
+          
+          docker buildx build --load --platform $PLATFORM \
+            -t noetl-gateway:latest \
+            -f crates/gateway/Dockerfile crates/gateway
+          
+          echo "Gateway image built: noetl-gateway:latest"
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: load_images_to_kind
+
+  - step: load_images_to_kind
+    desc: Load images into kind cluster
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Loading images into kind cluster..."
+          
+          IMAGE_TAG=$(cat .noetl_last_build_tag.txt)
+          NOETL_IMAGE="{{ workload.registry }}/{{ workload.image_name }}:$IMAGE_TAG"
+          
+          echo "Loading NoETL image: $NOETL_IMAGE"
+          kind load docker-image "$NOETL_IMAGE" --name noetl
+          
+          echo "Loading Gateway image: noetl-gateway:latest"
+          kind load docker-image noetl-gateway:latest --name noetl
+          
+          echo "Images loaded successfully"
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: update_deployments
+
+  - step: update_deployments
+    desc: Update deployment images
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Updating deployments with new images..."
+          
+          IMAGE_TAG=$(cat .noetl_last_build_tag.txt)
+          IMAGE="{{ workload.registry }}/{{ workload.image_name }}:$IMAGE_TAG"
+          
+          # Update NoETL server deployment
+          kubectl set image deployment/noetl-server -n noetl \
+            noetl-server="$IMAGE"
+          
+          # Update NoETL worker deployment (container name is "worker")
+          kubectl set image deployment/noetl-worker -n noetl \
+            worker="$IMAGE"
+          
+          # Update gateway deployment (container name is "gateway")
+          kubectl set image deployment/gateway -n gateway \
+            gateway=noetl-gateway:latest
+          
+          echo "Deployments updated"
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: wait_for_rollout
+
+  - step: wait_for_rollout
+    desc: Wait for deployments to be ready
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Waiting for deployments to be ready..."
+          
+          echo "Waiting for NoETL server..."
+          kubectl rollout status deployment/noetl-server -n noetl --timeout=120s || true
+          
+          echo "Waiting for NoETL workers..."
+          kubectl rollout status deployment/noetl-worker -n noetl --timeout=120s || true
+          
+          echo "Waiting for Gateway..."
+          kubectl rollout status deployment/gateway -n gateway --timeout=90s || true
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: verify_status
+
+  - step: verify_status
+    desc: Verify pod status
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "=========================================="
+          echo "Deployment Status"
+          echo "=========================================="
+          echo ""
+          echo "NoETL Pods:"
+          kubectl get pods -n noetl -l app=noetl-server
+          kubectl get pods -n noetl -l app=noetl-worker
+          echo ""
+          echo "Gateway Pods:"
+          kubectl get pods -n gateway -l app=gateway
+          echo ""
+          echo "To check logs:"
+          echo "  kubectl logs -n noetl -l app=noetl-server"
+          echo "  kubectl logs -n gateway -l app=gateway"
+          echo ""
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
+
+  - step: end
+    desc: Done
+    tool:
+      kind: noop

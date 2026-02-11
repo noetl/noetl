@@ -35,17 +35,20 @@ workflow:
           echo "Database: {{ workload.state_database }}"
           echo "Query:    {{ workload.query }}"
     next:
-      - step: show_summary
-        when: "{{ workload.query == 'summary' }}"
-      - step: list_resources
-        when: "{{ workload.query == 'resources' }}"
-      - step: list_operations
-        when: "{{ workload.query == 'operations' }}"
-      - step: list_drift
-        when: "{{ workload.query == 'drift' }}"
-      - step: show_all
-        when: "{{ workload.query == 'all' }}"
-      - step: show_help
+      spec:
+        mode: exclusive
+      arcs:
+        - step: show_summary
+          when: "{{ workload.query == 'summary' }}"
+        - step: list_resources
+          when: "{{ workload.query == 'resources' }}"
+        - step: list_operations
+          when: "{{ workload.query == 'operations' }}"
+        - step: list_drift
+          when: "{{ workload.query == 'drift' }}"
+        - step: show_all
+          when: "{{ workload.query == 'all' }}"
+        - step: show_help
 
   - step: show_help
     desc: Show available queries
@@ -68,7 +71,10 @@ workflow:
           echo "  --set project=mestumre-dev"
           echo "  --set status=running"
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: show_summary
     desc: Show state summary
@@ -102,7 +108,10 @@ workflow:
 
         SELECT COUNT(*) as unresolved_drift FROM drift_records WHERE resolved_at IS NULL;
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: list_resources
     desc: List all managed resources
@@ -126,7 +135,10 @@ workflow:
           {% if workload.status %}AND status = '{{ workload.status }}'{% endif %}
         ORDER BY updated_at DESC;
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: list_operations
     desc: List recent operations
@@ -146,7 +158,10 @@ workflow:
         ORDER BY started_at DESC
         LIMIT 20;
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: list_drift
     desc: List unresolved drift
@@ -166,7 +181,10 @@ workflow:
         WHERE resolved_at IS NULL
         ORDER BY detected_at DESC;
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: show_all
     desc: Show complete state
@@ -186,7 +204,10 @@ workflow:
         SELECT '=== SNAPSHOTS ===' as section;
         SELECT * FROM snapshots ORDER BY created_at DESC LIMIT 10;
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: Inspection complete

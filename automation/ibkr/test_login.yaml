@@ -26,9 +26,12 @@ workflow:
     tool:
       kind: noop
     next:
-      - step: setup
-        when: "{{ workload.setup == true }}"
-      - step: resolve_credentials
+      spec:
+        mode: exclusive
+      arcs:
+        - step: setup
+          when: "{{ workload.setup == true }}"
+        - step: resolve_credentials
 
   - step: resolve_credentials
     desc: Resolve IBKR login credentials
@@ -70,7 +73,10 @@ workflow:
             'two_fa_code': two_fa_code,
         }
     next:
-      - step: login
+      spec:
+        mode: exclusive
+      arcs:
+        - step: login
 
   - step: setup
     desc: Install deps + browser
@@ -80,7 +86,10 @@ workflow:
         - "cd /Users/akuksin/projects/noetl/noetl && if command -v uv >/dev/null 2>&1; then uv pip install -e '.[ibkr]'; else python -m pip install -e '.[ibkr]'; fi"
         - "python -m playwright install chromium"
     next:
-      - step: login
+      spec:
+        mode: exclusive
+      arcs:
+        - step: login
 
   - step: login
     desc: Open browser and wait for authentication
@@ -123,7 +132,10 @@ workflow:
             $manual_arg \
             $two_fa_arg
     next:
-      - step: verify
+      spec:
+        mode: exclusive
+      arcs:
+        - step: verify
 
   - step: verify
     desc: Verify auth endpoints
@@ -168,7 +180,10 @@ workflow:
 
           rm -f "$tickle_file" "$auth_file"
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: Done

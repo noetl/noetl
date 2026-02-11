@@ -20,7 +20,10 @@ workflow:
     tool:
       kind: noop
     next:
-      - step: build_image
+      spec:
+        mode: exclusive
+      arcs:
+        - step: build_image
 
   - step: build_image
     desc: Build IBKR gateway Docker image
@@ -31,7 +34,10 @@ workflow:
           echo "Building IBKR Client Portal Gateway Docker image..."
           noetl run automation/ibkr/build.yaml
     next:
-      - step: deploy_gateway
+      spec:
+        mode: exclusive
+      arcs:
+        - step: deploy_gateway
 
   - step: deploy_gateway
     desc: Deploy IBKR gateway to Kubernetes
@@ -48,7 +54,10 @@ workflow:
           echo "Waiting for deployment..."
           kubectl -n {{ workload.namespace }} wait --for=condition=available --timeout=90s deployment/ibkr-client-portal || true
     next:
-      - step: verify_status
+      spec:
+        mode: exclusive
+      arcs:
+        - step: verify_status
 
   - step: verify_status
     desc: Verify deployment status
@@ -65,7 +74,10 @@ workflow:
           echo "  External: https://localhost:30500"
           echo "  Internal: https://ibkr-client-portal.ibkr.svc.cluster.local:5000"
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: Done

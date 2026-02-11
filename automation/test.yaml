@@ -18,7 +18,10 @@ workflow:
     tool:
       kind: noop
     next:
-      - step: setup_all
+      spec:
+        mode: exclusive
+      arcs:
+        - step: setup_all
 
   - step: register_credentials
     desc: "Register test credentials using noetl CLI"
@@ -30,7 +33,10 @@ workflow:
         - "./bin/noetl register credential tests/fixtures/credentials/pg_demo.json"
         - "echo '✅ Credentials registered'"
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: register_playbooks
     desc: "Register all test playbooks"
@@ -41,15 +47,21 @@ workflow:
         - "./bin/noetl register playbook tests/fixtures/playbooks/ --recursive"
         - "echo '✅ Playbooks registered'"
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: setup_all
     desc: "Complete test environment setup"
     tool:
       kind: noop
     next:
-      - step: register_credentials
-      - step: register_playbooks
+      spec:
+        mode: exclusive
+      arcs:
+        - step: register_credentials
+        - step: register_playbooks
 
   - step: end
     desc: "End workflow"

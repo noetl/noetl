@@ -116,7 +116,7 @@ pub struct ExecutorSpec {
     pub final_step: Option<String>,
     /// Treat "no next match" as error (default: false = branch terminates)
     #[serde(default)]
-    pub no_next_is_error: Option<bool>,
+    pub _no_next_is_error: Option<bool>,
 }
 
 fn default_profile() -> String { "auto".to_string() }
@@ -206,7 +206,7 @@ impl NextFormat {
     /// Parse next field from serde_yaml::Value
     fn from_yaml_value(value: &serde_yaml::Value) -> Option<NextFormat> {
         match value {
-            serde_yaml::Value::Sequence(arr) => {
+            serde_yaml::Value::Sequence(_arr) => {
                 // Legacy array format
                 let steps: Vec<NextStep> = serde_yaml::from_value(value.clone()).ok()?;
                 Some(NextFormat::Array(steps))

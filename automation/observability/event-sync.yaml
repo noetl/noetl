@@ -24,19 +24,22 @@ workflow:
       cmds:
         - echo "Event Sync Automation - Action '{{ workload.action }}'"
     next:
-      - step: detect_clickhouse_pod
-        when: "{{ workload.action == 'sync' }}"
-      - step: detect_clickhouse_pod
-        when: "{{ workload.action == 'sync-recent' }}"
-      - step: count_events
-        when: "{{ workload.action == 'count' }}"
-      - step: verify_sync
-        when: "{{ workload.action == 'verify' }}"
-      - step: analyze_event_gaps
-        when: "{{ workload.action == 'analyze-gaps' }}"
-      - step: analyze_slow_executions
-        when: "{{ workload.action == 'analyze-slow' }}"
-      - step: show_help
+      spec:
+        mode: exclusive
+      arcs:
+        - step: detect_clickhouse_pod
+          when: "{{ workload.action == 'sync' }}"
+        - step: detect_clickhouse_pod
+          when: "{{ workload.action == 'sync-recent' }}"
+        - step: count_events
+          when: "{{ workload.action == 'count' }}"
+        - step: verify_sync
+          when: "{{ workload.action == 'verify' }}"
+        - step: analyze_event_gaps
+          when: "{{ workload.action == 'analyze-gaps' }}"
+        - step: analyze_slow_executions
+          when: "{{ workload.action == 'analyze-slow' }}"
+        - step: show_help
 
   - step: detect_clickhouse_pod
     desc: Detect ClickHouse pod name
@@ -56,7 +59,10 @@ workflow:
           fi
           echo "$POD"
     next:
-      - step: init_schema
+      spec:
+        mode: exclusive
+      arcs:
+        - step: init_schema
 
   - step: init_schema
     desc: Initialize ClickHouse observability schema
@@ -78,7 +84,10 @@ workflow:
             kubectl exec -n clickhouse $POD -- clickhouse-client --query="CREATE DATABASE IF NOT EXISTS observability"
           fi
     next:
-      - step: export_events_from_postgres
+      spec:
+        mode: exclusive
+      arcs:
+        - step: export_events_from_postgres
 
   - step: export_events_from_postgres
     desc: Export events from PostgreSQL
@@ -105,7 +114,10 @@ workflow:
         ORDER BY created_at ASC
         LIMIT {{ workload.batch_size }};
     next:
-      - step: transform_for_clickhouse
+      spec:
+        mode: exclusive
+      arcs:
+        - step: transform_for_clickhouse
 
   - step: transform_for_clickhouse
     desc: Transform events to ClickHouse JSON format
@@ -174,7 +186,10 @@ workflow:
                 'message': f'Transformed {len(json_lines)} events for ClickHouse'
             }
     next:
-      - step: insert_to_clickhouse
+      spec:
+        mode: exclusive
+      arcs:
+        - step: insert_to_clickhouse
 
   - step: insert_to_clickhouse
     desc: Insert events into ClickHouse
@@ -201,7 +216,10 @@ workflow:
 
           echo "Successfully inserted $COUNT events"
     next:
-      - step: show_sync_summary
+      spec:
+        mode: exclusive
+      arcs:
+        - step: show_sync_summary
 
   - step: show_sync_summary
     desc: Show sync summary
@@ -226,7 +244,10 @@ workflow:
             ORDER BY cnt DESC
             LIMIT 10"
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: count_events
     desc: Count events in both databases
@@ -238,7 +259,10 @@ workflow:
           echo ""
           echo "PostgreSQL (noetl.event):"
     next:
-      - step: count_pg_events
+      spec:
+        mode: exclusive
+      arcs:
+        - step: count_pg_events
 
   - step: count_pg_events
     desc: Count PostgreSQL events
@@ -253,7 +277,10 @@ workflow:
           MAX(created_at) as newest_event
         FROM noetl.event;
     next:
-      - step: count_ch_events
+      spec:
+        mode: exclusive
+      arcs:
+        - step: count_ch_events
 
   - step: count_ch_events
     desc: Count ClickHouse events
@@ -280,7 +307,10 @@ workflow:
             FROM observability.noetl_events
             FORMAT Vertical" 2>/dev/null || echo "Table not initialized"
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: verify_sync
     desc: Verify sync between PostgreSQL and ClickHouse
@@ -311,7 +341,10 @@ workflow:
             GROUP BY EventType
             ORDER BY event_count DESC"
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: analyze_event_gaps
     desc: Analyze time gaps between events to find bottlenecks
@@ -342,7 +375,10 @@ workflow:
         ORDER BY gap_seconds DESC
         LIMIT 50;
     next:
-      - step: show_gap_analysis
+      spec:
+        mode: exclusive
+      arcs:
+        - step: show_gap_analysis
 
   - step: show_gap_analysis
     desc: Display gap analysis results
@@ -399,7 +435,10 @@ workflow:
                 'total_gaps': len(rows)
             }
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: analyze_slow_executions
     desc: Find slowest executions and their event counts
@@ -424,7 +463,10 @@ workflow:
         ORDER BY duration_seconds DESC
         LIMIT 20;
     next:
-      - step: show_slow_analysis
+      spec:
+        mode: exclusive
+      arcs:
+        - step: show_slow_analysis
 
   - step: show_slow_analysis
     desc: Display slow execution analysis
@@ -484,7 +526,10 @@ workflow:
                 'executions': executions[:10]  # Top 10 slowest
             }
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: show_help
     desc: Show available actions
@@ -529,7 +574,10 @@ workflow:
           echo "  noetl run automation/observability/event-sync.yaml --set action=analyze-slow"
           echo ""
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: End workflow

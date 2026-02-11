@@ -43,7 +43,10 @@ workflow:
     vars:
       final_bucket_name: "{{ workload.bucket_name if workload.bucket_name else workload.project_id + '-noetl-state' }}"
     next:
-      - step: check_bucket_exists
+      spec:
+        mode: exclusive
+      arcs:
+        - step: check_bucket_exists
 
   - step: check_bucket_exists
     desc: Check if bucket already exists
@@ -56,9 +59,12 @@ workflow:
     vars:
       bucket_exists: "{{ result.status == 200 }}"
     next:
-      - step: bucket_exists_info
-        when: "{{ vars.bucket_exists }}"
-      - step: create_bucket
+      spec:
+        mode: exclusive
+      arcs:
+        - step: bucket_exists_info
+          when: "{{ vars.bucket_exists }}"
+        - step: create_bucket
 
   - step: bucket_exists_info
     desc: Bucket already exists
@@ -69,7 +75,10 @@ workflow:
           echo "Bucket 'gs://{{ vars.final_bucket_name }}' already exists"
           echo "Skipping creation, will configure versioning and lifecycle..."
     next:
-      - step: configure_versioning
+      spec:
+        mode: exclusive
+      arcs:
+        - step: configure_versioning
 
   - step: create_bucket
     desc: Create GCS bucket for state storage
@@ -97,7 +106,10 @@ workflow:
           }
         }
     next:
-      - step: configure_versioning
+      spec:
+        mode: exclusive
+      arcs:
+        - step: configure_versioning
 
   - step: configure_versioning
     desc: Enable versioning for state files
@@ -116,9 +128,12 @@ workflow:
           }
         }
     next:
-      - step: configure_lifecycle
-        when: "{{ workload.enable_versioning }}"
-      - step: create_folder_structure
+      spec:
+        mode: exclusive
+      arcs:
+        - step: configure_lifecycle
+          when: "{{ workload.enable_versioning }}"
+        - step: create_folder_structure
 
   - step: configure_lifecycle
     desc: Configure lifecycle rules for snapshot retention
@@ -156,7 +171,10 @@ workflow:
           }
         }
     next:
-      - step: create_folder_structure
+      spec:
+        mode: exclusive
+      arcs:
+        - step: create_folder_structure
 
   - step: create_folder_structure
     desc: Create folder structure markers
@@ -175,7 +193,10 @@ workflow:
           echo "  - shared/modules/"
           echo "  - shared/policies/"
     next:
-      - step: upload_folder_markers
+      spec:
+        mode: exclusive
+      arcs:
+        - step: upload_folder_markers
 
   - step: upload_folder_markers
     desc: Upload folder marker files
@@ -189,7 +210,10 @@ workflow:
         Content-Type: text/plain
       body: "# NoETL IaP State - Default Workspace"
     next:
-      - step: upload_crossplane_marker
+      spec:
+        mode: exclusive
+      arcs:
+        - step: upload_crossplane_marker
 
   - step: upload_crossplane_marker
     desc: Upload crossplane folder marker
@@ -203,7 +227,10 @@ workflow:
         Content-Type: text/plain
       body: "# NoETL IaP Crossplane Mode - Global"
     next:
-      - step: upload_shared_marker
+      spec:
+        mode: exclusive
+      arcs:
+        - step: upload_shared_marker
 
   - step: upload_shared_marker
     desc: Upload shared folder marker
@@ -217,7 +244,10 @@ workflow:
         Content-Type: text/plain
       body: "# NoETL IaP Shared Modules"
     next:
-      - step: init_local_state
+      spec:
+        mode: exclusive
+      arcs:
+        - step: init_local_state
 
   - step: init_local_state
     desc: Initialize local DuckDB state file
@@ -313,7 +343,10 @@ workflow:
 
         SELECT 'State database initialized successfully' as message;
     next:
-      - step: print_summary
+      spec:
+        mode: exclusive
+      arcs:
+        - step: print_summary
 
   - step: print_summary
     desc: Print setup summary
@@ -346,7 +379,10 @@ workflow:
           echo "     noetl iap apply automation/iap/gcp/state_sync.yaml --var action=push"
           echo ""
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: Setup complete

@@ -1,0 +1,160 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: load_images_to_kind
+  path: automation/development/load_images
+  description: Load Docker images into kind cluster
+
+executor:
+  profile: local
+  version: noetl-runtime/1
+
+workload:
+  noetl_image: ""  # Specify full image name:tag or leave empty to auto-detect
+  gateway_image: "noetl-gateway:latest"
+
+workflow:
+  - step: start
+    desc: Start image loading process
+    tool:
+      kind: shell
+      cmds:
+        - echo "Loading images into kind cluster..."
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: detect_noetl_image
+
+  - step: detect_noetl_image
+    desc: Auto-detect NoETL image if not specified
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          NOETL_IMAGE="{{ workload.noetl_image }}"
+          
+          if [ -z "$NOETL_IMAGE" ]; then
+            # Check for last build tag
+            if [ -f .noetl_last_build_tag.txt ]; then
+              IMAGE_TAG=$(cat .noetl_last_build_tag.txt)
+              NOETL_IMAGE="local/noetl:$IMAGE_TAG"
+              echo "Auto-detected NoETL image: $NOETL_IMAGE"
+            else
+              # Find latest local/noetl image
+              NOETL_IMAGE=$(docker images --format "{{.Repository}}:{{.Tag}}" | grep "^local/noetl:" | head -1)
+              if [ -n "$NOETL_IMAGE" ]; then
+                echo "Found NoETL image: $NOETL_IMAGE"
+              else
+                echo "ERROR: No NoETL image found. Build one first:"
+                echo "  docker buildx build --load --platform linux/amd64 -t local/noetl:latest -f docker/noetl/dev/Dockerfile ."
+                exit 1
+              fi
+            fi
+          else
+            echo "Using specified NoETL image: $NOETL_IMAGE"
+          fi
+          
+          # Save for next step
+          echo "$NOETL_IMAGE" > /tmp/noetl_image_to_load.txt
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: load_noetl_image
+
+  - step: load_noetl_image
+    desc: Load NoETL image into kind
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          NOETL_IMAGE=$(cat /tmp/noetl_image_to_load.txt)
+          echo "Loading NoETL image: $NOETL_IMAGE"
+          
+          if docker image inspect "$NOETL_IMAGE" >/dev/null 2>&1; then
+            kind load docker-image "$NOETL_IMAGE" --name noetl
+            echo "✓ NoETL image loaded successfully"
+          else
+            echo "ERROR: Image $NOETL_IMAGE not found in Docker"
+            echo "Available images:"
+            docker images | grep noetl
+            exit 1
+          fi
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: load_gateway_image
+
+  - step: load_gateway_image
+    desc: Load Gateway image into kind
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          GATEWAY_IMAGE="{{ workload.gateway_image }}"
+          echo "Loading Gateway image: $GATEWAY_IMAGE"
+          
+          if docker image inspect "$GATEWAY_IMAGE" >/dev/null 2>&1; then
+            kind load docker-image "$GATEWAY_IMAGE" --name noetl
+            echo "✓ Gateway image loaded successfully"
+          else
+            echo "WARNING: Gateway image $GATEWAY_IMAGE not found in Docker"
+            echo "If you need Gateway, build it first:"
+            echo "  docker buildx build --load --platform linux/amd64 -t noetl-gateway:latest -f crates/gateway/Dockerfile crates/gateway"
+          fi
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: verify_images
+
+  - step: verify_images
+    desc: Verify images are available in kind
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Verifying images in kind cluster..."
+          docker exec -it noetl-control-plane crictl images | grep -E "noetl|gateway" || echo "No noetl/gateway images found in kind"
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: summary
+
+  - step: summary
+    desc: Show summary
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "=========================================="
+          echo "Images loaded into kind cluster"
+          echo "=========================================="
+          echo ""
+          echo "Next steps:"
+          echo "  1. Restart deployments to use new images:"
+          echo "     kubectl rollout restart deployment/noetl-server -n noetl"
+          echo "     kubectl rollout restart deployment/noetl-worker -n noetl"
+          echo "     kubectl rollout restart deployment/gateway -n gateway"
+          echo ""
+          echo "  2. Or redeploy NoETL:"
+          echo "     noetl run automation/development/noetl.yaml --set action=redeploy"
+          echo ""
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
+
+  - step: end
+    desc: Done
+    tool:
+      kind: noop

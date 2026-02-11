@@ -18,19 +18,22 @@ workflow:
       cmds:
         - echo "Docker Automation - Action '{{ workload.action }}'"
     next:
-      - step: build_image
-        when: "{{ workload.action == 'build' }}"
-      - step: build_noetl_image
-        when: "{{ workload.action == 'noetl-image-build' }}"
-      - step: cleanup_all
-        when: "{{ workload.action == 'cleanup-all' }}"
-      - step: clear_images
-        when: "{{ workload.action == 'images-clear' }}"
-      - step: check_status
-        when: "{{ workload.action == 'status' }}"
-      - step: show_help
-        when: "{{ workload.action == 'help' }}"
-      - step: show_help
+      spec:
+        mode: exclusive
+      arcs:
+        - step: build_image
+          when: "{{ workload.action == 'build' }}"
+        - step: build_noetl_image
+          when: "{{ workload.action == 'noetl-image-build' }}"
+        - step: cleanup_all
+          when: "{{ workload.action == 'cleanup-all' }}"
+        - step: clear_images
+          when: "{{ workload.action == 'images-clear' }}"
+        - step: check_status
+          when: "{{ workload.action == 'status' }}"
+        - step: show_help
+          when: "{{ workload.action == 'help' }}"
+        - step: show_help
 
   - step: build_image
     desc: Build NoETL Docker image
@@ -44,7 +47,10 @@ workflow:
           docker build -t local/noetl:$IMAGE_TAG -f docker/noetl/dev/Dockerfile .
           echo "$IMAGE_TAG" > .noetl_last_build_tag.txt
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: build_noetl_image
     desc: Build noetl container with docker
@@ -58,7 +64,10 @@ workflow:
           DOCKER_BUILDKIT=0 docker build -t local/noetl:$IMAGE_TAG -f docker/noetl/dev/Dockerfile .
           echo "$IMAGE_TAG" > .noetl_last_build_tag.txt
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: cleanup_all
     desc: Clean all docker resources (builders, images, volumes)
@@ -75,7 +84,10 @@ workflow:
           docker image prune --all --force
           docker volume prune --force
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: clear_images
     desc: Clear all docker images
@@ -87,7 +99,10 @@ workflow:
           echo "Clearing all Docker images..."
           docker images "local/noetl" --format "{{.ID}}" | xargs -r docker rmi -f
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: check_status
     desc: Check Docker status and resources
@@ -111,7 +126,10 @@ workflow:
           echo "=== Docker Disk Usage ==="
           docker system df
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: show_help
     desc: Display available actions
@@ -151,7 +169,10 @@ workflow:
           echo "  noetl run automation/development/docker.yaml --set action=images-clear"
           echo ""
     next:
-      - step: end
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
 
   - step: end
     desc: End workflow
