@@ -574,6 +574,7 @@ workflow:
 
           # Apply namespace and non-deployment manifests first
           kubectl apply -f ci/manifests/noetl/namespace/
+          kubectl apply -f ci/manifests/noetl/secret.yaml
           kubectl apply -f ci/manifests/noetl/configmap-server.yaml
           kubectl apply -f ci/manifests/noetl/configmap-worker.yaml
           kubectl apply -f ci/manifests/noetl/service.yaml
