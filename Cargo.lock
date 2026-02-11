@@ -2880,7 +2880,7 @@ dependencies = [
 
 [[package]]
 name = "noetl-gateway"
-version = "2.5.11"
+version = "2.8.3"
 dependencies = [
  "anyhow",
  "async-graphql",
