@@ -216,11 +216,25 @@ workflow:
         - |
           echo ""
           echo "Building Docker images..."
+          
+          # Detect platform architecture
+          ARCH=$(uname -m)
+          if [ "$ARCH" = "arm64" ] || [ "$ARCH" = "aarch64" ]; then
+            PLATFORM="linux/arm64"
+            echo "Detected ARM64 architecture, building for: $PLATFORM"
+          else
+            PLATFORM="linux/amd64"
+            echo "Detected AMD64 architecture, building for: $PLATFORM"
+          fi
+          
           # Generate timestamp tag like task does
           IMAGE_TAG=$(date +%Y-%m-%d-%H-%M)
           echo "$IMAGE_TAG" > .noetl_last_build_tag.txt
           echo "Building with tag: $IMAGE_TAG"
-          docker buildx build --load --platform linux/amd64 -t {{ workload.registry }}/{{ workload.image_name }}:$IMAGE_TAG -f docker/noetl/dev/Dockerfile .
+          
+          docker buildx build --load --platform $PLATFORM \
+            -t {{ workload.registry }}/{{ workload.image_name }}:$IMAGE_TAG \
+            -f docker/noetl/dev/Dockerfile .
     next:
       spec:
         mode: exclusive
@@ -420,17 +434,93 @@ workflow:
       spec:
         mode: exclusive
       arcs:
+        - step: build_gateway_image
+          when: "{{ workload.deploy_gateway == true }}"
+        - step: reload_noetl_image
+
+  - step: build_gateway_image
+    desc: Build Gateway Docker image
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Building Gateway Docker image..."
+          
+          # Detect platform architecture
+          ARCH=$(uname -m)
+          if [ "$ARCH" = "arm64" ] || [ "$ARCH" = "aarch64" ]; then
+            PLATFORM="linux/arm64"
+            echo "Detected ARM64 architecture, building for: $PLATFORM"
+          else
+            PLATFORM="linux/amd64"
+            echo "Detected AMD64 architecture, building for: $PLATFORM"
+          fi
+          
+          docker buildx build --load --platform $PLATFORM \
+            -t noetl-gateway:latest \
+            -f crates/gateway/Dockerfile crates/gateway
+          echo "Gateway image built successfully"
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: reload_noetl_image
+
+  - step: reload_noetl_image
+    desc: Reload NoETL and Gateway images into kind cluster
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Loading images into kind cluster..."
+          
+          # Read the tag from the file created during build
+          if [ ! -f .noetl_last_build_tag.txt ]; then
+            echo "ERROR: .noetl_last_build_tag.txt not found. Build must have failed."
+            exit 1
+          fi
+          IMAGE_TAG=$(cat .noetl_last_build_tag.txt)
+          NOETL_IMAGE="{{ workload.registry }}/{{ workload.image_name }}:$IMAGE_TAG"
+          
+          echo "Loading NoETL image: $NOETL_IMAGE"
+          kind load docker-image "$NOETL_IMAGE" --name noetl
+          
+          # Load gateway image if it exists
+          if docker image inspect noetl-gateway:latest >/dev/null 2>&1; then
+            echo "Loading Gateway image: noetl-gateway:latest"
+            kind load docker-image noetl-gateway:latest --name noetl
+          else
+            echo "INFO: Gateway image not found, skipping"
+          fi
+          
+          echo "Images loaded into kind cluster"
+    next:
+      spec:
+        mode: exclusive
+      arcs:
         - step: deploy_gateway
           when: "{{ workload.deploy_gateway == true }}"
         - step: create_noetl_secrets
 
   - step: deploy_gateway
-    desc: Build and deploy NoETL Gateway API
+    desc: Deploy NoETL Gateway API and UI
     tool:
-      kind: playbook
-      path: ../infrastructure/gateway.yaml
-      args:
-        action: deploy-all
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Deploying Gateway API and UI to Kubernetes..."
+          kubectl apply -f ci/manifests/gateway/namespace.yaml
+          kubectl apply -f ci/manifests/gateway/deployment.yaml
+          kubectl apply -f ci/manifests/gateway/service.yaml
+          echo "Gateway API deployed at http://localhost:8090"
+          kubectl apply -f ci/manifests/gateway/configmap-ui.yaml
+          kubectl apply -f ci/manifests/gateway/configmap-ui-files.yaml
+          kubectl apply -f ci/manifests/gateway/deployment-ui.yaml
+          kubectl apply -f ci/manifests/gateway/service-ui.yaml
+          echo "Gateway UI deployed at http://localhost:8080"
     next:
       spec:
         mode: exclusive
@@ -482,12 +572,21 @@ workflow:
           IMAGE="{{ workload.registry }}/{{ workload.image_name }}:$IMAGE_TAG"
           echo "Using image: $IMAGE"
 
-          # Apply manifests with image substitution
-          for manifest in ci/manifests/noetl/*.yaml; do
-            if [ -f "$manifest" ]; then
-              sed "s|image_name:image_tag|$IMAGE|g" "$manifest" | kubectl apply -f -
-            fi
-          done
+          # Apply namespace and non-deployment manifests first
+          kubectl apply -f ci/manifests/noetl/namespace/
+          kubectl apply -f ci/manifests/noetl/configmap-server.yaml
+          kubectl apply -f ci/manifests/noetl/configmap-worker.yaml
+          kubectl apply -f ci/manifests/noetl/service.yaml
+          kubectl apply -f ci/manifests/noetl/service-external.yaml
+          kubectl apply -f ci/manifests/noetl/rbac.yaml
+          kubectl apply -f ci/manifests/noetl/persistent-volume.yaml
+          kubectl apply -f ci/manifests/noetl/pvc-noetl-data.yaml
+
+          # Apply deployments with image substitution
+          sed "s|image_name:image_tag|$IMAGE|g" ci/manifests/noetl/server-deployment.yaml | kubectl apply -f -
+          sed "s|image_name:image_tag|$IMAGE|g" ci/manifests/noetl/worker-deployment.yaml | kubectl apply -f -
+          
+          echo "NoETL deployed with image: $IMAGE"
     next:
       spec:
         mode: exclusive
