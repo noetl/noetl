@@ -1,0 +1,274 @@
+apiVersion: v1
+items:
+- apiVersion: v1
+  kind: Namespace
+  metadata:
+    annotations:
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","kind":"Namespace","metadata":{"annotations":{},"creationTimestamp":null,"name":"clickhouse"},"spec":{},"status":{}}
+    creationTimestamp: "2026-01-26T04:46:42Z"
+    labels:
+      kubernetes.io/metadata.name: clickhouse
+    name: clickhouse
+    resourceVersion: "1769402802038511021"
+    uid: 6199c98f-386f-47ed-8653-aa3ba1a81caf
+  spec:
+    finalizers:
+    - kubernetes
+  status:
+    phase: Active
+- apiVersion: v1
+  kind: Namespace
+  metadata:
+    creationTimestamp: "2026-01-26T04:40:29Z"
+    labels:
+      kubernetes.io/metadata.name: default
+    name: default
+    resourceVersion: "1769402429946815001"
+    uid: 80fecfdb-2043-4497-8160-b761b58088f1
+  spec:
+    finalizers:
+    - kubernetes
+  status:
+    phase: Active
+- apiVersion: v1
+  kind: Namespace
+  metadata:
+    creationTimestamp: "2026-01-26T04:50:18Z"
+    labels:
+      kubernetes.io/metadata.name: gateway
+      name: gateway
+    name: gateway
+    resourceVersion: "1769403018868639004"
+    uid: 98411be6-2204-4b5e-889e-f6ce40ee81b2
+  spec:
+    finalizers:
+    - kubernetes
+  status:
+    phase: Active
+- apiVersion: v1
+  kind: Namespace
+  metadata:
+    annotations:
+      components.gke.io/component-name: managed-prometheus
+      components.gke.io/component-version: 0.15.5-gke.2
+      components.gke.io/layer: addon
+    creationTimestamp: "2026-01-26T04:43:19Z"
+    labels:
+      addonmanager.kubernetes.io/mode: Reconcile
+      kubernetes.io/metadata.name: gke-gmp-system
+    name: gke-gmp-system
+    resourceVersion: "1769402599995055021"
+    uid: 44ec7e18-c16e-46f1-9c41-2cbd54a2d252
+  spec:
+    finalizers:
+    - kubernetes
+  status:
+    phase: Active
+- apiVersion: v1
+  kind: Namespace
+  metadata:
+    annotations:
+      components.gke.io/component-name: cluster-infra-metrics
+      components.gke.io/component-version: 1.33.5-gke.0
+      components.gke.io/layer: addon
+    creationTimestamp: "2026-01-26T04:42:13Z"
+    labels:
+      addonmanager.kubernetes.io/mode: Reconcile
+      kubernetes.io/metadata.name: gke-managed-cim
+    name: gke-managed-cim
+    resourceVersion: "1769402533509135001"
+    uid: 17ae2952-5bc0-42f9-83e4-e7ee3b110bb3
+  spec:
+    finalizers:
+    - kubernetes
+  status:
+    phase: Active
+- apiVersion: v1
+  kind: Namespace
+  metadata:
+    annotations:
+      components.gke.io/component-name: filestorecsi
+      components.gke.io/component-version: 0.18.19
+      components.gke.io/layer: addon
+    creationTimestamp: "2026-01-26T04:42:26Z"
+    labels:
+      addonmanager.kubernetes.io/mode: Reconcile
+      k8s-app: gcp-filestore-csi-driver
+      kubernetes.io/metadata.name: gke-managed-filestorecsi
+    name: gke-managed-filestorecsi
+    resourceVersion: "1770461630912527008"
+    uid: 0bf687f3-6d57-4e61-bd22-936256cafa6e
+  spec:
+    finalizers:
+    - kubernetes
+  status:
+    phase: Active
+- apiVersion: v1
+  kind: Namespace
+  metadata:
+    annotations:
+      components.gke.io/component-name: parallelstorecsi
+      components.gke.io/component-version: 0.5.34
+      components.gke.io/layer: addon
+    creationTimestamp: "2026-01-26T04:43:51Z"
+    labels:
+      addonmanager.kubernetes.io/mode: EnsureExists
+      k8s-app: parallelstore-csi-driver
+      kubernetes.io/metadata.name: gke-managed-parallelstorecsi
+    name: gke-managed-parallelstorecsi
+    resourceVersion: "1769402631287359023"
+    uid: edc0630c-1db6-43ec-9b82-fed62f4678ee
+  spec:
+    finalizers:
+    - kubernetes
+  status:
+    phase: Active
+- apiVersion: v1
+  kind: Namespace
+  metadata:
+    annotations:
+      components.gke.io/component-name: gke-managed-system
+      components.gke.io/component-version: 0.1.1
+      components.gke.io/layer: addon
+    creationTimestamp: "2026-01-26T04:42:48Z"
+    labels:
+      addonmanager.kubernetes.io/mode: Reconcile
+      kubernetes.io/metadata.name: gke-managed-system
+    name: gke-managed-system
+    resourceVersion: "1769402568497919010"
+    uid: 923fadfa-0bb8-4e24-b624-24b5da1dca72
+  spec:
+    finalizers:
+    - kubernetes
+  status:
+    phase: Active
+- apiVersion: v1
+  kind: Namespace
+  metadata:
+    annotations:
+      components.gke.io/component-name: gke-volume-populator
+      components.gke.io/component-version: 0.3.7
+      components.gke.io/layer: addon
+    creationTimestamp: "2026-01-26T04:43:00Z"
+    labels:
+      addonmanager.kubernetes.io/mode: Reconcile
+      k8s-app: gke-volume-populator
+      kubernetes.io/metadata.name: gke-managed-volumepopulator
+    name: gke-managed-volumepopulator
+    resourceVersion: "1769402580301151022"
+    uid: efc5e638-3445-416a-9ed2-eab09ea7fed1
+  spec:
+    finalizers:
+    - kubernetes
+  status:
+    phase: Active
+- apiVersion: v1
+  kind: Namespace
+  metadata:
+    annotations:
+      components.gke.io/component-name: managed-prometheus
+      components.gke.io/component-version: 0.15.5-gke.2
+      components.gke.io/layer: addon
+    creationTimestamp: "2026-01-26T04:43:20Z"
+    labels:
+      addonmanager.kubernetes.io/mode: Reconcile
+      kubernetes.io/metadata.name: gmp-public
+    name: gmp-public
+    resourceVersion: "1769402600297599004"
+    uid: edf6e1a7-607b-4348-a94e-80cb38ca63b4
+  spec:
+    finalizers:
+    - kubernetes
+  status:
+    phase: Active
+- apiVersion: v1
+  kind: Namespace
+  metadata:
+    creationTimestamp: "2026-01-26T04:40:30Z"
+    labels:
+      kubernetes.io/metadata.name: kube-node-lease
+    name: kube-node-lease
+    resourceVersion: "1769402430123839003"
+    uid: 16553c0c-1c75-436d-bdae-4ebc234cd7fd
+  spec:
+    finalizers:
+    - kubernetes
+  status:
+    phase: Active
+- apiVersion: v1
+  kind: Namespace
+  metadata:
+    creationTimestamp: "2026-01-26T04:40:29Z"
+    labels:
+      kubernetes.io/metadata.name: kube-public
+    name: kube-public
+    resourceVersion: "1769402429917071000"
+    uid: ec267074-f560-4fcd-a85b-58780d7dccf8
+  spec:
+    finalizers:
+    - kubernetes
+  status:
+    phase: Active
+- apiVersion: v1
+  kind: Namespace
+  metadata:
+    creationTimestamp: "2026-01-26T04:40:29Z"
+    labels:
+      kubernetes.io/metadata.name: kube-system
+    name: kube-system
+    resourceVersion: "1769402429797327004"
+    uid: ed797001-e4c1-44de-bfce-07e546bf49ce
+  spec:
+    finalizers:
+    - kubernetes
+  status:
+    phase: Active
+- apiVersion: v1
+  kind: Namespace
+  metadata:
+    creationTimestamp: "2026-01-26T04:46:08Z"
+    labels:
+      kubernetes.io/metadata.name: nats
+      name: nats
+    name: nats
+    resourceVersion: "1769402768198623014"
+    uid: 4e8a33ab-aade-480d-b467-bc4763c9936e
+  spec:
+    finalizers:
+    - kubernetes
+  status:
+    phase: Active
+- apiVersion: v1
+  kind: Namespace
+  metadata:
+    creationTimestamp: "2026-01-26T04:47:23Z"
+    labels:
+      kubernetes.io/metadata.name: noetl
+      name: noetl
+    name: noetl
+    resourceVersion: "1769402843928271016"
+    uid: 56dd8b48-e811-44fe-833b-e93d75eeeede
+  spec:
+    finalizers:
+    - kubernetes
+  status:
+    phase: Active
+- apiVersion: v1
+  kind: Namespace
+  metadata:
+    creationTimestamp: "2026-01-26T04:44:24Z"
+    labels:
+      kubernetes.io/metadata.name: postgres
+      name: postgres
+    name: postgres
+    resourceVersion: "1769402664856143010"
+    uid: 1359d46c-48c8-40c1-9f63-e4d5b30e69e2
+  spec:
+    finalizers:
+    - kubernetes
+  status:
+    phase: Active
+kind: List
+metadata:
+  resourceVersion: ""

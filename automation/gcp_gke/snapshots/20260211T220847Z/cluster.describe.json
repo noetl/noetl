@@ -1,0 +1,1233 @@
+{
+  "addonsConfig": {
+    "dnsCacheConfig": {
+      "enabled": true
+    },
+    "gcePersistentDiskCsiDriverConfig": {
+      "enabled": true
+    },
+    "gcpFilestoreCsiDriverConfig": {
+      "enabled": true
+    },
+    "gcsFuseCsiDriverConfig": {
+      "enabled": true
+    },
+    "kubernetesDashboard": {
+      "disabled": true
+    },
+    "networkPolicyConfig": {
+      "disabled": true
+    },
+    "parallelstoreCsiDriverConfig": {
+      "enabled": true
+    },
+    "statefulHaConfig": {
+      "enabled": true
+    }
+  },
+  "anonymousAuthenticationConfig": {
+    "mode": "ENABLED"
+  },
+  "autopilot": {
+    "enabled": true
+  },
+  "autoscaling": {
+    "autoprovisioningNodePoolDefaults": {
+      "imageType": "COS_CONTAINERD",
+      "management": {
+        "autoRepair": true,
+        "autoUpgrade": true
+      },
+      "oauthScopes": [
+        "https://www.googleapis.com/auth/devstorage.read_only",
+        "https://www.googleapis.com/auth/logging.write",
+        "https://www.googleapis.com/auth/monitoring",
+        "https://www.googleapis.com/auth/service.management.readonly",
+        "https://www.googleapis.com/auth/servicecontrol",
+        "https://www.googleapis.com/auth/trace.append"
+      ],
+      "serviceAccount": "default",
+      "upgradeSettings": {
+        "maxSurge": 1,
+        "strategy": "SURGE"
+      }
+    },
+    "autoscalingProfile": "OPTIMIZE_UTILIZATION",
+    "enableNodeAutoprovisioning": true,
+    "resourceLimits": [
+      {
+        "maximum": "1000000000",
+        "resourceType": "cpu"
+      },
+      {
+        "maximum": "1000000000",
+        "resourceType": "memory"
+      },
+      {
+        "maximum": "1000000000",
+        "resourceType": "nvidia-tesla-t4"
+      },
+      {
+        "maximum": "1000000000",
+        "resourceType": "nvidia-tesla-a100"
+      }
+    ]
+  },
+  "clusterIpv4Cidr": "10.89.0.0/17",
+  "controlPlaneEndpointsConfig": {
+    "dnsEndpointConfig": {
+      "allowExternalTraffic": false,
+      "enableK8sCertsViaDns": false,
+      "enableK8sTokensViaDns": false,
+      "endpoint": "gke-697e21865e404756a4ec009e76be58d15a94-1014428265962.us-central1.gke.goog"
+    },
+    "ipEndpointsConfig": {
+      "authorizedNetworksConfig": {},
+      "enablePublicEndpoint": true,
+      "enabled": true,
+      "privateEndpoint": "10.128.0.37",
+      "publicEndpoint": "34.71.6.63"
+    }
+  },
+  "createTime": "2026-01-26T04:38:13+00:00",
+  "currentMasterVersion": "1.33.5-gke.2172001",
+  "currentNodeCount": 2,
+  "currentNodeVersion": "1.33.5-gke.2100000",
+  "databaseEncryption": {
+    "currentState": "CURRENT_STATE_DECRYPTED",
+    "state": "DECRYPTED"
+  },
+  "defaultMaxPodsConstraint": {
+    "maxPodsPerNode": "110"
+  },
+  "endpoint": "34.71.6.63",
+  "enterpriseConfig": {
+    "clusterTier": "STANDARD"
+  },
+  "etag": "25befc44-738a-45ff-afd2-92270a5be363",
+  "id": "697e21865e404756a4ec009e76be58d15a94a0aac6074e968510abd030a51ad3",
+  "initialClusterVersion": "1.33.5-gke.2100000",
+  "instanceGroupUrls": [
+    "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/zones/us-central1-a/instanceGroupManagers/gk3-noetl-cluster-default-pool-2446935d-grp",
+    "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/zones/us-central1-f/instanceGroupManagers/gk3-noetl-cluster-pool-1-7ed7ae2b-grp",
+    "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/zones/us-central1-a/instanceGroupManagers/gk3-noetl-cluster-pool-1-a559eef3-grp",
+    "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/zones/us-central1-b/instanceGroupManagers/gk3-noetl-cluster-pool-1-3d0b80a2-grp",
+    "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/zones/us-central1-c/instanceGroupManagers/gk3-noetl-cluster-pool-1-797078f4-grp",
+    "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/zones/us-central1-f/instanceGroupManagers/gk3-noetl-cluster-pool-2-bf67072e-grp",
+    "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/zones/us-central1-a/instanceGroupManagers/gk3-noetl-cluster-pool-2-8e32bea5-grp",
+    "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/zones/us-central1-b/instanceGroupManagers/gk3-noetl-cluster-pool-2-231333ec-grp",
+    "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/zones/us-central1-c/instanceGroupManagers/gk3-noetl-cluster-pool-2-7ae9cecb-grp",
+    "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/zones/us-central1-f/instanceGroupManagers/gk3-noetl-cluster-pool-3-41054e18-grp",
+    "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/zones/us-central1-a/instanceGroupManagers/gk3-noetl-cluster-pool-3-ed8585bf-grp",
+    "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/zones/us-central1-b/instanceGroupManagers/gk3-noetl-cluster-pool-3-e51d10a1-grp",
+    "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/zones/us-central1-c/instanceGroupManagers/gk3-noetl-cluster-pool-3-14a75ac8-grp",
+    "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/zones/us-central1-f/instanceGroupManagers/gk3-noetl-cluster-pool-4-dc24d6fd-grp",
+    "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/zones/us-central1-a/instanceGroupManagers/gk3-noetl-cluster-pool-4-088b6da0-grp",
+    "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/zones/us-central1-b/instanceGroupManagers/gk3-noetl-cluster-pool-4-94acd438-grp",
+    "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/zones/us-central1-c/instanceGroupManagers/gk3-noetl-cluster-pool-4-586c9ee4-grp",
+    "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/zones/us-central1-f/instanceGroupManagers/gk3-noetl-cluster-pool-5-df6d383d-grp",
+    "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/zones/us-central1-a/instanceGroupManagers/gk3-noetl-cluster-pool-5-12615eb0-grp",
+    "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/zones/us-central1-b/instanceGroupManagers/gk3-noetl-cluster-pool-5-975ddc87-grp",
+    "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/zones/us-central1-c/instanceGroupManagers/gk3-noetl-cluster-pool-5-ec0eea6d-grp",
+    "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/zones/us-central1-f/instanceGroupManagers/gk3-noetl-cluster-pool-6-cf9431d3-grp",
+    "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/zones/us-central1-a/instanceGroupManagers/gk3-noetl-cluster-pool-6-30e7ac3b-grp",
+    "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/zones/us-central1-b/instanceGroupManagers/gk3-noetl-cluster-pool-6-784c7c44-grp",
+    "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/zones/us-central1-c/instanceGroupManagers/gk3-noetl-cluster-pool-6-64cfd5f0-grp",
+    "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/zones/us-central1-f/instanceGroupManagers/gk3-noetl-cluster-pool-7-b529cfb0-grp",
+    "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/zones/us-central1-a/instanceGroupManagers/gk3-noetl-cluster-pool-7-dd1368b1-grp",
+    "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/zones/us-central1-b/instanceGroupManagers/gk3-noetl-cluster-pool-7-ddd97b25-grp",
+    "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/zones/us-central1-c/instanceGroupManagers/gk3-noetl-cluster-pool-7-5ba1f6da-grp",
+    "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/zones/us-central1-f/instanceGroupManagers/gk3-noetl-cluster-pool-8-7e408053-grp",
+    "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/zones/us-central1-a/instanceGroupManagers/gk3-noetl-cluster-pool-8-457d6a7c-grp",
+    "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/zones/us-central1-b/instanceGroupManagers/gk3-noetl-cluster-pool-8-4ded8579-grp",
+    "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/zones/us-central1-c/instanceGroupManagers/gk3-noetl-cluster-pool-8-4191a755-grp",
+    "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/zones/us-central1-f/instanceGroupManagers/gk3-noetl-cluster-pool-9-70d7ccc3-grp",
+    "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/zones/us-central1-a/instanceGroupManagers/gk3-noetl-cluster-pool-9-9f433bf9-grp",
+    "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/zones/us-central1-b/instanceGroupManagers/gk3-noetl-cluster-pool-9-b3be10b7-grp",
+    "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/zones/us-central1-c/instanceGroupManagers/gk3-noetl-cluster-pool-9-6e2e8015-grp"
+  ],
+  "ipAllocationPolicy": {
+    "clusterIpv4Cidr": "10.89.0.0/17",
+    "clusterIpv4CidrBlock": "10.89.0.0/17",
+    "clusterSecondaryRangeName": "gke-noetl-cluster-pods-697e2186",
+    "defaultPodIpv4RangeUtilization": 0.0039,
+    "networkTierConfig": {
+      "networkTier": "NETWORK_TIER_DEFAULT"
+    },
+    "podCidrOverprovisionConfig": {},
+    "servicesIpv4Cidr": "34.118.224.0/20",
+    "servicesIpv4CidrBlock": "34.118.224.0/20",
+    "stackType": "IPV4",
+    "useIpAliases": true
+  },
+  "labelFingerprint": "a9dc16a7",
+  "legacyAbac": {},
+  "location": "us-central1",
+  "locations": [
+    "us-central1-f",
+    "us-central1-a",
+    "us-central1-b",
+    "us-central1-c"
+  ],
+  "loggingConfig": {
+    "componentConfig": {
+      "enableComponents": [
+        "SYSTEM_COMPONENTS",
+        "WORKLOADS"
+      ]
+    }
+  },
+  "loggingService": "logging.googleapis.com/kubernetes",
+  "maintenancePolicy": {
+    "resourceVersion": "e3b0c442"
+  },
+  "masterAuth": {
+    "clientCertificateConfig": {},
+    "clusterCaCertificate": "LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUVMRENDQXBTZ0F3SUJBZ0lRQVlCYVIxcUtBT3NkWW8weVNNemI3ekFOQmdrcWhraUc5dzBCQVFzRkFEQXYKTVMwd0t3WURWUVFERXlSaVlqQmlOR1U1TVMweE9XWTVMVFJqTmpRdE9UVTFNQzFqT1dZeU5qUmhNV05tT1dFdwpJQmNOTWpZd01USTJNRE16T0RFMFdoZ1BNakExTmpBeE1Ua3dORE00TVRSYU1DOHhMVEFyQmdOVkJBTVRKR0ppCk1HSTBaVGt4TFRFNVpqa3ROR00yTkMwNU5UVXdMV001WmpJMk5HRXhZMlk1WVRDQ0FhSXdEUVlKS29aSWh2Y04KQVFFQkJRQURnZ0dQQURDQ0FZb0NnZ0dCQU5NZDc0RTB1dHR6YWtRVVVpM2FlMFVWR0ZIekZycGNwNE9QWXgzUQovZHQ1dnBnT1l1U0Z2c2k3NGlwSWZSeFBTaGRLUTFrRFBiMWpNZW4wVVRnd1pXcEIrNkc1aVRYTEhPTkVQODROCkdBbFZKMGpsdFdhQUVYMit2NW4yZ3VDTFJnTmlzMy9oUUJZTTBCRk5HaXNhMjhwME1hMVNVY1UwNndkM2pwSVUKZnM3RVNMRjIzMVJwc04ydXZzTlgrSnBpb3hUZGNiL0dvdEROMi9NNVQwakN2WGw3MjIwNDdaNEtDbkdJRUZxLwoyMUZqeGpwZlkyN1JRd1dzT2E3TmkvT1hmWDBNV0tYQ2M4NDJ6dldlQS9MT0J1VHZlbE96QU9oT2EzVVNmUktmClpFTHc5YUZmNmlZTXl0U3hKbzZSc2RXNEZSakRHRFc4a3V2dEhqak1WSWRodUNnNHdvU1ZaeVRHVFhSYnRUNGwKT0NzbTJMYUNwU2p5QzRscWgyT2Y1WDJFUmpTZ2ptenQ3SDRWM0VGMUs0K1dSakJ1SEJ6NUloZDRoczRTTDZ2RQpUR0h5RnhjeFVXNzJQVlJEVkw3NEVWemwzeEVObXZHMnhwd2JUc0JwOUd5K1J3RlgweVFPVGJpa0N4TG53ZmpvCmxiUDIyQjc0bDdpd3lzOG04KzIxdzNUZHl3SURBUUFCbzBJd1FEQU9CZ05WSFE4QkFmOEVCQU1DQWdRd0R3WUQKVlIwVEFRSC9CQVV3QXdFQi96QWRCZ05WSFE0RUZnUVVlYU5WU3JPZkZmUUNyUW12TTRDVUNXbzNYOTh3RFFZSgpLb1pJaHZjTkFRRUxCUUFEZ2dHQkFFbFpjK0dsWldpbklRR1JtREtqQmE3ZXpVRlk1dDM2UFkvSkdtWFY2ZGIwCkU5UXNFOGo2eS9JZndGN2llZkJod3hCN2x6MXpMZjR0cnRBa1llWmRHYk8zTTN5SVFWRk5lMExJZHBMTjZVaUoKZy9pNUhxanFUSWtITzNyTVhLcnhKNlAralBjN3cyTlNmem80QmlKd2tXUnEzMGtOazZxc1NHall4TVFWNGhndwpRTlVqUXJJRDM3L1RIR05PVVhkY09GYkhKZnpaZjRtUE5vcW4xNTBUVThwYzNqcEV4QlYrWE9GSTFvNmIzVVYwCmlVM29zYzF4ejNWV0FOQmJ1clFUa2JJSzlHa3dWNEFyUWRRMzR6K3JGMUdtYnBJN0RKRVRObnZtdmFWVzZObC8KdzB5R3NtT1FrUndwbnpKTlZlOG83bk9CM3NTTkVkZUNFMTBHeHdRSDUxMUJCSmRXL2VQbHgxWUFVU3NtcXFNcQpFTlNOb3czTjRKM2ttaVg3UUY3ZXEvMDhYdWRWclhVeit3aUZ0M2RHNFc1RkthcTBoMzUydHRTVXlXbVZZMDNwClZJM1Y1clo2THpaenNGWnBFcmZZMklFYW5uaE1xbW9IU2lidkkzUTFFN0llbkRkVzZha01iNUpYZ1QrbGo3UUcKUnlXTWRSMnVxTjV1N2tqMUgrVEVsdz09Ci0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K"
+  },
+  "masterAuthorizedNetworksConfig": {},
+  "monitoringConfig": {
+    "advancedDatapathObservabilityConfig": {
+      "enableMetrics": true
+    },
+    "componentConfig": {
+      "enableComponents": [
+        "SYSTEM_COMPONENTS",
+        "STORAGE",
+        "HPA",
+        "POD",
+        "DAEMONSET",
+        "DEPLOYMENT",
+        "STATEFULSET",
+        "JOBSET",
+        "CADVISOR",
+        "KUBELET",
+        "DCGM"
+      ]
+    },
+    "managedPrometheusConfig": {
+      "enabled": true
+    }
+  },
+  "monitoringService": "monitoring.googleapis.com/kubernetes",
+  "name": "noetl-cluster",
+  "network": "default",
+  "networkConfig": {
+    "datapathProvider": "ADVANCED_DATAPATH",
+    "dnsConfig": {
+      "clusterDns": "CLOUD_DNS",
+      "clusterDnsDomain": "cluster.local",
+      "clusterDnsScope": "CLUSTER_SCOPE"
+    },
+    "enableIntraNodeVisibility": true,
+    "gatewayApiConfig": {
+      "channel": "CHANNEL_STANDARD"
+    },
+    "network": "projects/noetl-demo-19700101/global/networks/default",
+    "serviceExternalIpsConfig": {},
+    "subnetwork": "projects/noetl-demo-19700101/regions/us-central1/subnetworks/default"
+  },
+  "nodeConfig": {
+    "bootDisk": {
+      "diskType": "pd-balanced",
+      "sizeGb": "100"
+    },
+    "diskSizeGb": 100,
+    "diskType": "pd-balanced",
+    "effectiveCgroupMode": "EFFECTIVE_CGROUP_MODE_V2",
+    "gvnic": {
+      "enabled": true
+    },
+    "imageType": "COS_CONTAINERD",
+    "kubeletConfig": {
+      "insecureKubeletReadonlyPortEnabled": false,
+      "maxParallelImagePulls": 2
+    },
+    "machineType": "ek-standard-8",
+    "metadata": {
+      "disable-legacy-endpoints": "true"
+    },
+    "oauthScopes": [
+      "https://www.googleapis.com/auth/devstorage.read_only",
+      "https://www.googleapis.com/auth/logging.write",
+      "https://www.googleapis.com/auth/monitoring",
+      "https://www.googleapis.com/auth/service.management.readonly",
+      "https://www.googleapis.com/auth/servicecontrol",
+      "https://www.googleapis.com/auth/trace.append"
+    ],
+    "reservationAffinity": {
+      "consumeReservationType": "NO_RESERVATION"
+    },
+    "resourceLabels": {
+      "goog-gke-node-pool-provisioning-model": "on-demand"
+    },
+    "serviceAccount": "default",
+    "shieldedInstanceConfig": {
+      "enableIntegrityMonitoring": true,
+      "enableSecureBoot": true
+    },
+    "taints": [
+      {
+        "effect": "NO_SCHEDULE",
+        "key": "cloud.google.com/gke-quick-remove",
+        "value": "true"
+      }
+    ],
+    "windowsNodeConfig": {},
+    "workloadMetadataConfig": {
+      "mode": "GKE_METADATA"
+    }
+  },
+  "nodePoolAutoConfig": {
+    "nodeKubeletConfig": {
+      "insecureKubeletReadonlyPortEnabled": false
+    }
+  },
+  "nodePoolDefaults": {
+    "nodeConfigDefaults": {
+      "gcfsConfig": {
+        "enabled": true
+      },
+      "loggingConfig": {
+        "variantConfig": {
+          "variant": "DEFAULT"
+        }
+      },
+      "nodeKubeletConfig": {
+        "insecureKubeletReadonlyPortEnabled": false
+      }
+    }
+  },
+  "nodePools": [
+    {
+      "autoscaling": {
+        "enabled": true,
+        "locationPolicy": "BALANCED",
+        "maxNodeCount": 1000
+      },
+      "config": {
+        "bootDisk": {
+          "diskType": "pd-balanced",
+          "sizeGb": "100"
+        },
+        "diskSizeGb": 100,
+        "diskType": "pd-balanced",
+        "effectiveCgroupMode": "EFFECTIVE_CGROUP_MODE_V2",
+        "gvnic": {
+          "enabled": true
+        },
+        "imageType": "COS_CONTAINERD",
+        "kubeletConfig": {
+          "insecureKubeletReadonlyPortEnabled": false,
+          "maxParallelImagePulls": 2
+        },
+        "machineType": "ek-standard-8",
+        "metadata": {
+          "disable-legacy-endpoints": "true"
+        },
+        "oauthScopes": [
+          "https://www.googleapis.com/auth/devstorage.read_only",
+          "https://www.googleapis.com/auth/logging.write",
+          "https://www.googleapis.com/auth/monitoring",
+          "https://www.googleapis.com/auth/service.management.readonly",
+          "https://www.googleapis.com/auth/servicecontrol",
+          "https://www.googleapis.com/auth/trace.append"
+        ],
+        "reservationAffinity": {
+          "consumeReservationType": "NO_RESERVATION"
+        },
+        "resourceLabels": {
+          "goog-gke-node-pool-provisioning-model": "on-demand"
+        },
+        "serviceAccount": "default",
+        "shieldedInstanceConfig": {
+          "enableIntegrityMonitoring": true,
+          "enableSecureBoot": true
+        },
+        "taints": [
+          {
+            "effect": "NO_SCHEDULE",
+            "key": "cloud.google.com/gke-quick-remove",
+            "value": "true"
+          }
+        ],
+        "windowsNodeConfig": {},
+        "workloadMetadataConfig": {
+          "mode": "GKE_METADATA"
+        }
+      },
+      "etag": "e46d411c-978d-441b-975e-35d40067c55d",
+      "initialNodeCount": 1,
+      "instanceGroupUrls": [
+        "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/zones/us-central1-a/instanceGroupManagers/gk3-noetl-cluster-default-pool-2446935d-grp"
+      ],
+      "locations": [
+        "us-central1-a"
+      ],
+      "management": {
+        "autoRepair": true,
+        "autoUpgrade": true
+      },
+      "maxPodsConstraint": {
+        "maxPodsPerNode": "32"
+      },
+      "name": "default-pool",
+      "networkConfig": {
+        "networkTierConfig": {
+          "networkTier": "NETWORK_TIER_DEFAULT"
+        },
+        "podIpv4CidrBlock": "10.89.0.0/17",
+        "podIpv4RangeUtilization": 0.0039,
+        "podRange": "gke-noetl-cluster-pods-697e2186",
+        "subnetwork": "projects/noetl-demo-19700101/regions/us-central1/subnetworks/default"
+      },
+      "podIpv4CidrSize": 26,
+      "selfLink": "https://container.googleapis.com/v1/projects/noetl-demo-19700101/locations/us-central1/clusters/noetl-cluster/nodePools/default-pool",
+      "status": "RUNNING",
+      "upgradeSettings": {
+        "maxSurge": 1,
+        "strategy": "SURGE"
+      },
+      "version": "1.33.5-gke.2118001"
+    },
+    {
+      "autoscaling": {
+        "enabled": true,
+        "locationPolicy": "BALANCED",
+        "maxNodeCount": 1000
+      },
+      "config": {
+        "bootDisk": {
+          "diskType": "pd-balanced",
+          "sizeGb": "100"
+        },
+        "diskSizeGb": 100,
+        "diskType": "pd-balanced",
+        "effectiveCgroupMode": "EFFECTIVE_CGROUP_MODE_V2",
+        "gvnic": {
+          "enabled": true
+        },
+        "imageType": "COS_CONTAINERD",
+        "kubeletConfig": {
+          "insecureKubeletReadonlyPortEnabled": false,
+          "maxParallelImagePulls": 2
+        },
+        "machineType": "ek-standard-8",
+        "metadata": {
+          "disable-legacy-endpoints": "true"
+        },
+        "oauthScopes": [
+          "https://www.googleapis.com/auth/devstorage.read_only",
+          "https://www.googleapis.com/auth/logging.write",
+          "https://www.googleapis.com/auth/monitoring",
+          "https://www.googleapis.com/auth/service.management.readonly",
+          "https://www.googleapis.com/auth/servicecontrol",
+          "https://www.googleapis.com/auth/trace.append"
+        ],
+        "reservationAffinity": {
+          "consumeReservationType": "NO_RESERVATION"
+        },
+        "resourceLabels": {
+          "goog-gke-node-pool-provisioning-model": "on-demand"
+        },
+        "serviceAccount": "default",
+        "shieldedInstanceConfig": {
+          "enableIntegrityMonitoring": true,
+          "enableSecureBoot": true
+        },
+        "windowsNodeConfig": {},
+        "workloadMetadataConfig": {
+          "mode": "GKE_METADATA"
+        }
+      },
+      "etag": "60c116a9-a06b-4eec-b11a-e8b99878a9a6",
+      "instanceGroupUrls": [
+        "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/zones/us-central1-f/instanceGroupManagers/gk3-noetl-cluster-pool-1-7ed7ae2b-grp",
+        "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/zones/us-central1-a/instanceGroupManagers/gk3-noetl-cluster-pool-1-a559eef3-grp",
+        "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/zones/us-central1-b/instanceGroupManagers/gk3-noetl-cluster-pool-1-3d0b80a2-grp",
+        "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/zones/us-central1-c/instanceGroupManagers/gk3-noetl-cluster-pool-1-797078f4-grp"
+      ],
+      "locations": [
+        "us-central1-f",
+        "us-central1-a",
+        "us-central1-b",
+        "us-central1-c"
+      ],
+      "management": {
+        "autoRepair": true,
+        "autoUpgrade": true
+      },
+      "maxPodsConstraint": {
+        "maxPodsPerNode": "32"
+      },
+      "name": "pool-1",
+      "networkConfig": {
+        "networkTierConfig": {
+          "networkTier": "NETWORK_TIER_DEFAULT"
+        },
+        "podIpv4CidrBlock": "10.89.0.0/17",
+        "podIpv4RangeUtilization": 0.0039,
+        "podRange": "gke-noetl-cluster-pods-697e2186",
+        "subnetwork": "projects/noetl-demo-19700101/regions/us-central1/subnetworks/default"
+      },
+      "podIpv4CidrSize": 26,
+      "selfLink": "https://container.googleapis.com/v1/projects/noetl-demo-19700101/locations/us-central1/clusters/noetl-cluster/nodePools/pool-1",
+      "status": "RUNNING",
+      "upgradeSettings": {
+        "maxSurge": 1,
+        "strategy": "SURGE"
+      },
+      "version": "1.33.5-gke.2118001"
+    },
+    {
+      "autoscaling": {
+        "enabled": true,
+        "locationPolicy": "BALANCED",
+        "maxNodeCount": 1000
+      },
+      "config": {
+        "bootDisk": {
+          "diskType": "pd-balanced",
+          "sizeGb": "100"
+        },
+        "diskSizeGb": 100,
+        "diskType": "pd-balanced",
+        "effectiveCgroupMode": "EFFECTIVE_CGROUP_MODE_V2",
+        "gvnic": {
+          "enabled": true
+        },
+        "imageType": "COS_CONTAINERD",
+        "kubeletConfig": {
+          "insecureKubeletReadonlyPortEnabled": false,
+          "maxParallelImagePulls": 2
+        },
+        "machineType": "ek-standard-16",
+        "metadata": {
+          "disable-legacy-endpoints": "true"
+        },
+        "oauthScopes": [
+          "https://www.googleapis.com/auth/devstorage.read_only",
+          "https://www.googleapis.com/auth/logging.write",
+          "https://www.googleapis.com/auth/monitoring",
+          "https://www.googleapis.com/auth/service.management.readonly",
+          "https://www.googleapis.com/auth/servicecontrol",
+          "https://www.googleapis.com/auth/trace.append"
+        ],
+        "reservationAffinity": {
+          "consumeReservationType": "NO_RESERVATION"
+        },
+        "resourceLabels": {
+          "goog-gke-node-pool-provisioning-model": "on-demand"
+        },
+        "serviceAccount": "default",
+        "shieldedInstanceConfig": {
+          "enableIntegrityMonitoring": true,
+          "enableSecureBoot": true
+        },
+        "windowsNodeConfig": {},
+        "workloadMetadataConfig": {
+          "mode": "GKE_METADATA"
+        }
+      },
+      "etag": "441116dd-ff61-4072-af33-ff46e8a897c8",
+      "instanceGroupUrls": [
+        "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/zones/us-central1-f/instanceGroupManagers/gk3-noetl-cluster-pool-2-bf67072e-grp",
+        "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/zones/us-central1-a/instanceGroupManagers/gk3-noetl-cluster-pool-2-8e32bea5-grp",
+        "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/zones/us-central1-b/instanceGroupManagers/gk3-noetl-cluster-pool-2-231333ec-grp",
+        "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/zones/us-central1-c/instanceGroupManagers/gk3-noetl-cluster-pool-2-7ae9cecb-grp"
+      ],
+      "locations": [
+        "us-central1-f",
+        "us-central1-a",
+        "us-central1-b",
+        "us-central1-c"
+      ],
+      "management": {
+        "autoRepair": true,
+        "autoUpgrade": true
+      },
+      "maxPodsConstraint": {
+        "maxPodsPerNode": "32"
+      },
+      "name": "pool-2",
+      "networkConfig": {
+        "networkTierConfig": {
+          "networkTier": "NETWORK_TIER_DEFAULT"
+        },
+        "podIpv4CidrBlock": "10.89.0.0/17",
+        "podIpv4RangeUtilization": 0.0039,
+        "podRange": "gke-noetl-cluster-pods-697e2186",
+        "subnetwork": "projects/noetl-demo-19700101/regions/us-central1/subnetworks/default"
+      },
+      "podIpv4CidrSize": 26,
+      "selfLink": "https://container.googleapis.com/v1/projects/noetl-demo-19700101/locations/us-central1/clusters/noetl-cluster/nodePools/pool-2",
+      "status": "RUNNING",
+      "upgradeSettings": {
+        "maxSurge": 1,
+        "strategy": "SURGE"
+      },
+      "version": "1.33.5-gke.2172001"
+    },
+    {
+      "autoscaling": {
+        "enabled": true,
+        "locationPolicy": "BALANCED",
+        "maxNodeCount": 1000
+      },
+      "config": {
+        "bootDisk": {
+          "diskType": "pd-balanced",
+          "sizeGb": "100"
+        },
+        "diskSizeGb": 100,
+        "diskType": "pd-balanced",
+        "effectiveCgroupMode": "EFFECTIVE_CGROUP_MODE_V2",
+        "gvnic": {
+          "enabled": true
+        },
+        "imageType": "COS_CONTAINERD",
+        "kubeletConfig": {
+          "insecureKubeletReadonlyPortEnabled": false,
+          "maxParallelImagePulls": 2
+        },
+        "machineType": "ek-standard-32",
+        "metadata": {
+          "disable-legacy-endpoints": "true"
+        },
+        "oauthScopes": [
+          "https://www.googleapis.com/auth/devstorage.read_only",
+          "https://www.googleapis.com/auth/logging.write",
+          "https://www.googleapis.com/auth/monitoring",
+          "https://www.googleapis.com/auth/service.management.readonly",
+          "https://www.googleapis.com/auth/servicecontrol",
+          "https://www.googleapis.com/auth/trace.append"
+        ],
+        "reservationAffinity": {
+          "consumeReservationType": "NO_RESERVATION"
+        },
+        "resourceLabels": {
+          "goog-gke-node-pool-provisioning-model": "on-demand"
+        },
+        "serviceAccount": "default",
+        "shieldedInstanceConfig": {
+          "enableIntegrityMonitoring": true,
+          "enableSecureBoot": true
+        },
+        "windowsNodeConfig": {},
+        "workloadMetadataConfig": {
+          "mode": "GKE_METADATA"
+        }
+      },
+      "etag": "d27d8fae-5d90-449e-8a81-89655f8e4a9f",
+      "instanceGroupUrls": [
+        "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/zones/us-central1-f/instanceGroupManagers/gk3-noetl-cluster-pool-3-41054e18-grp",
+        "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/zones/us-central1-a/instanceGroupManagers/gk3-noetl-cluster-pool-3-ed8585bf-grp",
+        "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/zones/us-central1-b/instanceGroupManagers/gk3-noetl-cluster-pool-3-e51d10a1-grp",
+        "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/zones/us-central1-c/instanceGroupManagers/gk3-noetl-cluster-pool-3-14a75ac8-grp"
+      ],
+      "locations": [
+        "us-central1-f",
+        "us-central1-a",
+        "us-central1-b",
+        "us-central1-c"
+      ],
+      "management": {
+        "autoRepair": true,
+        "autoUpgrade": true
+      },
+      "maxPodsConstraint": {
+        "maxPodsPerNode": "32"
+      },
+      "name": "pool-3",
+      "networkConfig": {
+        "networkTierConfig": {
+          "networkTier": "NETWORK_TIER_DEFAULT"
+        },
+        "podIpv4CidrBlock": "10.89.0.0/17",
+        "podIpv4RangeUtilization": 0.0039,
+        "podRange": "gke-noetl-cluster-pods-697e2186",
+        "subnetwork": "projects/noetl-demo-19700101/regions/us-central1/subnetworks/default"
+      },
+      "podIpv4CidrSize": 26,
+      "selfLink": "https://container.googleapis.com/v1/projects/noetl-demo-19700101/locations/us-central1/clusters/noetl-cluster/nodePools/pool-3",
+      "status": "RUNNING",
+      "upgradeSettings": {
+        "maxSurge": 1,
+        "strategy": "SURGE"
+      },
+      "version": "1.33.5-gke.2172001"
+    },
+    {
+      "autoscaling": {
+        "enabled": true,
+        "locationPolicy": "BALANCED",
+        "maxNodeCount": 1000
+      },
+      "config": {
+        "bootDisk": {
+          "diskType": "pd-balanced",
+          "sizeGb": "100"
+        },
+        "diskSizeGb": 100,
+        "diskType": "pd-balanced",
+        "effectiveCgroupMode": "EFFECTIVE_CGROUP_MODE_V2",
+        "gvnic": {
+          "enabled": true
+        },
+        "imageType": "COS_CONTAINERD",
+        "kubeletConfig": {
+          "insecureKubeletReadonlyPortEnabled": false,
+          "maxParallelImagePulls": 2
+        },
+        "machineType": "e2-medium",
+        "metadata": {
+          "disable-legacy-endpoints": "true"
+        },
+        "oauthScopes": [
+          "https://www.googleapis.com/auth/devstorage.read_only",
+          "https://www.googleapis.com/auth/logging.write",
+          "https://www.googleapis.com/auth/monitoring",
+          "https://www.googleapis.com/auth/service.management.readonly",
+          "https://www.googleapis.com/auth/servicecontrol",
+          "https://www.googleapis.com/auth/trace.append"
+        ],
+        "reservationAffinity": {
+          "consumeReservationType": "NO_RESERVATION"
+        },
+        "resourceLabels": {
+          "goog-gke-node-pool-provisioning-model": "on-demand"
+        },
+        "serviceAccount": "default",
+        "shieldedInstanceConfig": {
+          "enableIntegrityMonitoring": true,
+          "enableSecureBoot": true
+        },
+        "windowsNodeConfig": {},
+        "workloadMetadataConfig": {
+          "mode": "GKE_METADATA"
+        }
+      },
+      "etag": "453377a7-6c12-4af6-a484-3736fa095ca5",
+      "instanceGroupUrls": [
+        "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/zones/us-central1-f/instanceGroupManagers/gk3-noetl-cluster-pool-4-dc24d6fd-grp",
+        "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/zones/us-central1-a/instanceGroupManagers/gk3-noetl-cluster-pool-4-088b6da0-grp",
+        "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/zones/us-central1-b/instanceGroupManagers/gk3-noetl-cluster-pool-4-94acd438-grp",
+        "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/zones/us-central1-c/instanceGroupManagers/gk3-noetl-cluster-pool-4-586c9ee4-grp"
+      ],
+      "locations": [
+        "us-central1-f",
+        "us-central1-a",
+        "us-central1-b",
+        "us-central1-c"
+      ],
+      "management": {
+        "autoRepair": true,
+        "autoUpgrade": true
+      },
+      "maxPodsConstraint": {
+        "maxPodsPerNode": "32"
+      },
+      "name": "pool-4",
+      "networkConfig": {
+        "networkTierConfig": {
+          "networkTier": "NETWORK_TIER_DEFAULT"
+        },
+        "podIpv4CidrBlock": "10.89.0.0/17",
+        "podIpv4RangeUtilization": 0.0039,
+        "podRange": "gke-noetl-cluster-pods-697e2186",
+        "subnetwork": "projects/noetl-demo-19700101/regions/us-central1/subnetworks/default"
+      },
+      "podIpv4CidrSize": 26,
+      "selfLink": "https://container.googleapis.com/v1/projects/noetl-demo-19700101/locations/us-central1/clusters/noetl-cluster/nodePools/pool-4",
+      "status": "RUNNING",
+      "upgradeSettings": {
+        "maxSurge": 1,
+        "strategy": "SURGE"
+      },
+      "version": "1.33.5-gke.2172001"
+    },
+    {
+      "autoscaling": {
+        "enabled": true,
+        "locationPolicy": "BALANCED",
+        "maxNodeCount": 1000
+      },
+      "config": {
+        "bootDisk": {
+          "diskType": "pd-balanced",
+          "sizeGb": "100"
+        },
+        "diskSizeGb": 100,
+        "diskType": "pd-balanced",
+        "effectiveCgroupMode": "EFFECTIVE_CGROUP_MODE_V2",
+        "gvnic": {
+          "enabled": true
+        },
+        "imageType": "COS_CONTAINERD",
+        "kubeletConfig": {
+          "insecureKubeletReadonlyPortEnabled": false,
+          "maxParallelImagePulls": 2
+        },
+        "machineType": "e2-standard-2",
+        "metadata": {
+          "disable-legacy-endpoints": "true"
+        },
+        "oauthScopes": [
+          "https://www.googleapis.com/auth/devstorage.read_only",
+          "https://www.googleapis.com/auth/logging.write",
+          "https://www.googleapis.com/auth/monitoring",
+          "https://www.googleapis.com/auth/service.management.readonly",
+          "https://www.googleapis.com/auth/servicecontrol",
+          "https://www.googleapis.com/auth/trace.append"
+        ],
+        "reservationAffinity": {
+          "consumeReservationType": "NO_RESERVATION"
+        },
+        "resourceLabels": {
+          "goog-gke-node-pool-provisioning-model": "on-demand"
+        },
+        "serviceAccount": "default",
+        "shieldedInstanceConfig": {
+          "enableIntegrityMonitoring": true,
+          "enableSecureBoot": true
+        },
+        "windowsNodeConfig": {},
+        "workloadMetadataConfig": {
+          "mode": "GKE_METADATA"
+        }
+      },
+      "etag": "aab45dd9-adde-4e40-85bb-8465c6d464d9",
+      "instanceGroupUrls": [
+        "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/zones/us-central1-f/instanceGroupManagers/gk3-noetl-cluster-pool-5-df6d383d-grp",
+        "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/zones/us-central1-a/instanceGroupManagers/gk3-noetl-cluster-pool-5-12615eb0-grp",
+        "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/zones/us-central1-b/instanceGroupManagers/gk3-noetl-cluster-pool-5-975ddc87-grp",
+        "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/zones/us-central1-c/instanceGroupManagers/gk3-noetl-cluster-pool-5-ec0eea6d-grp"
+      ],
+      "locations": [
+        "us-central1-f",
+        "us-central1-a",
+        "us-central1-b",
+        "us-central1-c"
+      ],
+      "management": {
+        "autoRepair": true,
+        "autoUpgrade": true
+      },
+      "maxPodsConstraint": {
+        "maxPodsPerNode": "32"
+      },
+      "name": "pool-5",
+      "networkConfig": {
+        "networkTierConfig": {
+          "networkTier": "NETWORK_TIER_DEFAULT"
+        },
+        "podIpv4CidrBlock": "10.89.0.0/17",
+        "podIpv4RangeUtilization": 0.0039,
+        "podRange": "gke-noetl-cluster-pods-697e2186",
+        "subnetwork": "projects/noetl-demo-19700101/regions/us-central1/subnetworks/default"
+      },
+      "podIpv4CidrSize": 26,
+      "selfLink": "https://container.googleapis.com/v1/projects/noetl-demo-19700101/locations/us-central1/clusters/noetl-cluster/nodePools/pool-5",
+      "status": "RUNNING",
+      "upgradeSettings": {
+        "maxSurge": 1,
+        "strategy": "SURGE"
+      },
+      "version": "1.33.5-gke.2172001"
+    },
+    {
+      "autoscaling": {
+        "enabled": true,
+        "locationPolicy": "BALANCED",
+        "maxNodeCount": 1000
+      },
+      "config": {
+        "bootDisk": {
+          "diskType": "pd-balanced",
+          "sizeGb": "100"
+        },
+        "diskSizeGb": 100,
+        "diskType": "pd-balanced",
+        "effectiveCgroupMode": "EFFECTIVE_CGROUP_MODE_V2",
+        "gvnic": {
+          "enabled": true
+        },
+        "imageType": "COS_CONTAINERD",
+        "kubeletConfig": {
+          "insecureKubeletReadonlyPortEnabled": false,
+          "maxParallelImagePulls": 2
+        },
+        "machineType": "e2-standard-4",
+        "metadata": {
+          "disable-legacy-endpoints": "true"
+        },
+        "oauthScopes": [
+          "https://www.googleapis.com/auth/devstorage.read_only",
+          "https://www.googleapis.com/auth/logging.write",
+          "https://www.googleapis.com/auth/monitoring",
+          "https://www.googleapis.com/auth/service.management.readonly",
+          "https://www.googleapis.com/auth/servicecontrol",
+          "https://www.googleapis.com/auth/trace.append"
+        ],
+        "reservationAffinity": {
+          "consumeReservationType": "NO_RESERVATION"
+        },
+        "resourceLabels": {
+          "goog-gke-node-pool-provisioning-model": "on-demand"
+        },
+        "serviceAccount": "default",
+        "shieldedInstanceConfig": {
+          "enableIntegrityMonitoring": true,
+          "enableSecureBoot": true
+        },
+        "windowsNodeConfig": {},
+        "workloadMetadataConfig": {
+          "mode": "GKE_METADATA"
+        }
+      },
+      "etag": "25a610ae-22dc-46b2-96f8-f6f1c955848d",
+      "instanceGroupUrls": [
+        "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/zones/us-central1-f/instanceGroupManagers/gk3-noetl-cluster-pool-6-cf9431d3-grp",
+        "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/zones/us-central1-a/instanceGroupManagers/gk3-noetl-cluster-pool-6-30e7ac3b-grp",
+        "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/zones/us-central1-b/instanceGroupManagers/gk3-noetl-cluster-pool-6-784c7c44-grp",
+        "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/zones/us-central1-c/instanceGroupManagers/gk3-noetl-cluster-pool-6-64cfd5f0-grp"
+      ],
+      "locations": [
+        "us-central1-f",
+        "us-central1-a",
+        "us-central1-b",
+        "us-central1-c"
+      ],
+      "management": {
+        "autoRepair": true,
+        "autoUpgrade": true
+      },
+      "maxPodsConstraint": {
+        "maxPodsPerNode": "32"
+      },
+      "name": "pool-6",
+      "networkConfig": {
+        "networkTierConfig": {
+          "networkTier": "NETWORK_TIER_DEFAULT"
+        },
+        "podIpv4CidrBlock": "10.89.0.0/17",
+        "podIpv4RangeUtilization": 0.0039,
+        "podRange": "gke-noetl-cluster-pods-697e2186",
+        "subnetwork": "projects/noetl-demo-19700101/regions/us-central1/subnetworks/default"
+      },
+      "podIpv4CidrSize": 26,
+      "selfLink": "https://container.googleapis.com/v1/projects/noetl-demo-19700101/locations/us-central1/clusters/noetl-cluster/nodePools/pool-6",
+      "status": "RUNNING",
+      "upgradeSettings": {
+        "maxSurge": 1,
+        "strategy": "SURGE"
+      },
+      "version": "1.33.5-gke.2172001"
+    },
+    {
+      "autoscaling": {
+        "enabled": true,
+        "locationPolicy": "BALANCED",
+        "maxNodeCount": 1000
+      },
+      "config": {
+        "bootDisk": {
+          "diskType": "pd-balanced",
+          "sizeGb": "100"
+        },
+        "diskSizeGb": 100,
+        "diskType": "pd-balanced",
+        "effectiveCgroupMode": "EFFECTIVE_CGROUP_MODE_V2",
+        "gvnic": {
+          "enabled": true
+        },
+        "imageType": "COS_CONTAINERD",
+        "kubeletConfig": {
+          "insecureKubeletReadonlyPortEnabled": false,
+          "maxParallelImagePulls": 2
+        },
+        "machineType": "e2-standard-8",
+        "metadata": {
+          "disable-legacy-endpoints": "true"
+        },
+        "oauthScopes": [
+          "https://www.googleapis.com/auth/devstorage.read_only",
+          "https://www.googleapis.com/auth/logging.write",
+          "https://www.googleapis.com/auth/monitoring",
+          "https://www.googleapis.com/auth/service.management.readonly",
+          "https://www.googleapis.com/auth/servicecontrol",
+          "https://www.googleapis.com/auth/trace.append"
+        ],
+        "reservationAffinity": {
+          "consumeReservationType": "NO_RESERVATION"
+        },
+        "resourceLabels": {
+          "goog-gke-node-pool-provisioning-model": "on-demand"
+        },
+        "serviceAccount": "default",
+        "shieldedInstanceConfig": {
+          "enableIntegrityMonitoring": true,
+          "enableSecureBoot": true
+        },
+        "windowsNodeConfig": {},
+        "workloadMetadataConfig": {
+          "mode": "GKE_METADATA"
+        }
+      },
+      "etag": "f0c289b8-74d8-4cf4-84e7-34c183ad3e84",
+      "instanceGroupUrls": [
+        "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/zones/us-central1-f/instanceGroupManagers/gk3-noetl-cluster-pool-7-b529cfb0-grp",
+        "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/zones/us-central1-a/instanceGroupManagers/gk3-noetl-cluster-pool-7-dd1368b1-grp",
+        "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/zones/us-central1-b/instanceGroupManagers/gk3-noetl-cluster-pool-7-ddd97b25-grp",
+        "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/zones/us-central1-c/instanceGroupManagers/gk3-noetl-cluster-pool-7-5ba1f6da-grp"
+      ],
+      "locations": [
+        "us-central1-f",
+        "us-central1-a",
+        "us-central1-b",
+        "us-central1-c"
+      ],
+      "management": {
+        "autoRepair": true,
+        "autoUpgrade": true
+      },
+      "maxPodsConstraint": {
+        "maxPodsPerNode": "32"
+      },
+      "name": "pool-7",
+      "networkConfig": {
+        "networkTierConfig": {
+          "networkTier": "NETWORK_TIER_DEFAULT"
+        },
+        "podIpv4CidrBlock": "10.89.0.0/17",
+        "podIpv4RangeUtilization": 0.0039,
+        "podRange": "gke-noetl-cluster-pods-697e2186",
+        "subnetwork": "projects/noetl-demo-19700101/regions/us-central1/subnetworks/default"
+      },
+      "podIpv4CidrSize": 26,
+      "selfLink": "https://container.googleapis.com/v1/projects/noetl-demo-19700101/locations/us-central1/clusters/noetl-cluster/nodePools/pool-7",
+      "status": "RUNNING",
+      "upgradeSettings": {
+        "maxSurge": 1,
+        "strategy": "SURGE"
+      },
+      "version": "1.33.5-gke.2100000"
+    },
+    {
+      "autoscaling": {
+        "enabled": true,
+        "locationPolicy": "BALANCED",
+        "maxNodeCount": 1000
+      },
+      "config": {
+        "bootDisk": {
+          "diskType": "pd-balanced",
+          "sizeGb": "100"
+        },
+        "diskSizeGb": 100,
+        "diskType": "pd-balanced",
+        "effectiveCgroupMode": "EFFECTIVE_CGROUP_MODE_V2",
+        "gvnic": {
+          "enabled": true
+        },
+        "imageType": "COS_CONTAINERD",
+        "kubeletConfig": {
+          "insecureKubeletReadonlyPortEnabled": false,
+          "maxParallelImagePulls": 2
+        },
+        "machineType": "e2-standard-16",
+        "metadata": {
+          "disable-legacy-endpoints": "true"
+        },
+        "oauthScopes": [
+          "https://www.googleapis.com/auth/devstorage.read_only",
+          "https://www.googleapis.com/auth/logging.write",
+          "https://www.googleapis.com/auth/monitoring",
+          "https://www.googleapis.com/auth/service.management.readonly",
+          "https://www.googleapis.com/auth/servicecontrol",
+          "https://www.googleapis.com/auth/trace.append"
+        ],
+        "reservationAffinity": {
+          "consumeReservationType": "NO_RESERVATION"
+        },
+        "resourceLabels": {
+          "goog-gke-node-pool-provisioning-model": "on-demand"
+        },
+        "serviceAccount": "default",
+        "shieldedInstanceConfig": {
+          "enableIntegrityMonitoring": true,
+          "enableSecureBoot": true
+        },
+        "windowsNodeConfig": {},
+        "workloadMetadataConfig": {
+          "mode": "GKE_METADATA"
+        }
+      },
+      "etag": "17a65ebf-d6eb-4c01-86d6-17270ec4ca02",
+      "instanceGroupUrls": [
+        "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/zones/us-central1-f/instanceGroupManagers/gk3-noetl-cluster-pool-8-7e408053-grp",
+        "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/zones/us-central1-a/instanceGroupManagers/gk3-noetl-cluster-pool-8-457d6a7c-grp",
+        "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/zones/us-central1-b/instanceGroupManagers/gk3-noetl-cluster-pool-8-4ded8579-grp",
+        "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/zones/us-central1-c/instanceGroupManagers/gk3-noetl-cluster-pool-8-4191a755-grp"
+      ],
+      "locations": [
+        "us-central1-f",
+        "us-central1-a",
+        "us-central1-b",
+        "us-central1-c"
+      ],
+      "management": {
+        "autoRepair": true,
+        "autoUpgrade": true
+      },
+      "maxPodsConstraint": {
+        "maxPodsPerNode": "32"
+      },
+      "name": "pool-8",
+      "networkConfig": {
+        "networkTierConfig": {
+          "networkTier": "NETWORK_TIER_DEFAULT"
+        },
+        "podIpv4CidrBlock": "10.89.0.0/17",
+        "podIpv4RangeUtilization": 0.0039,
+        "podRange": "gke-noetl-cluster-pods-697e2186",
+        "subnetwork": "projects/noetl-demo-19700101/regions/us-central1/subnetworks/default"
+      },
+      "podIpv4CidrSize": 26,
+      "selfLink": "https://container.googleapis.com/v1/projects/noetl-demo-19700101/locations/us-central1/clusters/noetl-cluster/nodePools/pool-8",
+      "status": "RUNNING",
+      "upgradeSettings": {
+        "maxSurge": 1,
+        "strategy": "SURGE"
+      },
+      "version": "1.33.5-gke.2100000"
+    },
+    {
+      "autoscaling": {
+        "enabled": true,
+        "locationPolicy": "BALANCED",
+        "maxNodeCount": 1000
+      },
+      "config": {
+        "bootDisk": {
+          "diskType": "pd-balanced",
+          "sizeGb": "100"
+        },
+        "diskSizeGb": 100,
+        "diskType": "pd-balanced",
+        "effectiveCgroupMode": "EFFECTIVE_CGROUP_MODE_V2",
+        "gvnic": {
+          "enabled": true
+        },
+        "imageType": "COS_CONTAINERD",
+        "kubeletConfig": {
+          "insecureKubeletReadonlyPortEnabled": false,
+          "maxParallelImagePulls": 2
+        },
+        "machineType": "e2-standard-32",
+        "metadata": {
+          "disable-legacy-endpoints": "true"
+        },
+        "oauthScopes": [
+          "https://www.googleapis.com/auth/devstorage.read_only",
+          "https://www.googleapis.com/auth/logging.write",
+          "https://www.googleapis.com/auth/monitoring",
+          "https://www.googleapis.com/auth/service.management.readonly",
+          "https://www.googleapis.com/auth/servicecontrol",
+          "https://www.googleapis.com/auth/trace.append"
+        ],
+        "reservationAffinity": {
+          "consumeReservationType": "NO_RESERVATION"
+        },
+        "resourceLabels": {
+          "goog-gke-node-pool-provisioning-model": "on-demand"
+        },
+        "serviceAccount": "default",
+        "shieldedInstanceConfig": {
+          "enableIntegrityMonitoring": true,
+          "enableSecureBoot": true
+        },
+        "windowsNodeConfig": {},
+        "workloadMetadataConfig": {
+          "mode": "GKE_METADATA"
+        }
+      },
+      "etag": "37dd8d7b-2c84-4e87-8a1a-264d8ceb4f46",
+      "instanceGroupUrls": [
+        "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/zones/us-central1-f/instanceGroupManagers/gk3-noetl-cluster-pool-9-70d7ccc3-grp",
+        "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/zones/us-central1-a/instanceGroupManagers/gk3-noetl-cluster-pool-9-9f433bf9-grp",
+        "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/zones/us-central1-b/instanceGroupManagers/gk3-noetl-cluster-pool-9-b3be10b7-grp",
+        "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/zones/us-central1-c/instanceGroupManagers/gk3-noetl-cluster-pool-9-6e2e8015-grp"
+      ],
+      "locations": [
+        "us-central1-f",
+        "us-central1-a",
+        "us-central1-b",
+        "us-central1-c"
+      ],
+      "management": {
+        "autoRepair": true,
+        "autoUpgrade": true
+      },
+      "maxPodsConstraint": {
+        "maxPodsPerNode": "32"
+      },
+      "name": "pool-9",
+      "networkConfig": {
+        "networkTierConfig": {
+          "networkTier": "NETWORK_TIER_DEFAULT"
+        },
+        "podIpv4CidrBlock": "10.89.0.0/17",
+        "podIpv4RangeUtilization": 0.0039,
+        "podRange": "gke-noetl-cluster-pods-697e2186",
+        "subnetwork": "projects/noetl-demo-19700101/regions/us-central1/subnetworks/default"
+      },
+      "podIpv4CidrSize": 26,
+      "selfLink": "https://container.googleapis.com/v1/projects/noetl-demo-19700101/locations/us-central1/clusters/noetl-cluster/nodePools/pool-9",
+      "status": "RUNNING",
+      "upgradeSettings": {
+        "maxSurge": 1,
+        "strategy": "SURGE"
+      },
+      "version": "1.33.5-gke.2100000"
+    }
+  ],
+  "notificationConfig": {
+    "pubsub": {}
+  },
+  "podAutoscaling": {
+    "hpaProfile": "PERFORMANCE"
+  },
+  "privateClusterConfig": {
+    "privateEndpoint": "10.128.0.37",
+    "publicEndpoint": "34.71.6.63"
+  },
+  "rbacBindingConfig": {
+    "enableInsecureBindingSystemAuthenticated": false,
+    "enableInsecureBindingSystemUnauthenticated": false
+  },
+  "releaseChannel": {
+    "channel": "REGULAR"
+  },
+  "satisfiesPzi": false,
+  "satisfiesPzs": false,
+  "securityPostureConfig": {
+    "mode": "BASIC",
+    "vulnerabilityMode": "VULNERABILITY_MODE_UNSPECIFIED"
+  },
+  "selfLink": "https://container.googleapis.com/v1/projects/noetl-demo-19700101/locations/us-central1/clusters/noetl-cluster",
+  "servicesIpv4Cidr": "34.118.224.0/20",
+  "shieldedNodes": {
+    "enabled": true
+  },
+  "status": "RUNNING",
+  "subnetwork": "default",
+  "userManagedKeysConfig": {},
+  "verticalPodAutoscaling": {
+    "enabled": true
+  },
+  "workloadIdentityConfig": {
+    "workloadPool": "noetl-demo-19700101.svc.id.goog"
+  },
+  "zone": "us-central1"
+}

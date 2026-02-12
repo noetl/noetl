@@ -1,0 +1,28 @@
+- app_version: 2.12.3
+  chart: nats-2.12.3
+  name: nats
+  namespace: nats
+  revision: "5"
+  status: deployed
+  updated: 2026-01-28 09:18:25.690495 -0800 PST
+- app_version: 0.0.0
+  chart: noetl-0.1.0
+  name: noetl
+  namespace: noetl
+  revision: "18"
+  status: deployed
+  updated: 2026-01-28 09:18:31.608937 -0800 PST
+- app_version: 0.0.0
+  chart: noetl-gateway-0.1.0
+  name: noetl-gateway
+  namespace: gateway
+  revision: "27"
+  status: deployed
+  updated: 2026-01-28 08:47:47.046908 -0800 PST
+- app_version: 18.1.0
+  chart: postgresql-18.2.3
+  name: postgres
+  namespace: postgres
+  revision: "5"
+  status: deployed
+  updated: 2026-01-28 09:18:19.161414 -0800 PST

@@ -21,6 +21,9 @@ workload:
   region: us-central1
   cluster_name: noetl-gke
   release_channel: regular
+  # Quota precheck (helps avoid Autopilot upgrade surge failures)
+  min_global_cpu_quota: 64
+  enforce_cpu_quota_check: true
   create_artifact_registry: true
   repository_id: noetl
   delete_cluster_on_destroy: false
@@ -67,6 +70,8 @@ workload:
   noetl_logs_persistence: false
 
   # Gateway settings
+  gateway_service_type: ClusterIP
+  gateway_load_balancer_ip: ""
   gateway_auth_bypass: "false"
   gateway_cors_allowed_origins: "http://localhost:3001,https://gui.example.com,https://gateway.example.com"
 
@@ -90,22 +95,13 @@ workflow:
             exit 1
           fi
     next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: show_help
-          when: "{{ workload.action == 'help' }}"
-        - step: verify_prerequisites
-          when: "{{ workload.action == 'provision' }}"
-        - step: verify_prerequisites
-          when: "{{ workload.action == 'deploy' }}"
-        - step: verify_prerequisites
-          when: "{{ workload.action == 'provision-deploy' }}"
-        - step: verify_prerequisites
-          when: "{{ workload.action == 'status' }}"
-        - step: verify_prerequisites
-          when: "{{ workload.action == 'destroy' }}"
-        - step: show_help
+      - when: "{{ workload.action == 'help' }}"
+        then:
+          - step: show_help
+      - when: "{{ workload.action == 'provision' or workload.action == 'deploy' or workload.action == 'provision-deploy' or workload.action == 'status' or workload.action == 'destroy' }}"
+        then:
+          - step: verify_prerequisites
+      - step: show_help
 
   - step: show_help
     desc: Show usage
@@ -129,6 +125,14 @@ workflow:
           echo "    --set gateway_public_host=gateway.example.com \\"
           echo "    --set gui_public_host=gui.example.com"
           echo ""
+          echo "  # Expose gateway on static IP"
+          echo "  noetl run automation/gcp_gke/noetl_gke_fresh_stack.yaml \\"
+          echo "    --set action=deploy \\"
+          echo "    --set project_id=my-gcp-project \\"
+          echo "    --set gateway_service_type=LoadBalancer \\"
+          echo "    --set gateway_load_balancer_ip=34.71.6.63 \\"
+          echo "    --set build_images=false"
+          echo ""
           echo "  # Deploy to existing cluster"
           echo "  noetl run automation/gcp_gke/noetl_gke_fresh_stack.yaml \\"
           echo "    --set action=deploy \\"
@@ -141,10 +145,7 @@ workflow:
           echo "    --set project_id=my-gcp-project \\"
           echo "    --set delete_cluster_on_destroy=true"
     next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: end
+      - step: end
 
   - step: verify_prerequisites
     desc: Verify required local tooling
@@ -158,10 +159,7 @@ workflow:
           command -v helm >/dev/null 2>&1 || { echo "ERROR: helm is required"; exit 1; }
           echo "Tooling check passed"
     next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: configure_gcloud
+      - step: configure_gcloud
 
   - step: configure_gcloud
     desc: Set active project and enable required APIs
@@ -178,30 +176,22 @@ workflow:
           gcloud services enable container.googleapis.com artifactregistry.googleapis.com cloudbuild.googleapis.com --project {{ workload.project_id }}
           echo "gcloud configured for project {{ workload.project_id }}"
     next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: route_action
+      - step: route_action
 
   - step: route_action
     desc: Route by action
     tool:
-      kind: noop
+      kind: shell
+      cmds:
+        - echo "Routing action {{ workload.action }}"
     next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: maybe_create_artifact_registry
-          when: "{{ workload.action == 'provision' }}"
-        - step: maybe_create_artifact_registry
-          when: "{{ workload.action == 'provision-deploy' }}"
-        - step: configure_kubectl
-          when: "{{ workload.action == 'deploy' }}"
-        - step: configure_kubectl
-          when: "{{ workload.action == 'status' }}"
-        - step: configure_kubectl
-          when: "{{ workload.action == 'destroy' }}"
-        - step: show_help
+      - when: "{{ workload.action == 'provision' or workload.action == 'provision-deploy' }}"
+        then:
+          - step: maybe_create_artifact_registry
+      - when: "{{ workload.action == 'deploy' or workload.action == 'status' or workload.action == 'destroy' }}"
+        then:
+          - step: configure_kubectl
+      - step: show_help
 
   - step: maybe_create_artifact_registry
     desc: Create Artifact Registry repository if requested
@@ -227,10 +217,7 @@ workflow:
             --description="NoETL images for fresh GKE deployment"
           echo "Artifact Registry created"
     next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: create_cluster
+      - step: create_cluster
 
   - step: create_cluster
     desc: Create GKE Autopilot cluster
@@ -243,16 +230,34 @@ workflow:
             echo "Cluster {{ workload.cluster_name }} already exists"
             exit 0
           fi
+
+          CPU_LIMIT=$(gcloud compute project-info describe --project {{ workload.project_id }} --format='value(quotas[metric=CPUS_ALL_REGIONS].limit)')
+          CPU_USAGE=$(gcloud compute project-info describe --project {{ workload.project_id }} --format='value(quotas[metric=CPUS_ALL_REGIONS].usage)')
+          REQUIRED_CPU="{{ workload.min_global_cpu_quota }}"
+
+          if [ -n "$CPU_LIMIT" ]; then
+            echo "CPUS_ALL_REGIONS quota: limit=$CPU_LIMIT usage=$CPU_USAGE required_min=$REQUIRED_CPU"
+            if awk "BEGIN {exit !($CPU_LIMIT < $REQUIRED_CPU)}"; then
+              echo "Detected low CPUS_ALL_REGIONS quota for Autopilot surge operations."
+              echo "Current limit ($CPU_LIMIT) is below required minimum ($REQUIRED_CPU)."
+              echo "Request quota increase in GCP Console:"
+              echo "  IAM & Admin -> Quotas -> filter CPUS_ALL_REGIONS"
+              if [ "{{ workload.enforce_cpu_quota_check }}" = "true" ]; then
+                echo "ERROR: Quota check failed. Increase quota or set enforce_cpu_quota_check=false to bypass."
+                exit 1
+              else
+                echo "WARNING: Quota check failed, but continuing because enforce_cpu_quota_check=false"
+              fi
+            fi
+          fi
+
           gcloud container clusters create-auto {{ workload.cluster_name }} \
             --region {{ workload.region }} \
             --project {{ workload.project_id }} \
             --release-channel {{ workload.release_channel }}
           echo "Cluster created"
     next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: configure_kubectl
+      - step: configure_kubectl
 
   - step: configure_kubectl
     desc: Configure kubectl context for cluster
@@ -275,30 +280,28 @@ workflow:
             --project {{ workload.project_id }}
           kubectl cluster-info
     next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: after_kube_context
+      - step: after_kube_context
 
   - step: after_kube_context
     desc: Continue based on action
     tool:
-      kind: noop
+      kind: shell
+      cmds:
+        - echo "Continuing action {{ workload.action }}"
     next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: end
-          when: "{{ workload.action == 'provision' }}"
-        - step: add_helm_repos
-          when: "{{ workload.action == 'deploy' }}"
-        - step: add_helm_repos
-          when: "{{ workload.action == 'provision-deploy' }}"
-        - step: check_status
-          when: "{{ workload.action == 'status' }}"
-        - step: destroy_stack
-          when: "{{ workload.action == 'destroy' }}"
-        - step: end
+      - when: "{{ workload.action == 'provision' }}"
+        then:
+          - step: end
+      - when: "{{ workload.action == 'deploy' or workload.action == 'provision-deploy' }}"
+        then:
+          - step: add_helm_repos
+      - when: "{{ workload.action == 'status' }}"
+        then:
+          - step: check_status
+      - when: "{{ workload.action == 'destroy' }}"
+        then:
+          - step: destroy_stack
+      - step: end
 
   - step: add_helm_repos
     desc: Add Helm repositories needed for dependencies
@@ -312,10 +315,7 @@ workflow:
           helm repo update
           echo "Helm repositories updated"
     next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: maybe_build_images
+      - step: maybe_build_images
 
   - step: maybe_build_images
     desc: Build and push images if requested
@@ -365,10 +365,7 @@ workflow:
               .
           fi
     next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: deploy_postgres
+      - step: deploy_postgres
 
   - step: deploy_postgres
     desc: Deploy PostgreSQL
@@ -390,10 +387,7 @@ workflow:
 
           kubectl wait --for=condition=ready pod -l app.kubernetes.io/instance=noetl-postgres -n postgres --timeout=300s
     next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: init_noetl_schema
+      - step: init_noetl_schema
 
   - step: init_noetl_schema
     desc: Initialize NoETL schema in PostgreSQL
@@ -426,10 +420,7 @@ workflow:
           kubectl exec -n postgres "$POSTGRES_POD" -- /bin/sh -c "PGPASSWORD={{ workload.postgres_password }} psql -U postgres -d noetl -c \"GRANT ALL ON SCHEMA noetl TO noetl; GRANT ALL ON ALL TABLES IN SCHEMA noetl TO noetl; GRANT ALL ON ALL SEQUENCES IN SCHEMA noetl TO noetl;\""
           echo "NoETL schema initialized"
     next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: deploy_nats
+      - step: deploy_nats
 
   - step: deploy_nats
     desc: Deploy NATS with JetStream
@@ -450,22 +441,19 @@ workflow:
             --set 'config.merge.authorization.users[0].password={{ workload.nats_password }}'
           kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=nats -n nats --timeout=240s
     next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: maybe_deploy_clickhouse
+      - step: maybe_deploy_clickhouse
 
   - step: maybe_deploy_clickhouse
     desc: Optionally deploy ClickHouse
     tool:
-      kind: noop
+      kind: shell
+      cmds:
+        - echo "deploy_clickhouse={{ workload.deploy_clickhouse }}"
     next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: deploy_clickhouse
-          when: "{{ workload.deploy_clickhouse == true }}"
-        - step: deploy_noetl
+      - when: "{{ workload.deploy_clickhouse == true }}"
+        then:
+          - step: deploy_clickhouse
+      - step: deploy_noetl
 
   - step: deploy_clickhouse
     desc: Deploy ClickHouse
@@ -483,10 +471,7 @@ workflow:
             --set persistence.size={{ workload.clickhouse_storage_size }}
           kubectl wait --for=condition=ready pod -l app.kubernetes.io/instance=clickhouse -n clickhouse --timeout=300s || true
     next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: deploy_noetl
+      - step: deploy_noetl
 
   - step: deploy_noetl
     desc: Deploy NoETL server and worker stack
@@ -527,10 +512,52 @@ workflow:
           kubectl rollout status deployment/noetl-server -n noetl --timeout=300s
           kubectl rollout status deployment/noetl-worker -n noetl --timeout=300s
     next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: deploy_gateway
+      - step: ensure_gateway_static_ip
+
+  - step: ensure_gateway_static_ip
+    desc: Reserve gateway static IP (when using LoadBalancer service)
+    tool:
+      kind: shell
+      cmds:
+        - |
+          set -e
+          if [ "{{ workload.gateway_service_type }}" != "LoadBalancer" ]; then
+            echo "Gateway service type is not LoadBalancer, skipping static IP reservation"
+            exit 0
+          fi
+
+          if [ -z "{{ workload.gateway_load_balancer_ip }}" ]; then
+            echo "Gateway static IP not provided, skipping reservation"
+            exit 0
+          fi
+
+          TARGET_IP="{{ workload.gateway_load_balancer_ip }}"
+          echo "Ensuring static IP exists: $TARGET_IP"
+
+          EXISTING_NAME=$(gcloud compute addresses list \
+            --project {{ workload.project_id }} \
+            --regions {{ workload.region }} \
+            --filter="address=$TARGET_IP" \
+            --format="value(name)" | head -n 1)
+
+          if [ -n "$EXISTING_NAME" ]; then
+            echo "Static IP $TARGET_IP already reserved as '$EXISTING_NAME'"
+            exit 0
+          fi
+
+          ADDRESS_NAME="noetl-gateway-static-ip"
+          if gcloud compute addresses describe "$ADDRESS_NAME" --region {{ workload.region }} --project {{ workload.project_id }} >/dev/null 2>&1; then
+            ADDRESS_NAME="${ADDRESS_NAME}-$(date +%s)"
+          fi
+
+          gcloud compute addresses create "$ADDRESS_NAME" \
+            --project {{ workload.project_id }} \
+            --region {{ workload.region }} \
+            --addresses "$TARGET_IP"
+
+          echo "Reserved static IP $TARGET_IP as '$ADDRESS_NAME'"
+    next:
+      - step: deploy_gateway
 
   - step: deploy_gateway
     desc: Deploy NoETL Gateway
@@ -542,10 +569,18 @@ workflow:
           REGISTRY="{{ workload.region }}-docker.pkg.dev/{{ workload.project_id }}/{{ workload.repository_id }}"
           GATEWAY_IMAGE="{{ workload.gateway_image_repository }}"
           [ -z "$GATEWAY_IMAGE" ] && GATEWAY_IMAGE="$REGISTRY/noetl-gateway"
+          GATEWAY_SERVICE_TYPE="{{ workload.gateway_service_type }}"
+          GATEWAY_STATIC_IP="{{ workload.gateway_load_balancer_ip }}"
 
           INGRESS_ARGS=""
           if [ "{{ workload.deploy_ingress }}" = "true" ]; then
             INGRESS_ARGS="--set ingress.enabled=true --set ingress.className=gce --set ingress.host={{ workload.gateway_public_host }} --set ingress.managedCertificate.enabled=true --set ingress.managedCertificate.name=gateway-managed-cert"
+          fi
+
+          GATEWAY_SERVICE_ARGS="--set service.type=$GATEWAY_SERVICE_TYPE"
+          if [ "$GATEWAY_SERVICE_TYPE" = "LoadBalancer" ] && [ -n "$GATEWAY_STATIC_IP" ]; then
+            GATEWAY_SERVICE_ARGS="$GATEWAY_SERVICE_ARGS --set service.loadBalancerIP=$GATEWAY_STATIC_IP"
+            echo "Gateway will use static LoadBalancer IP: $GATEWAY_STATIC_IP"
           fi
 
           helm upgrade --install noetl-gateway ./automation/helm/gateway \
@@ -554,19 +589,17 @@ workflow:
             --set namespace=gateway \
             --set image.repository="$GATEWAY_IMAGE" \
             --set image.tag={{ workload.gateway_image_tag }} \
-            --set service.type=ClusterIP \
             --set env.noetlBaseUrl=http://noetl.noetl.svc.cluster.local:8082 \
             --set env.natsUrl=nats://{{ workload.nats_user }}:{{ workload.nats_password }}@nats.nats.svc.cluster.local:4222 \
             --set env.corsAllowedOrigins={{ workload.gateway_cors_allowed_origins }} \
             --set env.authBypass={{ workload.gateway_auth_bypass }} \
+            $GATEWAY_SERVICE_ARGS \
             $INGRESS_ARGS
 
           kubectl rollout status deployment/gateway -n gateway --timeout=300s
+          kubectl get svc gateway -n gateway -o wide
     next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: deploy_gui
+      - step: deploy_gui
 
   - step: deploy_gui
     desc: Deploy NoETL GUI
@@ -594,10 +627,7 @@ workflow:
 
           kubectl rollout status deployment/gui -n gui --timeout=300s
     next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: check_status
+      - step: check_status
 
   - step: check_status
     desc: Show deployment status
@@ -628,12 +658,10 @@ workflow:
           kubectl get ingress -n gateway
           kubectl get ingress -n gui
     next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: maybe_destroy_cluster
-          when: "{{ workload.action == 'destroy' }}"
-        - step: end
+      - when: "{{ workload.action == 'destroy' }}"
+        then:
+          - step: maybe_destroy_cluster
+      - step: end
 
   - step: destroy_stack
     desc: Uninstall deployed Helm releases
@@ -651,14 +679,12 @@ workflow:
           helm uninstall noetl -n noetl --ignore-not-found
           helm uninstall clickhouse -n clickhouse --ignore-not-found
           helm uninstall nats -n nats --ignore-not-found
+          helm uninstall postgres -n postgres --ignore-not-found
           helm uninstall noetl-postgres -n postgres --ignore-not-found
           kubectl delete namespace gui gateway noetl clickhouse nats postgres --ignore-not-found=true
           echo "Stack uninstall completed"
     next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: maybe_destroy_cluster
+      - step: maybe_destroy_cluster
 
   - step: maybe_destroy_cluster
     desc: Optionally delete GKE cluster
@@ -680,12 +706,11 @@ workflow:
             --quiet
           echo "Cluster deletion requested"
     next:
-      spec:
-        mode: exclusive
-      arcs:
-        - step: end
+      - step: end
 
   - step: end
     desc: End workflow
     tool:
-      kind: noop
+      kind: shell
+      cmds:
+        - echo "Done"

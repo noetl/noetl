@@ -10,6 +10,21 @@ executor:
 workload:
   registry: "local"
   image_name: "noetl"
+  gke_action: "help"
+  gke_project_id: ""
+  gke_region: "us-central1"
+  gke_cluster_name: "noetl-cluster"
+  gke_cluster_action: "help"
+  gke_cluster_use_blueprint: true
+  gke_cluster_skip_snapshot: false
+  gke_build_images: true
+  gke_deploy_ingress: false
+  gke_gateway_service_type: "ClusterIP"
+  gke_gateway_static_ip: ""
+  gke_gateway_public_host: "gateway.example.com"
+  gke_noetl_public_host: "api.example.com"
+  gke_gui_public_host: "gui.example.com"
+  gke_gui_gateway_public_url: "https://gateway.example.com"
 workflow:
   - step: start
     desc: Entry point for automation workflows
@@ -29,6 +44,10 @@ workflow:
           when: "{{ target == 'destroy' }}"
         - step: quick_dev
           when: "{{ target == 'dev' }}"
+        - step: gke_fresh
+          when: "{{ target == 'gke-fresh' }}"
+        - step: gke_cluster
+          when: "{{ target == 'gke-cluster' }}"
         - step: unknown_target
 
   - step: show_help
@@ -54,7 +73,24 @@ workflow:
           echo "  bootstrap   - Complete K8s environment setup"
           echo "  destroy     - Destroy environment and clean up"
           echo "  dev         - Quick development cycle"
+          echo "  gke-fresh   - GCP GKE fresh provision/deploy/status/destroy orchestration"
+          echo "  gke-cluster - GKE cluster lifecycle (snapshot/provision/destroy/recreate)"
           echo "  test        - Run complete test suite"
+          echo ""
+          echo "GKE Fresh example:"
+          echo "  noetl run automation/main.yaml \\"
+          echo "    --set target=gke-fresh \\"
+          echo "    --set gke_action=provision-deploy \\"
+          echo "    --set gke_project_id=noetl-demo-19700101 \\"
+          echo "    --set gke_gateway_service_type=LoadBalancer \\"
+          echo "    --set gke_gateway_static_ip=34.71.6.63"
+          echo ""
+          echo "GKE Cluster lifecycle example:"
+          echo "  noetl run automation/main.yaml \\"
+          echo "    --set target=gke-cluster \\"
+          echo "    --set gke_cluster_action=recreate \\"
+          echo "    --set gke_project_id=noetl-demo-19700101 \\"
+          echo "    --set gke_cluster_name=noetl-cluster"
           echo ""
     next:
       spec:
@@ -96,6 +132,48 @@ workflow:
       arcs:
         - step: end
 
+  - step: gke_fresh
+    desc: Run fresh GKE stack orchestration
+    tool:
+      kind: playbook
+      path: gcp_gke/noetl_gke_fresh_stack.yaml
+      args:
+        action: "{{ workload.gke_action }}"
+        project_id: "{{ workload.gke_project_id }}"
+        region: "{{ workload.gke_region }}"
+        cluster_name: "{{ workload.gke_cluster_name }}"
+        build_images: "{{ workload.gke_build_images }}"
+        deploy_ingress: "{{ workload.gke_deploy_ingress }}"
+        gateway_service_type: "{{ workload.gke_gateway_service_type }}"
+        gateway_load_balancer_ip: "{{ workload.gke_gateway_static_ip }}"
+        gateway_public_host: "{{ workload.gke_gateway_public_host }}"
+        noetl_public_host: "{{ workload.gke_noetl_public_host }}"
+        gui_public_host: "{{ workload.gke_gui_public_host }}"
+        gui_gateway_public_url: "{{ workload.gke_gui_gateway_public_url }}"
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
+
+  - step: gke_cluster
+    desc: Run standalone GKE cluster lifecycle playbook
+    tool:
+      kind: playbook
+      path: gcp_gke/gke_cluster_recreate.yaml
+      args:
+        action: "{{ workload.gke_cluster_action }}"
+        project_id: "{{ workload.gke_project_id }}"
+        region: "{{ workload.gke_region }}"
+        cluster_name: "{{ workload.gke_cluster_name }}"
+        use_blueprint: "{{ workload.gke_cluster_use_blueprint }}"
+        skip_snapshot: "{{ workload.gke_cluster_skip_snapshot }}"
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
+
   - step: unknown_target
     desc: Handle unknown target
     tool:
@@ -103,7 +181,7 @@ workflow:
       cmds:
         - |
           echo "Error: Unknown target '{{ target }}'"
-          echo "Available targets: bootstrap, destroy, dev, test, help"
+          echo "Available targets: bootstrap, destroy, dev, gke-fresh, gke-cluster, test, help"
           exit 1
     next:
       spec:
