@@ -193,6 +193,7 @@ const sidebars: SidebarsConfig = {
       label: 'GUI',
       items: [
         'gui',
+        'gui/custom-ui-gateway',
       ],
     },
     {

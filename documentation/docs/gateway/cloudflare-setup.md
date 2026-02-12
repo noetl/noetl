@@ -321,6 +321,17 @@ curl https://www.cloudflare.com/ips-v6
 | Type | Name | Content | Proxy | TTL |
 |------|------|---------|-------|-----|
 | A | gateway | `34.46.180.136` | Proxied | Auto |
+| A | @ | `35.226.162.30` | Proxied | Auto |
+
+### Apex Conflict Note
+
+Cloudflare cannot keep both of these at the same time for `mestumre.dev`:
+
+- `CNAME @ -> c.storage.googleapis.com`
+- `A @ -> 35.226.162.30`
+
+If you want GUI on `https://mestumre.dev`, remove the existing apex CNAME and use the apex A record above.
+If you must keep the apex CNAME, use `gui.mestumre.dev` for GUI and point that subdomain to `35.226.162.30`.
 
 ### Required Settings
 

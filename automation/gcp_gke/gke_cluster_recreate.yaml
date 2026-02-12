@@ -137,7 +137,10 @@ workflow:
         - when: "{{ workload.action == 'status' }}"
           then:
             - step: cluster_status
-        - when: "{{ workload.action == 'destroy' or workload.action == 'recreate' }}"
+        - when: "{{ workload.action == 'destroy' }}"
+          then:
+            - step: maybe_snapshot_before_destroy
+        - when: "{{ workload.action == 'recreate' }}"
           then:
             - step: maybe_snapshot_before_destroy
         - when: "{{ workload.action == 'provision' }}"
@@ -191,7 +194,10 @@ workflow:
             echo "Cluster not found; snapshot captured project-level data only"
           fi
     next:
-        - when: "{{ workload.action == 'destroy' or workload.action == 'recreate' }}"
+        - when: "{{ workload.action == 'destroy' }}"
+          then:
+            - step: destroy_cluster
+        - when: "{{ workload.action == 'recreate' }}"
           then:
             - step: destroy_cluster
         - step: end

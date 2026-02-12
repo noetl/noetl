@@ -75,6 +75,10 @@ workload:
   gateway_auth_bypass: "false"
   gateway_cors_allowed_origins: "http://localhost:3001,https://gui.example.com,https://gateway.example.com"
 
+  # GUI settings
+  gui_service_type: ClusterIP
+  gui_load_balancer_ip: ""
+
 workflow:
   - step: start
     desc: Validate input and route action
@@ -95,10 +99,7 @@ workflow:
             exit 1
           fi
     next:
-      - when: "{{ workload.action == 'help' }}"
-        then:
-          - step: show_help
-      - when: "{{ workload.action == 'provision' or workload.action == 'deploy' or workload.action == 'provision-deploy' or workload.action == 'status' or workload.action == 'destroy' }}"
+      - when: "{{ workload.action != 'help' }}"
         then:
           - step: verify_prerequisites
       - step: show_help
@@ -132,6 +133,16 @@ workflow:
           echo "    --set gateway_service_type=LoadBalancer \\"
           echo "    --set gateway_load_balancer_ip=34.71.6.63 \\"
           echo "    --set build_images=false"
+          echo ""
+          echo "  # Expose GUI and gateway without exposing NoETL API"
+          echo "  noetl run automation/gcp_gke/noetl_gke_fresh_stack.yaml \\"
+          echo "    --set action=deploy \\"
+          echo "    --set project_id=my-gcp-project \\"
+          echo "    --set deploy_ingress=false \\"
+          echo "    --set gateway_service_type=LoadBalancer \\"
+          echo "    --set gateway_load_balancer_ip=34.71.6.63 \\"
+          echo "    --set gui_service_type=LoadBalancer \\"
+          echo "    --set gui_gateway_public_url=https://gateway.example.com"
           echo ""
           echo "  # Deploy to existing cluster"
           echo "  noetl run automation/gcp_gke/noetl_gke_fresh_stack.yaml \\"
@@ -185,10 +196,10 @@ workflow:
       cmds:
         - echo "Routing action {{ workload.action }}"
     next:
-      - when: "{{ workload.action == 'provision' or workload.action == 'provision-deploy' }}"
+      - when: "{{ workload.action == 'provision' }}"
         then:
           - step: maybe_create_artifact_registry
-      - when: "{{ workload.action == 'deploy' or workload.action == 'status' or workload.action == 'destroy' }}"
+      - when: "{{ workload.action != 'provision' and workload.action != 'help' }}"
         then:
           - step: configure_kubectl
       - step: show_help
@@ -292,15 +303,15 @@ workflow:
       - when: "{{ workload.action == 'provision' }}"
         then:
           - step: end
-      - when: "{{ workload.action == 'deploy' or workload.action == 'provision-deploy' }}"
-        then:
-          - step: add_helm_repos
       - when: "{{ workload.action == 'status' }}"
         then:
           - step: check_status
       - when: "{{ workload.action == 'destroy' }}"
         then:
           - step: destroy_stack
+      - when: "{{ workload.action != 'provision' and workload.action != 'status' and workload.action != 'destroy' and workload.action != 'help' }}"
+        then:
+          - step: add_helm_repos
       - step: end
 
   - step: add_helm_repos
@@ -340,29 +351,26 @@ workflow:
           if [ "{{ workload.build_noetl_image }}" = "true" ]; then
             echo "Building NoETL image -> $NOETL_IMAGE:{{ workload.noetl_image_tag }}"
             gcloud builds submit \
+              docker/noetl/pip \
               --project {{ workload.project_id }} \
-              --tag "$NOETL_IMAGE:{{ workload.noetl_image_tag }}" \
-              -f docker/noetl/pip/Dockerfile \
-              .
+              --tag "$NOETL_IMAGE:{{ workload.noetl_image_tag }}"
           fi
 
           if [ "{{ workload.build_gateway_image }}" = "true" ]; then
             echo "Building Gateway image -> $GATEWAY_IMAGE:{{ workload.gateway_image_tag }}"
             gcloud builds submit \
+              crates/gateway \
               --project {{ workload.project_id }} \
-              --tag "$GATEWAY_IMAGE:{{ workload.gateway_image_tag }}" \
-              -f crates/gateway/Dockerfile \
-              crates/gateway
+              --tag "$GATEWAY_IMAGE:{{ workload.gateway_image_tag }}"
           fi
 
           if [ "{{ workload.build_gui_image }}" = "true" ]; then
             echo "Building GUI image -> $GUI_IMAGE:{{ workload.gui_image_tag }}"
             gcloud builds submit \
+              . \
               --project {{ workload.project_id }} \
-              --tag "$GUI_IMAGE:{{ workload.gui_image_tag }}" \
-              --substitutions=_VITE_GATEWAY_URL={{ workload.gui_gateway_public_url }} \
-              -f automation/gcp_gke/assets/gui/Dockerfile \
-              .
+              --config automation/gcp_gke/assets/gui/cloudbuild.yaml \
+              --substitutions=_IMAGE=$GUI_IMAGE:{{ workload.gui_image_tag }},_VITE_GATEWAY_URL={{ workload.gui_gateway_public_url }}
           fi
     next:
       - step: deploy_postgres
@@ -409,15 +417,32 @@ workflow:
             exit 1
           fi
 
-          TABLE_EXISTS=$(kubectl exec -n postgres "$POSTGRES_POD" -- /bin/sh -c "PGPASSWORD={{ workload.postgres_password }} psql -U postgres -d noetl -tAc \"SELECT 1 FROM information_schema.tables WHERE table_schema='noetl' AND table_name='event'\"" 2>/dev/null || echo "")
+          PGHOST="noetl-postgres-postgresql.postgres.svc.cluster.local"
+          PGPORT="5432"
+          READY="false"
+          for i in $(seq 1 20); do
+            if kubectl exec -n postgres "$POSTGRES_POD" -- /bin/sh -c "PGPASSWORD={{ workload.postgres_password }} psql -h $PGHOST -p $PGPORT -U postgres -d noetl -tAc \"SELECT 1\"" >/dev/null 2>&1; then
+              READY="true"
+              break
+            fi
+            echo "PostgreSQL not ready yet (attempt $i/20), retrying..."
+            sleep 5
+          done
+
+          if [ "$READY" != "true" ]; then
+            echo "WARNING: PostgreSQL readiness check timed out, skipping schema init for this run"
+            exit 0
+          fi
+
+          TABLE_EXISTS=$(kubectl exec -n postgres "$POSTGRES_POD" -- /bin/sh -c "PGPASSWORD={{ workload.postgres_password }} psql -h $PGHOST -p $PGPORT -U postgres -d noetl -tAc \"SELECT 1 FROM information_schema.tables WHERE table_schema='noetl' AND table_name='event'\"" 2>/dev/null || echo "")
           if [ "$TABLE_EXISTS" = "1" ]; then
             echo "NoETL schema already initialized"
             exit 0
           fi
 
-          kubectl exec -n postgres "$POSTGRES_POD" -- /bin/sh -c "PGPASSWORD={{ workload.postgres_password }} psql -U postgres -d noetl -c \"CREATE SCHEMA IF NOT EXISTS noetl\""
-          cat "$SCHEMA_FILE" | kubectl exec -i -n postgres "$POSTGRES_POD" -- /bin/sh -c "PGPASSWORD={{ workload.postgres_password }} psql -U postgres -d noetl"
-          kubectl exec -n postgres "$POSTGRES_POD" -- /bin/sh -c "PGPASSWORD={{ workload.postgres_password }} psql -U postgres -d noetl -c \"GRANT ALL ON SCHEMA noetl TO noetl; GRANT ALL ON ALL TABLES IN SCHEMA noetl TO noetl; GRANT ALL ON ALL SEQUENCES IN SCHEMA noetl TO noetl;\""
+          kubectl exec -n postgres "$POSTGRES_POD" -- /bin/sh -c "PGPASSWORD={{ workload.postgres_password }} psql -h $PGHOST -p $PGPORT -U postgres -d noetl -c \"CREATE SCHEMA IF NOT EXISTS noetl\""
+          cat "$SCHEMA_FILE" | kubectl exec -i -n postgres "$POSTGRES_POD" -- /bin/sh -c "PGPASSWORD={{ workload.postgres_password }} psql -h $PGHOST -p $PGPORT -U postgres -d noetl"
+          kubectl exec -n postgres "$POSTGRES_POD" -- /bin/sh -c "PGPASSWORD={{ workload.postgres_password }} psql -h $PGHOST -p $PGPORT -U postgres -d noetl -c \"GRANT ALL ON SCHEMA noetl TO noetl; GRANT ALL ON ALL TABLES IN SCHEMA noetl TO noetl; GRANT ALL ON ALL SEQUENCES IN SCHEMA noetl TO noetl;\""
           echo "NoETL schema initialized"
     next:
       - step: deploy_nats
@@ -571,6 +596,8 @@ workflow:
           [ -z "$GATEWAY_IMAGE" ] && GATEWAY_IMAGE="$REGISTRY/noetl-gateway"
           GATEWAY_SERVICE_TYPE="{{ workload.gateway_service_type }}"
           GATEWAY_STATIC_IP="{{ workload.gateway_load_balancer_ip }}"
+          GATEWAY_CORS_ALLOWED_ORIGINS="{{ workload.gateway_cors_allowed_origins }}"
+          GATEWAY_CORS_ALLOWED_ORIGINS_ESCAPED=$(printf '%s' "$GATEWAY_CORS_ALLOWED_ORIGINS" | sed 's/,/\\,/g')
 
           INGRESS_ARGS=""
           if [ "{{ workload.deploy_ingress }}" = "true" ]; then
@@ -591,7 +618,7 @@ workflow:
             --set image.tag={{ workload.gateway_image_tag }} \
             --set env.noetlBaseUrl=http://noetl.noetl.svc.cluster.local:8082 \
             --set env.natsUrl=nats://{{ workload.nats_user }}:{{ workload.nats_password }}@nats.nats.svc.cluster.local:4222 \
-            --set env.corsAllowedOrigins={{ workload.gateway_cors_allowed_origins }} \
+            --set-string env.corsAllowedOrigins=$GATEWAY_CORS_ALLOWED_ORIGINS_ESCAPED \
             --set env.authBypass={{ workload.gateway_auth_bypass }} \
             $GATEWAY_SERVICE_ARGS \
             $INGRESS_ARGS
@@ -611,10 +638,18 @@ workflow:
           REGISTRY="{{ workload.region }}-docker.pkg.dev/{{ workload.project_id }}/{{ workload.repository_id }}"
           GUI_IMAGE="{{ workload.gui_image_repository }}"
           [ -z "$GUI_IMAGE" ] && GUI_IMAGE="$REGISTRY/noetl-gui"
+          GUI_SERVICE_TYPE="{{ workload.gui_service_type }}"
+          GUI_STATIC_IP="{{ workload.gui_load_balancer_ip }}"
 
           INGRESS_ARGS=""
           if [ "{{ workload.deploy_ingress }}" = "true" ]; then
             INGRESS_ARGS="--set ingress.enabled=true --set ingress.className=gce --set ingress.host={{ workload.gui_public_host }} --set ingress.managedCertificate.enabled=true --set ingress.managedCertificate.name=gui-managed-cert"
+          fi
+
+          GUI_SERVICE_ARGS="--set service.type=$GUI_SERVICE_TYPE"
+          if [ "$GUI_SERVICE_TYPE" = "LoadBalancer" ] && [ -n "$GUI_STATIC_IP" ]; then
+            GUI_SERVICE_ARGS="$GUI_SERVICE_ARGS --set service.loadBalancerIP=$GUI_STATIC_IP"
+            echo "GUI will use static LoadBalancer IP: $GUI_STATIC_IP"
           fi
 
           helm upgrade --install noetl-gui ./automation/gcp_gke/helm/gui \
@@ -623,9 +658,11 @@ workflow:
             --set namespace=gui \
             --set image.repository="$GUI_IMAGE" \
             --set image.tag={{ workload.gui_image_tag }} \
+            $GUI_SERVICE_ARGS \
             $INGRESS_ARGS
 
           kubectl rollout status deployment/gui -n gui --timeout=300s
+          kubectl get svc gui -n gui -o wide
     next:
       - step: check_status
 

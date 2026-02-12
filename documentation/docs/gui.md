@@ -12,6 +12,10 @@ This guide explains how to run and validate the NoETL GUI located at:
 
 The GUI is configured to use **NoETL Gateway only** (no direct NoETL API access).
 
+For teams building a custom frontend, see:
+
+- [Build Custom UI with Gateway](./gui/custom-ui-gateway)
+
 ## Prerequisites
 
 - Node.js 20+ (or a compatible Node.js runtime)
@@ -57,6 +61,30 @@ Expected behavior:
 
 - `type-check` exits with code `0`
 - `build` generates `gui/dist`
+
+## GKE Pinned Deploy Command (Keep This)
+
+Use this command to redeploy with pinned static IPs for gateway and GUI:
+
+```bash
+noetl run automation/gcp_gke/noetl_gke_fresh_stack.yaml \
+  --set action=deploy \
+  --set project_id=noetl-demo-19700101 \
+  --set region=us-central1 \
+  --set cluster_name=noetl-cluster \
+  --set deploy_ingress=false \
+  --set build_images=false \
+  --set deploy_clickhouse=false \
+  --set gateway_service_type=LoadBalancer \
+  --set gateway_load_balancer_ip=34.46.180.136 \
+  --set gui_service_type=LoadBalancer \
+  --set gui_load_balancer_ip=35.226.162.30
+```
+
+Current pinned values:
+
+- Gateway: `34.46.180.136`
+- GUI: `35.226.162.30`
 
 ## Gateway-Only Verification Checklist
 
