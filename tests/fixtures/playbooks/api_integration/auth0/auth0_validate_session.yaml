@@ -24,7 +24,7 @@ workload:
   nats_credential: nats_credential
   session_bucket: sessions
   request_id: ''
-  gateway_url: http://gateway.gateway.svc.cluster.local:8090
+  gateway_url: http://gateway.gateway.svc.cluster.local
 workflow:
 - step: start
   desc: Lookup and validate session from Postgres (source of truth)

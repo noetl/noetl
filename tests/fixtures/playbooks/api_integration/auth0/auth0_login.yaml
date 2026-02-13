@@ -48,7 +48,7 @@ workload:
   session_bucket: sessions
   callback_subject: ""
   request_id: ""
-  gateway_url: "http://gateway.gateway.svc.cluster.local:8090"
+  gateway_url: "http://gateway.gateway.svc.cluster.local"
 
 workflow:
   # Step 1: Entry point + JWT validation (merged)

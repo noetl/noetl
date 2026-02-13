@@ -17,9 +17,9 @@ workload:
   amadeus_secret_path: projects/1014428265962/secrets/api-secret-test-api-amadeus-com/versions/1
   query: I want a one-way flight from SFO to JFK on July 15, 2026 for 1 adult
   request_id: ""
-  gateway_url: "http://gateway.gateway.svc.cluster.local:8090"
+  gateway_url: "http://gateway.gateway.svc.cluster.local"
   api_url: "https://test.api.amadeus.com"
-  callback_url: ""x
+  callback_url: ""
 
 keychain:
   - name: openai_token

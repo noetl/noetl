@@ -1,0 +1,17 @@
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -f
+      - crates/gateway/Dockerfile
+      - -t
+      - ${_IMAGE}
+      - crates/gateway
+images:
+  - ${_IMAGE}
+substitutions:
+  _IMAGE: us-central1-docker.pkg.dev/noetl-demo-19700101/noetl/gateway:latest
+options:
+  substitutionOption: ALLOW_LOOSE
+  machineType: E2_HIGHCPU_8
+timeout: 7200s
