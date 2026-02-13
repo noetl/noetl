@@ -34,6 +34,26 @@ export VITE_AUTH0_CLIENT_ID="<your-auth0-client-id>"
 # export VITE_AUTH0_REDIRECT_URI="http://localhost:3001/gateway/login"
 ```
 
+## Auth0 Application Settings (Required)
+
+In your Auth0 Application (client id `Jqop7YoaiZalLHdBRo5ScNQ1RJhbhbDN`), add exact URLs:
+
+- **Allowed Callback URLs**:
+  - `https://mestumre.dev/gateway/login`
+  - `https://gui.mestumre.dev/gateway/login` (if using subdomain UI)
+  - `http://localhost:3001/gateway/login`
+- **Allowed Logout URLs**:
+  - `https://mestumre.dev`
+  - `https://gui.mestumre.dev`
+  - `http://localhost:3001`
+- **Allowed Web Origins**:
+  - `https://mestumre.dev`
+  - `https://gui.mestumre.dev`
+  - `https://gateway.mestumre.dev`
+  - `http://localhost:3001`
+
+`redirect_uri` must match one of Allowed Callback URLs exactly or Auth0 returns `Callback URL mismatch`.
+
 ## Run Locally
 
 From the project root:

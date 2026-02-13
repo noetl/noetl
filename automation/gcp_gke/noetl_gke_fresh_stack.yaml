@@ -623,6 +623,11 @@ workflow:
             $GATEWAY_SERVICE_ARGS \
             $INGRESS_ARGS
 
+          if [ "{{ workload.build_images }}" = "true" ] && [ "{{ workload.build_gateway_image }}" = "true" ]; then
+            echo "Gateway image was rebuilt. Forcing rollout restart to refresh pods for tag {{ workload.gateway_image_tag }}."
+            kubectl rollout restart deployment/gateway -n gateway
+          fi
+
           kubectl rollout status deployment/gateway -n gateway --timeout=300s
           kubectl get svc gateway -n gateway -o wide
     next:
@@ -660,6 +665,11 @@ workflow:
             --set image.tag={{ workload.gui_image_tag }} \
             $GUI_SERVICE_ARGS \
             $INGRESS_ARGS
+
+          if [ "{{ workload.build_images }}" = "true" ] && [ "{{ workload.build_gui_image }}" = "true" ]; then
+            echo "GUI image was rebuilt. Forcing rollout restart to refresh pods for tag {{ workload.gui_image_tag }}."
+            kubectl rollout restart deployment/gui -n gui
+          fi
 
           kubectl rollout status deployment/gui -n gui --timeout=300s
           kubectl get svc gui -n gui -o wide
