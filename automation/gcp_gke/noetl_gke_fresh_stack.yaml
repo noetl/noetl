@@ -445,6 +445,87 @@ workflow:
           kubectl exec -n postgres "$POSTGRES_POD" -- /bin/sh -c "PGPASSWORD={{ workload.postgres_password }} psql -h $PGHOST -p $PGPORT -U postgres -d noetl -c \"GRANT ALL ON SCHEMA noetl TO noetl; GRANT ALL ON ALL TABLES IN SCHEMA noetl TO noetl; GRANT ALL ON ALL SEQUENCES IN SCHEMA noetl TO noetl;\""
           echo "NoETL schema initialized"
     next:
+      - step: init_demo_database
+
+  - step: init_demo_database
+    desc: Create demo_noetl database with auth and demo users for independent module management
+    tool:
+      kind: shell
+      cmds:
+        - |
+          set -e
+          POSTGRES_POD=$(kubectl get pods -n postgres -l app.kubernetes.io/instance=noetl-postgres -o jsonpath='{.items[0].metadata.name}')
+          if [ -z "$POSTGRES_POD" ]; then
+            echo "ERROR: PostgreSQL pod not found"
+            exit 1
+          fi
+
+          PGHOST="noetl-postgres-postgresql.postgres.svc.cluster.local"
+          PGPORT="5432"
+
+          echo "Creating demo_noetl database and users..."
+
+          # Create demo_noetl database if it doesn't exist
+          DB_EXISTS=$(kubectl exec -n postgres "$POSTGRES_POD" -- /bin/sh -c "PGPASSWORD={{ workload.postgres_password }} psql -h $PGHOST -p $PGPORT -U postgres -tAc \"SELECT 1 FROM pg_database WHERE datname='demo_noetl'\"" 2>/dev/null || echo "")
+          if [ "$DB_EXISTS" != "1" ]; then
+            kubectl exec -n postgres "$POSTGRES_POD" -- /bin/sh -c "PGPASSWORD={{ workload.postgres_password }} psql -h $PGHOST -p $PGPORT -U postgres -c \"CREATE DATABASE demo_noetl\""
+            echo "Created demo_noetl database"
+          else
+            echo "demo_noetl database already exists"
+          fi
+
+          # Create demo user for application tables (public schema)
+          USER_EXISTS=$(kubectl exec -n postgres "$POSTGRES_POD" -- /bin/sh -c "PGPASSWORD={{ workload.postgres_password }} psql -h $PGHOST -p $PGPORT -U postgres -tAc \"SELECT 1 FROM pg_roles WHERE rolname='demo'\"" 2>/dev/null || echo "")
+          if [ "$USER_EXISTS" != "1" ]; then
+            kubectl exec -n postgres "$POSTGRES_POD" -- /bin/sh -c "PGPASSWORD={{ workload.postgres_password }} psql -h $PGHOST -p $PGPORT -U postgres -c \"CREATE USER demo WITH PASSWORD 'demo'\""
+            echo "Created demo user (for application tables)"
+          else
+            echo "demo user already exists"
+          fi
+
+          # Create auth user for auth schema (independent module)
+          AUTH_USER_EXISTS=$(kubectl exec -n postgres "$POSTGRES_POD" -- /bin/sh -c "PGPASSWORD={{ workload.postgres_password }} psql -h $PGHOST -p $PGPORT -U postgres -tAc \"SELECT 1 FROM pg_roles WHERE rolname='auth'\"" 2>/dev/null || echo "")
+          if [ "$AUTH_USER_EXISTS" != "1" ]; then
+            kubectl exec -n postgres "$POSTGRES_POD" -- /bin/sh -c "PGPASSWORD={{ workload.postgres_password }} psql -h $PGHOST -p $PGPORT -U postgres -c \"CREATE USER auth WITH PASSWORD 'auth'\""
+            echo "Created auth user (for auth schema)"
+          else
+            echo "auth user already exists"
+          fi
+
+          # Grant database-level permissions
+          kubectl exec -n postgres "$POSTGRES_POD" -- /bin/sh -c "PGPASSWORD={{ workload.postgres_password }} psql -h $PGHOST -p $PGPORT -U postgres -c \"
+            GRANT ALL PRIVILEGES ON DATABASE demo_noetl TO demo;
+            GRANT ALL PRIVILEGES ON DATABASE demo_noetl TO auth;
+            GRANT ALL PRIVILEGES ON DATABASE demo_noetl TO noetl;
+          \""
+
+          # Grant public schema permissions (for demo user - application tables)
+          kubectl exec -n postgres "$POSTGRES_POD" -- /bin/sh -c "PGPASSWORD={{ workload.postgres_password }} psql -h $PGHOST -p $PGPORT -U postgres -d demo_noetl -c \"
+            GRANT ALL ON SCHEMA public TO demo;
+            GRANT ALL ON SCHEMA public TO noetl;
+            ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO demo;
+            ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO noetl;
+            ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO demo;
+            ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO noetl;
+          \""
+
+          # Create auth schema and grant permissions (for auth user - authentication module)
+          kubectl exec -n postgres "$POSTGRES_POD" -- /bin/sh -c "PGPASSWORD={{ workload.postgres_password }} psql -h $PGHOST -p $PGPORT -U postgres -d demo_noetl -c \"
+            CREATE SCHEMA IF NOT EXISTS auth;
+            GRANT ALL ON SCHEMA auth TO auth;
+            GRANT ALL ON SCHEMA auth TO noetl;
+            ALTER DEFAULT PRIVILEGES IN SCHEMA auth GRANT ALL ON TABLES TO auth;
+            ALTER DEFAULT PRIVILEGES IN SCHEMA auth GRANT ALL ON TABLES TO noetl;
+            ALTER DEFAULT PRIVILEGES IN SCHEMA auth GRANT ALL ON SEQUENCES TO auth;
+            ALTER DEFAULT PRIVILEGES IN SCHEMA auth GRANT ALL ON SEQUENCES TO noetl;
+          \""
+
+          echo ""
+          echo "Database users initialized:"
+          echo "  - demo/demo  -> demo_noetl.public (application tables)"
+          echo "  - auth/auth  -> demo_noetl.auth (authentication module)"
+          echo "  - noetl/noetl -> noetl.noetl (NoETL core schema)"
+    next:
       - step: deploy_nats
 
   - step: deploy_nats
