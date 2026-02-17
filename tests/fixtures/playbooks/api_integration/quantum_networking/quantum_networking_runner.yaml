@@ -1,0 +1,370 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: quantum_networking_runner
+  path: api_integration/quantum_networking
+  description: |
+    Runnable NoETL quantum networking use case with two execution modes:
+      - nvidia_simulator: local Bell-state simulation (Qiskit Aer path, with fallback)
+      - ibm_api: IBM Quantum Runtime REST job submission/poll/result retrieval
+
+workload:
+  provider: "{{ env.QUANTUM_PROVIDER | default('nvidia_simulator') }}"
+  shots: 1024
+
+  # NVIDIA simulator mode
+  nvidia_use_gpu: "{{ env.NVIDIA_USE_GPU | default('false') }}"
+
+  # IBM API mode
+  ibm_api_base: "{{ env.IBM_QUANTUM_API_BASE | default('https://api.quantum.ibm.com/runtime') }}"
+  ibm_api_version: "{{ env.IBM_QUANTUM_API_VERSION | default('2024-06-13') }}"
+  ibm_api_key: "{{ env.IBM_QUANTUM_API_KEY | default('') }}"
+  ibm_instance_crn: "{{ env.IBM_QUANTUM_INSTANCE_CRN | default('') }}"
+  ibm_backend: "{{ env.IBM_QUANTUM_BACKEND | default('ibm_brisbane') }}"
+  ibm_poll_interval_s: 10
+  ibm_poll_timeout_s: 600
+
+workflow:
+  - step: start_validate
+    desc: Validate mode and route execution
+    tool:
+      kind: python
+      args:
+        provider: "{{ provider }}"
+        shots: "{{ shots }}"
+      code: |
+        normalized_provider = str(provider or "").strip().lower()
+        shot_count = int(shots)
+
+        if shot_count <= 0:
+            result = {
+                "status": "error",
+                "message": "shots must be > 0",
+                "provider": normalized_provider,
+            }
+        else:
+            result = {
+                "status": "ok",
+                "provider": normalized_provider,
+                "shots": shot_count,
+                "message": "validated",
+            }
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: run_nvidia_simulator
+          when: "{{ provider in ['nvidia_simulator', 'nvidia'] }}"
+        - step: run_ibm_api
+          when: "{{ provider in ['ibm_api', 'ibm'] }}"
+        - step: unsupported_provider
+
+  - step: run_nvidia_simulator
+    desc: Run Bell-state simulation for quantum networking baseline
+    tool:
+      kind: python
+      args:
+        shots: "{{ shots }}"
+        nvidia_use_gpu: "{{ nvidia_use_gpu }}"
+      code: |
+        import traceback
+
+        shot_count = int(shots)
+        use_gpu = str(nvidia_use_gpu).strip().lower() in ("1", "true", "yes", "on")
+
+        mode = "qiskit_aer"
+        notes = []
+        counts = {}
+        backend_details = {}
+
+        try:
+            from qiskit import QuantumCircuit, transpile
+            from qiskit_aer import AerSimulator
+
+            simulator = AerSimulator()
+            backend_details["backend"] = "AerSimulator"
+            backend_details["device_requested"] = "GPU" if use_gpu else "CPU/default"
+
+            if use_gpu:
+                try:
+                    simulator.set_options(device="GPU")
+                    backend_details["device_selected"] = "GPU"
+                except Exception as gpu_error:
+                    backend_details["device_selected"] = "CPU/default"
+                    notes.append(f"GPU not enabled by backend: {gpu_error}")
+
+            qc = QuantumCircuit(2, 2)
+            qc.h(0)
+            qc.cx(0, 1)
+            qc.measure([0, 1], [0, 1])
+
+            compiled = transpile(qc, simulator)
+            job = simulator.run(compiled, shots=shot_count)
+            counts = job.result().get_counts()
+        except Exception as e:
+            mode = "analytic_fallback"
+            notes.append(f"Qiskit Aer path unavailable: {e}")
+            notes.append("Using analytic Bell-state fallback (00/11 distribution).")
+
+            half = shot_count // 2
+            counts = {"00": half, "11": shot_count - half}
+            backend_details = {
+                "backend": "analytic_fallback",
+                "device_selected": "cpu",
+                "traceback": traceback.format_exc(limit=2),
+            }
+
+        correlated = int(counts.get("00", 0)) + int(counts.get("11", 0))
+        qber_estimate = 1.0 - (correlated / float(max(shot_count, 1)))
+
+        result = {
+            "status": "ok",
+            "provider": "nvidia_simulator",
+            "mode": mode,
+            "shots": shot_count,
+            "counts": counts,
+            "qber_estimate": round(qber_estimate, 6),
+            "notes": notes,
+            "backend": backend_details,
+            "interpretation": "Lower qber_estimate is better; Bell correlation baseline expects 00/11 outcomes.",
+        }
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
+
+  - step: run_ibm_api
+    desc: Submit and monitor a Bell-state sampler job via IBM Quantum Runtime REST API
+    tool:
+      kind: python
+      args:
+        ibm_api_base: "{{ ibm_api_base }}"
+        ibm_api_version: "{{ ibm_api_version }}"
+        ibm_api_key: "{{ ibm_api_key }}"
+        ibm_instance_crn: "{{ ibm_instance_crn }}"
+        ibm_backend: "{{ ibm_backend }}"
+        ibm_poll_interval_s: "{{ ibm_poll_interval_s }}"
+        ibm_poll_timeout_s: "{{ ibm_poll_timeout_s }}"
+      code: |
+        import json
+        import time
+        import urllib.error
+        import urllib.request
+
+        api_base = str(ibm_api_base).rstrip("/")
+        api_version = str(ibm_api_version)
+        api_key = str(ibm_api_key or "").strip()
+        instance_crn = str(ibm_instance_crn or "").strip()
+        backend = str(ibm_backend or "").strip()
+        poll_interval = max(1, int(ibm_poll_interval_s))
+        poll_timeout = max(30, int(ibm_poll_timeout_s))
+
+        if not api_key or not instance_crn:
+            result = {
+                "status": "error",
+                "provider": "ibm_api",
+                "message": "Missing IBM credentials. Set IBM_QUANTUM_API_KEY and IBM_QUANTUM_INSTANCE_CRN.",
+                "required_env": [
+                    "IBM_QUANTUM_API_KEY",
+                    "IBM_QUANTUM_INSTANCE_CRN",
+                    "IBM_QUANTUM_BACKEND",
+                ],
+            }
+        else:
+            def request_json(method, url, payload=None):
+                body = None
+                if payload is not None:
+                    body = json.dumps(payload).encode("utf-8")
+
+                req = urllib.request.Request(url=url, data=body, method=method)
+                req.add_header("Authorization", f"Bearer {api_key}")
+                req.add_header("IBM-API-Version", api_version)
+                req.add_header("Content-Type", "application/json")
+
+                try:
+                    with urllib.request.urlopen(req, timeout=60) as resp:
+                        raw = resp.read().decode("utf-8")
+                        return resp.getcode(), (json.loads(raw) if raw else {})
+                except urllib.error.HTTPError as err:
+                    body_text = err.read().decode("utf-8", errors="replace")
+                    try:
+                        parsed = json.loads(body_text)
+                    except Exception:
+                        parsed = {"raw": body_text}
+                    return err.code, parsed
+
+            # Bell-state sampler payload in OpenQASM 3 format.
+            qasm3_bell = (
+                'OPENQASM 3.0; include "stdgates.inc"; '
+                'bit[2] c; qubit[2] q; '
+                'h q[0]; cx q[0], q[1]; '
+                'c[0] = measure q[0]; c[1] = measure q[1];'
+            )
+
+            submit_payload = {
+                "mode": "qpu",
+                "instance": instance_crn,
+                "backend": backend,
+                "program_id": "sampler",
+                "params": {
+                    "pubs": [
+                        [
+                            {
+                                "__type__": "QuantumCircuit",
+                                "__value__": qasm3_bell,
+                            },
+                            None,
+                        ]
+                    ]
+                },
+            }
+
+            submit_url = f"{api_base}/jobs"
+            status_code, submit_resp = request_json("POST", submit_url, submit_payload)
+
+            if status_code >= 300:
+                result = {
+                    "status": "error",
+                    "provider": "ibm_api",
+                    "message": "Failed to submit IBM Runtime job.",
+                    "http_status": status_code,
+                    "response": submit_resp,
+                    "request_url": submit_url,
+                }
+            else:
+                job_id = submit_resp.get("id") or submit_resp.get("job_id")
+                if not job_id:
+                    result = {
+                        "status": "error",
+                        "provider": "ibm_api",
+                        "message": "IBM response missing job id.",
+                        "submit_response": submit_resp,
+                    }
+                else:
+                    status_url = f"{api_base}/jobs/{job_id}"
+                    results_url = f"{api_base}/jobs/{job_id}/results"
+
+                    terminal = {"DONE", "COMPLETED", "ERROR", "FAILED", "CANCELLED"}
+                    started = time.time()
+                    polls = 0
+                    latest_status = {}
+                    state = "PENDING"
+
+                    while True:
+                        polls += 1
+                        s_code, status_resp = request_json("GET", status_url)
+                        latest_status = status_resp
+
+                        if s_code >= 300:
+                            result = {
+                                "status": "error",
+                                "provider": "ibm_api",
+                                "message": "Failed while polling IBM Runtime job status.",
+                                "job_id": job_id,
+                                "http_status": s_code,
+                                "response": status_resp,
+                            }
+                            break
+
+                        state = str(
+                            status_resp.get("state")
+                            or status_resp.get("status")
+                            or status_resp.get("execution", {}).get("state")
+                            or ""
+                        ).upper()
+
+                        if state in terminal:
+                            if state in {"DONE", "COMPLETED"}:
+                                r_code, results_resp = request_json("GET", results_url)
+                                if r_code >= 300:
+                                    result = {
+                                        "status": "error",
+                                        "provider": "ibm_api",
+                                        "message": "Job finished but fetching results failed.",
+                                        "job_id": job_id,
+                                        "final_state": state,
+                                        "http_status": r_code,
+                                        "response": results_resp,
+                                    }
+                                else:
+                                    result = {
+                                        "status": "ok",
+                                        "provider": "ibm_api",
+                                        "job_id": job_id,
+                                        "final_state": state,
+                                        "polls": polls,
+                                        "status_snapshot": latest_status,
+                                        "results": results_resp,
+                                    }
+                            else:
+                                result = {
+                                    "status": "error",
+                                    "provider": "ibm_api",
+                                    "message": "IBM job reached terminal non-success state.",
+                                    "job_id": job_id,
+                                    "final_state": state,
+                                    "polls": polls,
+                                    "status_snapshot": latest_status,
+                                }
+                            break
+
+                        if (time.time() - started) >= poll_timeout:
+                            result = {
+                                "status": "error",
+                                "provider": "ibm_api",
+                                "message": "IBM job polling timeout reached.",
+                                "job_id": job_id,
+                                "last_state": state,
+                                "polls": polls,
+                                "timeout_seconds": poll_timeout,
+                            }
+                            break
+
+                        time.sleep(poll_interval)
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
+
+  - step: unsupported_provider
+    desc: Handle unsupported provider values
+    tool:
+      kind: python
+      args:
+        provider: "{{ provider }}"
+      code: |
+        result = {
+            "status": "error",
+            "message": f"Unsupported provider: {provider}",
+            "supported_providers": ["nvidia_simulator", "ibm_api"],
+        }
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
+
+  - step: end
+    desc: Final response envelope
+    tool:
+      kind: python
+      args:
+        provider: "{{ provider }}"
+      code: |
+        selected = None
+        if "run_nvidia_simulator" in context:
+            selected = context["run_nvidia_simulator"]
+        elif "run_ibm_api" in context:
+            selected = context["run_ibm_api"]
+        elif "unsupported_provider" in context:
+            selected = context["unsupported_provider"]
+        else:
+            selected = {"status": "error", "message": "No execution branch result found."}
+
+        result = {
+            "status": selected.get("status", "unknown"),
+            "provider": provider,
+            "run": selected,
+        }

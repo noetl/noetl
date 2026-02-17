@@ -29,7 +29,7 @@ metadata:
     - roles
 
 workload:
-  db_credential: pg_k8s
+  db_credential: pg_auth
   action: "list_users"
   user_id: null
   role_names: []

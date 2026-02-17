@@ -1,7 +1,8 @@
-type GatewayUser = {
+export type GatewayUser = {
   email?: string;
   display_name?: string;
   name?: string;
+  roles?: string[];
   [key: string]: unknown;
 };
 
@@ -59,7 +60,7 @@ function getGatewayBaseUrl(): string {
 function getAuth0RedirectUri(): string {
   return (
     import.meta.env.VITE_AUTH0_REDIRECT_URI ||
-    `${window.location.origin}/gateway/login`
+    `${window.location.origin}/login`
   );
 }
 
@@ -437,6 +438,45 @@ export async function executeGatewayPlaybook(query: string): Promise<ExecutePlay
   const result = await authenticatedGraphQL(mutation, {
     name: PLAYBOOK_NAME,
     vars: { query },
+    clientId,
+  });
+
+  const execution = result.executePlaybook as ExecutePlaybookAsyncResult;
+  if (!execution.requestId) {
+    return execution;
+  }
+
+  return new Promise((resolve, reject) => {
+    registerPendingCallback(execution.requestId as string, resolve, reject);
+  });
+}
+
+export async function executePlaybook(
+  playbookName: string,
+  variables: Record<string, unknown>,
+): Promise<ExecutePlaybookAsyncResult> {
+  const hasAccess = await checkPlaybookAccess(playbookName, "execute");
+  if (!hasAccess) {
+    throw new Error("You do not have permission to execute this playbook");
+  }
+
+  await waitForSSEConnection();
+
+  const mutation = `
+    mutation ExecutePlaybook($name: String!, $vars: JSON, $clientId: String) {
+      executePlaybook(name: $name, variables: $vars, clientId: $clientId) {
+        id
+        executionId
+        requestId
+        name
+        status
+      }
+    }
+  `;
+
+  const result = await authenticatedGraphQL(mutation, {
+    name: playbookName,
+    vars: variables,
     clientId,
   });
 

@@ -34,6 +34,27 @@ function messageId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+const MESSAGES_STORAGE_KEY = "gateway-assistant-messages";
+
+// Load messages from sessionStorage
+const loadMessages = (): ChatMessage[] => {
+  try {
+    const stored = sessionStorage.getItem(MESSAGES_STORAGE_KEY);
+    return stored ? JSON.parse(stored) : [];
+  } catch {
+    return [];
+  }
+};
+
+// Save messages to sessionStorage
+const saveMessages = (messages: ChatMessage[]) => {
+  try {
+    sessionStorage.setItem(MESSAGES_STORAGE_KEY, JSON.stringify(messages));
+  } catch {
+    // Ignore storage errors
+  }
+};
+
 const GatewayAssistant = () => {
   const navigate = useNavigate();
   const [query, setQuery] = useState("");
@@ -41,31 +62,12 @@ const GatewayAssistant = () => {
   const [connectionReady, setConnectionReady] = useState(false);
   const [progress, setProgress] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [messages, setMessages] = useState<ChatMessage[]>(loadMessages);
   const user = useMemo(() => getUserInfo(), []);
 
   useEffect(() => {
-    const initialize = async () => {
-      if (!isAuthenticated()) {
-        navigate("/gateway/login", { replace: true });
-        return;
-      }
-
-      try {
-        const valid = await validateSession();
-        if (!valid) {
-          logout();
-          navigate("/gateway/login", { replace: true });
-          return;
-        }
-      } catch {
-        logout();
-        navigate("/gateway/login", { replace: true });
-        return;
-      }
-
-      connectSSE();
-    };
+    // Auth is handled by parent AuthenticatedApp - just connect SSE
+    connectSSE();
 
     const unsubscribeConnection = subscribeConnection((connected) => {
       setConnectionReady(connected);
@@ -74,17 +76,19 @@ const GatewayAssistant = () => {
       setProgress(message);
     });
 
-    initialize();
-
     return () => {
       unsubscribeConnection();
       unsubscribeProgress();
       disconnectSSE();
     };
-  }, [navigate]);
+  }, []);
 
   const appendMessage = (message: ChatMessage) => {
-    setMessages((previous) => [...previous, message]);
+    setMessages((previous) => {
+      const updated = [...previous, message];
+      saveMessages(updated);
+      return updated;
+    });
   };
 
   const onSubmit = async (prompt: string) => {
@@ -117,7 +121,7 @@ const GatewayAssistant = () => {
       const detail = submitError instanceof Error ? submitError.message : "Failed to execute playbook";
       if (detail === "Session expired" || detail === "Not authenticated") {
         logout();
-        navigate("/gateway/login", { replace: true });
+        navigate("/login", { replace: true });
         return;
       }
       setError(detail);
@@ -134,7 +138,7 @@ const GatewayAssistant = () => {
           <div className="gateway-header">
             <div>
               <Title level={3} style={{ marginBottom: 4 }}>
-                Amadeus Gateway Assistant
+                Travel Assistant
               </Title>
               <Text type="secondary">
                 Ask flight-search queries and execute playbook `api_integration/amadeus_ai_api`.
@@ -150,7 +154,7 @@ const GatewayAssistant = () => {
               <Button
                 onClick={() => {
                   logout();
-                  navigate("/gateway/login", { replace: true });
+                  navigate("/login", { replace: true });
                 }}
               >
                 Logout

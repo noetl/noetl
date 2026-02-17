@@ -31,7 +31,7 @@ const GatewayLogin = () => {
   useEffect(() => {
     const initialize = async () => {
       if (isAuthenticated() && getUserInfo()) {
-        navigate("/gateway", { replace: true });
+        navigate("/", { replace: true });
         return;
       }
 
@@ -45,7 +45,7 @@ const GatewayLogin = () => {
         await loginWithAuth0Token(idToken);
         setMessage({ type: "success", text: "Login successful. Redirecting..." });
         window.history.replaceState({}, document.title, window.location.pathname);
-        navigate("/gateway", { replace: true });
+        navigate("/", { replace: true });
       } catch (error) {
         const detail = error instanceof Error ? error.message : "Authentication failed";
         setMessage({ type: "error", text: detail });
@@ -66,7 +66,7 @@ const GatewayLogin = () => {
         throw new Error("Invalid or expired session token");
       }
       setMessage({ type: "success", text: "Session validated. Redirecting..." });
-      navigate("/gateway", { replace: true });
+      navigate("/", { replace: true });
     } catch (error) {
       const detail = error instanceof Error ? error.message : "Token login failed";
       setMessage({ type: "error", text: detail });

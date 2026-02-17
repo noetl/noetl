@@ -26,6 +26,9 @@ Complete integration playbooks are available in the repository:
 - **Google Cloud Storage**: Upload, download, and list objects
 - **DuckDB + GCS**: Analytics with cloud storage integration
 
+### Quantum Workloads
+- **Quantum Networking Runner**: Bell-state workflow via NVIDIA simulator mode or IBM Runtime API mode
+
 ### Data Sources
 - **PostgreSQL**: Direct database operations and bulk transfers
 - **Snowflake**: Data warehouse queries and cross-platform transfers
