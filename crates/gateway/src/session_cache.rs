@@ -18,6 +18,8 @@ pub struct CachedSession {
     pub display_name: String,
     pub expires_at: String,
     pub is_active: bool,
+    #[serde(default)]
+    pub roles: Vec<String>,
 }
 
 /// Session cache backed by NATS JetStream K/V

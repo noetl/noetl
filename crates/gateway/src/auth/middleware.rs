@@ -141,6 +141,7 @@ pub async fn auth_middleware(
             .to_string(),
         session_token: token.to_string(),
     };
+    let roles = super::parse_roles(user_obj.get("roles"));
 
     // Cache the validated session for future requests
     let expires_at = output
@@ -156,6 +157,7 @@ pub async fn auth_middleware(
         display_name: user_context.display_name.clone(),
         expires_at,
         is_active: true,
+        roles,
     };
     if let Err(e) = state.session_cache.put(&cached_session).await {
         tracing::warn!("Failed to cache session: {}", e);

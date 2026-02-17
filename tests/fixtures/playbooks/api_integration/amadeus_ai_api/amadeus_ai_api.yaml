@@ -101,7 +101,14 @@ workflow:
         model: "gpt-4o-mini"
         messages:
           - role: system
-            content: "Translate user travel request into an Amadeus Search API query (JSON or query params). Return ONLY JSON."
+            content: |
+              Translate the user travel request into Amadeus Flight Offers Search JSON.
+              Return ONLY JSON with keys:
+              - origin (IATA code)
+              - destination (IATA code)
+              - departureDate (YYYY-MM-DD)
+              - adults (integer)
+              If the user gives a relative date (e.g., "tomorrow"), convert to an actual date.
           - role: user
             content: "{{ workload.query }}"
     next:
@@ -131,6 +138,7 @@ workflow:
       code: |
         import json
         import re
+        from datetime import datetime, timedelta
 
         # Extract content from OpenAI response
         raw = ""
@@ -154,15 +162,53 @@ workflow:
             parsed = {}
 
         # Transform to Amadeus Flight Offers Search API format
-        origin = parsed.get("origin") or parsed.get("originLocationCode") or "SFO"
-        dest = parsed.get("destination") or parsed.get("destinationLocationCode") or "JFK"
-        dep_date = parsed.get("departureDate") or "2026-07-15"
+        origin = (
+            parsed.get("origin")
+            or parsed.get("originLocationCode")
+            or parsed.get("departureAirport")
+            or "SFO"
+        )
+        dest = (
+            parsed.get("destination")
+            or parsed.get("destinationLocationCode")
+            or parsed.get("arrivalAirport")
+            or "JFK"
+        )
+
+        def parse_date(value):
+            if not value:
+                return None
+            if isinstance(value, datetime):
+                return value.date()
+            if hasattr(value, "year") and hasattr(value, "month") and hasattr(value, "day"):
+                return value
+            if isinstance(value, str):
+                cleaned = value.strip()
+                if not cleaned:
+                    return None
+                try:
+                    return datetime.strptime(cleaned, "%Y-%m-%d").date()
+                except Exception:
+                    return None
+            return None
+
+        today = datetime.utcnow().date()
+        default_date = today + timedelta(days=1)
+        dep_date_raw = parsed.get("departureDate") or parsed.get("departure_date")
+        dep_date_value = parse_date(dep_date_raw)
+        if dep_date_value is None or dep_date_value < today:
+            dep_date_value = default_date
+
         adults = parsed.get("adults") or 1
+        try:
+            adults = int(adults)
+        except Exception:
+            adults = 1
 
         result = {
             "origin": origin,
             "destination": dest,
-            "departure_date": dep_date,
+            "departure_date": dep_date_value.isoformat(),
             "adults": adults
         }
     next:

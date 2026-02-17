@@ -30,6 +30,7 @@ env:
   corsAllowedOrigins: "http://localhost:8080,http://localhost:8090,http://localhost:3000,https://gateway.mestumre.dev"
   natsUrl: "nats://noetl:noetl@nats.nats.svc.cluster.local:4222"
   natsUpdatesSubjectPrefix: "playbooks.executions."
+  publicUrl: ""
   # Set to "true" to bypass auth validation (for testing only)
   authBypass: "true"
 

@@ -21,7 +21,8 @@ const getGatewayBaseUrl = () => {
   return trimTrailingSlash(window.location.origin);
 };
 
-const getApiBaseUrl = () => `${getGatewayBaseUrl()}/api`;
+// In gateway-only mode, NoETL APIs are proxied under /noetl
+const getApiBaseUrl = () => `${getGatewayBaseUrl()}/noetl`;
 
 const API_BASE_URL = getApiBaseUrl();
 

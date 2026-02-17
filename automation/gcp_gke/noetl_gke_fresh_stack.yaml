@@ -72,6 +72,7 @@ workload:
   # Gateway settings
   gateway_service_type: ClusterIP
   gateway_load_balancer_ip: ""
+  gateway_public_url: "http://gateway.gateway.svc.cluster.local"
   gateway_auth_bypass: "false"
   gateway_cors_allowed_origins: "http://localhost:3001,https://gui.example.com,https://gateway.example.com"
 
@@ -699,6 +700,7 @@ workflow:
             --set image.tag={{ workload.gateway_image_tag }} \
             --set env.noetlBaseUrl=http://noetl.noetl.svc.cluster.local:8082 \
             --set env.natsUrl=nats://{{ workload.nats_user }}:{{ workload.nats_password }}@nats.nats.svc.cluster.local:4222 \
+            --set env.publicUrl={{ workload.gateway_public_url }} \
             --set-string env.corsAllowedOrigins=$GATEWAY_CORS_ALLOWED_ORIGINS_ESCAPED \
             --set env.authBypass={{ workload.gateway_auth_bypass }} \
             $GATEWAY_SERVICE_ARGS \
