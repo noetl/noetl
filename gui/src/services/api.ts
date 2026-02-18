@@ -9,6 +9,7 @@ import {
 import { CreatePlaybookResponse } from "./api.types";
 
 const trimTrailingSlash = (value: string): string => value.replace(/\/+$/, "");
+const SESSION_TOKEN_KEY = "session_token";
 
 const getGatewayBaseUrl = () => {
   const envValue = import.meta.env.VITE_GATEWAY_URL;
@@ -34,9 +35,23 @@ const apiClient = axios.create({
   },
 });
 
+apiClient.interceptors.request.use((config) => {
+  const token = localStorage.getItem(SESSION_TOKEN_KEY);
+  if (token) {
+    config.headers = config.headers || {};
+    config.headers.Authorization = `Bearer ${token}`;
+    config.headers["X-Session-Token"] = token;
+  }
+  return config;
+});
+
 apiClient.interceptors.response.use(
   (response) => response,
   (error) => {
+    if (error?.response?.status === 401) {
+      localStorage.removeItem(SESSION_TOKEN_KEY);
+      localStorage.removeItem("user_info");
+    }
     console.error("API Error:", error);
     return Promise.reject(error);
   },

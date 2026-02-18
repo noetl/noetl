@@ -11,7 +11,7 @@ use axum::{
     Router,
     extract::State,
     response::Html,
-    routing::{get, post, put, delete, patch},
+    routing::{get, post, put, delete, patch, options},
     http::header::{AUTHORIZATION, CONTENT_TYPE},
     http::{HeaderName, Method},
 };
@@ -170,6 +170,7 @@ async fn main() -> anyhow::Result<()> {
             CONTENT_TYPE,
             AUTHORIZATION,
             HeaderName::from_static("x-session-id"),
+            HeaderName::from_static("x-session-token"),
             HeaderName::from_static("x-user-id"),
             HeaderName::from_static("x-request-id"),
         ])
@@ -195,6 +196,7 @@ async fn main() -> anyhow::Result<()> {
     // Protected GraphQL routes (auth required)
     let graphql_routes = Router::new()
         .route("/graphql", get(graphiql).post_service(GraphQL::new(schema.clone())))
+        .route("/graphql", options(proxy::proxy_options))
         .route_layer(middleware::from_fn_with_state(
             auth_state.clone(),
             auth::middleware::auth_middleware,
@@ -209,6 +211,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/noetl/{*path}", put(proxy::proxy_put))
         .route("/noetl/{*path}", delete(proxy::proxy_delete))
         .route("/noetl/{*path}", patch(proxy::proxy_patch))
+        .route("/noetl/{*path}", options(proxy::proxy_options))
         .route_layer(middleware::from_fn_with_state(
             auth_state.clone(),
             auth::middleware::auth_middleware,

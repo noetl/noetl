@@ -70,6 +70,30 @@ noetl run boot
 noetl run destroy
 ```
 
+## GKE Fresh Stack Notes (CORS + Public URLs)
+
+The GKE playbook `automation/gcp_gke/noetl_gke_fresh_stack.yaml` **resets Gateway CORS settings on every deploy**.
+If you don't pass `gateway_cors_allowed_origins` each time, it will fall back to the default values and your UI will
+start failing CORS preflight requests.
+
+Recommended pattern:
+
+```bash
+noetl run automation/gcp_gke/noetl_gke_fresh_stack.yaml \
+  --set action=deploy \
+  --set project_id=<gcp-project-id> \
+  --set region=us-central1 \
+  --set cluster_name=<cluster-name> \
+  --set gateway_service_type=LoadBalancer \
+  --set gateway_load_balancer_ip=<gateway-lb-ip> \
+  --set gateway_public_url=http://gateway.gateway.svc.cluster.local \
+  --set gateway_cors_allowed_origins="http://localhost:3001,https://YOUR_GUI_DOMAIN,https://YOUR_GATEWAY_DOMAIN"
+```
+
+To make this permanent for your environment, update the defaults in:
+`automation/gcp_gke/noetl_gke_fresh_stack.yaml` (the `gateway_cors_allowed_origins` and `gateway_public_url` workload fields),
+or set the values in your own wrapper playbook so they are always passed during deploys.
+
 ## Bootstrap Workflow
 
 Complete K8s environment setup including:

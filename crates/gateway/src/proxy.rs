@@ -85,6 +85,11 @@ pub async fn proxy_patch(
     proxy_request(state, &path, Method::PATCH, req).await
 }
 
+/// Proxy handler for OPTIONS preflight requests.
+pub async fn proxy_options() -> impl IntoResponse {
+    StatusCode::NO_CONTENT
+}
+
 /// Core proxy logic that forwards requests to NoETL server.
 async fn proxy_request(
     state: Arc<ProxyState>,

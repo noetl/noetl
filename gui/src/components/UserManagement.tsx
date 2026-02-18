@@ -82,8 +82,6 @@ const UserManagement = () => {
   }, [navigate]);
 
   const loadUsers = async () => {
-    if (!connectionReady) return;
-
     setLoading(true);
     setError(null);
     try {
@@ -114,8 +112,6 @@ const UserManagement = () => {
   };
 
   const loadRoles = async () => {
-    if (!connectionReady) return;
-
     try {
       const result = await executePlaybook(USER_MGMT_PLAYBOOK, { action: "list_roles" });
       const data = result.data as { roles?: Role[]; success?: boolean };
