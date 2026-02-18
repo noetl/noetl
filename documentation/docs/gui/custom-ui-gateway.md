@@ -30,6 +30,170 @@ VITE_AUTH0_CLIENT_ID=<your-auth0-client-id>
 VITE_AUTH0_REDIRECT_URI=https://mestumre.dev/gateway/login
 ```
 
+## Developer End-to-End Setup (UI + Playbooks)
+
+Use this loop when building your own UI and testing your own playbooks against Gateway.
+
+### 0) Connect local tools to Gateway and NoETL server
+
+If Gateway and NoETL run in GKE, port-forward both services:
+
+```bash
+# Terminal 1: Gateway for UI/API calls
+kubectl port-forward -n gateway svc/gateway 8091:80
+
+# Terminal 2: NoETL server for register/exec CLI calls
+kubectl port-forward -n noetl svc/noetl 8082:8082
+```
+
+Set UI and CLI targets:
+
+```bash
+export VITE_GATEWAY_URL=http://localhost:8091
+export NOETL_SERVER_URL=http://localhost:8082
+```
+
+Start your frontend locally:
+
+```bash
+cd <your-ui-project>
+npm install
+npm run dev
+```
+
+Optional context setup:
+
+```bash
+noetl context add gke-dev --server-url=http://localhost:8082 --runtime=distributed --set-current
+noetl context current
+```
+
+### 1) Create and register credentials (with `noetl` binary)
+
+Example credential file (`credentials/pg_dev.json`):
+
+```bash
+mkdir -p credentials
+```
+
+```json
+{
+  "name": "pg_dev",
+  "type": "postgres",
+  "description": "Developer Postgres credential",
+  "tags": ["dev", "postgres"],
+  "data": {
+    "db_host": "postgres.postgres.svc.cluster.local",
+    "db_port": "5432",
+    "db_user": "demo",
+    "db_password": "demo",
+    "db_name": "demo_noetl"
+  }
+}
+```
+
+Save this JSON to `credentials/pg_dev.json`.
+
+Register credential:
+
+```bash
+noetl --server-url "$NOETL_SERVER_URL" register credential --file credentials/pg_dev.json
+```
+
+Verify:
+
+```bash
+noetl --server-url "$NOETL_SERVER_URL" catalog list Credential
+```
+
+### 2) Create and register your playbook
+
+Example playbook (`playbooks/dev/dev_gateway_check.yaml`):
+
+```bash
+mkdir -p playbooks/dev
+```
+
+```yaml
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: dev_gateway_check
+  path: dev/dev_gateway_check
+  description: Verify custom UI -> Gateway -> NoETL execution path
+
+workload:
+  query: "select 1 as ok"
+
+workflow:
+  - step: db_check
+    tool:
+      kind: postgres
+      auth: pg_dev
+      query: "{{ workload.query }}"
+```
+
+Save this YAML to `playbooks/dev/dev_gateway_check.yaml`.
+
+Register playbook:
+
+```bash
+noetl --server-url "$NOETL_SERVER_URL" register playbook --file playbooks/dev/dev_gateway_check.yaml
+```
+
+Verify:
+
+```bash
+noetl --server-url "$NOETL_SERVER_URL" catalog list Playbook
+```
+
+### 3) Run playbook directly with `noetl` binary
+
+```bash
+noetl --server-url "$NOETL_SERVER_URL" exec dev/dev_gateway_check -r distributed --json
+```
+
+Check status by execution ID:
+
+```bash
+noetl --server-url "$NOETL_SERVER_URL" status <EXECUTION_ID> --json
+```
+
+### 4) Run the same playbook from your custom UI through Gateway
+
+1. Start your frontend dev server (React/Vue/Svelte/etc.) with `VITE_GATEWAY_URL` set.
+2. Authenticate via Auth0 and exchange token at `POST /api/auth/login`.
+3. Open SSE `GET /events` and capture `clientId`.
+4. Execute GraphQL mutation:
+
+```graphql
+mutation ExecuteAsync($vars: JSON!, $clientId: String!) {
+  executePlaybook(
+    name: "dev/dev_gateway_check"
+    variables: $vars
+    clientId: $clientId
+  ) {
+    executionId
+    requestId
+    status
+  }
+}
+```
+
+Variables:
+
+```json
+{
+  "vars": {
+    "query": "select now() as ts"
+  },
+  "clientId": "<SSE_CLIENT_ID>"
+}
+```
+
+This validates the full path:
+`Custom UI -> Gateway (/graphql) -> NoETL playbook -> SSE callback`.
+
 ## 1) Login and Session Token
 
 After obtaining Auth0 ID token in your UI:
