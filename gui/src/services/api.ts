@@ -289,6 +289,49 @@ class APIService {
     return response.data;
   }
 
+  async getPlaybookTestSuite(suiteId: string): Promise<{
+    suite_id: string;
+    file_path: string;
+    playbook_path: string;
+    tests: any[];
+    metadata: Record<string, any>;
+    updated_at: string;
+  }> {
+    const encoded = suiteId.split("/").map(encodeURIComponent).join("/");
+    const response = await apiClient.get(`/playbook-tests/suites/${encoded}`);
+    return response.data;
+  }
+
+  async savePlaybookTestSuite(
+    suiteId: string,
+    payload: {
+      playbook_path: string;
+      tests: any[];
+      metadata?: Record<string, any>;
+    },
+  ): Promise<{
+    suite_id: string;
+    file_path: string;
+    playbook_path: string;
+    tests: any[];
+    metadata: Record<string, any>;
+    updated_at: string;
+  }> {
+    const encoded = suiteId.split("/").map(encodeURIComponent).join("/");
+    const response = await apiClient.put(`/playbook-tests/suites/${encoded}`, {
+      playbook_path: payload.playbook_path,
+      tests: payload.tests || [],
+      metadata: payload.metadata || {},
+    });
+    return response.data;
+  }
+
+  async deletePlaybookTestSuite(suiteId: string): Promise<{ status: string; suite_id: string; file_path: string }> {
+    const encoded = suiteId.split("/").map(encodeURIComponent).join("/");
+    const response = await apiClient.delete(`/playbook-tests/suites/${encoded}`);
+    return response.data;
+  }
+
   async searchPlaybooks(query: string): Promise<PlaybookData[]> {
     const response = await apiClient.get(
       `/catalog/playbooks/search`,

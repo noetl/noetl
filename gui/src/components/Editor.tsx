@@ -1,116 +1,84 @@
-/*
- * Playbook Editor Component
- *
- * This component provides a code editor for editing YAML playbooks.
- * Currently uses an enhanced TextArea with VS Code-like features.
- *
- * To upgrade to full Monaco Editor (VS Code editor):
- * 1. Install Monaco Editor: npm install @monaco-editor/react
- * 2. Replace the CodeEditor component with Monaco Editor
- * 3. Uncomment the Monaco-specific features below
- *
- * Features:
- * - Syntax highlighting (basic in TextArea, full in Monaco)
- * - Auto-indentation with Tab key
- * - Keyboard shortcuts (Ctrl/Cmd + S to save)
- * - Fullscreen mode
- * - Dark theme
- * - Monospace font with programming ligatures
- */
-
-import React, { useState, useEffect, useRef } from "react";
+import React, { useEffect, useState } from "react";
 import {
-  Layout,
+  Alert,
   Button,
-  Input,
-  Typography,
+  Card,
+  Col,
+  Layout,
+  Row,
   Space,
   Spin,
-  Alert,
-  Card,
-  Row,
-  Col,
+  Tabs,
+  Typography,
   message,
-  Divider,
 } from "antd";
 import {
-  SaveOutlined,
-  PlayCircleOutlined,
+  ApartmentOutlined,
   CheckCircleOutlined,
-  FileTextOutlined,
-  ExpandOutlined,
-  CompressOutlined,
-  NodeIndexOutlined,
+  CodeOutlined,
+  ExperimentOutlined,
+  PlayCircleOutlined,
+  SaveOutlined,
 } from "@ant-design/icons";
+import MonacoEditor from "@monaco-editor/react";
+import { useNavigate } from "react-router-dom";
+// @ts-ignore
+import yaml from "js-yaml";
 import { apiService } from "../services/api";
 import { PlaybookData } from "../types";
-import MonacoEditor from "@monaco-editor/react";
-import FlowVisualization from "./FlowVisualization";
-import { useNavigate } from "react-router-dom";
+import PlaybookDesigner from "./PlaybookDesigner";
+import PlaybookTestLab from "./PlaybookTestLab";
 
 const { Content } = Layout;
 const { Title, Text } = Typography;
-const { TextArea } = Input;
 
-// Enhanced CodeEditor component with Monaco-like features using TextArea
-const CodeEditor: React.FC<{
-  value: string;
-  onChange: (value: string) => void;
-  language?: string;
-  theme?: string;
-  height?: number;
-  isFullscreen?: boolean;
-}> = ({ value, onChange, height = 500, isFullscreen = false }) => {
-  const textareaRef = useRef<any>(null);
+const stripYamlExtension = (value: string): string => value.replace(/\.(ya?ml)$/i, "");
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    // Handle Ctrl/Cmd + S for save
-    if ((e.ctrlKey || e.metaKey) && e.key === "s") {
-      e.preventDefault();
-      // This will be handled by the parent component
-      return;
+const normalizeCatalogPath = (value: string): string => {
+  const parts = value
+    .split("/")
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+  const stack: string[] = [];
+  for (const part of parts) {
+    if (part === ".") continue;
+    if (part === "..") {
+      if (stack.length > 0) stack.pop();
+      continue;
     }
+    stack.push(part);
+  }
+  return stack.join("/");
+};
 
-    // Handle Tab for indentation
-    if (e.key === "Tab") {
-      e.preventDefault();
-      const textarea = textareaRef.current;
-      if (textarea) {
-        const start = textarea.selectionStart;
-        const end = textarea.selectionEnd;
-        const newValue =
-          value.substring(0, start) + "  " + value.substring(end);
-        onChange(newValue);
+const resolveRelativeCatalogPath = (referencePath: string, currentPath?: string | null): string => {
+  const ref = referencePath.trim();
+  if (!ref.startsWith("./") && !ref.startsWith("../")) {
+    return normalizeCatalogPath(ref);
+  }
+  const current = normalizeCatalogPath(String(currentPath || ""));
+  if (!current) return normalizeCatalogPath(ref);
+  const baseParts = current.split("/");
+  baseParts.pop();
+  const merged = [...baseParts, ...ref.split("/")].join("/");
+  return normalizeCatalogPath(merged);
+};
 
-        // Set cursor position after the tab
-        setTimeout(() => {
-          textarea.selectionStart = textarea.selectionEnd = start + 2;
-        }, 0);
-      }
-    }
-  };
-
-  return (
-    <TextArea
-      ref={textareaRef}
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      onKeyDown={handleKeyDown}
-      placeholder="Enter your playbook YAML content here..."
-      style={{
-        fontFamily:
-          'Monaco, "Fira Code", "Cascadia Code", "Consolas", monospace',
-        fontSize: "14px",
-        lineHeight: "1.5",
-        height: isFullscreen ? "90vh" : `${height}px`,
-        resize: "none",
-        backgroundColor: "#1e1e1e",
-        color: "#d4d4d4",
-        border: "1px solid #3c3c3c",
-        borderRadius: "4px",
-        padding: "16px",
-      }}
-    />
+const buildReferenceCandidates = (referencePath: string, currentPath?: string | null): string[] => {
+  const ref = referencePath.trim();
+  if (!ref) return [];
+  const candidates = [
+    ref,
+    stripYamlExtension(ref),
+    resolveRelativeCatalogPath(ref, currentPath),
+    stripYamlExtension(resolveRelativeCatalogPath(ref, currentPath)),
+  ];
+  return Array.from(
+    new Set(
+      candidates
+        .map((candidate) => normalizeCatalogPath(candidate))
+        .filter((candidate) => candidate.length > 0)
+    )
   );
 };
 
@@ -126,50 +94,41 @@ const PlaybookEditor: React.FC = () => {
     valid: boolean;
     errors?: string[];
   } | null>(null);
-  const [isFullscreen, setIsFullscreen] = useState(false);
-  const [editorHeight, setEditorHeight] = useState(500);
-  const [showFlowVisualization, setShowFlowVisualization] = useState(false);
-  const editorRef = useRef<any>(null);
+  const [activeTab, setActiveTab] = useState("designer");
   const navigate = useNavigate();
 
-  // Get playbooks ID from URL parameters
   const urlParams = new URLSearchParams(window.location.search);
   const playbookId = urlParams.get("id");
-  console.log("Playbook ID from URL:", playbookId);
 
   useEffect(() => {
     if (playbookId) {
       loadPlaybook(playbookId);
     } else {
-      // Create new playbooks template
-      setContent(`# New Playbook`);
+      setContent(`apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: new_playbook
+  path: examples/new_playbook
+  version: "1.0"
+  description: New playbook
+workload: {}
+workflow: []
+`);
     }
   }, [playbookId]);
-
-  const toggleFullscreen = () => {
-    setIsFullscreen(!isFullscreen);
-    setEditorHeight(isFullscreen ? 500 : window.innerHeight - 200);
-  };
 
   const loadPlaybook = async (id: string) => {
     try {
       setLoading(true);
       setError(null);
-
       const playbookData = await apiService.getPlaybook(id);
-      console.log("Loaded playbook data:", playbookData);
-
       setPlaybook(playbookData);
       setContent(playbookData.content || "");
     } catch (err: any) {
-      console.error("Failed to load playbooks:", err);
-      // IMPROVEMENT: Display the specific error from the server
       const detail =
         err.response?.data?.detail ||
-        "An unknown error occurred. Check the server logs.";
-      const status = err.response?.status
-        ? ` (Status: ${err.response.status})`
-        : "";
+        "Unknown error while loading playbook. Check gateway/noetl logs.";
+      const status = err.response?.status ? ` (Status: ${err.response.status})` : "";
       setError(`Failed to load playbook content: ${detail}${status}`);
     } finally {
       setLoading(false);
@@ -184,21 +143,16 @@ const PlaybookEditor: React.FC = () => {
 
     try {
       setSaving(true);
-
       if (playbookId) {
-        // Update existing playbooks
         await apiService.savePlaybookContent(playbookId, content);
         message.success("Playbook saved successfully");
       } else {
-        // Create new playbooks
-        const newPlaybook = await apiService.createPlaybook(content);
-
-        navigate(`/editor?id=${newPlaybook.path}`);
-        message.success(newPlaybook.message);
+        const created = await apiService.createPlaybook(content);
+        navigate(`/editor?id=${created.path}`);
+        message.success(created.message || "Playbook created");
       }
-    } catch (err) {
-      console.error("Failed to save playbooks:", err);
-      message.error("Failed to save playbooks");
+    } catch (err: any) {
+      message.error(err?.response?.data?.detail || "Failed to save playbook");
     } finally {
       setSaving(false);
     }
@@ -209,48 +163,94 @@ const PlaybookEditor: React.FC = () => {
       setValidating(true);
       const result = await apiService.validatePlaybook(content);
       setValidationResult(result);
-
       if (result.valid) {
         message.success("Playbook is valid");
       } else {
         message.error("Playbook validation failed");
       }
-    } catch (err) {
-      console.error("Validation failed:", err);
-      message.error("Validation failed");
+    } catch (err: any) {
+      message.error(err?.response?.data?.detail || "Validation failed");
     } finally {
       setValidating(false);
     }
   };
 
+  const extractExecutionTarget = (): { path?: string; version?: string } => {
+    if (playbook?.path) {
+      return { path: playbook.path, version: playbook.version };
+    }
+    try {
+      const loaded = (yaml.load(content) || {}) as any;
+      return {
+        path: loaded?.metadata?.path,
+        version: String(loaded?.metadata?.version || "latest"),
+      };
+    } catch {
+      return {};
+    }
+  };
+
   const handleExecute = async () => {
-    if (!playbook) {
-      message.error("Please save the playbooks first");
+    const target = extractExecutionTarget();
+    if (!target.path) {
+      message.error("metadata.path is required to execute this playbook");
       return;
     }
 
     try {
       setExecuting(true);
       const response = await apiService.executePlaybookWithPayload({
-        path: playbook.path,
-        version: playbook.version,
-        // merge: mergePayload,
+        path: target.path,
+        version: target.version || "latest",
+        payload: {},
       });
       message.success(`Execution started. ID: ${response.execution_id}`);
-
-      // Navigate to execution page
       navigate(`/execution/${response.execution_id}`);
-
-    } catch (err) {
-      console.error("Failed to execute playbooks:", err);
-      message.error("Failed to execute playbooks");
+    } catch (err: any) {
+      message.error(err?.response?.data?.detail || "Failed to execute playbook");
     } finally {
       setExecuting(false);
     }
   };
 
-  const handleShowWorkflow = () => {
-    setShowFlowVisualization(true);
+  const resolveCurrentCatalogPath = (): string | null => {
+    if (playbook?.path) return playbook.path;
+    if (playbookId) return playbookId;
+    try {
+      const loaded = (yaml.load(content) || {}) as any;
+      const metadataPath = loaded?.metadata?.path;
+      return typeof metadataPath === "string" && metadataPath.trim() ? metadataPath.trim() : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const handleDrillDownPlaybook = async (referencePath: string) => {
+    const currentPath = resolveCurrentCatalogPath();
+    const candidates = buildReferenceCandidates(referencePath, currentPath);
+    if (candidates.length === 0) {
+      message.error("Referenced playbook path is empty");
+      return;
+    }
+
+    let resolvedPath: string | null = null;
+    for (const candidate of candidates) {
+      try {
+        await apiService.getPlaybook(candidate);
+        resolvedPath = candidate;
+        break;
+      } catch {
+        // Try next candidate
+      }
+    }
+
+    if (!resolvedPath) {
+      message.error(`Referenced playbook not found: ${referencePath}`);
+      return;
+    }
+
+    const query = new URLSearchParams({ id: resolvedPath }).toString();
+    navigate(`/editor?${query}`);
   };
 
   if (loading) {
@@ -272,19 +272,21 @@ const PlaybookEditor: React.FC = () => {
 
   return (
     <Content className="PlaybookEditor">
-      <Space className="PlaybookEditor__content" direction="vertical" size="large" style={{ width: "100%" }}>
+      <Space
+        className="PlaybookEditor__content"
+        direction="vertical"
+        size="large"
+        style={{ width: "100%" }}
+      >
         <Row className="PlaybookEditor__header" justify="space-between" align="middle">
           <Col>
-            <Title level={2}>✏️ Playbook Editor</Title>
+            <Title level={2}>Playbook Studio</Title>
             {playbook ? (
               <Text type="secondary">
-                Editing: {playbook.path} (ID:{" "}
-                {playbookId || playbook.catalog_id || "New"})
+                Editing: {playbook.path} (ID: {playbookId || playbook.catalog_id || "new"})
               </Text>
             ) : playbookId ? (
-              <Text type="secondary">
-                Loading playbook (ID: {playbookId})...
-              </Text>
+              <Text type="secondary">Loading playbook (ID: {playbookId})...</Text>
             ) : (
               <Text type="secondary">Creating new playbook</Text>
             )}
@@ -300,15 +302,6 @@ const PlaybookEditor: React.FC = () => {
                 Validate
               </Button>
               <Button
-                type="default"
-                icon={<NodeIndexOutlined />}
-                onClick={handleShowWorkflow}
-                disabled={!content?.trim()}
-                title="Show workflow visualization"
-              >
-                Show Workflow
-              </Button>
-              <Button
                 type="primary"
                 icon={<SaveOutlined />}
                 loading={saving}
@@ -322,7 +315,7 @@ const PlaybookEditor: React.FC = () => {
                 icon={<PlayCircleOutlined />}
                 loading={executing}
                 onClick={handleExecute}
-                disabled={!playbook}
+                disabled={!content.trim()}
               >
                 Execute
               </Button>
@@ -330,21 +323,15 @@ const PlaybookEditor: React.FC = () => {
           </Col>
         </Row>
 
-        {/* Validation Results */}
         {validationResult && (
           <Card className="PlaybookValidationErrors" size="small">
             <Alert
-              message={
-                validationResult.valid
-                  ? "Playbook is valid"
-                  : "Validation failed"
-              }
+              message={validationResult.valid ? "Playbook is valid" : "Validation failed"}
               description={
-                validationResult.errors &&
-                  validationResult.errors.length > 0 ? (
+                validationResult.errors && validationResult.errors.length > 0 ? (
                   <ul style={{ margin: 0, paddingLeft: 20 }}>
-                    {validationResult.errors.map((error, index) => (
-                      <li key={index}>{error}</li>
+                    {validationResult.errors.map((entry, index) => (
+                      <li key={index}>{entry}</li>
                     ))}
                   </ul>
                 ) : undefined
@@ -355,50 +342,69 @@ const PlaybookEditor: React.FC = () => {
           </Card>
         )}
 
-        {/* Flow Visualization (embedded above the code editor when requested) */}
-        <FlowVisualization
-          visible={showFlowVisualization}
-          onClose={() => setShowFlowVisualization(false)}
-          playbookId={playbookId || playbook?.catalog_id || "new"}
-          playbookName={playbook?.path || "New Playbook"}
-          content={content}
-          onUpdateContent={(newYaml) => setContent(newYaml)}
+        <Tabs
+          activeKey={activeTab}
+          onChange={setActiveTab}
+          items={[
+            {
+              key: "designer",
+              label: (
+                <span>
+                  <ApartmentOutlined /> Designer
+                </span>
+              ),
+              children: (
+                <PlaybookDesigner
+                  yamlContent={content}
+                  onYamlChange={setContent}
+                  playbookId={playbookId || playbook?.path || null}
+                  onDrillDownPlaybook={handleDrillDownPlaybook}
+                />
+              ),
+            },
+            {
+              key: "yaml",
+              label: (
+                <span>
+                  <CodeOutlined /> YAML
+                </span>
+              ),
+              children: (
+                <Card className="YamlEditor" bodyStyle={{ padding: 0 }}>
+                  <MonacoEditor
+                    height="68vh"
+                    language="yaml"
+                    theme="light"
+                    value={content}
+                    onChange={(value: any) => setContent(value || "")}
+                    options={{
+                      automaticLayout: true,
+                      minimap: { enabled: true },
+                      wordWrap: "on",
+                      lineNumbers: "on",
+                      folding: true,
+                      matchBrackets: "always",
+                      autoIndent: "full",
+                      tabSize: 2,
+                      insertSpaces: true,
+                      formatOnPaste: true,
+                      formatOnType: true,
+                    }}
+                  />
+                </Card>
+              ),
+            },
+            {
+              key: "tests",
+              label: (
+                <span>
+                  <ExperimentOutlined /> Tests
+                </span>
+              ),
+              children: <PlaybookTestLab yamlContent={content} playbook={playbook} />,
+            },
+          ]}
         />
-
-        {/* Code Editor */}
-        <Card className="YamlEditor" style={{ height: isFullscreen ? "100vh" : "auto", padding: 0 }}>
-          <MonacoEditor
-            height={isFullscreen ? "90vh" : editorHeight}
-            language="yaml"
-            theme="light"
-            value={content}
-            onChange={(value: any) => setContent(value || "")}
-            options={{
-              selectOnLineNumbers: true,
-              mouseWheelZoom: true,
-              formatOnPaste: true,
-              formatOnType: true,
-              automaticLayout: true,
-              minimap: { enabled: !isFullscreen },
-              wordWrap: "on",
-              lineNumbers: "on",
-              folding: true,
-              matchBrackets: "always",
-              autoIndent: "full",
-              tabSize: 2,
-              insertSpaces: true,
-            }}
-          />
-        </Card>
-
-        {/* Help text */}
-        <Card size="small">
-          <Text type="secondary">
-            <strong>Tips:</strong> Use YAML format for playbook definition.
-            Validate your playbook before saving to catch syntax errors. Use{" "}
-            <kbd>Ctrl/Cmd + S</kbd> to save quickly.
-          </Text>
-        </Card>
       </Space>
     </Content>
   );
