@@ -125,7 +125,7 @@ workflow:
       timeout: 900
       args:
         pg_auth: '{{ pg_auth }}'
-        parent_execution_id: '{{ execution_id }}'
+        parent_execution_id: '{{ job.execution_id }}'
         batch_number: '{{ iter.batch.batch_number }}'
         offset: '{{ iter.batch.offset }}'
         batch_size: '{{ iter.batch.limit }}'

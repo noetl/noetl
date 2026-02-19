@@ -18,12 +18,22 @@ workflow:
     desc: Initialize chunk worker
     tool:
       kind: python
+      args:
+        batch_number: '{{ batch_number }}'
+        offset: '{{ offset }}'
+        batch_size: '{{ batch_size }}'
       code: |
+        def _to_int(value, default):
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return default
+
         result = {
           "status": "initialized",
-          "batch_number": int(batch_number or 1),
-          "offset": int(offset or 0),
-          "batch_size": int(batch_size or 100),
+          "batch_number": _to_int(batch_number, 1),
+          "offset": _to_int(offset, 0),
+          "batch_size": _to_int(batch_size, 100),
         }
     next:
       spec:
@@ -238,14 +248,21 @@ workflow:
       args:
         normalize: '{{ normalize_batch }}'
         transformed: '{{ transform_http_results }}'
+        batch_number: '{{ batch_number }}'
       code: |
+        def _to_int(value, default):
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return default
+
         batch_count = int(normalize.get("batch_count", 0) or 0) if isinstance(normalize, dict) else 0
         transformed_count = int(transformed.get("transformed_count", 0) or 0) if isinstance(transformed, dict) else 0
         failed_count = int(transformed.get("failed_count", 0) or 0) if isinstance(transformed, dict) else 0
 
         result = {
             "status": "completed",
-            "batch_number": int(batch_number or 1),
+            "batch_number": _to_int(batch_number, 1),
             "batch_count": batch_count,
             "transformed_count": transformed_count,
             "failed_count": failed_count,

@@ -334,11 +334,28 @@ class APIService {
   }
 
   async searchPlaybooks(query: string): Promise<PlaybookData[]> {
-    const response = await apiClient.get(
-      `/catalog/playbooks/search`,
-      { params: { q: query } }
-    );
-    return response.data;
+    const q = query.trim().toLowerCase();
+    if (!q) {
+      return this.getPlaybooks();
+    }
+
+    // Backend does not expose /catalog/playbooks/search in gateway mode.
+    // Use catalog/list and filter client-side to avoid noisy 404s.
+    const response = await apiClient.post("/catalog/list", {
+      resource_type: "Playbook",
+    });
+    const entries: PlaybookData[] = response.data.entries || [];
+
+    for (const entry of entries) {
+      entry.status = entry.status || "active";
+    }
+
+    return entries.filter((playbook) => {
+      const path = (playbook.path || "").toLowerCase();
+      const description = (playbook.payload?.metadata?.description || "").toLowerCase();
+      const name = (playbook.payload?.metadata?.name || "").toLowerCase();
+      return path.includes(q) || description.includes(q) || name.includes(q);
+    });
   }
 
   async getCredentials(type?: string): Promise<CredentialData[]> {

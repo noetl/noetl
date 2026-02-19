@@ -62,6 +62,10 @@ workflow:
           created_at TIMESTAMP DEFAULT NOW()
         );
 
+        -- Backward/forward compatibility for consumers that expect this flag.
+        ALTER TABLE auth.roles
+          ADD COLUMN IF NOT EXISTS is_system_role BOOLEAN DEFAULT false;
+
         -- Create permissions table
         CREATE TABLE IF NOT EXISTS auth.permissions (
           permission_id SERIAL PRIMARY KEY,

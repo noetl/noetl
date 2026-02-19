@@ -151,7 +151,8 @@ workflow:
           role_id,
           role_name,
           description,
-          is_system_role,
+          -- Keep API response shape stable across schema versions.
+          false AS is_system_role,
           created_at
         FROM auth.roles
         ORDER BY role_id;

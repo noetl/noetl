@@ -172,16 +172,6 @@ const AuthenticatedApp: React.FC = () => {
     return match?.key || "";
   }, [location.pathname, visibleMenuItems]);
 
-  // Redirect to first available menu item if on root
-  useEffect(() => {
-    if (!loading && user && location.pathname === "/") {
-      const firstItem = visibleMenuItems[0];
-      if (firstItem) {
-        navigate(firstItem.path, { replace: true });
-      }
-    }
-  }, [loading, user, location.pathname, visibleMenuItems, navigate]);
-
   if (loading) {
     return (
       <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -232,6 +222,16 @@ const AuthenticatedApp: React.FC = () => {
           }}
         >
           <Routes>
+            <Route
+              path="/"
+              element={
+                visibleMenuItems[0] ? (
+                  <Navigate to={visibleMenuItems[0].path} replace />
+                ) : (
+                  <AccessDenied />
+                )
+              }
+            />
             <Route path="/catalog" element={userRoles.includes("admin") ? <Catalog /> : <AccessDenied />} />
             <Route path="/credentials" element={userRoles.includes("admin") ? <Credentials /> : <AccessDenied />} />
             <Route path="/editor" element={userRoles.includes("admin") ? <Editor /> : <AccessDenied />} />

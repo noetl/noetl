@@ -30,7 +30,7 @@ noetl run automation/gcp_gke/noetl_gke_fresh_stack.yaml \
   --set action=provision-deploy \
   --set project_id=<gcp-project-id> \
   --set region=us-central1 \
-  --set cluster_name=noetl-gke \
+  --set cluster_name=noetl-cluster \
   --set gateway_service_type=LoadBalancer \
   --set gateway_load_balancer_ip=34.71.6.63 \
   --set gui_gateway_public_url=https://gateway.example.com \
@@ -38,6 +38,59 @@ noetl run automation/gcp_gke/noetl_gke_fresh_stack.yaml \
   --set gateway_public_host=gateway.example.com \
   --set gui_public_host=gui.example.com
 ```
+
+## Cloud SQL Private IP + Static Public LBs (mestumre.dev)
+
+Use this deploy profile for:
+- existing cluster `noetl-cluster`
+- Cloud SQL + PgBouncer (no in-cluster PostgreSQL)
+- private-only Cloud SQL IP
+- static public IPs for gateway and GUI (Cloudflare DNS targets)
+
+```bash
+noetl run /Volumes/X10/projects/noetl/noetl/automation/gcp_gke/noetl_gke_fresh_stack.yaml \
+  --set action=deploy \
+  --set project_id=noetl-demo-19700101 \
+  --set cluster_name=noetl-cluster \
+  --set build_images=false \
+  --set use_cloud_sql=true \
+  --set cloud_sql_enable_private_ip=true \
+  --set cloud_sql_enable_public_ip=false \
+  --set pgbouncer_enabled=true \
+  --set deploy_postgres=false \
+  --set deploy_clickhouse=false \
+  --set deploy_ingress=false \
+  --set gateway_service_type=LoadBalancer \
+  --set gateway_load_balancer_ip=34.46.180.136 \
+  --set gui_service_type=LoadBalancer \
+  --set gui_load_balancer_ip=35.226.162.30 \
+  --set gateway_public_host=gateway.mestumre.dev \
+  --set gui_public_host=mestumre.dev \
+  --set gateway_public_url=https://gateway.mestumre.dev \
+  --set gui_gateway_public_url=https://gateway.mestumre.dev \
+  --set gateway_cors_allowed_domains='mestumre.dev,gateway.mestumre.dev'
+```
+
+## Gateway Auth Bootstrap
+
+By default the deploy playbook now auto-bootstraps gateway auth dependencies:
+
+- registers credentials: `pg_auth`, `nats_credential`
+- registers auth playbooks:
+  - `api_integration/auth0/auth0_login`
+  - `api_integration/auth0/auth0_validate_session`
+  - `api_integration/auth0/check_playbook_access`
+  - `api_integration/auth0/provision_auth_schema`
+  - `api_integration/auth0/setup_admin_permissions`
+- executes `api_integration/auth0/provision_auth_schema`
+
+This is controlled by:
+
+```bash
+--set bootstrap_gateway_auth=true
+```
+
+Set it to `false` only if you manage auth catalog/credentials separately.
 
 ## Multi-domain CORS
 
@@ -58,6 +111,27 @@ noetl run automation/gcp_gke/noetl_gke_fresh_stack.yaml \
   --set gateway_cors_allowed_domains='mestumre.dev,staging.mestumre.dev' \
   --set gateway_cors_allowed_origins='https://preview.mestumre.dev'
 ```
+
+## PostgreSQL Stability (Autopilot)
+
+If you see `CrashLoopBackOff` / `OOMKilled` on `noetl-postgres-postgresql-0`, set explicit PostgreSQL resources:
+
+```bash
+noetl run automation/gcp_gke/noetl_gke_fresh_stack.yaml \
+  --set action=deploy \
+  --set project_id=<gcp-project-id> \
+  --set build_images=false \
+  --set postgres_primary_cpu_request=500m \
+  --set postgres_primary_cpu_limit=1000m \
+  --set postgres_primary_memory_request=512Mi \
+  --set postgres_primary_memory_limit=1Gi
+```
+
+## DB Access Notes
+
+- `demo/demo` is intended for `demo_noetl` application schemas (`public`, `auth`).
+- NoETL metadata tables (`noetl.catalog`, `noetl.event`, etc.) are in database `noetl`.
+- To let `demo` read NoETL metadata, keep `demo_can_read_noetl_schema=true` (default in this playbook).
 
 ## Actions
 
