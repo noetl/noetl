@@ -44,12 +44,14 @@ const GatewayLogin = () => {
       try {
         await loginWithAuth0Token(idToken);
         setMessage({ type: "success", text: "Login successful. Redirecting..." });
-        window.history.replaceState({}, document.title, window.location.pathname);
         navigate("/", { replace: true });
       } catch (error) {
         const detail = error instanceof Error ? error.message : "Authentication failed";
         setMessage({ type: "error", text: detail });
       } finally {
+        if (window.location.hash) {
+          window.history.replaceState({}, document.title, window.location.pathname);
+        }
         setLoading(false);
       }
     };
@@ -136,4 +138,3 @@ const GatewayLogin = () => {
 };
 
 export default GatewayLogin;
-

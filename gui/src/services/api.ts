@@ -7,23 +7,12 @@ import {
   CredentialData,
 } from "../types";
 import { CreatePlaybookResponse } from "./api.types";
+import { resolveGatewayBaseUrl } from "./gatewayBaseUrl";
 
-const trimTrailingSlash = (value: string): string => value.replace(/\/+$/, "");
 const SESSION_TOKEN_KEY = "session_token";
 
-const getGatewayBaseUrl = () => {
-  const envValue = import.meta.env.VITE_GATEWAY_URL;
-  if (envValue) {
-    return trimTrailingSlash(envValue);
-  }
-  if (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") {
-    return "http://localhost:8090";
-  }
-  return trimTrailingSlash(window.location.origin);
-};
-
 // In gateway-only mode, NoETL APIs are proxied under /noetl
-const getApiBaseUrl = () => `${getGatewayBaseUrl()}/noetl`;
+const getApiBaseUrl = () => `${resolveGatewayBaseUrl()}/noetl`;
 
 const API_BASE_URL = getApiBaseUrl();
 
@@ -230,6 +219,18 @@ class APIService {
         has_prev: false
       }
     };
+  }
+
+  async analyzeExecution(
+    id: string,
+    payload?: {
+      max_events?: number;
+      event_sample_size?: number;
+      include_playbook_content?: boolean;
+    },
+  ): Promise<any> {
+    const response = await apiClient.post(`/executions/${id}/analyze`, payload || {});
+    return response.data;
   }
 
   async executePlaybook(

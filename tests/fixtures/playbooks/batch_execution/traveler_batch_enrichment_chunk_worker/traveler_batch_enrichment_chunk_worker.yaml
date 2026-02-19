@@ -1,0 +1,264 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: traveler_batch_enrichment_chunk_worker
+  path: tests/fixtures/playbooks/batch_execution/traveler_batch_enrichment_chunk_worker
+  description: Process one traveler batch window. Fetch rows, run parallel HTTP enrichment, transform, and store.
+
+workload:
+  pg_auth: pg_k8s
+  parent_execution_id: ''
+  batch_number: 1
+  offset: 0
+  batch_size: 100
+  profile_api_url: https://httpbin.org/anything/traveler-profile
+
+workflow:
+  - step: start
+    desc: Initialize chunk worker
+    tool:
+      kind: python
+      code: |
+        result = {
+          "status": "initialized",
+          "batch_number": int(batch_number or 1),
+          "offset": int(offset or 0),
+          "batch_size": int(batch_size or 100),
+        }
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: fetch_batch
+
+  - step: fetch_batch
+    desc: Fetch one batch slice using OFFSET/LIMIT
+    tool:
+      kind: postgres
+      auth: '{{ pg_auth }}'
+      query: |
+        SELECT traveler_id, traveler_name
+        FROM public.traveler_batch_source
+        WHERE execution_id = '{{ parent_execution_id }}'
+        ORDER BY traveler_id ASC
+        OFFSET {{ offset | int }}
+        LIMIT {{ batch_size | int }};
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: normalize_batch
+
+  - step: normalize_batch
+    desc: Normalize fetched rows for loop processing
+    tool:
+      kind: python
+      args:
+        db_result: '{{ fetch_batch }}'
+      code: |
+        rows = db_result.get("command_0", {}).get("rows", []) if isinstance(db_result, dict) else []
+        result = {
+            "batch_rows": rows,
+            "batch_count": len(rows),
+            "has_rows": len(rows) > 0,
+        }
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: process_batch_http
+          when: '{{ (normalize_batch.has_rows | string | lower) == "true" }}'
+        - step: summarize
+
+  - step: process_batch_http
+    desc: Run HTTP for each traveler in this chunk
+    loop:
+      in: '{{ normalize_batch.batch_rows }}'
+      iterator: traveler
+      spec:
+        mode: parallel
+        max_in_flight: 25
+        policy:
+          exec: distributed
+    tool:
+      kind: http
+      method: GET
+      url: '{{ profile_api_url }}'
+      params:
+        traveler_id: '{{ iter.traveler.traveler_id }}'
+        traveler_name: '{{ iter.traveler.traveler_name }}'
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: transform_http_results
+          when: '{{ event.name == ''loop.done'' }}'
+
+  - step: transform_http_results
+    desc: Validate and transform HTTP loop output to normalized rows
+    tool:
+      kind: python
+      libs:
+        hashlib: hashlib
+      args:
+        http_loop_result: '{{ process_batch_http }}'
+        batch_rows: '{{ normalize_batch.batch_rows }}'
+      code: |
+        loop_results = http_loop_result.get("results", []) if isinstance(http_loop_result, dict) else []
+        source_rows = batch_rows if isinstance(batch_rows, list) else []
+
+        transformed_rows = []
+        failed_rows = []
+
+        for index, entry in enumerate(loop_results):
+            payload = entry.get("data", {}) if isinstance(entry, dict) else {}
+            if not isinstance(payload, dict):
+                payload = {"raw": str(payload)}
+
+            args = payload.get("args", {}) if isinstance(payload, dict) else {}
+            fallback_row = source_rows[index] if index < len(source_rows) else {}
+
+            traveler_id_raw = args.get("traveler_id", fallback_row.get("traveler_id", 0))
+            traveler_name_raw = args.get("traveler_name", fallback_row.get("traveler_name", ""))
+
+            traveler_id = int(traveler_id_raw or 0)
+            traveler_name = str(traveler_name_raw or "").strip()
+            normalized_name = traveler_name.upper()
+
+            status_code = int(entry.get("status_code", entry.get("status", 0)) or 0)
+            echoed_id = str(args.get("traveler_id", ""))
+
+            validation_error = ""
+            if not traveler_id:
+                validation_error = "missing traveler_id in response args"
+            elif echoed_id and echoed_id != str(traveler_id):
+                validation_error = f"echoed traveler_id={echoed_id}, expected={traveler_id}"
+
+            profile_hash = hashlib.sha256(
+                f"{traveler_id}:{normalized_name}".encode("utf-8")
+            ).hexdigest()[:20]
+
+            row = {
+                "traveler_id": traveler_id,
+                "traveler_name": traveler_name,
+                "normalized_name": normalized_name,
+                "profile_status": status_code,
+                "profile_hash": profile_hash,
+                "profile_payload": payload,
+                "is_valid": validation_error == "",
+                "validation_error": validation_error,
+            }
+            transformed_rows.append(row)
+            if validation_error:
+                failed_rows.append(
+                    {
+                        "traveler_id": traveler_id,
+                        "traveler_name": traveler_name,
+                        "error": validation_error,
+                    }
+                )
+
+        result = {
+            "transformed_rows": transformed_rows,
+            "transformed_count": len(transformed_rows),
+            "failed_count": len(failed_rows),
+            "failed_rows": failed_rows,
+        }
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: store_rows
+
+  - step: store_rows
+    desc: Persist transformed rows for this chunk
+    tool:
+      kind: postgres
+      auth: '{{ pg_auth }}'
+      query: |
+        WITH normalized AS (
+          SELECT *
+          FROM jsonb_to_recordset('{{ transform_http_results.transformed_rows | tojson | replace("'", "''") }}'::jsonb)
+            AS item(
+              traveler_id INTEGER,
+              traveler_name TEXT,
+              normalized_name TEXT,
+              profile_status INTEGER,
+              profile_hash TEXT,
+              profile_payload JSONB,
+              is_valid BOOLEAN,
+              validation_error TEXT
+            )
+        )
+        INSERT INTO public.traveler_batch_results (
+          execution_id,
+          traveler_id,
+          traveler_name,
+          normalized_name,
+          profile_status,
+          profile_hash,
+          profile_payload,
+          is_valid,
+          validation_error,
+          batch_number
+        )
+        SELECT
+          '{{ parent_execution_id }}',
+          n.traveler_id,
+          n.traveler_name,
+          n.normalized_name,
+          n.profile_status,
+          n.profile_hash,
+          n.profile_payload,
+          n.is_valid,
+          n.validation_error,
+          {{ batch_number | int }}
+        FROM normalized AS n
+        ON CONFLICT (execution_id, traveler_id)
+        DO UPDATE SET
+          traveler_name = EXCLUDED.traveler_name,
+          normalized_name = EXCLUDED.normalized_name,
+          profile_status = EXCLUDED.profile_status,
+          profile_hash = EXCLUDED.profile_hash,
+          profile_payload = EXCLUDED.profile_payload,
+          is_valid = EXCLUDED.is_valid,
+          validation_error = EXCLUDED.validation_error,
+          batch_number = EXCLUDED.batch_number,
+          processed_at = NOW();
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: summarize
+
+  - step: summarize
+    desc: Return chunk processing summary
+    tool:
+      kind: python
+      args:
+        normalize: '{{ normalize_batch }}'
+        transformed: '{{ transform_http_results }}'
+      code: |
+        batch_count = int(normalize.get("batch_count", 0) or 0) if isinstance(normalize, dict) else 0
+        transformed_count = int(transformed.get("transformed_count", 0) or 0) if isinstance(transformed, dict) else 0
+        failed_count = int(transformed.get("failed_count", 0) or 0) if isinstance(transformed, dict) else 0
+
+        result = {
+            "status": "completed",
+            "batch_number": int(batch_number or 1),
+            "batch_count": batch_count,
+            "transformed_count": transformed_count,
+            "failed_count": failed_count,
+        }
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
+
+  - step: end
+    desc: End chunk worker
+    tool:
+      kind: python
+      code: |
+        result = {"status": "completed"}

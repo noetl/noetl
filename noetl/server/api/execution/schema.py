@@ -79,3 +79,40 @@ class CleanupStuckExecutionsResponse(BaseModel):
     cancelled_count: int = Field(..., description="Number of executions marked as cancelled")
     execution_ids: List[str] = Field(..., description="List of execution IDs that were cancelled")
     message: str = Field(..., description="Human-readable status message")
+
+
+class AnalyzeExecutionRequest(BaseModel):
+    """Request schema for execution analysis bundle."""
+
+    max_events: int = Field(
+        default=2000,
+        ge=100,
+        le=10000,
+        description="Maximum number of events to include in analysis",
+    )
+    event_sample_size: int = Field(
+        default=200,
+        ge=20,
+        le=1000,
+        description="Number of latest events to include in AI prompt sample",
+    )
+    include_playbook_content: bool = Field(
+        default=True,
+        description="Include full playbook YAML content in analysis bundle",
+    )
+
+
+class AnalyzeExecutionResponse(BaseModel):
+    """Response schema for execution analysis bundle."""
+
+    execution_id: str = Field(..., description="Execution identifier")
+    path: str = Field(..., description="Playbook path")
+    status: str = Field(..., description="Execution status")
+    generated_at: datetime = Field(..., description="UTC timestamp when analysis was generated")
+    summary: Dict[str, Any] = Field(..., description="Computed execution summary metrics")
+    findings: List[Dict[str, Any]] = Field(default_factory=list, description="Detected findings")
+    recommendations: List[str] = Field(default_factory=list, description="Suggested improvements")
+    cloud: Dict[str, Any] = Field(default_factory=dict, description="Cloud links/query helpers")
+    playbook: Dict[str, Any] = Field(default_factory=dict, description="Playbook metadata/content")
+    event_sample: List[Dict[str, Any]] = Field(default_factory=list, description="Latest event sample for AI")
+    ai_prompt: str = Field(..., description="Prompt payload for external AI analysis")

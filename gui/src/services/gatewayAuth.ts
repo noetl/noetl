@@ -1,3 +1,5 @@
+import { resolveGatewayBaseUrl } from "./gatewayBaseUrl";
+
 export type GatewayUser = {
   email?: string;
   display_name?: string;
@@ -47,14 +49,7 @@ function notifyConnection(connected: boolean): void {
 }
 
 function getGatewayBaseUrl(): string {
-  const envValue = import.meta.env.VITE_GATEWAY_URL;
-  if (envValue) {
-    return envValue;
-  }
-  if (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") {
-    return "http://localhost:8090";
-  }
-  return window.location.origin;
+  return resolveGatewayBaseUrl();
 }
 
 function getAuth0RedirectUri(): string {
@@ -145,7 +140,8 @@ export async function validateSession(token?: string): Promise<boolean> {
 }
 
 export async function loginWithAuth0Token(idToken: string): Promise<void> {
-  const response = await fetch(`${getGatewayBaseUrl()}/api/auth/login`, {
+  const gatewayBaseUrl = getGatewayBaseUrl();
+  const response = await fetch(`${gatewayBaseUrl}/api/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -155,7 +151,23 @@ export async function loginWithAuth0Token(idToken: string): Promise<void> {
   });
 
   if (!response.ok) {
-    const message = `Auth login failed (${response.status})`;
+    let detail = "";
+    try {
+      const payload = await response.json();
+      detail =
+        payload?.error ||
+        payload?.message ||
+        JSON.stringify(payload);
+    } catch {
+      try {
+        detail = (await response.text()).slice(0, 300);
+      } catch {
+        detail = "";
+      }
+    }
+    const message = detail
+      ? `Auth login failed (${response.status}) via ${gatewayBaseUrl}: ${detail}`
+      : `Auth login failed (${response.status}) via ${gatewayBaseUrl}`;
     throw new Error(message);
   }
 
@@ -489,4 +501,3 @@ export async function executePlaybook(
     registerPendingCallback(execution.requestId as string, resolve, reject);
   });
 }
-

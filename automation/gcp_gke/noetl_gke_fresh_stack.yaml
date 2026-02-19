@@ -74,7 +74,16 @@ workload:
   gateway_load_balancer_ip: ""
   gateway_public_url: "http://gateway.gateway.svc.cluster.local"
   gateway_auth_bypass: "false"
-  gateway_cors_allowed_origins: "http://localhost:3001,https://gui.example.com,https://gateway.example.com"
+  # Comma/space/newline-separated list of allowed browser origins.
+  # Tokens can be full origins (https://app.example.com) or bare domains (app.example.com).
+  # Bare domains are expanded to both https:// and http://.
+  gateway_cors_allowed_origins: ""
+  # Additional bare domains for CORS expansion.
+  gateway_cors_allowed_domains: ""
+  # Auto-include https://{gui_public_host} and https://{gateway_public_host}.
+  gateway_cors_include_public_hosts: true
+  # Keep local UI development enabled.
+  gateway_cors_include_localhost: true
 
   # GUI settings
   gui_service_type: ClusterIP
@@ -143,7 +152,8 @@ workflow:
           echo "    --set gateway_service_type=LoadBalancer \\"
           echo "    --set gateway_load_balancer_ip=34.71.6.63 \\"
           echo "    --set gui_service_type=LoadBalancer \\"
-          echo "    --set gui_gateway_public_url=https://gateway.example.com"
+          echo "    --set gui_gateway_public_url=https://gateway.example.com \\"
+          echo "    --set gateway_cors_allowed_domains='mestumre.dev,staging.mestumre.dev'"
           echo ""
           echo "  # Deploy to existing cluster"
           echo "  noetl run automation/gcp_gke/noetl_gke_fresh_stack.yaml \\"
@@ -169,6 +179,7 @@ workflow:
           command -v gcloud >/dev/null 2>&1 || { echo "ERROR: gcloud is required"; exit 1; }
           command -v kubectl >/dev/null 2>&1 || { echo "ERROR: kubectl is required"; exit 1; }
           command -v helm >/dev/null 2>&1 || { echo "ERROR: helm is required"; exit 1; }
+          command -v python3 >/dev/null 2>&1 || { echo "ERROR: python3 is required"; exit 1; }
           echo "Tooling check passed"
     next:
       - step: configure_gcloud
@@ -352,9 +363,10 @@ workflow:
           if [ "{{ workload.build_noetl_image }}" = "true" ]; then
             echo "Building NoETL image -> $NOETL_IMAGE:{{ workload.noetl_image_tag }}"
             gcloud builds submit \
-              docker/noetl/pip \
+              . \
               --project {{ workload.project_id }} \
-              --tag "$NOETL_IMAGE:{{ workload.noetl_image_tag }}"
+              --config automation/gcp_gke/assets/noetl/cloudbuild.yaml \
+              --substitutions=_IMAGE=$NOETL_IMAGE:{{ workload.noetl_image_tag }}
           fi
 
           if [ "{{ workload.build_gateway_image }}" = "true" ]; then
@@ -616,6 +628,12 @@ workflow:
             --set secrets.noetlPassword={{ workload.noetl_password }} \
             $INGRESS_ARGS
 
+          if [ "{{ workload.build_noetl_image }}" = "true" ]; then
+            echo "NoETL image was rebuilt. Forcing rollout restart to refresh pods for tag {{ workload.noetl_image_tag }}."
+            kubectl rollout restart deployment/noetl-server -n noetl
+            kubectl rollout restart deployment/noetl-worker -n noetl
+          fi
+
           kubectl rollout status deployment/noetl-server -n noetl --timeout=300s
           kubectl rollout status deployment/noetl-worker -n noetl --timeout=300s
     next:
@@ -678,7 +696,69 @@ workflow:
           [ -z "$GATEWAY_IMAGE" ] && GATEWAY_IMAGE="$REGISTRY/noetl-gateway"
           GATEWAY_SERVICE_TYPE="{{ workload.gateway_service_type }}"
           GATEWAY_STATIC_IP="{{ workload.gateway_load_balancer_ip }}"
-          GATEWAY_CORS_ALLOWED_ORIGINS="{{ workload.gateway_cors_allowed_origins }}"
+
+          export RAW_CORS_ALLOWED_ORIGINS="{{ workload.gateway_cors_allowed_origins }}"
+          export RAW_CORS_ALLOWED_DOMAINS="{{ workload.gateway_cors_allowed_domains }}"
+          export CORS_INCLUDE_PUBLIC_HOSTS="{{ workload.gateway_cors_include_public_hosts }}"
+          export CORS_INCLUDE_LOCALHOST="{{ workload.gateway_cors_include_localhost }}"
+          export GUI_PUBLIC_HOST="{{ workload.gui_public_host }}"
+          export GATEWAY_PUBLIC_HOST="{{ workload.gateway_public_host }}"
+
+          GATEWAY_CORS_ALLOWED_ORIGINS="$(python3 - <<'PY'
+          import os
+          import re
+
+          seen = set()
+          origins = []
+
+          def add_origin(origin: str) -> None:
+              origin = origin.strip()
+              if not origin or origin in seen:
+                  return
+              seen.add(origin)
+              origins.append(origin)
+
+          def split_tokens(raw: str):
+              for token in re.split(r"[,\s;]+", raw or ""):
+                  token = token.strip()
+                  if token:
+                      yield token
+
+          def add_token(token: str) -> None:
+              if token.startswith("http://") or token.startswith("https://"):
+                  add_origin(token)
+              else:
+                  add_origin(f"https://{token}")
+                  add_origin(f"http://{token}")
+
+          if os.environ.get("CORS_INCLUDE_LOCALHOST", "true").lower() == "true":
+              add_origin("http://localhost:3001")
+
+          if os.environ.get("CORS_INCLUDE_PUBLIC_HOSTS", "true").lower() == "true":
+              gui_host = os.environ.get("GUI_PUBLIC_HOST", "").strip()
+              gateway_host = os.environ.get("GATEWAY_PUBLIC_HOST", "").strip()
+              if gui_host and not gui_host.endswith(".example.com") and gui_host != "example.com":
+                  add_origin(f"https://{gui_host}")
+              if gateway_host and not gateway_host.endswith(".example.com") and gateway_host != "example.com":
+                  add_origin(f"https://{gateway_host}")
+
+          for token in split_tokens(os.environ.get("RAW_CORS_ALLOWED_ORIGINS", "")):
+              add_token(token)
+
+          for domain in split_tokens(os.environ.get("RAW_CORS_ALLOWED_DOMAINS", "")):
+              add_origin(f"https://{domain}")
+              add_origin(f"http://{domain}")
+
+          print(",".join(origins))
+          PY
+          )"
+
+          if [ -z "$GATEWAY_CORS_ALLOWED_ORIGINS" ]; then
+            echo "ERROR: Resolved CORS origin list is empty"
+            exit 1
+          fi
+
+          echo "Gateway CORS allowed origins: $GATEWAY_CORS_ALLOWED_ORIGINS"
           GATEWAY_CORS_ALLOWED_ORIGINS_ESCAPED=$(printf '%s' "$GATEWAY_CORS_ALLOWED_ORIGINS" | sed 's/,/\\,/g')
 
           INGRESS_ARGS=""

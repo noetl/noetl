@@ -8,6 +8,7 @@ import uuid
 import datetime
 import httpx
 import os
+import threading
 from urllib.parse import urlparse
 from typing import Dict, Any, Optional, Callable
 from jinja2 import Environment
@@ -24,6 +25,85 @@ from .request import build_request_args, redact_sensitive_headers
 from .response import process_response, create_mock_response, build_result_reference
 
 logger = setup_logger(__name__, include_location=True)
+
+
+def _read_int_env(name: str, default: int, min_value: int = 1) -> int:
+    """Read integer env var with safe fallback."""
+    raw = os.getenv(name)
+    if not raw:
+        return default
+    try:
+        return max(min_value, int(raw))
+    except (TypeError, ValueError):
+        return default
+
+
+def _read_float_env(name: str, default: float, min_value: float = 0.1) -> float:
+    """Read float env var with safe fallback."""
+    raw = os.getenv(name)
+    if not raw:
+        return default
+    try:
+        return max(min_value, float(raw))
+    except (TypeError, ValueError):
+        return default
+
+
+def _read_bool_env(name: str, default: bool) -> bool:
+    """Read boolean env var with safe fallback."""
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return str(raw).strip().lower() not in {"0", "false", "no", "off"}
+
+
+_HTTP_CLIENT_LOCK = threading.Lock()
+_HTTP_CLIENTS: Dict[tuple[bool, bool], httpx.Client] = {}
+
+
+def _get_shared_http_client(verify_ssl: bool, follow_redirects: bool) -> httpx.Client:
+    """
+    Return a shared keep-alive HTTP client for this worker process.
+
+    This avoids creating/tearing down a client per HTTP task call, which is
+    especially expensive for high-volume task_sequence loops.
+    """
+    key = (bool(verify_ssl), bool(follow_redirects))
+    with _HTTP_CLIENT_LOCK:
+        existing = _HTTP_CLIENTS.get(key)
+        if existing is not None and not existing.is_closed:
+            return existing
+
+        limits = httpx.Limits(
+            max_connections=_read_int_env("NOETL_HTTP_MAX_CONNECTIONS", 200),
+            max_keepalive_connections=_read_int_env("NOETL_HTTP_MAX_KEEPALIVE_CONNECTIONS", 50),
+            keepalive_expiry=_read_float_env("NOETL_HTTP_KEEPALIVE_EXPIRY_SECONDS", 30.0, min_value=1.0),
+        )
+        http2_enabled = _read_bool_env("NOETL_HTTP_ENABLE_HTTP2", True)
+        try:
+            client = httpx.Client(
+                verify=verify_ssl,
+                follow_redirects=follow_redirects,
+                limits=limits,
+                http2=http2_enabled,
+            )
+        except Exception as exc:
+            # Graceful fallback when httpx HTTP/2 extras are not installed in runtime image.
+            if http2_enabled and "h2" in str(exc).lower():
+                logger.warning(
+                    "HTTP/2 requested but h2 extras are unavailable; falling back to HTTP/1.1. "
+                    "Set NOETL_HTTP_ENABLE_HTTP2=false to suppress this warning."
+                )
+                client = httpx.Client(
+                    verify=verify_ssl,
+                    follow_redirects=follow_redirects,
+                    limits=limits,
+                    http2=False,
+                )
+            else:
+                raise
+        _HTTP_CLIENTS[key] = client
+        return client
 
 
 async def execute_http_task(
@@ -159,43 +239,49 @@ async def execute_http_task(
                     method, endpoint, task_with, mocked=True, sink_config=sink_config
                 )
 
-            # Execute the actual HTTP request
-            with httpx.Client(timeout=timeout, verify=verify_ssl, follow_redirects=follow_redirects) as client:
-                request_args = build_request_args(
-                    endpoint, method, headers, data_map, params, payload
-                )
+            # Execute the actual HTTP request using shared keep-alive client
+            client = _get_shared_http_client(bool(verify_ssl), follow_redirects)
+            request_args = build_request_args(
+                endpoint, method, headers, data_map, params, payload
+            )
 
-                # SECURITY: Log request with sensitive data redacted (no tokens/passwords in logs)
-                redacted_headers = redact_sensitive_headers(headers)
-                # Sanitize request args for logging (may contain auth in headers or payload)
-                sanitized_args = sanitize_sensitive_data(request_args)
-                logger.info(f"HTTP.EXECUTE_HTTP_TASK: Making request | timeout={timeout} | headers={redacted_headers} | args={sanitized_args}")
-                
-                response = client.request(method, **request_args)
+            # SECURITY: Log request with sensitive data redacted (no tokens/passwords in logs)
+            redacted_headers = redact_sensitive_headers(headers)
+            # Sanitize request args for logging (may contain auth in headers or payload)
+            sanitized_args = sanitize_sensitive_data(request_args)
+            logger.info(
+                "HTTP.EXECUTE_HTTP_TASK: Making request | timeout=%s | shared_client=true | "
+                "headers=%s | args=%s",
+                timeout,
+                redacted_headers,
+                sanitized_args,
+            )
 
-                response_data = process_response(response)
-                is_success = response.is_success
-                logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Response received | status={response.status_code} | success={is_success}")
+            response = client.request(method, timeout=timeout, **request_args)
 
-                # Apply sink-driven reference if sink is configured
-                if sink_config:
-                    logger.info(f"HTTP.EXECUTE_HTTP_TASK: Sink detected, building result reference")
-                    response_data = build_result_reference(response_data, sink_config)
+            response_data = process_response(response)
+            is_success = response.is_success
+            logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Response received | status={response.status_code} | success={is_success}")
 
-                result = {
-                    'id': task_id,
-                    'status': 'success' if is_success else 'error',
-                    'data': response_data
-                }
+            # Apply sink-driven reference if sink is configured
+            if sink_config:
+                logger.info(f"HTTP.EXECUTE_HTTP_TASK: Sink detected, building result reference")
+                response_data = build_result_reference(response_data, sink_config)
 
-                if not is_success:
-                    result['error'] = f"HTTP {response.status_code}: {response.reason_phrase}"
-                    logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Request failed with error={result['error']}")
+            result = {
+                'id': task_id,
+                'status': 'success' if is_success else 'error',
+                'data': response_data
+            }
 
-                return _complete_task(
-                    task_id, task_name, start_time, result['status'], result.get('data'),
-                    method, endpoint, task_with, sink_config=sink_config
-                )
+            if not is_success:
+                result['error'] = f"HTTP {response.status_code}: {response.reason_phrase}"
+                logger.debug(f"HTTP.EXECUTE_HTTP_TASK: Request failed with error={result['error']}")
+
+            return _complete_task(
+                task_id, task_name, start_time, result['status'], result.get('data'),
+                method, endpoint, task_with, sink_config=sink_config
+            )
 
         except httpx.HTTPStatusError as e:
             error_msg = f"HTTP error: {e.response.status_code} - {e.response.text}"

@@ -25,6 +25,7 @@ import {
   SearchOutlined,
   RightOutlined,
   StopOutlined,
+  RobotOutlined,
 } from "@ant-design/icons";
 import { apiService } from "../services/api";
 import { ExecutionData, ExecutionEvent } from "../types";
@@ -49,6 +50,8 @@ const ExecutionDetail: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState(false);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [analysis, setAnalysis] = useState<any | null>(null);
 
   // Pagination state for events table
   const [currentPage, setCurrentPage] = useState<number>(1);
@@ -123,7 +126,6 @@ const ExecutionDetail: React.FC = () => {
         if (execution?.status) {
           const status = execution.status.toUpperCase();
           if (['COMPLETED', 'FAILED', 'CANCELLED'].includes(status)) {
-            console.log('Execution completed, skipping polling');
             return;
           }
         }
@@ -179,7 +181,6 @@ const ExecutionDetail: React.FC = () => {
     const interval = setInterval(() => {
       const shouldPoll = getPollingInterval() !== null;
       if (shouldPoll) {
-        console.log('Refreshing execution data for id:', id, 'since_event_id:', latestEventId);
         fetchIncrementalEvents();
       }
     }, 5000);
@@ -309,6 +310,38 @@ const ExecutionDetail: React.FC = () => {
       message.error(errorMsg);
     } finally {
       setCancelling(false);
+    }
+  };
+
+  const handleAnalyzeExecution = async () => {
+    if (!id) return;
+    try {
+      setAnalyzing(true);
+      const result = await apiService.analyzeExecution(id, {
+        max_events: 3000,
+        event_sample_size: 300,
+        include_playbook_content: true,
+      });
+      setAnalysis(result);
+      message.success("Execution analysis generated");
+    } catch (err: any) {
+      console.error("Failed to analyze execution:", err);
+      message.error(err?.response?.data?.detail || "Failed to generate execution analysis");
+    } finally {
+      setAnalyzing(false);
+    }
+  };
+
+  const handleCopyAnalysisPrompt = async () => {
+    if (!analysis?.ai_prompt) {
+      message.warning("No AI prompt available");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(analysis.ai_prompt);
+      message.success("AI prompt copied to clipboard");
+    } catch {
+      message.error("Failed to copy prompt");
     }
   };
 
@@ -471,16 +504,7 @@ const ExecutionDetail: React.FC = () => {
       },
     },
   ];
-  console.log('Rendering ExecutionDetail for execution:', execution);
-  console.log('execution.start_time:', execution.start_time);
-  console.log('moment: execution.start_time:', moment(execution.start_time).format("YYYY-MM-DD HH:mm:ss"));
-
   const canCancel = execution?.status?.toLowerCase() === "running" || execution?.status?.toLowerCase() === "pending";
-  console.log('Cancel button check:', {
-    status: execution?.status,
-    statusLower: execution?.status?.toLowerCase(),
-    canCancel
-  });
 
   return (
     <Card className="execution-detail-container">
@@ -502,6 +526,13 @@ const ExecutionDetail: React.FC = () => {
             Cancel Execution
           </Button>
         )}
+        <Button
+          icon={<RobotOutlined />}
+          onClick={handleAnalyzeExecution}
+          loading={analyzing}
+        >
+          Analyze Execution
+        </Button>
       </Space>
 
       <Title level={3}>Execution Details</Title>
@@ -589,6 +620,88 @@ const ExecutionDetail: React.FC = () => {
           )}
         </Row>
       </Card>
+
+      {analysis && (
+        <Card
+          size="small"
+          title="AI Analysis Bundle"
+          className="execution-detail-info-card"
+          extra={
+            <Space>
+              <Button size="small" icon={<CopyOutlined />} onClick={handleCopyAnalysisPrompt}>
+                Copy AI Prompt
+              </Button>
+              {analysis?.cloud?.logs_url && (
+                <Button
+                  size="small"
+                  type="link"
+                  href={analysis.cloud.logs_url}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Open Cloud Logs
+                </Button>
+              )}
+              {analysis?.cloud?.metrics_url && (
+                <Button
+                  size="small"
+                  type="link"
+                  href={analysis.cloud.metrics_url}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Open Metrics
+                </Button>
+              )}
+            </Space>
+          }
+        >
+          <Row gutter={[24, 12]}>
+            <Col xs={24} md={8}>
+              <Text className="execution-detail-label">Duration (sec)</Text>
+              <div><Text className="execution-detail-value">{analysis?.summary?.duration_seconds ?? "-"}</Text></div>
+            </Col>
+            <Col xs={24} md={8}>
+              <Text className="execution-detail-label">Event Count</Text>
+              <div><Text className="execution-detail-value">{analysis?.summary?.event_count ?? "-"}</Text></div>
+            </Col>
+            <Col xs={24} md={8}>
+              <Text className="execution-detail-label">Retry Attempts</Text>
+              <div><Text className="execution-detail-value">{analysis?.summary?.retry_attempts ?? 0}</Text></div>
+            </Col>
+            <Col xs={24}>
+              <Text className="execution-detail-label">Findings</Text>
+              {(analysis.findings || []).length === 0 && <div><Text>No findings</Text></div>}
+              {(analysis.findings || []).map((finding: any, idx: number) => (
+                <div key={`finding-${idx}`} style={{ marginTop: 8 }}>
+                  <Tag color={finding.severity === "high" ? "red" : finding.severity === "medium" ? "orange" : "blue"}>
+                    {(finding.severity || "info").toUpperCase()}
+                  </Tag>
+                  <Text strong>{finding.title}</Text>
+                  <div><Text>{finding.detail}</Text></div>
+                </div>
+              ))}
+            </Col>
+            <Col xs={24}>
+              <Text className="execution-detail-label">Recommendations</Text>
+              {(analysis.recommendations || []).map((item: string, idx: number) => (
+                <div key={`rec-${idx}`} style={{ marginTop: 6 }}>
+                  <Text>{idx + 1}. {item}</Text>
+                </div>
+              ))}
+            </Col>
+            <Col xs={24}>
+              <Text className="execution-detail-label">AI Prompt</Text>
+              <Input.TextArea
+                value={analysis.ai_prompt || ""}
+                readOnly
+                autoSize={{ minRows: 8, maxRows: 20 }}
+                style={{ marginTop: 8, fontFamily: "monospace" }}
+              />
+            </Col>
+          </Row>
+        </Card>
+      )}
 
       <Title level={4} className="execution-detail-events-title">
         Events

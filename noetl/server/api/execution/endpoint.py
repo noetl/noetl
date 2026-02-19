@@ -1,9 +1,11 @@
 import json
+import os
+from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from typing import Optional
-from fastapi import APIRouter, HTTPException, Request, Body, Query
+from urllib.parse import quote
+from fastapi import APIRouter, HTTPException, Body, Query
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
 from psycopg.rows import dict_row
 from psycopg.types.json import Json
 from noetl.core.db.pool import get_pool_connection, get_snowflake_id
@@ -16,7 +18,9 @@ from .schema import (
     FinalizeExecutionRequest,
     FinalizeExecutionResponse,
     CleanupStuckExecutionsRequest,
-    CleanupStuckExecutionsResponse
+    CleanupStuckExecutionsResponse,
+    AnalyzeExecutionRequest,
+    AnalyzeExecutionResponse,
 )
 
 # V2 engine fallback
@@ -27,6 +31,153 @@ except Exception:  # pragma: no cover
 
 logger = setup_logger(__name__, include_location=True)
 router = APIRouter(tags=["executions"])
+
+
+def _as_iso(value: Optional[datetime]) -> Optional[str]:
+    if not value:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.isoformat()
+
+
+def _truncate_text(value: Optional[str], max_len: int = 600) -> Optional[str]:
+    if value is None:
+        return None
+    text = str(value)
+    if len(text) <= max_len:
+        return text
+    return text[:max_len] + " ...[truncated]"
+
+
+def _extract_duration_ms(raw: Optional[object]) -> int:
+    try:
+        if raw is None:
+            return 0
+        value = float(raw)
+        if value <= 0:
+            return 0
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _looks_like_http_activity(row: dict) -> bool:
+    node_name = (row.get("node_name") or "").lower()
+    if "http" in node_name:
+        return True
+
+    for field in ("context", "result", "meta"):
+        value = row.get(field)
+        if isinstance(value, dict):
+            kind = value.get("kind")
+            if isinstance(kind, str) and kind.lower() == "http":
+                return True
+            if isinstance(value.get("tool"), str) and value.get("tool", "").lower() == "http":
+                return True
+            if "url" in value or "status_code" in value:
+                return True
+            config = value.get("config")
+            if isinstance(config, dict):
+                if isinstance(config.get("kind"), str) and config.get("kind", "").lower() == "http":
+                    return True
+                if "url" in config or "endpoint" in config:
+                    return True
+    return False
+
+
+def _build_cloud_context(execution_id: str, start_time: Optional[datetime], end_time: Optional[datetime]) -> dict:
+    project_id = (
+        os.getenv("GCP_PROJECT_ID")
+        or os.getenv("GOOGLE_CLOUD_PROJECT")
+        or os.getenv("NOETL_GCP_PROJECT_ID")
+    )
+    cluster_name = os.getenv("GKE_CLUSTER_NAME") or os.getenv("NOETL_GKE_CLUSTER_NAME")
+    region = os.getenv("GCP_REGION") or os.getenv("GOOGLE_CLOUD_REGION") or os.getenv("NOETL_GCP_REGION")
+
+    if not project_id:
+        return {
+            "configured": False,
+            "message": "Set GCP_PROJECT_ID (or GOOGLE_CLOUD_PROJECT) to generate Cloud Logging/Monitoring deep links.",
+        }
+
+    query_parts = [
+        'resource.type="k8s_container"',
+        f'"{execution_id}"',
+    ]
+    if cluster_name:
+        query_parts.append(f'resource.labels.cluster_name="{cluster_name}"')
+    if region:
+        query_parts.append(f'resource.labels.location="{region}"')
+
+    log_query = " AND ".join(query_parts)
+    encoded_query = quote(log_query, safe="")
+    logs_url = f"https://console.cloud.google.com/logs/query;query={encoded_query}?project={project_id}"
+    metrics_url = f"https://console.cloud.google.com/monitoring/metrics-explorer?project={project_id}"
+
+    return {
+        "configured": True,
+        "project_id": project_id,
+        "cluster_name": cluster_name,
+        "region": region,
+        "start_time": _as_iso(start_time),
+        "end_time": _as_iso(end_time),
+        "logs_query": log_query,
+        "logs_url": logs_url,
+        "metrics_url": metrics_url,
+    }
+
+
+def _build_ai_prompt(
+    execution_id: str,
+    path: str,
+    status: str,
+    summary: dict,
+    findings: list[dict],
+    recommendations: list[str],
+    event_sample: list[dict],
+    playbook_content: Optional[str],
+    cloud_context: dict,
+) -> str:
+    prompt_sections = [
+        "You are a senior NoETL platform engineer performing execution triage.",
+        "Goal: explain root causes, bottlenecks, and concrete remediation steps.",
+        "",
+        f"Execution ID: {execution_id}",
+        f"Playbook Path: {path}",
+        f"Execution Status: {status}",
+        "",
+        "Summary JSON:",
+        json.dumps(summary, indent=2),
+        "",
+        "Findings JSON:",
+        json.dumps(findings, indent=2),
+        "",
+        "Recommendations (current heuristic):",
+        json.dumps(recommendations, indent=2),
+        "",
+        "Cloud Context JSON:",
+        json.dumps(cloud_context, indent=2),
+        "",
+        "Latest Event Sample JSON:",
+        json.dumps(event_sample, indent=2),
+    ]
+
+    if playbook_content:
+        max_chars = 60000
+        content = playbook_content if len(playbook_content) <= max_chars else playbook_content[:max_chars] + "\n# ...truncated..."
+        prompt_sections.extend(["", "Playbook YAML:", content])
+
+    prompt_sections.extend([
+        "",
+        "Deliver output in sections:",
+        "1) Executive Summary",
+        "2) Primary Bottlenecks",
+        "3) Failure / Risk Analysis",
+        "4) Recommended DSL / runtime changes (prioritized)",
+        "5) Validation plan (what to measure after fix)",
+    ])
+    return "\n".join(prompt_sections)
 
 
 @router.post("/executions/{execution_id}/finalize", response_model=FinalizeExecutionResponse)
@@ -528,6 +679,322 @@ async def get_execution(
     }
 
 
+@router.post("/executions/{execution_id}/analyze", response_model=AnalyzeExecutionResponse)
+async def analyze_execution(
+    execution_id: str,
+    request: AnalyzeExecutionRequest = Body(default=None),
+):
+    """
+    Build an AI-ready execution analysis bundle.
+
+    The bundle combines execution events, playbook YAML, and cloud deep links
+    so users can paste one payload into any LLM and get actionable diagnostics.
+    """
+    request = request or AnalyzeExecutionRequest()
+
+    async with get_pool_connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cursor:
+            await cursor.execute(
+                """
+                SELECT
+                  e.catalog_id,
+                  c.path,
+                  c.version
+                FROM noetl.event e
+                LEFT JOIN noetl.catalog c ON c.catalog_id = e.catalog_id
+                WHERE e.execution_id = %s
+                ORDER BY e.event_id ASC
+                LIMIT 1
+                """,
+                (int(execution_id),),
+            )
+            base_row = await cursor.fetchone()
+            if not base_row:
+                raise HTTPException(status_code=404, detail=f"Execution {execution_id} not found")
+
+            await cursor.execute(
+                """
+                SELECT event_type, status, created_at
+                FROM noetl.event
+                WHERE execution_id = %s
+                ORDER BY event_id DESC
+                LIMIT 1
+                """,
+                (int(execution_id),),
+            )
+            latest_row = await cursor.fetchone()
+
+            await cursor.execute(
+                """
+                SELECT event_type, status, created_at
+                FROM noetl.event
+                WHERE execution_id = %s
+                  AND event_type IN (
+                    'execution.cancelled',
+                    'playbook.failed',
+                    'workflow.failed',
+                    'playbook.completed',
+                    'workflow.completed'
+                  )
+                ORDER BY event_id DESC
+                LIMIT 1
+                """,
+                (int(execution_id),),
+            )
+            terminal_row = await cursor.fetchone()
+
+            await cursor.execute(
+                """
+                SELECT
+                  event_id,
+                  event_type,
+                  node_name,
+                  status,
+                  created_at,
+                  duration,
+                  context,
+                  result,
+                  error,
+                  meta
+                FROM noetl.event
+                WHERE execution_id = %s
+                ORDER BY event_id ASC
+                LIMIT %s
+                """,
+                (int(execution_id), request.max_events),
+            )
+            event_rows = await cursor.fetchall()
+
+            playbook_content = None
+            if request.include_playbook_content and base_row.get("catalog_id"):
+                await cursor.execute(
+                    """
+                    SELECT content
+                    FROM noetl.catalog
+                    WHERE catalog_id = %s
+                    """,
+                    (base_row["catalog_id"],),
+                )
+                catalog_content_row = await cursor.fetchone()
+                if catalog_content_row:
+                    playbook_content = catalog_content_row.get("content")
+
+    if not event_rows:
+        raise HTTPException(status_code=404, detail=f"No events found for execution {execution_id}")
+
+    first_event_time = event_rows[0].get("created_at")
+    last_event_time = (latest_row or {}).get("created_at")
+    duration_seconds = 0.0
+    if first_event_time and last_event_time:
+        duration_seconds = max(0.0, (last_event_time - first_event_time).total_seconds())
+
+    path = base_row.get("path") or "unknown"
+    status = (
+        (terminal_row or {}).get("status")
+        or (latest_row or {}).get("status")
+        or "UNKNOWN"
+    )
+
+    event_type_counts = Counter()
+    status_counts = Counter()
+    node_event_counts = Counter()
+    command_issued_by_node = Counter()
+    node_duration_totals_ms = defaultdict(int)
+    node_duration_samples = defaultdict(int)
+    failed_events = 0
+    http_activity_events = 0
+
+    for row in event_rows:
+        event_type = row.get("event_type") or "UNKNOWN"
+        node_name = row.get("node_name") or "UNKNOWN"
+        row_status = row.get("status") or "UNKNOWN"
+        duration_ms = _extract_duration_ms(row.get("duration"))
+
+        event_type_counts[event_type] += 1
+        status_counts[row_status] += 1
+        node_event_counts[node_name] += 1
+
+        if event_type == "command.issued":
+            command_issued_by_node[node_name] += 1
+
+        if duration_ms > 0:
+            node_duration_totals_ms[node_name] += duration_ms
+            node_duration_samples[node_name] += 1
+
+        if "failed" in event_type.lower() or str(row_status).upper() == "FAILED":
+            failed_events += 1
+
+        if _looks_like_http_activity(row):
+            http_activity_events += 1
+
+    retry_nodes = {
+        node: count - 1
+        for node, count in command_issued_by_node.items()
+        if count > 1
+    }
+    retry_attempts = sum(retry_nodes.values())
+
+    slowest_nodes = []
+    for node, total_ms in node_duration_totals_ms.items():
+        samples = node_duration_samples.get(node, 0)
+        if samples <= 0:
+            continue
+        slowest_nodes.append(
+            {
+                "node_name": node,
+                "total_duration_ms": total_ms,
+                "avg_duration_ms": round(total_ms / samples, 2),
+                "samples": samples,
+            }
+        )
+    slowest_nodes.sort(key=lambda item: item["total_duration_ms"], reverse=True)
+    slowest_nodes = slowest_nodes[:8]
+
+    total_step_duration_ms = sum(item["total_duration_ms"] for item in slowest_nodes)
+    dominant_node = slowest_nodes[0] if slowest_nodes else None
+    dominant_share = (
+        (dominant_node["total_duration_ms"] / total_step_duration_ms)
+        if dominant_node and total_step_duration_ms > 0
+        else 0.0
+    )
+
+    findings: list[dict] = []
+    recommendations: list[str] = []
+
+    if duration_seconds >= 60:
+        findings.append(
+            {
+                "severity": "high",
+                "title": "High Execution Duration",
+                "detail": f"Execution took {round(duration_seconds, 2)} seconds.",
+                "evidence": {
+                    "duration_seconds": round(duration_seconds, 2),
+                    "event_count": len(event_rows),
+                },
+            }
+        )
+        recommendations.append("Reduce per-item network latency: avoid high-latency external endpoints for row-wise enrichment.")
+
+    if dominant_node and dominant_share >= 0.65:
+        findings.append(
+            {
+                "severity": "medium",
+                "title": "Single Step Dominates Runtime",
+                "detail": (
+                    f"Node '{dominant_node['node_name']}' consumes "
+                    f"{round(dominant_share * 100, 1)}% of measured step duration."
+                ),
+                "evidence": dominant_node,
+            }
+        )
+        recommendations.append(
+            "Split dominant task_sequence into smaller distributed steps or add bounded parallel fan-out for HTTP-heavy loops."
+        )
+
+    if retry_attempts > 0:
+        findings.append(
+            {
+                "severity": "medium",
+                "title": "Retries Detected",
+                "detail": f"Detected {retry_attempts} retry attempts across {len(retry_nodes)} nodes.",
+                "evidence": {"retry_nodes": retry_nodes},
+            }
+        )
+        recommendations.append("Inspect retryable failures and adjust timeouts/backoff to reduce repeated attempts.")
+
+    if failed_events > 0:
+        findings.append(
+            {
+                "severity": "high",
+                "title": "Failure Events Present",
+                "detail": f"Detected {failed_events} failed/error events in execution timeline.",
+                "evidence": {"failed_events": failed_events},
+            }
+        )
+        recommendations.append("Review the first failure event and add explicit error-branch handling in DSL policy rules.")
+
+    terminal_event_type = (terminal_row or {}).get("event_type")
+    if terminal_event_type is None:
+        findings.append(
+            {
+                "severity": "medium",
+                "title": "Missing Terminal Lifecycle Event",
+                "detail": "No playbook/workflow terminal event found in current event window.",
+                "evidence": {"latest_event_type": (latest_row or {}).get("event_type")},
+            }
+        )
+        recommendations.append("Ensure terminal events are emitted consistently to avoid stale RUNNING states in UI.")
+
+    if http_activity_events > 0:
+        recommendations.append(
+            "For high-volume HTTP enrichment, prefer in-cluster low-latency endpoints and connection reuse."
+        )
+
+    if not recommendations:
+        recommendations.append("No major issues detected from current event sample.")
+
+    summary = {
+        "event_count": len(event_rows),
+        "duration_seconds": round(duration_seconds, 3),
+        "status_counts": dict(status_counts),
+        "event_type_counts": dict(event_type_counts),
+        "failed_event_count": failed_events,
+        "http_activity_event_count": http_activity_events,
+        "retry_attempts": retry_attempts,
+        "retry_nodes": retry_nodes,
+        "top_nodes_by_events": node_event_counts.most_common(10),
+        "slowest_nodes": slowest_nodes,
+        "terminal_event_type": terminal_event_type,
+    }
+
+    sample_count = min(request.event_sample_size, len(event_rows))
+    latest_events = event_rows[-sample_count:]
+    event_sample = [
+        {
+            "event_id": str(row.get("event_id")),
+            "event_type": row.get("event_type"),
+            "node_name": row.get("node_name"),
+            "status": row.get("status"),
+            "timestamp": _as_iso(row.get("created_at")),
+            "duration_ms": _extract_duration_ms(row.get("duration")),
+            "error": _truncate_text(row.get("error"), max_len=400),
+        }
+        for row in latest_events
+    ]
+
+    cloud = _build_cloud_context(execution_id, first_event_time, last_event_time)
+    ai_prompt = _build_ai_prompt(
+        execution_id=execution_id,
+        path=path,
+        status=status,
+        summary=summary,
+        findings=findings,
+        recommendations=recommendations,
+        event_sample=event_sample,
+        playbook_content=playbook_content,
+        cloud_context=cloud,
+    )
+
+    return AnalyzeExecutionResponse(
+        execution_id=str(execution_id),
+        path=path,
+        status=status,
+        generated_at=datetime.now(timezone.utc),
+        summary=summary,
+        findings=findings,
+        recommendations=recommendations,
+        cloud=cloud,
+        playbook={
+            "catalog_id": str(base_row.get("catalog_id")) if base_row.get("catalog_id") else None,
+            "path": path,
+            "version": base_row.get("version"),
+            "content": playbook_content if request.include_playbook_content else None,
+        },
+        event_sample=event_sample,
+        ai_prompt=ai_prompt,
+    )
+
+
 @router.post("/executions/cleanup", response_model=CleanupStuckExecutionsResponse)
 async def cleanup_stuck_executions(request: CleanupStuckExecutionsRequest = Body(...)):
     """
@@ -623,4 +1090,3 @@ async def cleanup_stuck_executions(request: CleanupStuckExecutionsRequest = Body
                 execution_ids=execution_ids,
                 message=f"Successfully cancelled {len(execution_ids)} stuck executions older than {request.older_than_minutes} minutes"
             )
-

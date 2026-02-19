@@ -34,7 +34,7 @@ workbook:
 
 workflow:
   - step: start
-    desc: "Start regression test suite - 52 playbooks (4 skipped)"
+    desc: "Start regression test suite - 53 playbooks (4 skipped)"
     tool:
       kind: python
       args: {}
@@ -722,6 +722,19 @@ workflow:
       spec:
         mode: exclusive
       arcs:
+        - step: tests/fixtures/playbooks/batch_execution/traveler_batch_enrichment_in_step
+
+  - step: tests/fixtures/playbooks/batch_execution/traveler_batch_enrichment_in_step
+    tool:
+      kind: playbook
+      path: tests/fixtures/playbooks/batch_execution/traveler_batch_enrichment_in_step
+      retry:
+        max_attempts: 2
+        retry_on: ["timeout"]
+    next:
+      spec:
+        mode: exclusive
+      arcs:
         - step: tests/fixtures/playbooks/broken_sql
 
   # SKIPPED: tests/fixtures/playbooks/interactive_brokers/gateway_test - IB Gateway not running
@@ -789,5 +802,5 @@ workflow:
       kind: python
       args: {}
       code: |
-        print("=== Regression test suite completed - 52 playbooks tested (4 skipped) ===")
-        result = {"status": "success", "data": {"tests_run": 52, "skipped": 4}}
+        print("=== Regression test suite completed - 53 playbooks tested (4 skipped) ===")
+        result = {"status": "success", "data": {"tests_run": 53, "skipped": 4}}

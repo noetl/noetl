@@ -1,0 +1,227 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: traveler_batch_enrichment_in_step
+  path: tests/fixtures/playbooks/batch_execution/traveler_batch_enrichment_in_step
+  description: Query travelers in 100-row batches and process each batch with parallel HTTP enrichment.
+
+workload:
+  pg_auth: pg_k8s
+  seed_rows: 2000
+  batch_size: 100
+  max_batches: 20
+  profile_api_url: https://httpbin.org/anything/traveler-profile
+  batch_worker_path: tests/fixtures/playbooks/batch_execution/traveler_batch_enrichment_chunk_worker
+
+workflow:
+  - step: start
+    desc: Initialize execution
+    tool:
+      kind: python
+      code: |
+        result = {
+          "status": "initialized",
+          "pattern": "query_100_then_parallel_http_then_next_batch"
+        }
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: prepare_source_and_target
+
+  - step: prepare_source_and_target
+    desc: Prepare source/target tables and seed traveler source rows
+    tool:
+      kind: postgres
+      auth: '{{ pg_auth }}'
+      query: |
+        CREATE TABLE IF NOT EXISTS public.traveler_batch_source (
+          execution_id TEXT NOT NULL,
+          traveler_id INTEGER NOT NULL,
+          traveler_name TEXT NOT NULL,
+          PRIMARY KEY (execution_id, traveler_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS public.traveler_batch_results (
+          execution_id TEXT NOT NULL,
+          traveler_id INTEGER NOT NULL,
+          traveler_name TEXT NOT NULL,
+          normalized_name TEXT NOT NULL,
+          profile_status INTEGER NOT NULL,
+          profile_hash TEXT NOT NULL,
+          profile_payload JSONB NOT NULL,
+          is_valid BOOLEAN NOT NULL DEFAULT TRUE,
+          validation_error TEXT,
+          batch_number INTEGER NOT NULL,
+          processed_at TIMESTAMPTZ DEFAULT NOW(),
+          PRIMARY KEY (execution_id, traveler_id)
+        );
+
+        DELETE FROM public.traveler_batch_source
+        WHERE execution_id = '{{ execution_id }}';
+
+        DELETE FROM public.traveler_batch_results
+        WHERE execution_id = '{{ execution_id }}';
+
+        INSERT INTO public.traveler_batch_source (execution_id, traveler_id, traveler_name)
+        SELECT
+          '{{ execution_id }}',
+          gs,
+          'Traveler ' || gs
+        FROM generate_series(1, {{ seed_rows }}) AS gs;
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: build_batch_plan
+
+  - step: build_batch_plan
+    desc: Build exactly 20 batch windows of 100 rows each (configurable)
+    tool:
+      kind: python
+      args:
+        batch_size: '{{ batch_size }}'
+        max_batches: '{{ max_batches }}'
+      code: |
+        size = int(batch_size or 100)
+        total = int(max_batches or 20)
+
+        batches = []
+        for idx in range(total):
+            batch_number = idx + 1
+            offset = idx * size
+            batches.append(
+                {
+                    "batch_number": batch_number,
+                    "offset": offset,
+                    "limit": size,
+                }
+            )
+
+        result = {
+            "batch_size": size,
+            "max_batches": total,
+            "batches": batches,
+        }
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: run_batch_workers
+
+  - step: run_batch_workers
+    desc: For each planned batch, execute worker playbook that runs parallel HTTP per traveler
+    loop:
+      in: '{{ build_batch_plan.batches }}'
+      iterator: batch
+      spec:
+        mode: sequential
+        policy:
+          exec: distributed
+    tool:
+      kind: playbook
+      path: '{{ batch_worker_path }}'
+      return_step: end
+      timeout: 900
+      args:
+        pg_auth: '{{ pg_auth }}'
+        parent_execution_id: '{{ execution_id }}'
+        batch_number: '{{ iter.batch.batch_number }}'
+        offset: '{{ iter.batch.offset }}'
+        batch_size: '{{ iter.batch.limit }}'
+        profile_api_url: '{{ profile_api_url }}'
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: validate_persisted_results
+          when: '{{ event.name == ''loop.done'' }}'
+
+  - step: validate_persisted_results
+    desc: Validate persisted rows for processed batch range
+    tool:
+      kind: postgres
+      auth: '{{ pg_auth }}'
+      query: |
+        SELECT
+          (SELECT COUNT(*)
+           FROM public.traveler_batch_source
+           WHERE execution_id = '{{ execution_id }}') AS source_rows,
+          (SELECT COUNT(*)
+           FROM public.traveler_batch_results
+           WHERE execution_id = '{{ execution_id }}') AS stored_rows,
+          (SELECT COUNT(*)
+           FROM public.traveler_batch_results
+           WHERE execution_id = '{{ execution_id }}' AND profile_status = 200) AS successful_http_calls,
+          (SELECT COUNT(*)
+           FROM public.traveler_batch_results
+           WHERE execution_id = '{{ execution_id }}' AND is_valid = TRUE) AS valid_rows,
+          (SELECT COUNT(*)
+           FROM public.traveler_batch_results
+           WHERE execution_id = '{{ execution_id }}' AND is_valid = FALSE) AS invalid_rows,
+          (SELECT COALESCE(MAX(batch_number), 0)
+           FROM public.traveler_batch_results
+           WHERE execution_id = '{{ execution_id }}') AS max_batch_number,
+          LEAST({{ seed_rows | int }}, {{ batch_size | int }} * {{ max_batches | int }}) AS expected_rows;
+
+        SELECT COUNT(*) AS missing_rows
+        FROM public.traveler_batch_source src
+        LEFT JOIN public.traveler_batch_results tgt
+          ON src.execution_id = tgt.execution_id
+         AND src.traveler_id = tgt.traveler_id
+        WHERE src.execution_id = '{{ execution_id }}'
+          AND src.traveler_id <= LEAST({{ seed_rows | int }}, {{ batch_size | int }} * {{ max_batches | int }})
+          AND tgt.traveler_id IS NULL;
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: summarize
+
+  - step: summarize
+    desc: Summarize batch worker execution and persistence checks
+    tool:
+      kind: python
+      args:
+        validation: '{{ validate_persisted_results }}'
+        worker_loop: '{{ run_batch_workers }}'
+        batch_size: '{{ batch_size }}'
+        max_batches: '{{ max_batches }}'
+      code: |
+        stats = validation.get("command_0", {}).get("rows", [{}])[0] if isinstance(validation, dict) else {}
+        gaps = validation.get("command_1", {}).get("rows", [{}])[0] if isinstance(validation, dict) else {}
+        loop_stats = worker_loop.get("stats", {}) if isinstance(worker_loop, dict) else {}
+
+        result = {
+            "status": "completed",
+            "configured": {
+                "batch_size": int(batch_size or 100),
+                "max_batches": int(max_batches or 20),
+            },
+            "execution": {
+                "batch_worker_iterations": int(loop_stats.get("total", 0) or 0),
+                "batch_worker_failed_iterations": int(loop_stats.get("failed", 0) or 0),
+            },
+            "data": {
+                "source_rows": int(stats.get("source_rows", 0) or 0),
+                "expected_rows": int(stats.get("expected_rows", 0) or 0),
+                "stored_rows": int(stats.get("stored_rows", 0) or 0),
+                "missing_rows": int(gaps.get("missing_rows", 0) or 0),
+                "successful_http_calls": int(stats.get("successful_http_calls", 0) or 0),
+                "valid_rows": int(stats.get("valid_rows", 0) or 0),
+                "invalid_rows": int(stats.get("invalid_rows", 0) or 0),
+                "max_batch_number": int(stats.get("max_batch_number", 0) or 0),
+            },
+        }
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
+
+  - step: end
+    desc: End workflow
+    tool:
+      kind: python
+      code: |
+        result = {"status": "completed"}

@@ -982,7 +982,9 @@ fn parse_exec_reference(reference: &str, version_override: Option<&str>) -> Resu
         });
     }
     
-    // Pattern 3: File path (contains / or \ or ends with .yaml/.yml or file exists)
+    // Pattern 3: File path (contains / or \ or ends with .yaml/.yml)
+    // IMPORTANT: Only treat as file when it's an actual file. A directory path
+    // (e.g. catalog-like path with '/') should continue to catalog resolution.
     let is_file_like = reference.contains('/') || 
                        reference.contains('\\') || 
                        reference.ends_with(".yaml") || 
@@ -990,7 +992,7 @@ fn parse_exec_reference(reference: &str, version_override: Option<&str>) -> Resu
     
     if is_file_like {
         let path = PathBuf::from(reference);
-        if path.exists() || reference.ends_with(".yaml") || reference.ends_with(".yml") {
+        if path.is_file() || reference.ends_with(".yaml") || reference.ends_with(".yml") {
             return Ok(ExecContext {
                 ref_type: RefType::File(path),
                 version: None,
@@ -1034,8 +1036,14 @@ fn parse_exec_reference(reference: &str, version_override: Option<&str>) -> Resu
     }
     
     // Pattern 5: Check for noetl.yaml in current directory - treat reference as target
+    // Only apply for simple target names. If reference contains path separators,
+    // prefer catalog-path resolution (Pattern 6).
     let noetl_yaml = PathBuf::from("noetl.yaml");
-    if noetl_yaml.exists() && noetl_yaml.is_file() {
+    let is_simple_target = !reference.contains('/') &&
+                          !reference.contains('\\') &&
+                          !reference.ends_with(".yaml") &&
+                          !reference.ends_with(".yml");
+    if is_simple_target && noetl_yaml.exists() && noetl_yaml.is_file() {
         return Ok(ExecContext {
             ref_type: RefType::File(noetl_yaml),
             version: None,

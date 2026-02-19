@@ -4,7 +4,7 @@ kind: Playbook
 metadata:
   name: master_regression_test_parallel
   path: tests/fixtures/playbooks/regression_test/master_regression_test_parallel
-  description: "Parallel regression test suite - runs 48 playbooks concurrently (4 skipped)"
+  description: "Parallel regression test suite - runs 51 playbooks concurrently (4 skipped)"
 
 workload:
   test_run_id: "{{ execution_id }}"
@@ -81,6 +81,7 @@ workload:
     - api_integration/amadeus_ai_api
     - data_processing/wikipedia_processing
     - batch_execution/multi_playbook_batch
+    - tests/fixtures/playbooks/batch_execution/traveler_batch_enrichment_in_step
 
     # Error handling tests
     - tests/fixtures/playbooks/broken_sql
@@ -93,13 +94,13 @@ workload:
 
 workflow:
   - step: start
-    desc: "Start parallel regression test suite - 48 playbooks (4 skipped)"
+    desc: "Start parallel regression test suite - 51 playbooks (4 skipped)"
     tool:
       kind: python
       args: {}
       code: |
         print(f"Starting parallel regression test suite")
-        print(f"Total playbooks: 48 (4 skipped)")
+        print(f"Total playbooks: 51 (4 skipped)")
         print(f"Execution mode: PARALLEL")
         result = {"status": "initialized", "mode": "parallel"}
     next:
@@ -209,6 +210,6 @@ workflow:
       args: {}
       code: |
         print("=== Parallel regression test suite completed ===")
-        print("Total playbooks: 48 (4 skipped)")
+        print("Total playbooks: 51 (4 skipped)")
         print("Execution mode: PARALLEL with concurrency=10")
-        result = {"status": "success", "data": {"tests_run": 48, "skipped": 4, "mode": "parallel"}}
+        result = {"status": "success", "data": {"tests_run": 51, "skipped": 4, "mode": "parallel"}}
