@@ -2821,7 +2821,7 @@ dependencies = [
 
 [[package]]
 name = "noetl"
-version = "2.8.3"
+version = "2.8.4"
 dependencies = [
  "anyhow",
  "base64",
@@ -2849,7 +2849,7 @@ dependencies = [
 
 [[package]]
 name = "noetl-control-plane"
-version = "2.8.3"
+version = "2.8.4"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -2880,7 +2880,7 @@ dependencies = [
 
 [[package]]
 name = "noetl-gateway"
-version = "2.8.3"
+version = "2.8.4"
 dependencies = [
  "anyhow",
  "async-graphql",
@@ -2913,7 +2913,7 @@ dependencies = [
 
 [[package]]
 name = "noetl-tools"
-version = "2.8.3"
+version = "2.8.4"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -6032,7 +6032,7 @@ checksum = "f17a85883d4e6d00e8a97c586de764dabcc06133f7f1d55dce5cdc070ad7fe59"
 
 [[package]]
 name = "worker-pool"
-version = "2.8.3"
+version = "2.8.4"
 dependencies = [
  "anyhow",
  "async-nats",
