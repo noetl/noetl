@@ -274,6 +274,38 @@ class APIService {
     return response.data;
   }
 
+  async explainPlaybookWithAI(
+    payload: {
+      catalog_id?: string;
+      path?: string;
+      version?: string | number;
+      explanation_playbook_path?: string;
+      gcp_auth_credential?: string;
+      openai_secret_path?: string;
+      model?: string;
+      timeout_seconds?: number;
+      poll_interval_ms?: number;
+    },
+  ): Promise<any> {
+    const response = await apiClient.post("/catalog/playbooks/explain/ai", payload || {});
+    return response.data;
+  }
+
+  async generatePlaybookWithAI(
+    payload: {
+      prompt: string;
+      generator_playbook_path?: string;
+      gcp_auth_credential?: string;
+      openai_secret_path?: string;
+      model?: string;
+      timeout_seconds?: number;
+      poll_interval_ms?: number;
+    },
+  ): Promise<any> {
+    const response = await apiClient.post("/catalog/playbooks/generate/ai", payload);
+    return response.data;
+  }
+
   async executePlaybook(
     catalog_id: string,
     params?: any,

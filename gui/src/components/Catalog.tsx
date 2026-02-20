@@ -25,6 +25,7 @@ import {
   FileTextOutlined,
   UploadOutlined,
   PlusOutlined,
+  RobotOutlined,
 } from "@ant-design/icons";
 import { apiService } from "../services/api";
 import { PlaybookData } from "../types";
@@ -68,6 +69,15 @@ const Catalog: React.FC = () => {
   const [createPlaybookJson, setCreatePlaybookJson] = useState("");
   const [createPlaybookFile, setCreatePlaybookFile] = useState<File | null>(null);
   const [activeCreateTab, setActiveCreateTab] = useState("json");
+  const [createPlaybookAiPrompt, setCreatePlaybookAiPrompt] = useState("");
+  const [createPlaybookAiDraft, setCreatePlaybookAiDraft] = useState("");
+  const [createPlaybookAiResult, setCreatePlaybookAiResult] = useState<any | null>(null);
+  const [generatingPlaybookAi, setGeneratingPlaybookAi] = useState(false);
+
+  // Explain playbook modal state
+  const [explainingPlaybookPath, setExplainingPlaybookPath] = useState<string | null>(null);
+  const [explainModalVisible, setExplainModalVisible] = useState(false);
+  const [explainResult, setExplainResult] = useState<any | null>(null);
 
   // Debounced search function
   const debounceSearch = useCallback(
@@ -266,6 +276,9 @@ const Catalog: React.FC = () => {
     setCreatePlaybookJson("");
     setCreatePlaybookFile(null);
     setActiveCreateTab("json");
+    setCreatePlaybookAiPrompt("");
+    setCreatePlaybookAiDraft("");
+    setCreatePlaybookAiResult(null);
   };
 
   const handleCloseCreateModal = () => {
@@ -273,6 +286,9 @@ const Catalog: React.FC = () => {
     setCreatePlaybookJson("");
     setCreatePlaybookFile(null);
     setActiveCreateTab("json");
+    setCreatePlaybookAiPrompt("");
+    setCreatePlaybookAiDraft("");
+    setCreatePlaybookAiResult(null);
   };
 
   const handleCreatePlaybook = async () => {
@@ -285,6 +301,8 @@ const Catalog: React.FC = () => {
       } else if (activeCreateTab === "file" && createPlaybookFile) {
         const fileText = await createPlaybookFile.text();
         playbookContent = fileText.trim();
+      } else if (activeCreateTab === "ai" && createPlaybookAiDraft.trim()) {
+        playbookContent = createPlaybookAiDraft.trim();
       } else {
         message.error("Please provide playbook data");
         return;
@@ -303,6 +321,76 @@ const Catalog: React.FC = () => {
       console.error("Failed to register playbook:", error);
       message.error(error?.response?.data?.detail || "Failed to register playbook. Please try again.");
     }
+  };
+
+  const handleGeneratePlaybookWithAI = async () => {
+    const prompt = createPlaybookAiPrompt.trim();
+    if (!prompt) {
+      message.error("Please enter a prompt for AI generation");
+      return;
+    }
+
+    try {
+      setGeneratingPlaybookAi(true);
+      const result = await apiService.generatePlaybookWithAI({
+        prompt,
+        timeout_seconds: 180,
+        poll_interval_ms: 1500,
+      });
+      const generated = String(result?.generated_playbook || "").trim();
+      if (!generated) {
+        message.error("AI generation finished but returned empty playbook draft");
+        return;
+      }
+      setCreatePlaybookAiDraft(generated);
+      setCreatePlaybookAiResult(result);
+      message.success("AI draft generated");
+    } catch (error: any) {
+      console.error("Failed to generate playbook with AI:", error);
+      message.error(
+        error?.response?.data?.detail || "Failed to generate playbook draft with AI.",
+      );
+    } finally {
+      setGeneratingPlaybookAi(false);
+    }
+  };
+
+  const handleUseAIDraftInEditor = () => {
+    if (!createPlaybookAiDraft.trim()) {
+      message.warning("Generate a draft first");
+      return;
+    }
+    setCreatePlaybookJson(createPlaybookAiDraft.trim());
+    setActiveCreateTab("json");
+    message.success("Draft loaded into JSON/YAML editor");
+  };
+
+  const handleExplainPlaybook = async (playbook: PlaybookData) => {
+    try {
+      setExplainingPlaybookPath(playbook.path);
+      const result = await apiService.explainPlaybookWithAI({
+        catalog_id: playbook.catalog_id,
+        path: playbook.path,
+        version: playbook.version,
+        timeout_seconds: 180,
+        poll_interval_ms: 1500,
+      });
+      setExplainResult(result);
+      setExplainModalVisible(true);
+      message.success("AI explanation generated");
+    } catch (error: any) {
+      console.error("Failed to explain playbook with AI:", error);
+      message.error(
+        error?.response?.data?.detail || "Failed to explain playbook with AI.",
+      );
+    } finally {
+      setExplainingPlaybookPath(null);
+    }
+  };
+
+  const handleCloseExplainModal = () => {
+    setExplainModalVisible(false);
+    setExplainResult(null);
   };
 
   const handleViewFlow = (playbookId: string, playbookName: string) => {
@@ -438,6 +526,14 @@ const Catalog: React.FC = () => {
                       }
                     >
                       Payload
+                    </Button>
+                    <Button
+                      type="text"
+                      icon={<RobotOutlined />}
+                      onClick={() => handleExplainPlaybook(playbook)}
+                      loading={explainingPlaybookPath === playbook.path}
+                    >
+                      Explain with AI
                     </Button>
                     <Button
                       type="primary"
@@ -648,7 +744,88 @@ workflow:
                 />
               </Space>
             </TabPane>
+            <TabPane tab="Generate with AI" key="ai">
+              <Space
+                direction="vertical"
+                size="small"
+                style={{ width: "100%" }}
+              >
+                <Text>Describe the playbook you want:</Text>
+                <TextArea
+                  rows={6}
+                  placeholder="Example: Build a playbook that fetches weather for a city, transforms it, and stores daily stats in Postgres."
+                  value={createPlaybookAiPrompt}
+                  onChange={(e) => setCreatePlaybookAiPrompt(e.target.value)}
+                />
+                <Space>
+                  <Button
+                    type="primary"
+                    icon={<RobotOutlined />}
+                    loading={generatingPlaybookAi}
+                    onClick={handleGeneratePlaybookWithAI}
+                  >
+                    Generate Draft
+                  </Button>
+                  <Button
+                    onClick={handleUseAIDraftInEditor}
+                    disabled={!createPlaybookAiDraft.trim()}
+                  >
+                    Use Draft in JSON/YAML
+                  </Button>
+                </Space>
+                {createPlaybookAiResult?.ai_execution_id && (
+                  <Text type="secondary">
+                    AI execution: {createPlaybookAiResult.ai_execution_id} ({createPlaybookAiResult.ai_execution_status || "unknown"})
+                  </Text>
+                )}
+                <TextArea
+                  rows={12}
+                  value={createPlaybookAiDraft}
+                  readOnly
+                  placeholder="Generated draft will appear here."
+                  style={{ fontFamily: "monospace" }}
+                />
+              </Space>
+            </TabPane>
           </Tabs>
+        </Space>
+      </Modal>
+
+      <Modal
+        title={`Explain Playbook with AI${explainResult?.target_path ? `: ${explainResult.target_path}` : ""}`}
+        open={explainModalVisible}
+        onCancel={handleCloseExplainModal}
+        width={900}
+        footer={[
+          <Button key="close" onClick={handleCloseExplainModal}>
+            Close
+          </Button>,
+          <Button
+            key="copy"
+            icon={<FileTextOutlined />}
+            onClick={async () => {
+              try {
+                await navigator.clipboard.writeText(JSON.stringify(explainResult?.ai_report || {}, null, 2));
+                message.success("AI explanation copied");
+              } catch {
+                message.error("Failed to copy explanation");
+              }
+            }}
+          >
+            Copy Explanation
+          </Button>,
+        ]}
+      >
+        <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+          <Text type="secondary">
+            AI execution: {explainResult?.ai_execution_id || "-"} ({explainResult?.ai_execution_status || "unknown"})
+          </Text>
+          <TextArea
+            rows={20}
+            readOnly
+            value={JSON.stringify(explainResult?.ai_report || {}, null, 2)}
+            style={{ fontFamily: "monospace" }}
+          />
         </Space>
       </Modal>
     </Content>

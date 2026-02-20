@@ -190,4 +190,122 @@ class CatalogRegisterResponse(AppBaseModel):
         description="Resource type/kind",
         example="Playbook"
     )
+
+
+class ExplainPlaybookWithAIRequest(AppBaseModel):
+    """Request schema for playbook explanation via AI playbook."""
+
+    catalog_id: Optional[str] = Field(
+        default=None,
+        description="Catalog ID of target playbook (optional if path provided)",
+    )
+    path: Optional[str] = Field(
+        default=None,
+        description="Path of target playbook (optional if catalog_id provided)",
+    )
+    version: Optional[str | int] = Field(
+        default="latest",
+        description="Target version (default latest)",
+    )
+    explanation_playbook_path: str = Field(
+        default="ops/playbook_ai_explain",
+        description="Playbook path used to generate explanation",
+    )
+    gcp_auth_credential: Optional[str] = Field(
+        default=None,
+        description="Optional override for analyzer workload.gcp_auth",
+    )
+    openai_secret_path: Optional[str] = Field(
+        default=None,
+        description="Optional override for analyzer workload.openai_secret_path",
+    )
+    model: str = Field(
+        default="gpt-4o-mini",
+        description="OpenAI model used by explain playbook",
+    )
+    timeout_seconds: int = Field(
+        default=180,
+        ge=30,
+        le=1200,
+        description="Max time to wait for explain playbook completion",
+    )
+    poll_interval_ms: int = Field(
+        default=1500,
+        ge=200,
+        le=10000,
+        description="Polling interval while waiting for explain playbook",
+    )
+
+    @model_validator(mode="after")
+    def validate_identifiers(self) -> "ExplainPlaybookWithAIRequest":
+        if not self.catalog_id and not self.path:
+            raise ValueError("Either catalog_id or path must be provided")
+        return self
+
+
+class ExplainPlaybookWithAIResponse(AppBaseModel):
+    """Response schema for playbook explanation via AI playbook."""
+
+    target_path: str = Field(..., description="Target playbook path")
+    target_version: Optional[int] = Field(None, description="Target playbook version")
+    generated_at: datetime = Field(..., description="UTC timestamp when explanation finished")
+    ai_playbook_path: str = Field(..., description="AI explainer playbook path")
+    ai_execution_id: Optional[str] = Field(None, description="Execution ID of AI explainer playbook")
+    ai_execution_status: str = Field(..., description="AI explainer execution status")
+    ai_report: dict[str, Any] = Field(default_factory=dict, description="Parsed AI explanation report")
+    ai_raw_output: dict[str, Any] = Field(default_factory=dict, description="Raw AI output payload")
+
+
+class GeneratePlaybookWithAIRequest(AppBaseModel):
+    """Request schema for AI-generated playbook draft."""
+
+    prompt: str = Field(..., description="Natural language prompt describing the playbook to generate")
+    generator_playbook_path: str = Field(
+        default="ops/playbook_ai_generate",
+        description="Playbook path used to generate draft playbook",
+    )
+    gcp_auth_credential: Optional[str] = Field(
+        default=None,
+        description="Optional override for generator workload.gcp_auth",
+    )
+    openai_secret_path: Optional[str] = Field(
+        default=None,
+        description="Optional override for generator workload.openai_secret_path",
+    )
+    model: str = Field(
+        default="gpt-4o-mini",
+        description="OpenAI model used by generator playbook",
+    )
+    timeout_seconds: int = Field(
+        default=180,
+        ge=30,
+        le=1200,
+        description="Max time to wait for generator playbook completion",
+    )
+    poll_interval_ms: int = Field(
+        default=1500,
+        ge=200,
+        le=10000,
+        description="Polling interval while waiting for generator playbook",
+    )
+
+    @field_validator("prompt", mode="before")
+    @classmethod
+    def validate_prompt(cls, value: Any) -> str:
+        text = str(value or "").strip()
+        if not text:
+            raise ValueError("prompt cannot be empty")
+        return text
+
+
+class GeneratePlaybookWithAIResponse(AppBaseModel):
+    """Response schema for AI-generated playbook draft."""
+
+    generated_at: datetime = Field(..., description="UTC timestamp when generation finished")
+    ai_playbook_path: str = Field(..., description="AI generator playbook path")
+    ai_execution_id: Optional[str] = Field(None, description="Execution ID of AI generator playbook")
+    ai_execution_status: str = Field(..., description="AI generator execution status")
+    generated_playbook: str = Field(..., description="Generated playbook YAML draft")
+    ai_report: dict[str, Any] = Field(default_factory=dict, description="Parsed AI generation report")
+    ai_raw_output: dict[str, Any] = Field(default_factory=dict, description="Raw AI output payload")
         
