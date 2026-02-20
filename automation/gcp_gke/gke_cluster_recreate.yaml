@@ -1,0 +1,312 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: gke_cluster_recreate
+  path: automation/gcp_gke/gke-cluster-recreate
+  description: Snapshot, destroy, provision, or recreate a GKE Autopilot cluster using optional blueprint settings
+  labels:
+    iap.noetl.io/provider: gcp
+    iap.noetl.io/category: cluster-lifecycle
+
+executor:
+  profile: local
+  version: noetl-runtime/1
+
+workload:
+  # Actions: snapshot, status, destroy, provision, recreate, help
+  action: help
+
+  project_id: ""
+  region: us-central1
+  cluster_name: noetl-cluster
+
+  # Create defaults (used when no blueprint is available)
+  release_channel: regular
+  network: default
+  subnetwork: default
+
+  # Blueprint/snapshot behavior
+  use_blueprint: true
+  skip_snapshot: false
+  snapshot_dir: automation/gcp_gke/snapshots
+  blueprint_path: automation/gcp_gke/blueprints/noetl-cluster-blueprint.json
+
+  # Quota precheck (prevents create/recreate that later fails on surge upgrades)
+  min_global_cpu_quota: 64
+  enforce_cpu_quota_check: true
+
+workflow:
+  - step: start
+    desc: Validate action and input
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "========================================"
+          echo " GKE Cluster Lifecycle Playbook"
+          echo "========================================"
+          echo "Action:   {{ workload.action }}"
+          echo "Project:  {{ workload.project_id }}"
+          echo "Cluster:  {{ workload.cluster_name }}"
+          echo "Region:   {{ workload.region }}"
+          echo ""
+          if [ "{{ workload.action }}" != "help" ] && [ -z "{{ workload.project_id }}" ]; then
+            echo "ERROR: workload.project_id is required"
+            exit 1
+          fi
+    next:
+        - when: "{{ workload.action != 'help' }}"
+          then:
+            - step: verify_prerequisites
+        - step: show_help
+
+  - step: show_help
+    desc: Show usage
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Usage:"
+          echo "  noetl run automation/gcp_gke/gke_cluster_recreate.yaml \\"
+          echo "    --set action=<snapshot|status|destroy|provision|recreate> \\"
+          echo "    --set project_id=<gcp-project-id>"
+          echo ""
+          echo "Examples:"
+          echo "  # Snapshot current cluster and store blueprint"
+          echo "  noetl run automation/gcp_gke/gke_cluster_recreate.yaml \\"
+          echo "    --set action=snapshot \\"
+          echo "    --set project_id=noetl-demo-19700101"
+          echo ""
+          echo "  # Destroy and recreate cluster using blueprint"
+          echo "  noetl run automation/gcp_gke/gke_cluster_recreate.yaml \\"
+          echo "    --set action=recreate \\"
+          echo "    --set project_id=noetl-demo-19700101 \\"
+          echo "    --set cluster_name=noetl-cluster"
+          echo ""
+          echo "  # Provision only (with explicit defaults)"
+          echo "  noetl run automation/gcp_gke/gke_cluster_recreate.yaml \\"
+          echo "    --set action=provision \\"
+          echo "    --set project_id=noetl-demo-19700101 \\"
+          echo "    --set release_channel=regular \\"
+          echo "    --set network=default \\"
+          echo "    --set subnetwork=default"
+    next:
+        - step: end
+
+  - step: verify_prerequisites
+    desc: Verify local prerequisites
+    tool:
+      kind: shell
+      cmds:
+        - |
+          set -e
+          command -v gcloud >/dev/null 2>&1 || { echo "ERROR: gcloud is required"; exit 1; }
+          command -v jq >/dev/null 2>&1 || { echo "ERROR: jq is required"; exit 1; }
+          echo "Prerequisites check passed"
+    next:
+        - step: configure_gcloud
+
+  - step: configure_gcloud
+    desc: Configure gcloud project
+    tool:
+      kind: shell
+      cmds:
+        - |
+          set -e
+          gcloud auth list --filter="status:ACTIVE" --format="value(account)" | grep -q . || {
+            echo "ERROR: No active gcloud account. Run: gcloud auth login"
+            exit 1
+          }
+          gcloud config set project {{ workload.project_id }}
+          gcloud services enable container.googleapis.com --project {{ workload.project_id }}
+          echo "gcloud configured for project {{ workload.project_id }}"
+    next:
+        - step: route_action
+
+  - step: route_action
+    desc: Route based on requested action
+    tool:
+      kind: shell
+      cmds:
+        - echo "Routing action {{ workload.action }}"
+    next:
+        - when: "{{ workload.action == 'snapshot' }}"
+          then:
+            - step: snapshot_cluster
+        - when: "{{ workload.action == 'status' }}"
+          then:
+            - step: cluster_status
+        - when: "{{ workload.action == 'destroy' }}"
+          then:
+            - step: maybe_snapshot_before_destroy
+        - when: "{{ workload.action == 'recreate' }}"
+          then:
+            - step: maybe_snapshot_before_destroy
+        - when: "{{ workload.action == 'provision' }}"
+          then:
+            - step: create_cluster
+        - step: show_help
+
+  - step: maybe_snapshot_before_destroy
+    desc: Snapshot before destructive operation
+    tool:
+      kind: shell
+      cmds:
+        - |
+          if [ "{{ workload.skip_snapshot }}" = "true" ]; then
+            echo "Skipping snapshot before destroy/recreate (skip_snapshot=true)"
+            exit 0
+          fi
+          echo "Taking pre-destroy snapshot..."
+    next:
+        - when: "{{ workload.skip_snapshot == true }}"
+          then:
+            - step: destroy_cluster
+        - step: snapshot_cluster
+
+  - step: snapshot_cluster
+    desc: Capture cluster snapshot and persist blueprint
+    tool:
+      kind: shell
+      cmds:
+        - |
+          set -e
+          TS=$(date -u +%Y%m%dT%H%M%SZ)
+          SNAP_DIR="{{ workload.snapshot_dir }}/$TS"
+          mkdir -p "$SNAP_DIR"
+
+          echo "Snapshot directory: $SNAP_DIR"
+          gcloud container clusters list --project {{ workload.project_id }} --format=json > "$SNAP_DIR/clusters.list.json"
+          gcloud compute addresses list --project {{ workload.project_id }} --format=json > "$SNAP_DIR/addresses.list.json"
+
+          if gcloud container clusters describe {{ workload.cluster_name }} --region {{ workload.region }} --project {{ workload.project_id }} --format=json > "$SNAP_DIR/cluster.describe.json" 2>/dev/null; then
+            mkdir -p "$(dirname "{{ workload.blueprint_path }}")"
+            cp "$SNAP_DIR/cluster.describe.json" "{{ workload.blueprint_path }}"
+            echo "Blueprint updated: {{ workload.blueprint_path }}"
+
+            gcloud container clusters get-credentials {{ workload.cluster_name }} --region {{ workload.region }} --project {{ workload.project_id }} >/dev/null
+            kubectl get nodes -o wide > "$SNAP_DIR/kubectl.nodes.txt" || true
+            kubectl get ns -o yaml > "$SNAP_DIR/kubectl.namespaces.yaml" || true
+            kubectl get deploy,svc,ingress,statefulset,pvc -A -o yaml > "$SNAP_DIR/kubectl.workloads.yaml" || true
+            helm ls -A -o yaml > "$SNAP_DIR/helm.releases.yaml" || true
+          else
+            echo "Cluster not found; snapshot captured project-level data only"
+          fi
+    next:
+        - when: "{{ workload.action == 'destroy' }}"
+          then:
+            - step: destroy_cluster
+        - when: "{{ workload.action == 'recreate' }}"
+          then:
+            - step: destroy_cluster
+        - step: end
+
+  - step: destroy_cluster
+    desc: Destroy target GKE cluster if it exists
+    tool:
+      kind: shell
+      cmds:
+        - |
+          set -e
+          if gcloud container clusters describe {{ workload.cluster_name }} --region {{ workload.region }} --project {{ workload.project_id }} >/dev/null 2>&1; then
+            echo "Deleting cluster {{ workload.cluster_name }} ..."
+            gcloud container clusters delete {{ workload.cluster_name }} \
+              --region {{ workload.region }} \
+              --project {{ workload.project_id }} \
+              --quiet
+            echo "Cluster deleted"
+          else
+            echo "Cluster {{ workload.cluster_name }} does not exist; nothing to delete"
+          fi
+    next:
+        - when: "{{ workload.action == 'recreate' }}"
+          then:
+            - step: create_cluster
+        - step: end
+
+  - step: create_cluster
+    desc: Provision GKE Autopilot cluster (blueprint-aware)
+    tool:
+      kind: shell
+      cmds:
+        - |
+          set -e
+          if gcloud container clusters describe {{ workload.cluster_name }} --region {{ workload.region }} --project {{ workload.project_id }} >/dev/null 2>&1; then
+            echo "Cluster {{ workload.cluster_name }} already exists"
+            exit 0
+          fi
+
+          CPU_LIMIT=$(gcloud compute project-info describe --project {{ workload.project_id }} --format='value(quotas[metric=CPUS_ALL_REGIONS].limit)')
+          CPU_USAGE=$(gcloud compute project-info describe --project {{ workload.project_id }} --format='value(quotas[metric=CPUS_ALL_REGIONS].usage)')
+          REQUIRED_CPU="{{ workload.min_global_cpu_quota }}"
+
+          if [ -n "$CPU_LIMIT" ]; then
+            echo "CPUS_ALL_REGIONS quota: limit=$CPU_LIMIT usage=$CPU_USAGE required_min=$REQUIRED_CPU"
+            if awk "BEGIN {exit !($CPU_LIMIT < $REQUIRED_CPU)}"; then
+              echo "Detected low CPUS_ALL_REGIONS quota for Autopilot surge operations."
+              echo "Current limit ($CPU_LIMIT) is below required minimum ($REQUIRED_CPU)."
+              echo "Request quota increase in GCP Console:"
+              echo "  IAM & Admin -> Quotas -> filter CPUS_ALL_REGIONS"
+              if [ "{{ workload.enforce_cpu_quota_check }}" = "true" ]; then
+                echo "ERROR: Quota check failed. Increase quota or set enforce_cpu_quota_check=false to bypass."
+                exit 1
+              else
+                echo "WARNING: Quota check failed, but continuing because enforce_cpu_quota_check=false"
+              fi
+            fi
+          fi
+
+          RELEASE_CHANNEL="{{ workload.release_channel }}"
+          NETWORK="{{ workload.network }}"
+          SUBNETWORK="{{ workload.subnetwork }}"
+
+          if [ "{{ workload.use_blueprint }}" = "true" ] && [ -f "{{ workload.blueprint_path }}" ]; then
+            BP_CHANNEL=$(jq -r '.releaseChannel.channel // empty' "{{ workload.blueprint_path }}")
+            BP_NETWORK=$(jq -r '.network // empty' "{{ workload.blueprint_path }}")
+            BP_SUBNETWORK=$(jq -r '.subnetwork // empty' "{{ workload.blueprint_path }}")
+            [ -n "$BP_CHANNEL" ] && RELEASE_CHANNEL=$(echo "$BP_CHANNEL" | tr '[:upper:]' '[:lower:]')
+            [ -n "$BP_NETWORK" ] && NETWORK="$BP_NETWORK"
+            [ -n "$BP_SUBNETWORK" ] && SUBNETWORK="$BP_SUBNETWORK"
+            echo "Using blueprint settings from {{ workload.blueprint_path }}"
+          else
+            echo "Using workload defaults (no blueprint applied)"
+          fi
+
+          echo "Creating cluster with:"
+          echo "  release_channel=$RELEASE_CHANNEL"
+          echo "  network=$NETWORK"
+          echo "  subnetwork=$SUBNETWORK"
+
+          gcloud container clusters create-auto {{ workload.cluster_name }} \
+            --region {{ workload.region }} \
+            --project {{ workload.project_id }} \
+            --release-channel "$RELEASE_CHANNEL" \
+            --network "$NETWORK" \
+            --subnetwork "$SUBNETWORK"
+
+          echo "Cluster provisioned"
+    next:
+        - step: cluster_status
+
+  - step: cluster_status
+    desc: Show cluster status summary
+    tool:
+      kind: shell
+      cmds:
+        - |
+          set +e
+          if ! gcloud container clusters describe {{ workload.cluster_name }} --region {{ workload.region }} --project {{ workload.project_id }} --format=json >/tmp/noetl_cluster_describe.json 2>/dev/null; then
+            echo "Cluster {{ workload.cluster_name }} not found in {{ workload.region }}"
+            exit 0
+          fi
+          jq '{name,location,status,network,subnetwork,releaseChannel,autopilot,privateClusterConfig,workloadIdentityConfig}' /tmp/noetl_cluster_describe.json
+    next:
+        - step: end
+
+  - step: end
+    desc: End workflow
+    tool:
+      kind: shell
+      cmds:
+        - echo "Done"

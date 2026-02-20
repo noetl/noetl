@@ -1,0 +1,544 @@
+/**
+ * FlowVisualization.css
+ * Styles for the FlowVisualization component
+ * Handles workflow editor, node styling, edges, and modal layout
+ */
+
+/* ==========================================================================
+   ReactFlow Overrides
+   ========================================================================== */
+
+.react-flow__node-default {
+    background: transparent !important;
+    border: none !important;
+    padding: 0 !important;
+    box-shadow: none !important;
+}
+
+.react-flow__node-default .react-flow__node-main {
+    background: transparent !important;
+    border: none !important;
+}
+
+.react-flow__node {
+    background: transparent;
+    border: none;
+    padding: 0;
+    width: auto;
+    height: auto;
+}
+
+/* Hide attribution for a cleaner canvas (optional) */
+.react-flow__attribution {
+    display: none !important;
+}
+
+/* ==========================================================================
+   Flow Nodes
+   ========================================================================== */
+
+.flow-node {
+    /* restore prior uniform padding */
+    padding: 12px;
+    border-radius: 8px;
+    background: linear-gradient(180deg, #ffffff 0%, #f9fafc 100%);
+    min-width: 280px;
+    /* original width */
+    position: relative;
+    transition: box-shadow .15s ease, border-color .15s ease, transform .15s ease;
+    border: 1px solid #e2e8f0;
+    box-shadow: 0 6px 16px rgba(17, 24, 39, .08);
+    --accent: #8c8c8c;
+}
+
+/* colored spine removed */
+.flow-node::before {
+    display: none !important;
+    content: none !important;
+}
+
+.flow-node:hover {
+    transform: translateY(-1px);
+}
+
+.flow-node.selected {
+    border-color: var(--accent);
+    box-shadow: 0 6px 18px rgba(0, 0, 0, .14), 0 0 0 2px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+.flow-node.unselected {
+    box-shadow: 0 4px 12px rgba(17, 24, 39, .06);
+}
+
+/* type-to-accent map */
+.flow-node.log {
+    --accent: #52c41a;
+}
+
+.flow-node.http {
+    --accent: #1890ff;
+}
+
+.flow-node.sql {
+    --accent: #722ed1;
+}
+
+.flow-node.script {
+    --accent: #fa8c16;
+}
+
+.flow-node.secret {
+    --accent: #eb2f96;
+}
+
+.flow-node.export {
+    --accent: #13c2c2;
+}
+
+.flow-node.python {
+    --accent: #3776ab;
+}
+
+.flow-node.workbook {
+    --accent: #ff6b35;
+}
+
+/* Header */
+.flow-node-header {
+    display: flex;
+    align-items: center;
+    margin-bottom: 4px;
+    padding-bottom: 0;
+    position: relative;
+    width: 100%;
+    /* ensure separator spans full node width */
+    justify-content: center;
+    flex-direction: column;
+}
+
+.flow-node-header::after {
+    content: none !important;
+    display: none !important;
+}
+
+/* add spacing to content that follows header so it clears the separator */
+.flow-node-header+* {
+    margin-top: 14px !important;
+    /* ensures clear visual gap after line */
+}
+
+/* Center the node name specifically for end nodes */
+.flow-node.end .flow-node-header {
+    justify-content: center;
+}
+
+.flow-node-header .flow-node-status {
+    flex: 1;
+    text-align: center;
+}
+
+/* Icon chip */
+.flow-node-icon {
+    width: 20px;
+    height: 20px;
+    display: inline-flex;
+    font-size: 18px;
+    margin: 0 0 4px 0;
+}
+
+/* Select tweaks */
+.flow-node-type-select .ant-select-selector {
+    border-radius: 8px !important;
+    height: 28px !important;
+}
+
+.flow-node-toolbar-type-select .ant-select-selector {
+    height: 28px !important;
+    padding: 0 6px !important;
+    border-radius: 6px !important;
+}
+
+.flow-node-toolbar-type-select {
+    min-width: 130px;
+}
+
+/* Name + description spacing */
+.flow-node-name {
+    margin-top: 5px;
+    margin-bottom: 10px;
+}
+
+.flow-node-name-input {
+    border-radius: 5px;
+    border: 1px solid #e2e8f0 !important;
+    box-shadow: 0 1px 0 rgba(0, 0, 0, .03);
+    width: 100%;
+    padding-left: 6px;
+}
+
+.flow-node-description-input {
+    font-size: 12px;
+    border-radius: 8px;
+    border: 1px solid #e2e8f0 !important;
+    box-shadow: 0 1px 0 rgba(0, 0, 0, .03);
+    width: 100%;
+    padding-left: 6px;
+    resize: vertical;
+}
+
+/* Tiny field labels inside node */
+.flow-node-field-label {
+    display: block;
+    font-size: 12px;
+    line-height: 1.1;
+    letter-spacing: .5px;
+    color: #94a3b8;
+    margin: 0 0 4px 6px;
+    user-select: none;
+    pointer-events: none;
+}
+
+/* Status pill */
+.flow-node-status {
+    display: inline-block;
+    margin-top: 4px;
+    margin-left: 6px;
+    font-size: 11px;
+    text-transform: none;
+    font-weight: 600;
+    letter-spacing: .2px;
+    color: #6b7280;
+}
+
+/* Floating toolbar for selected node */
+.flow-node-toolbar {
+    position: absolute;
+    top: -40px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 6px;
+    background: #ffffff;
+    padding: 4px 8px;
+    border: 1px solid rgba(226, 232, 240, .9);
+    border-radius: 10px;
+    box-shadow: 0 4px 12px rgba(17, 24, 39, .12);
+    z-index: 10;
+    backdrop-filter: blur(6px) saturate(120%);
+    background: rgba(255, 255, 255, .9);
+}
+
+.flow-node-toolbar-button {
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    font-size: 12px;
+    border-radius: 6px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, .15);
+    border: 1px solid #d9e2ec;
+}
+
+.flow-node-toolbar-button:hover {
+    background: #f1f5f9 !important;
+}
+
+/* ==========================================================================
+   Modal and Layout
+   ========================================================================== */
+
+.flow-modal {
+    width: 95vw !important;
+    max-width: 1400px !important;
+}
+
+.flow-modal.flow-modal-fullscreen {
+    width: 100vw !important;
+    height: 100vh !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    top: 0 !important;
+}
+
+.flow-modal.flow-modal-windowed {
+    top: 50px !important;
+    height: 100% !important;
+}
+
+.flow-modal-content {
+    height: 80vh;
+    display: flex;
+    flex-direction: column;
+}
+
+.flow-modal-content.flow-modal-content-fullscreen {
+    height: 100vh;
+}
+
+.flow-modal-title {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.flow-modal-title-icon {
+    font-size: 20px;
+}
+
+.flow-modal-body-fullscreen {
+    height: 85vh;
+    padding: 0;
+    overflow: hidden;
+}
+
+.flow-modal-body-windowed {
+    height: 70vh;
+    padding: 0;
+    overflow: hidden;
+}
+
+.flow-toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+    padding: 8px 0;
+    border-bottom: 1px solid #f0f0f0;
+}
+
+.flow-toolbar-title {
+    margin: 0 !important;
+}
+
+/* Left vertical dock */
+.flow-dock {
+    position: absolute;
+    top: 50%;
+    left: 0;
+    transform: translateY(-50%);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 8px 6px;
+    /* slightly tighter now that it's flush */
+    background: #ffffff;
+    border: 1px solid #e5e7eb;
+    border-radius: 16px;
+    box-shadow: 0 8px 24px rgba(17, 24, 39, 0.12);
+    z-index: 15;
+    width: 48px;
+    align-items: center;
+    border-top-left-radius: 0;
+    border-bottom-left-radius: 0;
+}
+
+.flow-dock-btn {
+    width: 36px !important;
+    height: 36px !important;
+    display: flex !important;
+    align-items: center;
+    justify-content: center;
+    padding: 0 !important;
+    border-radius: 10px !important;
+}
+
+.flow-dock-btn.ant-btn-primary:not([disabled]) {
+    background: linear-gradient(180deg, #2563eb, #1d4ed8) !important;
+    border-color: #1d4ed8 !important;
+    box-shadow: 0 2px 6px rgba(29, 78, 216, 0.35);
+}
+
+.flow-dock-btn.ant-btn-primary:hover:not([disabled]) {
+    background: linear-gradient(180deg, #1d4ed8, #1e40af) !important;
+}
+
+.flow-dock-btn.ant-btn-text {
+    border: 1px solid #e2e8f0 !important;
+    background: #f8fafc !important;
+}
+
+.flow-dock-btn.ant-btn-text:hover {
+    background: #f1f5f9 !important;
+}
+
+.flow-dock-separator {
+    width: 100%;
+    height: 1px;
+    background: #e5e7eb;
+    margin: 4px 0 2px;
+}
+
+/* Removed padding-left that shifted entire canvas and could cause blank area */
+/* .flow-content-container .react-flow-wrapper { padding-left: 90px; } */
+
+/* Optional reserved space variant (not applied by default)
+.flow-canvas-offset .react-flow__renderer { margin-left: 88px; }
+*/
+
+/* ReactFlow controls & minimap to match theme */
+.react-flow__controls {
+    border: 1px solid #e5e7eb !important;
+    border-radius: 12px !important;
+    box-shadow: 0 4px 12px rgba(17, 24, 39, .06) !important;
+    overflow: hidden;
+    background: #fff !important;
+    /* reposition flush left under dock */
+    position: absolute !important;
+    left: 6px !important;
+    /* align with dock padding */
+    bottom: 18px !important;
+    /* keep clear of bottom edge */
+    top: auto !important;
+    right: auto !important;
+    z-index: 14;
+    /* just beneath dock (15) */
+}
+
+.react-flow__minimap {
+    border: 1px solid #e5e7eb !important;
+    border-radius: 12px;
+    box-shadow: 0 4px 12px rgba(17, 24, 39, .06);
+    background: #fff !important;
+}
+
+/* Edges — smooth & crisp */
+.flow-edge-solid {
+    stroke: #a0aec0;
+    stroke-width: 2;
+    stroke-dasharray: none;
+}
+
+/* Rectangular connection handles */
+.flow-node-handle {
+    width: 4px !important;
+    height: 16px !important;
+    border-radius: 2px !important;
+    background: #cbd5e1 !important;
+    border: 1px solid #94a3b8 !important;
+    opacity: 1;
+    box-shadow: none;
+    transition: background .15s, transform .15s;
+}
+
+.flow-node-handle:hover {
+    background: #94a3b8 !important;
+}
+
+.flow-node-handle-target {
+    left: -3px !important;
+    top: 50% !important;
+    transform: translateY(-50%) !important;
+}
+
+.flow-node-handle-source {
+    right: -3px !important;
+    top: 50% !important;
+    transform: translateY(-50%) !important;
+}
+
+.flow-node.selected .flow-node-handle {
+    border-color: #94a3b8 !important;
+}
+
+/* Read-only (disabled) inputs inside nodes: improve legibility */
+.flow-node .ant-input[disabled],
+.flow-node .ant-input-disabled,
+.flow-node .ant-input[disabled]:hover,
+.flow-node .ant-input-affix-wrapper-disabled,
+.flow-node .ant-input-affix-wrapper[disabled] {
+    background: #ffffff !important;
+    /* keep white card bg */
+    color: #334155 !important;
+    /* slate-700 for strong readability */
+    opacity: 1 !important;
+    /* override default dim */
+    cursor: default !important;
+}
+
+.flow-node .ant-input-disabled::placeholder {
+    color: #94a3b8 !important;
+    /* subtle placeholder if any remains */
+}
+
+/* TextArea disabled styling */
+.flow-node .ant-input-disabled.ant-input-textarea,
+.flow-node .ant-input-textarea .ant-input[disabled] {
+    background: #ffffff !important;
+}
+
+.flow-node .ant-input-disabled.ant-input-textarea textarea {
+    background: transparent !important;
+    color: #475569 !important;
+    /* slate-600 for body text */
+    opacity: 1 !important;
+}
+
+/* Keep borders crisp in read-only */
+.flow-node .ant-input[disabled],
+.flow-node .ant-input-textarea .ant-input[disabled] {
+    border: 1px solid #e2e8f0 !important;
+    box-shadow: none !important;
+}
+
+/* Optional: subtle italic for empty description in read-only */
+.flow-node .ant-input-textarea .ant-input[disabled][value=""]::before {
+    content: attr(placeholder);
+    font-style: italic;
+    color: #94a3b8;
+}
+
+.flow-content-container {
+    width: 100%;
+    height: 100%;
+    position: relative;
+    background: linear-gradient(180deg, #fff, #fcfdff);
+    min-height: 520px;
+    padding-left: 0;
+    /* remove external padding; dock now inside wrapper */
+}
+
+.react-flow-wrapper {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    min-height: 500px;
+    overflow: hidden;
+    background: #ffffff;
+    border-radius: 14px;
+    border: 1px solid #d7dde3;
+    box-shadow: 0 2px 6px rgba(17, 24, 39, 0.06), 0 1px 2px rgba(17, 24, 39, 0.04);
+}
+
+/* Adjust dock positioning now that it's inside the wrapper */
+.react-flow-wrapper .flow-dock {
+    position: absolute;
+    top: 50%;
+    left: 0;
+    transform: translateY(-50%);
+    margin-left: 0;
+    /* flush */
+}
+
+/* Add left padding for canvas render area so nodes not hidden */
+.react-flow-wrapper .react-flow__renderer {
+    margin-left: 60px;
+}
+
+/* Controls shift accordingly */
+.react-flow-wrapper .react-flow__controls {
+    left: 66px !important;
+}
+
+/* Focus state subtle */
+.react-flow-wrapper:focus-within {
+    border-color: #b7c2cc;
+    box-shadow: 0 3px 8px rgba(17, 24, 39, 0.07);
+}
+
+.flow-layout-root {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+}

@@ -1,0 +1,451 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: execution_ai_analyze
+  path: ops/execution_ai_analyze
+  description: |
+    AI-assisted execution triage playbook.
+    Inputs include execution timeline, playbook YAML, event rows, and optional metrics.
+    Output is a structured root-cause report with remediation and optional patch diff.
+
+workload:
+  gcp_auth: google_oauth
+  openai_secret_path: projects/1014428265962/secrets/openai-api-key/versions/1
+  model: gpt-4o-mini
+  target_execution_id: ""
+  target_playbook_path: ""
+  target_playbook_status: ""
+  ai_prompt: ""
+  analysis_bundle: {}
+  event_rows: []
+  event_log_rows: []
+  metric_rows: []
+  cloud_context: {}
+  include_patch_diff: true
+  auto_fix_mode: report
+  approval_required: true
+  approved: false
+  default_dry_run_commands:
+    - noetl exec catalog://<playbook-path> -r distributed --dry-run
+  default_test_commands:
+    - pytest -q
+
+keychain:
+  - name: openai_token
+    kind: secret_manager
+    provider: gcp
+    scope: global
+    auth: '{{ gcp_auth }}'
+    map:
+      api_key: '{{ openai_secret_path }}'
+
+workflow:
+  - step: start
+    desc: Validate mode and approval gates
+    tool:
+      kind: python
+      args:
+        auto_fix_mode: '{{ auto_fix_mode }}'
+        approval_required: '{{ approval_required }}'
+        approved: '{{ approved }}'
+      code: |
+        def to_bool(value):
+            if isinstance(value, bool):
+                return value
+            return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+        mode = str(auto_fix_mode or "report").strip().lower()
+        if mode not in {"report", "dry_run", "apply"}:
+            mode = "report"
+
+        need_approval = to_bool(approval_required)
+        is_approved = to_bool(approved)
+        blocked = mode == "apply" and need_approval and not is_approved
+
+        result = {
+            "mode": mode,
+            "approval_required": need_approval,
+            "approved": is_approved,
+            "blocked": blocked,
+            "apply_allowed": mode != "apply" or not need_approval or is_approved,
+        }
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: approval_blocked
+          when: '{{ start.blocked }}'
+        - step: prepare_ai_input
+          when: '{{ not start.blocked }}'
+
+  - step: approval_blocked
+    desc: Return guardrail report when apply mode is not approved
+    tool:
+      kind: python
+      args:
+        default_dry_run_commands: '{{ default_dry_run_commands }}'
+        default_test_commands: '{{ default_test_commands }}'
+      code: |
+        dry_run_commands = default_dry_run_commands if isinstance(default_dry_run_commands, list) else []
+        test_commands = default_test_commands if isinstance(default_test_commands, list) else []
+
+        result = {
+            "ai_report": {
+                "executive_summary": "Apply mode was requested without explicit approval. No patch was produced.",
+                "primary_bottlenecks": ["Approval gate blocked apply mode."],
+                "failure_risk_analysis": [
+                    "Applying generated patches without review is disabled by policy.",
+                ],
+                "recommended_dsl_runtime_changes": [
+                    {
+                        "priority": "high",
+                        "title": "Require explicit approve/apply",
+                        "change": "Set approved=true only after reviewing proposed diff and validation plan.",
+                        "rationale": "Prevents unsafe automated changes.",
+                    }
+                ],
+                "validation_plan": [
+                    "Run dry-run first.",
+                    "Run test suite before manual apply.",
+                ],
+                "proposed_patch_diff": "",
+                "dry_run_commands": dry_run_commands,
+                "test_commands": test_commands,
+                "apply_checklist": [
+                    "Review report and diff.",
+                    "Run dry-run + tests.",
+                    "Approve and apply manually.",
+                ],
+            },
+            "dry_run_recommended": True,
+            "auto_fix_mode": "apply",
+            "approval_required": True,
+            "approved": False,
+            "apply_allowed": False,
+        }
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
+
+  - step: prepare_ai_input
+    desc: Compact analyzer inputs to stay within model token limits
+    tool:
+      kind: python
+      libs:
+        json: json
+      args:
+        target_execution_id: '{{ target_execution_id }}'
+        target_playbook_path: '{{ target_playbook_path }}'
+        target_playbook_status: '{{ target_playbook_status }}'
+        analysis_bundle: '{{ analysis_bundle }}'
+        event_rows: '{{ event_rows }}'
+        event_log_rows: '{{ event_log_rows }}'
+        metric_rows: '{{ metric_rows }}'
+        cloud_context: '{{ cloud_context }}'
+        ai_prompt: '{{ ai_prompt }}'
+        default_dry_run_commands: '{{ default_dry_run_commands }}'
+        default_test_commands: '{{ default_test_commands }}'
+        auto_fix_mode: '{{ start.mode }}'
+        include_patch_diff: '{{ include_patch_diff }}'
+      code: |
+        TARGET_CHARS = 120000
+        MAX_STR = 700
+        MAX_EVENT_ROWS = 80
+        MAX_EVENT_LOG_ROWS = 40
+        MAX_EVENT_SAMPLE = 80
+
+        def trim_str(value, limit=MAX_STR):
+            s = str(value or "")
+            if len(s) <= limit:
+                return s
+            return s[:limit] + "...<truncated>"
+
+        def as_list(value):
+            if isinstance(value, list):
+                return value
+            if value is None:
+                return []
+            return [value]
+
+        def trim_value(value, depth=0):
+            if depth > 4:
+                return "<truncated-depth>"
+            if isinstance(value, str):
+                return trim_str(value)
+            if value is None or isinstance(value, (int, float, bool)):
+                return value
+            if isinstance(value, list):
+                return [trim_value(v, depth + 1) for v in value[:20]]
+            if isinstance(value, dict):
+                out = {}
+                keys = list(value.keys())[:30]
+                for key in keys:
+                    out[str(key)] = trim_value(value.get(key), depth + 1)
+                return out
+            return trim_str(value)
+
+        # NoETL python tool executes code with separate globals/locals.
+        # Export helpers so nested functions can resolve them at runtime.
+        globals()["trim_str"] = trim_str
+        globals()["as_list"] = as_list
+        globals()["trim_value"] = trim_value
+        globals()["MAX_EVENT_ROWS"] = MAX_EVENT_ROWS
+        globals()["MAX_EVENT_LOG_ROWS"] = MAX_EVENT_LOG_ROWS
+        globals()["MAX_EVENT_SAMPLE"] = MAX_EVENT_SAMPLE
+        globals()["TARGET_CHARS"] = TARGET_CHARS
+
+        def compact_event_rows(rows):
+            compact = []
+            for row in as_list(rows)[:MAX_EVENT_ROWS]:
+                if not isinstance(row, dict):
+                    compact.append(trim_value(row))
+                    continue
+                compact.append({
+                    "event_id": row.get("event_id"),
+                    "event_type": row.get("event_type"),
+                    "node_name": row.get("node_name"),
+                    "status": row.get("status"),
+                    "created_at": row.get("created_at"),
+                    "duration": row.get("duration"),
+                    "error": trim_value(row.get("error")),
+                    "result": trim_value(row.get("result")),
+                })
+            return compact
+
+        def compact_event_log_rows(rows):
+            compact = []
+            for row in as_list(rows)[:MAX_EVENT_LOG_ROWS]:
+                if not isinstance(row, dict):
+                    compact.append(trim_value(row))
+                    continue
+                compact.append({
+                    "event_id": row.get("event_id"),
+                    "execution_id": row.get("execution_id"),
+                    "node_name": row.get("node_name"),
+                    "status": row.get("status"),
+                    "event_type": row.get("event_type"),
+                    "created_at": row.get("created_at"),
+                    "error": trim_value(row.get("error")),
+                })
+            return compact
+
+        bundle = analysis_bundle if isinstance(analysis_bundle, dict) else {}
+        playbook = bundle.get("playbook", {}) if isinstance(bundle, dict) else {}
+        summary = bundle.get("summary", {}) if isinstance(bundle, dict) else {}
+        findings = bundle.get("findings", []) if isinstance(bundle, dict) else []
+        recommendations = bundle.get("recommendations", []) if isinstance(bundle, dict) else []
+        event_sample = bundle.get("event_sample", []) if isinstance(bundle, dict) else []
+
+        compact_bundle = {
+            "execution_id": bundle.get("execution_id"),
+            "path": bundle.get("path"),
+            "status": bundle.get("status"),
+            "summary": trim_value(summary),
+            "findings": trim_value(findings),
+            "recommendations": trim_value(recommendations),
+            "event_sample": trim_value(as_list(event_sample)[:MAX_EVENT_SAMPLE]),
+            "playbook": {
+                "catalog_id": playbook.get("catalog_id"),
+                "path": playbook.get("path"),
+                "version": playbook.get("version"),
+            },
+        }
+
+        payload = {
+            "target_execution_id": str(target_execution_id or ""),
+            "target_playbook_path": str(target_playbook_path or ""),
+            "target_playbook_status": str(target_playbook_status or ""),
+            "auto_fix_mode": str(auto_fix_mode or "report"),
+            "include_patch_diff": str(include_patch_diff).strip().lower() in {"1", "true", "yes", "y", "on"},
+            "analysis_bundle": compact_bundle,
+            "event_rows": compact_event_rows(event_rows),
+            "event_log_rows": compact_event_log_rows(event_log_rows),
+            "metric_rows": trim_value(as_list(metric_rows)[:40]),
+            "cloud_context": trim_value(cloud_context),
+            "fallback_prompt": trim_str(ai_prompt, limit=2000),
+            "default_dry_run_commands": trim_value(default_dry_run_commands),
+            "default_test_commands": trim_value(default_test_commands),
+        }
+
+        compact_json = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
+        while len(compact_json) > TARGET_CHARS and (payload["event_rows"] or payload["event_log_rows"]):
+            if len(payload["event_rows"]) > 20:
+                payload["event_rows"] = payload["event_rows"][: max(20, len(payload["event_rows"]) // 2)]
+            elif len(payload["event_log_rows"]) > 10:
+                payload["event_log_rows"] = payload["event_log_rows"][: max(10, len(payload["event_log_rows"]) // 2)]
+            else:
+                break
+            compact_json = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
+
+        if len(compact_json) > TARGET_CHARS:
+            payload["event_rows"] = payload["event_rows"][:10]
+            payload["event_log_rows"] = payload["event_log_rows"][:5]
+            payload["analysis_bundle"]["event_sample"] = payload["analysis_bundle"]["event_sample"][:20]
+            compact_json = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
+
+        result = {
+            "compact_payload_json": compact_json,
+            "payload_stats": {
+                "chars": len(compact_json),
+                "event_rows": len(payload["event_rows"]),
+                "event_log_rows": len(payload["event_log_rows"]),
+            },
+        }
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: openai_triage
+
+  - step: openai_triage
+    desc: Generate structured triage report with OpenAI
+    tool:
+      kind: http
+      method: POST
+      url: "https://api.openai.com/v1/chat/completions"
+      headers:
+        Authorization: "Bearer {{ keychain.openai_token.api_key }}"
+        Content-Type: "application/json"
+      payload:
+        model: '{{ model }}'
+        messages:
+          - role: system
+            content: |
+              You are a senior NoETL platform engineer. Analyze execution diagnostics and produce actionable triage.
+              Return strictly JSON (no markdown) with keys:
+              - executive_summary: string
+              - primary_bottlenecks: string[]
+              - failure_risk_analysis: string[]
+              - recommended_dsl_runtime_changes: array of objects {priority,title,change,rationale}
+              - validation_plan: string[]
+              - proposed_patch_diff: string (unified diff; empty string when not applicable)
+              - dry_run_commands: string[]
+              - test_commands: string[]
+              - apply_checklist: string[]
+              - confidence: number (0-1)
+
+              Constraints:
+              - Do NOT invent unavailable logs.
+              - If uncertain, state assumptions explicitly in executive_summary.
+              - proposed_patch_diff must stay proposal-only; never claim change is applied.
+              - Keep recommendations prioritized and concrete.
+          - role: user
+            content: |
+              Analyze this compact execution diagnostics bundle and return strictly JSON only:
+              {{ prepare_ai_input.compact_payload_json }}
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: parse_ai_report
+
+  - step: parse_ai_report
+    desc: Parse OpenAI output into normalized report payload
+    tool:
+      kind: python
+      libs:
+        json: json
+        re: re
+      args:
+        openai_response: '{{ openai_triage }}'
+        auto_fix_mode: '{{ start.mode }}'
+        include_patch_diff: '{{ include_patch_diff }}'
+        default_dry_run_commands: '{{ default_dry_run_commands }}'
+        default_test_commands: '{{ default_test_commands }}'
+        approval_required: '{{ start.approval_required }}'
+        approved: '{{ start.approved }}'
+      code: |
+        def to_bool(value):
+            if isinstance(value, bool):
+                return value
+            return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+        raw = ""
+        if isinstance(openai_response, dict):
+            payload = openai_response.get("data")
+            if isinstance(payload, str):
+                try:
+                    payload = json.loads(payload)
+                except Exception:
+                    payload = {}
+
+            if isinstance(payload, dict):
+                choices = payload.get("choices", [])
+                if choices:
+                    raw = choices[0].get("message", {}).get("content", "")
+
+        raw = str(raw or "").strip()
+        if raw.startswith("```"):
+            raw = re.sub(r"^```[a-zA-Z0-9_\-]*\n?", "", raw)
+            raw = re.sub(r"\n?```$", "", raw)
+            raw = raw.strip()
+
+        parsed = {}
+        if raw:
+            try:
+                parsed = json.loads(raw)
+            except Exception:
+                parsed = {
+                    "executive_summary": raw,
+                    "primary_bottlenecks": [],
+                    "failure_risk_analysis": [],
+                    "recommended_dsl_runtime_changes": [],
+                    "validation_plan": [],
+                    "proposed_patch_diff": "",
+                    "confidence": 0.0,
+                }
+
+        if not isinstance(parsed, dict):
+            parsed = {}
+
+        def as_list(value):
+            if isinstance(value, list):
+                return value
+            if value is None:
+                return []
+            return [value]
+
+        include_diff = to_bool(include_patch_diff)
+        report = {
+            "executive_summary": str(parsed.get("executive_summary") or "No executive summary generated."),
+            "primary_bottlenecks": as_list(parsed.get("primary_bottlenecks")),
+            "failure_risk_analysis": as_list(parsed.get("failure_risk_analysis")),
+            "recommended_dsl_runtime_changes": as_list(parsed.get("recommended_dsl_runtime_changes")),
+            "validation_plan": as_list(parsed.get("validation_plan")),
+            "proposed_patch_diff": str(parsed.get("proposed_patch_diff") or "") if include_diff else "",
+            "dry_run_commands": as_list(parsed.get("dry_run_commands")) or as_list(default_dry_run_commands),
+            "test_commands": as_list(parsed.get("test_commands")) or as_list(default_test_commands),
+            "apply_checklist": as_list(parsed.get("apply_checklist")) or [
+                "Review proposed patch diff.",
+                "Run dry-run commands.",
+                "Run tests.",
+                "Approve and apply manually.",
+            ],
+            "confidence": parsed.get("confidence", 0.0),
+        }
+
+        mode = str(auto_fix_mode or "report").strip().lower()
+        need_approval = to_bool(approval_required)
+        is_approved = to_bool(approved)
+
+        result = {
+            "ai_report": report,
+            "raw_response_text": raw,
+            "dry_run_recommended": True,
+            "auto_fix_mode": mode,
+            "approval_required": need_approval,
+            "approved": is_approved,
+            "apply_allowed": mode != "apply" or not need_approval or is_approved,
+        }
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
+
+  - step: end
+    desc: Complete AI analysis
+    tool:
+      kind: noop

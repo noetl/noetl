@@ -14,7 +14,7 @@ from fastapi.responses import JSONResponse
 from . import v2
 
 # Essential management APIs (catalog, credentials, database utilities)
-from . import credential, catalog, database, keychain
+from . import credential, catalog, database, keychain, playbook_tests
 
 # Query/monitoring APIs
 from . import execution, vars, dashboard, system, runtime
@@ -42,6 +42,7 @@ router.include_router(catalog.router)
 router.include_router(credential.router)
 router.include_router(database.router)
 router.include_router(keychain.router)
+router.include_router(playbook_tests.router)
 
 # Query/monitoring APIs
 router.include_router(execution.router)
@@ -62,7 +63,7 @@ router.include_router(temp.router)
 __all__ = [
     "router",
     "v2",
-    "catalog", "credential", "database", "keychain",
+    "catalog", "credential", "database", "keychain", "playbook_tests",
     "execution", "vars", "dashboard", "system", "runtime",
     "context", "result", "temp"
 ]

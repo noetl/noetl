@@ -74,6 +74,39 @@ fn default_session_duration() -> i32 {
     8
 }
 
+fn parse_roles(value: Option<&serde_json::Value>) -> Vec<String> {
+    match value {
+        Some(serde_json::Value::Array(items)) => items
+            .iter()
+            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+            .collect(),
+        Some(serde_json::Value::String(s)) => parse_roles_from_string(s),
+        _ => Vec::new(),
+    }
+}
+
+fn parse_roles_from_string(value: &str) -> Vec<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Vec::new();
+    }
+    if let Ok(list) = serde_json::from_str::<Vec<String>>(trimmed) {
+        return list;
+    }
+    if trimmed.starts_with('{') && trimmed.ends_with('}') {
+        let inner = &trimmed[1..trimmed.len() - 1];
+        if inner.trim().is_empty() {
+            return Vec::new();
+        }
+        return inner
+            .split(',')
+            .map(|part| part.trim().trim_matches('"').to_string())
+            .filter(|role| !role.is_empty())
+            .collect();
+    }
+    vec![trimmed.to_string()]
+}
+
 /// Login response
 #[derive(Debug, Serialize)]
 pub struct LoginResponse {
@@ -90,6 +123,8 @@ pub struct UserInfo {
     pub user_id: i32,
     pub email: String,
     pub display_name: String,
+    #[serde(default)]
+    pub roles: Vec<String>,
 }
 
 /// Session validation request
@@ -208,6 +243,7 @@ pub async fn login(
         .and_then(|v| v.as_str())
         .ok_or_else(|| AuthError::InternalError("Invalid email".to_string()))?
         .to_string();
+    let roles = parse_roles(user_obj.get("roles"));
 
     // user_id can be either a number or string (from Jinja2 templates)
     let user_id = user_obj
@@ -226,6 +262,7 @@ pub async fn login(
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
             .unwrap_or_else(|| email.clone()),
+        roles,
     };
 
     let expires_at = output
@@ -244,6 +281,7 @@ pub async fn login(
         display_name: user.display_name.clone(),
         expires_at: expires_at.clone(),
         is_active: true,
+        roles: user.roles.clone(),
     };
     if let Err(e) = state.session_cache.put(&cached_session).await {
         tracing::warn!("Failed to cache session after login: {}", e);
@@ -275,6 +313,7 @@ pub async fn validate_session(
                 user_id: cached.user_id,
                 email: cached.email,
                 display_name: cached.display_name,
+                roles: cached.roles,
             }),
             expires_at: Some(cached.expires_at),
             message: "Session is valid (cached)".to_string(),
@@ -353,6 +392,7 @@ pub async fn validate_session(
                 .and_then(|v| v.as_str())
                 .unwrap_or("Unknown User")
                 .to_string(),
+            roles: parse_roles(u.get("roles")),
         })
     } else {
         None
@@ -372,6 +412,7 @@ pub async fn validate_session(
             display_name: user_info.display_name.clone(),
             expires_at: expires_at.clone().unwrap_or_default(),
             is_active: true,
+            roles: user_info.roles.clone(),
         };
         if let Err(e) = state.session_cache.put(&cached_session).await {
             tracing::warn!("Failed to cache session: {}", e);
@@ -462,6 +503,7 @@ pub async fn check_access(
                 .and_then(|v| v.as_str())
                 .unwrap_or("Unknown User")
                 .to_string(),
+            roles: parse_roles(u.get("roles")),
         })
     } else {
         None

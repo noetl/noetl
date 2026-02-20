@@ -27,7 +27,7 @@ workload:
   callback_subject: ""  # Legacy - kept for compatibility
   request_id: ""
   # Gateway URL for HTTP callbacks (use K8s service name in cluster)
-  gateway_url: "http://gateway.gateway.svc.cluster.local:8090"
+  gateway_url: "http://gateway.gateway.svc.cluster.local"
 
 workflow:
   - step: start

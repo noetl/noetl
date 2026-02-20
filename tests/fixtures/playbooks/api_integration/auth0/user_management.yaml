@@ -29,13 +29,13 @@ metadata:
     - roles
 
 workload:
-  db_credential: pg_k8s
+  db_credential: pg_auth
   action: "list_users"
   user_id: null
   role_names: []
   granted_by: null
   request_id: ""
-  gateway_url: "http://gateway.gateway.svc.cluster.local:8090"
+  gateway_url: "http://gateway.gateway.svc.cluster.local"
 
 workflow:
   - step: start
@@ -151,7 +151,8 @@ workflow:
           role_id,
           role_name,
           description,
-          is_system_role,
+          -- Keep API response shape stable across schema versions.
+          false AS is_system_role,
           created_at
         FROM auth.roles
         ORDER BY role_id;

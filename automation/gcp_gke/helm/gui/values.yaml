@@ -1,0 +1,29 @@
+namespace: gui
+
+image:
+  repository: ""
+  tag: "latest"
+  pullPolicy: Always
+
+service:
+  type: ClusterIP
+  loadBalancerIP: ""
+  port: 80
+  targetPort: 8080
+
+ingress:
+  enabled: false
+  className: gce
+  annotations: {}
+  host: gui.example.com
+  managedCertificate:
+    enabled: false
+    name: gui-managed-cert
+
+resources:
+  requests:
+    memory: "128Mi"
+    cpu: "100m"
+  limits:
+    memory: "512Mi"
+    cpu: "500m"

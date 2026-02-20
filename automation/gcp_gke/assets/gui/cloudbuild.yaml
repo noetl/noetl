@@ -1,0 +1,18 @@
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -f
+      - automation/gcp_gke/assets/gui/Dockerfile
+      - -t
+      - ${_IMAGE}
+      - --build-arg
+      - VITE_GATEWAY_URL=${_VITE_GATEWAY_URL}
+      - .
+images:
+  - ${_IMAGE}
+substitutions:
+  _IMAGE: us-central1-docker.pkg.dev/PROJECT/REPO/noetl-gui:latest
+  _VITE_GATEWAY_URL: https://gateway.example.com
+options:
+  substitutionOption: ALLOW_LOOSE

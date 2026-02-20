@@ -1,0 +1,170 @@
+:root {
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+  line-height: 1.4;
+  color: #1f2937;
+  background-color: #f3f4f6;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: #f3f4f6;
+}
+
+code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, Courier New, monospace;
+}
+
+.app-shell {
+  max-width: 900px;
+  margin: 24px auto;
+  padding: 0 16px 24px;
+}
+
+header h1 {
+  margin: 0;
+  font-size: 1.5rem;
+}
+
+header p {
+  margin: 8px 0 18px;
+  color: #4b5563;
+}
+
+.card {
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+.card h2 {
+  margin-top: 0;
+  margin-bottom: 12px;
+  font-size: 1.1rem;
+}
+
+label {
+  display: block;
+  font-size: 0.9rem;
+  margin-bottom: 6px;
+  color: #374151;
+}
+
+small {
+  color: #6b7280;
+}
+
+input,
+textarea {
+  width: 100%;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  font-size: 0.95rem;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+}
+
+textarea {
+  resize: vertical;
+}
+
+.grid-2 {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+}
+
+.actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+button {
+  border: 0;
+  border-radius: 8px;
+  background: #1d4ed8;
+  color: #ffffff;
+  padding: 10px 14px;
+  font-size: 0.92rem;
+  cursor: pointer;
+}
+
+button.secondary {
+  background: #4b5563;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+hr {
+  border: none;
+  border-top: 1px solid #e5e7eb;
+  margin: 14px 0;
+}
+
+.session-box,
+.execution-box,
+.diagnostics-box {
+  margin-top: 12px;
+  border: 1px solid #d1d5db;
+  background: #f9fafb;
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.execution-box pre,
+.diagnostics-report {
+  margin: 10px 0 0;
+  padding: 10px;
+  border-radius: 6px;
+  background: #111827;
+  color: #f9fafb;
+  overflow: auto;
+}
+
+.diagnostics-description {
+  margin: 0 0 10px;
+  color: #4b5563;
+}
+
+.diagnostics-report {
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 420px;
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+
+.status {
+  border-radius: 8px;
+  padding: 10px 12px;
+  border: 1px solid #d1d5db;
+  background: #ffffff;
+  font-size: 0.92rem;
+}
+
+.status.info {
+  border-color: #93c5fd;
+  background: #eff6ff;
+  color: #1e3a8a;
+}
+
+.status.success {
+  border-color: #86efac;
+  background: #f0fdf4;
+  color: #166534;
+}
+
+.status.error {
+  border-color: #fca5a5;
+  background: #fef2f2;
+  color: #991b1b;
+}

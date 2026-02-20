@@ -16,7 +16,10 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
     Frame, Terminal,
 };
-use reqwest::Client;
+use reqwest::{
+    header::{HeaderMap, HeaderValue, AUTHORIZATION},
+    Client,
+};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::fs;
@@ -46,6 +49,14 @@ struct Cli {
     /// NoETL server URL (overrides host and port)
     #[arg(long)]
     server_url: Option<String>,
+
+    /// Route API requests via Gateway protected proxy (/noetl/*)
+    #[arg(long)]
+    gateway: bool,
+
+    /// Gateway session token (or set NOETL_SESSION_TOKEN env var)
+    #[arg(long)]
+    session_token: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -151,6 +162,11 @@ enum Commands {
     Context {
         #[command(subcommand)]
         command: ContextCommand,
+    },
+    /// Gateway authentication management
+    Auth {
+        #[command(subcommand)]
+        command: AuthCommand,
     },
     /// Register resources
     Register {
@@ -872,6 +888,7 @@ enum ContextCommand {
     ///     noetl context add local --server-url=http://localhost:8082
     ///     noetl context add local-dev --server-url=http://localhost:8082 --runtime=local
     ///     noetl context add prod --server-url=https://noetl.example.com --runtime=distributed
+    ///     noetl context add gateway --server-url=https://gateway.example.com --auth0-domain=tenant.auth0.com
     ///     noetl context add staging --server-url=http://staging:8082 --set-current
     #[command(verbatim_doc_comment)]
     Add {
@@ -883,6 +900,9 @@ enum ContextCommand {
         /// Default runtime mode for this context: local, distributed, or auto
         #[arg(long, default_value = "auto")]
         runtime: String,
+        /// Default Auth0 domain to use for 'noetl auth login'
+        #[arg(long)]
+        auth0_domain: Option<String>,
         /// Set as current context
         #[arg(long)]
         set_current: bool,
@@ -925,6 +945,61 @@ enum ContextCommand {
     ///     noetl context current
     #[command(verbatim_doc_comment)]
     Current,
+}
+
+#[derive(Subcommand)]
+enum AuthCommand {
+    /// Login via Gateway /api/auth/login and optionally cache session token in context
+    /// Examples:
+    ///     noetl auth login --auth0-token <ID_TOKEN>
+    ///     noetl auth login --auth0-callback-url 'https://app/login#id_token=...'
+    ///     noetl auth login --auth0 user@example.com
+    ///     noetl auth login --auth0-token <ID_TOKEN> --context gateway
+    #[command(verbatim_doc_comment)]
+    Login {
+        /// Unified Auth0 input: email/login hint, raw token, or callback URL
+        /// If email is provided, CLI prompts once for callback URL/token.
+        #[arg(long, value_name = "EMAIL|TOKEN|CALLBACK_URL", conflicts_with_all = ["auth0_token", "auth0_callback_url"])]
+        auth0: Option<String>,
+
+        /// Auth0 ID/access token (the value sent as auth0_token to gateway)
+        #[arg(long)]
+        auth0_token: Option<String>,
+
+        /// Full Auth0 callback URL containing #id_token=... or #access_token=...
+        #[arg(long)]
+        auth0_callback_url: Option<String>,
+
+        /// Auth0 domain (defaults to context value, then gateway default)
+        #[arg(long)]
+        auth0_domain: Option<String>,
+
+        /// Session duration in hours
+        #[arg(long, default_value_t = 8)]
+        session_duration_hours: i32,
+
+        /// Context name to store session token into (defaults to current context)
+        #[arg(long)]
+        context: Option<String>,
+
+        /// Do not save the returned session token into context
+        #[arg(long)]
+        no_save: bool,
+
+        /// Emit only JSON response
+        #[arg(short, long)]
+        json: bool,
+    },
+    /// Remove cached gateway session token from context
+    /// Example:
+    ///     noetl auth logout
+    ///     noetl auth logout --context gateway
+    #[command(verbatim_doc_comment)]
+    Logout {
+        /// Context name to clear token from (defaults to current context)
+        #[arg(long)]
+        context: Option<String>,
+    },
 }
 
 #[derive(Serialize)]
@@ -982,7 +1057,9 @@ fn parse_exec_reference(reference: &str, version_override: Option<&str>) -> Resu
         });
     }
     
-    // Pattern 3: File path (contains / or \ or ends with .yaml/.yml or file exists)
+    // Pattern 3: File path (contains / or \ or ends with .yaml/.yml)
+    // IMPORTANT: Only treat as file when it's an actual file. A directory path
+    // (e.g. catalog-like path with '/') should continue to catalog resolution.
     let is_file_like = reference.contains('/') || 
                        reference.contains('\\') || 
                        reference.ends_with(".yaml") || 
@@ -990,7 +1067,7 @@ fn parse_exec_reference(reference: &str, version_override: Option<&str>) -> Resu
     
     if is_file_like {
         let path = PathBuf::from(reference);
-        if path.exists() || reference.ends_with(".yaml") || reference.ends_with(".yml") {
+        if path.is_file() || reference.ends_with(".yaml") || reference.ends_with(".yml") {
             return Ok(ExecContext {
                 ref_type: RefType::File(path),
                 version: None,
@@ -1034,8 +1111,14 @@ fn parse_exec_reference(reference: &str, version_override: Option<&str>) -> Resu
     }
     
     // Pattern 5: Check for noetl.yaml in current directory - treat reference as target
+    // Only apply for simple target names. If reference contains path separators,
+    // prefer catalog-path resolution (Pattern 6).
     let noetl_yaml = PathBuf::from("noetl.yaml");
-    if noetl_yaml.exists() && noetl_yaml.is_file() {
+    let is_simple_target = !reference.contains('/') &&
+                          !reference.contains('\\') &&
+                          !reference.ends_with(".yaml") &&
+                          !reference.ends_with(".yml");
+    if is_simple_target && noetl_yaml.exists() && noetl_yaml.is_file() {
         return Ok(ExecContext {
             ref_type: RefType::File(noetl_yaml),
             version: None,
@@ -1226,12 +1309,55 @@ fn resolve_playbook_and_target(
     Ok((playbook, target))
 }
 
+fn env_flag(name: &str) -> bool {
+    std::env::var(name)
+        .map(|value| {
+            let normalized = value.trim().to_ascii_lowercase();
+            matches!(normalized.as_str(), "1" | "true" | "yes" | "on")
+        })
+        .unwrap_or(false)
+}
+
+fn is_gateway_url(base_url: &str) -> bool {
+    let normalized = base_url.trim().to_ascii_lowercase();
+    normalized.contains("gateway.")
+}
+
+fn api_url(base_url: &str, path: &str, use_gateway_proxy: bool) -> String {
+    let base = base_url.trim_end_matches('/');
+    let endpoint = path.trim_start_matches('/');
+    if use_gateway_proxy {
+        format!("{}/noetl/{}", base, endpoint)
+    } else {
+        format!("{}/api/{}", base, endpoint)
+    }
+}
+
+fn build_http_client(session_token: Option<&str>) -> Result<Client> {
+    if let Some(token) = session_token {
+        let mut headers = HeaderMap::new();
+        let bearer = format!("Bearer {}", token);
+        headers.insert(
+            AUTHORIZATION,
+            HeaderValue::from_str(&bearer).context("Invalid session token for Authorization header")?,
+        );
+        headers.insert(
+            "x-session-token",
+            HeaderValue::from_str(token).context("Invalid session token for x-session-token header")?,
+        );
+
+        Ok(Client::builder().default_headers(headers).build()?)
+    } else {
+        Ok(Client::new())
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     let mut config = Config::load()?;
 
-    let base_url = if let Some(url) = cli.server_url {
+    let base_url = if let Some(url) = cli.server_url.clone() {
         url
     } else if let (Some(host), Some(port)) = (cli.host.as_ref(), cli.port) {
         format!("http://{}:{}", host, port)
@@ -1242,11 +1368,37 @@ async fn main() -> Result<()> {
             .unwrap_or_else(|| "http://localhost:8082".to_string())
     };
 
-    if cli.interactive {
-        return run_tui(&base_url).await;
+    let env_session_token = std::env::var("NOETL_SESSION_TOKEN")
+        .ok()
+        .filter(|v| !v.trim().is_empty());
+    let context_session_token = config
+        .get_current_context()
+        .and_then(|(_, ctx)| ctx.gateway_session_token.clone())
+        .filter(|v| !v.trim().is_empty());
+    let session_token = cli
+        .session_token
+        .clone()
+        .or(env_session_token)
+        .or(context_session_token);
+
+    let use_gateway_proxy = cli.gateway || env_flag("NOETL_USE_GATEWAY") || is_gateway_url(&base_url);
+    let is_auth_login_command = matches!(
+        &cli.command,
+        Some(Commands::Auth {
+            command: AuthCommand::Login { .. }
+        })
+    );
+
+    if use_gateway_proxy && session_token.is_none() && !is_auth_login_command {
+        eprintln!("Warning: gateway mode enabled but no session token provided.");
+        eprintln!("  Set --session-token <token> or NOETL_SESSION_TOKEN to authenticate gateway requests.");
     }
 
-    let client = Client::new();
+    let client = build_http_client(session_token.as_deref())?;
+
+    if cli.interactive {
+        return run_tui(&base_url, client, use_gateway_proxy).await;
+    }
 
     match cli.command {
         Some(Commands::Exec {
@@ -1270,6 +1422,7 @@ async fn main() -> Result<()> {
             let exec_ctx = parse_exec_reference(&reference, version.as_deref())?;
             let effective_runtime = resolve_runtime(&runtime, context_runtime, &exec_ctx, verbose)?;
             let effective_endpoint = endpoint.unwrap_or_else(|| base_url.clone());
+            let effective_gateway_proxy = use_gateway_proxy || is_gateway_url(&effective_endpoint);
             
             // Build variables from payload and --set flags
             let vars = build_variables(payload.as_deref(), &variables)?;
@@ -1366,6 +1519,7 @@ async fn main() -> Result<()> {
                     execute_playbook_distributed(
                         &client, 
                         &effective_endpoint, 
+                        effective_gateway_proxy,
                         &path, 
                         version.and_then(|v| v.parse().ok()), 
                         input, 
@@ -1424,6 +1578,7 @@ async fn main() -> Result<()> {
                 execute_playbook_distributed(
                     &client, 
                     &base_url, 
+                    use_gateway_proxy,
                     &catalog_path, 
                     None, // version
                     None, // input file
@@ -1457,12 +1612,15 @@ async fn main() -> Result<()> {
         Some(Commands::Context { command }) => {
             handle_context_command(&mut config, command)?;
         }
+        Some(Commands::Auth { command }) => {
+            handle_auth_command(&mut config, &base_url, command).await?;
+        }
         Some(Commands::Register { resource }) => match resource {
             RegisterResource::Credential { file, directory } => {
                 if let Some(f) = file {
-                    register_resource(&client, &base_url, "Credential", &f).await?;
+                    register_resource(&client, &base_url, use_gateway_proxy, "Credential", &f).await?;
                 } else if let Some(d) = directory {
-                    register_directory(&client, &base_url, "Credential", &d, &["json"]).await?;
+                    register_directory(&client, &base_url, use_gateway_proxy, "Credential", &d, &["json"]).await?;
                 } else {
                     eprintln!("Error: Either --file or --directory must be specified");
                     std::process::exit(1);
@@ -1470,9 +1628,9 @@ async fn main() -> Result<()> {
             }
             RegisterResource::Playbook { file, directory } => {
                 if let Some(f) = file {
-                    register_resource(&client, &base_url, "Playbook", &f).await?;
+                    register_resource(&client, &base_url, use_gateway_proxy, "Playbook", &f).await?;
                 } else if let Some(d) = directory {
-                    register_directory(&client, &base_url, "Playbook", &d, &["yaml", "yml"]).await?;
+                    register_directory(&client, &base_url, use_gateway_proxy, "Playbook", &d, &["yaml", "yml"]).await?;
                 } else {
                     eprintln!("Error: Either --file or --directory must be specified");
                     std::process::exit(1);
@@ -1480,13 +1638,13 @@ async fn main() -> Result<()> {
             }
         },
         Some(Commands::Status { execution_id, json }) => {
-            get_status(&client, &base_url, &execution_id, json).await?;
+            get_status(&client, &base_url, use_gateway_proxy, &execution_id, json).await?;
         }
         Some(Commands::Cancel { execution_id, reason, cascade, json }) => {
-            cancel_execution(&client, &base_url, &execution_id, reason, cascade, json).await?;
+            cancel_execution(&client, &base_url, use_gateway_proxy, &execution_id, reason, cascade, json).await?;
         }
         Some(Commands::List { resource_type, json }) => {
-            list_resources(&client, &base_url, &resource_type, json).await?;
+            list_resources(&client, &base_url, use_gateway_proxy, &resource_type, json).await?;
         }
         Some(Commands::Catalog { command }) => {
             match command {
@@ -1501,31 +1659,31 @@ async fn main() -> Result<()> {
                     } else {
                         "Playbook" // Default
                     };
-                    register_resource(&client, &base_url, resource_type, &file).await?;
+                    register_resource(&client, &base_url, use_gateway_proxy, resource_type, &file).await?;
                 }
                 CatalogCommand::Get { path } => {
-                    get_catalog_resource(&client, &base_url, &path).await?;
+                    get_catalog_resource(&client, &base_url, use_gateway_proxy, &path).await?;
                 }
                 CatalogCommand::List { resource_type, json } => {
-                    list_resources(&client, &base_url, &resource_type, json).await?;
+                    list_resources(&client, &base_url, use_gateway_proxy, &resource_type, json).await?;
                 }
             }
         }
         Some(Commands::Execute { command }) => match command {
             ExecuteCommand::Playbook { path, input, json } => {
-                execute_playbook(&client, &base_url, &path, input, json).await?;
+                execute_playbook(&client, &base_url, use_gateway_proxy, &path, input, json).await?;
             }
             ExecuteCommand::Status { execution_id, json } => {
-                get_status(&client, &base_url, &execution_id, json).await?;
+                get_status(&client, &base_url, use_gateway_proxy, &execution_id, json).await?;
             }
         },
         Some(Commands::Get { resource }) => match resource {
             GetResource::Credential { name, include_data } => {
-                get_credential(&client, &base_url, &name, include_data).await?;
+                get_credential(&client, &base_url, use_gateway_proxy, &name, include_data).await?;
             }
         },
         Some(Commands::Query { query, schema, format }) => {
-            execute_query(&client, &base_url, &query, &schema, &format).await?;
+            execute_query(&client, &base_url, use_gateway_proxy, &query, &schema, &format).await?;
         }
         Some(Commands::Server { command }) => match command {
             ServerCommand::Start { init_db } => {
@@ -1545,10 +1703,10 @@ async fn main() -> Result<()> {
         },
         Some(Commands::Db { command }) => match command {
             DbCommand::Init => {
-                db_init(&client, &base_url).await?;
+                db_init(&client, &base_url, use_gateway_proxy).await?;
             }
             DbCommand::Validate => {
-                db_validate(&client, &base_url).await?;
+                db_validate(&client, &base_url, use_gateway_proxy).await?;
             }
         },
         Some(Commands::Build { no_cache, platform }) => {
@@ -1569,7 +1727,7 @@ async fn main() -> Result<()> {
             }
         },
         Some(Commands::Cleanup { older_than_minutes, dry_run, json }) => {
-            cleanup_stuck_executions(&client, &base_url, older_than_minutes, dry_run, json).await?;
+            cleanup_stuck_executions(&client, &base_url, use_gateway_proxy, older_than_minutes, dry_run, json).await?;
         },
         Some(Commands::Iap { command }) => {
             handle_iap_command(command).await?;
@@ -1588,6 +1746,7 @@ fn handle_context_command(config: &mut Config, command: ContextCommand) -> Resul
             name,
             server_url,
             runtime,
+            auth0_domain,
             set_current,
         } => {
             // Validate runtime value
@@ -1598,7 +1757,9 @@ fn handle_context_command(config: &mut Config, command: ContextCommand) -> Resul
             
             config.contexts.insert(
                 name.clone(), 
-                Context::new(server_url).with_runtime(runtime)
+                Context::new(server_url)
+                    .with_runtime(runtime)
+                    .with_gateway_auth0_domain(auth0_domain)
             );
             if set_current || config.current_context.is_none() {
                 config.current_context = Some(name.clone());
@@ -1610,14 +1771,31 @@ fn handle_context_command(config: &mut Config, command: ContextCommand) -> Resul
             }
         }
         ContextCommand::List => {
-            println!("  {:<15} {:<30} {:<12}", "NAME", "SERVER URL", "RUNTIME");
+            println!(
+                "  {:<15} {:<30} {:<12} {:<22} {:<10}",
+                "NAME",
+                "SERVER URL",
+                "RUNTIME",
+                "AUTH0 DOMAIN",
+                "TOKEN"
+            );
             for (name, ctx) in &config.contexts {
                 let current_mark = if config.current_context.as_ref() == Some(name) {
                     "*"
                 } else {
                     " "
                 };
-                println!("{} {:<15} {:<30} {:<12}", current_mark, name, ctx.server_url, ctx.runtime);
+                let auth0_domain = ctx.gateway_auth0_domain.as_deref().unwrap_or("-");
+                let token_state = if ctx.gateway_session_token.is_some() { "cached" } else { "-" };
+                println!(
+                    "{} {:<15} {:<30} {:<12} {:<22} {:<10}",
+                    current_mark,
+                    name,
+                    ctx.server_url,
+                    ctx.runtime,
+                    auth0_domain,
+                    token_state
+                );
             }
         }
         ContextCommand::Use { name } => {
@@ -1669,6 +1847,18 @@ fn handle_context_command(config: &mut Config, command: ContextCommand) -> Resul
                 println!("Current context: {}", name);
                 println!("  Server URL: {}", ctx.server_url);
                 println!("  Runtime:    {}", ctx.runtime);
+                println!(
+                    "  Auth0:      {}",
+                    ctx.gateway_auth0_domain.as_deref().unwrap_or("(gateway default)")
+                );
+                println!(
+                    "  Token:      {}",
+                    if ctx.gateway_session_token.is_some() {
+                        "cached"
+                    } else {
+                        "not cached"
+                    }
+                );
             } else {
                 println!("No current context set.");
             }
@@ -1677,9 +1867,219 @@ fn handle_context_command(config: &mut Config, command: ContextCommand) -> Resul
     Ok(())
 }
 
+fn extract_token_from_callback_url(url: &str) -> Option<String> {
+    for source in [url.split('#').nth(1), url.split('?').nth(1)] {
+        let Some(source) = source else { continue };
+        for pair in source.split('&') {
+            let mut parts = pair.splitn(2, '=');
+            let key = parts.next()?.trim();
+            let value = parts.next().unwrap_or("").trim();
+            if (key == "id_token" || key == "access_token") && !value.is_empty() {
+                return Some(value.to_string());
+            }
+        }
+    }
+    None
+}
+
+fn looks_like_email(value: &str) -> bool {
+    let trimmed = value.trim();
+    trimmed.contains('@')
+        && trimmed.split('@').count() == 2
+        && trimmed.split('@').nth(1).is_some_and(|domain| domain.contains('.'))
+}
+
+fn looks_like_jwt(value: &str) -> bool {
+    let trimmed = value.trim();
+    trimmed.split('.').count() == 3 && !trimmed.contains(' ')
+}
+
+fn prompt_input(prompt: &str) -> Result<String> {
+    use std::io::Write;
+    print!("{}", prompt);
+    io::stdout()
+        .flush()
+        .context("Failed to flush prompt to stdout")?;
+    let mut line = String::new();
+    io::stdin()
+        .read_line(&mut line)
+        .context("Failed to read input from stdin")?;
+    Ok(line.trim().to_string())
+}
+
+fn mask_token(token: &str) -> String {
+    if token.len() <= 12 {
+        return "[redacted]".to_string();
+    }
+    format!("{}...{}", &token[..6], &token[token.len() - 4..])
+}
+
+async fn handle_auth_command(config: &mut Config, base_url: &str, command: AuthCommand) -> Result<()> {
+    match command {
+        AuthCommand::Login {
+            auth0,
+            auth0_token,
+            auth0_callback_url,
+            auth0_domain,
+            session_duration_hours,
+            context,
+            no_save,
+            json,
+        } => {
+            let mut token = auth0_token
+                .or_else(|| auth0_callback_url.as_deref().and_then(extract_token_from_callback_url));
+
+            if token.is_none() {
+                if let Some(auth0_input) = auth0 {
+                    if let Some(parsed) = extract_token_from_callback_url(&auth0_input) {
+                        token = Some(parsed);
+                    } else if looks_like_jwt(&auth0_input) {
+                        token = Some(auth0_input.trim().to_string());
+                    } else if looks_like_email(&auth0_input) {
+                        if !json {
+                            println!(
+                                "Auth0 login hint: {}",
+                                auth0_input.trim()
+                            );
+                            println!(
+                                "Paste Auth0 callback URL (with #id_token=... or #access_token=...) or token:"
+                            );
+                        }
+                        let provided = prompt_input("> ")?;
+                        token = extract_token_from_callback_url(&provided)
+                            .or_else(|| (!provided.is_empty()).then_some(provided));
+                    } else if !auth0_input.trim().is_empty() {
+                        token = Some(auth0_input.trim().to_string());
+                    }
+                }
+            }
+
+            let token = token.ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Missing Auth0 token. Use --auth0-token, --auth0-callback-url, or --auth0 <email|token|callback-url>."
+                )
+            })?;
+
+            let target_context_name = context.or_else(|| config.current_context.clone());
+            let context_auth0_domain = target_context_name
+                .as_ref()
+                .and_then(|name| config.contexts.get(name))
+                .and_then(|ctx| ctx.gateway_auth0_domain.clone());
+            let effective_auth0_domain = auth0_domain.or(context_auth0_domain);
+
+            let gateway_base = base_url.trim_end_matches('/');
+            let login_url = format!("{}/api/auth/login", gateway_base);
+            let client = Client::new();
+
+            let mut payload = serde_json::json!({
+                "auth0_token": token,
+                "session_duration_hours": session_duration_hours
+            });
+            if let Some(domain) = effective_auth0_domain.clone() {
+                payload["auth0_domain"] = serde_json::Value::String(domain);
+            }
+
+            let response = client
+                .post(&login_url)
+                .json(&payload)
+                .send()
+                .await
+                .context("Failed to call gateway auth login endpoint")?;
+
+            if !response.status().is_success() {
+                let status = response.status();
+                let text = response.text().await.unwrap_or_default();
+                anyhow::bail!(
+                    "Auth login failed at {}: {} - {}. Ensure this server URL points to Gateway (not NoETL API) and token/domain are valid.",
+                    login_url,
+                    status,
+                    text
+                );
+            }
+
+            let login_result: serde_json::Value = response
+                .json()
+                .await
+                .context("Failed to parse gateway auth login response")?;
+
+            let session_token = login_result
+                .get("session_token")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow::anyhow!("Gateway response missing session_token"))?
+                .to_string();
+
+            let mut saved_context = None::<String>;
+            if !no_save {
+                if let Some(context_name) = target_context_name.clone() {
+                    if let Some(ctx) = config.contexts.get_mut(&context_name) {
+                        ctx.gateway_session_token = Some(session_token.clone());
+                        if effective_auth0_domain.is_some() {
+                            ctx.gateway_auth0_domain = effective_auth0_domain.clone();
+                        }
+                        config.save()?;
+                        saved_context = Some(context_name);
+                    } else {
+                        eprintln!(
+                            "Warning: context '{}' not found, token not saved to config.",
+                            context_name
+                        );
+                    }
+                } else {
+                    eprintln!("Warning: no current context selected, token not saved to config.");
+                }
+            }
+
+            if json {
+                let output = serde_json::json!({
+                    "gateway_url": gateway_base,
+                    "saved_context": saved_context,
+                    "session_token": session_token,
+                    "login": login_result,
+                });
+                println!("{}", serde_json::to_string(&output)?);
+            } else {
+                let user_email = login_result
+                    .get("user")
+                    .and_then(|u| u.get("email"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown");
+                println!("Gateway login successful.");
+                println!("  Gateway: {}", gateway_base);
+                println!("  User:    {}", user_email);
+                println!("  Token:   {}", mask_token(&session_token));
+                if let Some(context_name) = saved_context {
+                    println!("  Saved:   context '{}'", context_name);
+                } else if no_save {
+                    println!("  Saved:   disabled (--no-save)");
+                } else {
+                    println!("  Saved:   no");
+                }
+                println!("\nUse this session for CLI calls:");
+                println!("  export NOETL_SESSION_TOKEN='{}'", session_token);
+            }
+        }
+        AuthCommand::Logout { context } => {
+            let target_context_name = context.or_else(|| config.current_context.clone());
+            let Some(context_name) = target_context_name else {
+                anyhow::bail!("No context selected. Use --context <name> or 'noetl context use <name>'.");
+            };
+
+            let Some(ctx) = config.contexts.get_mut(&context_name) else {
+                anyhow::bail!("Context '{}' not found.", context_name);
+            };
+
+            ctx.gateway_session_token = None;
+            config.save()?;
+            println!("Cleared cached gateway session token for context '{}'.", context_name);
+        }
+    }
+    Ok(())
+}
+
 async fn register_directory(
     client: &Client,
     base_url: &str,
+    use_gateway_proxy: bool,
     resource_type: &str,
     directory: &PathBuf,
     extensions: &[&str],
@@ -1697,7 +2097,7 @@ async fn register_directory(
     let mut fail_count = 0;
 
     for file in files {
-        match register_resource(client, base_url, resource_type, &file).await {
+        match register_resource(client, base_url, use_gateway_proxy, resource_type, &file).await {
             Ok(_) => success_count += 1,
             Err(e) => {
                 eprintln!("Failed to register {:?}: {}", file, e);
@@ -1779,7 +2179,13 @@ fn is_valid_resource_file(file: &PathBuf, extensions: &[&str]) -> Result<bool> {
     Ok(false)
 }
 
-async fn register_resource(client: &Client, base_url: &str, resource_type: &str, file: &PathBuf) -> Result<()> {
+async fn register_resource(
+    client: &Client,
+    base_url: &str,
+    use_gateway_proxy: bool,
+    resource_type: &str,
+    file: &PathBuf,
+) -> Result<()> {
     let content = fs::read_to_string(file).context(format!("Failed to read file: {:?}", file))?;
 
     let (url, request_body) = if resource_type == "Credential" {
@@ -1787,7 +2193,7 @@ async fn register_resource(client: &Client, base_url: &str, resource_type: &str,
         let credential_data: serde_json::Value =
             serde_json::from_str(&content).context(format!("Failed to parse credential JSON from file: {:?}", file))?;
 
-        (format!("{}/api/credentials", base_url), credential_data)
+        (api_url(base_url, "credentials", use_gateway_proxy), credential_data)
     } else {
         // For playbooks, base64 encode and POST to /api/catalog/register
         let content_base64 = BASE64_STANDARD.encode(&content);
@@ -1797,7 +2203,7 @@ async fn register_resource(client: &Client, base_url: &str, resource_type: &str,
         };
 
         (
-            format!("{}/api/catalog/register", base_url),
+            api_url(base_url, "catalog/register", use_gateway_proxy),
             serde_json::to_value(request)?,
         )
     };
@@ -1826,6 +2232,7 @@ async fn register_resource(client: &Client, base_url: &str, resource_type: &str,
 async fn execute_playbook_distributed(
     client: &Client,
     base_url: &str,
+    use_gateway_proxy: bool,
     path: &str,
     version: Option<i64>,
     input: Option<PathBuf>,
@@ -1840,7 +2247,7 @@ async fn execute_playbook_distributed(
     };
 
     // Build request with optional version
-    let url = format!("{}/api/execute", base_url);
+    let url = api_url(base_url, "execute", use_gateway_proxy);
     let mut request_body = serde_json::json!({
         "path": path,
         "payload": payload
@@ -1893,16 +2300,23 @@ async fn execute_playbook_distributed(
 async fn execute_playbook(
     client: &Client,
     base_url: &str,
+    use_gateway_proxy: bool,
     path: &str,
     input: Option<PathBuf>,
     json_only: bool,
 ) -> Result<()> {
     // Legacy function - delegate to new one without version
-    execute_playbook_distributed(client, base_url, path, None, input, json_only).await
+    execute_playbook_distributed(client, base_url, use_gateway_proxy, path, None, input, json_only).await
 }
 
-async fn get_status(client: &Client, base_url: &str, execution_id: &str, json_only: bool) -> Result<()> {
-    let url = format!("{}/api/executions/{}/status", base_url, execution_id);
+async fn get_status(
+    client: &Client,
+    base_url: &str,
+    use_gateway_proxy: bool,
+    execution_id: &str,
+    json_only: bool,
+) -> Result<()> {
+    let url = api_url(base_url, &format!("executions/{}/status", execution_id), use_gateway_proxy);
     let response = client.get(&url).send().await.context("Failed to send status request")?;
 
     if response.status().is_success() {
@@ -1969,12 +2383,13 @@ async fn get_status(client: &Client, base_url: &str, execution_id: &str, json_on
 async fn cancel_execution(
     client: &Client,
     base_url: &str,
+    use_gateway_proxy: bool,
     execution_id: &str,
     reason: Option<String>,
     cascade: bool,
     json_only: bool,
 ) -> Result<()> {
-    let url = format!("{}/api/executions/{}/cancel", base_url, execution_id);
+    let url = api_url(base_url, &format!("executions/{}/cancel", execution_id), use_gateway_proxy);
     
     // Build request body
     let mut body = serde_json::json!({
@@ -2050,11 +2465,12 @@ async fn cancel_execution(
 async fn cleanup_stuck_executions(
     client: &Client,
     base_url: &str,
+    use_gateway_proxy: bool,
     older_than_minutes: u32,
     dry_run: bool,
     json_only: bool,
 ) -> Result<()> {
-    let url = format!("{}/api/executions/cleanup", base_url);
+    let url = api_url(base_url, "executions/cleanup", use_gateway_proxy);
     
     // Build request body
     let body = serde_json::json!({
@@ -2124,8 +2540,14 @@ async fn cleanup_stuck_executions(
     Ok(())
 }
 
-async fn list_resources(client: &Client, base_url: &str, resource_type: &str, json_only: bool) -> Result<()> {
-    let url = format!("{}/api/catalog/list/{}", base_url, resource_type);
+async fn list_resources(
+    client: &Client,
+    base_url: &str,
+    use_gateway_proxy: bool,
+    resource_type: &str,
+    json_only: bool,
+) -> Result<()> {
+    let url = api_url(base_url, &format!("catalog/list/{}", resource_type), use_gateway_proxy);
     let response = client.get(&url).send().await.context("Failed to send list request")?;
 
     if response.status().is_success() {
@@ -2144,8 +2566,13 @@ async fn list_resources(client: &Client, base_url: &str, resource_type: &str, js
     Ok(())
 }
 
-async fn get_catalog_resource(client: &Client, base_url: &str, path: &str) -> Result<()> {
-    let url = format!("{}/api/catalog/get/{}", base_url, path);
+async fn get_catalog_resource(
+    client: &Client,
+    base_url: &str,
+    use_gateway_proxy: bool,
+    path: &str,
+) -> Result<()> {
+    let url = api_url(base_url, &format!("catalog/get/{}", path), use_gateway_proxy);
     let response = client
         .get(&url)
         .send()
@@ -2163,8 +2590,18 @@ async fn get_catalog_resource(client: &Client, base_url: &str, path: &str) -> Re
     Ok(())
 }
 
-async fn get_credential(client: &Client, base_url: &str, name: &str, include_data: bool) -> Result<()> {
-    let url = format!("{}/api/credentials/{}?include_data={}", base_url, name, include_data);
+async fn get_credential(
+    client: &Client,
+    base_url: &str,
+    use_gateway_proxy: bool,
+    name: &str,
+    include_data: bool,
+) -> Result<()> {
+    let url = api_url(
+        base_url,
+        &format!("credentials/{}?include_data={}", name, include_data),
+        use_gateway_proxy,
+    );
     let response = client
         .get(&url)
         .send()
@@ -2182,8 +2619,15 @@ async fn get_credential(client: &Client, base_url: &str, name: &str, include_dat
     Ok(())
 }
 
-async fn execute_query(client: &Client, base_url: &str, query: &str, schema: &str, format: &str) -> Result<()> {
-    let url = format!("{}/api/postgres/execute", base_url);
+async fn execute_query(
+    client: &Client,
+    base_url: &str,
+    use_gateway_proxy: bool,
+    query: &str,
+    schema: &str,
+    format: &str,
+) -> Result<()> {
+    let url = api_url(base_url, "postgres/execute", use_gateway_proxy);
 
     let payload = serde_json::json!({
         "query": query,
@@ -2371,14 +2815,14 @@ fn format_value(val: &serde_json::Value) -> String {
     }
 }
 
-async fn run_tui(base_url: &str) -> Result<()> {
+async fn run_tui(base_url: &str, client: Client, use_gateway_proxy: bool) -> Result<()> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let app = App::new(base_url);
+    let app = App::new(base_url, client, use_gateway_proxy);
     let res = run_app(&mut terminal, app).await;
 
     disable_raw_mode()?;
@@ -2394,23 +2838,25 @@ async fn run_tui(base_url: &str) -> Result<()> {
 
 struct App {
     base_url: String,
+    use_gateway_proxy: bool,
     playbooks: Vec<String>,
     state: ListState,
     client: Client,
 }
 
 impl App {
-    fn new(base_url: &str) -> App {
+    fn new(base_url: &str, client: Client, use_gateway_proxy: bool) -> App {
         App {
             base_url: base_url.to_string(),
+            use_gateway_proxy,
             playbooks: Vec::new(),
             state: ListState::default(),
-            client: Client::new(),
+            client,
         }
     }
 
     async fn update_playbooks(&mut self) -> Result<()> {
-        let url = format!("{}/api/catalog/list/Playbook", self.base_url);
+        let url = api_url(&self.base_url, "catalog/list/Playbook", self.use_gateway_proxy);
         let response = self.client.get(&url).send().await?;
         if response.status().is_success() {
             let json: serde_json::Value = response.json().await?;
@@ -2876,10 +3322,10 @@ async fn stop_worker(name: Option<String>, force: bool) -> Result<()> {
 // Database Management
 // ============================================================================
 
-async fn db_init(client: &Client, base_url: &str) -> Result<()> {
+async fn db_init(client: &Client, base_url: &str, use_gateway_proxy: bool) -> Result<()> {
     println!("Initializing NoETL database schema...");
 
-    let url = format!("{}/api/db/init", base_url);
+    let url = api_url(base_url, "db/init", use_gateway_proxy);
     let response = client
         .post(&url)
         .send()
@@ -2900,10 +3346,10 @@ async fn db_init(client: &Client, base_url: &str) -> Result<()> {
     Ok(())
 }
 
-async fn db_validate(client: &Client, base_url: &str) -> Result<()> {
+async fn db_validate(client: &Client, base_url: &str, use_gateway_proxy: bool) -> Result<()> {
     println!("Validating NoETL database schema...");
 
-    let url = format!("{}/api/db/validate", base_url);
+    let url = api_url(base_url, "db/validate", use_gateway_proxy);
     let response = client
         .get(&url)
         .send()

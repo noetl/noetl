@@ -1,0 +1,3 @@
+NAME                                     STATUS   ROLES    AGE    VERSION               INTERNAL-IP   EXTERNAL-IP    OS-IMAGE                             KERNEL-VERSION   CONTAINER-RUNTIME
+gk3-noetl-cluster-pool-2-7ae9cecb-5gn5   Ready    <none>   13h    v1.33.5-gke.2172001   10.128.0.2    34.31.232.38   Container-Optimized OS from Google   6.6.113+         containerd://2.0.6
+gk3-noetl-cluster-pool-2-8e32bea5-wgem   Ready    <none>   2d7h   v1.33.5-gke.2172001   10.128.0.26   34.10.38.33    Container-Optimized OS from Google   6.6.113+         containerd://2.0.6

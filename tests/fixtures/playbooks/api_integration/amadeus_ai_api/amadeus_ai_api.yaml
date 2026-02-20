@@ -17,7 +17,7 @@ workload:
   amadeus_secret_path: projects/1014428265962/secrets/api-secret-test-api-amadeus-com/versions/1
   query: I want a one-way flight from SFO to JFK on July 15, 2026 for 1 adult
   request_id: ""
-  gateway_url: "http://gateway.gateway.svc.cluster.local:8090"
+  gateway_url: "http://gateway.gateway.svc.cluster.local"
   api_url: "https://test.api.amadeus.com"
   callback_url: ""
 
@@ -101,7 +101,14 @@ workflow:
         model: "gpt-4o-mini"
         messages:
           - role: system
-            content: "Translate user travel request into an Amadeus Search API query (JSON or query params). Return ONLY JSON."
+            content: |
+              Translate the user travel request into Amadeus Flight Offers Search JSON.
+              Return ONLY JSON with keys:
+              - origin (IATA code)
+              - destination (IATA code)
+              - departureDate (YYYY-MM-DD)
+              - adults (integer)
+              If the user gives a relative date (e.g., "tomorrow"), convert to an actual date.
           - role: user
             content: "{{ workload.query }}"
     next:
@@ -131,6 +138,8 @@ workflow:
       code: |
         import json
         import re
+        # Ensure modules are available to functions (exec uses separate globals/locals)
+        globals()["re"] = re
 
         # Extract content from OpenAI response
         raw = ""
@@ -154,15 +163,108 @@ workflow:
             parsed = {}
 
         # Transform to Amadeus Flight Offers Search API format
-        origin = parsed.get("origin") or parsed.get("originLocationCode") or "SFO"
-        dest = parsed.get("destination") or parsed.get("destinationLocationCode") or "JFK"
-        dep_date = parsed.get("departureDate") or "2026-07-15"
+        origin_raw = (
+            parsed.get("origin")
+            or parsed.get("originLocationCode")
+            or parsed.get("departureAirport")
+            or ""
+        )
+        dest_raw = (
+            parsed.get("destination")
+            or parsed.get("destinationLocationCode")
+            or parsed.get("arrivalAirport")
+            or ""
+        )
+
+        def normalize_iata(value, default):
+            if value is None:
+                return default
+            raw = str(value).strip()
+            if not raw:
+                return default
+            # Prefer explicit codes like "(SFO)" or "[SFO]"
+            match = re.search(r'[\(\[]\s*([A-Z]{3})\s*[\)\]]', raw)
+            if match:
+                return match.group(1)
+            # Exact 3-letter code, uppercase or lowercase only
+            if re.fullmatch(r"[A-Za-z]{3}", raw) and (raw.isupper() or raw.islower()):
+                return raw.upper()
+            # If the string already contains an uppercase 3-letter token, use it
+            match = re.search(r"\b([A-Z]{3})\b", raw)
+            if match:
+                return match.group(1)
+            return default
+
+        origin = normalize_iata(origin_raw, "SFO")
+        dest = normalize_iata(dest_raw, "JFK")
+
+        def parse_date(value):
+            if not value:
+                return None
+            if isinstance(value, datetime.datetime):
+                return value.date()
+            if hasattr(value, "year") and hasattr(value, "month") and hasattr(value, "day"):
+                return value
+            if isinstance(value, str):
+                cleaned = value.strip()
+                if not cleaned:
+                    return None
+                lowered = cleaned.lower()
+                if lowered == "today":
+                    return datetime.datetime.utcnow().date()
+                if lowered == "tomorrow":
+                    return (datetime.datetime.utcnow().date() + datetime.timedelta(days=1))
+                if lowered == "yesterday":
+                    return (datetime.datetime.utcnow().date() - datetime.timedelta(days=1))
+                # Try ISO formats (date or datetime)
+                try:
+                    normalized = cleaned.replace("Z", "")
+                    return datetime.datetime.fromisoformat(normalized).date()
+                except Exception:
+                    pass
+                # Common date formats
+                for fmt in (
+                    "%Y-%m-%d",
+                    "%m/%d/%Y",
+                    "%m/%d/%y",
+                    "%B %d, %Y",
+                    "%b %d, %Y",
+                    "%B %d %Y",
+                    "%b %d %Y",
+                    "%d %B %Y",
+                    "%d %b %Y",
+                ):
+                    try:
+                        return datetime.datetime.strptime(cleaned, fmt).date()
+                    except Exception:
+                        pass
+                # Last-resort parsing if dateutil is available
+                try:
+                    from dateutil import parser as dateutil_parser
+                    return dateutil_parser.parse(cleaned).date()
+                except Exception:
+                    return None
+            return None
+
+        today = datetime.datetime.utcnow().date()
+        default_date = today + datetime.timedelta(days=1)
+        dep_date_raw = parsed.get("departureDate") or parsed.get("departure_date")
+        dep_date_value = parse_date(dep_date_raw)
+        if dep_date_value is None or dep_date_value < today:
+            dep_date_value = default_date
+
         adults = parsed.get("adults") or 1
+        try:
+            adults = int(adults)
+        except Exception:
+            adults = 1
+        if adults < 1:
+            adults = 1
 
         result = {
             "origin": origin,
             "destination": dest,
-            "departure_date": dep_date,
+            "departure_date": dep_date_value.isoformat(),
             "adults": adults
         }
     next:

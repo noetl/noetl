@@ -1,0 +1,213 @@
+/**
+ * Execution.css
+ * Styles for the Execution component
+ * Handles execution history, workflow visualization, filtering, and statistics
+ */
+
+/* ==========================================================================
+   Main Layout
+   ========================================================================== */
+
+.execution-loading-content {
+    padding: 50px;
+    text-align: center;
+}
+
+.execution-loading-text {
+    margin-top: 16px;
+}
+
+.execution-error-content {
+    padding: 50px;
+}
+
+.execution-main-content {
+    padding: 50px;
+}
+
+.execution-space-vertical {
+    width: 100%;
+}
+
+/* ==========================================================================
+   Flow Visualization
+   ========================================================================== */
+
+.execution-flow-modal-body {
+    height: 80vh;
+    display: flex;
+    flex-direction: column;
+}
+
+.execution-flow-toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+    padding: 8px 0;
+    border-bottom: 1px solid #f0f0f0;
+}
+
+.execution-flow-toolbar-loading {
+    color: #8c8c8c;
+}
+
+.execution-flow-container {
+    flex: 1;
+    border: 1px solid #d9d9d9;
+    border-radius: 6px;
+    width: 100%;
+    min-height: 480px;
+    /* ensure React Flow has a height to render into */
+    height: 60vh;
+    /* responsive height */
+    overflow: hidden;
+}
+
+/* Ensure the react-flow canvas fills the parent container */
+.execution-flow-container .react-flow {
+    width: 100% !important;
+    height: 100% !important;
+}
+
+/* ==========================================================================
+   Flow Nodes
+   ========================================================================== */
+
+.execution-node {
+    padding: 16px;
+    border-radius: 12px;
+    background: white;
+    min-width: 200px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    border: 2px solid #8c8c8c;
+    /* default */
+}
+
+/* Node type colors */
+.execution-node.log {
+    border-color: #52c41a;
+}
+
+.execution-node.http {
+    border-color: #1890ff;
+}
+
+.execution-node.sql {
+    border-color: #722ed1;
+}
+
+.execution-node.script {
+    border-color: #fa8c16;
+}
+
+.execution-node.secret {
+    border-color: #eb2f96;
+}
+
+.execution-node.export {
+    border-color: #13c2c2;
+}
+
+.execution-node.python {
+    border-color: #3776ab;
+}
+
+.execution-node.workbook {
+    border-color: #ff6b35;
+}
+
+.execution-node-icon {
+    font-size: 24px;
+    margin-bottom: 8px;
+}
+
+.execution-node-name {
+    text-align: center;
+    font-weight: bold;
+    color: #262626;
+    margin-bottom: 8px;
+}
+
+.execution-node-type {
+    text-align: center;
+    font-size: 12px;
+    text-transform: uppercase;
+    font-weight: 500;
+    margin-top: 4px;
+    color: #8c8c8c;
+    /* default */
+}
+
+/* Node type text colors */
+.execution-node-type.log {
+    color: #52c41a;
+}
+
+.execution-node-type.http {
+    color: #1890ff;
+}
+
+.execution-node-type.sql {
+    color: #722ed1;
+}
+
+.execution-node-type.script {
+    color: #fa8c16;
+}
+
+.execution-node-type.secret {
+    color: #eb2f96;
+}
+
+.execution-node-type.export {
+    color: #13c2c2;
+}
+
+.execution-node-type.python {
+    color: #3776ab;
+}
+
+.execution-node-type.workbook {
+    color: #ff6b35;
+}
+
+/* ==========================================================================
+   Filtering Controls
+   ========================================================================== */
+
+.execution-filter-space {
+    width: 100%;
+}
+
+.execution-filter-select {
+    width: 100%;
+}
+
+.execution-date-picker {
+    width: 100%;
+}
+
+/* ==========================================================================
+   Statistics
+   ========================================================================== */
+
+.execution-stats-title {
+    margin: 0;
+}
+
+.execution-stats-title.running {
+    color: #1890ff;
+}
+
+.execution-stats-title.pending {
+    color: #faad14;
+}
+
+.execution-stats-title.completed {
+    color: #52c41a;
+}
+
+.execution-stats-title.failed {
+    color: #ff4d4f;
+}

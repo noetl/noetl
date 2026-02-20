@@ -1802,11 +1802,17 @@ class V2Worker:
             return result.get('data', result) if isinstance(result, dict) else result
             
         elif tool_kind == "playbook":
-            # Use plugin's execute_playbook_task (sync function - run in executor)
+            # Playbook tasks need merged task args from config["args"] (task_sequence path passes args={}).
+            # If return_step is configured, use native async executor with polling support.
+            playbook_args = task_config.get("args") if isinstance(task_config.get("args"), dict) else args
+            if task_config.get("return_step"):
+                return await self._execute_playbook(task_config, playbook_args or {})
+
+            # Fallback to plugin executor for fire-and-forget behavior.
             loop = asyncio.get_running_loop()
             result = await loop.run_in_executor(
                 None,
-                lambda: execute_playbook_task(task_config, context, jinja_env, args)
+                lambda: execute_playbook_task(task_config, context, jinja_env, playbook_args or {})
             )
             return result
             

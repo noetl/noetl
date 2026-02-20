@@ -1,0 +1,202 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: playbook_ai_explain
+  path: ops/playbook_ai_explain
+  description: |
+    Explain a playbook in plain language with architecture, risks, and test guidance.
+    Input is a target playbook content + payload, output is ai_report JSON.
+
+workload:
+  gcp_auth: google_oauth
+  openai_secret_path: projects/1014428265962/secrets/openai-api-key/versions/1
+  model: gpt-4o-mini
+  target_playbook_catalog_id: ""
+  target_playbook_path: ""
+  target_playbook_version: ""
+  target_playbook_kind: Playbook
+  target_playbook_content: ""
+  target_playbook_payload: {}
+
+keychain:
+  - name: openai_token
+    kind: secret_manager
+    provider: gcp
+    scope: global
+    auth: "{{ gcp_auth }}"
+    map:
+      api_key: "{{ openai_secret_path }}"
+
+workflow:
+  - step: start
+    desc: Build compact explanation payload
+    tool:
+      kind: python
+      libs:
+        json: json
+      args:
+        target_playbook_catalog_id: "{{ target_playbook_catalog_id }}"
+        target_playbook_path: "{{ target_playbook_path }}"
+        target_playbook_version: "{{ target_playbook_version }}"
+        target_playbook_kind: "{{ target_playbook_kind }}"
+        target_playbook_content: "{{ target_playbook_content }}"
+        target_playbook_payload: "{{ target_playbook_payload }}"
+      code: |
+        payload = target_playbook_payload if isinstance(target_playbook_payload, dict) else {}
+        metadata = payload.get("metadata", {}) if isinstance(payload, dict) else {}
+        workflow = payload.get("workflow", []) if isinstance(payload, dict) else []
+        workload = payload.get("workload", {}) if isinstance(payload, dict) else {}
+
+        compact_steps = []
+        for item in workflow[:80]:
+            if not isinstance(item, dict):
+                continue
+            next_spec = item.get("next")
+            next_steps = []
+            if isinstance(next_spec, dict):
+                arcs = next_spec.get("arcs")
+                if isinstance(arcs, list):
+                    for arc in arcs[:8]:
+                        if isinstance(arc, dict):
+                            next_steps.append({
+                                "step": arc.get("step"),
+                                "when": arc.get("when"),
+                            })
+            compact_steps.append({
+                "step": item.get("step"),
+                "desc": item.get("desc"),
+                "kind": (item.get("tool") or {}).get("kind") if isinstance(item.get("tool"), dict) else None,
+                "next": next_steps,
+            })
+
+        compact = {
+            "catalog_id": str(target_playbook_catalog_id or ""),
+            "path": str(target_playbook_path or ""),
+            "version": str(target_playbook_version or ""),
+            "kind": str(target_playbook_kind or "Playbook"),
+            "name": metadata.get("name"),
+            "description": metadata.get("description"),
+            "labels": metadata.get("labels") if isinstance(metadata.get("labels"), dict) else {},
+            "tags": metadata.get("tags") if isinstance(metadata.get("tags"), list) else [],
+            "workload_keys": sorted(list(workload.keys()))[:120] if isinstance(workload, dict) else [],
+            "workflow": compact_steps,
+            "workflow_step_count": len(workflow) if isinstance(workflow, list) else 0,
+            "yaml_preview": str(target_playbook_content or "")[:30000],
+        }
+
+        result = {
+            "compact_playbook_json": json.dumps(compact, ensure_ascii=False),
+            "step_count": compact["workflow_step_count"],
+        }
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: openai_explain
+
+  - step: openai_explain
+    desc: Ask OpenAI to explain playbook
+    tool:
+      kind: http
+      method: POST
+      url: "https://api.openai.com/v1/chat/completions"
+      headers:
+        Authorization: "Bearer {{ keychain.openai_token.api_key }}"
+        Content-Type: "application/json"
+      payload:
+        model: "{{ model }}"
+        messages:
+          - role: system
+            content: |
+              You are a senior NoETL engineer.
+              Explain a NoETL playbook clearly and concretely.
+              Return STRICT JSON only (no markdown) with keys:
+              - executive_summary: string
+              - architecture_overview: string
+              - step_by_step: string[]
+              - risks: string[]
+              - improvement_opportunities: string[]
+              - test_recommendations: string[]
+              - assumptions: string[]
+          - role: user
+            content: |
+              Explain this playbook bundle:
+              {{ start.compact_playbook_json }}
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: parse_ai_report
+
+  - step: parse_ai_report
+    desc: Parse and normalize explain report
+    tool:
+      kind: python
+      libs:
+        json: json
+        re: re
+      args:
+        openai_response: "{{ openai_explain }}"
+      code: |
+        raw = ""
+        if isinstance(openai_response, dict):
+            payload = openai_response.get("data")
+            if isinstance(payload, str):
+                try:
+                    payload = json.loads(payload)
+                except Exception:
+                    payload = {}
+            if isinstance(payload, dict):
+                choices = payload.get("choices", [])
+                if choices:
+                    raw = choices[0].get("message", {}).get("content", "")
+
+        raw = str(raw or "").strip()
+        if raw.startswith("```"):
+            raw = re.sub(r"^```[a-zA-Z0-9_\\-]*\\n?", "", raw)
+            raw = re.sub(r"\\n?```$", "", raw)
+            raw = raw.strip()
+
+        parsed = {}
+        if raw:
+            try:
+                parsed = json.loads(raw)
+            except Exception:
+                parsed = {
+                    "executive_summary": raw,
+                }
+
+        if not isinstance(parsed, dict):
+            parsed = {}
+
+        def as_list(value):
+            if isinstance(value, list):
+                return [str(x) for x in value]
+            if value is None:
+                return []
+            return [str(value)]
+
+        report = {
+            "executive_summary": str(parsed.get("executive_summary") or "No executive summary generated."),
+            "architecture_overview": str(parsed.get("architecture_overview") or ""),
+            "step_by_step": as_list(parsed.get("step_by_step")),
+            "risks": as_list(parsed.get("risks")),
+            "improvement_opportunities": as_list(parsed.get("improvement_opportunities")),
+            "test_recommendations": as_list(parsed.get("test_recommendations")),
+            "assumptions": as_list(parsed.get("assumptions")),
+        }
+
+        result = {
+            "ai_report": report,
+            "raw_response_text": raw,
+        }
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
+
+  - step: end
+    desc: Complete
+    tool:
+      kind: noop

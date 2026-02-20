@@ -1,0 +1,205 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: playbook_ai_generate
+  path: ops/playbook_ai_generate
+  description: |
+    Generate a NoETL playbook draft from a natural-language prompt.
+    Returns generated_playbook_yaml plus ai_report metadata.
+
+workload:
+  gcp_auth: google_oauth
+  openai_secret_path: projects/1014428265962/secrets/openai-api-key/versions/1
+  model: gpt-4o-mini
+  prompt: ""
+
+keychain:
+  - name: openai_token
+    kind: secret_manager
+    provider: gcp
+    scope: global
+    auth: "{{ gcp_auth }}"
+    map:
+      api_key: "{{ openai_secret_path }}"
+
+workflow:
+  - step: start
+    desc: Normalize prompt and set generation guardrails
+    tool:
+      kind: python
+      args:
+        prompt: "{{ prompt }}"
+      code: |
+        normalized_prompt = str(prompt or "").strip()
+        if not normalized_prompt:
+            normalized_prompt = "Create a minimal valid NoETL playbook with start and end steps."
+
+        result = {
+            "normalized_prompt": normalized_prompt,
+            "generation_constraints": [
+                "Output must be valid YAML.",
+                "apiVersion must be noetl.io/v2.",
+                "kind must be Playbook.",
+                "Include metadata.name, metadata.path, workload, workflow.",
+                "Workflow must include start and end steps.",
+                "Do not include markdown code fences."
+            ],
+        }
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: openai_generate
+
+  - step: openai_generate
+    desc: Generate playbook draft with OpenAI
+    tool:
+      kind: http
+      method: POST
+      url: "https://api.openai.com/v1/chat/completions"
+      headers:
+        Authorization: "Bearer {{ keychain.openai_token.api_key }}"
+        Content-Type: "application/json"
+      payload:
+        model: "{{ model }}"
+        messages:
+          - role: system
+            content: |
+              You generate NoETL playbooks.
+              Return STRICT JSON only (no markdown) with keys:
+              - generated_playbook_yaml: string
+              - summary: string
+              - assumptions: string[]
+              - validation_notes: string[]
+              Requirements for generated_playbook_yaml:
+              - valid YAML
+              - apiVersion: noetl.io/v2
+              - kind: Playbook
+              - include metadata.name and metadata.path
+              - include workload map
+              - include workflow with start and end
+              - use NoETL DSL-compatible structure
+          - role: user
+            content: |
+              User prompt:
+              {{ start.normalized_prompt }}
+
+              Constraints:
+              {{ start.generation_constraints | tojson }}
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: parse_generated_playbook
+
+  - step: parse_generated_playbook
+    desc: Parse and normalize generated playbook payload
+    tool:
+      kind: python
+      libs:
+        json: json
+      args:
+        openai_response: "{{ openai_generate }}"
+      code: |
+        raw = ""
+        if isinstance(openai_response, dict):
+            payload = openai_response.get("data")
+            if isinstance(payload, str):
+                try:
+                    payload = json.loads(payload)
+                except Exception:
+                    payload = {}
+            if isinstance(payload, dict):
+                choices = payload.get("choices", [])
+                if choices:
+                    raw = choices[0].get("message", {}).get("content", "")
+
+        raw = str(raw or "").strip()
+        if raw.startswith("```"):
+            lines = raw.splitlines()
+            if lines and lines[0].startswith("```"):
+                lines = lines[1:]
+            if lines and lines[-1].strip() == "```":
+                lines = lines[:-1]
+            raw = "\n".join(lines).strip()
+
+        parsed = {}
+        if raw:
+            try:
+                parsed = json.loads(raw)
+            except Exception:
+                parsed = {}
+
+        if not isinstance(parsed, dict):
+            parsed = {}
+
+        generated_yaml = str(parsed.get("generated_playbook_yaml") or "").strip()
+        def looks_like_noetl_dsl(yaml_text):
+            if not isinstance(yaml_text, str):
+                return False
+            text = yaml_text
+            checks = [
+                "apiVersion: noetl.io/v2" in text,
+                "kind: Playbook" in text,
+                "metadata:" in text,
+                "workload:" in text,
+                "workflow:" in text,
+                "- step:" in text,
+                "tool:" in text,
+            ]
+            return all(checks)
+
+        if not generated_yaml or not looks_like_noetl_dsl(generated_yaml):
+            generated_yaml = (
+                "apiVersion: noetl.io/v2\n"
+                "kind: Playbook\n"
+                "metadata:\n"
+                "  name: generated_playbook\n"
+                "  path: generated/generated_playbook\n"
+                "  description: Auto-generated fallback draft\n"
+                "workload:\n"
+                "  input: {}\n"
+                "workflow:\n"
+                "  - step: start\n"
+                "    desc: Start\n"
+                "    tool:\n"
+                "      kind: noop\n"
+                "    next:\n"
+                "      spec: { mode: exclusive }\n"
+                "      arcs:\n"
+                "        - step: end\n"
+                "  - step: end\n"
+                "    desc: End\n"
+                "    tool:\n"
+                "      kind: noop\n"
+            )
+
+        def as_list(value):
+            if isinstance(value, list):
+                return [str(x) for x in value]
+            if value is None:
+                return []
+            return [str(value)]
+
+        report = {
+            "summary": str(parsed.get("summary") or "Generated draft playbook."),
+            "assumptions": as_list(parsed.get("assumptions")),
+            "validation_notes": as_list(parsed.get("validation_notes")),
+            "generated_playbook_yaml": generated_yaml,
+        }
+
+        result = {
+            "generated_playbook_yaml": generated_yaml,
+            "ai_report": report,
+            "raw_response_text": raw,
+        }
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
+
+  - step: end
+    desc: Complete
+    tool:
+      kind: noop

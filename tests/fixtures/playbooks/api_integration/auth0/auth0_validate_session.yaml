@@ -24,7 +24,7 @@ workload:
   nats_credential: nats_credential
   session_bucket: sessions
   request_id: ''
-  gateway_url: http://gateway.gateway.svc.cluster.local:8090
+  gateway_url: http://gateway.gateway.svc.cluster.local
 workflow:
 - step: start
   desc: Lookup and validate session from Postgres (source of truth)
@@ -41,7 +41,7 @@ workflow:
     spec:
       mode: exclusive
     arcs:
-    - step: cache_session
+    - step: get_user_roles
       when: '{{ start.command_0.rows | length > 0 and start.command_0.rows[0].session_valid
         }}'
     - step: send_invalid_callback
@@ -50,6 +50,68 @@ workflow:
     - step: end
       when: '{{ not request_id and (start.command_0.rows | length == 0 or not start.command_0.rows[0].session_valid)
         }}'
+
+- step: get_user_roles
+  desc: Fetch roles for validated user
+  tool:
+    kind: postgres
+    auth: '{{ db_credential }}'
+    command: |
+      SELECT COALESCE(
+        json_agg(r.role_name ORDER BY r.role_name) FILTER (WHERE r.role_id IS NOT NULL),
+        '[]'::json
+      ) AS roles
+      FROM auth.user_roles ur
+      JOIN auth.roles r ON ur.role_id = r.role_id
+      WHERE ur.user_id = {{ start.command_0.rows[0].user_id }}
+        AND (ur.expires_at IS NULL OR ur.expires_at > NOW());
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: prepare_session_cache
+
+- step: prepare_session_cache
+  desc: Prepare session payload with roles
+  tool:
+    kind: python
+    libs:
+      json: json
+    code: |
+      session_row = context.get('start', {}).get('command_0', {}).get('rows', [{}])[0]
+      roles = context.get('get_user_roles', {}).get('command_0', {}).get('rows', [{}])[0].get('roles', [])
+      if isinstance(roles, str):
+          try:
+              roles = json.loads(roles)
+          except Exception:
+              roles = []
+      if roles is None:
+          roles = []
+
+      user = {
+          "user_id": session_row.get("user_id"),
+          "email": session_row.get("email"),
+          "display_name": session_row.get("display_name"),
+          "roles": roles,
+      }
+
+      result = {
+          "session_cache": {
+              "session_token": session_row.get("session_token"),
+              "user_id": session_row.get("user_id"),
+              "email": session_row.get("email"),
+              "display_name": session_row.get("display_name"),
+              "expires_at": session_row.get("expires_at"),
+              "is_active": True,
+              "roles": roles,
+          },
+          "user": user,
+      }
+  next:
+    spec:
+      mode: exclusive
+    arcs:
+    - step: cache_session
 - step: cache_session
   desc: Cache valid session in NATS K/V for fast gateway lookups
   tool:
@@ -57,14 +119,8 @@ workflow:
     auth: '{{ nats_credential }}'
     operation: kv_put
     bucket: '{{ session_bucket }}'
-    key: '{{ start.command_0.rows[0].session_token }}'
-    value:
-      session_token: '{{ start.command_0.rows[0].session_token }}'
-      user_id: '{{ start.command_0.rows[0].user_id }}'
-      email: '{{ start.command_0.rows[0].email }}'
-      display_name: '{{ start.command_0.rows[0].display_name }}'
-      expires_at: '{{ start.command_0.rows[0].expires_at }}'
-      is_active: true
+    key: '{{ prepare_session_cache.session_cache.session_token }}'
+    value: '{{ prepare_session_cache.session_cache }}'
   next:
     spec:
       mode: exclusive
@@ -89,11 +145,8 @@ workflow:
       status: success
       data:
         valid: true
-        user:
-          user_id: '{{ start.command_0.rows[0].user_id }}'
-          email: '{{ start.command_0.rows[0].email }}'
-          display_name: '{{ start.command_0.rows[0].display_name }}'
-        expires_at: '{{ start.command_0.rows[0].expires_at }}'
+        user: '{{ prepare_session_cache.user }}'
+        expires_at: '{{ prepare_session_cache.session_cache.expires_at }}'
         message: Session is valid
     spec:
       policy:

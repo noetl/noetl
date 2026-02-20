@@ -1,0 +1,32 @@
+[
+  {
+    "address": "10.42.0.0",
+    "addressType": "INTERNAL",
+    "creationTimestamp": "2025-09-11T21:35:37.307-07:00",
+    "description": "",
+    "id": "1009854798418025974",
+    "kind": "compute#address",
+    "labelFingerprint": "42WmSpB8rSM=",
+    "name": "noetl-development-private-ip",
+    "network": "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/global/networks/noetl-development-vpc",
+    "networkTier": "PREMIUM",
+    "prefixLength": 16,
+    "purpose": "VPC_PEERING",
+    "selfLink": "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/global/addresses/noetl-development-private-ip",
+    "status": "RESERVED"
+  },
+  {
+    "address": "34.46.180.136",
+    "addressType": "EXTERNAL",
+    "creationTimestamp": "2026-01-27T13:06:45.505-08:00",
+    "description": "",
+    "id": "5394943328788977162",
+    "kind": "compute#address",
+    "labelFingerprint": "42WmSpB8rSM=",
+    "name": "gateway-static-ip",
+    "networkTier": "PREMIUM",
+    "region": "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/regions/us-central1",
+    "selfLink": "https://www.googleapis.com/compute/v1/projects/noetl-demo-19700101/regions/us-central1/addresses/gateway-static-ip",
+    "status": "RESERVED"
+  }
+]

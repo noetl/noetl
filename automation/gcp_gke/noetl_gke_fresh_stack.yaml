@@ -1,0 +1,1873 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: noetl_gke_fresh_stack
+  path: automation/gcp_gke/noetl-gke-fresh-stack
+  description: Fresh GKE provisioning and full NoETL stack deployment (NoETL + Gateway + GUI)
+  labels:
+    iap.noetl.io/provider: gcp
+    iap.noetl.io/category: fresh-deployment
+
+executor:
+  profile: local
+  version: noetl-runtime/1
+
+workload:
+  # Actions: provision, deploy, provision-deploy, status, destroy, help
+  action: help
+
+  # GCP / GKE
+  project_id: ""
+  region: us-central1
+  cluster_name: noetl-gke
+  release_channel: regular
+  # Quota precheck (helps avoid Autopilot upgrade surge failures)
+  min_global_cpu_quota: 64
+  enforce_cpu_quota_check: true
+  create_artifact_registry: true
+  repository_id: noetl
+  delete_cluster_on_destroy: false
+
+  # Build controls
+  build_images: true
+  build_noetl_image: true
+  build_gateway_image: true
+  build_gui_image: true
+
+  # Optional explicit image repositories. If empty, defaults to Artifact Registry:
+  # {region}-docker.pkg.dev/{project_id}/{repository_id}/{image-name}
+  noetl_image_repository: ""
+  gateway_image_repository: ""
+  gui_image_repository: ""
+
+  noetl_image_tag: latest
+  gateway_image_tag: latest
+  gui_image_tag: latest
+
+  # Public hosts (used when ingress is enabled)
+  deploy_ingress: true
+  noetl_public_host: api.example.com
+  gateway_public_host: gateway.example.com
+  gui_public_host: gui.example.com
+  gui_gateway_public_url: https://gateway.example.com
+
+  # Core service settings
+  postgres_password: demo
+  noetl_password: noetl
+  demo_password: demo
+  auth_password: auth
+  nats_user: noetl
+  nats_password: noetl
+  deploy_clickhouse: false
+
+  # Database topology (cost-optimized default: Cloud SQL + PgBouncer in GKE)
+  use_cloud_sql: true
+  deploy_postgres: false
+  postgres_host: pgbouncer.postgres.svc.cluster.local
+  postgres_port: "5432"
+
+  # Cloud SQL (single instance hosts both noetl + demo_noetl databases)
+  cloud_sql_instance_name: noetl-shared-pg
+  cloud_sql_edition: ENTERPRISE
+  cloud_sql_database_version: POSTGRES_15
+  cloud_sql_tier: db-f1-micro
+  cloud_sql_storage_size_gb: 10
+  cloud_sql_storage_type: HDD
+  cloud_sql_availability_type: ZONAL
+  cloud_sql_deletion_protection: false
+  delete_cloud_sql_on_destroy: false
+  cloud_sql_enable_private_ip: true
+  cloud_sql_enable_public_ip: false
+  # Leave empty to auto-detect from GKE cluster network.
+  cloud_sql_private_network: ""
+  cloud_sql_private_service_range_name: noetl-cloudsql-psa-range
+  cloud_sql_private_service_range_prefix_length: 16
+
+  # PgBouncer + Cloud SQL proxy
+  pgbouncer_enabled: true
+  pgbouncer_namespace: postgres
+  pgbouncer_service_name: pgbouncer
+  pgbouncer_max_client_conn: 500
+  pgbouncer_default_pool_size: 40
+  cloud_sql_proxy_gsa_name: noetl-cloudsql-proxy
+  cloud_sql_proxy_ksa_name: cloudsql-proxy
+  cloud_sql_proxy_image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.18.3
+  cloud_sql_proxy_port: "6432"
+  pgbouncer_image: edoburu/pgbouncer:v1.24.1-p1
+  cloud_sql_proxy_egress_rule_enabled: true
+  cloud_sql_proxy_egress_rule_name: noetl-allow-cloudsql-3307
+  cloud_sql_proxy_egress_priority: 900
+  cloud_sql_proxy_egress_port: "3307"
+
+  # Storage
+  postgres_storage_size: 20Gi
+  postgres_primary_cpu_request: 500m
+  postgres_primary_cpu_limit: 1000m
+  postgres_primary_memory_request: 512Mi
+  postgres_primary_memory_limit: 1Gi
+  postgres_primary_ephemeral_storage_request: 1Gi
+  postgres_primary_ephemeral_storage_limit: 2Gi
+  nats_jetstream_file_size: 5Gi
+  clickhouse_storage_size: 10Gi
+
+  # NoETL settings
+  noetl_worker_replicas: 2
+  noetl_enable_worker_pool: false
+  noetl_data_persistence: false
+  noetl_logs_persistence: false
+  demo_can_read_noetl_schema: true
+
+  # Gateway settings
+  gateway_service_type: ClusterIP
+  gateway_load_balancer_ip: ""
+  gateway_public_url: "http://gateway.gateway.svc.cluster.local"
+  gateway_auth_bypass: "false"
+  bootstrap_gateway_auth: true
+  # Comma/space/newline-separated list of allowed browser origins.
+  # Tokens can be full origins (https://app.example.com) or bare domains (app.example.com).
+  # Bare domains are expanded to both https:// and http://.
+  gateway_cors_allowed_origins: ""
+  # Additional bare domains for CORS expansion.
+  gateway_cors_allowed_domains: ""
+  # Auto-include https://{gui_public_host} and https://{gateway_public_host}.
+  gateway_cors_include_public_hosts: true
+  # Keep local UI development enabled.
+  gateway_cors_include_localhost: true
+
+  # GUI settings
+  gui_service_type: ClusterIP
+  gui_load_balancer_ip: ""
+
+workflow:
+  - step: start
+    desc: Validate input and route action
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "========================================"
+          echo " NoETL GKE Fresh Stack Automation"
+          echo "========================================"
+          echo "Action:      {{ workload.action }}"
+          echo "Project:     {{ workload.project_id }}"
+          echo "Region:      {{ workload.region }}"
+          echo "Cluster:     {{ workload.cluster_name }}"
+          echo ""
+          if [ -z "{{ workload.project_id }}" ] && [ "{{ workload.action }}" != "help" ]; then
+            echo "ERROR: workload.project_id is required for action '{{ workload.action }}'"
+            exit 1
+          fi
+    next:
+      - when: "{{ workload.action != 'help' }}"
+        then:
+          - step: verify_prerequisites
+      - step: show_help
+
+  - step: show_help
+    desc: Show usage
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo ""
+          echo "Usage:"
+          echo "  noetl run automation/gcp_gke/noetl_gke_fresh_stack.yaml \\"
+          echo "    --set action=<provision|deploy|provision-deploy|status|destroy> \\"
+          echo "    --set project_id=<gcp-project-id>"
+          echo ""
+          echo "Examples:"
+          echo "  # Provision cluster + deploy full stack"
+          echo "  noetl run automation/gcp_gke/noetl_gke_fresh_stack.yaml \\"
+          echo "    --set action=provision-deploy \\"
+          echo "    --set project_id=my-gcp-project \\"
+          echo "    --set gui_gateway_public_url=https://gateway.example.com \\"
+          echo "    --set noetl_public_host=api.example.com \\"
+          echo "    --set gateway_public_host=gateway.example.com \\"
+          echo "    --set gui_public_host=gui.example.com"
+          echo ""
+          echo "  # Expose gateway on static IP"
+          echo "  noetl run automation/gcp_gke/noetl_gke_fresh_stack.yaml \\"
+          echo "    --set action=deploy \\"
+          echo "    --set project_id=my-gcp-project \\"
+          echo "    --set gateway_service_type=LoadBalancer \\"
+          echo "    --set gateway_load_balancer_ip=34.71.6.63 \\"
+          echo "    --set build_images=false"
+          echo ""
+          echo "  # Expose GUI and gateway without exposing NoETL API"
+          echo "  noetl run automation/gcp_gke/noetl_gke_fresh_stack.yaml \\"
+          echo "    --set action=deploy \\"
+          echo "    --set project_id=my-gcp-project \\"
+          echo "    --set cluster_name=noetl-cluster \\"
+          echo "    --set deploy_ingress=false \\"
+          echo "    --set gateway_service_type=LoadBalancer \\"
+          echo "    --set gateway_load_balancer_ip=34.71.6.63 \\"
+          echo "    --set gui_service_type=LoadBalancer \\"
+          echo "    --set gui_load_balancer_ip=34.71.6.64 \\"
+          echo "    --set cloud_sql_enable_private_ip=true \\"
+          echo "    --set cloud_sql_enable_public_ip=false \\"
+          echo "    --set gui_gateway_public_url=https://gateway.example.com \\"
+          echo "    --set gateway_cors_allowed_domains='mestumre.dev,staging.mestumre.dev'"
+          echo ""
+          echo "  # Deploy to existing cluster"
+          echo "  noetl run automation/gcp_gke/noetl_gke_fresh_stack.yaml \\"
+          echo "    --set action=deploy \\"
+          echo "    --set project_id=my-gcp-project \\"
+          echo "    --set build_images=false"
+          echo ""
+          echo "  # Destroy stack (and optionally cluster)"
+          echo "  noetl run automation/gcp_gke/noetl_gke_fresh_stack.yaml \\"
+          echo "    --set action=destroy \\"
+          echo "    --set project_id=my-gcp-project \\"
+          echo "    --set delete_cluster_on_destroy=true"
+          echo ""
+          echo "  # Also delete Cloud SQL instance during destroy"
+          echo "  noetl run automation/gcp_gke/noetl_gke_fresh_stack.yaml \\"
+          echo "    --set action=destroy \\"
+          echo "    --set project_id=my-gcp-project \\"
+          echo "    --set delete_cloud_sql_on_destroy=true"
+    next:
+      - step: end
+
+  - step: verify_prerequisites
+    desc: Verify required local tooling
+    tool:
+      kind: shell
+      cmds:
+        - |
+          set -e
+          command -v gcloud >/dev/null 2>&1 || { echo "ERROR: gcloud is required"; exit 1; }
+          command -v kubectl >/dev/null 2>&1 || { echo "ERROR: kubectl is required"; exit 1; }
+          command -v helm >/dev/null 2>&1 || { echo "ERROR: helm is required"; exit 1; }
+          command -v python3 >/dev/null 2>&1 || { echo "ERROR: python3 is required"; exit 1; }
+          echo "Tooling check passed"
+    next:
+      - step: configure_gcloud
+
+  - step: configure_gcloud
+    desc: Set active project and enable required APIs
+    tool:
+      kind: shell
+      cmds:
+        - |
+          set -e
+          gcloud auth list --filter="status:ACTIVE" --format="value(account)" | grep -q . || {
+            echo "ERROR: No active gcloud account. Run: gcloud auth login"
+            exit 1
+          }
+          gcloud config set project {{ workload.project_id }}
+          gcloud services enable \
+            container.googleapis.com \
+            artifactregistry.googleapis.com \
+            cloudbuild.googleapis.com \
+            sqladmin.googleapis.com \
+            servicenetworking.googleapis.com \
+            iam.googleapis.com \
+            --project {{ workload.project_id }}
+          echo "gcloud configured for project {{ workload.project_id }}"
+    next:
+      - step: route_action
+
+  - step: route_action
+    desc: Route by action
+    tool:
+      kind: shell
+      cmds:
+        - echo "Routing action {{ workload.action }}"
+    next:
+      - when: "{{ workload.action == 'provision' }}"
+        then:
+          - step: maybe_create_artifact_registry
+      - when: "{{ workload.action != 'provision' and workload.action != 'help' }}"
+        then:
+          - step: configure_kubectl
+      - step: show_help
+
+  - step: maybe_create_artifact_registry
+    desc: Create Artifact Registry repository if requested
+    tool:
+      kind: shell
+      cmds:
+        - |
+          set -e
+          if [ "{{ workload.create_artifact_registry }}" != "true" ]; then
+            echo "Skipping Artifact Registry creation"
+            exit 0
+          fi
+          gcloud artifacts repositories describe {{ workload.repository_id }} \
+            --location {{ workload.region }} \
+            --project {{ workload.project_id }} >/dev/null 2>&1 && {
+            echo "Artifact Registry '{{ workload.repository_id }}' already exists"
+            exit 0
+          }
+          gcloud artifacts repositories create {{ workload.repository_id }} \
+            --repository-format=docker \
+            --location={{ workload.region }} \
+            --project={{ workload.project_id }} \
+            --description="NoETL images for fresh GKE deployment"
+          echo "Artifact Registry created"
+    next:
+      - step: create_cluster
+
+  - step: create_cluster
+    desc: Create GKE Autopilot cluster
+    tool:
+      kind: shell
+      cmds:
+        - |
+          set -e
+          if gcloud container clusters describe {{ workload.cluster_name }} --region {{ workload.region }} --project {{ workload.project_id }} >/dev/null 2>&1; then
+            echo "Cluster {{ workload.cluster_name }} already exists"
+            exit 0
+          fi
+
+          CPU_LIMIT=$(gcloud compute project-info describe --project {{ workload.project_id }} --format='value(quotas[metric=CPUS_ALL_REGIONS].limit)')
+          CPU_USAGE=$(gcloud compute project-info describe --project {{ workload.project_id }} --format='value(quotas[metric=CPUS_ALL_REGIONS].usage)')
+          REQUIRED_CPU="{{ workload.min_global_cpu_quota }}"
+
+          if [ -n "$CPU_LIMIT" ]; then
+            echo "CPUS_ALL_REGIONS quota: limit=$CPU_LIMIT usage=$CPU_USAGE required_min=$REQUIRED_CPU"
+            if awk "BEGIN {exit !($CPU_LIMIT < $REQUIRED_CPU)}"; then
+              echo "Detected low CPUS_ALL_REGIONS quota for Autopilot surge operations."
+              echo "Current limit ($CPU_LIMIT) is below required minimum ($REQUIRED_CPU)."
+              echo "Request quota increase in GCP Console:"
+              echo "  IAM & Admin -> Quotas -> filter CPUS_ALL_REGIONS"
+              if [ "{{ workload.enforce_cpu_quota_check }}" = "true" ]; then
+                echo "ERROR: Quota check failed. Increase quota or set enforce_cpu_quota_check=false to bypass."
+                exit 1
+              else
+                echo "WARNING: Quota check failed, but continuing because enforce_cpu_quota_check=false"
+              fi
+            fi
+          fi
+
+          gcloud container clusters create-auto {{ workload.cluster_name }} \
+            --region {{ workload.region }} \
+            --project {{ workload.project_id }} \
+            --release-channel {{ workload.release_channel }}
+          echo "Cluster created"
+    next:
+      - step: configure_kubectl
+
+  - step: configure_kubectl
+    desc: Configure kubectl context for cluster
+    tool:
+      kind: shell
+      cmds:
+        - |
+          set -e
+          if ! gcloud container clusters describe {{ workload.cluster_name }} --region {{ workload.region }} --project {{ workload.project_id }} >/dev/null 2>&1; then
+            if [ "{{ workload.action }}" = "destroy" ] && [ "{{ workload.delete_cluster_on_destroy }}" = "true" ]; then
+              echo "Cluster not found, skipping kubectl context setup for destroy path"
+              exit 0
+            fi
+            echo "ERROR: Cluster '{{ workload.cluster_name }}' does not exist in region '{{ workload.region }}'"
+            echo ""
+            echo "Available clusters in project {{ workload.project_id }}:"
+            gcloud container clusters list --project {{ workload.project_id }} --format='table(name,location,status)' || true
+            echo ""
+            echo "Hint: rerun with --set cluster_name=<existing-cluster-name>"
+            exit 1
+          fi
+
+          gcloud container clusters get-credentials {{ workload.cluster_name }} \
+            --region {{ workload.region }} \
+            --project {{ workload.project_id }}
+          kubectl cluster-info
+    next:
+      - step: after_kube_context
+
+  - step: after_kube_context
+    desc: Continue based on action
+    tool:
+      kind: shell
+      cmds:
+        - echo "Continuing action {{ workload.action }}"
+    next:
+      - when: "{{ workload.action == 'provision' }}"
+        then:
+          - step: end
+      - when: "{{ workload.action == 'status' }}"
+        then:
+          - step: check_status
+      - when: "{{ workload.action == 'destroy' }}"
+        then:
+          - step: destroy_stack
+      - when: "{{ workload.action != 'provision' and workload.action != 'status' and workload.action != 'destroy' and workload.action != 'help' }}"
+        then:
+          - step: add_helm_repos
+      - step: end
+
+  - step: add_helm_repos
+    desc: Add Helm repositories needed for dependencies
+    tool:
+      kind: shell
+      cmds:
+        - |
+          set -e
+          helm repo add bitnami https://charts.bitnami.com/bitnami || true
+          helm repo add nats https://nats-io.github.io/k8s/helm/charts/ || true
+          helm repo update
+          echo "Helm repositories updated"
+    next:
+      - step: maybe_build_images
+
+  - step: maybe_build_images
+    desc: Build and push images if requested
+    tool:
+      kind: shell
+      cmds:
+        - |
+          set -e
+          if [ "{{ workload.build_images }}" != "true" ]; then
+            echo "Skipping image builds (workload.build_images=false)"
+            exit 0
+          fi
+
+          REGISTRY="{{ workload.region }}-docker.pkg.dev/{{ workload.project_id }}/{{ workload.repository_id }}"
+          NOETL_IMAGE="{{ workload.noetl_image_repository }}"
+          GATEWAY_IMAGE="{{ workload.gateway_image_repository }}"
+          GUI_IMAGE="{{ workload.gui_image_repository }}"
+          [ -z "$NOETL_IMAGE" ] && NOETL_IMAGE="$REGISTRY/noetl"
+          [ -z "$GATEWAY_IMAGE" ] && GATEWAY_IMAGE="$REGISTRY/noetl-gateway"
+          [ -z "$GUI_IMAGE" ] && GUI_IMAGE="$REGISTRY/noetl-gui"
+
+          if [ "{{ workload.build_noetl_image }}" = "true" ]; then
+            echo "Building NoETL image -> $NOETL_IMAGE:{{ workload.noetl_image_tag }}"
+            gcloud builds submit \
+              . \
+              --project {{ workload.project_id }} \
+              --config automation/gcp_gke/assets/noetl/cloudbuild.yaml \
+              --substitutions=_IMAGE=$NOETL_IMAGE:{{ workload.noetl_image_tag }}
+          fi
+
+          if [ "{{ workload.build_gateway_image }}" = "true" ]; then
+            echo "Building Gateway image -> $GATEWAY_IMAGE:{{ workload.gateway_image_tag }}"
+            gcloud builds submit \
+              crates/gateway \
+              --project {{ workload.project_id }} \
+              --tag "$GATEWAY_IMAGE:{{ workload.gateway_image_tag }}"
+          fi
+
+          if [ "{{ workload.build_gui_image }}" = "true" ]; then
+            echo "Building GUI image -> $GUI_IMAGE:{{ workload.gui_image_tag }}"
+            gcloud builds submit \
+              . \
+              --project {{ workload.project_id }} \
+              --config automation/gcp_gke/assets/gui/cloudbuild.yaml \
+              --substitutions=_IMAGE=$GUI_IMAGE:{{ workload.gui_image_tag }},_VITE_GATEWAY_URL={{ workload.gui_gateway_public_url }}
+          fi
+    next:
+      - step: prepare_database_layer
+
+  - step: prepare_database_layer
+    desc: Select database topology (Cloud SQL + PgBouncer or in-cluster PostgreSQL)
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "use_cloud_sql={{ workload.use_cloud_sql }}"
+          echo "deploy_postgres={{ workload.deploy_postgres }}"
+          echo "pgbouncer_enabled={{ workload.pgbouncer_enabled }}"
+          echo "cloud_sql_enable_private_ip={{ workload.cloud_sql_enable_private_ip }}"
+          echo "cloud_sql_enable_public_ip={{ workload.cloud_sql_enable_public_ip }}"
+    next:
+      - when: "{{ workload.use_cloud_sql == true and workload.pgbouncer_enabled != true }}"
+        then:
+          - step: fail_no_database
+      - when: "{{ workload.use_cloud_sql == true and workload.cloud_sql_enable_private_ip == true }}"
+        then:
+          - step: ensure_cloud_sql_private_service_access
+      - when: "{{ workload.use_cloud_sql == true }}"
+        then:
+          - step: ensure_cloud_sql_instance
+      - when: "{{ workload.use_cloud_sql != true and workload.deploy_postgres == true }}"
+        then:
+          - step: deploy_postgres
+      - step: fail_no_database
+
+  - step: fail_no_database
+    desc: Fail when no database backend is configured
+    tool:
+      kind: shell
+      cmds:
+        - |
+          echo "ERROR: No valid database backend configuration."
+          echo "Set either:"
+          echo "  --set use_cloud_sql=true --set pgbouncer_enabled=true"
+          echo "or"
+          echo "  --set use_cloud_sql=false --set deploy_postgres=true"
+          exit 1
+    next:
+      - step: end
+
+  - step: ensure_cloud_sql_private_service_access
+    desc: Ensure VPC private service access for Cloud SQL private IP
+    tool:
+      kind: shell
+      cmds:
+        - |
+          set -e
+          if [ "{{ workload.use_cloud_sql }}" != "true" ] || [ "{{ workload.cloud_sql_enable_private_ip }}" != "true" ]; then
+            echo "Cloud SQL private IP is disabled, skipping private service access setup"
+            exit 0
+          fi
+
+          PROJECT="{{ workload.project_id }}"
+          REGION="{{ workload.region }}"
+          CLUSTER="{{ workload.cluster_name }}"
+          RANGE_NAME="{{ workload.cloud_sql_private_service_range_name }}"
+          RANGE_PREFIX="{{ workload.cloud_sql_private_service_range_prefix_length }}"
+          NETWORK_INPUT="{{ workload.cloud_sql_private_network }}"
+
+          if [ -z "$NETWORK_INPUT" ]; then
+            NETWORK_INPUT=$(gcloud container clusters describe "$CLUSTER" --region "$REGION" --project "$PROJECT" --format='value(network)' 2>/dev/null || true)
+          fi
+          if [ -z "$NETWORK_INPUT" ]; then
+            echo "ERROR: Unable to determine VPC network for Cloud SQL private IP."
+            echo "Set --set cloud_sql_private_network=<network-name>."
+            exit 1
+          fi
+
+          NETWORK_NAME="$NETWORK_INPUT"
+          case "$NETWORK_NAME" in
+            projects/*/global/networks/*)
+              NETWORK_NAME="${NETWORK_NAME##*/}"
+              ;;
+          esac
+
+          if ! gcloud compute networks describe "$NETWORK_NAME" --project "$PROJECT" >/dev/null 2>&1; then
+            echo "ERROR: VPC network '$NETWORK_NAME' not found in project '$PROJECT'"
+            exit 1
+          fi
+
+          if ! gcloud compute addresses describe "$RANGE_NAME" --global --project "$PROJECT" >/dev/null 2>&1; then
+            gcloud compute addresses create "$RANGE_NAME" \
+              --project "$PROJECT" \
+              --global \
+              --purpose=VPC_PEERING \
+              --prefix-length="$RANGE_PREFIX" \
+              --network="$NETWORK_NAME"
+            echo "Created private service range '$RANGE_NAME' on network '$NETWORK_NAME'"
+          else
+            echo "Private service range '$RANGE_NAME' already exists"
+          fi
+
+          if gcloud services vpc-peerings list --network="$NETWORK_NAME" --project="$PROJECT" --format='value(service)' | grep -Fxq "servicenetworking.googleapis.com"; then
+            gcloud services vpc-peerings update \
+              --service=servicenetworking.googleapis.com \
+              --network="$NETWORK_NAME" \
+              --ranges="$RANGE_NAME" \
+              --project="$PROJECT" || true
+            echo "Private service connection already exists for network '$NETWORK_NAME'"
+          else
+            gcloud services vpc-peerings connect \
+              --service=servicenetworking.googleapis.com \
+              --network="$NETWORK_NAME" \
+              --ranges="$RANGE_NAME" \
+              --project="$PROJECT"
+            echo "Created private service connection for network '$NETWORK_NAME'"
+          fi
+    next:
+      - step: ensure_cloud_sql_private_proxy_egress
+
+  - step: ensure_cloud_sql_private_proxy_egress
+    desc: Ensure egress firewall rule for Cloud SQL connector private endpoint
+    tool:
+      kind: shell
+      cmds:
+        - |
+          set -e
+          if [ "{{ workload.use_cloud_sql }}" != "true" ] || [ "{{ workload.cloud_sql_enable_private_ip }}" != "true" ]; then
+            echo "Cloud SQL private IP is disabled, skipping connector egress firewall setup"
+            exit 0
+          fi
+          if [ "{{ workload.cloud_sql_proxy_egress_rule_enabled }}" != "true" ]; then
+            echo "cloud_sql_proxy_egress_rule_enabled=false, skipping connector egress firewall setup"
+            exit 0
+          fi
+
+          PROJECT="{{ workload.project_id }}"
+          REGION="{{ workload.region }}"
+          CLUSTER="{{ workload.cluster_name }}"
+          RANGE_NAME="{{ workload.cloud_sql_private_service_range_name }}"
+          RULE_NAME="{{ workload.cloud_sql_proxy_egress_rule_name }}"
+          RULE_PRIORITY="{{ workload.cloud_sql_proxy_egress_priority }}"
+          RULE_PORT="{{ workload.cloud_sql_proxy_egress_port }}"
+          NETWORK_INPUT="{{ workload.cloud_sql_private_network }}"
+
+          if [ -z "$NETWORK_INPUT" ]; then
+            NETWORK_INPUT=$(gcloud container clusters describe "$CLUSTER" --region "$REGION" --project "$PROJECT" --format='value(network)' 2>/dev/null || true)
+          fi
+          if [ -z "$NETWORK_INPUT" ]; then
+            echo "ERROR: Unable to determine VPC network for connector egress firewall rule."
+            echo "Set --set cloud_sql_private_network=<network-name>."
+            exit 1
+          fi
+
+          NETWORK_NAME="$NETWORK_INPUT"
+          case "$NETWORK_NAME" in
+            projects/*/global/networks/*)
+              NETWORK_NAME="${NETWORK_NAME##*/}"
+              ;;
+          esac
+
+          if ! gcloud compute networks describe "$NETWORK_NAME" --project "$PROJECT" >/dev/null 2>&1; then
+            echo "ERROR: VPC network '$NETWORK_NAME' not found in project '$PROJECT'"
+            exit 1
+          fi
+
+          RANGE_INFO=$(gcloud compute addresses describe "$RANGE_NAME" --global --project "$PROJECT" --format='value(address,prefixLength)' 2>/dev/null || true)
+          if [ -z "$RANGE_INFO" ]; then
+            echo "ERROR: Private service range '$RANGE_NAME' not found."
+            echo "Run ensure_cloud_sql_private_service_access first."
+            exit 1
+          fi
+          RANGE_IP=$(echo "$RANGE_INFO" | awk '{print $1}')
+          RANGE_PREFIX=$(echo "$RANGE_INFO" | awk '{print $2}')
+          RANGE_CIDR="${RANGE_IP}/${RANGE_PREFIX}"
+
+          if gcloud compute firewall-rules describe "$RULE_NAME" --project "$PROJECT" >/dev/null 2>&1; then
+            echo "Firewall rule '$RULE_NAME' already exists"
+          else
+            gcloud compute firewall-rules create "$RULE_NAME" \
+              --project "$PROJECT" \
+              --network "$NETWORK_NAME" \
+              --direction EGRESS \
+              --priority "$RULE_PRIORITY" \
+              --action ALLOW \
+              --rules "tcp:${RULE_PORT}" \
+              --destination-ranges "$RANGE_CIDR"
+            echo "Created firewall rule '$RULE_NAME' for tcp:${RULE_PORT} -> ${RANGE_CIDR}"
+          fi
+    next:
+      - step: ensure_cloud_sql_instance
+
+  - step: ensure_cloud_sql_instance
+    desc: Provision Cloud SQL instance (smallest tier by default)
+    tool:
+      kind: shell
+      cmds:
+        - |
+          set -e
+          if [ "{{ workload.use_cloud_sql }}" != "true" ]; then
+            echo "Cloud SQL disabled, skipping instance provisioning"
+            exit 0
+          fi
+
+          INSTANCE="{{ workload.cloud_sql_instance_name }}"
+          PROJECT="{{ workload.project_id }}"
+          REGION="{{ workload.region }}"
+          CLUSTER="{{ workload.cluster_name }}"
+
+          ENABLE_PRIVATE="{{ workload.cloud_sql_enable_private_ip }}"
+          ENABLE_PUBLIC="{{ workload.cloud_sql_enable_public_ip }}"
+          if [ "$ENABLE_PRIVATE" != "true" ] && [ "$ENABLE_PUBLIC" != "true" ]; then
+            echo "ERROR: At least one of cloud_sql_enable_private_ip or cloud_sql_enable_public_ip must be true."
+            exit 1
+          fi
+
+          wait_for_sql_operations() {
+            local max_wait_seconds="${1:-1800}"
+            local waited=0
+            while true; do
+              local running_op
+              running_op=$(gcloud sql operations list \
+                --instance="$INSTANCE" \
+                --project="$PROJECT" \
+                --filter='status!=DONE' \
+                --format='value(name)' | head -n 1)
+              if [ -z "$running_op" ]; then
+                break
+              fi
+              echo "Waiting for Cloud SQL operation '$running_op' to finish..."
+              gcloud sql operations wait "$running_op" --project="$PROJECT" --timeout=300 >/dev/null || true
+              sleep 5
+              waited=$((waited + 305))
+              if [ "$waited" -ge "$max_wait_seconds" ]; then
+                echo "WARNING: Timed out waiting for Cloud SQL operations after ${max_wait_seconds}s"
+                break
+              fi
+            done
+          }
+
+          wait_for_sql_operations 1800
+
+          NETWORK_INPUT="{{ workload.cloud_sql_private_network }}"
+          if [ "$ENABLE_PRIVATE" = "true" ] && [ -z "$NETWORK_INPUT" ]; then
+            NETWORK_INPUT=$(gcloud container clusters describe "$CLUSTER" --region "$REGION" --project "$PROJECT" --format='value(network)' 2>/dev/null || true)
+          fi
+          NETWORK_NAME="$NETWORK_INPUT"
+          case "$NETWORK_NAME" in
+            projects/*/global/networks/*)
+              NETWORK_NAME="${NETWORK_NAME##*/}"
+              ;;
+          esac
+
+          NETWORK_ARG=""
+          if [ "$ENABLE_PRIVATE" = "true" ]; then
+            if [ -z "$NETWORK_NAME" ]; then
+              echo "ERROR: cloud_sql_enable_private_ip=true but network is empty."
+              echo "Set --set cloud_sql_private_network=<network-name>."
+              exit 1
+            fi
+            NETWORK_ARG="--network=projects/${PROJECT}/global/networks/${NETWORK_NAME}"
+          fi
+
+          IP_ARG=""
+          if [ "$ENABLE_PUBLIC" = "true" ]; then
+            IP_ARG="--assign-ip"
+          else
+            IP_ARG="--no-assign-ip"
+          fi
+
+          if gcloud sql instances describe "$INSTANCE" --project "$PROJECT" >/dev/null 2>&1; then
+            echo "Cloud SQL instance '$INSTANCE' already exists"
+            PATCH_EXTRA=""
+            if [ -n "$NETWORK_ARG" ]; then
+              PATCH_EXTRA="$PATCH_EXTRA $NETWORK_ARG"
+            fi
+            if [ -n "$IP_ARG" ]; then
+              PATCH_EXTRA="$PATCH_EXTRA $IP_ARG"
+            fi
+            if [ -n "$PATCH_EXTRA" ]; then
+              gcloud sql instances patch "$INSTANCE" \
+                --project "$PROJECT" \
+                $PATCH_EXTRA \
+                --quiet || true
+            fi
+          else
+            DELETION_PROTECTION_FLAG="--no-deletion-protection"
+            if [ "{{ workload.cloud_sql_deletion_protection }}" = "true" ]; then
+              DELETION_PROTECTION_FLAG="--deletion-protection"
+            fi
+
+            gcloud sql instances create "$INSTANCE" \
+              --project "$PROJECT" \
+              --region "$REGION" \
+              --edition={{ workload.cloud_sql_edition }} \
+              --database-version={{ workload.cloud_sql_database_version }} \
+              --tier={{ workload.cloud_sql_tier }} \
+              --storage-size={{ workload.cloud_sql_storage_size_gb }} \
+              --storage-type={{ workload.cloud_sql_storage_type }} \
+              --availability-type={{ workload.cloud_sql_availability_type }} \
+              $NETWORK_ARG \
+              $IP_ARG \
+              $DELETION_PROTECTION_FLAG \
+              --quiet
+          fi
+
+          wait_for_sql_operations 1800
+
+          CONNECTION_NAME=$(gcloud sql instances describe "$INSTANCE" --project "$PROJECT" --format='value(connectionName)')
+          PUBLIC_IP=$(gcloud sql instances describe "$INSTANCE" --project "$PROJECT" --format='value(ipAddresses[?type=PRIMARY].ipAddress)' 2>/dev/null || true)
+          PRIVATE_IP=$(gcloud sql instances describe "$INSTANCE" --project "$PROJECT" --format='value(ipAddresses[?type=PRIVATE].ipAddress)' 2>/dev/null || true)
+          echo "Cloud SQL ready: instance=$INSTANCE connection=$CONNECTION_NAME public_ip=${PUBLIC_IP:-n/a} private_ip=${PRIVATE_IP:-n/a}"
+    next:
+      - step: ensure_cloud_sql_users_and_databases
+
+  - step: ensure_cloud_sql_users_and_databases
+    desc: Ensure noetl/demo_noetl databases and users exist in Cloud SQL
+    tool:
+      kind: shell
+      cmds:
+        - |
+          set -e
+          if [ "{{ workload.use_cloud_sql }}" != "true" ]; then
+            echo "Cloud SQL disabled, skipping db/user provisioning"
+            exit 0
+          fi
+
+          INSTANCE="{{ workload.cloud_sql_instance_name }}"
+          PROJECT="{{ workload.project_id }}"
+
+          wait_for_sql_idle() {
+            local max_wait_seconds="${1:-1800}"
+            local waited=0
+            while true; do
+              local running_op
+              running_op=$(gcloud sql operations list \
+                --instance="$INSTANCE" \
+                --project="$PROJECT" \
+                --filter='status!=DONE' \
+                --format='value(name)' | head -n 1)
+              if [ -z "$running_op" ]; then
+                break
+              fi
+              echo "Waiting for Cloud SQL operation '$running_op' to finish before DB/user changes..."
+              gcloud sql operations wait "$running_op" --project="$PROJECT" --timeout=300 >/dev/null || true
+              sleep 5
+              waited=$((waited + 305))
+              if [ "$waited" -ge "$max_wait_seconds" ]; then
+                echo "WARNING: Timed out waiting for Cloud SQL operations after ${max_wait_seconds}s"
+                break
+              fi
+            done
+          }
+
+          wait_for_sql_idle 1800
+
+          ensure_db() {
+            local db="$1"
+            if gcloud sql databases describe "$db" --instance "$INSTANCE" --project "$PROJECT" >/dev/null 2>&1; then
+              echo "Database '$db' already exists"
+            else
+              gcloud sql databases create "$db" --instance "$INSTANCE" --project "$PROJECT" --quiet
+              echo "Created database '$db'"
+              wait_for_sql_idle 1800
+            fi
+          }
+
+          ensure_user() {
+            local username="$1"
+            local password="$2"
+            if gcloud sql users list --instance "$INSTANCE" --project "$PROJECT" --format='value(name)' | grep -Fxq "$username"; then
+              gcloud sql users set-password "$username" --instance "$INSTANCE" --project "$PROJECT" --password "$password" --quiet
+              echo "Updated password for user '$username'"
+              wait_for_sql_idle 1800
+            else
+              gcloud sql users create "$username" --instance "$INSTANCE" --project "$PROJECT" --password "$password" --quiet
+              echo "Created user '$username'"
+              wait_for_sql_idle 1800
+            fi
+          }
+
+          ensure_db "noetl"
+          ensure_db "demo_noetl"
+
+          gcloud sql users set-password postgres \
+            --instance "$INSTANCE" \
+            --project "$PROJECT" \
+            --password "{{ workload.postgres_password }}" \
+            --quiet || true
+          wait_for_sql_idle 1800
+
+          ensure_user "noetl" "{{ workload.noetl_password }}"
+          ensure_user "demo" "{{ workload.demo_password }}"
+          ensure_user "auth" "{{ workload.auth_password }}"
+    next:
+      - step: ensure_cloudsql_proxy_identity
+
+  - step: ensure_cloudsql_proxy_identity
+    desc: Configure Workload Identity for Cloud SQL Proxy
+    tool:
+      kind: shell
+      cmds:
+        - |
+          set -e
+          if [ "{{ workload.use_cloud_sql }}" != "true" ]; then
+            echo "Cloud SQL disabled, skipping proxy identity setup"
+            exit 0
+          fi
+
+          PROJECT="{{ workload.project_id }}"
+          REGION="{{ workload.region }}"
+          CLUSTER="{{ workload.cluster_name }}"
+          NS="{{ workload.pgbouncer_namespace }}"
+          KSA="{{ workload.cloud_sql_proxy_ksa_name }}"
+          GSA_NAME="{{ workload.cloud_sql_proxy_gsa_name }}"
+          GSA_EMAIL="${GSA_NAME}@${PROJECT}.iam.gserviceaccount.com"
+
+          WORKLOAD_POOL=$(gcloud container clusters describe "$CLUSTER" --region "$REGION" --project "$PROJECT" --format='value(workloadIdentityConfig.workloadPool)')
+          if [ -z "$WORKLOAD_POOL" ]; then
+            echo "ERROR: Workload Identity is not enabled on cluster '$CLUSTER'"
+            exit 1
+          fi
+
+          kubectl create namespace "$NS" --dry-run=client -o yaml | kubectl apply -f -
+
+          if ! gcloud iam service-accounts describe "$GSA_EMAIL" --project "$PROJECT" >/dev/null 2>&1; then
+            gcloud iam service-accounts create "$GSA_NAME" --project "$PROJECT" --display-name "NoETL Cloud SQL Proxy"
+          fi
+
+          gcloud projects add-iam-policy-binding "$PROJECT" \
+            --member "serviceAccount:${GSA_EMAIL}" \
+            --role "roles/cloudsql.client" \
+            --quiet >/dev/null
+
+          gcloud iam service-accounts add-iam-policy-binding "$GSA_EMAIL" \
+            --project "$PROJECT" \
+            --role "roles/iam.workloadIdentityUser" \
+            --member "serviceAccount:${WORKLOAD_POOL}[${NS}/${KSA}]" \
+            --quiet >/dev/null
+
+          kubectl create serviceaccount "$KSA" -n "$NS" --dry-run=client -o yaml | kubectl apply -f -
+          kubectl annotate serviceaccount "$KSA" -n "$NS" iam.gke.io/gcp-service-account="$GSA_EMAIL" --overwrite
+    next:
+      - step: deploy_pgbouncer
+
+  - step: deploy_pgbouncer
+    desc: Deploy PgBouncer with Cloud SQL Proxy sidecar
+    tool:
+      kind: shell
+      cmds:
+        - |
+          set -e
+          if [ "{{ workload.pgbouncer_enabled }}" != "true" ]; then
+            echo "PgBouncer disabled, skipping deployment"
+            exit 0
+          fi
+
+          NS="{{ workload.pgbouncer_namespace }}"
+          APP="{{ workload.pgbouncer_service_name }}"
+          KSA="{{ workload.cloud_sql_proxy_ksa_name }}"
+          INSTANCE_CONNECTION_NAME="{{ workload.project_id }}:{{ workload.region }}:{{ workload.cloud_sql_instance_name }}"
+          PROXY_PORT="{{ workload.cloud_sql_proxy_port }}"
+
+          cat <<EOF | kubectl apply -f -
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: ${APP}
+            namespace: ${NS}
+            labels:
+              app: ${APP}
+          spec:
+            type: ClusterIP
+            selector:
+              app: ${APP}
+            ports:
+              - name: psql
+                port: 5432
+                targetPort: 5432
+          ---
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: ${APP}
+            namespace: ${NS}
+            labels:
+              app: ${APP}
+          spec:
+            replicas: 1
+            selector:
+              matchLabels:
+                app: ${APP}
+            template:
+              metadata:
+                labels:
+                  app: ${APP}
+              spec:
+                serviceAccountName: ${KSA}
+                containers:
+                  - name: cloud-sql-proxy
+                    image: {{ workload.cloud_sql_proxy_image }}
+                    args:
+                      - --structured-logs
+                      - --address=127.0.0.1
+                      - --port=${PROXY_PORT}
+                      - --private-ip
+                      - ${INSTANCE_CONNECTION_NAME}
+                    resources:
+                      requests:
+                        cpu: 100m
+                        memory: 128Mi
+                      limits:
+                        cpu: 500m
+                        memory: 512Mi
+                  - name: pgbouncer
+                    image: {{ workload.pgbouncer_image }}
+                    env:
+                      - name: AUTH_TYPE
+                        value: scram-sha-256
+                      - name: DATABASE_URLS
+                        value: "postgres://noetl:{{ workload.noetl_password }}@127.0.0.1:${PROXY_PORT}/noetl,postgres://demo:{{ workload.demo_password }}@127.0.0.1:${PROXY_PORT}/demo_noetl,postgres://auth:{{ workload.auth_password }}@127.0.0.1:${PROXY_PORT}/demo_noetl,postgres://postgres:{{ workload.postgres_password }}@127.0.0.1:${PROXY_PORT}/noetl"
+                      - name: POOL_MODE
+                        value: transaction
+                      - name: IGNORE_STARTUP_PARAMETERS
+                        value: "extra_float_digits,options"
+                      - name: MAX_CLIENT_CONN
+                        value: "{{ workload.pgbouncer_max_client_conn }}"
+                      - name: DEFAULT_POOL_SIZE
+                        value: "{{ workload.pgbouncer_default_pool_size }}"
+                    ports:
+                      - containerPort: 5432
+                        name: psql
+                    readinessProbe:
+                      tcpSocket:
+                        port: 5432
+                      initialDelaySeconds: 5
+                      periodSeconds: 5
+                    livenessProbe:
+                      tcpSocket:
+                        port: 5432
+                      initialDelaySeconds: 15
+                      periodSeconds: 10
+                    resources:
+                      requests:
+                        cpu: 100m
+                        memory: 128Mi
+                      limits:
+                        cpu: 500m
+                        memory: 512Mi
+          EOF
+
+          kubectl rollout status deployment/${APP} -n ${NS} --timeout=300s
+          kubectl get svc ${APP} -n ${NS} -o wide
+    next:
+      - step: init_noetl_schema
+
+  - step: deploy_postgres
+    desc: Deploy PostgreSQL
+    tool:
+      kind: shell
+      cmds:
+        - |
+          set -e
+          helm upgrade --install noetl-postgres bitnami/postgresql \
+            --namespace postgres \
+            --create-namespace \
+            --set auth.postgresPassword={{ workload.postgres_password }} \
+            --set auth.username=noetl \
+            --set auth.password={{ workload.noetl_password }} \
+            --set auth.database=noetl \
+            --set primary.persistence.enabled=true \
+            --set primary.persistence.size={{ workload.postgres_storage_size }} \
+            --set primary.resources.requests.cpu={{ workload.postgres_primary_cpu_request }} \
+            --set primary.resources.requests.memory={{ workload.postgres_primary_memory_request }} \
+            --set primary.resources.requests.ephemeral-storage={{ workload.postgres_primary_ephemeral_storage_request }} \
+            --set primary.resources.limits.cpu={{ workload.postgres_primary_cpu_limit }} \
+            --set primary.resources.limits.memory={{ workload.postgres_primary_memory_limit }} \
+            --set primary.resources.limits.ephemeral-storage={{ workload.postgres_primary_ephemeral_storage_limit }} \
+            --set architecture=standalone
+
+          kubectl wait --for=condition=ready pod -l app.kubernetes.io/instance=noetl-postgres -n postgres --timeout=300s
+    next:
+      - step: init_noetl_schema
+
+  - step: init_noetl_schema
+    desc: Initialize NoETL schema in PostgreSQL
+    tool:
+      kind: shell
+      cmds:
+        - |
+          set -e
+          SCHEMA_FILE="noetl/database/ddl/postgres/schema_ddl.sql"
+          if [ ! -f "$SCHEMA_FILE" ]; then
+            echo "WARNING: Schema file not found: $SCHEMA_FILE"
+            echo "Skipping schema initialization"
+            exit 0
+          fi
+
+          DB_CLIENT_NS="postgres"
+          DB_CLIENT_POD=$(kubectl get pods -n "$DB_CLIENT_NS" -l app.kubernetes.io/instance=noetl-postgres -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+          DB_CLIENT_EPHEMERAL="false"
+
+          if [ "{{ workload.use_cloud_sql }}" = "true" ] && [ "{{ workload.pgbouncer_enabled }}" = "true" ]; then
+            DB_CLIENT_NS="{{ workload.pgbouncer_namespace }}"
+            DB_CLIENT_POD="noetl-db-client-$RANDOM"
+            DB_CLIENT_EPHEMERAL="true"
+            kubectl run "$DB_CLIENT_POD" -n "$DB_CLIENT_NS" --image=postgres:15 --restart=Never --command -- sleep 3600 >/dev/null
+            kubectl wait --for=condition=Ready "pod/$DB_CLIENT_POD" -n "$DB_CLIENT_NS" --timeout=120s >/dev/null
+          fi
+
+          cleanup_db_client() {
+            if [ "$DB_CLIENT_EPHEMERAL" = "true" ]; then
+              kubectl delete pod "$DB_CLIENT_POD" -n "$DB_CLIENT_NS" --ignore-not-found=true >/dev/null 2>&1 || true
+            fi
+          }
+          trap cleanup_db_client EXIT
+
+          if [ -z "$DB_CLIENT_POD" ]; then
+            echo "ERROR: No PostgreSQL client pod available"
+            exit 1
+          fi
+
+          PGHOST="{{ workload.postgres_host }}"
+          PGPORT="{{ workload.postgres_port }}"
+          if [ "{{ workload.use_cloud_sql }}" != "true" ] && [ "$DB_CLIENT_NS" = "postgres" ]; then
+            PGHOST="noetl-postgres-postgresql.postgres.svc.cluster.local"
+            PGPORT="5432"
+          fi
+          READY="false"
+          for i in $(seq 1 20); do
+            if kubectl exec -n "$DB_CLIENT_NS" "$DB_CLIENT_POD" -- /bin/sh -c "PGPASSWORD={{ workload.postgres_password }} psql -h $PGHOST -p $PGPORT -U postgres -d noetl -tAc \"SELECT 1\"" >/dev/null 2>&1; then
+              READY="true"
+              break
+            fi
+            echo "PostgreSQL not ready yet (attempt $i/20), retrying..."
+            sleep 5
+          done
+
+          if [ "$READY" != "true" ]; then
+            echo "WARNING: PostgreSQL readiness check timed out, skipping schema init for this run"
+            exit 0
+          fi
+
+          TABLE_EXISTS=$(kubectl exec -n "$DB_CLIENT_NS" "$DB_CLIENT_POD" -- /bin/sh -c "PGPASSWORD={{ workload.postgres_password }} psql -h $PGHOST -p $PGPORT -U postgres -d noetl -tAc \"SELECT 1 FROM information_schema.tables WHERE table_schema='noetl' AND table_name='event'\"" 2>/dev/null || echo "")
+          if [ "$TABLE_EXISTS" = "1" ]; then
+            echo "NoETL schema already initialized"
+            exit 0
+          fi
+
+          kubectl exec -n "$DB_CLIENT_NS" "$DB_CLIENT_POD" -- /bin/sh -c "PGPASSWORD={{ workload.postgres_password }} psql -h $PGHOST -p $PGPORT -U postgres -d noetl -c \"CREATE SCHEMA IF NOT EXISTS noetl\""
+          cat "$SCHEMA_FILE" | kubectl exec -i -n "$DB_CLIENT_NS" "$DB_CLIENT_POD" -- /bin/sh -c "PGPASSWORD={{ workload.postgres_password }} psql -h $PGHOST -p $PGPORT -U postgres -d noetl"
+          kubectl exec -n "$DB_CLIENT_NS" "$DB_CLIENT_POD" -- /bin/sh -c "PGPASSWORD={{ workload.postgres_password }} psql -h $PGHOST -p $PGPORT -U postgres -d noetl -c \"GRANT ALL ON SCHEMA noetl TO noetl; GRANT ALL ON ALL TABLES IN SCHEMA noetl TO noetl; GRANT ALL ON ALL SEQUENCES IN SCHEMA noetl TO noetl;\""
+          echo "NoETL schema initialized"
+    next:
+      - step: init_demo_database
+
+  - step: init_demo_database
+    desc: Create demo_noetl database with auth and demo users for independent module management
+    tool:
+      kind: shell
+      cmds:
+        - |
+          set -e
+          if [ "{{ workload.use_cloud_sql }}" = "true" ]; then
+            echo "Cloud SQL mode: demo_noetl database/users are managed in ensure_cloud_sql_users_and_databases; skipping init_demo_database."
+            exit 0
+          fi
+
+          DB_CLIENT_NS="postgres"
+          DB_CLIENT_POD=$(kubectl get pods -n "$DB_CLIENT_NS" -l app.kubernetes.io/instance=noetl-postgres -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+          DB_CLIENT_EPHEMERAL="false"
+
+          if [ "{{ workload.use_cloud_sql }}" = "true" ] && [ "{{ workload.pgbouncer_enabled }}" = "true" ]; then
+            DB_CLIENT_NS="{{ workload.pgbouncer_namespace }}"
+            DB_CLIENT_POD="noetl-db-client-$RANDOM"
+            DB_CLIENT_EPHEMERAL="true"
+            kubectl run "$DB_CLIENT_POD" -n "$DB_CLIENT_NS" --image=postgres:15 --restart=Never --command -- sleep 3600 >/dev/null
+            kubectl wait --for=condition=Ready "pod/$DB_CLIENT_POD" -n "$DB_CLIENT_NS" --timeout=120s >/dev/null
+          fi
+
+          cleanup_db_client() {
+            if [ "$DB_CLIENT_EPHEMERAL" = "true" ]; then
+              kubectl delete pod "$DB_CLIENT_POD" -n "$DB_CLIENT_NS" --ignore-not-found=true >/dev/null 2>&1 || true
+            fi
+          }
+          trap cleanup_db_client EXIT
+
+          if [ -z "$DB_CLIENT_POD" ]; then
+            echo "ERROR: No PostgreSQL client pod available"
+            exit 1
+          fi
+
+          PGHOST="{{ workload.postgres_host }}"
+          PGPORT="{{ workload.postgres_port }}"
+          if [ "{{ workload.use_cloud_sql }}" != "true" ] && [ "$DB_CLIENT_NS" = "postgres" ]; then
+            PGHOST="noetl-postgres-postgresql.postgres.svc.cluster.local"
+            PGPORT="5432"
+          fi
+
+          READY="false"
+          for i in $(seq 1 20); do
+            if kubectl exec -n "$DB_CLIENT_NS" "$DB_CLIENT_POD" -- /bin/sh -c "PGPASSWORD={{ workload.postgres_password }} psql -h $PGHOST -p $PGPORT -U postgres -d noetl -tAc \"SELECT 1\"" >/dev/null 2>&1; then
+              READY="true"
+              break
+            fi
+            echo "PostgreSQL not ready yet (attempt $i/20), retrying..."
+            sleep 5
+          done
+
+          if [ "$READY" != "true" ]; then
+            echo "ERROR: PostgreSQL readiness check timed out during demo database initialization"
+            exit 1
+          fi
+
+          echo "Creating demo_noetl database and users..."
+
+          DB_EXISTS=$(kubectl exec -n "$DB_CLIENT_NS" "$DB_CLIENT_POD" -- /bin/sh -c "PGPASSWORD={{ workload.postgres_password }} psql -h $PGHOST -p $PGPORT -U postgres -d noetl -tAc \"SELECT 1 FROM pg_database WHERE datname='demo_noetl'\"" 2>/dev/null || echo "")
+          if [ "$DB_EXISTS" != "1" ]; then
+            kubectl exec -n "$DB_CLIENT_NS" "$DB_CLIENT_POD" -- /bin/sh -c "PGPASSWORD={{ workload.postgres_password }} psql -h $PGHOST -p $PGPORT -U postgres -d noetl -c \"CREATE DATABASE demo_noetl\""
+            echo "Created demo_noetl database"
+          else
+            echo "demo_noetl database already exists"
+          fi
+
+          cat <<'SQL' | kubectl exec -i -n "$DB_CLIENT_NS" "$DB_CLIENT_POD" -- /bin/sh -c "PGPASSWORD={{ workload.postgres_password }} psql -v ON_ERROR_STOP=1 -h $PGHOST -p $PGPORT -U postgres -d noetl"
+          DO $$
+          BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='demo') THEN
+              CREATE USER demo WITH PASSWORD '{{ workload.demo_password }}';
+            ELSE
+              ALTER USER demo WITH PASSWORD '{{ workload.demo_password }}';
+            END IF;
+
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='auth') THEN
+              CREATE USER auth WITH PASSWORD '{{ workload.auth_password }}';
+            ELSE
+              ALTER USER auth WITH PASSWORD '{{ workload.auth_password }}';
+            END IF;
+
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='noetl') THEN
+              CREATE USER noetl WITH PASSWORD '{{ workload.noetl_password }}';
+            ELSE
+              ALTER USER noetl WITH PASSWORD '{{ workload.noetl_password }}';
+            END IF;
+          END
+          $$;
+          SQL
+
+          cat <<'SQL' | kubectl exec -i -n "$DB_CLIENT_NS" "$DB_CLIENT_POD" -- /bin/sh -c "PGPASSWORD={{ workload.postgres_password }} psql -v ON_ERROR_STOP=1 -h $PGHOST -p $PGPORT -U postgres -d demo_noetl"
+          GRANT ALL PRIVILEGES ON DATABASE demo_noetl TO demo;
+          GRANT ALL PRIVILEGES ON DATABASE demo_noetl TO auth;
+          GRANT ALL PRIVILEGES ON DATABASE demo_noetl TO noetl;
+
+          GRANT ALL ON SCHEMA public TO demo;
+          GRANT ALL ON SCHEMA public TO noetl;
+          ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO demo;
+          ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO noetl;
+          ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO demo;
+          ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO noetl;
+
+          CREATE SCHEMA IF NOT EXISTS auth;
+          GRANT ALL ON SCHEMA auth TO auth;
+          GRANT ALL ON SCHEMA auth TO noetl;
+          ALTER DEFAULT PRIVILEGES IN SCHEMA auth GRANT ALL ON TABLES TO auth;
+          ALTER DEFAULT PRIVILEGES IN SCHEMA auth GRANT ALL ON TABLES TO noetl;
+          ALTER DEFAULT PRIVILEGES IN SCHEMA auth GRANT ALL ON SEQUENCES TO auth;
+          ALTER DEFAULT PRIVILEGES IN SCHEMA auth GRANT ALL ON SEQUENCES TO noetl;
+          SQL
+
+          if [ "{{ workload.demo_can_read_noetl_schema }}" = "true" ]; then
+            kubectl exec -n "$DB_CLIENT_NS" "$DB_CLIENT_POD" -- /bin/sh -c "PGPASSWORD={{ workload.postgres_password }} psql -h $PGHOST -p $PGPORT -U postgres -d noetl -c \"
+              GRANT CONNECT ON DATABASE noetl TO demo;
+              GRANT USAGE ON SCHEMA noetl TO demo;
+              GRANT SELECT ON ALL TABLES IN SCHEMA noetl TO demo;
+              ALTER DEFAULT PRIVILEGES FOR USER noetl IN SCHEMA noetl GRANT SELECT ON TABLES TO demo;
+            \""
+          fi
+
+          echo ""
+          echo "Database users initialized:"
+          echo "  - demo/<configured-password>  -> demo_noetl.public (application tables)"
+          echo "  - auth/<configured-password>  -> demo_noetl.auth (authentication module)"
+          echo "  - noetl/<configured-password> -> noetl.noetl (NoETL core schema)"
+    next:
+      - step: deploy_nats
+
+  - step: deploy_nats
+    desc: Deploy NATS with JetStream
+    tool:
+      kind: shell
+      cmds:
+        - |
+          set -e
+          helm upgrade --install nats nats/nats \
+            --namespace nats \
+            --create-namespace \
+            --set config.jetstream.enabled=true \
+            --set config.jetstream.fileStore.enabled=true \
+            --set config.jetstream.fileStore.pvc.size={{ workload.nats_jetstream_file_size }} \
+            --set config.jetstream.memoryStore.enabled=true \
+            --set config.jetstream.memoryStore.maxSize=1Gi \
+            --set 'config.merge.authorization.users[0].user={{ workload.nats_user }}' \
+            --set 'config.merge.authorization.users[0].password={{ workload.nats_password }}'
+          kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=nats -n nats --timeout=240s
+    next:
+      - step: maybe_deploy_clickhouse
+
+  - step: maybe_deploy_clickhouse
+    desc: Optionally deploy ClickHouse
+    tool:
+      kind: shell
+      cmds:
+        - echo "deploy_clickhouse={{ workload.deploy_clickhouse }}"
+    next:
+      - when: "{{ workload.deploy_clickhouse == true }}"
+        then:
+          - step: deploy_clickhouse
+      - step: deploy_noetl
+
+  - step: deploy_clickhouse
+    desc: Deploy ClickHouse
+    tool:
+      kind: shell
+      cmds:
+        - |
+          set -e
+          helm upgrade --install clickhouse bitnami/clickhouse \
+            --namespace clickhouse \
+            --create-namespace \
+            --set shards=1 \
+            --set replicaCount=1 \
+            --set persistence.enabled=true \
+            --set persistence.size={{ workload.clickhouse_storage_size }}
+          kubectl wait --for=condition=ready pod -l app.kubernetes.io/instance=clickhouse -n clickhouse --timeout=300s || true
+    next:
+      - step: deploy_noetl
+
+  - step: deploy_noetl
+    desc: Deploy NoETL server and worker stack
+    tool:
+      kind: shell
+      cmds:
+        - |
+          set -e
+          REGISTRY="{{ workload.region }}-docker.pkg.dev/{{ workload.project_id }}/{{ workload.repository_id }}"
+          NOETL_IMAGE="{{ workload.noetl_image_repository }}"
+          [ -z "$NOETL_IMAGE" ] && NOETL_IMAGE="$REGISTRY/noetl"
+          DB_HOST="{{ workload.postgres_host }}"
+          DB_PORT="{{ workload.postgres_port }}"
+          if [ "{{ workload.use_cloud_sql }}" != "true" ] && [ "{{ workload.deploy_postgres }}" = "true" ]; then
+            DB_HOST="noetl-postgres-postgresql.postgres.svc.cluster.local"
+            DB_PORT="5432"
+          fi
+
+          INGRESS_ARGS=""
+          if [ "{{ workload.deploy_ingress }}" = "true" ]; then
+            INGRESS_ARGS="--set ingress.enabled=true --set ingress.className=gce --set ingress.host={{ workload.noetl_public_host }} --set ingress.managedCertificate.enabled=true --set ingress.managedCertificate.name=noetl-managed-cert"
+          fi
+
+          helm upgrade --install noetl ./automation/helm/noetl \
+            --namespace noetl \
+            --create-namespace \
+            --set namespace=noetl \
+            --set image.repository="$NOETL_IMAGE" \
+            --set image.tag={{ workload.noetl_image_tag }} \
+            --set worker.replicas={{ workload.noetl_worker_replicas }} \
+            --set workerPool.enabled={{ workload.noetl_enable_worker_pool }} \
+            --set persistence.data.enabled={{ workload.noetl_data_persistence }} \
+            --set persistence.logs.enabled={{ workload.noetl_logs_persistence }} \
+            --set config.server.POSTGRES_HOST="$DB_HOST" \
+            --set config.server.POSTGRES_PORT="$DB_PORT" \
+            --set config.server.NOETL_USER=noetl \
+            --set config.server.NOETL_POSTGRES_DB=noetl \
+            --set config.server.NATS_URL=nats://{{ workload.nats_user }}:{{ workload.nats_password }}@nats.nats.svc.cluster.local:4222 \
+            --set config.worker.NATS_URL=nats://{{ workload.nats_user }}:{{ workload.nats_password }}@nats.nats.svc.cluster.local:4222 \
+            --set secrets.postgresPassword={{ workload.postgres_password }} \
+            --set secrets.noetlPassword={{ workload.noetl_password }} \
+            $INGRESS_ARGS
+
+          if [ "{{ workload.build_noetl_image }}" = "true" ]; then
+            echo "NoETL image was rebuilt. Forcing rollout restart to refresh pods for tag {{ workload.noetl_image_tag }}."
+            kubectl rollout restart deployment/noetl-server -n noetl
+            kubectl rollout restart deployment/noetl-worker -n noetl
+          fi
+
+          kubectl rollout status deployment/noetl-server -n noetl --timeout=300s
+          kubectl rollout status deployment/noetl-worker -n noetl --timeout=300s
+    next:
+      - step: bootstrap_gateway_auth
+
+  - step: bootstrap_gateway_auth
+    desc: Register gateway auth resources and provision auth schema
+    tool:
+      kind: shell
+      cmds:
+        - |
+          set -euo pipefail
+
+          if [ "{{ workload.bootstrap_gateway_auth }}" != "true" ]; then
+            echo "bootstrap_gateway_auth=false, skipping auth bootstrap"
+            exit 0
+          fi
+
+          if [ "{{ workload.gateway_auth_bypass }}" = "true" ]; then
+            echo "gateway_auth_bypass=true, skipping auth bootstrap"
+            exit 0
+          fi
+
+          NOETL_URL="http://localhost:18082"
+          PF_LOG="/tmp/noetl-auth-bootstrap-port-forward.log"
+          PF_PID=""
+          TMP_DIR=""
+
+          cleanup() {
+            if [ -n "$PF_PID" ] && kill -0 "$PF_PID" >/dev/null 2>&1; then
+              kill "$PF_PID" >/dev/null 2>&1 || true
+              wait "$PF_PID" 2>/dev/null || true
+            fi
+            if [ -n "$TMP_DIR" ] && [ -d "$TMP_DIR" ]; then
+              rm -rf "$TMP_DIR"
+            fi
+          }
+          trap cleanup EXIT
+
+          kubectl port-forward -n noetl svc/noetl 18082:8082 >"$PF_LOG" 2>&1 &
+          PF_PID=$!
+
+          READY=false
+          for _ in $(seq 1 30); do
+            if curl -fsS "$NOETL_URL/api/health" >/dev/null 2>&1; then
+              READY=true
+              break
+            fi
+            sleep 2
+          done
+
+          if [ "$READY" != "true" ]; then
+            echo "ERROR: NoETL API is not reachable via port-forward"
+            echo "Port-forward log:"
+            cat "$PF_LOG" || true
+            exit 1
+          fi
+
+          DB_HOST="{{ workload.postgres_host }}"
+          DB_PORT="{{ workload.postgres_port }}"
+          if [ "{{ workload.use_cloud_sql }}" != "true" ] && [ "{{ workload.deploy_postgres }}" = "true" ]; then
+            DB_HOST="noetl-postgres-postgresql.postgres.svc.cluster.local"
+            DB_PORT="5432"
+          fi
+
+          TMP_DIR=$(mktemp -d)
+
+          cat > "$TMP_DIR/pg_auth.json" <<JSON
+          {
+            "name": "pg_auth",
+            "type": "postgres",
+            "description": "Gateway auth database credential",
+            "tags": ["auth", "gateway", "postgres"],
+            "data": {
+              "db_host": "$DB_HOST",
+              "db_port": "$DB_PORT",
+              "db_user": "postgres",
+              "db_password": "{{ workload.postgres_password }}",
+              "db_name": "noetl"
+            }
+          }
+          JSON
+
+          cat > "$TMP_DIR/nats_credential.json" <<JSON
+          {
+            "name": "nats_credential",
+            "type": "nats",
+            "description": "Gateway auth session cache credential",
+            "tags": ["auth", "gateway", "nats"],
+            "data": {
+              "nats_url": "nats://{{ workload.nats_user }}:{{ workload.nats_password }}@nats.nats.svc.cluster.local:4222",
+              "nats_user": "{{ workload.nats_user }}",
+              "nats_password": "{{ workload.nats_password }}"
+            }
+          }
+          JSON
+
+          noetl --server-url "$NOETL_URL" register credential -f "$TMP_DIR/pg_auth.json"
+          noetl --server-url "$NOETL_URL" register credential -f "$TMP_DIR/nats_credential.json"
+
+          for pb in \
+            auth0_login.yaml \
+            auth0_validate_session.yaml \
+            check_playbook_access.yaml \
+            user_management.yaml \
+            provision_auth_schema.yaml \
+            setup_admin_permissions.yaml
+          do
+            noetl --server-url "$NOETL_URL" register playbook -f "tests/fixtures/playbooks/api_integration/auth0/$pb"
+          done
+
+          EXEC_JSON=$(noetl exec catalog://api_integration/auth0/provision_auth_schema -r distributed --endpoint "$NOETL_URL" --json)
+          EXEC_ID=$(printf '%s' "$EXEC_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("execution_id", ""))')
+
+          if [ -z "$EXEC_ID" ]; then
+            echo "ERROR: Failed to parse execution_id from provision_auth_schema output"
+            echo "$EXEC_JSON"
+            exit 1
+          fi
+
+          echo "Waiting for provision_auth_schema execution: $EXEC_ID"
+          STATUS=""
+          for _ in $(seq 1 90); do
+            STATUS=$(curl -fsS "$NOETL_URL/api/executions/$EXEC_ID" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("status", ""))')
+            case "$STATUS" in
+              COMPLETED)
+                break
+                ;;
+              FAILED|CANCELLED)
+                echo "ERROR: provision_auth_schema execution ended with status=$STATUS"
+                curl -fsS "$NOETL_URL/api/executions/$EXEC_ID" | python3 -c "import json,sys; data=json.load(sys.stdin); [print(f\"{e.get('timestamp')} {e.get('event_type')} {e.get('node_name')} {e.get('error')}\") for e in data.get('events', []) if e.get('event_type') in ('command.failed','call.error','workflow.failed','playbook.failed')]"
+                exit 1
+                ;;
+            esac
+            sleep 2
+          done
+
+          if [ "$STATUS" != "COMPLETED" ]; then
+            echo "ERROR: Timed out waiting for provision_auth_schema execution to complete"
+            exit 1
+          fi
+
+          echo "Gateway auth bootstrap completed"
+    next:
+      - step: ensure_gateway_static_ip
+
+  - step: ensure_gateway_static_ip
+    desc: Reserve gateway static IP (when using LoadBalancer service)
+    tool:
+      kind: shell
+      cmds:
+        - |
+          set -e
+          if [ "{{ workload.gateway_service_type }}" != "LoadBalancer" ]; then
+            echo "Gateway service type is not LoadBalancer, skipping static IP reservation"
+            exit 0
+          fi
+
+          if [ -z "{{ workload.gateway_load_balancer_ip }}" ]; then
+            echo "Gateway static IP not provided, skipping reservation"
+            exit 0
+          fi
+
+          TARGET_IP="{{ workload.gateway_load_balancer_ip }}"
+          echo "Ensuring static IP exists: $TARGET_IP"
+
+          EXISTING_NAME=$(gcloud compute addresses list \
+            --project {{ workload.project_id }} \
+            --regions {{ workload.region }} \
+            --filter="address=$TARGET_IP" \
+            --format="value(name)" | head -n 1)
+
+          if [ -n "$EXISTING_NAME" ]; then
+            echo "Static IP $TARGET_IP already reserved as '$EXISTING_NAME'"
+            exit 0
+          fi
+
+          ADDRESS_NAME="noetl-gateway-static-ip"
+          if gcloud compute addresses describe "$ADDRESS_NAME" --region {{ workload.region }} --project {{ workload.project_id }} >/dev/null 2>&1; then
+            ADDRESS_NAME="${ADDRESS_NAME}-$(date +%s)"
+          fi
+
+          gcloud compute addresses create "$ADDRESS_NAME" \
+            --project {{ workload.project_id }} \
+            --region {{ workload.region }} \
+            --addresses "$TARGET_IP"
+
+          echo "Reserved static IP $TARGET_IP as '$ADDRESS_NAME'"
+    next:
+      - step: deploy_gateway
+
+  - step: deploy_gateway
+    desc: Deploy NoETL Gateway
+    tool:
+      kind: shell
+      cmds:
+        - |
+          set -e
+          REGISTRY="{{ workload.region }}-docker.pkg.dev/{{ workload.project_id }}/{{ workload.repository_id }}"
+          GATEWAY_IMAGE="{{ workload.gateway_image_repository }}"
+          [ -z "$GATEWAY_IMAGE" ] && GATEWAY_IMAGE="$REGISTRY/noetl-gateway"
+          GATEWAY_SERVICE_TYPE="{{ workload.gateway_service_type }}"
+          GATEWAY_STATIC_IP="{{ workload.gateway_load_balancer_ip }}"
+
+          export RAW_CORS_ALLOWED_ORIGINS="{{ workload.gateway_cors_allowed_origins }}"
+          export RAW_CORS_ALLOWED_DOMAINS="{{ workload.gateway_cors_allowed_domains }}"
+          export CORS_INCLUDE_PUBLIC_HOSTS="{{ workload.gateway_cors_include_public_hosts }}"
+          export CORS_INCLUDE_LOCALHOST="{{ workload.gateway_cors_include_localhost }}"
+          export GUI_PUBLIC_HOST="{{ workload.gui_public_host }}"
+          export GATEWAY_PUBLIC_HOST="{{ workload.gateway_public_host }}"
+
+          GATEWAY_CORS_ALLOWED_ORIGINS="$(python3 - <<'PY'
+          import os
+          import re
+
+          seen = set()
+          origins = []
+
+          def add_origin(origin: str) -> None:
+              origin = origin.strip()
+              if not origin or origin in seen:
+                  return
+              seen.add(origin)
+              origins.append(origin)
+
+          def split_tokens(raw: str):
+              for token in re.split(r"[,\s;]+", raw or ""):
+                  token = token.strip()
+                  if token:
+                      yield token
+
+          def add_token(token: str) -> None:
+              if token.startswith("http://") or token.startswith("https://"):
+                  add_origin(token)
+              else:
+                  add_origin(f"https://{token}")
+                  add_origin(f"http://{token}")
+
+          if os.environ.get("CORS_INCLUDE_LOCALHOST", "true").lower() == "true":
+              add_origin("http://localhost:3001")
+
+          if os.environ.get("CORS_INCLUDE_PUBLIC_HOSTS", "true").lower() == "true":
+              gui_host = os.environ.get("GUI_PUBLIC_HOST", "").strip()
+              gateway_host = os.environ.get("GATEWAY_PUBLIC_HOST", "").strip()
+              if gui_host and not gui_host.endswith(".example.com") and gui_host != "example.com":
+                  add_origin(f"https://{gui_host}")
+              if gateway_host and not gateway_host.endswith(".example.com") and gateway_host != "example.com":
+                  add_origin(f"https://{gateway_host}")
+
+          for token in split_tokens(os.environ.get("RAW_CORS_ALLOWED_ORIGINS", "")):
+              add_token(token)
+
+          for domain in split_tokens(os.environ.get("RAW_CORS_ALLOWED_DOMAINS", "")):
+              add_origin(f"https://{domain}")
+              add_origin(f"http://{domain}")
+
+          print(",".join(origins))
+          PY
+          )"
+
+          if [ -z "$GATEWAY_CORS_ALLOWED_ORIGINS" ]; then
+            echo "ERROR: Resolved CORS origin list is empty"
+            exit 1
+          fi
+
+          echo "Gateway CORS allowed origins: $GATEWAY_CORS_ALLOWED_ORIGINS"
+          GATEWAY_CORS_ALLOWED_ORIGINS_ESCAPED=$(printf '%s' "$GATEWAY_CORS_ALLOWED_ORIGINS" | sed 's/,/\\,/g')
+
+          INGRESS_ARGS=""
+          if [ "{{ workload.deploy_ingress }}" = "true" ]; then
+            INGRESS_ARGS="--set ingress.enabled=true --set ingress.className=gce --set ingress.host={{ workload.gateway_public_host }} --set ingress.managedCertificate.enabled=true --set ingress.managedCertificate.name=gateway-managed-cert"
+          fi
+
+          GATEWAY_SERVICE_ARGS="--set service.type=$GATEWAY_SERVICE_TYPE"
+          if [ "$GATEWAY_SERVICE_TYPE" = "LoadBalancer" ] && [ -n "$GATEWAY_STATIC_IP" ]; then
+            GATEWAY_SERVICE_ARGS="$GATEWAY_SERVICE_ARGS --set service.loadBalancerIP=$GATEWAY_STATIC_IP"
+            echo "Gateway will use static LoadBalancer IP: $GATEWAY_STATIC_IP"
+          fi
+
+          helm upgrade --install noetl-gateway ./automation/helm/gateway \
+            --namespace gateway \
+            --create-namespace \
+            --set namespace=gateway \
+            --set image.repository="$GATEWAY_IMAGE" \
+            --set image.tag={{ workload.gateway_image_tag }} \
+            --set env.noetlBaseUrl=http://noetl.noetl.svc.cluster.local:8082 \
+            --set env.natsUrl=nats://{{ workload.nats_user }}:{{ workload.nats_password }}@nats.nats.svc.cluster.local:4222 \
+            --set env.publicUrl={{ workload.gateway_public_url }} \
+            --set-string env.corsAllowedOrigins=$GATEWAY_CORS_ALLOWED_ORIGINS_ESCAPED \
+            --set env.authBypass={{ workload.gateway_auth_bypass }} \
+            $GATEWAY_SERVICE_ARGS \
+            $INGRESS_ARGS
+
+          if [ "{{ workload.build_images }}" = "true" ] && [ "{{ workload.build_gateway_image }}" = "true" ]; then
+            echo "Gateway image was rebuilt. Forcing rollout restart to refresh pods for tag {{ workload.gateway_image_tag }}."
+            kubectl rollout restart deployment/gateway -n gateway
+          fi
+
+          kubectl rollout status deployment/gateway -n gateway --timeout=300s
+          kubectl get svc gateway -n gateway -o wide
+    next:
+      - step: ensure_gui_static_ip
+
+  - step: ensure_gui_static_ip
+    desc: Reserve GUI static IP (when using LoadBalancer service)
+    tool:
+      kind: shell
+      cmds:
+        - |
+          set -e
+          if [ "{{ workload.gui_service_type }}" != "LoadBalancer" ]; then
+            echo "GUI service type is not LoadBalancer, skipping static IP reservation"
+            exit 0
+          fi
+
+          if [ -z "{{ workload.gui_load_balancer_ip }}" ]; then
+            echo "GUI static IP not provided, skipping reservation"
+            exit 0
+          fi
+
+          TARGET_IP="{{ workload.gui_load_balancer_ip }}"
+          echo "Ensuring GUI static IP exists: $TARGET_IP"
+
+          EXISTING_NAME=$(gcloud compute addresses list \
+            --project {{ workload.project_id }} \
+            --regions {{ workload.region }} \
+            --filter="address=$TARGET_IP" \
+            --format="value(name)" | head -n 1)
+
+          if [ -n "$EXISTING_NAME" ]; then
+            echo "GUI static IP $TARGET_IP already reserved as '$EXISTING_NAME'"
+            exit 0
+          fi
+
+          ADDRESS_NAME="noetl-gui-static-ip"
+          if gcloud compute addresses describe "$ADDRESS_NAME" --region {{ workload.region }} --project {{ workload.project_id }} >/dev/null 2>&1; then
+            ADDRESS_NAME="${ADDRESS_NAME}-$(date +%s)"
+          fi
+
+          gcloud compute addresses create "$ADDRESS_NAME" \
+            --project {{ workload.project_id }} \
+            --region {{ workload.region }} \
+            --addresses "$TARGET_IP"
+
+          echo "Reserved GUI static IP $TARGET_IP as '$ADDRESS_NAME'"
+    next:
+      - step: deploy_gui
+
+  - step: deploy_gui
+    desc: Deploy NoETL GUI
+    tool:
+      kind: shell
+      cmds:
+        - |
+          set -e
+          REGISTRY="{{ workload.region }}-docker.pkg.dev/{{ workload.project_id }}/{{ workload.repository_id }}"
+          GUI_IMAGE="{{ workload.gui_image_repository }}"
+          [ -z "$GUI_IMAGE" ] && GUI_IMAGE="$REGISTRY/noetl-gui"
+          GUI_SERVICE_TYPE="{{ workload.gui_service_type }}"
+          GUI_STATIC_IP="{{ workload.gui_load_balancer_ip }}"
+
+          INGRESS_ARGS=""
+          if [ "{{ workload.deploy_ingress }}" = "true" ]; then
+            INGRESS_ARGS="--set ingress.enabled=true --set ingress.className=gce --set ingress.host={{ workload.gui_public_host }} --set ingress.managedCertificate.enabled=true --set ingress.managedCertificate.name=gui-managed-cert"
+          fi
+
+          GUI_SERVICE_ARGS="--set service.type=$GUI_SERVICE_TYPE"
+          if [ "$GUI_SERVICE_TYPE" = "LoadBalancer" ] && [ -n "$GUI_STATIC_IP" ]; then
+            GUI_SERVICE_ARGS="$GUI_SERVICE_ARGS --set service.loadBalancerIP=$GUI_STATIC_IP"
+            echo "GUI will use static LoadBalancer IP: $GUI_STATIC_IP"
+          fi
+
+          helm upgrade --install noetl-gui ./automation/gcp_gke/helm/gui \
+            --namespace gui \
+            --create-namespace \
+            --set namespace=gui \
+            --set image.repository="$GUI_IMAGE" \
+            --set image.tag={{ workload.gui_image_tag }} \
+            $GUI_SERVICE_ARGS \
+            $INGRESS_ARGS
+
+          if [ "{{ workload.build_images }}" = "true" ] && [ "{{ workload.build_gui_image }}" = "true" ]; then
+            echo "GUI image was rebuilt. Forcing rollout restart to refresh pods for tag {{ workload.gui_image_tag }}."
+            kubectl rollout restart deployment/gui -n gui
+          fi
+
+          kubectl rollout status deployment/gui -n gui --timeout=300s
+          kubectl get svc gui -n gui -o wide
+    next:
+      - step: cleanup_disabled_components
+
+  - step: cleanup_disabled_components
+    desc: Remove disabled datastore components from cluster
+    tool:
+      kind: shell
+      cmds:
+        - |
+          set +e
+
+          if [ "{{ workload.deploy_clickhouse }}" != "true" ]; then
+            echo "deploy_clickhouse=false -> removing ClickHouse from cluster"
+            helm uninstall clickhouse -n clickhouse --ignore-not-found
+            kubectl delete namespace clickhouse --ignore-not-found=true
+          fi
+
+          if [ "{{ workload.use_cloud_sql }}" = "true" ] && [ "{{ workload.deploy_postgres }}" != "true" ]; then
+            CURRENT_DB_HOST=$(kubectl get configmap -n noetl noetl-server-config -o jsonpath='{.data.POSTGRES_HOST}' 2>/dev/null || true)
+            if [ "$CURRENT_DB_HOST" = "{{ workload.postgres_host }}" ]; then
+              echo "NoETL is configured for Cloud SQL via PgBouncer -> removing in-cluster PostgreSQL release"
+              helm uninstall noetl-postgres -n postgres --ignore-not-found
+              helm uninstall postgres -n postgres --ignore-not-found
+            else
+              echo "Skipping PostgreSQL removal: NoETL currently points to '$CURRENT_DB_HOST' (expected '{{ workload.postgres_host }}')"
+            fi
+          fi
+    next:
+      - step: check_status
+
+  - step: check_status
+    desc: Show deployment status
+    tool:
+      kind: shell
+      cmds:
+        - |
+          set +e
+          echo ""
+          echo "========== Cluster =========="
+          kubectl config current-context
+          echo ""
+          echo "========== Namespaces =========="
+          kubectl get ns | grep -E 'postgres|nats|clickhouse|noetl|gateway|gui'
+          echo ""
+          echo "========== Workloads =========="
+          kubectl get deploy -n noetl
+          kubectl get deploy -n gateway
+          kubectl get deploy -n gui
+          echo ""
+          echo "========== Services =========="
+          kubectl get svc -n noetl
+          kubectl get svc -n gateway
+          kubectl get svc -n gui
+          echo ""
+          echo "========== Ingress =========="
+          kubectl get ingress -n noetl
+          kubectl get ingress -n gateway
+          kubectl get ingress -n gui
+    next:
+      - when: "{{ workload.action == 'destroy' }}"
+        then:
+          - step: maybe_destroy_cluster
+      - step: end
+
+  - step: destroy_stack
+    desc: Uninstall deployed Helm releases
+    tool:
+      kind: shell
+      cmds:
+        - |
+          set +e
+          if ! kubectl cluster-info >/dev/null 2>&1; then
+            echo "Kubernetes context not available; skipping Helm uninstall phase"
+            exit 0
+          fi
+          helm uninstall noetl-gui -n gui --ignore-not-found
+          helm uninstall noetl-gateway -n gateway --ignore-not-found
+          helm uninstall noetl -n noetl --ignore-not-found
+          helm uninstall clickhouse -n clickhouse --ignore-not-found
+          helm uninstall nats -n nats --ignore-not-found
+          helm uninstall postgres -n postgres --ignore-not-found
+          helm uninstall noetl-postgres -n postgres --ignore-not-found
+          kubectl delete namespace gui gateway noetl clickhouse nats postgres --ignore-not-found=true
+          echo "Stack uninstall completed"
+    next:
+      - step: maybe_destroy_cloud_sql
+
+  - step: maybe_destroy_cloud_sql
+    desc: Optionally delete Cloud SQL instance on destroy
+    tool:
+      kind: shell
+      cmds:
+        - |
+          set +e
+          if [ "{{ workload.action }}" != "destroy" ]; then
+            exit 0
+          fi
+          if [ "{{ workload.use_cloud_sql }}" != "true" ]; then
+            echo "Cloud SQL disabled for this stack, skipping Cloud SQL deletion"
+            exit 0
+          fi
+          if [ "{{ workload.delete_cloud_sql_on_destroy }}" != "true" ]; then
+            echo "Skipping Cloud SQL deletion (workload.delete_cloud_sql_on_destroy=false)"
+            exit 0
+          fi
+
+          INSTANCE="{{ workload.cloud_sql_instance_name }}"
+          PROJECT="{{ workload.project_id }}"
+
+          if ! gcloud sql instances describe "$INSTANCE" --project "$PROJECT" >/dev/null 2>&1; then
+            echo "Cloud SQL instance '$INSTANCE' not found, nothing to delete"
+            exit 0
+          fi
+
+          gcloud sql instances patch "$INSTANCE" --project "$PROJECT" --no-deletion-protection --quiet >/dev/null 2>&1 || true
+          gcloud sql instances delete "$INSTANCE" --project "$PROJECT" --quiet
+          echo "Cloud SQL instance '$INSTANCE' deleted"
+    next:
+      - step: maybe_destroy_cluster
+
+  - step: maybe_destroy_cluster
+    desc: Optionally delete GKE cluster
+    tool:
+      kind: shell
+      cmds:
+        - |
+          set +e
+          if [ "{{ workload.action }}" != "destroy" ]; then
+            exit 0
+          fi
+          if [ "{{ workload.delete_cluster_on_destroy }}" != "true" ]; then
+            echo "Skipping cluster deletion (workload.delete_cluster_on_destroy=false)"
+            exit 0
+          fi
+          gcloud container clusters delete {{ workload.cluster_name }} \
+            --region {{ workload.region }} \
+            --project {{ workload.project_id }} \
+            --quiet
+          echo "Cluster deletion requested"
+    next:
+      - step: end
+
+  - step: end
+    desc: End workflow
+    tool:
+      kind: shell
+      cmds:
+        - echo "Done"

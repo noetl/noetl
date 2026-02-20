@@ -195,6 +195,49 @@ noetl context use prod
 noetl context current
 ```
 
+### Gateway Mode (No Port-Forward)
+
+Use Gateway as API entrypoint (with auth) instead of port-forwarding to `svc/noetl`.
+
+Token flow:
+- Auth0 issues `id_token` / `access_token` after user login.
+- `noetl auth login` sends that token to **Gateway** (`/api/auth/login`).
+- Gateway validates via auth playbooks and returns `session_token` for protected `/noetl/*` calls.
+
+1. Add/use a gateway context:
+```bash
+noetl context add gateway \
+  --server-url https://gateway.mestumre.dev \
+  --auth0-domain mestumre-development.us.auth0.com \
+  --set-current
+```
+
+2. Login and cache session token in current context:
+```bash
+noetl auth login --auth0-token '<ID_TOKEN_FROM_AUTH0>'
+# or:
+noetl auth login --auth0-callback-url 'https://mestumre.dev/login#id_token=...'
+# or (email/login hint -> CLI prompts for callback URL/token once):
+noetl auth login --auth0 'akuksin@gmail.com'
+```
+
+3. Run commands through gateway proxy:
+```bash
+noetl --gateway register playbook -f tests/fixtures/playbooks/api_integration/amadeus_ai_api/amadeus_ai_api.yaml
+noetl --gateway register credential -f tests/fixtures/credentials/pg_k8s.json
+noetl --gateway exec catalog://tests/fixtures/playbooks/batch_execution/traveler_batch_enrichment_in_step@4 -r distributed
+```
+
+You can also pass token inline:
+```bash
+noetl --gateway --session-token '<gateway-session-token>' catalog list Playbook
+```
+
+Clear cached token:
+```bash
+noetl auth logout
+```
+
 ### CLI Mode
 
 #### Catalog Management

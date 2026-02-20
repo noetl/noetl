@@ -190,6 +190,14 @@ const sidebars: SidebarsConfig = {
     },
     {
       type: 'category',
+      label: 'GUI',
+      items: [
+        'gui',
+        'gui/custom-ui-gateway',
+      ],
+    },
+    {
+      type: 'category',
       label: 'IAP GCP',
       items: [
         {

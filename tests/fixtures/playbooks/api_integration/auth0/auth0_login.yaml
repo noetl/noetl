@@ -48,7 +48,7 @@ workload:
   session_bucket: sessions
   callback_subject: ""
   request_id: ""
-  gateway_url: "http://gateway.gateway.svc.cluster.local:8090"
+  gateway_url: "http://gateway.gateway.svc.cluster.local"
 
 workflow:
   # Step 1: Entry point + JWT validation (merged)
@@ -164,7 +164,7 @@ workflow:
       spec:
         mode: exclusive
       arcs:
-        - step: cache_and_callback
+        - step: get_user_roles
           when: "{{ create_user_session.command_0 is defined }}"
         - step: send_db_error_callback
           when: "{{ create_user_session.command_0 is not defined and request_id }}"
@@ -191,6 +191,68 @@ workflow:
       arcs:
         - step: end
 
+  - step: get_user_roles
+    desc: Fetch roles for authenticated user
+    tool:
+      kind: postgres
+      auth: "{{ db_credential }}"
+      command: |
+        SELECT COALESCE(
+          json_agg(r.role_name ORDER BY r.role_name) FILTER (WHERE r.role_id IS NOT NULL),
+          '[]'::json
+        ) AS roles
+        FROM auth.user_roles ur
+        JOIN auth.roles r ON ur.role_id = r.role_id
+        WHERE ur.user_id = {{ create_user_session.command_0.rows[0].user_id }}
+          AND (ur.expires_at IS NULL OR ur.expires_at > NOW());
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: prepare_session_cache
+
+  - step: prepare_session_cache
+    desc: Prepare session payload with roles
+    tool:
+      kind: python
+      libs:
+        json: json
+      code: |
+        session_row = context.get('create_user_session', {}).get('command_0', {}).get('rows', [{}])[0]
+        roles = context.get('get_user_roles', {}).get('command_0', {}).get('rows', [{}])[0].get('roles', [])
+        if isinstance(roles, str):
+            try:
+                roles = json.loads(roles)
+            except Exception:
+                roles = []
+        if roles is None:
+            roles = []
+
+        user = {
+            "user_id": session_row.get("user_id"),
+            "email": session_row.get("email"),
+            "display_name": session_row.get("display_name"),
+            "roles": roles,
+        }
+
+        result = {
+            "session_cache": {
+                "session_token": session_row.get("session_token"),
+                "user_id": session_row.get("user_id"),
+                "email": session_row.get("email"),
+                "display_name": session_row.get("display_name"),
+                "expires_at": session_row.get("expires_at"),
+                "is_active": True,
+                "roles": roles,
+            },
+            "user": user,
+        }
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: cache_and_callback
+
   # Step 3: Cache session in NATS and send callback
   - step: cache_and_callback
     desc: Cache session in NATS K/V and send callback to gateway
@@ -199,14 +261,8 @@ workflow:
       auth: "{{ nats_credential }}"
       operation: kv_put
       bucket: "{{ session_bucket }}"
-      key: "{{ create_user_session.command_0.rows[0].session_token }}"
-      value:
-        session_token: "{{ create_user_session.command_0.rows[0].session_token }}"
-        user_id: "{{ create_user_session.command_0.rows[0].user_id }}"
-        email: "{{ create_user_session.command_0.rows[0].email }}"
-        display_name: "{{ create_user_session.command_0.rows[0].display_name }}"
-        expires_at: "{{ create_user_session.command_0.rows[0].expires_at }}"
-        is_active: true
+      key: "{{ prepare_session_cache.session_cache.session_token }}"
+      value: "{{ prepare_session_cache.session_cache }}"
       spec:
         policy:
           rules:
@@ -238,12 +294,9 @@ workflow:
         status: "success"
         data:
           status: "authenticated"
-          session_token: "{{ create_user_session.command_0.rows[0].session_token }}"
-          user:
-            user_id: "{{ create_user_session.command_0.rows[0].user_id }}"
-            email: "{{ create_user_session.command_0.rows[0].email }}"
-            display_name: "{{ create_user_session.command_0.rows[0].display_name }}"
-          expires_at: "{{ create_user_session.command_0.rows[0].expires_at }}"
+          session_token: "{{ prepare_session_cache.session_cache.session_token }}"
+          user: "{{ prepare_session_cache.user }}"
+          expires_at: "{{ prepare_session_cache.session_cache.expires_at }}"
     next:
       spec:
         mode: exclusive

@@ -761,13 +761,56 @@ async def get_execution_status(execution_id: str):
         
         if not state:
             raise HTTPException(404, "Execution not found")
+
+        completed = state.completed
+        failed = state.failed
+        completion_inferred = False
+
+        # Fallback completion inference:
+        # Some runs reach terminal step completion in events but may miss
+        # playbook/workflow terminal flags in engine state.
+        if not completed:
+            latest_event = None
+            async with get_pool_connection() as conn:
+                async with conn.cursor(row_factory=dict_row) as cur:
+                    await cur.execute("""
+                        SELECT event_type, node_name, status
+                        FROM noetl.event
+                        WHERE execution_id = %s
+                        ORDER BY event_id DESC
+                        LIMIT 1
+                    """, (int(execution_id),))
+                    latest_event = await cur.fetchone()
+
+            if state.current_step == "end" and "end" in state.completed_steps and not failed:
+                completed = True
+                completion_inferred = True
+            elif latest_event:
+                terminal_complete_events = {"playbook.completed", "workflow.completed"}
+                terminal_failed_events = {"playbook.failed", "workflow.failed", "execution.cancelled"}
+
+                if latest_event["event_type"] in terminal_complete_events:
+                    completed = True
+                    completion_inferred = True
+                elif latest_event["event_type"] in terminal_failed_events:
+                    completed = True
+                    failed = latest_event["event_type"] != "execution.cancelled"
+                    completion_inferred = True
+                elif (
+                    latest_event["node_name"] == "end"
+                    and latest_event["status"] == "COMPLETED"
+                    and latest_event["event_type"] in {"command.completed", "call.done", "step.exit"}
+                ):
+                    completed = True
+                    completion_inferred = True
         
         return {
             "execution_id": execution_id,
             "current_step": state.current_step,
             "completed_steps": list(state.completed_steps),
-            "failed": state.failed,
-            "completed": state.completed,
+            "failed": failed,
+            "completed": completed,
+            "completion_inferred": completion_inferred,
             "variables": state.variables,
         }
     except HTTPException:
