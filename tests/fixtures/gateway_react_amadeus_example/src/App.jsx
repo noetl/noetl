@@ -12,6 +12,11 @@ const DEFAULT_AUTH0_CLIENT_ID = (
 const DEFAULT_PLAYBOOK_PATH = (
   import.meta.env.VITE_AMADEUS_PLAYBOOK_PATH || 'api_integration/amadeus_ai_api'
 ).trim();
+const MAX_SSE_RECONNECT_ATTEMPTS = 5;
+const SSE_RECONNECT_DELAY_MS = 2000;
+const CALLBACK_TIMEOUT_MS = 120000;
+const CALLBACK_CACHE_TTL_MS = 5 * 60 * 1000;
+const CALLBACK_FALLBACK_POLL_WINDOW_MS = 45000;
 
 function normalizeBaseUrl(url) {
   return (url || '').trim().replace(/\/+$/, '');
@@ -30,6 +35,201 @@ function safeParseJson(raw, fallback) {
 
 async function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function parseJsonText(value) {
+  if (typeof value !== 'string') {
+    return value;
+  }
+
+  const text = value.trim();
+  if (!text) {
+    return value;
+  }
+
+  if (!(text.startsWith('{') || text.startsWith('[') || text.startsWith('"'))) {
+    return value;
+  }
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    return value;
+  }
+}
+
+function unwrapResultPayload(value) {
+  let current = parseJsonText(value);
+  const maxDepth = 8;
+
+  for (let depth = 0; depth < maxDepth; depth += 1) {
+    if (!current || typeof current !== 'object' || Array.isArray(current)) {
+      return current;
+    }
+
+    if (
+      current.kind &&
+      Object.prototype.hasOwnProperty.call(current, 'data') &&
+      (typeof current.data === 'object' || typeof current.data === 'string')
+    ) {
+      current = parseJsonText(current.data);
+      continue;
+    }
+
+    if (
+      Object.prototype.hasOwnProperty.call(current, 'result') &&
+      (typeof current.result === 'object' || typeof current.result === 'string')
+    ) {
+      current = parseJsonText(current.result);
+      continue;
+    }
+
+    if (
+      Object.prototype.hasOwnProperty.call(current, 'data') &&
+      (typeof current.data === 'object' || typeof current.data === 'string')
+    ) {
+      current = parseJsonText(current.data);
+      continue;
+    }
+
+    return current;
+  }
+
+  return current;
+}
+
+function extractTextOutput(value) {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed ? trimmed : null;
+  }
+
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return String(value);
+  }
+
+  if (Array.isArray(value)) {
+    return null;
+  }
+
+  if (typeof value !== 'object') {
+    return null;
+  }
+
+  const preferredKeys = [
+    'summary_text',
+    'summary',
+    'textOutput',
+    'text_output',
+    'message',
+    'answer',
+    'response',
+    'result',
+  ];
+
+  for (const key of preferredKeys) {
+    const nested = extractTextOutput(value[key]);
+    if (nested) {
+      return nested;
+    }
+  }
+
+  return null;
+}
+
+function scorePayloadCandidate(payload, event) {
+  let score = 0;
+  const textOutput = extractTextOutput(payload);
+
+  if (textOutput) {
+    score += 80;
+  }
+
+  if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
+    const keys = Object.keys(payload);
+    if (
+      keys.includes('summary') ||
+      keys.includes('summary_text') ||
+      keys.includes('textOutput') ||
+      keys.includes('text_output') ||
+      keys.includes('offers_preview')
+    ) {
+      score += 40;
+    }
+
+    if (keys.length <= 3 && keys.includes('command_id')) {
+      score -= 20;
+    }
+  }
+
+  const eventType = String(event?.event_type || '').toLowerCase();
+  const nodeName = String(event?.node_name || '').toLowerCase();
+
+  if (eventType === 'call.done') {
+    score += 20;
+  }
+  if (eventType === 'step.exit') {
+    score += 10;
+  }
+  if (nodeName.includes('extract_summary')) {
+    score += 60;
+  }
+  if (nodeName.includes('send_callback')) {
+    score += 50;
+  }
+
+  return score;
+}
+
+function extractExecutionOutput(events, executionData = null) {
+  const candidates = [];
+
+  function pushCandidate(rawValue, event, source) {
+    if (rawValue === null || rawValue === undefined) {
+      return;
+    }
+
+    const payload = unwrapResultPayload(rawValue);
+    if (payload === null || payload === undefined) {
+      return;
+    }
+
+    candidates.push({
+      source,
+      event: event || null,
+      payload,
+      textOutput: extractTextOutput(payload),
+      score: scorePayloadCandidate(payload, event),
+    });
+  }
+
+  if (executionData && typeof executionData === 'object') {
+    pushCandidate(executionData.result, null, 'execution.result');
+    pushCandidate(executionData.output_result, null, 'execution.output_result');
+    pushCandidate(executionData.output, null, 'execution.output');
+  }
+
+  for (const event of events || []) {
+    pushCandidate(event?.result, event, 'event.result');
+    pushCandidate(event?.output_result, event, 'event.output_result');
+
+    const parsedContext = parseJsonText(event?.context);
+    if (parsedContext && typeof parsedContext === 'object' && !Array.isArray(parsedContext)) {
+      pushCandidate(parsedContext.result, event, 'event.context.result');
+      pushCandidate(parsedContext.data, event, 'event.context.data');
+    }
+  }
+
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  candidates.sort((a, b) => b.score - a.score);
+  return candidates[0];
 }
 
 function resolveAuth0RedirectUri() {
@@ -74,11 +274,20 @@ export default function App() {
   const [executionId, setExecutionId] = useState('');
   const [executionStatus, setExecutionStatus] = useState('');
   const [executionSummary, setExecutionSummary] = useState(null);
+  const [callbackResult, setCallbackResult] = useState(null);
+  const [sseConnected, setSseConnected] = useState(false);
+  const [sseClientId, setSseClientId] = useState('');
   const [diagnosticsRunning, setDiagnosticsRunning] = useState(false);
   const [diagnosticsGeneratedAt, setDiagnosticsGeneratedAt] = useState('');
   const [diagnosticsReport, setDiagnosticsReport] = useState('');
   const callbackHandledRef = useRef(false);
   const auth0ClientRef = useRef(null);
+  const eventSourceRef = useRef(null);
+  const pendingCallbacksRef = useRef(new Map());
+  const recentCallbacksRef = useRef(new Map());
+  const sseReconnectAttemptsRef = useRef(0);
+  const sseReconnectTimerRef = useRef(null);
+  const sseClientIdRef = useRef('');
 
   const apiBase = useMemo(() => normalizeBaseUrl(gatewayUrl), [gatewayUrl]);
   const useDevProxy = useMemo(
@@ -100,6 +309,9 @@ export default function App() {
   }
 
   function clearSession() {
+    rejectPendingCallbacks('Session was cleared.');
+    disconnectSse();
+
     localStorage.removeItem(STORAGE_TOKEN_KEY);
     localStorage.removeItem(STORAGE_USER_KEY);
     setSessionToken('');
@@ -108,6 +320,7 @@ export default function App() {
     setExecutionId('');
     setExecutionStatus('');
     setExecutionSummary(null);
+    setCallbackResult(null);
     setStatus('Session cleared.', 'info');
   }
 
@@ -168,6 +381,235 @@ export default function App() {
     }
 
     return data;
+  }
+
+  function getSseUrl(token) {
+    const clientParam = sseClientIdRef.current
+      ? `&client_id=${encodeURIComponent(sseClientIdRef.current)}`
+      : '';
+    const ssePath = `/events?session_token=${encodeURIComponent(token)}${clientParam}`;
+    return useDevProxy ? ssePath : `${apiBase}${ssePath}`;
+  }
+
+  function clearSseReconnectTimer() {
+    if (sseReconnectTimerRef.current) {
+      window.clearTimeout(sseReconnectTimerRef.current);
+      sseReconnectTimerRef.current = null;
+    }
+  }
+
+  function rejectPendingCallbacks(message) {
+    for (const [, pending] of pendingCallbacksRef.current.entries()) {
+      window.clearTimeout(pending.timeoutId);
+      pending.reject(new Error(message));
+    }
+    pendingCallbacksRef.current.clear();
+  }
+
+  function pruneRecentCallbacks() {
+    const now = Date.now();
+    for (const [requestId, cached] of recentCallbacksRef.current.entries()) {
+      if (now - cached.receivedAt > CALLBACK_CACHE_TTL_MS) {
+        recentCallbacksRef.current.delete(requestId);
+      }
+    }
+  }
+
+  function cacheRecentCallback(requestId, payload) {
+    pruneRecentCallbacks();
+    recentCallbacksRef.current.set(requestId, {
+      payload,
+      receivedAt: Date.now(),
+    });
+  }
+
+  function disconnectSse(options = {}) {
+    const { preserveClientId = false } = options;
+    clearSseReconnectTimer();
+    sseReconnectAttemptsRef.current = 0;
+
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close();
+      eventSourceRef.current = null;
+    }
+
+    setSseConnected(false);
+    if (!preserveClientId) {
+      setSseClientId('');
+      sseClientIdRef.current = '';
+      recentCallbacksRef.current.clear();
+    }
+  }
+
+  function registerPendingCallback(requestId, timeoutMs = CALLBACK_TIMEOUT_MS) {
+    return new Promise((resolve, reject) => {
+      pruneRecentCallbacks();
+
+      const cached = recentCallbacksRef.current.get(requestId);
+      if (cached) {
+        recentCallbacksRef.current.delete(requestId);
+        const payload = cached.payload;
+        if (String(payload.status || '').toUpperCase() === 'FAILED' || payload.errorMessage) {
+          reject(new Error(payload.errorMessage || 'Playbook execution failed.'));
+          return;
+        }
+        resolve(payload);
+        return;
+      }
+
+      const existing = pendingCallbacksRef.current.get(requestId);
+      if (existing) {
+        window.clearTimeout(existing.timeoutId);
+        pendingCallbacksRef.current.delete(requestId);
+      }
+
+      const timeoutId = window.setTimeout(() => {
+        const pending = pendingCallbacksRef.current.get(requestId);
+        if (!pending) {
+          return;
+        }
+        pendingCallbacksRef.current.delete(requestId);
+        pending.reject(new Error('Playbook callback timed out.'));
+      }, timeoutMs);
+
+      pendingCallbacksRef.current.set(requestId, {
+        timeoutId,
+        resolve: (value) => {
+          window.clearTimeout(timeoutId);
+          resolve(value);
+        },
+        reject: (error) => {
+          window.clearTimeout(timeoutId);
+          reject(error);
+        },
+      });
+    });
+  }
+
+  function cancelPendingCallback(requestId, reason = 'Playbook callback cancelled.') {
+    const pending = pendingCallbacksRef.current.get(requestId);
+    if (!pending) {
+      return;
+    }
+
+    pendingCallbacksRef.current.delete(requestId);
+    pending.reject(new Error(reason));
+  }
+
+  function connectSse(token, options = {}) {
+    const { reconnect = false } = options;
+    if (!token) {
+      return;
+    }
+
+    clearSseReconnectTimer();
+
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close();
+      eventSourceRef.current = null;
+    }
+
+    const sseUrl = getSseUrl(token);
+    const es = new EventSource(sseUrl);
+    eventSourceRef.current = es;
+
+    if (!reconnect) {
+      setSseConnected(false);
+    }
+
+    es.onopen = () => {
+      sseReconnectAttemptsRef.current = 0;
+    };
+
+    es.addEventListener('message', (event) => {
+      const msg = safeParseJson(event.data, null);
+      const nextClientId = msg?.result?.clientId;
+      if (!nextClientId) {
+        return;
+      }
+
+      sseClientIdRef.current = nextClientId;
+      setSseClientId(nextClientId);
+      setSseConnected(true);
+    });
+
+    es.addEventListener('playbook/result', (event) => {
+      const msg = safeParseJson(event.data, null);
+      const params = msg?.params || {};
+      const requestId = params.requestId || params.request_id;
+      if (!requestId) {
+        return;
+      }
+
+      const isFailure = String(params.status || '').toUpperCase() === 'FAILED' || Boolean(params.error);
+      const errorMessage = params.error?.message || null;
+
+      const textOutput =
+        params.data?.textOutput ||
+        params.data?.text_output ||
+        params.data?.summary ||
+        params.data?.result ||
+        null;
+
+      const payload = {
+        requestId,
+        executionId: params.executionId || params.execution_id,
+        status: params.status || 'COMPLETED',
+        textOutput,
+        data: params.data || null,
+        errorMessage,
+      };
+
+      const pending = pendingCallbacksRef.current.get(requestId);
+      if (!pending) {
+        cacheRecentCallback(requestId, payload);
+        return;
+      }
+
+      pendingCallbacksRef.current.delete(requestId);
+
+      if (isFailure) {
+        pending.reject(new Error(errorMessage || 'Playbook execution failed.'));
+        return;
+      }
+
+      pending.resolve(payload);
+    });
+
+    es.onerror = () => {
+      if (eventSourceRef.current !== es) {
+        return;
+      }
+
+      setSseConnected(false);
+
+      if (sseReconnectAttemptsRef.current >= MAX_SSE_RECONNECT_ATTEMPTS) {
+        rejectPendingCallbacks('SSE connection lost.');
+        return;
+      }
+
+      sseReconnectAttemptsRef.current += 1;
+      const reconnectDelay = SSE_RECONNECT_DELAY_MS;
+      sseReconnectTimerRef.current = window.setTimeout(() => {
+        connectSse(token, { reconnect: true });
+      }, reconnectDelay);
+    };
+  }
+
+  async function waitForSseClientId(timeoutMs = 10000) {
+    if (sseClientIdRef.current) {
+      return true;
+    }
+
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < timeoutMs) {
+      await sleep(100);
+      if (sseClientIdRef.current) {
+        return true;
+      }
+    }
+
+    return false;
   }
 
   async function runProbe({ id, label, method = 'GET', path, body }) {
@@ -525,6 +967,23 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (!sessionToken) {
+      disconnectSse();
+      return;
+    }
+
+    connectSse(sessionToken);
+    return () => disconnectSse({ preserveClientId: true });
+  }, [sessionToken, apiBase, useDevProxy]);
+
+  useEffect(() => {
+    return () => {
+      rejectPendingCallbacks('Application closed.');
+      disconnectSse();
+    };
+  }, []);
+
+  useEffect(() => {
     if (callbackHandledRef.current) {
       return;
     }
@@ -601,36 +1060,99 @@ export default function App() {
     }
   }
 
-  async function pollExecution(execId, token) {
+  function applyExecutionSnapshot(execId, snapshot, mode = 'polling-events') {
+    if (!snapshot) {
+      return;
+    }
+
+    const nextStatus = snapshot.status || 'UNKNOWN';
+    setExecutionStatus(nextStatus);
+
+    if (snapshot.extracted) {
+      setCallbackResult({
+        mode,
+        execution_id: execId,
+        status: nextStatus,
+        source: snapshot.extracted.source,
+        source_event_type: snapshot.extracted.event?.event_type || null,
+        source_node: snapshot.extracted.event?.node_name || null,
+        text_output: snapshot.extracted.textOutput,
+        data: snapshot.extracted.payload,
+      });
+    }
+
+    setExecutionSummary({
+      status: nextStatus,
+      playbook_path: snapshot.path || playbookPath.trim(),
+      event_count: snapshot.eventCount,
+      end_time: snapshot.endTime,
+      latest_error: snapshot.latestError || null,
+    });
+  }
+
+  async function getExecutionTerminalSnapshot(execId, token) {
     const terminalStatuses = new Set(['COMPLETED', 'FAILED', 'CANCELLED']);
 
-    for (let attempt = 0; attempt < 90; attempt += 1) {
+    const data = await request(`/noetl/executions/${execId}?page=1&page_size=100`, {
+      method: 'GET',
+      token,
+    });
+
+    const nextStatus = (data.status || '').toUpperCase();
+    if (!terminalStatuses.has(nextStatus)) {
+      return {
+        terminal: false,
+        status: nextStatus || 'UNKNOWN',
+      };
+    }
+
+    const pageSize = Number(data.pagination?.page_size) || 100;
+    const totalPages = Math.max(1, Number(data.pagination?.total_pages) || 1);
+    const maxPagesToLoad = Math.min(totalPages, 3);
+
+    const allEvents = Array.isArray(data.events) ? [...data.events] : [];
+    for (let page = 2; page <= maxPagesToLoad; page += 1) {
       try {
-        const data = await request(`/noetl/executions/${execId}?page=1&page_size=50`, {
+        const pageData = await request(`/noetl/executions/${execId}?page=${page}&page_size=${pageSize}`, {
           method: 'GET',
           token,
         });
+        if (Array.isArray(pageData.events) && pageData.events.length > 0) {
+          allEvents.push(...pageData.events);
+        }
+      } catch (error) {
+        void error;
+        break;
+      }
+    }
 
-        const nextStatus = (data.status || '').toUpperCase();
-        setExecutionStatus(nextStatus || 'UNKNOWN');
+    const failedEvent = allEvents.find((event) => event.status === 'FAILED' || Boolean(event.error));
+    const extracted = extractExecutionOutput(allEvents, data);
+    const eventCount = Number(data.pagination?.total_events) || allEvents.length || null;
 
-        if (terminalStatuses.has(nextStatus)) {
-          const failedEvent = (data.events || []).find(
-            (event) => event.status === 'FAILED' || Boolean(event.error)
-          );
+    return {
+      terminal: true,
+      status: nextStatus || 'UNKNOWN',
+      path: data.path,
+      endTime: data.end_time,
+      eventCount,
+      latestError: failedEvent?.error || null,
+      extracted,
+    };
+  }
 
-          setExecutionSummary({
-            status: nextStatus,
-            playbook_path: data.path,
-            event_count: data.pagination?.total_events,
-            end_time: data.end_time,
-            latest_error: failedEvent?.error || null,
-          });
+  async function pollExecution(execId, token) {
+    for (let attempt = 0; attempt < 90; attempt += 1) {
+      try {
+        const snapshot = await getExecutionTerminalSnapshot(execId, token);
+        setExecutionStatus(snapshot.status || 'UNKNOWN');
 
-          if (nextStatus === 'COMPLETED') {
+        if (snapshot.terminal) {
+          applyExecutionSnapshot(execId, snapshot, 'polling-events');
+          if (snapshot.status === 'COMPLETED') {
             setStatus(`Execution ${execId} completed.`, 'success');
           } else {
-            setStatus(`Execution ${execId} finished with ${nextStatus}.`, 'error');
+            setStatus(`Execution ${execId} finished with ${snapshot.status}.`, 'error');
           }
           return;
         }
@@ -660,11 +1182,12 @@ export default function App() {
     setExecutionId('');
     setExecutionStatus('');
     setExecutionSummary(null);
+    setCallbackResult(null);
     setStatus('Starting playbook via /graphql executePlaybook ...', 'info');
 
     const mutation = `
-      mutation ExecuteAmadeus($name: String!, $variables: JSON) {
-        executePlaybook(name: $name, variables: $variables) {
+      mutation ExecuteAmadeus($name: String!, $variables: JSON, $clientId: String) {
+        executePlaybook(name: $name, variables: $variables, clientId: $clientId) {
           id
           executionId
           status
@@ -675,6 +1198,13 @@ export default function App() {
     `;
 
     try {
+      if (!eventSourceRef.current) {
+        connectSse(sessionToken);
+      }
+
+      const hasClientId = await waitForSseClientId();
+      const callbackClientId = hasClientId ? sseClientIdRef.current : null;
+
       const response = await request('/graphql', {
         method: 'POST',
         token: sessionToken,
@@ -685,6 +1215,7 @@ export default function App() {
             variables: {
               query: query.trim(),
             },
+            clientId: callbackClientId,
           },
         },
       });
@@ -702,7 +1233,98 @@ export default function App() {
 
       setExecutionId(execId);
       setExecutionStatus((exec.status || 'STARTED').toUpperCase());
-      setStatus(`Execution ${execId} started. Polling status ...`, 'info');
+
+      if (callbackClientId && exec?.requestId) {
+        setStatus(`Execution ${execId} started. Waiting callback ${exec.requestId} ...`, 'info');
+
+        try {
+          const callbackPromise = registerPendingCallback(exec.requestId);
+          const callbackTaggedPromise = callbackPromise
+            .then((value) => ({ type: 'callback', value }))
+            .catch((error) => ({ type: 'callback_error', error }));
+
+          const fallbackPollChecks = Math.max(1, Math.floor(CALLBACK_FALLBACK_POLL_WINDOW_MS / 2000));
+          let callback = null;
+
+          for (let check = 0; check < fallbackPollChecks; check += 1) {
+            const raceResult = await Promise.race([
+              callbackTaggedPromise,
+              sleep(2000).then(() => ({ type: 'tick' })),
+            ]);
+
+            if (raceResult.type === 'callback') {
+              callback = raceResult.value;
+              break;
+            }
+
+            if (raceResult.type === 'callback_error') {
+              throw raceResult.error;
+            }
+
+            const snapshot = await getExecutionTerminalSnapshot(execId, sessionToken);
+            setExecutionStatus(snapshot.status || 'UNKNOWN');
+
+            if (snapshot.terminal) {
+              cancelPendingCallback(
+                exec.requestId,
+                'Execution reached terminal state before callback delivery.'
+              );
+              applyExecutionSnapshot(execId, snapshot, 'polling-events');
+
+              if (snapshot.status === 'COMPLETED') {
+                setStatus(
+                  `Execution ${execId} completed via polling fallback (callback channel unavailable).`,
+                  'success'
+                );
+              } else {
+                setStatus(
+                  `Execution ${execId} finished with ${snapshot.status} via polling fallback.`,
+                  'error'
+                );
+              }
+              return;
+            }
+          }
+
+          if (!callback) {
+            cancelPendingCallback(exec.requestId, 'Fallback to execution polling after callback wait window.');
+            throw new Error('Callback not received in fallback window');
+          }
+
+          const callbackStatus = String(callback.status || 'COMPLETED').toUpperCase();
+
+          setExecutionStatus(callbackStatus);
+          setCallbackResult({
+            mode: 'sse-callback',
+            request_id: callback.requestId,
+            execution_id: callback.executionId || execId,
+            status: callbackStatus,
+            text_output: callback.textOutput,
+            data: callback.data,
+          });
+          setExecutionSummary({
+            status: callbackStatus,
+            playbook_path: playbookPath.trim(),
+            mode: 'callback',
+            request_id: callback.requestId,
+            execution_id: callback.executionId || execId,
+            event_count: null,
+            end_time: new Date().toISOString(),
+            latest_error: null,
+          });
+
+          if (callbackStatus === 'FAILED') {
+            setStatus(`Execution ${execId} failed via callback.`, 'error');
+          } else {
+            setStatus(`Execution ${execId} completed via callback.`, 'success');
+          }
+          return;
+        } catch (callbackError) {
+          setStatus(`Callback wait failed: ${callbackError.message}. Falling back to polling ...`, 'info');
+        }
+      } else {
+        setStatus(`Execution ${execId} started without callback channel. Polling status ...`, 'info');
+      }
 
       await pollExecution(execId, sessionToken);
     } catch (error) {
@@ -813,6 +1435,14 @@ export default function App() {
             <div>
               <strong>Session token:</strong> <code>{sessionToken.slice(0, 16)}...</code>
             </div>
+            <div>
+              <strong>Callback channel:</strong>{' '}
+              {sseConnected ? 'connected' : 'connecting or unavailable'}
+            </div>
+            <div>
+              <strong>Callback client:</strong>{' '}
+              <code>{sseClientId ? `${sseClientId.slice(0, 12)}...` : 'pending'}</code>
+            </div>
           </div>
         ) : null}
       </section>
@@ -851,8 +1481,17 @@ export default function App() {
             <div>
               <strong>Status:</strong> {executionStatus || 'starting'}
             </div>
+            {callbackResult?.text_output ? (
+              <div>
+                <strong>Playbook Response:</strong>
+                <pre>{callbackResult.text_output}</pre>
+              </div>
+            ) : null}
             {executionSummary ? (
               <pre>{JSON.stringify(executionSummary, null, 2)}</pre>
+            ) : null}
+            {callbackResult ? (
+              <pre>{JSON.stringify(callbackResult, null, 2)}</pre>
             ) : null}
           </div>
         ) : null}

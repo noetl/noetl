@@ -2,10 +2,10 @@
 
 Very small React starter UI for developers who want to integrate their applications with NoETL Gateway.
 
-This example focuses on exactly two flows:
+This example focuses on three flows:
 
 1. Login against Gateway (`/api/auth/login` or `/api/auth/validate`)
-2. Execute the Amadeus playbook via GraphQL (`executePlaybook`) and poll execution status through Gateway proxy
+2. Execute the Amadeus playbook via GraphQL (`executePlaybook`) with async callback routing
 3. Run built-in Gateway diagnostics (`/health`, GraphQL auth, auth endpoint probes) and produce a one-screen triage report
 
 The existing `tests/fixtures/gateway_ui` files are not used or modified.
@@ -121,9 +121,57 @@ Open:
 
 The app will:
 
-- call `POST /graphql` with `executePlaybook`
-- capture `executionId`
-- poll `GET /noetl/executions/{executionId}` until terminal status
+- open SSE channel at `GET /events?session_token=...`
+- call `POST /graphql` with `executePlaybook` + `clientId` for async callback routing
+- wait for `playbook/result` callback and display returned payload
+- if callback does not arrive quickly, poll `GET /noetl/executions/{executionId}` in parallel
+- if execution reaches terminal state first, immediately switch to polling-derived output (no need to wait for callback timeout)
+- extract final response text from execution events and show:
+  - `Playbook Response` (human-readable text)
+  - full payload JSON in execution details
+
+## Callback + fallback behavior (important)
+
+Gateway async callback delivery depends on an active SSE client connection tied to `clientId`.
+
+If the worker sends callback while SSE client is disconnected, Gateway may return:
+
+- `202` with payload like `{ "status": "queued", "clientDisconnected": true }`
+
+This means:
+
+- playbook execution can still be `COMPLETED`
+- callback event is not delivered to browser in real time
+- UI must recover from execution events (polling path)
+
+This example now does that recovery automatically.
+
+## Troubleshooting: "Execution started. Waiting callback ...", but no response appears
+
+1. Check session panel:
+   - `Callback channel` should ideally be `connected`
+   - `Callback client` should show a non-empty client id
+2. Keep the tab open during execution. Reloading or navigating away can drop SSE.
+3. Run Gateway diagnostics from the UI to verify routing/auth guards.
+4. Inspect execution events directly:
+
+```bash
+curl -sS \
+  -H "Authorization: Bearer <session_token>" \
+  "https://gateway.mestumre.dev/noetl/executions/<execution_id>?page=1&page_size=200" | jq '.events[] | select(.node_name=="send_callback") | {event_id,event_type,status,result}'
+```
+
+If `send_callback` shows `clientDisconnected: true`, real-time callback was not deliverable at that moment.
+
+5. Inspect extracted response payload in events:
+
+```bash
+curl -sS \
+  -H "Authorization: Bearer <session_token>" \
+  "https://gateway.mestumre.dev/noetl/executions/<execution_id>?page=1&page_size=200" | jq '.events[] | select(.node_name=="extract_summary" and .event_type=="command.completed") | .result'
+```
+
+The UI fallback reads this event data and renders it as `Playbook Response`.
 
 ## Environment variables
 
