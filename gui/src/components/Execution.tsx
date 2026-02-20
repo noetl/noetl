@@ -136,14 +136,10 @@ const Execution: React.FC = () => {
     const interval = setInterval(async () => {
       try {
         const response = await apiService.getExecutions();
-        if (
-          response.some(
-            (exec: ExecutionData) =>
-              exec.status === "running" || exec.status === "pending",
-          )
-        ) {
-          setExecutions(response);
-        }
+        const deduped = Array.from(
+          new Map(response.map((exec) => [exec.execution_id, exec])).values()
+        );
+        setExecutions(deduped);
       } catch (err) {
         // Optionally handle error
       }

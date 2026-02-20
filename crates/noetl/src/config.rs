@@ -10,6 +10,12 @@ pub struct Context {
     /// Default runtime mode: local, distributed, or auto
     #[serde(default = "default_runtime")]
     pub runtime: String,
+    /// Cached gateway session token for authenticated /noetl/* proxy calls.
+    #[serde(default)]
+    pub gateway_session_token: Option<String>,
+    /// Default Auth0 domain for gateway login command.
+    #[serde(default)]
+    pub gateway_auth0_domain: Option<String>,
 }
 
 fn default_runtime() -> String {
@@ -21,11 +27,18 @@ impl Context {
         Self {
             server_url,
             runtime: default_runtime(),
+            gateway_session_token: None,
+            gateway_auth0_domain: None,
         }
     }
     
     pub fn with_runtime(mut self, runtime: String) -> Self {
         self.runtime = runtime;
+        self
+    }
+
+    pub fn with_gateway_auth0_domain(mut self, domain: Option<String>) -> Self {
+        self.gateway_auth0_domain = domain;
         self
     }
 }

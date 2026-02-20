@@ -1,8 +1,10 @@
+import asyncio
 import json
 import os
+import time
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Optional
 from urllib.parse import quote
 from fastapi import APIRouter, HTTPException, Body, Query
 from fastapi.responses import JSONResponse
@@ -21,6 +23,8 @@ from .schema import (
     CleanupStuckExecutionsResponse,
     AnalyzeExecutionRequest,
     AnalyzeExecutionResponse,
+    AnalyzeExecutionWithAIRequest,
+    AnalyzeExecutionWithAIResponse,
 )
 
 # V2 engine fallback
@@ -178,6 +182,325 @@ def _build_ai_prompt(
         "5) Validation plan (what to measure after fix)",
     ])
     return "\n".join(prompt_sections)
+
+
+def _json_ready(value: Any) -> Any:
+    """Recursively convert values to JSON-safe primitives."""
+    if isinstance(value, datetime):
+        return _as_iso(value)
+    if isinstance(value, dict):
+        return {str(k): _json_ready(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_ready(v) for v in value]
+    return value
+
+
+def _parse_json_text(value: Any) -> Any:
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return value
+        try:
+            return json.loads(text)
+        except Exception:
+            return value
+    return value
+
+
+def _unwrap_result_payload(value: Any) -> Any:
+    """
+    Unwrap common result envelopes produced by workers:
+    {"kind":"data","data":...}, {"data":{"result":...}}, {"result":...}
+    """
+    current = _parse_json_text(value)
+    max_depth = 6
+    for _ in range(max_depth):
+        if not isinstance(current, dict):
+            return current
+
+        if "ai_report" in current:
+            return current
+
+        if (
+            current.get("kind") in {"data", "ref", "refs"}
+            and "data" in current
+            and isinstance(current.get("data"), (dict, list, str))
+        ):
+            current = _parse_json_text(current.get("data"))
+            continue
+
+        if "result" in current and isinstance(current.get("result"), (dict, list, str)):
+            current = _parse_json_text(current.get("result"))
+            continue
+
+        if "data" in current and isinstance(current.get("data"), (dict, list, str)):
+            current = _parse_json_text(current.get("data"))
+            continue
+
+        return current
+
+    return current
+
+
+def _extract_ai_report_from_payload(value: Any) -> tuple[dict[str, Any], dict[str, Any]]:
+    raw_payload = _unwrap_result_payload(value)
+
+    if isinstance(raw_payload, dict):
+        if isinstance(raw_payload.get("ai_report"), dict):
+            return _json_ready(raw_payload.get("ai_report")), _json_ready(raw_payload)
+
+        report_keys = {
+            "executive_summary",
+            "primary_bottlenecks",
+            "failure_risk_analysis",
+            "recommended_dsl_runtime_changes",
+            "validation_plan",
+            "proposed_patch_diff",
+        }
+        if report_keys.intersection(raw_payload.keys()):
+            return _json_ready(raw_payload), _json_ready(raw_payload)
+
+    return {}, _json_ready(raw_payload) if isinstance(raw_payload, dict) else {}
+
+
+def _derive_execution_terminal_status(row: Optional[dict[str, Any]]) -> str:
+    if not row:
+        return "RUNNING"
+
+    terminal_by_type = {
+        "execution.cancelled": "CANCELLED",
+        "playbook.completed": "COMPLETED",
+        "workflow.completed": "COMPLETED",
+        "playbook.failed": "FAILED",
+        "workflow.failed": "FAILED",
+    }
+    event_type = row.get("event_type")
+    if event_type in terminal_by_type:
+        return terminal_by_type[event_type]
+
+    status = str(row.get("status") or "").upper()
+    if status:
+        return status
+    return "UNKNOWN"
+
+
+def _default_validation_commands(path: str, version: Any) -> tuple[list[str], list[str]]:
+    version_suffix = f"@{version}" if version not in (None, "", "latest") else ""
+    catalog_ref = f"catalog://{path}{version_suffix}" if path else "catalog://<playbook-path>"
+    dry_run_commands = [
+        f"noetl exec {catalog_ref} -r distributed --dry-run",
+    ]
+    test_commands = [
+        "pytest -q",
+    ]
+    return dry_run_commands, test_commands
+
+
+async def _load_db_rows_for_ai(
+    execution_id: int,
+    include_event_rows: bool,
+    event_rows_limit: int,
+    include_event_log_rows: bool,
+    event_log_rows_limit: int,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    event_rows: list[dict[str, Any]] = []
+    event_log_rows: list[dict[str, Any]] = []
+    metric_rows: list[dict[str, Any]] = []
+
+    async with get_pool_connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cursor:
+            if include_event_rows:
+                await cursor.execute(
+                    """
+                    SELECT
+                      event_id,
+                      event_type,
+                      node_name,
+                      status,
+                      created_at,
+                      duration,
+                      context,
+                      result,
+                      error,
+                      meta
+                    FROM noetl.event
+                    WHERE execution_id = %s
+                    ORDER BY event_id DESC
+                    LIMIT %s
+                    """,
+                    (execution_id, event_rows_limit),
+                )
+                rows = await cursor.fetchall()
+                event_rows = [_json_ready(dict(r)) for r in rows]
+
+            if include_event_log_rows:
+                await cursor.execute(
+                    "SELECT to_regclass('noetl.event_log') AS regclass_name"
+                )
+                reg_row = await cursor.fetchone()
+                if reg_row and reg_row.get("regclass_name"):
+                    await cursor.execute(
+                        """
+                        SELECT
+                          event_id,
+                          event_type,
+                          node_name,
+                          status,
+                          created_at,
+                          duration,
+                          context,
+                          result,
+                          error,
+                          meta
+                        FROM noetl.event_log
+                        WHERE execution_id = %s
+                        ORDER BY event_id DESC
+                        LIMIT %s
+                        """,
+                        (execution_id, event_log_rows_limit),
+                    )
+                    rows = await cursor.fetchall()
+                    event_log_rows = [_json_ready(dict(r)) for r in rows]
+
+    try:
+        async with get_pool_connection() as conn:
+            async with conn.cursor(row_factory=dict_row) as cursor:
+                await cursor.execute(
+                    "SELECT to_regclass('noetl.metric') AS regclass_name"
+                )
+                metric_reg = await cursor.fetchone()
+                if metric_reg and metric_reg.get("regclass_name"):
+                    await cursor.execute(
+                        """
+                        SELECT column_name
+                        FROM information_schema.columns
+                        WHERE table_schema = 'noetl' AND table_name = 'metric'
+                        """
+                    )
+                    cols = {row["column_name"] for row in (await cursor.fetchall())}
+
+                    where_clauses = []
+                    params: list[Any] = []
+                    if "labels" in cols:
+                        where_clauses.append("(labels->>'execution_id' = %s OR labels->>'parent_execution_id' = %s)")
+                        params.extend([str(execution_id), str(execution_id)])
+                    if "execution_id" in cols:
+                        where_clauses.append("execution_id = %s")
+                        params.append(execution_id)
+
+                    if where_clauses:
+                        ts_column = "created_at" if "created_at" in cols else "timestamp" if "timestamp" in cols else None
+                        order_sql = f"ORDER BY {ts_column} DESC" if ts_column else ""
+                        sql = (
+                            "SELECT * FROM noetl.metric "
+                            f"WHERE {' OR '.join(where_clauses)} "
+                            f"{order_sql} LIMIT 200"
+                        )
+                        await cursor.execute(sql, tuple(params))
+                        rows = await cursor.fetchall()
+                        metric_rows = [_json_ready(dict(r)) for r in rows]
+    except Exception as metric_exc:
+        logger.warning("Skipping metric rows for execution %s due to query error: %s", execution_id, metric_exc)
+
+    return event_rows, event_log_rows, metric_rows
+
+
+async def _wait_for_terminal_event(
+    execution_id: int,
+    timeout_seconds: int,
+    poll_interval_ms: int,
+) -> tuple[Optional[dict[str, Any]], bool]:
+    terminal_events = {
+        "execution.cancelled",
+        "playbook.completed",
+        "playbook.failed",
+        "workflow.completed",
+        "workflow.failed",
+    }
+    deadline = time.monotonic() + timeout_seconds
+    last_row: Optional[dict[str, Any]] = None
+
+    while time.monotonic() < deadline:
+        async with get_pool_connection() as conn:
+            async with conn.cursor(row_factory=dict_row) as cursor:
+                await cursor.execute(
+                    """
+                    SELECT event_id, event_type, status, created_at, node_name, error
+                    FROM noetl.event
+                    WHERE execution_id = %s
+                    ORDER BY event_id DESC
+                    LIMIT 1
+                    """,
+                    (execution_id,),
+                )
+                row = await cursor.fetchone()
+                if row:
+                    last_row = dict(row)
+                    if row.get("event_type") in terminal_events:
+                        return _json_ready(last_row), False
+
+        await asyncio.sleep(max(0.2, poll_interval_ms / 1000.0))
+
+    return _json_ready(last_row) if last_row else None, True
+
+
+async def _load_ai_execution_output(
+    ai_execution_id: int,
+) -> tuple[dict[str, Any], dict[str, Any], str]:
+    async with get_pool_connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cursor:
+            await cursor.execute(
+                """
+                SELECT event_type, status, created_at
+                FROM noetl.event
+                WHERE execution_id = %s
+                ORDER BY event_id DESC
+                LIMIT 1
+                """,
+                (ai_execution_id,),
+            )
+            latest_row = await cursor.fetchone()
+
+            await cursor.execute(
+                """
+                SELECT
+                  event_id,
+                  event_type,
+                  node_name,
+                  status,
+                  created_at,
+                  result,
+                  error
+                FROM noetl.event
+                WHERE execution_id = %s
+                ORDER BY event_id DESC
+                LIMIT 500
+                """,
+                (ai_execution_id,),
+            )
+            rows = await cursor.fetchall()
+
+    ai_report: dict[str, Any] = {}
+    ai_raw_output: dict[str, Any] = {}
+    for row in rows:
+        parsed_report, parsed_raw = _extract_ai_report_from_payload(row.get("result"))
+        if parsed_report:
+            ai_report = parsed_report
+            ai_raw_output = parsed_raw
+            break
+
+    if not ai_raw_output and rows:
+        first_row = rows[0]
+        ai_raw_output = {
+            "node_name": first_row.get("node_name"),
+            "event_type": first_row.get("event_type"),
+            "status": first_row.get("status"),
+            "error": _truncate_text(first_row.get("error"), 1200),
+            "result": _json_ready(_unwrap_result_payload(first_row.get("result"))),
+        }
+
+    status = _derive_execution_terminal_status(dict(latest_row) if latest_row else None)
+    return ai_report, ai_raw_output, status
 
 
 @router.post("/executions/{execution_id}/finalize", response_model=FinalizeExecutionResponse)
@@ -992,6 +1315,168 @@ async def analyze_execution(
         },
         event_sample=event_sample,
         ai_prompt=ai_prompt,
+    )
+
+
+@router.post("/executions/{execution_id}/analyze/ai", response_model=AnalyzeExecutionWithAIResponse)
+async def analyze_execution_with_ai(
+    execution_id: str,
+    request: AnalyzeExecutionWithAIRequest = Body(default=None),
+):
+    """
+    Run execution triage through AI analyzer playbook and return structured report.
+
+    Human-in-the-loop safeguards:
+    - `auto_fix_mode=apply` requires `approved=true` when `approval_required=true`
+    - analyzer returns patch proposal + dry-run/test commands (no direct code apply)
+    """
+    request = request or AnalyzeExecutionWithAIRequest()
+    auto_fix_mode = (request.auto_fix_mode or "report").strip().lower()
+    valid_modes = {"report", "dry_run", "apply"}
+
+    if auto_fix_mode not in valid_modes:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid auto_fix_mode '{request.auto_fix_mode}'. Expected one of: {sorted(valid_modes)}",
+        )
+
+    if auto_fix_mode == "apply" and request.approval_required and not request.approved:
+        raise HTTPException(
+            status_code=400,
+            detail="Apply mode requires approved=true when approval_required=true",
+        )
+
+    try:
+        execution_id_int = int(execution_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid execution_id '{execution_id}'") from exc
+
+    # Build base bundle first (same output as "Analyze Execution" flow).
+    bundle_req = AnalyzeExecutionRequest(
+        max_events=request.max_events,
+        event_sample_size=request.event_sample_size,
+        include_playbook_content=request.include_playbook_content,
+    )
+    bundle = await analyze_execution(execution_id=execution_id, request=bundle_req)
+    if isinstance(bundle, dict):
+        bundle = AnalyzeExecutionResponse.model_validate(bundle)
+
+    openai_secret_path = str(request.openai_secret_path).strip() if request.openai_secret_path else None
+    gcp_auth_credential = str(request.gcp_auth_credential).strip() if request.gcp_auth_credential else None
+
+    event_rows, event_log_rows, metric_rows = await _load_db_rows_for_ai(
+        execution_id=execution_id_int,
+        include_event_rows=request.include_event_rows,
+        event_rows_limit=request.event_rows_limit,
+        include_event_log_rows=request.include_event_log_rows,
+        event_log_rows_limit=request.event_log_rows_limit,
+    )
+
+    playbook_version = None
+    if isinstance(bundle.playbook, dict):
+        playbook_version = bundle.playbook.get("version")
+    dry_run_commands, test_commands = _default_validation_commands(bundle.path, playbook_version)
+
+    ai_payload: dict[str, Any] = {
+        "target_execution_id": str(execution_id),
+        "target_playbook_path": bundle.path,
+        "target_playbook_status": bundle.status,
+        "analysis_bundle": _json_ready(bundle.model_dump()),
+        "event_rows": event_rows if request.include_event_rows else [],
+        "event_log_rows": event_log_rows if request.include_event_log_rows else [],
+        "metric_rows": metric_rows,
+        "cloud_context": _json_ready(bundle.cloud),
+        "ai_prompt": bundle.ai_prompt,
+        "model": request.model,
+        "include_patch_diff": request.include_patch_diff,
+        "auto_fix_mode": auto_fix_mode,
+        "approval_required": request.approval_required,
+        "approved": request.approved,
+        "default_dry_run_commands": dry_run_commands,
+        "default_test_commands": test_commands,
+    }
+    if gcp_auth_credential:
+        ai_payload["gcp_auth"] = gcp_auth_credential
+    if openai_secret_path:
+        ai_payload["openai_secret_path"] = openai_secret_path
+
+    try:
+        from noetl.server.api.v2 import ExecuteRequest as V2ExecuteRequest
+        from noetl.server.api.v2 import execute as execute_v2
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"V2 execute endpoint is unavailable: {exc}") from exc
+
+    try:
+        ai_exec = await execute_v2(
+            V2ExecuteRequest(
+                path=request.analysis_playbook_path,
+                payload=ai_payload,
+            )
+        )
+    except HTTPException as exc:
+        if exc.status_code == 404:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    f"AI analysis playbook not found: {request.analysis_playbook_path}. "
+                    "Register tests/fixtures/playbooks/ops/execution_ai_analyze/execution_ai_analyze.yaml first."
+                ),
+            ) from exc
+        raise
+
+    ai_execution_id = int(ai_exec.execution_id)
+    terminal_row, timed_out = await _wait_for_terminal_event(
+        execution_id=ai_execution_id,
+        timeout_seconds=request.timeout_seconds,
+        poll_interval_ms=request.poll_interval_ms,
+    )
+
+    ai_report, ai_raw_output, ai_execution_status = await _load_ai_execution_output(ai_execution_id)
+    if timed_out:
+        ai_execution_status = "TIMEOUT"
+
+    if not ai_report:
+        ai_report = {
+            "executive_summary": "AI report payload was not found in analyzer execution output.",
+            "primary_bottlenecks": [],
+            "failure_risk_analysis": [],
+            "recommended_dsl_runtime_changes": [],
+            "validation_plan": [],
+            "proposed_patch_diff": "",
+        }
+
+    ai_report.setdefault("dry_run_commands", dry_run_commands)
+    ai_report.setdefault("test_commands", test_commands)
+    ai_report.setdefault("auto_fix_mode", auto_fix_mode)
+    ai_report.setdefault("approval_required", request.approval_required)
+    ai_report.setdefault("approved", request.approved)
+    ai_report.setdefault(
+        "apply_allowed",
+        auto_fix_mode != "apply" or not request.approval_required or request.approved,
+    )
+    ai_report.setdefault("dry_run_recommended", True)
+
+    if not request.include_patch_diff:
+        ai_report["proposed_patch_diff"] = ""
+
+    if terminal_row:
+        ai_raw_output.setdefault("terminal_event", terminal_row)
+
+    return AnalyzeExecutionWithAIResponse(
+        execution_id=str(execution_id),
+        path=bundle.path,
+        status=bundle.status,
+        generated_at=datetime.now(timezone.utc),
+        bundle=bundle,
+        ai_playbook_path=request.analysis_playbook_path,
+        ai_execution_id=str(ai_execution_id),
+        ai_execution_status=ai_execution_status,
+        ai_report=_json_ready(ai_report),
+        ai_raw_output=_json_ready(ai_raw_output),
+        approval_required=request.approval_required,
+        approved=request.approved,
+        auto_fix_mode=auto_fix_mode,
+        dry_run_recommended=True,
     )
 
 

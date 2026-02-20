@@ -37,6 +37,7 @@ const { Title, Text } = Typography;
 const { TabPane } = Tabs;
 const { Option } = Select;
 const { RangePicker } = DatePicker;
+type AnalysisMode = "report" | "dry_run" | "apply";
 
 // JSON stringify cache to avoid repeated heavy stringify on same object refs
 const jsonStringCache = new WeakMap<object, string>();
@@ -52,6 +53,7 @@ const ExecutionDetail: React.FC = () => {
   const [cancelling, setCancelling] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [analysis, setAnalysis] = useState<any | null>(null);
+  const [analysisMode, setAnalysisMode] = useState<AnalysisMode>("report");
 
   // Pagination state for events table
   const [currentPage, setCurrentPage] = useState<number>(1);
@@ -313,32 +315,44 @@ const ExecutionDetail: React.FC = () => {
     }
   };
 
-  const handleAnalyzeExecution = async () => {
+  const handleAnalyzeExecution = async (mode: AnalysisMode = "report") => {
     if (!id) return;
     try {
       setAnalyzing(true);
-      const result = await apiService.analyzeExecution(id, {
+      setAnalysisMode(mode);
+      const result = await apiService.analyzeExecutionWithAI(id, {
         max_events: 3000,
         event_sample_size: 300,
         include_playbook_content: true,
+        include_event_rows: true,
+        event_rows_limit: 500,
+        include_event_log_rows: true,
+        event_log_rows_limit: 250,
+        include_patch_diff: true,
+        auto_fix_mode: mode,
+        approval_required: true,
+        approved: mode === "apply",
+        timeout_seconds: 240,
+        poll_interval_ms: 1500,
       });
       setAnalysis(result);
-      message.success("Execution analysis generated");
+      message.success("AI analysis generated");
     } catch (err: any) {
       console.error("Failed to analyze execution:", err);
-      message.error(err?.response?.data?.detail || "Failed to generate execution analysis");
+      message.error(err?.response?.data?.detail || "Failed to generate AI execution analysis");
     } finally {
       setAnalyzing(false);
     }
   };
 
   const handleCopyAnalysisPrompt = async () => {
-    if (!analysis?.ai_prompt) {
+    const prompt = analysis?.bundle?.ai_prompt || analysis?.ai_prompt;
+    if (!prompt) {
       message.warning("No AI prompt available");
       return;
     }
     try {
-      await navigator.clipboard.writeText(analysis.ai_prompt);
+      await navigator.clipboard.writeText(prompt);
       message.success("AI prompt copied to clipboard");
     } catch {
       message.error("Failed to copy prompt");
@@ -505,6 +519,16 @@ const ExecutionDetail: React.FC = () => {
     },
   ];
   const canCancel = execution?.status?.toLowerCase() === "running" || execution?.status?.toLowerCase() === "pending";
+  const analysisBundle = analysis?.bundle || analysis || {};
+  const analysisSummary = analysisBundle?.summary || {};
+  const analysisFindings: any[] = Array.isArray(analysisBundle?.findings) ? analysisBundle.findings : [];
+  const analysisRecommendations: string[] = Array.isArray(analysisBundle?.recommendations) ? analysisBundle.recommendations : [];
+  const analysisCloud = analysisBundle?.cloud || {};
+  const aiReport = analysis?.ai_report || {};
+  const patchDiff = typeof aiReport?.proposed_patch_diff === "string" ? aiReport.proposed_patch_diff : "";
+  const dryRunCommands: string[] = Array.isArray(aiReport?.dry_run_commands) ? aiReport.dry_run_commands : [];
+  const testCommands: string[] = Array.isArray(aiReport?.test_commands) ? aiReport.test_commands : [];
+  const applyChecklist: string[] = Array.isArray(aiReport?.apply_checklist) ? aiReport.apply_checklist : [];
 
   return (
     <Card className="execution-detail-container">
@@ -528,10 +552,24 @@ const ExecutionDetail: React.FC = () => {
         )}
         <Button
           icon={<RobotOutlined />}
-          onClick={handleAnalyzeExecution}
-          loading={analyzing}
+          onClick={() => handleAnalyzeExecution("report")}
+          loading={analyzing && analysisMode === "report"}
         >
-          Analyze Execution
+          Analyze with AI
+        </Button>
+        <Button
+          onClick={() => handleAnalyzeExecution("dry_run")}
+          loading={analyzing && analysisMode === "dry_run"}
+        >
+          Run Dry-Run + Tests
+        </Button>
+        <Button
+          type="primary"
+          danger
+          onClick={() => handleAnalyzeExecution("apply")}
+          loading={analyzing && analysisMode === "apply"}
+        >
+          Approve & Apply Plan
         </Button>
       </Space>
 
@@ -624,29 +662,29 @@ const ExecutionDetail: React.FC = () => {
       {analysis && (
         <Card
           size="small"
-          title="AI Analysis Bundle"
+          title="AI Triage + Fix Plan"
           className="execution-detail-info-card"
           extra={
             <Space>
               <Button size="small" icon={<CopyOutlined />} onClick={handleCopyAnalysisPrompt}>
                 Copy AI Prompt
               </Button>
-              {analysis?.cloud?.logs_url && (
+              {analysisCloud?.logs_url && (
                 <Button
                   size="small"
                   type="link"
-                  href={analysis.cloud.logs_url}
+                  href={analysisCloud.logs_url}
                   target="_blank"
                   rel="noreferrer"
                 >
                   Open Cloud Logs
                 </Button>
               )}
-              {analysis?.cloud?.metrics_url && (
+              {analysisCloud?.metrics_url && (
                 <Button
                   size="small"
                   type="link"
-                  href={analysis.cloud.metrics_url}
+                  href={analysisCloud.metrics_url}
                   target="_blank"
                   rel="noreferrer"
                 >
@@ -659,20 +697,46 @@ const ExecutionDetail: React.FC = () => {
           <Row gutter={[24, 12]}>
             <Col xs={24} md={8}>
               <Text className="execution-detail-label">Duration (sec)</Text>
-              <div><Text className="execution-detail-value">{analysis?.summary?.duration_seconds ?? "-"}</Text></div>
+              <div><Text className="execution-detail-value">{analysisSummary?.duration_seconds ?? "-"}</Text></div>
             </Col>
             <Col xs={24} md={8}>
               <Text className="execution-detail-label">Event Count</Text>
-              <div><Text className="execution-detail-value">{analysis?.summary?.event_count ?? "-"}</Text></div>
+              <div><Text className="execution-detail-value">{analysisSummary?.event_count ?? "-"}</Text></div>
             </Col>
             <Col xs={24} md={8}>
               <Text className="execution-detail-label">Retry Attempts</Text>
-              <div><Text className="execution-detail-value">{analysis?.summary?.retry_attempts ?? 0}</Text></div>
+              <div><Text className="execution-detail-value">{analysisSummary?.retry_attempts ?? 0}</Text></div>
+            </Col>
+            <Col xs={24} md={8}>
+              <Text className="execution-detail-label">AI Execution</Text>
+              <div>
+                <Text className="execution-detail-value">{analysis?.ai_execution_id || "-"}</Text>
+              </div>
+            </Col>
+            <Col xs={24} md={8}>
+              <Text className="execution-detail-label">AI Status</Text>
+              <div>
+                <Tag color={(analysis?.ai_execution_status || "").toLowerCase() === "completed" ? "green" : (analysis?.ai_execution_status || "").toLowerCase() === "failed" ? "red" : "blue"}>
+                  {analysis?.ai_execution_status || "UNKNOWN"}
+                </Tag>
+              </div>
+            </Col>
+            <Col xs={24} md={8}>
+              <Text className="execution-detail-label">Mode</Text>
+              <div>
+                <Text className="execution-detail-value">{analysis?.auto_fix_mode || "report"}</Text>
+              </div>
+            </Col>
+            <Col xs={24}>
+              <Text className="execution-detail-label">Executive Summary</Text>
+              <div style={{ marginTop: 8 }}>
+                <Text>{aiReport?.executive_summary || "No summary available."}</Text>
+              </div>
             </Col>
             <Col xs={24}>
               <Text className="execution-detail-label">Findings</Text>
-              {(analysis.findings || []).length === 0 && <div><Text>No findings</Text></div>}
-              {(analysis.findings || []).map((finding: any, idx: number) => (
+              {analysisFindings.length === 0 && <div><Text>No findings</Text></div>}
+              {analysisFindings.map((finding: any, idx: number) => (
                 <div key={`finding-${idx}`} style={{ marginTop: 8 }}>
                   <Tag color={finding.severity === "high" ? "red" : finding.severity === "medium" ? "orange" : "blue"}>
                     {(finding.severity || "info").toUpperCase()}
@@ -684,16 +748,67 @@ const ExecutionDetail: React.FC = () => {
             </Col>
             <Col xs={24}>
               <Text className="execution-detail-label">Recommendations</Text>
-              {(analysis.recommendations || []).map((item: string, idx: number) => (
+              {analysisRecommendations.map((item: string, idx: number) => (
                 <div key={`rec-${idx}`} style={{ marginTop: 6 }}>
                   <Text>{idx + 1}. {item}</Text>
                 </div>
               ))}
             </Col>
             <Col xs={24}>
+              <Text className="execution-detail-label">AI Prioritized Changes</Text>
+              {(Array.isArray(aiReport?.recommended_dsl_runtime_changes) ? aiReport.recommended_dsl_runtime_changes : []).length === 0 && (
+                <div><Text>No AI change proposals</Text></div>
+              )}
+              {(Array.isArray(aiReport?.recommended_dsl_runtime_changes) ? aiReport.recommended_dsl_runtime_changes : []).map((item: any, idx: number) => (
+                <div key={`change-${idx}`} style={{ marginTop: 8 }}>
+                  <Tag color={String(item?.priority || "").toLowerCase() === "high" ? "red" : String(item?.priority || "").toLowerCase() === "medium" ? "orange" : "blue"}>
+                    {String(item?.priority || "info").toUpperCase()}
+                  </Tag>
+                  <Text strong>{item?.title || `Change ${idx + 1}`}</Text>
+                  <div><Text>{item?.change || item?.rationale || ""}</Text></div>
+                </div>
+              ))}
+            </Col>
+            <Col xs={24}>
+              <Text className="execution-detail-label">Dry-Run Commands</Text>
+              {dryRunCommands.length === 0 && <div><Text>-</Text></div>}
+              {dryRunCommands.map((cmd: string, idx: number) => (
+                <div key={`dry-${idx}`} style={{ marginTop: 6 }}>
+                  <Text code>{cmd}</Text>
+                </div>
+              ))}
+            </Col>
+            <Col xs={24}>
+              <Text className="execution-detail-label">Test Commands</Text>
+              {testCommands.length === 0 && <div><Text>-</Text></div>}
+              {testCommands.map((cmd: string, idx: number) => (
+                <div key={`test-${idx}`} style={{ marginTop: 6 }}>
+                  <Text code>{cmd}</Text>
+                </div>
+              ))}
+            </Col>
+            <Col xs={24}>
+              <Text className="execution-detail-label">Apply Checklist</Text>
+              {applyChecklist.length === 0 && <div><Text>-</Text></div>}
+              {applyChecklist.map((item: string, idx: number) => (
+                <div key={`apply-${idx}`} style={{ marginTop: 6 }}>
+                  <Text>{idx + 1}. {item}</Text>
+                </div>
+              ))}
+            </Col>
+            <Col xs={24}>
+              <Text className="execution-detail-label">Proposed Patch Diff (AI)</Text>
+              <Input.TextArea
+                value={patchDiff}
+                readOnly
+                autoSize={{ minRows: 6, maxRows: 20 }}
+                style={{ marginTop: 8, fontFamily: "monospace" }}
+              />
+            </Col>
+            <Col xs={24}>
               <Text className="execution-detail-label">AI Prompt</Text>
               <Input.TextArea
-                value={analysis.ai_prompt || ""}
+                value={analysisBundle?.ai_prompt || ""}
                 readOnly
                 autoSize={{ minRows: 8, maxRows: 20 }}
                 style={{ marginTop: 8, fontFamily: "monospace" }}

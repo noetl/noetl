@@ -116,6 +116,21 @@ apiClient.interceptors.response.use(
 // }
 
 class APIService {
+  private normalizeExecution(raw: any): ExecutionData {
+    const normalizedStatus =
+      typeof raw?.status === "string" ? raw.status.toLowerCase() : raw?.status;
+    return {
+      ...raw,
+      execution_id: raw?.execution_id != null ? String(raw.execution_id) : "",
+      status: normalizedStatus,
+    };
+  }
+
+  private normalizeExecutionList(rawList: any): ExecutionData[] {
+    if (!Array.isArray(rawList)) return [];
+    return rawList.map((item) => this.normalizeExecution(item));
+  }
+
   async getHealth(): Promise<ServerStatus> {
     const response = await apiClient.get("/health");
     return response.data;
@@ -176,7 +191,7 @@ class APIService {
 
   async getExecutions(): Promise<ExecutionData[]> {
     const response = await apiClient.get("/executions");
-    return response.data;
+    return this.normalizeExecutionList(response.data);
   }
 
   async getExecution(id: string, params?: {
@@ -187,7 +202,7 @@ class APIService {
   }): Promise<ExecutionData> {
     // Use primary execution detail endpoint under /api/executions with pagination support
     const response = await apiClient.get(`/executions/${id}`, { params });
-    return response.data;
+    return this.normalizeExecution(response.data);
   }
 
   async getExecutionEvents(id: string, params?: {
@@ -230,6 +245,32 @@ class APIService {
     },
   ): Promise<any> {
     const response = await apiClient.post(`/executions/${id}/analyze`, payload || {});
+    return response.data;
+  }
+
+  async analyzeExecutionWithAI(
+    id: string,
+    payload?: {
+      max_events?: number;
+      event_sample_size?: number;
+      include_playbook_content?: boolean;
+      include_event_rows?: boolean;
+      event_rows_limit?: number;
+      include_event_log_rows?: boolean;
+      event_log_rows_limit?: number;
+      analysis_playbook_path?: string;
+      gcp_auth_credential?: string;
+      openai_secret_path?: string;
+      model?: string;
+      include_patch_diff?: boolean;
+      auto_fix_mode?: "report" | "dry_run" | "apply";
+      approval_required?: boolean;
+      approved?: boolean;
+      timeout_seconds?: number;
+      poll_interval_ms?: number;
+    },
+  ): Promise<any> {
+    const response = await apiClient.post(`/executions/${id}/analyze/ai`, payload || {});
     return response.data;
   }
 
