@@ -321,18 +321,18 @@ const ExecutionDetail: React.FC = () => {
       setAnalyzing(true);
       setAnalysisMode(mode);
       const result = await apiService.analyzeExecutionWithAI(id, {
-        max_events: 3000,
-        event_sample_size: 300,
-        include_playbook_content: true,
+        max_events: 1200,
+        event_sample_size: 120,
+        include_playbook_content: false,
         include_event_rows: true,
-        event_rows_limit: 500,
-        include_event_log_rows: true,
-        event_log_rows_limit: 250,
+        event_rows_limit: 120,
+        include_event_log_rows: false,
+        event_log_rows_limit: 40,
         include_patch_diff: true,
         auto_fix_mode: mode,
         approval_required: true,
         approved: mode === "apply",
-        timeout_seconds: 240,
+        timeout_seconds: 180,
         poll_interval_ms: 1500,
       });
       setAnalysis(result);

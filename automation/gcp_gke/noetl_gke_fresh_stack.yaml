@@ -94,6 +94,10 @@ workload:
   cloud_sql_proxy_image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.18.3
   cloud_sql_proxy_port: "6432"
   pgbouncer_image: edoburu/pgbouncer:v1.24.1-p1
+  cloud_sql_proxy_egress_rule_enabled: true
+  cloud_sql_proxy_egress_rule_name: noetl-allow-cloudsql-3307
+  cloud_sql_proxy_egress_priority: 900
+  cloud_sql_proxy_egress_port: "3307"
 
   # Storage
   postgres_storage_size: 20Gi
@@ -562,6 +566,78 @@ workflow:
               --ranges="$RANGE_NAME" \
               --project="$PROJECT"
             echo "Created private service connection for network '$NETWORK_NAME'"
+          fi
+    next:
+      - step: ensure_cloud_sql_private_proxy_egress
+
+  - step: ensure_cloud_sql_private_proxy_egress
+    desc: Ensure egress firewall rule for Cloud SQL connector private endpoint
+    tool:
+      kind: shell
+      cmds:
+        - |
+          set -e
+          if [ "{{ workload.use_cloud_sql }}" != "true" ] || [ "{{ workload.cloud_sql_enable_private_ip }}" != "true" ]; then
+            echo "Cloud SQL private IP is disabled, skipping connector egress firewall setup"
+            exit 0
+          fi
+          if [ "{{ workload.cloud_sql_proxy_egress_rule_enabled }}" != "true" ]; then
+            echo "cloud_sql_proxy_egress_rule_enabled=false, skipping connector egress firewall setup"
+            exit 0
+          fi
+
+          PROJECT="{{ workload.project_id }}"
+          REGION="{{ workload.region }}"
+          CLUSTER="{{ workload.cluster_name }}"
+          RANGE_NAME="{{ workload.cloud_sql_private_service_range_name }}"
+          RULE_NAME="{{ workload.cloud_sql_proxy_egress_rule_name }}"
+          RULE_PRIORITY="{{ workload.cloud_sql_proxy_egress_priority }}"
+          RULE_PORT="{{ workload.cloud_sql_proxy_egress_port }}"
+          NETWORK_INPUT="{{ workload.cloud_sql_private_network }}"
+
+          if [ -z "$NETWORK_INPUT" ]; then
+            NETWORK_INPUT=$(gcloud container clusters describe "$CLUSTER" --region "$REGION" --project "$PROJECT" --format='value(network)' 2>/dev/null || true)
+          fi
+          if [ -z "$NETWORK_INPUT" ]; then
+            echo "ERROR: Unable to determine VPC network for connector egress firewall rule."
+            echo "Set --set cloud_sql_private_network=<network-name>."
+            exit 1
+          fi
+
+          NETWORK_NAME="$NETWORK_INPUT"
+          case "$NETWORK_NAME" in
+            projects/*/global/networks/*)
+              NETWORK_NAME="${NETWORK_NAME##*/}"
+              ;;
+          esac
+
+          if ! gcloud compute networks describe "$NETWORK_NAME" --project "$PROJECT" >/dev/null 2>&1; then
+            echo "ERROR: VPC network '$NETWORK_NAME' not found in project '$PROJECT'"
+            exit 1
+          fi
+
+          RANGE_INFO=$(gcloud compute addresses describe "$RANGE_NAME" --global --project "$PROJECT" --format='value(address,prefixLength)' 2>/dev/null || true)
+          if [ -z "$RANGE_INFO" ]; then
+            echo "ERROR: Private service range '$RANGE_NAME' not found."
+            echo "Run ensure_cloud_sql_private_service_access first."
+            exit 1
+          fi
+          RANGE_IP=$(echo "$RANGE_INFO" | awk '{print $1}')
+          RANGE_PREFIX=$(echo "$RANGE_INFO" | awk '{print $2}')
+          RANGE_CIDR="${RANGE_IP}/${RANGE_PREFIX}"
+
+          if gcloud compute firewall-rules describe "$RULE_NAME" --project "$PROJECT" >/dev/null 2>&1; then
+            echo "Firewall rule '$RULE_NAME' already exists"
+          else
+            gcloud compute firewall-rules create "$RULE_NAME" \
+              --project "$PROJECT" \
+              --network "$NETWORK_NAME" \
+              --direction EGRESS \
+              --priority "$RULE_PRIORITY" \
+              --action ALLOW \
+              --rules "tcp:${RULE_PORT}" \
+              --destination-ranges "$RANGE_CIDR"
+            echo "Created firewall rule '$RULE_NAME' for tcp:${RULE_PORT} -> ${RANGE_CIDR}"
           fi
     next:
       - step: ensure_cloud_sql_instance

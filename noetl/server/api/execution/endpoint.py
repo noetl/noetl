@@ -319,10 +319,10 @@ async def _load_db_rows_for_ai(
                       status,
                       created_at,
                       duration,
-                      context,
-                      result,
+                      CASE WHEN context IS NULL THEN NULL ELSE LEFT(context::text, 4000) END AS context,
+                      CASE WHEN result IS NULL THEN NULL ELSE LEFT(result::text, 4000) END AS result,
                       error,
-                      meta
+                      CASE WHEN meta IS NULL THEN NULL ELSE LEFT(meta::text, 2000) END AS meta
                     FROM noetl.event
                     WHERE execution_id = %s
                     ORDER BY event_id DESC
@@ -348,10 +348,10 @@ async def _load_db_rows_for_ai(
                           status,
                           created_at,
                           duration,
-                          context,
-                          result,
+                          CASE WHEN context IS NULL THEN NULL ELSE LEFT(context::text, 4000) END AS context,
+                          CASE WHEN result IS NULL THEN NULL ELSE LEFT(result::text, 4000) END AS result,
                           error,
-                          meta
+                          CASE WHEN meta IS NULL THEN NULL ELSE LEFT(meta::text, 2000) END AS meta
                         FROM noetl.event_log
                         WHERE execution_id = %s
                         ORDER BY event_id DESC
@@ -394,7 +394,7 @@ async def _load_db_rows_for_ai(
                         sql = (
                             "SELECT * FROM noetl.metric "
                             f"WHERE {' OR '.join(where_clauses)} "
-                            f"{order_sql} LIMIT 200"
+                            f"{order_sql} LIMIT 80"
                         )
                         await cursor.execute(sql, tuple(params))
                         rows = await cursor.fetchall()
@@ -423,6 +423,27 @@ async def _wait_for_terminal_event(
     while time.monotonic() < deadline:
         async with get_pool_connection() as conn:
             async with conn.cursor(row_factory=dict_row) as cursor:
+                await cursor.execute(
+                    """
+                    SELECT event_id, event_type, status, created_at, node_name, error
+                    FROM noetl.event
+                    WHERE execution_id = %s
+                      AND event_type IN (
+                        'execution.cancelled',
+                        'playbook.completed',
+                        'playbook.failed',
+                        'workflow.completed',
+                        'workflow.failed'
+                      )
+                    ORDER BY event_id DESC
+                    LIMIT 1
+                    """,
+                    (execution_id,),
+                )
+                terminal_row = await cursor.fetchone()
+                if terminal_row:
+                    return _json_ready(dict(terminal_row)), False
+
                 await cursor.execute(
                     """
                     SELECT event_id, event_type, status, created_at, node_name, error
@@ -540,51 +561,71 @@ async def get_executions():
     """Get all executions"""
     async with get_pool_connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cursor:
-            await cursor.execute("""
-                WITH execution_times AS (
-                    SELECT 
-                        execution_id,
-                        MIN(created_at) as start_time,
-                        MAX(created_at) as end_time,
-                        MAX(event_id) as latest_event_id
-                    FROM event
-                    GROUP BY execution_id
-                ),
-                -- Get the latest terminal event (by event_id DESC) for each execution
-                latest_terminal_event AS (
-                    SELECT DISTINCT ON (execution_id)
-                        execution_id,
-                        event_type as terminal_event_type,
-                        status as terminal_status,
-                        event_id as terminal_event_id
-                    FROM event
-                    WHERE event_type IN ('playbook.completed', 'playbook.failed', 'execution.cancelled', 'workflow.completed', 'workflow.failed')
-                    ORDER BY execution_id, event_id DESC
-                )
-                SELECT 
-                    e.execution_id,
-                    e.catalog_id,
-                    e.event_type,
-                    -- Use terminal status if available, otherwise use latest event status
-                    COALESCE(lte.terminal_status, e.status) as status,
-                    COALESCE(lte.terminal_event_type, e.event_type) as derived_event_type,
-                    et.start_time,
-                    et.end_time,
-                    e.meta,
-                    e.context,
-                    e.result,
-                    e.error,
-                    e.stack_trace,
-                    e.parent_execution_id,
-                    c.path,
-                    c.version
-                FROM event e
-                JOIN execution_times et ON e.execution_id = et.execution_id AND e.event_id = et.latest_event_id
-                JOIN catalog c on c.catalog_id = e.catalog_id
-                LEFT JOIN latest_terminal_event lte ON lte.execution_id = e.execution_id
-                ORDER BY et.start_time DESC
-            """)
-            rows = await cursor.fetchall()
+            try:
+                # Keep this endpoint lightweight for UI polling. Avoid scanning giant payload columns.
+                await cursor.execute("SET LOCAL statement_timeout = '8s'")
+                await cursor.execute("""
+                    WITH latest_event AS (
+                        SELECT DISTINCT ON (e.execution_id)
+                            e.execution_id,
+                            e.catalog_id,
+                            e.event_type,
+                            e.status,
+                            e.created_at AS end_time,
+                            e.error,
+                            e.parent_execution_id
+                        FROM noetl.event e
+                        ORDER BY e.execution_id, e.event_id DESC
+                    ),
+                    first_event AS (
+                        SELECT DISTINCT ON (e.execution_id)
+                            e.execution_id,
+                            e.created_at AS start_time
+                        FROM noetl.event e
+                        ORDER BY e.execution_id, e.event_id ASC
+                    ),
+                    latest_terminal_event AS (
+                        SELECT DISTINCT ON (e.execution_id)
+                            e.execution_id,
+                            e.event_type AS terminal_event_type,
+                            e.status AS terminal_status
+                        FROM noetl.event e
+                        WHERE e.event_type IN (
+                            'playbook.completed',
+                            'playbook.failed',
+                            'execution.cancelled',
+                            'workflow.completed',
+                            'workflow.failed'
+                        )
+                        ORDER BY e.execution_id, e.event_id DESC
+                    )
+                    SELECT
+                        le.execution_id,
+                        le.catalog_id,
+                        le.event_type,
+                        COALESCE(lte.terminal_status, le.status) AS status,
+                        COALESCE(lte.terminal_event_type, le.event_type) AS derived_event_type,
+                        fe.start_time,
+                        le.end_time,
+                        NULL::jsonb AS result,
+                        le.error,
+                        le.parent_execution_id,
+                        COALESCE(c.path, 'unknown') AS path,
+                        COALESCE(c.version, 0) AS version
+                    FROM latest_event le
+                    JOIN first_event fe ON fe.execution_id = le.execution_id
+                    LEFT JOIN noetl.catalog c ON c.catalog_id = le.catalog_id
+                    LEFT JOIN latest_terminal_event lte ON lte.execution_id = le.execution_id
+                    ORDER BY fe.start_time DESC
+                    LIMIT 500
+                """)
+                rows = await cursor.fetchall()
+            except Exception as exc:
+                logger.error("Failed to load executions list: %s", exc)
+                raise HTTPException(
+                    status_code=503,
+                    detail="Execution list query timed out or DB pool is busy. Retry in a few seconds.",
+                ) from exc
             resp = []
             for row_dict in rows:
                 resp.append(ExecutionEntryResponse(
@@ -1075,10 +1116,7 @@ async def analyze_execution(
                   status,
                   created_at,
                   duration,
-                  context,
-                  result,
-                  error,
-                  meta
+                  error
                 FROM noetl.event
                 WHERE execution_id = %s
                 ORDER BY event_id ASC
@@ -1351,10 +1389,16 @@ async def analyze_execution_with_ai(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=f"Invalid execution_id '{execution_id}'") from exc
 
+    # Apply server-side safety caps to avoid oversized AI payloads and OOM.
+    safe_max_events = max(100, min(int(request.max_events), 2000))
+    safe_event_sample_size = max(20, min(int(request.event_sample_size), 200))
+    safe_event_rows_limit = max(50, min(int(request.event_rows_limit), 200))
+    safe_event_log_rows_limit = max(20, min(int(request.event_log_rows_limit), 80))
+
     # Build base bundle first (same output as "Analyze Execution" flow).
     bundle_req = AnalyzeExecutionRequest(
-        max_events=request.max_events,
-        event_sample_size=request.event_sample_size,
+        max_events=safe_max_events,
+        event_sample_size=safe_event_sample_size,
         include_playbook_content=request.include_playbook_content,
     )
     bundle = await analyze_execution(execution_id=execution_id, request=bundle_req)
@@ -1367,9 +1411,9 @@ async def analyze_execution_with_ai(
     event_rows, event_log_rows, metric_rows = await _load_db_rows_for_ai(
         execution_id=execution_id_int,
         include_event_rows=request.include_event_rows,
-        event_rows_limit=request.event_rows_limit,
+        event_rows_limit=safe_event_rows_limit,
         include_event_log_rows=request.include_event_log_rows,
-        event_log_rows_limit=request.event_log_rows_limit,
+        event_log_rows_limit=safe_event_log_rows_limit,
     )
 
     playbook_version = None

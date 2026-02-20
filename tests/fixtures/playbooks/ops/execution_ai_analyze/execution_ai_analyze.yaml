@@ -75,7 +75,7 @@ workflow:
       arcs:
         - step: approval_blocked
           when: '{{ start.blocked }}'
-        - step: openai_triage
+        - step: prepare_ai_input
           when: '{{ not start.blocked }}'
 
   - step: approval_blocked
@@ -129,6 +129,176 @@ workflow:
       arcs:
         - step: end
 
+  - step: prepare_ai_input
+    desc: Compact analyzer inputs to stay within model token limits
+    tool:
+      kind: python
+      libs:
+        json: json
+      args:
+        target_execution_id: '{{ target_execution_id }}'
+        target_playbook_path: '{{ target_playbook_path }}'
+        target_playbook_status: '{{ target_playbook_status }}'
+        analysis_bundle: '{{ analysis_bundle }}'
+        event_rows: '{{ event_rows }}'
+        event_log_rows: '{{ event_log_rows }}'
+        metric_rows: '{{ metric_rows }}'
+        cloud_context: '{{ cloud_context }}'
+        ai_prompt: '{{ ai_prompt }}'
+        default_dry_run_commands: '{{ default_dry_run_commands }}'
+        default_test_commands: '{{ default_test_commands }}'
+        auto_fix_mode: '{{ start.mode }}'
+        include_patch_diff: '{{ include_patch_diff }}'
+      code: |
+        TARGET_CHARS = 120000
+        MAX_STR = 700
+        MAX_EVENT_ROWS = 80
+        MAX_EVENT_LOG_ROWS = 40
+        MAX_EVENT_SAMPLE = 80
+
+        def trim_str(value, limit=MAX_STR):
+            s = str(value or "")
+            if len(s) <= limit:
+                return s
+            return s[:limit] + "...<truncated>"
+
+        def as_list(value):
+            if isinstance(value, list):
+                return value
+            if value is None:
+                return []
+            return [value]
+
+        def trim_value(value, depth=0):
+            if depth > 4:
+                return "<truncated-depth>"
+            if isinstance(value, str):
+                return trim_str(value)
+            if value is None or isinstance(value, (int, float, bool)):
+                return value
+            if isinstance(value, list):
+                return [trim_value(v, depth + 1) for v in value[:20]]
+            if isinstance(value, dict):
+                out = {}
+                keys = list(value.keys())[:30]
+                for key in keys:
+                    out[str(key)] = trim_value(value.get(key), depth + 1)
+                return out
+            return trim_str(value)
+
+        # NoETL python tool executes code with separate globals/locals.
+        # Export helpers so nested functions can resolve them at runtime.
+        globals()["trim_str"] = trim_str
+        globals()["as_list"] = as_list
+        globals()["trim_value"] = trim_value
+        globals()["MAX_EVENT_ROWS"] = MAX_EVENT_ROWS
+        globals()["MAX_EVENT_LOG_ROWS"] = MAX_EVENT_LOG_ROWS
+        globals()["MAX_EVENT_SAMPLE"] = MAX_EVENT_SAMPLE
+        globals()["TARGET_CHARS"] = TARGET_CHARS
+
+        def compact_event_rows(rows):
+            compact = []
+            for row in as_list(rows)[:MAX_EVENT_ROWS]:
+                if not isinstance(row, dict):
+                    compact.append(trim_value(row))
+                    continue
+                compact.append({
+                    "event_id": row.get("event_id"),
+                    "event_type": row.get("event_type"),
+                    "node_name": row.get("node_name"),
+                    "status": row.get("status"),
+                    "created_at": row.get("created_at"),
+                    "duration": row.get("duration"),
+                    "error": trim_value(row.get("error")),
+                    "result": trim_value(row.get("result")),
+                })
+            return compact
+
+        def compact_event_log_rows(rows):
+            compact = []
+            for row in as_list(rows)[:MAX_EVENT_LOG_ROWS]:
+                if not isinstance(row, dict):
+                    compact.append(trim_value(row))
+                    continue
+                compact.append({
+                    "event_id": row.get("event_id"),
+                    "execution_id": row.get("execution_id"),
+                    "node_name": row.get("node_name"),
+                    "status": row.get("status"),
+                    "event_type": row.get("event_type"),
+                    "created_at": row.get("created_at"),
+                    "error": trim_value(row.get("error")),
+                })
+            return compact
+
+        bundle = analysis_bundle if isinstance(analysis_bundle, dict) else {}
+        playbook = bundle.get("playbook", {}) if isinstance(bundle, dict) else {}
+        summary = bundle.get("summary", {}) if isinstance(bundle, dict) else {}
+        findings = bundle.get("findings", []) if isinstance(bundle, dict) else []
+        recommendations = bundle.get("recommendations", []) if isinstance(bundle, dict) else []
+        event_sample = bundle.get("event_sample", []) if isinstance(bundle, dict) else []
+
+        compact_bundle = {
+            "execution_id": bundle.get("execution_id"),
+            "path": bundle.get("path"),
+            "status": bundle.get("status"),
+            "summary": trim_value(summary),
+            "findings": trim_value(findings),
+            "recommendations": trim_value(recommendations),
+            "event_sample": trim_value(as_list(event_sample)[:MAX_EVENT_SAMPLE]),
+            "playbook": {
+                "catalog_id": playbook.get("catalog_id"),
+                "path": playbook.get("path"),
+                "version": playbook.get("version"),
+            },
+        }
+
+        payload = {
+            "target_execution_id": str(target_execution_id or ""),
+            "target_playbook_path": str(target_playbook_path or ""),
+            "target_playbook_status": str(target_playbook_status or ""),
+            "auto_fix_mode": str(auto_fix_mode or "report"),
+            "include_patch_diff": str(include_patch_diff).strip().lower() in {"1", "true", "yes", "y", "on"},
+            "analysis_bundle": compact_bundle,
+            "event_rows": compact_event_rows(event_rows),
+            "event_log_rows": compact_event_log_rows(event_log_rows),
+            "metric_rows": trim_value(as_list(metric_rows)[:40]),
+            "cloud_context": trim_value(cloud_context),
+            "fallback_prompt": trim_str(ai_prompt, limit=2000),
+            "default_dry_run_commands": trim_value(default_dry_run_commands),
+            "default_test_commands": trim_value(default_test_commands),
+        }
+
+        compact_json = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
+        while len(compact_json) > TARGET_CHARS and (payload["event_rows"] or payload["event_log_rows"]):
+            if len(payload["event_rows"]) > 20:
+                payload["event_rows"] = payload["event_rows"][: max(20, len(payload["event_rows"]) // 2)]
+            elif len(payload["event_log_rows"]) > 10:
+                payload["event_log_rows"] = payload["event_log_rows"][: max(10, len(payload["event_log_rows"]) // 2)]
+            else:
+                break
+            compact_json = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
+
+        if len(compact_json) > TARGET_CHARS:
+            payload["event_rows"] = payload["event_rows"][:10]
+            payload["event_log_rows"] = payload["event_log_rows"][:5]
+            payload["analysis_bundle"]["event_sample"] = payload["analysis_bundle"]["event_sample"][:20]
+            compact_json = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
+
+        result = {
+            "compact_payload_json": compact_json,
+            "payload_stats": {
+                "chars": len(compact_json),
+                "event_rows": len(payload["event_rows"]),
+                "event_log_rows": len(payload["event_log_rows"]),
+            },
+        }
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: openai_triage
+
   - step: openai_triage
     desc: Generate structured triage report with OpenAI
     tool:
@@ -163,21 +333,8 @@ workflow:
               - Keep recommendations prioritized and concrete.
           - role: user
             content: |
-              {
-                "target_execution_id": "{{ target_execution_id }}",
-                "target_playbook_path": "{{ target_playbook_path }}",
-                "target_playbook_status": "{{ target_playbook_status }}",
-                "auto_fix_mode": "{{ start.mode }}",
-                "include_patch_diff": {{ include_patch_diff | tojson }},
-                "analysis_bundle": {{ analysis_bundle | tojson }},
-                "event_rows": {{ event_rows | tojson }},
-                "event_log_rows": {{ event_log_rows | tojson }},
-                "metric_rows": {{ metric_rows | tojson }},
-                "cloud_context": {{ cloud_context | tojson }},
-                "fallback_prompt": {{ ai_prompt | tojson }},
-                "default_dry_run_commands": {{ default_dry_run_commands | tojson }},
-                "default_test_commands": {{ default_test_commands | tojson }}
-              }
+              Analyze this compact execution diagnostics bundle and return strictly JSON only:
+              {{ prepare_ai_input.compact_payload_json }}
     next:
       spec:
         mode: exclusive

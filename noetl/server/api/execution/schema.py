@@ -85,19 +85,19 @@ class AnalyzeExecutionRequest(BaseModel):
     """Request schema for execution analysis bundle."""
 
     max_events: int = Field(
-        default=2000,
+        default=1200,
         ge=100,
         le=10000,
         description="Maximum number of events to include in analysis",
     )
     event_sample_size: int = Field(
-        default=200,
+        default=120,
         ge=20,
         le=1000,
         description="Number of latest events to include in AI prompt sample",
     )
     include_playbook_content: bool = Field(
-        default=True,
+        default=False,
         description="Include full playbook YAML content in analysis bundle",
     )
 
@@ -122,19 +122,19 @@ class AnalyzeExecutionWithAIRequest(BaseModel):
     """Request schema for execution analysis + AI playbook run."""
 
     max_events: int = Field(
-        default=2000,
+        default=1200,
         ge=100,
         le=10000,
         description="Maximum number of events to include in analysis",
     )
     event_sample_size: int = Field(
-        default=200,
+        default=120,
         ge=20,
         le=1000,
         description="Number of latest events to include in AI prompt sample",
     )
     include_playbook_content: bool = Field(
-        default=True,
+        default=False,
         description="Include full playbook YAML content in analysis bundle",
     )
     include_event_rows: bool = Field(
@@ -142,17 +142,17 @@ class AnalyzeExecutionWithAIRequest(BaseModel):
         description="Include raw event rows from Postgres in payload sent to AI playbook",
     )
     event_rows_limit: int = Field(
-        default=500,
+        default=120,
         ge=50,
         le=5000,
         description="Maximum number of event rows to include",
     )
     include_event_log_rows: bool = Field(
-        default=True,
+        default=False,
         description="Include event_log rows from Postgres in payload sent to AI playbook",
     )
     event_log_rows_limit: int = Field(
-        default=200,
+        default=40,
         ge=20,
         le=2000,
         description="Maximum number of event_log rows to include",
