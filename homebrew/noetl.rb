@@ -1,15 +1,15 @@
 class Noetl < Formula
   desc "NoETL workflow automation CLI - Execute playbooks locally or orchestrate distributed pipelines"
   homepage "https://noetl.io"
-  url "https://github.com/noetl/noetl/archive/refs/tags/v2.8.3.tar.gz"
-  sha256 "82ad6b367c2d42402b559e2eea42c4434ec139683b5d45eb522c43030f16a0b3"
+  url "https://github.com/noetl/noetl/archive/refs/tags/v2.8.4.tar.gz"
+  sha256 "PLACEHOLDER_SHA256"
   license "MIT"
   head "https://github.com/noetl/noetl.git", branch: "master"
 
   depends_on "rust" => :build
 
   def install
-    cd "crates/noetlctl" do
+    cd "crates/noetl" do
       system "cargo", "install", *std_cargo_args
     end
   end
