@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.8.4](https://github.com/noetl/noetl/compare/v2.8.3...v2.8.4) (2026-02-20)
+
+### Bug Fixes
+
+* Add AI analysis endpoint for execution triage ([c70cfb2](https://github.com/noetl/noetl/commit/c70cfb2e0800541a1d809246aac683181e2e5dca))
+* Add execution analysis request and response schemas ([3b814f3](https://github.com/noetl/noetl/commit/3b814f3542488bf73e1c05add276d014ec9e01a4))
+* add Playbook Test Lab component for managing and executing test suites ([3ecf63d](https://github.com/noetl/noetl/commit/3ecf63d9bce9d4ad925a4dbdc16b7f309f902438))
+* add React example for NoETL Gateway with Amadeus integration ([0a9f081](https://github.com/noetl/noetl/commit/0a9f081fb2f6c69c1efa0a2b348f6899034098f6))
+* enhance callback handling and execution polling in Amadeus integration example ([5f7071e](https://github.com/noetl/noetl/commit/5f7071e386a80e0e8af228822ed9adfd784f86cb))
+* Enhance user management and role handling ([cf5b6b8](https://github.com/noetl/noetl/commit/cf5b6b8762476c2401756d4cec8ee15083334730))
+* implement AI-driven playbook generation and explanation features ([90f86b0](https://github.com/noetl/noetl/commit/90f86b0927728811bfd6b7c3c3eccf991fcdec10))
+* update README and enhance health probe diagnostics in React example ([9bfd703](https://github.com/noetl/noetl/commit/9bfd703e903ac7c3502644de2f6bb03ca00f3f5d))
+
 ## [2.8.3](https://github.com/noetl/noetl/compare/v2.8.2...v2.8.3) (2026-02-10)
 
 ### Bug Fixes
