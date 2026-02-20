@@ -6,7 +6,7 @@ This example focuses on exactly two flows:
 
 1. Login against Gateway (`/api/auth/login` or `/api/auth/validate`)
 2. Execute the Amadeus playbook via GraphQL (`executePlaybook`) and poll execution status through Gateway proxy
-3. Run built-in Gateway diagnostics (`/health`, auth probes) and produce a one-screen triage report
+3. Run built-in Gateway diagnostics (`/health`, GraphQL auth, auth endpoint probes) and produce a one-screen triage report
 
 The existing `tests/fixtures/gateway_ui` files are not used or modified.
 

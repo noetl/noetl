@@ -227,11 +227,13 @@ export default function App() {
 
     switch (probe.id) {
       case 'health':
-        return probe.status === 200;
+        return probe.status === 200 && !probe.body_preview.toLowerCase().includes('<!doctype html');
       case 'graphql_auth':
         return probe.status === 401 || probe.status === 403;
       case 'auth_login_schema':
         return probe.status === 400 || probe.status === 401 || probe.status === 422;
+      case 'auth_login_fake_token':
+        return probe.status === 200 || probe.status === 400 || probe.status === 401 || probe.status === 403 || probe.status === 422;
       case 'auth_validate_dummy':
         return probe.status === 200 || probe.status === 401 || probe.status === 422;
       case 'auth_check_access_dummy':
@@ -246,13 +248,21 @@ export default function App() {
     const byId = Object.fromEntries(probes.map((probe) => [probe.id, probe]));
     const health = byId.health;
     const graphqlAuth = byId.graphql_auth;
-    const authProbes = [byId.auth_login_schema, byId.auth_validate_dummy, byId.auth_check_access_dummy].filter(
-      Boolean
-    );
+    const authProbes = [
+      byId.auth_login_schema,
+      byId.auth_login_fake_token,
+      byId.auth_validate_dummy,
+      byId.auth_check_access_dummy,
+    ].filter(Boolean);
     const authHas502 = authProbes.some((probe) => probe.status === 502);
     const networkErrors = probes.filter((probe) => probe.status === 0);
+    const healthLooksLikeLocalHtml =
+      health?.status === 200 && (health?.body_preview || '').toLowerCase().includes('<!doctype html');
 
     const triage = [];
+    if (healthLooksLikeLocalHtml) {
+      triage.push('Health probe returned local HTML, not gateway health output. Check Vite /health proxy and restart dev server.');
+    }
     if (health?.status === 200 && authHas502) {
       triage.push(
         'Gateway responds on /health, but auth endpoints return 502. Likely failure is in gateway auth dependency chain (NoETL auth playbooks, callback path, NATS, DB, DNS).'
@@ -286,6 +296,9 @@ export default function App() {
     }
     if (health?.status !== 200) {
       nextSteps.push('Verify gateway /health from Cloudflare and from inside cluster.');
+    }
+    if (healthLooksLikeLocalHtml) {
+      nextSteps.push('Ensure Vite proxy includes /health and restart npm run dev.');
     }
     if (networkErrors.length > 0) {
       nextSteps.push('Restart local dev server and confirm Vite proxy target in terminal output.');
@@ -357,6 +370,16 @@ export default function App() {
           method: 'POST',
           path: '/api/auth/login',
           body: {},
+        }),
+        runProbe({
+          id: 'auth_login_fake_token',
+          label: 'Auth login flow (fake token)',
+          method: 'POST',
+          path: '/api/auth/login',
+          body: {
+            auth0_token: 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJkaWFnbm9zdGljIn0.signature',
+            auth0_domain: auth0Domain.trim() || DEFAULT_AUTH0_DOMAIN,
+          },
         }),
         runProbe({
           id: 'auth_validate_dummy',

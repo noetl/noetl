@@ -56,6 +56,7 @@ export default defineConfig(({ mode }) => {
       host: '0.0.0.0',
       port: 8080,
       proxy: {
+        '/health': proxyOptions(),
         '/api': proxyOptions(),
         '/graphql': proxyOptions(),
         '/noetl': proxyOptions(),
