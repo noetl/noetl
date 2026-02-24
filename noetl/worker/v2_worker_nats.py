@@ -2158,14 +2158,17 @@ class V2Worker:
             max_wait = config.get("timeout", 300)  # Default 5 minutes
             poll_interval = 2  # seconds
             elapsed = 0
+            failed_statuses = {"FAILED", "ERROR", "CANCELLED", "CANCELED"}
             
             while elapsed < max_wait:
                 await asyncio.sleep(poll_interval)
                 elapsed += poll_interval
                 
-                # Check execution status
+                # Check execution status using engine state endpoint.
+                # /api/executions/{id} can show transient COMPLETED for intermediate
+                # command.completed events, which is not a terminal playbook state.
                 status_response = await self._http_client.get(
-                    f"{server_url}/api/executions/{execution_id}",
+                    f"{server_url}/api/executions/{execution_id}/status",
                     timeout=10.0
                 )
                 
@@ -2176,6 +2179,25 @@ class V2Worker:
                     
                     if state_completed or state_failed:
                         return status_data
+                else:
+                    # Backward-compatible fallback for older servers without /status.
+                    fallback_response = await self._http_client.get(
+                        f"{server_url}/api/executions/{execution_id}",
+                        timeout=10.0
+                    )
+                    if fallback_response.status_code == 200:
+                        fallback_data = fallback_response.json()
+                        state_completed = bool(fallback_data.get("completed"))
+                        state_failed = bool(fallback_data.get("failed"))
+
+                        # Only trust status string for explicit failure states in fallback mode.
+                        status_value = str(fallback_data.get("status") or fallback_data.get("state") or "").upper()
+                        if status_value in failed_statuses:
+                            state_failed = True
+                            state_completed = True
+
+                        if state_completed or state_failed:
+                            return fallback_data
             
             # Timeout - return what we have
             logger.warning(f"Sub-playbook {execution_id} timed out after {max_wait}s")
