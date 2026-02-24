@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.8.5](https://github.com/noetl/noetl/compare/v2.8.4...v2.8.5) (2026-02-24)
+
+### Bug Fixes
+
+* enhance loop handling and terminal status detection in playbook execution ([7acf458](https://github.com/noetl/noetl/commit/7acf458b327a412ca694865ae14b922ae746cf5d))
+* improve execution status handling and add tests for status endpoint ([c3fe7e4](https://github.com/noetl/noetl/commit/c3fe7e4553ff2cb48c7b8e392bec0487439b8b37))
+
 ## [2.8.4](https://github.com/noetl/noetl/compare/v2.8.3...v2.8.4) (2026-02-20)
 
 ### Bug Fixes
