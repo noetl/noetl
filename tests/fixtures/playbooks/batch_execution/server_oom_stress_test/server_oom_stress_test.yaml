@@ -1,0 +1,467 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+
+metadata:
+  name: server_oom_stress_test
+  path: tests/fixtures/playbooks/batch_execution/server_oom_stress_test
+  description: |
+    Stress test for server/worker memory under large-context batch processing with loopback.
+    Reproduces production conditions from state_report_generation_prod_v10.yaml:
+      - 21 context steps (~3-8KB each) to simulate fat execution context (42 vars in prod)
+      - 3000 items processed in 100-row batches via loopback (loop.done -> load_batch)
+      - Each item produces a ~250KB compute result (matching MDS assessment JSON payloads)
+        which triggers _ref externalization (> 64KB NOETL_INLINE_MAX_BYTES threshold)
+      - No sensitive data, no external HTTP calls
+    Expected failure modes:
+      - Worker OOMKilled: holding 250KB result + template context during render/serialize
+      - Server OOMKilled: accumulating _ref metadata + context copies across 100 iterations
+    If both survive 3000 items (30 loopback cycles) → OOM bug is fixed.
+
+workload:
+  pg_auth: pg_k8s
+  total_items: 3000
+  batch_size: 100
+
+workflow:
+
+  # ── Phase 1: Simulate the "wide" context from production (40+ variables) ─────
+  # Each step returns ~3-5KB of synthetic data, matching production step result sizes.
+  # In production these are: load_next_facility, fetch_athena_dataview,
+  # fetch_and_extract_patient_ids, load_patients_for_*, parse_*, etc.
+
+  - step: start
+    desc: Initialize stress test
+    tool:
+      kind: python
+      args:
+        total_items: '{{ total_items }}'
+        batch_size: '{{ batch_size }}'
+      code: |
+        result = {
+            "status": "started",
+            "total_items": int(total_items or 3000),
+            "batch_size": int(batch_size or 100),
+        }
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: ctx_step_01
+
+  - step: ctx_step_01
+    desc: Simulate load_next_facility result (~3KB)
+    tool:
+      kind: python
+      code: |
+        result = {
+            "facility_id": 414,
+            "facility_name": "Test Facility Alpha",
+            "facility_org_uuid": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+            "facility_mapping_id": 414,
+            "customer_code": "test_customer",
+            "base_url": "https://test.example.com",
+            "rows": [{"facility_id": 414, "name": "Test Facility Alpha", "active": True, "region": "west", "tier": "enterprise", "data": "x" * 1024}],
+        }
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: ctx_step_02
+
+  - step: ctx_step_02
+    desc: Simulate fetch_athena_dataview result (~5KB list)
+    tool:
+      kind: python
+      code: |
+        result = {
+            "status": "ok",
+            "rows": [{"patient_id": i, "mrn": f"MRN{i:06d}", "dob": "1950-01-01", "gender": "M", "payer": "Medicare", "data": "y" * 50} for i in range(1, 51)],
+            "row_count": 50,
+        }
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: ctx_step_03
+
+  - step: ctx_step_03
+    desc: Simulate fetch_and_extract_patient_ids result (~4KB)
+    tool:
+      kind: python
+      code: |
+        result = {
+            "patient_ids": list(range(10001, 10201)),
+            "count": 200,
+            "facility_mapping_id": 414,
+            "extracted_at": "2026-01-01T00:00:00Z",
+            "meta": {"source": "athena", "version": "v2", "data": "z" * 512},
+        }
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: ctx_step_04
+
+  - step: ctx_step_04
+    desc: Simulate load_patient_ids_context result
+    tool:
+      kind: python
+      code: |
+        result = {"rows": [{"patient_id": i, "pcc_patient_id": i + 50000} for i in range(10001, 10201)], "row_count": 200}
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: ctx_step_05
+
+  - step: ctx_step_05
+    desc: Simulate load_patients_for_demographics result (~4KB)
+    tool:
+      kind: python
+      code: |
+        result = {"rows": [{"patient_id": i, "first_name": f"First{i}", "last_name": f"Last{i}", "address": "123 Test St", "city": "Testville", "state": "CA", "zip": "90210"} for i in range(10001, 10051)], "row_count": 50}
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: ctx_step_06
+
+  - step: ctx_step_06
+    desc: Simulate parse_demographics result
+    tool:
+      kind: python
+      code: |
+        result = {"parsed": 50, "skipped": 0, "status": "ok", "records": [{"patient_id": i, "parsed": True, "canonical": {"name": f"Last{i}, First{i}", "dob": "1950-01-01"}} for i in range(10001, 10051)]}
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: ctx_step_07
+
+  - step: ctx_step_07
+    desc: Simulate load_patients_for_assessments result
+    tool:
+      kind: python
+      code: |
+        result = {"rows": [{"patient_id": i, "pcc_patient_id": i + 50000, "last_assessment_date": "2025-12-01"} for i in range(10001, 10101)], "row_count": 100}
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: ctx_step_08
+
+  - step: ctx_step_08
+    desc: Simulate parse_assessments result
+    tool:
+      kind: python
+      code: |
+        result = {"parsed": 100, "status": "ok", "assessment_ids": list(range(20001, 20101))}
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: ctx_step_09
+
+  - step: ctx_step_09
+    desc: Simulate load_patients_for_medications result
+    tool:
+      kind: python
+      code: |
+        result = {"rows": [{"patient_id": i, "medication_count": 5} for i in range(10001, 10101)], "row_count": 100}
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: ctx_step_10
+
+  - step: ctx_step_10
+    desc: Simulate parse_medications result (~6KB)
+    tool:
+      kind: python
+      code: |
+        result = {"parsed": 100, "medications": [{"patient_id": i, "drug": f"Drug_{i}", "dose": "10mg", "route": "oral", "frequency": "daily", "ndc": f"{i:011d}", "data": "m" * 30} for i in range(10001, 10101)]}
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: ctx_step_11
+
+  - step: ctx_step_11
+    desc: Simulate load_patients_for_conditions result
+    tool:
+      kind: python
+      code: |
+        result = {"rows": [{"patient_id": i, "condition_count": 3} for i in range(10001, 10101)], "row_count": 100}
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: ctx_step_12
+
+  - step: ctx_step_12
+    desc: Simulate parse_conditions result
+    tool:
+      kind: python
+      code: |
+        result = {"parsed": 100, "conditions": [{"patient_id": i, "icd10": f"Z{i % 99:02d}.{i % 9}", "description": f"Condition {i}", "onset": "2020-01-01"} for i in range(10001, 10101)]}
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: ctx_step_13
+
+  - step: ctx_step_13
+    desc: Simulate load_patients_for_adt result
+    tool:
+      kind: python
+      code: |
+        result = {"rows": [{"patient_id": i, "admit_date": "2025-11-01", "discharge_date": "2025-11-10"} for i in range(10001, 10051)], "row_count": 50}
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: ctx_step_14
+
+  - step: ctx_step_14
+    desc: Simulate parse_adt_records result
+    tool:
+      kind: python
+      code: |
+        result = {"parsed": 50, "admissions": [{"patient_id": i, "los": 9, "drg": f"DRG{i % 999:03d}", "payer": "Medicare"} for i in range(10001, 10051)]}
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: ctx_step_15
+
+  - step: ctx_step_15
+    desc: Simulate parse_athena_dataview result (~8KB)
+    tool:
+      kind: python
+      code: |
+        result = {"parsed": 200, "status": "ok", "dataview": [{"patient_id": i, "athena_id": f"ATH{i}", "insurance": "Medicare Part A", "provider": f"Dr. Test {i % 10}", "data": "a" * 64} for i in range(10001, 10201)]}
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: ctx_step_16
+
+  - step: ctx_step_16
+    desc: Simulate extract_mds_assessment_ids result
+    tool:
+      kind: python
+      code: |
+        result = {"assessment_ids": list(range(30001, 33001)), "count": 3000, "facility_mapping_id": 414}
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: ctx_step_17
+
+  - step: ctx_step_17
+    desc: Simulate patients_needing_assessments result
+    tool:
+      kind: python
+      code: |
+        result = {"patient_ids": list(range(10001, 10101)), "count": 100, "reason": "no_recent_assessment"}
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: ctx_step_18
+
+  - step: ctx_step_18
+    desc: Simulate patients_needing_medications result
+    tool:
+      kind: python
+      code: |
+        result = {"patient_ids": list(range(10001, 10101)), "count": 100, "reason": "medication_refresh"}
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: ctx_step_19
+
+  - step: ctx_step_19
+    desc: Simulate patients_needing_demographics result
+    tool:
+      kind: python
+      code: |
+        result = {"patient_ids": list(range(10001, 10101)), "count": 100, "reason": "demographics_refresh"}
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: ctx_step_20
+
+  - step: ctx_step_20
+    desc: Simulate patients_needing_conditions result
+    tool:
+      kind: python
+      code: |
+        result = {"patient_ids": list(range(10001, 10051)), "count": 50, "reason": "conditions_refresh"}
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: ctx_step_21
+
+  - step: ctx_step_21
+    desc: Simulate patients_needing_adt result
+    tool:
+      kind: python
+      code: |
+        result = {"patient_ids": list(range(10001, 10051)), "count": 50, "reason": "adt_refresh"}
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: setup_test_data
+
+  # ── Phase 2: Create test data ─────────────────────────────────────────────────
+
+  - step: setup_test_data
+    desc: Create test tables and insert 3000 synthetic items (idempotent)
+    tool:
+      kind: postgres
+      auth: '{{ pg_auth }}'
+      command: |
+        CREATE TABLE IF NOT EXISTS public.stress_test_items (
+          item_id INTEGER PRIMARY KEY,
+          group_id INTEGER NOT NULL,
+          payload TEXT NOT NULL,
+          created_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE TABLE IF NOT EXISTS public.stress_test_results (
+          item_id INTEGER PRIMARY KEY,
+          result_data JSONB NOT NULL,
+          processed_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        DELETE FROM public.stress_test_results;
+        DELETE FROM public.stress_test_items;
+        INSERT INTO public.stress_test_items (item_id, group_id, payload)
+        SELECT
+          i AS item_id,
+          ((i - 1) / 100) + 1 AS group_id,
+          'synthetic_payload_' || i || '_' || repeat('x', 64) AS payload
+        FROM generate_series(1, 3000) AS i;
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: load_batch
+
+  # ── Phase 3: Batch loop with loopback ─────────────────────────────────────────
+  # This is the section being stress-tested.
+  # Mirrors the production pattern: load -> normalize -> loop(100) -> load (loopback)
+
+  - step: load_batch
+    desc: Load next 100 unprocessed items (NOT EXISTS ensures idempotency, loopback target)
+    tool:
+      kind: postgres
+      auth: '{{ pg_auth }}'
+      query: |
+        SELECT s.item_id, s.group_id, s.payload
+        FROM public.stress_test_items s
+        WHERE NOT EXISTS (
+          SELECT 1 FROM public.stress_test_results r
+          WHERE r.item_id = s.item_id
+        )
+        ORDER BY s.item_id
+        LIMIT 100;
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: normalize_batch
+
+  - step: normalize_batch
+    desc: Extract rows from DB result via Python (mirrors production normalize_mds pattern)
+    tool:
+      kind: python
+      args:
+        db_result: '{{ load_batch }}'
+      code: |
+        rows = db_result.get("command_0", {}).get("rows", []) if isinstance(db_result, dict) else []
+        result = {
+            "batch_rows": rows,
+            "batch_count": len(rows),
+            "has_rows": len(rows) > 0,
+        }
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: process_batch
+          when: '{{ (normalize_batch.has_rows | string | lower) == "true" }}'
+        - step: summarize
+
+  - step: process_batch
+    desc: Process each item in the batch (parallel loop, mirrors production fetch_mds_assessment_details)
+    loop:
+      in: '{{ normalize_batch.batch_rows }}'
+      iterator: item_row
+      spec:
+        mode: parallel
+        max_in_flight: 100
+    tool:
+      - name: compute
+        kind: python
+        args:
+          item_id: '{{ iter.item_row.item_id }}'
+        code: |
+          # Simulate a large API response (~250KB JSON), matching MDS assessment payloads.
+          # This triggers _ref externalization (> 64KB threshold) and stresses worker
+          # memory during template rendering and result serialization — the same
+          # conditions that cause worker/server OOM in production.
+          import json
+          fields = {f"field_{j:03d}": f"value_{item_id}_{j}_" + "x" * 64 for j in range(600)}
+          result = {
+              "item_id": int(item_id),
+              "status": "ok",
+              "data": fields,
+          }
+        spec:
+          policy:
+            rules:
+              - else:
+                  then:
+                    do: continue
+                    set_iter:
+                      item_result: '{{ outcome.result.data }}'
+      - name: save
+        kind: postgres
+        auth: '{{ pg_auth }}'
+        command: |
+          INSERT INTO public.stress_test_results (item_id, result_data)
+          VALUES (
+            {{ iter.item_row.item_id }},
+            '{{ iter.item_result | tojson | replace("'", "''") }}'::jsonb
+          )
+          ON CONFLICT (item_id) DO UPDATE SET
+            result_data = EXCLUDED.result_data,
+            processed_at = NOW();
+        spec:
+          policy:
+            rules:
+              - else:
+                  then: { do: break }
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: load_batch
+          when: "{{ event.name == 'loop.done' }}"
+
+  # ── Phase 4: Summary ─────────────────────────────────────────────────────────
+
+  - step: summarize
+    desc: Return stress test summary
+    tool:
+      kind: python
+      args:
+        batch_count: '{{ normalize_batch.batch_count }}'
+      code: |
+        count = int(batch_count or 0) if batch_count else 0
+        result = {
+            "status": "completed",
+            "last_batch_count": count,
+        }
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: cleanup
+
+  - step: cleanup
+    desc: Drop test tables (comment out if you want to inspect results)
+    tool:
+      kind: postgres
+      auth: '{{ pg_auth }}'
+      command: |
+        DROP TABLE IF EXISTS public.stress_test_results;
+        DROP TABLE IF EXISTS public.stress_test_items;
+    next:
+      spec: { mode: exclusive }
+      arcs:
+        - step: end
+
+  - step: end
+    desc: End
+    tool:
+      kind: python
+      code: |
+        result = {"status": "done"}
