@@ -2127,6 +2127,13 @@ class ControlFlowEngine:
                     try:
                         nats_cache = await get_nats_cache()
                         loop_event_id = loop_state.get("event_id")
+                        if loop_event_id is None:
+                            loop_event_id = state.step_event_ids.get(parent_step)
+                        if loop_event_id is None:
+                            # Keep compatibility with loop init keying when state was reconstructed
+                            loop_event_id = f"exec_{state.execution_id}"
+                        loop_state["event_id"] = loop_event_id
+
                         new_count = await nats_cache.increment_loop_completed(
                             str(state.execution_id),
                             parent_step,
@@ -2135,13 +2142,51 @@ class ControlFlowEngine:
                         if new_count >= 0:
                             logger.info(f"[TASK_SEQ-LOOP] Incremented loop count in NATS K/V for {parent_step}: {new_count}")
 
+                        # Resolve collection size with distributed-safe fallback order:
+                        # local cache -> NATS K/V metadata -> re-render loop expression.
+                        collection = loop_state.get("collection")
+                        collection_size = len(collection) if isinstance(collection, list) else 0
+
+                        nats_loop_state = None
+                        if collection_size == 0:
+                            nats_loop_state = await nats_cache.get_loop_state(
+                                str(state.execution_id),
+                                parent_step,
+                                event_id=str(loop_event_id) if loop_event_id else None
+                            )
+                            if nats_loop_state:
+                                collection_size = nats_loop_state.get("collection_size", 0)
+
+                        if collection_size == 0:
+                            context = state.get_render_context(event)
+                            rendered_collection = self._render_template(parent_step_def.loop.in_, context)
+                            if not isinstance(rendered_collection, list):
+                                rendered_collection = list(rendered_collection) if hasattr(rendered_collection, "__iter__") else [rendered_collection]
+                            loop_state["collection"] = rendered_collection
+                            collection_size = len(rendered_collection)
+                            logger.info(f"[TASK_SEQ-LOOP] Re-rendered collection for {parent_step}: {collection_size} items")
+
+                            # Backfill NATS metadata if it was missing.
+                            if not nats_loop_state:
+                                await nats_cache.set_loop_state(
+                                    str(state.execution_id),
+                                    parent_step,
+                                    {
+                                        "collection_size": collection_size,
+                                        "completed_count": max(new_count, 0),
+                                        "iterator": loop_state.get("iterator"),
+                                        "mode": loop_state.get("mode"),
+                                        "event_id": loop_event_id
+                                    },
+                                    event_id=str(loop_event_id) if loop_event_id else None
+                                )
+
                         # Check if loop is done
-                        collection = loop_state.get("collection", [])
-                        if new_count >= len(collection):
+                        if new_count >= collection_size:
                             # Loop done - mark completed and create loop.done event
                             loop_state["completed"] = True
                             loop_state["aggregation_finalized"] = True
-                            logger.info(f"[TASK_SEQ-LOOP] Loop completed for {parent_step}: {new_count}/{len(collection)}")
+                            logger.info(f"[TASK_SEQ-LOOP] Loop completed for {parent_step}: {new_count}/{collection_size}")
 
                             # Get aggregated result
                             loop_aggregation = state.get_loop_aggregation(parent_step)
@@ -2163,7 +2208,7 @@ class ControlFlowEngine:
                             logger.info(f"[TASK_SEQ-LOOP] Generated {len(loop_done_commands)} commands from loop.done")
                         else:
                             # More iterations - create next command
-                            logger.info(f"[TASK_SEQ-LOOP] Creating next iteration command for {parent_step}: {new_count}/{len(collection)}")
+                            logger.info(f"[TASK_SEQ-LOOP] Creating next iteration command for {parent_step}: {new_count}/{collection_size}")
                             next_cmd = await self._create_command_for_step(state, parent_step_def, {})
                             if next_cmd:
                                 commands.append(next_cmd)

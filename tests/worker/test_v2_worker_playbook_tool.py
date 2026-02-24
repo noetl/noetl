@@ -65,3 +65,54 @@ async def test_playbook_tool_passes_merged_args_to_plugin_executor(monkeypatch):
 
     assert result["status"] == "success"
     assert captured["task_with"] == {"batch_number": 5, "offset": 400}
+
+
+@pytest.mark.asyncio
+async def test_execute_playbook_return_step_detects_terminal_status_field(monkeypatch):
+    worker = V2Worker(worker_id="test-worker")
+    worker._current_execution_id = "parent-exec-1"
+
+    class FakeResponse:
+        def __init__(self, payload, status_code=200):
+            self._payload = payload
+            self.status_code = status_code
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise RuntimeError(f"HTTP {self.status_code}")
+
+        def json(self):
+            return self._payload
+
+    class FakeHttpClient:
+        def __init__(self):
+            self.post_payload = None
+            self.get_calls = 0
+
+        async def post(self, _url, json=None, timeout=None):
+            self.post_payload = json
+            return FakeResponse({"execution_id": "child-exec-1"})
+
+        async def get(self, _url, timeout=None):
+            self.get_calls += 1
+            return FakeResponse({"execution_id": "child-exec-1", "status": "COMPLETED"})
+
+    async def fast_sleep(_seconds):
+        return None
+
+    worker._http_client = FakeHttpClient()
+    monkeypatch.setattr(worker_module.asyncio, "sleep", fast_sleep)
+
+    result = await worker._execute_playbook(
+        {
+            "path": "tests/fixtures/playbooks/batch_execution/traveler_batch_enrichment_chunk_worker",
+            "return_step": "end",
+            "timeout": 2,
+        },
+        {"batch_number": 1},
+    )
+
+    assert result["status"] == "COMPLETED"
+    assert result["execution_id"] == "child-exec-1"
+    assert worker._http_client.post_payload["parent_execution_id"] == "parent-exec-1"
+    assert worker._http_client.get_calls == 1

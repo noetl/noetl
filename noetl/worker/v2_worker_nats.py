@@ -2158,6 +2158,8 @@ class V2Worker:
             max_wait = config.get("timeout", 300)  # Default 5 minutes
             poll_interval = 2  # seconds
             elapsed = 0
+            terminal_statuses = {"COMPLETED", "FAILED", "ERROR", "CANCELLED", "CANCELED"}
+            failed_statuses = {"FAILED", "ERROR", "CANCELLED", "CANCELED"}
             
             while elapsed < max_wait:
                 await asyncio.sleep(poll_interval)
@@ -2173,6 +2175,12 @@ class V2Worker:
                     status_data = status_response.json()
                     state_completed = bool(status_data.get("completed"))
                     state_failed = bool(status_data.get("failed"))
+
+                    # /api/executions/{id} exposes terminal state via status string.
+                    status_value = str(status_data.get("status") or status_data.get("state") or "").upper()
+                    if status_value in terminal_statuses:
+                        state_completed = True
+                        state_failed = status_value in failed_statuses
                     
                     if state_completed or state_failed:
                         return status_data
