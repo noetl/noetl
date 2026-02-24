@@ -95,7 +95,14 @@ async def test_execute_playbook_return_step_detects_terminal_status_field(monkey
 
         async def get(self, _url, timeout=None):
             self.get_calls += 1
-            return FakeResponse({"execution_id": "child-exec-1", "status": "COMPLETED"})
+            return FakeResponse(
+                {
+                    "execution_id": "child-exec-1",
+                    "current_step": "end",
+                    "completed": True,
+                    "failed": False,
+                }
+            )
 
     async def fast_sleep(_seconds):
         return None
@@ -112,7 +119,79 @@ async def test_execute_playbook_return_step_detects_terminal_status_field(monkey
         {"batch_number": 1},
     )
 
-    assert result["status"] == "COMPLETED"
+    assert result["completed"] is True
+    assert result["failed"] is False
     assert result["execution_id"] == "child-exec-1"
     assert worker._http_client.post_payload["parent_execution_id"] == "parent-exec-1"
     assert worker._http_client.get_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_execute_playbook_waits_for_status_endpoint_not_transient_execution_status(monkeypatch):
+    worker = V2Worker(worker_id="test-worker")
+    worker._current_execution_id = "parent-exec-2"
+
+    class FakeResponse:
+        def __init__(self, payload, status_code=200):
+            self._payload = payload
+            self.status_code = status_code
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise RuntimeError(f"HTTP {self.status_code}")
+
+        def json(self):
+            return self._payload
+
+    class FakeHttpClient:
+        def __init__(self):
+            self.status_polls = 0
+            self.execution_polls = 0
+
+        async def post(self, _url, json=None, timeout=None):
+            return FakeResponse({"execution_id": "child-exec-2"})
+
+        async def get(self, url, timeout=None):
+            if url.endswith("/status"):
+                self.status_polls += 1
+                if self.status_polls == 1:
+                    return FakeResponse(
+                        {
+                            "execution_id": "child-exec-2",
+                            "current_step": "process_batch_http",
+                            "completed": False,
+                            "failed": False,
+                        }
+                    )
+                return FakeResponse(
+                    {
+                        "execution_id": "child-exec-2",
+                        "current_step": "end",
+                        "completed": True,
+                        "failed": False,
+                    }
+                )
+
+            # This payload mimics transient non-terminal COMPLETED status from /executions/{id}.
+            self.execution_polls += 1
+            return FakeResponse({"execution_id": "child-exec-2", "status": "COMPLETED"})
+
+    async def fast_sleep(_seconds):
+        return None
+
+    worker._http_client = FakeHttpClient()
+    monkeypatch.setattr(worker_module.asyncio, "sleep", fast_sleep)
+
+    result = await worker._execute_playbook(
+        {
+            "path": "tests/fixtures/playbooks/batch_execution/traveler_batch_enrichment_chunk_worker",
+            "return_step": "end",
+            "timeout": 6,
+        },
+        {"batch_number": 2},
+    )
+
+    assert result["completed"] is True
+    assert result["failed"] is False
+    assert worker._http_client.status_polls == 2
+    assert worker._http_client.execution_polls == 0

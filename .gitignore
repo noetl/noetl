@@ -122,3 +122,4 @@ noetl-*/
 # Exception: keep crates/noetl-tools (part of Rust workspace)
 !crates/noetl-tools/
 bin/
+AGENTS.md
