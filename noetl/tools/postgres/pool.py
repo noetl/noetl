@@ -160,9 +160,10 @@ async def get_plugin_connection(connection_string: str, pool_name: str = "postgr
         connection_string: PostgreSQL connection string
         pool_name: Name prefix for the pool (for logging/monitoring)
         **pool_kwargs: Pool configuration parameters:
-            - timeout: Timeout for acquiring connection (None=default 10s, -1=infinite wait)
+            - timeout: Timeout for acquiring connection
+                (None=default from env NOETL_POSTGRES_POOL_TIMEOUT_SECONDS, -1=infinite wait)
             - min_size: Minimum connections (default from env, fallback 1)
-            - max_size: Maximum connections (default from env, fallback 5)
+            - max_size: Maximum connections (default from env, fallback 12)
             - max_waiting: Max requests waiting (default from env, fallback 100)
             - max_lifetime: Connection max lifetime in seconds (default 3600)
             - max_idle: Connection max idle time in seconds (default 300)
@@ -179,10 +180,12 @@ async def get_plugin_connection(connection_string: str, pool_name: str = "postgr
     Raises:
         Exception: If pool creation or connection acquisition fails
     """
-    # Handle timeout parameter: None = default (10s), -1 = infinite, else = specified value
+    # Handle timeout parameter: None = env default, -1 = infinite, else = specified value
     if 'timeout' in pool_kwargs:
         timeout = pool_kwargs['timeout']
-        pool_kwargs['timeout'] = 10.0 if timeout is None else (None if timeout == -1 else timeout)
+        pool_kwargs['timeout'] = (
+            _DEFAULT_POOL_TIMEOUT if timeout is None else (None if timeout == -1 else timeout)
+        )
     
     pool = await get_or_create_plugin_pool(connection_string, pool_name, **pool_kwargs)
 
@@ -207,19 +210,23 @@ async def get_plugin_connection(connection_string: str, pool_name: str = "postgr
         raise
 
 
-async def close_plugin_pool(connection_string: str) -> None:
+async def close_plugin_pool(connection_string: str, pool_name: str = "postgres_plugin") -> None:
     """
     Close and remove a specific plugin connection pool.
 
     Args:
         connection_string: PostgreSQL connection string
+        pool_name: Name prefix for the pool (must match creation)
     """
-    pool_key = _create_pool_key(connection_string)
+    pool_key = _create_pool_key(connection_string + "||" + pool_name)
 
     async with _plugin_global_lock:
         pool = _plugin_pools.get(pool_key)
         if not pool:
-            logger.warning(f"No plugin pool found for connection string: {connection_string}")
+            logger.warning(
+                f"No plugin pool found for connection string + pool name: "
+                f"{connection_string} ({pool_name})"
+            )
             return
         logger.info(f"Closing Postgres plugin pool: {pool.name}")
         try:
@@ -390,14 +397,14 @@ async def get_connection(connection_string: str, pool_name: str = "postgres_plug
         yield conn
 
 
-async def close_pool(connection_string: str) -> None:
+async def close_pool(connection_string: str, pool_name: str = "postgres_plugin") -> None:
     """
     Close and remove a specific connection pool.
     
     Wrapper for backward compatibility with legacy code.
     Delegates to close_plugin_pool.
     """
-    await close_plugin_pool(connection_string)
+    await close_plugin_pool(connection_string, pool_name=pool_name)
 
 
 async def close_all_pools() -> None:

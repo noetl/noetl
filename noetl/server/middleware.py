@@ -100,12 +100,23 @@ async def catch_exceptions_middleware(request: Request, call_next):
             {"kind": "openapi"} if "/openapi.json" in request.url.path else _payload_meta(response_body),
         )
 
-        return Response(
+        rebuilt_response = Response(
             content=response_body,
             status_code=response.status_code,
-            headers=dict(response.headers),
             media_type=response.media_type,
+            background=response.background,
         )
+        raw_headers = getattr(response, "raw_headers", None)
+        if raw_headers is not None:
+            # Preserve duplicate headers (e.g. multiple Set-Cookie) from the original response.
+            rebuilt_response.raw_headers = [
+                (k, v) for (k, v) in raw_headers if k.lower() != b"content-length"
+            ]
+            rebuilt_response.headers["content-length"] = str(len(response_body))
+        else:
+            for key, value in response.headers.items():
+                rebuilt_response.headers[key] = value
+        return rebuilt_response
     except asyncio.TimeoutError as err:
         process_time_sec = time.time() - start_time
         request_preview = (
