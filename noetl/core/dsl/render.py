@@ -105,13 +105,21 @@ def render_template(env: Environment, template: Any, context: Dict, rules: Dict 
     Returns:
         The rendered template
     """
-    logger.debug(f"render_template called with template: {template}, type: {type(template)}")
+    logger.debug(
+        "render_template called: template_type=%s template_len=%s",
+        type(template).__name__,
+        len(template) if isinstance(template, str) else "-",
+    )
 
     env = add_b64encode_filter(env)
     if isinstance(template, str) and (('{{' in template and '}}' in template) or ('{%' in template and '%}' in template)):
-        logger.debug(f"Render template: {template} | context_keys={list(context.keys())}")
+        logger.debug(
+            "Render template: has_jinja=true context_key_count=%s template_len=%s",
+            len(context.keys()) if isinstance(context, dict) else 0,
+            len(template),
+        )
         if rules:
-            logger.debug(f"Render template rules: {rules}")
+            logger.debug("Render template rules_keys=%s", list(rules.keys()) if isinstance(rules, dict) else type(rules).__name__)
 
     render_ctx = dict(context)
     if rules:
@@ -120,10 +128,10 @@ def render_template(env: Environment, template: Any, context: Dict, rules: Dict 
     if isinstance(template, str):
         if (('{{' not in template or '}}' not in template) and 
             ('{%' not in template or '%}' not in template)):
-            logger.debug(f"render_template: Plain string (no template vars), returning as-is: {template}")
+            logger.debug("render_template: plain string (no variables), length=%s", len(template))
             return template
 
-        logger.debug(f"render_template: String with template vars: {template}")
+        logger.debug("render_template: string with variables, length=%s", len(template))
         try:
             expr = template.strip()
             if expr == '{{}}':
@@ -219,9 +227,16 @@ def render_template(env: Environment, template: Any, context: Dict, rules: Dict 
                 custom_context = _handle_undefined_values(custom_context)
 
                 rendered = template_obj.render(**custom_context)
-                logger.debug(f"render_template: Successfully rendered: {rendered}")
+                logger.debug(
+                    "render_template: rendered successfully output_type=%s output_len=%s",
+                    type(rendered).__name__,
+                    len(rendered) if isinstance(rendered, str) else "-",
+                )
             except Exception as e:
-                error_msg = f"Template rendering error: {e}, template: {template}"
+                error_msg = (
+                    f"Template rendering error: {e} "
+                    f"(template_len={len(template) if isinstance(template, str) else '-'})"
+                )
                 # Reduce noise: always suppress persistence for undefined-variable cases.
                 # These are expected when rendering loop-scoped variables like {{ city_item }} before evaluation.
                 msg = str(e)
@@ -245,10 +260,17 @@ def render_template(env: Environment, template: Any, context: Dict, rules: Dict 
                             var_path = var_path_match.group(1).strip()
                             fixed_path = var_path.replace('.data.', '.').replace('.result.', '.')
                             fixed_template = template.replace(var_path, fixed_path)
-                            logger.info(f"Attempting fallback rendering with modified path: {fixed_template}")
+                            logger.debug(
+                                "Attempting fallback rendering with modified path template_len=%s",
+                                len(fixed_template),
+                            )
                             fixed_obj = env.from_string(fixed_template)
                             rendered = fixed_obj.render(**render_ctx)
-                            logger.info(f"Fallback rendering succeeded: {rendered}")
+                            logger.debug(
+                                "Fallback rendering succeeded output_type=%s output_len=%s",
+                                type(rendered).__name__,
+                                len(rendered) if isinstance(rendered, str) else "-",
+                            )
                             return rendered
                     except Exception as fallback_error:
                         logger.error(f"Fallback rendering also failed: {fallback_error}")
@@ -260,7 +282,7 @@ def render_template(env: Environment, template: Any, context: Dict, rules: Dict 
             # Check if the original template used tojson filter - if so, respect the string output
             # The user explicitly requested JSON string format, don't parse it back to dict
             if '| tojson' in template or '|tojson' in template:
-                logger.debug(f"render_template: Template uses tojson filter, returning string as-is: {rendered[:100]}...")
+                logger.debug("render_template: Template uses tojson filter, returning string output as-is")
                 return rendered
 
             if (rendered.startswith('[') and rendered.endswith(']')) or \
@@ -303,7 +325,10 @@ def render_template(env: Environment, template: Any, context: Dict, rules: Dict 
 
             return rendered
         except Exception as e:
-            error_msg = f"Template rendering error: {e}, template: {template}"
+            error_msg = (
+                f"Template rendering error: {e} "
+                f"(template_len={len(template) if isinstance(template, str) else '-'})"
+            )
             logger.error(error_msg)
             
             log_error(
@@ -324,7 +349,10 @@ def render_template(env: Environment, template: Any, context: Dict, rules: Dict 
     elif isinstance(template, list):
         return [render_template(env, item, render_ctx, rules, strict_keys=strict_keys) for item in template]
 
-    logger.debug(f"render_template: Returning template unchanged: {template}")
+    logger.debug(
+        "render_template: returning unchanged value type=%s",
+        type(template).__name__,
+    )
     return template
 
 
@@ -395,7 +423,7 @@ def render_sql_template(env: Environment, sql_template: str, context: Dict) -> s
         return final_sql
 
     except Exception as e:
-        error_msg = f"Error rendering SQL template: {e} | template={sql_template[:200]}..."
+        error_msg = f"Error rendering SQL template: {e} | template_len={len(sql_template)}"
         logger.error(error_msg)
         
         log_error(

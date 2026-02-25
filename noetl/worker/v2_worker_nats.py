@@ -14,6 +14,7 @@ import asyncio
 import logging
 import httpx
 import os
+import time
 from collections import OrderedDict
 from typing import Optional, Any
 from datetime import datetime, timezone
@@ -23,6 +24,14 @@ from noetl.core.messaging import NATSCommandSubscriber
 from noetl.core.logging_context import LoggingContext
 from noetl.core.logger import setup_logger
 logger = setup_logger(__name__, include_location=True)
+
+
+def _safe_keys(value: Any, max_items: int = 10) -> list[str]:
+    if isinstance(value, dict):
+        return list(value.keys())[:max_items]
+    if isinstance(value, (list, tuple)):
+        return [str(v) for v in list(value)[:max_items]]
+    return []
 
 # Pre-import tool executors at module level to avoid 5s cold-start delay
 # These were previously imported inside _execute_tool() causing slow first execution
@@ -134,6 +143,62 @@ class V2Worker:
         self._nats_subscriber: Optional[NATSCommandSubscriber] = None
         self._heartbeat_task: Optional[asyncio.Task] = None
         self._registered = False
+        self._max_inflight_commands = max(1, int(worker_settings.max_inflight_commands))
+        self._max_inflight_db_commands = max(1, int(worker_settings.max_inflight_db_commands))
+        self._throttle_poll_interval = float(worker_settings.throttle_poll_interval)
+        self._postgres_pool_waiting_threshold = max(0, int(worker_settings.postgres_pool_waiting_threshold))
+        self._db_command_semaphore = asyncio.Semaphore(self._max_inflight_db_commands)
+        self._last_db_throttle_log_at = 0.0
+
+    @staticmethod
+    def _is_db_heavy_tool(tool_kind: Optional[str]) -> bool:
+        return str(tool_kind or "").strip().lower() in {
+            "postgres",
+            "transfer",
+            "snowflake",
+            "snowflake_transfer",
+        }
+
+    def _is_postgres_pool_saturated(self) -> bool:
+        """
+        Check plugin pool pressure.
+
+        Returns True when any pool shows active queueing beyond threshold.
+        """
+        try:
+            from noetl.tools.postgres.pool import get_plugin_pool_stats
+
+            pool_stats = get_plugin_pool_stats()
+        except Exception:
+            return False
+
+        if not pool_stats:
+            return False
+
+        for stats in pool_stats.values():
+            if not isinstance(stats, dict) or "error" in stats:
+                continue
+            waiting = int(stats.get("waiting", 0) or 0)
+            available = int(stats.get("available", 0) or 0)
+            if waiting > self._postgres_pool_waiting_threshold:
+                return True
+            if waiting > 0 and available <= 0:
+                return True
+
+        return False
+
+    async def _wait_for_postgres_capacity(self, step: str, command_id: str) -> None:
+        """Pause db-heavy command execution while plugin pools are saturated."""
+        while self._running and self._is_postgres_pool_saturated():
+            now = time.monotonic()
+            if now - self._last_db_throttle_log_at >= 5.0:
+                logger.info(
+                    "[THROTTLE] Delaying db-heavy command %s (%s): postgres pools saturated",
+                    command_id,
+                    step,
+                )
+                self._last_db_throttle_log_at = now
+            await asyncio.sleep(self._throttle_poll_interval)
     
     async def _register_worker(self, server_url: str) -> bool:
         """Register this worker in the runtime table via API."""
@@ -224,10 +289,21 @@ class V2Worker:
             nats_url=self.nats_url,
             subject=worker_settings.nats_subject,
             consumer_name=worker_settings.nats_consumer,
-            stream_name=worker_settings.nats_stream
+            stream_name=worker_settings.nats_stream,
+            max_inflight=self._max_inflight_commands,
+            max_ack_pending=worker_settings.nats_max_ack_pending,
+            fetch_timeout=worker_settings.nats_fetch_timeout_seconds,
+            fetch_heartbeat=worker_settings.nats_fetch_heartbeat_seconds,
         )
-        
-        logger.info(f"Worker {self.worker_id} starting (NATS: {self.nats_url})")
+
+        logger.info(
+            "Worker %s starting (NATS: %s, inflight=%s, db_inflight=%s, max_ack_pending=%s)",
+            self.worker_id,
+            self.nats_url,
+            self._max_inflight_commands,
+            self._max_inflight_db_commands,
+            worker_settings.nats_max_ack_pending,
+        )
         
         # Connect to NATS
         await self._nats_subscriber.connect()
@@ -385,8 +461,8 @@ class V2Worker:
         2. If claim succeeds, execute command
         3. If claim fails (409), another worker got it - silently skip
         """
-        import time
         t_total_start = time.perf_counter()
+        db_slot_acquired = False
 
         with LoggingContext(logger, notification=notification, execution_id=notification.get("execution_id")):
             try:
@@ -410,6 +486,12 @@ class V2Worker:
 
                 logger.info(f"[EVENT] Worker {self.worker_id} claimed command {command_id}")
 
+                command_tool = command.get("action")
+                if self._is_db_heavy_tool(command_tool):
+                    await self._db_command_semaphore.acquire()
+                    db_slot_acquired = True
+                    await self._wait_for_postgres_capacity(step=step, command_id=command_id)
+
                 # Execute the command
                 t_command_start = time.perf_counter()
                 await self._execute_command(command, server_url, command_id)
@@ -422,6 +504,9 @@ class V2Worker:
 
             except Exception as e:
                 logger.exception(f"Error handling command notification: {e}")
+            finally:
+                if db_slot_acquired:
+                    self._db_command_semaphore.release()
     
     async def _claim_and_fetch_command(self, server_url: str, event_id: int) -> Optional[dict]:
         """
@@ -770,7 +855,10 @@ class V2Worker:
                                 else:
                                     retry_config[key] = value
                             
-                            logger.info(f"[CASE-EVAL] Rendered retry config: {retry_config}")
+                            logger.debug(
+                                "[CASE-EVAL] Rendered retry config keys=%s",
+                                _safe_keys(retry_config),
+                            )
                         if 'next' in action:
                             has_next = True
                             next_steps = action['next']
@@ -819,7 +907,11 @@ class V2Worker:
                         server_vars = await self._fetch_execution_variables(server_url, execution_id)
                         
                         if server_vars:
-                            logger.info(f"[CASE-EVAL] Fetched {len(server_vars)} variables from server: {list(server_vars.keys())}")
+                            logger.debug(
+                                "[CASE-EVAL] Fetched %s variables from server (keys=%s)",
+                                len(server_vars),
+                                _safe_keys(server_vars),
+                            )
                             # Merge into eval_context under 'vars' namespace
                             eval_context['vars'] = server_vars
                             variables_fetched = True
@@ -871,175 +963,6 @@ class V2Worker:
             error=response.get('error') if isinstance(response, dict) else None
         )
     
-    async def _fetch_execution_variables(
-        self,
-        server_url: str,
-        execution_id: int
-    ) -> dict:
-        """
-        Fetch all execution variables from server API.
-        
-        Returns dict with variable names as keys and their values.
-        Used for case condition evaluation when variables are referenced.
-        """
-        import httpx
-        
-        try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.get(
-                    f"{server_url}/api/vars/{execution_id}",
-                    headers={"Content-Type": "application/json"}
-                )
-                
-                if response.status_code == 200:
-                    data = response.json()
-                    # Extract just the values from metadata structure
-                    # API returns: {variables: {name: {value, type, source_step, ...}}}
-                    variables = data.get('variables', {})
-                    return {name: meta.get('value') for name, meta in variables.items()}
-                else:
-                    logger.warning(f"[VARS] Failed to fetch variables: {response.status_code}")
-                    return {}
-        except Exception as e:
-            logger.error(f"[VARS] Error fetching variables: {e}")
-            return {}
-    
-    async def _evaluate_case_blocks(
-        self,
-        case_blocks: list,
-        response: dict,
-        render_context: dict,
-        server_url: str,
-        execution_id: int,
-        step: str
-    ) -> dict | None:
-        """
-        Hybrid case evaluation: Worker-side evaluation with both event and data context.
-
-        Evaluates case conditions against:
-        - Event context (event.name, event.type, etc.)
-        - Data context (response.status_code, result.field, error, etc.)
-
-        Returns action to take: {type: 'next'|'retry', details: {...}}
-        If no case matches, returns None.
-        """
-        from jinja2 import Environment
-        
-        if not case_blocks or not isinstance(case_blocks, list):
-            return None
-        
-        logger.info(f"[CASE-EVAL] Evaluating {len(case_blocks)} case blocks with hybrid context")
-        
-        # Create Jinja environment for condition evaluation
-        jinja_env = Environment()
-        
-        # Build hybrid evaluation context with both event and data
-        # Support both event-source (event.name) and data-source (response.status_code) evaluation
-        eval_context = {
-            **render_context,
-            'response': response,
-            'result': response,
-            'this': response,
-            'event': {
-                'name': 'call.done',  # Event name for post-call evaluation
-                'type': 'tool.completed',
-                'step': step
-            },
-            'error': response.get('error') if isinstance(response, dict) else None
-        }
-        
-        # Track if we need to fetch variables from server
-        variables_fetched = False
-        
-        # Check each case block
-        for idx, case in enumerate(case_blocks):
-            if not isinstance(case, dict):
-                continue
-            
-            when_condition = case.get('when')
-            then_block = case.get('then')
-            
-            if not when_condition or not then_block:
-                continue
-            
-            # Evaluate condition with hybrid context (with retry on missing variables)
-            max_retries = 2  # Allow one retry with server variable lookup
-            for attempt in range(max_retries):
-                try:
-                    # Use cached template for performance
-                    template = _template_cache.get_or_compile(when_condition)
-                    condition_result = template.render(eval_context)
-                    
-                    # Parse boolean result (Jinja2 returns string)
-                    # Jinja2's `and` operator returns the actual value, not "True/False"
-                    # e.g., {{ cond1 and some_string }} returns the string if truthy
-                    # So we evaluate truthiness: non-empty strings that aren't falsy values
-                    result_stripped = condition_result.strip()
-                    result_lower = result_stripped.lower()
-                    matches = bool(result_stripped) and result_lower not in ['false', '0', 'no', 'none', '']
-                    
-                    logger.info(f"[CASE-EVAL] Case {idx} condition: {when_condition[:100]}... = {matches}")
-                    
-                    if not matches:
-                        # Condition not met - break retry loop and try next case
-                        break
-                    
-                    # Case matched - extract action
-                    logger.info(f"[CASE-EVAL] Case {idx} matched! Extracting action from then block")
-                    
-                    # Normalize then_block to dict format
-                    then_actions = then_block if isinstance(then_block, dict) else {}
-                    
-                    # Check for routing actions (next, retry)
-                    if 'next' in then_actions:
-                        next_steps = then_actions['next']
-                        if isinstance(next_steps, list) and len(next_steps) > 0:
-                            return {
-                                'type': 'next',
-                                'steps': next_steps,
-                                'case_index': idx
-                            }
-                    
-                    if 'retry' in then_actions:
-                        retry_config = then_actions['retry']
-                        return {
-                            'type': 'retry',
-                            'config': retry_config,
-                            'case_index': idx
-                        }
-                    
-                    # Successfully evaluated - break retry loop
-                    break
-                    
-                except Exception as e:
-                    # Check if error is due to missing variable reference
-                    error_msg = str(e)
-                    if ('undefined' in error_msg.lower() or 'not defined' in error_msg.lower()) and attempt == 0 and not variables_fetched:
-                        # First attempt failed due to missing variable - fetch from server
-                        logger.warning(f"[CASE-EVAL] Missing variable in condition, fetching from server: {error_msg}")
-                        
-                        # Fetch variables from server API
-                        server_vars = await self._fetch_execution_variables(server_url, execution_id)
-                        
-                        if server_vars:
-                            logger.info(f"[CASE-EVAL] Fetched {len(server_vars)} variables from server: {list(server_vars.keys())}")
-                            # Merge into eval_context under 'vars' namespace
-                            eval_context['vars'] = server_vars
-                            variables_fetched = True
-                            # Continue to retry with enriched context
-                            continue
-                        else:
-                            logger.error(f"[CASE-EVAL] Failed to fetch variables from server")
-                            break
-                    else:
-                        # Other error or retry exhausted
-                        logger.error(f"[CASE-EVAL] Error evaluating case {idx} (attempt {attempt + 1}): {e}")
-                        break
-        
-        # No matching case with routing action
-        logger.info(f"[CASE-EVAL] No matching case with routing action found")
-        return None
-    
     async def _execute_command(self, command: dict, server_url: str, command_id: str = None):
         """Execute a command and emit events."""
         execution_id = command["execution_id"]
@@ -1062,7 +985,7 @@ class V2Worker:
         if spec:
             case_mode = spec.get("case_mode", "exclusive")
             eval_mode = spec.get("eval_mode", "on_entry")
-            logger.info(f"[SPEC] Step '{step}' has spec: case_mode={case_mode}, eval_mode={eval_mode}")
+            logger.debug(f"[SPEC] Step '{step}' spec: case_mode={case_mode}, eval_mode={eval_mode}")
         
         # CRITICAL: Merge tool_config.args with top-level args
         # In V2 DSL, step args are often defined within the tool block
@@ -1072,9 +995,9 @@ class V2Worker:
             # Merge with top-level args taking precedence
             merged_args = {**tool_config["args"], **args}
             args = merged_args
-            logger.debug(f"Args config: merged_from_tool_config | result={args}")
+            logger.debug("Args config: merged_from_tool_config | keys=%s", _safe_keys(args))
         else:
-            logger.debug(f"Args config: using_top_level | args={args}")
+            logger.debug("Args config: using_top_level | keys=%s", _safe_keys(args))
         
         logger.info(f"[EVENT] Executing {step} (tool={tool_kind}) for execution {execution_id}" + (f" command={command_id}" if command_id else ""))
 
@@ -1087,7 +1010,7 @@ class V2Worker:
             render_context["execution_id"] = execution_id
         if catalog_id and "catalog_id" not in render_context:
             render_context["catalog_id"] = catalog_id
-            logger.info(f"[KEYCHAIN] Added catalog_id={catalog_id} to render_context for step {step}")
+            logger.debug(f"[KEYCHAIN] Added catalog_id to render_context for step {step}")
         
         try:
             import time
@@ -1158,19 +1081,20 @@ class V2Worker:
 
             # Note: _internal_data will be cleaned up before emitting final events
             
-            # CRITICAL: Log case blocks at INFO level for debugging
-            logger.info(f"[CASE-CHECK] After tool execution for step: {step} | case_blocks present: {case_blocks is not None} | type: {type(case_blocks)}")
-            if case_blocks:
-                logger.info(f"[CASE-CHECK] case_blocks length: {len(case_blocks)} | value: {case_blocks}")
-            
+            logger.debug(
+                "[CASE-CHECK] step=%s case_blocks_present=%s case_blocks_type=%s case_blocks_count=%s",
+                step,
+                case_blocks is not None,
+                type(case_blocks).__name__,
+                len(case_blocks) if isinstance(case_blocks, list) else 0,
+            )
             logger.debug(f"[DEBUG] After tool execution for step: {step}")
-            logger.debug(f"[DEBUG] case_blocks type: {type(case_blocks)}, value: {case_blocks}")
             logger.debug(f"[DEBUG] case_blocks is None: {case_blocks is None}")
             logger.debug(f"[DEBUG] case_blocks bool: {bool(case_blocks)}")
             if case_blocks:
                 logger.debug(f"[DEBUG] case_blocks length: {len(case_blocks)}")
                 for idx, cb in enumerate(case_blocks):
-                    logger.debug(f"[DEBUG] case_block[{idx}]: {cb}")
+                    logger.debug("[DEBUG] case_block[%s] keys=%s", idx, _safe_keys(cb))
 
             logger.debug(f"[DEBUG] context has_case={'case' in context} | case_blocks={case_blocks is not None} | case_count={len(case_blocks) if case_blocks else 0}")
             
@@ -1268,6 +1192,9 @@ class V2Worker:
                     )
                     
                     # Emit appropriate event based on success or error
+                    # IMPORTANT: Use response_for_events for errors too so large failed
+                    # payloads are externalized and do not bloat event storage.
+                    error_event_response = response_for_events if tool_error else error_response
                     if tool_error:
                         await self._emit_event(
                             server_url,
@@ -1276,7 +1203,7 @@ class V2Worker:
                             "call.error",
                             {
                                 "error": tool_error,
-                                "response": error_response,
+                                "response": error_event_response,
                                 "case_handled": True
                             },
                             actionable=True,  # Case evaluated - server may route/retry
@@ -1331,6 +1258,9 @@ class V2Worker:
             if tool_error:
                 # Tool returned error - treat as failure (no case handled it)
                 logger.error(f"Tool execution failed for {step}: {tool_error}")
+                # Use processed response (externalized when large) to avoid persisting
+                # raw oversized payloads in failure events.
+                error_event_response = response_for_events if error_response is not None else error_response
                 
                 # Emit call.error with error payload - ACTIONABLE for server to handle
                 await self._emit_event(
@@ -1338,7 +1268,7 @@ class V2Worker:
                     execution_id,
                     step,
                     "call.error",
-                    {"error": tool_error, "response": error_response},
+                    {"error": tool_error, "response": error_event_response},
                     actionable=True,  # Server should evaluate case blocks or fail
                     informative=True
                 )
@@ -1352,7 +1282,7 @@ class V2Worker:
                     {
                         "status": "FAILED",  # Uppercase to match database status values
                         "error": tool_error,
-                        "result": error_response
+                        "result": error_event_response
                     },
                     actionable=True,  # Server may want to handle failure
                     informative=True
@@ -1369,7 +1299,7 @@ class V2Worker:
                             "command_id": command_id,
                             "worker_id": self.worker_id,
                             "error": tool_error,
-                            "result": error_response
+                            "result": error_event_response
                         },
                         actionable=False,  # Informational
                         informative=True
@@ -1537,7 +1467,12 @@ class V2Worker:
         # This allows plugins to render Jinja2 templates with full state
         context = render_context if render_context else {"args": args, "step": step}
         
-        logger.info(f"WORKER: Initial context keys={list(context.keys())} | execution_id={context.get('execution_id')} | catalog_id={context.get('catalog_id')}")
+        logger.debug(
+            "WORKER: initial context keys=%s execution_id=%s has_catalog_id=%s",
+            _safe_keys(context),
+            context.get("execution_id"),
+            bool(context.get("catalog_id")),
+        )
         
         # Note: catalog_id should come from server in render_context
         # Worker does NOT query noetl database - only executes tool steps
@@ -1553,7 +1488,13 @@ class V2Worker:
         # This scans the config for {{ keychain.* }} references and populates context['keychain']
         catalog_id = context.get('catalog_id')
         execution_id = context.get('execution_id')
-        logger.info(f"[KEYCHAIN-DEBUG] Step {step}: catalog_id={catalog_id}, execution_id={execution_id}, tool_kind={tool_kind}")
+        logger.debug(
+            "[KEYCHAIN] Step=%s has_catalog_id=%s execution_id=%s tool_kind=%s",
+            step,
+            bool(catalog_id),
+            execution_id,
+            tool_kind,
+        )
         if catalog_id:
             # Combine config and args into single dict for scanning
             task_config_combined = {**config, **args}
@@ -1575,7 +1516,7 @@ class V2Worker:
                 refresh_threshold_seconds=refresh_threshold
             )
             k_end = time.perf_counter()
-            logger.info(f"[PERF] populate_keychain_context took {k_end - k_start:.4f}s")
+            logger.debug(f"[PERF] populate_keychain_context took {k_end - k_start:.4f}s")
         
         import time
         t_jinja_start = time.perf_counter()
@@ -1587,7 +1528,7 @@ class V2Worker:
         jinja_env = add_b64encode_filter(jinja_env)  # Add custom filters including tojson
         register_token_functions(jinja_env, context)
         t_jinja_end = time.perf_counter()
-        logger.info(f"[PERF] Jinja2 setup took {t_jinja_end - t_jinja_start:.4f}s")
+        logger.debug(f"[PERF] Jinja2 setup took {t_jinja_end - t_jinja_start:.4f}s")
         
         # Map V2 config format to plugin task_config format
         # Plugins use different field names than V2 DSL
@@ -2002,8 +1943,14 @@ class V2Worker:
         if not url:
             raise ValueError("HTTP tool requires 'url' or 'endpoint' in config")
         
-        # Debug logging
-        logger.info(f"HTTP {method} request to URL: {url} | headers={headers} | params={params}")
+        logger.debug(
+            "HTTP %s request url=%s headers_keys=%s params_keys=%s has_json_body=%s",
+            method,
+            url,
+            _safe_keys(headers),
+            _safe_keys(params),
+            json_body is not None,
+        )
         
         # Make request
         response = await self._http_client.request(
@@ -2307,7 +2254,15 @@ class V2Worker:
         for attempt in range(max_retries):
             try:
                 t_http_start = time.perf_counter()
-                logger.info(f"[HTTP] POST {event_url} - Event: {name} for {step} (execution {execution_id}) - Attempt {attempt + 1}/{max_retries}")
+                logger.debug(
+                    "[HTTP] POST %s event=%s step=%s execution=%s attempt=%s/%s",
+                    event_url,
+                    name,
+                    step,
+                    execution_id,
+                    attempt + 1,
+                    max_retries,
+                )
 
                 response = await self._http_client.post(
                     event_url,
@@ -2317,7 +2272,7 @@ class V2Worker:
                 response.raise_for_status()
 
                 t_http_end = time.perf_counter()
-                logger.info(f"[PERF] emit_event({name}) HTTP took {(t_http_end - t_http_start)*1000:.1f}ms - Status: {response.status_code}")
+                logger.debug(f"[PERF] emit_event({name}) HTTP took {(t_http_end - t_http_start)*1000:.1f}ms - status={response.status_code}")
                 return  # Success - exit retry loop
 
             except Exception as e:

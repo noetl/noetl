@@ -8,6 +8,7 @@ from typing import Dict, Any, Optional
 import httpx
 
 from noetl.core.logger import setup_logger
+from noetl.core.sanitize import sanitize_headers
 
 logger = setup_logger(__name__, include_location=True)
 
@@ -22,14 +23,21 @@ def process_response(response: httpx.Response) -> Dict[str, Any]:
     Returns:
         Dictionary containing response metadata and data
     """
+    raw_headers = dict(response.headers)
     response_data = {
         'status_code': response.status_code,
-        'headers': dict(response.headers),
+        'headers': raw_headers,
         'url': str(response.url),
         'elapsed': response.elapsed.total_seconds() if hasattr(response, 'elapsed') else None
     }
     
-    logger.debug(f"HTTP: Response metadata={response_data}")
+    logger.debug(
+        "HTTP: Response metadata status=%s url=%s elapsed=%s header_keys=%s",
+        response.status_code,
+        response_data["url"],
+        response_data["elapsed"],
+        list(sanitize_headers(raw_headers).keys()),
+    )
     
     try:
         response_content_type = response.headers.get('Content-Type', '').lower()

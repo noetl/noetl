@@ -129,11 +129,11 @@ def execute_snowflake_transfer_action(
             raise ValueError("Either target.table or target.query is required")
         
         logger.info(f"Snowflake transfer: direction={direction} | chunk_size={chunk_size} | mode={mode if not target_query else 'custom'}")
-        query_info = [f"source_query={source_query}"]
+        query_info = ["source_query=<provided>"]
         if target_table:
             query_info.append(f"target_table={target_table}")
         if target_query:
-            query_info.append(f"target_query={target_query[:100]}")
+            query_info.append(f"target_query_length={len(target_query)}")
         logger.info(f"Snowflake config: {' | '.join(query_info)}")
         
         # Resolve credentials from auth configuration
@@ -148,7 +148,11 @@ def execute_snowflake_transfer_action(
         
         mode_type, resolved_auth_map = resolve_auth(auth_config, jinja_env, context)
         
-        logger.info(f"Snowflake auth resolved | mode={mode_type} | aliases={list(resolved_auth_map.keys())} | config={auth_config}")
+        logger.info(
+            "Snowflake auth resolved | mode=%s | aliases=%s",
+            mode_type,
+            list(resolved_auth_map.keys()),
+        )
         
         # Get Snowflake and PostgreSQL credentials (following duckdb pattern)
         sf_auth_item = resolved_auth_map.get('sf')
@@ -163,7 +167,11 @@ def execute_snowflake_transfer_action(
         sf_auth_data = sf_auth_item.payload
         pg_auth_data = pg_auth_item.payload
         
-        logger.info(f"Auth payloads | sf_keys={list(sf_auth_data.keys())} | pg_keys={list(pg_auth_data.keys())}")
+        logger.debug(
+            "Auth payload shapes | sf_keys=%s | pg_keys=%s",
+            list(sf_auth_data.keys()),
+            list(pg_auth_data.keys()),
+        )
         
         # Extract Snowflake connection parameters (use sf_ prefix as stored in credential)
         sf_account = sf_auth_data.get('sf_account') or sf_auth_data.get('account')
@@ -183,11 +191,11 @@ def execute_snowflake_transfer_action(
         
         # Validate credentials
         if not all([sf_account, sf_user, sf_password]):
-            logger.error(f"Snowflake credentials missing | keys={list(sf_auth_data.keys())} | account={sf_account} | user={sf_user} | password={'***' if sf_password else None}")
+            logger.error("Snowflake credentials missing | keys=%s", list(sf_auth_data.keys()))
             raise ValueError("Snowflake credentials (account, user, password) are required")
         
         if not all([pg_user, pg_password, pg_database]):
-            logger.error(f"PostgreSQL credentials missing | keys={list(pg_auth_data.keys())} | user={pg_user} | database={pg_database} | password={'***' if pg_password else None}")
+            logger.error("PostgreSQL credentials missing | keys=%s", list(pg_auth_data.keys()))
             raise ValueError("PostgreSQL credentials (user, password, database) are required")
         
         # Log task start event

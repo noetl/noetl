@@ -75,7 +75,7 @@ def transfer_snowflake_to_postgres(
         if target_query:
             # Use custom query provided by user
             insert_sql = target_query
-            logger.info(f"Using custom target query: {insert_sql}")
+            logger.info("Using custom target query (length=%s chars)", len(insert_sql))
             
             # Validate placeholder count matches column count
             placeholder_count = insert_sql.count('%s')
@@ -110,7 +110,7 @@ def transfer_snowflake_to_postgres(
                     VALUES ({placeholders})
                 """
             
-            logger.debug(f"Auto-generated SQL: {insert_sql}")
+            logger.debug("Auto-generated SQL for Snowflake transfer (length=%s chars)", len(insert_sql))
         
         # Process data in chunks
         while True:
@@ -218,7 +218,7 @@ def transfer_postgres_to_snowflake(
             if target_query:
                 # Use custom query provided by user
                 insert_sql = target_query
-                logger.info(f"Using custom target query: {insert_sql}")
+                logger.info("Using custom target query (length=%s chars)", len(insert_sql))
                 
                 # Validate placeholder count matches column count
                 placeholder_count = insert_sql.count('%s')
@@ -243,7 +243,7 @@ def transfer_postgres_to_snowflake(
                     VALUES ({placeholders})
                 """
                 
-                logger.debug(f"Auto-generated SQL: {insert_sql}")
+                logger.debug("Auto-generated SQL for Snowflake transfer (length=%s chars)", len(insert_sql))
             
             # Process data in chunks
             while True:

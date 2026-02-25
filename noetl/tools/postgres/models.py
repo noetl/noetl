@@ -16,35 +16,34 @@ class PostgresPoolConfig(BaseModel):
     
     name: Optional[str] = Field(
         default=None,
-        description="Pool name for sharing across steps. If not specified, defaults to execution_id (pool per playbook). "
-                    "Use explicit name to share pool across multiple steps: pool: {name: 'shared_pool'}"
+        description="Pool name for sharing across steps. If not specified, runtime derives a shared pool name from db/user."
     )
     
     timeout: Optional[float] = Field(
         default=None,
         description="Timeout in seconds for acquiring connection from pool. "
-                    "None = default 10s, -1 = infinite wait, positive number = custom timeout"
+                    "None = runtime/env default (60s), -1 = infinite wait, positive number = custom timeout"
     )
     
     min_size: Optional[int] = Field(
         default=None,
         ge=1,
         le=100,
-        description="Minimum number of connections to maintain in pool (1-100, default 2)"
+        description="Minimum number of connections to maintain in pool (1-100, default from runtime/env)"
     )
     
     max_size: Optional[int] = Field(
         default=None,
         ge=1,
         le=1000,
-        description="Maximum number of connections allowed in pool (1-1000, default 20)"
+        description="Maximum number of connections allowed in pool (1-1000, default from runtime/env)"
     )
     
     max_waiting: Optional[int] = Field(
         default=None,
         ge=0,
         le=10000,
-        description="Maximum number of requests waiting for connection (0-10000, default 50)"
+        description="Maximum number of requests waiting for connection (0-10000, default from runtime/env)"
     )
     
     max_lifetime: Optional[float] = Field(

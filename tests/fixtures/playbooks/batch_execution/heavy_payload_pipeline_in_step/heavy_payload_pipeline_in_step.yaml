@@ -1,0 +1,439 @@
+apiVersion: noetl.io/v2
+kind: Playbook
+metadata:
+  name: heavy_payload_pipeline_in_step
+  path: tests/fixtures/playbooks/batch_execution/heavy_payload_pipeline_in_step
+  description: Simulate large per-item pipeline payloads and compare direct stress vs chunked processing.
+
+workload:
+  pg_auth: pg_k8s
+  seed_rows: 240
+  payload_kb_per_item: 256
+  batch_size: 40
+  max_batches: 6
+  execution_mode: chunked_optimal
+  details_api_url: https://httpbin.org/anything/heavy-item-detail
+  batch_worker_path: tests/fixtures/playbooks/batch_execution/heavy_payload_pipeline_chunk_worker
+
+workflow:
+  - step: start
+    desc: Initialize heavy payload simulation
+    tool:
+      kind: python
+      code: |
+        result = {
+          "status": "initialized",
+          "modes": ["direct_stress", "chunked_optimal"],
+          "goal": "simulate_large_pipeline_payloads"
+        }
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: prepare_source_and_target
+
+  - step: prepare_source_and_target
+    desc: Prepare source and result tables and seed source IDs
+    tool:
+      kind: postgres
+      auth: '{{ pg_auth }}'
+      query: |
+        CREATE TABLE IF NOT EXISTS public.heavy_payload_source (
+          execution_id TEXT NOT NULL,
+          item_id INTEGER NOT NULL,
+          item_key TEXT NOT NULL,
+          PRIMARY KEY (execution_id, item_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS public.heavy_payload_results (
+          execution_id TEXT NOT NULL,
+          item_id INTEGER NOT NULL,
+          item_key TEXT NOT NULL,
+          mode TEXT NOT NULL,
+          batch_number INTEGER NOT NULL DEFAULT 0,
+          http_status INTEGER,
+          request_bytes INTEGER NOT NULL DEFAULT 0,
+          response_bytes INTEGER NOT NULL DEFAULT 0,
+          has_response BOOLEAN NOT NULL DEFAULT FALSE,
+          response_meta JSONB,
+          error_message TEXT,
+          processed_at TIMESTAMPTZ DEFAULT NOW(),
+          PRIMARY KEY (execution_id, item_id)
+        );
+
+        DELETE FROM public.heavy_payload_source
+        WHERE execution_id = '{{ execution_id }}';
+
+        DELETE FROM public.heavy_payload_results
+        WHERE execution_id = '{{ execution_id }}';
+
+        INSERT INTO public.heavy_payload_source (execution_id, item_id, item_key)
+        SELECT
+          '{{ execution_id }}',
+          gs,
+          'Item-' || gs
+        FROM generate_series(1, {{ seed_rows | int }}) AS gs;
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: load_items_for_execution
+
+  - step: load_items_for_execution
+    desc: Load lightweight item list (IDs only) for loop routing
+    tool:
+      kind: postgres
+      auth: '{{ pg_auth }}'
+      query: |
+        SELECT item_id, item_key
+        FROM public.heavy_payload_source
+        WHERE execution_id = '{{ execution_id }}'
+        ORDER BY item_id ASC;
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: resolve_mode
+
+  - step: resolve_mode
+    desc: Resolve mode for this run
+    tool:
+      kind: python
+      args:
+        execution_mode: '{{ execution_mode }}'
+      code: |
+        mode = str(execution_mode or "chunked_optimal").strip().lower()
+        if mode not in ("direct_stress", "chunked_optimal"):
+            mode = "chunked_optimal"
+
+        result = {
+            "mode": mode,
+            "is_direct": mode == "direct_stress",
+        }
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: run_direct_stress
+          when: '{{ resolve_mode.mode == "direct_stress" }}'
+        - step: build_batch_plan
+          when: '{{ resolve_mode.mode != "direct_stress" }}'
+
+  - step: run_direct_stress
+    desc: Direct loop over all items using heavy pipeline per item
+    loop:
+      in: '{{ load_items_for_execution.command_0.rows }}'
+      iterator: item
+      spec:
+        mode: parallel
+        max_in_flight: 20
+        policy:
+          exec: distributed
+    tool:
+      - name: build_large_request
+        kind: python
+        args:
+          item: '{{ iter.item }}'
+          payload_kb_per_item: '{{ payload_kb_per_item }}'
+        code: |
+          import hashlib
+
+          size_kb = int(payload_kb_per_item or 256)
+          size_bytes = max(1024, size_kb * 1024)
+
+          item_id = int(item.get("item_id", 0) or 0) if isinstance(item, dict) else 0
+          item_key = str(item.get("item_key", "") or "") if isinstance(item, dict) else ""
+
+          seed = f"{item_id}:{item_key}".encode("utf-8")
+          block = hashlib.sha256(seed).hexdigest()
+          repeat_count = (size_bytes // len(block)) + 2
+          request_blob = (block * repeat_count)[:size_bytes]
+
+          result = {
+              "item_id": item_id,
+              "item_key": item_key,
+              "request_blob": request_blob,
+              "request_bytes": len(request_blob.encode("utf-8")),
+          }
+      - name: fetch_detail
+        kind: http
+        method: POST
+        url: '{{ details_api_url }}'
+        headers:
+          Content-Type: application/json
+          Accept: application/json
+        payload:
+          item_id: '{{ build_large_request.item_id }}'
+          item_key: '{{ build_large_request.item_key }}'
+          request_blob: '{{ build_large_request.request_blob }}'
+        spec:
+          policy:
+            rules:
+              - when: '{{ outcome.status == "error" and (outcome.http.status in [429, 500, 502, 503, 504]) }}'
+                then: { do: retry, attempts: 4, backoff: exponential, delay: 1.0 }
+              - when: '{{ outcome.status == "error" }}'
+                then: { do: fail }
+              - else:
+                  then: { do: continue }
+      - name: project_result
+        kind: python
+        libs:
+          json: json
+        args:
+          request_payload: '{{ build_large_request }}'
+          http_result: '{{ fetch_detail }}'
+          mode: direct_stress
+          batch_number: 0
+        code: |
+          status_code = int(http_result.get("status_code", 0) or 0) if isinstance(http_result, dict) else 0
+          response_headers = http_result.get("headers", {}) if isinstance(http_result, dict) else {}
+
+          content_length = response_headers.get("content-length") or response_headers.get("Content-Length")
+          if isinstance(content_length, str) and content_length.isdigit():
+              response_bytes = int(content_length)
+          else:
+              response_bytes = len(json.dumps(http_result.get("data", {}), separators=(",", ":"))) if isinstance(http_result, dict) else 0
+
+          result = {
+              "item_id": int(request_payload.get("item_id", 0) or 0),
+              "item_key": str(request_payload.get("item_key", "") or ""),
+              "mode": str(mode),
+              "batch_number": int(batch_number or 0),
+              "http_status": status_code,
+              "request_bytes": int(request_payload.get("request_bytes", 0) or 0),
+              "response_bytes": int(response_bytes or 0),
+              "has_response": status_code > 0,
+              "response_meta": {
+                  "url": http_result.get("url") if isinstance(http_result, dict) else None,
+                  "elapsed": http_result.get("elapsed") if isinstance(http_result, dict) else None,
+              },
+              "error_message": "",
+          }
+      - name: persist_result
+        kind: postgres
+        auth: '{{ pg_auth }}'
+        command: |
+          INSERT INTO public.heavy_payload_results (
+            execution_id,
+            item_id,
+            item_key,
+            mode,
+            batch_number,
+            http_status,
+            request_bytes,
+            response_bytes,
+            has_response,
+            response_meta,
+            error_message
+          )
+          VALUES (
+            '{{ execution_id }}',
+            {{ project_result.item_id }},
+            '{{ project_result.item_key | replace("'", "''") }}',
+            '{{ project_result.mode }}',
+            {{ project_result.batch_number }},
+            {{ project_result.http_status }},
+            {{ project_result.request_bytes }},
+            {{ project_result.response_bytes }},
+            {{ 'true' if project_result.has_response else 'false' }},
+            '{{ project_result.response_meta | tojson | replace("'", "''") }}'::jsonb,
+            NULLIF('{{ project_result.error_message | replace("'", "''") }}', '')
+          )
+          ON CONFLICT (execution_id, item_id)
+          DO UPDATE SET
+            item_key = EXCLUDED.item_key,
+            mode = EXCLUDED.mode,
+            batch_number = EXCLUDED.batch_number,
+            http_status = EXCLUDED.http_status,
+            request_bytes = EXCLUDED.request_bytes,
+            response_bytes = EXCLUDED.response_bytes,
+            has_response = EXCLUDED.has_response,
+            response_meta = EXCLUDED.response_meta,
+            error_message = EXCLUDED.error_message,
+            processed_at = NOW();
+      - name: finalize
+        kind: python
+        args:
+          projected: '{{ project_result }}'
+        code: |
+          result = projected
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: validate_persisted_results
+          when: '{{ event.name == ''loop.done'' }}'
+
+  - step: build_batch_plan
+    desc: Build chunk windows for bounded-memory batch execution
+    tool:
+      kind: python
+      args:
+        batch_size: '{{ batch_size }}'
+        max_batches: '{{ max_batches }}'
+      code: |
+        size = int(batch_size or 40)
+        total = int(max_batches or 1)
+
+        batches = []
+        for idx in range(total):
+            batch_number = idx + 1
+            offset = idx * size
+            batches.append(
+                {
+                    "batch_number": batch_number,
+                    "offset": offset,
+                    "limit": size,
+                }
+            )
+
+        result = {
+            "batch_size": size,
+            "max_batches": total,
+            "batches": batches,
+        }
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: run_batch_workers
+
+  - step: run_batch_workers
+    desc: Execute chunk worker playbook sequentially across planned windows
+    loop:
+      in: '{{ build_batch_plan.batches }}'
+      iterator: batch
+      spec:
+        mode: sequential
+        policy:
+          exec: distributed
+    tool:
+      kind: playbook
+      path: '{{ batch_worker_path }}'
+      return_step: end
+      timeout: 1200
+      args:
+        pg_auth: '{{ pg_auth }}'
+        parent_execution_id: '{{ job.execution_id }}'
+        batch_number: '{{ iter.batch.batch_number }}'
+        offset: '{{ iter.batch.offset }}'
+        batch_size: '{{ iter.batch.limit }}'
+        payload_kb_per_item: '{{ payload_kb_per_item }}'
+        details_api_url: '{{ details_api_url }}'
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: validate_persisted_results
+          when: '{{ event.name == ''loop.done'' }}'
+
+  - step: validate_persisted_results
+    desc: Validate persisted data volume and completeness
+    tool:
+      kind: postgres
+      auth: '{{ pg_auth }}'
+      query: |
+        SELECT
+          (SELECT COUNT(*)
+           FROM public.heavy_payload_source
+           WHERE execution_id = '{{ execution_id }}') AS source_rows,
+          (SELECT COUNT(*)
+           FROM public.heavy_payload_results
+           WHERE execution_id = '{{ execution_id }}') AS stored_rows,
+          (SELECT COUNT(*)
+           FROM public.heavy_payload_results
+           WHERE execution_id = '{{ execution_id }}' AND http_status = 200) AS successful_http_calls,
+          (SELECT COUNT(*)
+           FROM public.heavy_payload_results
+           WHERE execution_id = '{{ execution_id }}' AND mode = 'direct_stress') AS direct_mode_rows,
+          (SELECT COUNT(*)
+           FROM public.heavy_payload_results
+           WHERE execution_id = '{{ execution_id }}' AND mode = 'chunked_optimal') AS chunked_mode_rows,
+          (SELECT COALESCE(MAX(batch_number), 0)
+           FROM public.heavy_payload_results
+           WHERE execution_id = '{{ execution_id }}') AS max_batch_number,
+          CASE
+            WHEN '{{ resolve_mode.mode }}' = 'direct_stress'
+              THEN {{ seed_rows | int }}
+            ELSE LEAST({{ seed_rows | int }}, {{ batch_size | int }} * {{ max_batches | int }})
+          END AS expected_rows;
+
+        SELECT COUNT(*) AS missing_rows
+        FROM public.heavy_payload_source src
+        LEFT JOIN public.heavy_payload_results tgt
+          ON src.execution_id = tgt.execution_id
+         AND src.item_id = tgt.item_id
+        WHERE src.execution_id = '{{ execution_id }}'
+          AND src.item_id <= CASE
+            WHEN '{{ resolve_mode.mode }}' = 'direct_stress'
+              THEN {{ seed_rows | int }}
+            ELSE LEAST({{ seed_rows | int }}, {{ batch_size | int }} * {{ max_batches | int }})
+          END
+          AND tgt.item_id IS NULL;
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: summarize
+
+  - step: summarize
+    desc: Summarize execution for mode and data checks
+    tool:
+      kind: python
+      args:
+        mode: '{{ resolve_mode.mode }}'
+        validation: '{{ validate_persisted_results }}'
+        direct_loop: '{{ run_direct_stress | default({}) }}'
+        worker_loop: '{{ run_batch_workers | default({}) }}'
+        payload_kb_per_item: '{{ payload_kb_per_item }}'
+        seed_rows: '{{ seed_rows }}'
+        batch_size: '{{ batch_size }}'
+        max_batches: '{{ max_batches }}'
+      code: |
+        stats = validation.get("command_0", {}).get("rows", [{}])[0] if isinstance(validation, dict) else {}
+        gaps = validation.get("command_1", {}).get("rows", [{}])[0] if isinstance(validation, dict) else {}
+
+        chosen_mode = str(mode or "chunked_optimal")
+        loop_data = direct_loop if chosen_mode == "direct_stress" else worker_loop
+        loop_stats = loop_data.get("stats", {}) if isinstance(loop_data, dict) else {}
+
+        configured_seed = int(seed_rows or 0)
+        configured_batch_size = int(batch_size or 0)
+        configured_max_batches = int(max_batches or 0)
+
+        result = {
+            "status": "completed",
+            "mode": chosen_mode,
+            "configured": {
+                "seed_rows": configured_seed,
+                "payload_kb_per_item": int(payload_kb_per_item or 0),
+                "batch_size": configured_batch_size,
+                "max_batches": configured_max_batches,
+            },
+            "execution": {
+                "loop_iterations": int(loop_stats.get("total", 0) or 0),
+                "failed_iterations": int(loop_stats.get("failed", 0) or 0),
+            },
+            "data": {
+                "source_rows": int(stats.get("source_rows", 0) or 0),
+                "expected_rows": int(stats.get("expected_rows", 0) or 0),
+                "stored_rows": int(stats.get("stored_rows", 0) or 0),
+                "missing_rows": int(gaps.get("missing_rows", 0) or 0),
+                "successful_http_calls": int(stats.get("successful_http_calls", 0) or 0),
+                "direct_mode_rows": int(stats.get("direct_mode_rows", 0) or 0),
+                "chunked_mode_rows": int(stats.get("chunked_mode_rows", 0) or 0),
+                "max_batch_number": int(stats.get("max_batch_number", 0) or 0),
+            },
+        }
+    next:
+      spec:
+        mode: exclusive
+      arcs:
+        - step: end
+
+  - step: end
+    desc: End workflow
+    tool:
+      kind: python
+      code: |
+        result = {"status": "completed"}

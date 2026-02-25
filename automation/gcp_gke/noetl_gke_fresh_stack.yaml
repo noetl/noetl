@@ -45,11 +45,11 @@ workload:
   gui_image_tag: latest
 
   # Public hosts (used when ingress is enabled)
-  deploy_ingress: true
-  noetl_public_host: api.example.com
-  gateway_public_host: gateway.example.com
-  gui_public_host: gui.example.com
-  gui_gateway_public_url: https://gateway.example.com
+  deploy_ingress: false
+  noetl_public_host: api.mestumre.dev
+  gateway_public_host: gateway.mestumre.dev
+  gui_public_host: mestumre.dev
+  gui_gateway_public_url: https://gateway.mestumre.dev
 
   # Core service settings
   postgres_password: demo
@@ -88,7 +88,13 @@ workload:
   pgbouncer_namespace: postgres
   pgbouncer_service_name: pgbouncer
   pgbouncer_max_client_conn: 500
-  pgbouncer_default_pool_size: 40
+  pgbouncer_default_pool_size: 12
+  pgbouncer_min_pool_size: 4
+  pgbouncer_reserve_pool_size: 4
+  pgbouncer_reserve_pool_timeout: "5"
+  pgbouncer_max_db_connections: 60
+  pgbouncer_server_lifetime: "21600"
+  pgbouncer_server_idle_timeout: "600"
   cloud_sql_proxy_gsa_name: noetl-cloudsql-proxy
   cloud_sql_proxy_ksa_name: cloudsql-proxy
   cloud_sql_proxy_image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.18.3
@@ -118,8 +124,8 @@ workload:
   demo_can_read_noetl_schema: true
 
   # Gateway settings
-  gateway_service_type: ClusterIP
-  gateway_load_balancer_ip: ""
+  gateway_service_type: LoadBalancer
+  gateway_load_balancer_ip: "34.46.180.136"
   gateway_public_url: "http://gateway.gateway.svc.cluster.local"
   gateway_auth_bypass: "false"
   bootstrap_gateway_auth: true
@@ -135,8 +141,8 @@ workload:
   gateway_cors_include_localhost: true
 
   # GUI settings
-  gui_service_type: ClusterIP
-  gui_load_balancer_ip: ""
+  gui_service_type: LoadBalancer
+  gui_load_balancer_ip: "35.226.162.30"
 
 workflow:
   - step: start
@@ -156,6 +162,26 @@ workflow:
           if [ -z "{{ workload.project_id }}" ] && [ "{{ workload.action }}" != "help" ]; then
             echo "ERROR: workload.project_id is required for action '{{ workload.action }}'"
             exit 1
+          fi
+
+          # Guardrail: if ingress is disabled, GUI/Gateway must stay publicly reachable via LB.
+          if [ "{{ workload.action }}" = "deploy" ] || [ "{{ workload.action }}" = "provision-deploy" ]; then
+            if [ "{{ workload.deploy_ingress }}" != "true" ]; then
+              if [ "{{ workload.gateway_service_type }}" != "LoadBalancer" ] || [ "{{ workload.gui_service_type }}" != "LoadBalancer" ]; then
+                echo "ERROR: deploy_ingress=false requires gateway_service_type=LoadBalancer and gui_service_type=LoadBalancer"
+                echo "       Otherwise public domains will fail with Cloudflare 522."
+                exit 1
+              fi
+            fi
+
+            # Guardrail: ingress with placeholder example.com hosts causes cert provisioning failures.
+            if [ "{{ workload.deploy_ingress }}" = "true" ]; then
+              if [ "{{ workload.noetl_public_host }}" = "api.example.com" ] || [ "{{ workload.gateway_public_host }}" = "gateway.example.com" ] || [ "{{ workload.gui_public_host }}" = "gui.example.com" ]; then
+                echo "ERROR: ingress hosts are still placeholder example.com values."
+                echo "       Set noetl_public_host/gateway_public_host/gui_public_host to real DNS names before deploy."
+                exit 1
+              fi
+            fi
           fi
     next:
       - when: "{{ workload.action != 'help' }}"
@@ -979,6 +1005,18 @@ workflow:
                         value: "{{ workload.pgbouncer_max_client_conn }}"
                       - name: DEFAULT_POOL_SIZE
                         value: "{{ workload.pgbouncer_default_pool_size }}"
+                      - name: MIN_POOL_SIZE
+                        value: "{{ workload.pgbouncer_min_pool_size }}"
+                      - name: RESERVE_POOL_SIZE
+                        value: "{{ workload.pgbouncer_reserve_pool_size }}"
+                      - name: RESERVE_POOL_TIMEOUT
+                        value: "{{ workload.pgbouncer_reserve_pool_timeout }}"
+                      - name: MAX_DB_CONNECTIONS
+                        value: "{{ workload.pgbouncer_max_db_connections }}"
+                      - name: SERVER_LIFETIME
+                        value: "{{ workload.pgbouncer_server_lifetime }}"
+                      - name: SERVER_IDLE_TIMEOUT
+                        value: "{{ workload.pgbouncer_server_idle_timeout }}"
                     ports:
                       - containerPort: 5432
                         name: psql

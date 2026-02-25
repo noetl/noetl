@@ -15,12 +15,17 @@ from noetl.core.common import (
 )
 from noetl.core.db.pool import get_pool_connection
 from noetl.core.logger import setup_logger
+from noetl.core.sanitize import sanitize_for_logging
 from noetl.server.api.broker.service import EventService
 from noetl.server.api.catalog import get_catalog_service
 from noetl.server.api.catalog.service import CatalogService
 from noetl.worker.transient import TransientVars
 
 logger = setup_logger(__name__, include_location=True)
+
+
+def _preview(value: Any, max_length: int = 200) -> str:
+    return sanitize_for_logging(value, max_length=max_length)
 
 
 async def fetch_execution_context(execution_id: int) -> Dict[str, Any]:
@@ -151,12 +156,12 @@ async def build_rendering_context(
         try:
             vars_data = await TransientVars.get_all_vars(execution_id)
             base_ctx["vars"] = vars_data
-            logger.info(f"✓ Loaded {len(vars_data)} variables from transient for execution {execution_id}")
+            logger.debug(f"Loaded {len(vars_data)} transient vars for execution {execution_id}")
         except Exception as e:
             logger.warning(f"Failed to load transient for execution {execution_id}: {e}")
             base_ctx["vars"] = {}
     else:
-        logger.info("No execution_id in extra_context, vars namespace will be empty")
+        logger.debug("No execution_id in extra_context; vars namespace is empty")
         base_ctx["vars"] = {}
 
     # Allow direct references to prior step names
@@ -245,9 +250,11 @@ async def build_rendering_context(
     # Merge extra context FIRST (before workload) to establish protected system fields
     if isinstance(extra_context, dict):
         try:
-            # DEBUG: Log execution_id from extra_context
             if "execution_id" in extra_context:
-                logger.info(f"[CONTEXT] execution_id from extra_context: {extra_context['execution_id']} (type: {type(extra_context['execution_id']).__name__})")
+                logger.debug(
+                    "[CONTEXT] extra_context includes execution_id (type=%s)",
+                    type(extra_context["execution_id"]).__name__,
+                )
             base_ctx.update(extra_context)
         except (TypeError, ValueError, KeyError) as e:
             logger.warning(f"Could not update context with extra_context: {e}")
@@ -260,18 +267,19 @@ async def build_rendering_context(
             protected_fields = {"execution_id", "catalog_id", "job_id"}
             # Save protected values
             protected_values = {k: base_ctx.get(k) for k in protected_fields if k in base_ctx}
-            # DEBUG: Log what we're protecting
             if protected_values:
-                logger.info(f"[CONTEXT] Protecting fields: {list(protected_values.keys())} with values: {protected_values}")
+                logger.debug("[CONTEXT] Protecting fields from workload merge: %s", list(protected_values.keys()))
             if "execution_id" in workload:
-                logger.warning(f"[CONTEXT] workload contains execution_id={workload['execution_id']}, will be overridden by protected value")
+                logger.warning("[CONTEXT] workload contains execution_id; protected system value will override it")
             # Merge workload
             base_ctx.update(workload)
             # Restore protected values
             base_ctx.update(protected_values)
-            # DEBUG: Verify execution_id after restore
             if "execution_id" in base_ctx:
-                logger.info(f"[CONTEXT] After restore, execution_id={base_ctx['execution_id']} (type: {type(base_ctx['execution_id']).__name__})")
+                logger.debug(
+                    "[CONTEXT] Restored protected execution_id (type=%s)",
+                    type(base_ctx["execution_id"]).__name__,
+                )
         except (TypeError, ValueError) as e:
             logger.warning(f"Could not update context with workload: {e}")
 
@@ -365,7 +373,7 @@ def merge_template_work_context(
                                 tmpl = env.from_string(v)
                                 rendered_val = tmpl.render(**context)
                                 context[k] = rendered_val
-                                logger.debug(f"  Rendered arg {k}: '{v}' -> '{rendered_val}'")
+                                logger.debug("Rendered arg '%s' (type=%s)", k, type(rendered_val).__name__)
                             except Exception as e:
                                 logger.warning(f"Failed to render arg template '{k}': {e}")
                                 context[k] = v
@@ -397,18 +405,16 @@ def render_template_object(
 
     template_info = f"type={type(template)} | is_dict={isinstance(template, dict)}"
     if isinstance(template, str):
-        template_info += f" | value={template[:200]}"
+        template_info += f" | value_preview={_preview(template, max_length=120)}"
     elif isinstance(template, dict):
         template_info += f" | keys={list(template.keys())}"
-    logger.info(f"RENDER_TEMPLATE_OBJECT: {template_info}")
+    logger.debug(f"RENDER_TEMPLATE_OBJECT: {template_info}")
 
     env = Environment(loader=BaseLoader(), undefined=StrictUndefined)
 
     # Handle dict templates specially
     if isinstance(template, dict):
-        logger.info(
-            f"RENDER_DEBUG: Template is dict with keys: {list(template.keys())}"
-        )
+        logger.debug("RENDER_DEBUG: template keys=%s", list(template.keys()))
         
         # Make a copy to avoid mutating the original
         template = dict(template)
@@ -431,12 +437,18 @@ def render_template_object(
         sink_block = None
         
         task_dict_keys = list(task_dict.keys()) if task_dict else None
-        logger.critical(f"RENDER_DEBUG: Before extraction | template_keys={list(template.keys())} | has_loop={has_loop} | task_dict_exists={task_dict is not None} | task_dict_keys={task_dict_keys}")
+        logger.debug(
+            "RENDER_DEBUG: before extraction template_keys=%s has_loop=%s task_dict_exists=%s task_dict_keys=%s",
+            list(template.keys()),
+            has_loop,
+            task_dict is not None,
+            task_dict_keys,
+        )
         if task_dict:
             # Extract sink from inside the task dict
             if 'sink' in task_dict:
                 sink_block = task_dict.pop('sink')
-                logger.critical(f"RENDER_DEBUG: Extracted sink from template['task']: {sink_block}")
+                logger.debug("RENDER_DEBUG: extracted sink from template['task']")
         
         if is_iterator and "task" in template:
             task_block = template.pop("task")
@@ -453,43 +465,39 @@ def render_template_object(
             else:
                 loop_source = None
             if loop_source:
-                logger.critical(f"RENDER_DEBUG: Extracted loop block from {loop_source}")
+                logger.debug(f"RENDER_DEBUG: extracted loop block from {loop_source}")
         
         # Also check for top-level sink (legacy support)
         if "sink" in template:
             top_level_sink = template.pop("sink")
             if sink_block is None:
                 sink_block = top_level_sink
-            logger.critical(f"RENDER_DEBUG: Extracted top-level sink (preserve unrendered) | sink={top_level_sink}")
+            logger.debug("RENDER_DEBUG: extracted top-level sink (preserve unrendered)")
         
         # NEW: For loop steps, preserve fields that may reference loop variables
         # These fields should only be rendered worker-side after loop context is available
         preserved_fields = {}
         if has_loop:
-            logger.critical(f"RENDER_DEBUG: Loop detected, preserving loop-sensitive fields")
+            logger.debug("RENDER_DEBUG: loop detected, preserving loop-sensitive fields")
             # Fields that commonly reference loop variables ({{ patient_id }}, {{ item }}, etc.)
             loop_sensitive_fields = ['url', 'endpoint', 'data', 'params', 'payload', 'code', 'command', 'commands', 'query', 'sql']
             # Check both task dict and top-level template
             for field in loop_sensitive_fields:
                 if task_dict and field in task_dict:
                     preserved_fields[field] = task_dict.pop(field)
-                    logger.critical(f"RENDER_DEBUG: Preserved loop-sensitive field '{field}' from template['task']")
+                    logger.debug(f"RENDER_DEBUG: preserved field '{field}' from template['task']")
                 elif field in template:
                     preserved_fields[field] = template.pop(field)
-                    logger.critical(f"RENDER_DEBUG: Preserved loop-sensitive field '{field}' from top-level template")
+                    logger.debug(f"RENDER_DEBUG: preserved field '{field}' from top-level template")
         
         # Render the template (everything except extracted blocks and preserved fields)
         try:
-            # DEBUG: Log what we're about to render
-            logger.critical(f"RENDER_DEBUG: About to render template={template}")
-            for k, v in context.items():
-                if k in ['success', 'validate_token']:
-                    logger.critical(f"RENDER_DEBUG: context[{k}]={type(v).__name__} | v={v}")
+            logger.debug("RENDER_DEBUG: rendering template copy with keys=%s", list(template.keys()))
 
             out = render_template(
                 env, template, context, rules=None, strict_keys=False
             )
-            logger.critical(f"RENDER_DEBUG: After render_template, out={out}")
+            logger.debug("RENDER_DEBUG: rendered output type=%s", type(out).__name__)
             if not isinstance(out, dict):
                 out = {"rendered": out}
         except Exception as e:
@@ -502,10 +510,10 @@ def render_template_object(
         for field, value in preserved_fields.items():
             if task_dict is not None and isinstance(out.get('task'), dict):
                 out['task'][field] = value
-                logger.critical(f"RENDER_DEBUG: Restored preserved field '{field}' unrendered to out['task']")
+                logger.debug(f"RENDER_DEBUG: restored preserved field '{field}' to out['task']")
             else:
                 out[field] = value
-                logger.critical(f"RENDER_DEBUG: Restored preserved field '{field}' unrendered to top level")
+                logger.debug(f"RENDER_DEBUG: restored preserved field '{field}' to top-level")
         
         # Restore the unrendered blocks
         if task_block is not None:
@@ -520,7 +528,7 @@ def render_template_object(
             else:
                 out['loop'] = loop_block
                 restore_location = "top level"
-            logger.critical(f"RENDER_DEBUG: Restored loop block to {restore_location}")
+            logger.debug(f"RENDER_DEBUG: restored loop block to {restore_location}")
         
         if sink_block is not None:
             # Restore sink into the task dict where it came from
@@ -531,7 +539,7 @@ def render_template_object(
                 # Fallback: restore to top level if task dict not found
                 out['sink'] = sink_block
                 restore_location = "top level"
-            logger.critical(f"RENDER_DEBUG: Restored unrendered sink to {restore_location} | sink={sink_block}")
+            logger.debug(f"RENDER_DEBUG: restored unrendered sink to {restore_location}")
         
         return out
     else:
@@ -569,7 +577,7 @@ async def render_context(
             f"execution_id must be an integer, got {type(execution_id).__name__}: {execution_id}"
         )
 
-    logger.info(f"Rendering template for execution {execution_id}")
+    logger.debug(f"Rendering template for execution {execution_id}")
 
     # Fetch execution context
     exec_ctx = await fetch_execution_context(execution_id)
@@ -590,14 +598,6 @@ async def render_context(
 
     # Merge template work context if present
     render_ctx = merge_template_work_context(template, render_ctx)
-
-    # DEBUG: Log context for key step results
-    for key in ['success', 'validate_token', 'upsert_user', 'create_session']:
-        if key in render_ctx:
-            val = render_ctx[key]
-            logger.critical(f"RENDER_CONTEXT_DEBUG: {key}={type(val).__name__} | keys={list(val.keys()) if hasattr(val, 'keys') else 'N/A'}")
-            if hasattr(val, '_data'):
-                logger.critical(f"RENDER_CONTEXT_DEBUG: {key}._data={val._data}")
 
     # Render template
     rendered = render_template_object(template, render_ctx, strict)

@@ -6,6 +6,7 @@ for postgres plugin executions. All actual pooling logic is in noetl.core.db.poo
 """
 import hashlib
 import asyncio
+import os
 import time
 from psycopg import AsyncConnection
 from psycopg_pool import AsyncConnectionPool
@@ -32,6 +33,34 @@ _plugin_locks: Dict[str, asyncio.Lock] = {}
 _plugin_global_lock = asyncio.Lock()
 
 
+def _env_int(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return int(raw)
+    except Exception:
+        return default
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except Exception:
+        return default
+
+
+_DEFAULT_POOL_MIN_SIZE = max(1, _env_int("NOETL_POSTGRES_POOL_MIN_SIZE", 1))
+_DEFAULT_POOL_MAX_SIZE = max(1, _env_int("NOETL_POSTGRES_POOL_MAX_SIZE", 12))
+_DEFAULT_POOL_TIMEOUT = max(1.0, _env_float("NOETL_POSTGRES_POOL_TIMEOUT_SECONDS", 60.0))
+_DEFAULT_POOL_MAX_WAITING = max(1, _env_int("NOETL_POSTGRES_POOL_MAX_WAITING", 100))
+_DEFAULT_POOL_MAX_LIFETIME = max(60.0, _env_float("NOETL_POSTGRES_POOL_MAX_LIFETIME_SECONDS", 3600.0))
+_DEFAULT_POOL_MAX_IDLE = max(30.0, _env_float("NOETL_POSTGRES_POOL_MAX_IDLE_SECONDS", 300.0))
+
+
 # ============================================================================
 # Per-Credential Pool Registry (for plugin executions)
 # ============================================================================
@@ -39,12 +68,12 @@ _plugin_global_lock = asyncio.Lock()
 async def get_or_create_plugin_pool(
         connection_string: str,
         pool_name: str = "postgres_plugin",
-        min_size: int = 2,
-        max_size: int = 20,
-        timeout: float = 30.0,  # Default 30s timeout for connection acquisition
-        max_waiting: int = 50,
-        max_lifetime: float = 3600.0,  # 1 hour (for long analytical workloads)
-        max_idle: float = 300.0,  # 5 minutes
+        min_size: int = _DEFAULT_POOL_MIN_SIZE,
+        max_size: int = _DEFAULT_POOL_MAX_SIZE,
+        timeout: float = _DEFAULT_POOL_TIMEOUT,
+        max_waiting: int = _DEFAULT_POOL_MAX_WAITING,
+        max_lifetime: float = _DEFAULT_POOL_MAX_LIFETIME,
+        max_idle: float = _DEFAULT_POOL_MAX_IDLE,
 ) -> AsyncConnectionPool[AsyncConnection[DictRow]]:
     """
     Get existing pool or create new one for the connection string.
@@ -71,7 +100,7 @@ async def get_or_create_plugin_pool(
     """
     # Ensure timeout is never None (psycopg_pool requires numeric timeout)
     if timeout is None:
-        timeout = 30.0
+        timeout = _DEFAULT_POOL_TIMEOUT
 
     # Create a hash key from connection string + pool name
     # This allows different pools for same credentials with different names
@@ -132,9 +161,9 @@ async def get_plugin_connection(connection_string: str, pool_name: str = "postgr
         pool_name: Name prefix for the pool (for logging/monitoring)
         **pool_kwargs: Pool configuration parameters:
             - timeout: Timeout for acquiring connection (None=default 10s, -1=infinite wait)
-            - min_size: Minimum connections (default 2)
-            - max_size: Maximum connections (default 20)
-            - max_waiting: Max requests waiting (default 50)
+            - min_size: Minimum connections (default from env, fallback 1)
+            - max_size: Maximum connections (default from env, fallback 5)
+            - max_waiting: Max requests waiting (default from env, fallback 100)
             - max_lifetime: Connection max lifetime in seconds (default 3600)
             - max_idle: Connection max idle time in seconds (default 300)
     

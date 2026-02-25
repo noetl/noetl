@@ -85,6 +85,14 @@ from noetl.core.logger import setup_logger
 logger = setup_logger(__name__, include_location=True)
 
 
+def _sample_keys(value: Any, max_items: int = 10) -> list[str]:
+    if isinstance(value, dict):
+        return list(value.keys())[:max_items]
+    if isinstance(value, (list, tuple, set)):
+        return [str(v) for v in list(value)[:max_items]]
+    return []
+
+
 # Type variable for generic BoundedCache
 T = TypeVar('T')
 
@@ -257,7 +265,12 @@ class ExecutionState:
                 self.variables[k] = v
 
         # Log final state for debugging reconstruction issues
-        logger.info(f"[STATE-INIT] Final state: execution_id={execution_id}, variables_count={len(self.variables)}, variable_keys={list(self.variables.keys())[:10]}")
+        logger.debug(
+            "[STATE-INIT] execution_id=%s variables_count=%s variable_keys=%s",
+            execution_id,
+            len(self.variables),
+            _sample_keys(self.variables),
+        )
 
     def get_step(self, step_name: str) -> Optional[Step]:
         """Get step by name."""
@@ -397,9 +410,13 @@ class ExecutionState:
         Loop variables are added to state.variables in _create_command_for_step,
         so they will be available via **self.variables spread below.
         """
-        # Log workload variables for debugging state reconstruction issues
-        workload_vars = {k: v for k, v in self.variables.items() if not isinstance(v, dict) or 'status' not in v}
-        logger.info(f"ENGINE: get_render_context called, catalog_id={self.catalog_id}, execution_id={self.execution_id}, variables_count={len(self.variables)}, workload_sample={list(workload_vars.items())[:5]}")
+        logger.debug(
+            "ENGINE.get_render_context execution_id=%s catalog_id=%s variables_count=%s variable_keys=%s",
+            self.execution_id,
+            self.catalog_id,
+            len(self.variables),
+            _sample_keys(self.variables),
+        )
         
         # Protected system fields that should not be overridden by workload variables
         protected_fields = {"execution_id", "catalog_id", "job"}
@@ -596,9 +613,14 @@ class StateStore:
         # Check memory first
         cached = await self._memory_cache.get(execution_id)
         if cached:
-            logger.info(f"[STATE-CACHE-HIT] Execution {execution_id}: found in cache, issued_steps={cached.issued_steps}, completed_steps={cached.completed_steps}")
+            logger.debug(
+                "[STATE-CACHE-HIT] execution_id=%s issued_steps=%s completed_steps=%s",
+                execution_id,
+                len(cached.issued_steps),
+                len(cached.completed_steps),
+            )
             return cached
-        logger.info(f"[STATE-CACHE-MISS] Execution {execution_id}: not in cache, reconstructing from events")
+        logger.debug(f"[STATE-CACHE-MISS] Execution {execution_id}: reconstructing from events")
         
         # Reconstruct state from events in database using event sourcing
         async with get_pool_connection() as conn:
@@ -614,7 +636,11 @@ class StateStore:
                 """, (int(execution_id),))
 
                 result = await cur.fetchone()
-                logger.info(f"[STATE-LOAD] playbook.initialized query result: type={type(result)}, is_none={result is None}")
+                logger.debug(
+                    "[STATE-LOAD] playbook.initialized query result_type=%s is_none=%s",
+                    type(result).__name__,
+                    result is None,
+                )
                 if not result:
                     logger.warning(f"[STATE-LOAD] No playbook.initialized event found for execution {execution_id}")
                     return None
@@ -631,14 +657,28 @@ class StateStore:
                 # Extract workload from playbook.initialized event result
                 # This contains the merged workload (playbook defaults + parent args)
                 workload = {}
-                logger.info(f"[STATE-LOAD] Raw event_result type: {type(event_result)}, truthy: {bool(event_result)}, is_dict: {isinstance(event_result, dict) if event_result else 'N/A'}")
+                logger.debug(
+                    "[STATE-LOAD] event_result type=%s truthy=%s is_dict=%s",
+                    type(event_result).__name__,
+                    bool(event_result),
+                    isinstance(event_result, dict) if event_result is not None else False,
+                )
                 if event_result and isinstance(event_result, dict):
                     workload = event_result.get("workload", {})
-                    logger.info(f"[STATE-LOAD] Restored workload from playbook.initialized event: keys={list(workload.keys()) if workload else 'empty'}")
+                    logger.debug(
+                        "[STATE-LOAD] restored workload keys=%s",
+                        list(workload.keys()) if isinstance(workload, dict) else [],
+                    )
                     if not workload:
-                        logger.warning(f"[STATE-LOAD] Workload is empty! event_result keys: {list(event_result.keys())}, full event_result: {event_result}")
+                        logger.warning(
+                            "[STATE-LOAD] workload is empty (event_result keys=%s)",
+                            list(event_result.keys()),
+                        )
                 else:
-                    logger.warning(f"[STATE-LOAD] Could not extract workload from event_result - raw value: {str(event_result)[:500] if event_result else 'None'}")
+                    logger.warning(
+                        "[STATE-LOAD] Could not extract workload from event_result (type=%s)",
+                        type(event_result).__name__,
+                    )
                 
                 # Load playbook
                 playbook = await self.playbook_repo.load_playbook_by_id(catalog_id)
@@ -690,15 +730,41 @@ class StateStore:
                         state.issued_steps.discard(node_name)
                         logger.debug(f"[STATE-LOAD] Removed completed command from issued_steps: {node_name}")
 
+                    # Stored event.result values are wrapped as {"kind": "...", "data": {...}}.
+                    # Replay should work against payload semantics, not the storage wrapper.
+                    event_payload = result_data
+                    if isinstance(result_data, dict) and "kind" in result_data and "data" in result_data:
+                        event_payload = result_data.get("data")
+
                     # For loop steps, collect iteration results from step.exit events
-                    if event_type == 'step.exit' and result_data and node_name in loop_steps:
+                    if event_type == 'step.exit' and event_payload and node_name in loop_steps:
                         if node_name not in loop_iteration_results:
                             loop_iteration_results[node_name] = []
-                        loop_iteration_results[node_name].append(result_data)
+                        iteration_result = (
+                            event_payload.get("result", event_payload)
+                            if isinstance(event_payload, dict)
+                            else event_payload
+                        )
+                        loop_iteration_results[node_name].append(iteration_result)
 
                     # Restore step results from step.exit events (final result only)
-                    if event_type == 'step.exit' and result_data:
-                        state.mark_step_completed(node_name, result_data)
+                    if event_type == 'step.exit' and event_payload:
+                        # Task-sequence substeps are iteration-level internals; parent completion
+                        # is driven by call.done/loop.done, not per-iteration step.exit.
+                        if node_name.endswith(":task_sequence"):
+                            continue
+
+                        # For looped parent steps, step.exit is emitted per iteration and should
+                        # not mark the whole step as completed during replay.
+                        if node_name in loop_steps:
+                            continue
+
+                        step_result = (
+                            event_payload.get("result", event_payload)
+                            if isinstance(event_payload, dict)
+                            else event_payload
+                        )
+                        state.mark_step_completed(node_name, step_result)
                 
                 # Initialize loop_state for loop steps with collected iteration results
                 for step_name in loop_steps:
@@ -715,17 +781,25 @@ class StateStore:
                             "failed_count": 0,
                             "aggregation_finalized": False
                         }
-                        logger.info(f"[STATE-LOAD] Initialized loop_state for {step_name}: index={iteration_count} (from {iteration_count} completed iterations)")
+                        logger.debug(f"[STATE-LOAD] Initialized loop_state for {step_name}: index={iteration_count}")
                     else:
                         # Restore collected results and update index
                         state.loop_state[step_name]["results"] = loop_iteration_results.get(step_name, [])
                         state.loop_state[step_name]["index"] = iteration_count
-                        logger.info(f"[STATE-LOAD] Updated loop_state for {step_name}: index={iteration_count}")
+                        logger.debug(f"[STATE-LOAD] Updated loop_state for {step_name}: index={iteration_count}")
                 
                 # Log reconstructed state for debugging
                 if state.issued_steps:
-                    logger.info(f"[STATE-LOAD] Reconstructed {len(state.issued_steps)} pending commands (issued_steps): {state.issued_steps}")
-                logger.info(f"[STATE-LOAD] Execution {execution_id}: completed_steps={len(state.completed_steps)}, issued_steps={len(state.issued_steps)}")
+                    logger.debug(
+                        "[STATE-LOAD] Reconstructed pending commands count=%s",
+                        len(state.issued_steps),
+                    )
+                logger.debug(
+                    "[STATE-LOAD] Execution %s: completed_steps=%s issued_steps=%s",
+                    execution_id,
+                    len(state.completed_steps),
+                    len(state.issued_steps),
+                )
 
                 # Cache and return
                 await self._memory_cache.set(execution_id, state)
@@ -890,8 +964,66 @@ class ControlFlowEngine:
             
             return result
         except Exception as e:
-            logger.error(f"Template rendering error: {e} | Template: {template_str} | Context keys: {list(context.keys())}")
+            logger.error(
+                "Template rendering error: %s | template_preview=%s | context_keys=%s",
+                e,
+                (template_str[:160] + "...") if isinstance(template_str, str) and len(template_str) > 160 else template_str,
+                list(context.keys()) if isinstance(context, dict) else [],
+            )
             raise
+
+    def _normalize_loop_collection(self, value: Any, step_name: str) -> list[Any]:
+        """Normalize loop input to a list without accidentally exploding strings into characters."""
+        if isinstance(value, list):
+            return value
+        if value is None:
+            return []
+        if isinstance(value, tuple):
+            return list(value)
+        if isinstance(value, set):
+            return list(value)
+        if isinstance(value, dict):
+            logger.warning(f"[LOOP] Step {step_name}: collection rendered as dict; wrapping as single item")
+            return [value]
+        if isinstance(value, (str, bytes, bytearray)):
+            text = value.decode("utf-8", errors="replace") if not isinstance(value, str) else value
+            if "{{" in text or "{%" in text:
+                logger.warning(f"[LOOP] Step {step_name}: collection template unresolved, defaulting to empty list")
+                return []
+            logger.warning(f"[LOOP] Step {step_name}: collection rendered as scalar string; wrapping as single item")
+            return [text]
+        if hasattr(value, "__iter__"):
+            try:
+                return list(value)
+            except Exception:
+                logger.warning(f"[LOOP] Step {step_name}: failed to materialize iterable collection; wrapping value")
+                return [value]
+        return [value]
+
+    def _build_loop_event_id_candidates(
+        self,
+        state: "ExecutionState",
+        step_name: str,
+        loop_state: Optional[dict[str, Any]] = None,
+    ) -> list[str]:
+        """Build ordered candidate loop identifiers for distributed-safe NATS loop state lookup."""
+        candidates: list[str] = []
+
+        loop_event_id = loop_state.get("event_id") if loop_state else None
+        if loop_event_id is not None:
+            candidates.append(str(loop_event_id))
+
+        execution_fallback = f"exec_{state.execution_id}"
+        if execution_fallback not in candidates:
+            candidates.append(execution_fallback)
+
+        step_event_id = state.step_event_ids.get(step_name)
+        if step_event_id is not None:
+            step_event_id_str = str(step_event_id)
+            if step_event_id_str not in candidates:
+                candidates.append(step_event_id_str)
+
+        return candidates
     
     def _evaluate_condition(self, when_expr: str, context: dict[str, Any]) -> bool:
         """Evaluate when condition."""
@@ -901,19 +1033,23 @@ class ControlFlowEngine:
             
             # Convert to boolean
             if isinstance(result, bool):
-                logger.info(f"[COND] Evaluated '{when_expr}' => {result}")
+                logger.debug("[COND] Evaluated condition -> %s", result)
                 return result
             if isinstance(result, str):
                 # Check for explicit false values, otherwise treat non-empty strings as truthy
                 is_false = result.lower() in ("false", "0", "no", "none", "")
                 is_true = not is_false
-                logger.info(f"[COND] Evaluated '{when_expr}' => '{result}' => {is_true}")
+                logger.debug("[COND] Evaluated string condition -> %s", is_true)
                 return is_true
             bool_result = bool(result)
-            logger.info(f"[COND] Evaluated '{when_expr}' => {result} (type={type(result)}) => {bool_result}")
+            logger.debug("[COND] Evaluated condition value_type=%s -> %s", type(result).__name__, bool_result)
             return bool_result
         except Exception as e:
-            logger.error(f"Condition evaluation error: {e} | Condition: {when_expr}")
+            logger.error(
+                "Condition evaluation error: %s | condition_preview=%s",
+                e,
+                (when_expr[:160] + "...") if isinstance(when_expr, str) and len(when_expr) > 160 else when_expr,
+            )
             return False
     
     async def _evaluate_next_transitions(
@@ -1462,7 +1598,11 @@ class ControlFlowEngine:
                     logger.error(f"Retry: current step not found: {event.step}")
                     continue
                 
-                logger.info(f"[RETRY-ACTION] Creating retry command with args: {retry_args}")
+                logger.info(
+                    "[RETRY-ACTION] Creating retry command for %s with arg_keys=%s",
+                    event.step,
+                    _sample_keys(retry_args),
+                )
                 
                 # Create retry command with rendered args from worker
                 command = await self._create_command_for_step(state, step_def, retry_args)
@@ -1474,7 +1614,7 @@ class ControlFlowEngine:
                     command.retry_backoff = backoff
                     commands.append(command)
                     logger.info(
-                        f"[RETRY-ACTION] Re-attempting step {event.step} with args {retry_args} "
+                        f"[RETRY-ACTION] Re-attempting step {event.step} "
                         f"(attempt {command.attempt}/{max_attempts})"
                     )
 
@@ -1764,7 +1904,12 @@ class ControlFlowEngine:
         """Create a command to execute a step."""
         # Check if step has loop configuration
         if step.loop:
-            logger.debug(f"[CREATE-CMD] Step {step.step} has loop: in={step.loop.in_}, iterator={step.loop.iterator}, mode={step.loop.mode}")
+            logger.debug(
+                "[CREATE-CMD] Step %s has loop iterator=%s mode=%s",
+                step.step,
+                step.loop.iterator,
+                step.loop.mode,
+            )
             # Get collection to iterate
             context = state.get_render_context(Event(
                 execution_id=state.execution_id,
@@ -1776,10 +1921,7 @@ class ControlFlowEngine:
             # Render collection expression
             collection_expr = step.loop.in_
             collection = self._render_template(collection_expr, context)
-            
-            if not isinstance(collection, list):
-                logger.warning(f"Loop collection is not a list: {type(collection)}, converting")
-                collection = list(collection) if hasattr(collection, '__iter__') else [collection]
+            collection = self._normalize_loop_collection(collection, step.step)
             
             # Get completed count from NATS K/V (authoritative) or local fallback
             # Use last event_id for this step as the loop instance identifier
@@ -1838,12 +1980,20 @@ class ControlFlowEngine:
             
             # Get next item by index (stateless - just use completed_count as index)
             item = collection[completed_count]
-            logger.info(f"[LOOP] Creating command for loop iteration {completed_count} of step {step.step}, item={item}")
+            logger.info(
+                "[LOOP] Creating command for loop iteration %s of step %s",
+                completed_count,
+                step.step,
+            )
             
             # Add loop variables to state for Jinja2 template rendering
             state.variables[step.loop.iterator] = item
             state.variables["loop_index"] = completed_count
-            logger.info(f"[LOOP] Added to state.variables: {step.loop.iterator}={item}, loop_index={completed_count}")
+            logger.debug(
+                "[LOOP] Updated loop state variables: iterator=%s loop_index=%s",
+                step.loop.iterator,
+                completed_count,
+            )
         
         # Get render context for Jinja2 templates
         context = state.get_render_context(Event(
@@ -1859,11 +2009,22 @@ class ControlFlowEngine:
         # Debug: Log state for verify_result step
         if step.step == "verify_result":
             gcs_result = state.step_results.get('run_python_from_gcs', 'NOT_FOUND')
-            logger.error(f"DEBUG verify_result: step_results={list(state.step_results.keys())} | variables={list(state.variables.keys())} | run_python_from_gcs={gcs_result}")
+            logger.debug(
+                "verify_result debug: step_results_keys=%s variable_keys=%s run_python_from_gcs_type=%s",
+                list(state.step_results.keys()),
+                list(state.variables.keys()),
+                type(gcs_result).__name__,
+            )
 
         # Debug: Log loop variables in context
         if step.loop:
-            logger.warning(f"[LOOP-DEBUG] Step {step.step}: context_keys={list(context.keys())} | iterator='{step.loop.iterator}'={context.get(step.loop.iterator, 'NOT_FOUND')} | loop_index={context.get('loop_index', 'NOT_FOUND')} | state.variables={state.variables}")
+            logger.debug(
+                "[LOOP-DEBUG] Step %s context_keys=%s has_iterator=%s loop_index=%s",
+                step.step,
+                list(context.keys()),
+                step.loop.iterator in context,
+                context.get("loop_index", "NOT_FOUND"),
+            )
 
         # Build args separately - for step inputs
         step_args = {}
@@ -2091,7 +2252,7 @@ class ControlFlowEngine:
             if task_ctx and isinstance(task_ctx, dict):
                 for key, value in task_ctx.items():
                     state.variables[key] = value
-                    logger.info(f"[TASK_SEQ] Synced ctx variable '{key}' from task sequence to execution state")
+                    logger.debug(f"[TASK_SEQ] Synced ctx variable '{key}' from task sequence to execution state")
 
             # Get parent step definition for loop handling
             parent_step_def = state.get_step(parent_step)
@@ -2101,7 +2262,11 @@ class ControlFlowEngine:
             if parent_step_def and parent_step_def.set_ctx:
                 # Get render context with the task sequence result available
                 context = state.get_render_context(event)
-                logger.info(f"[SET_CTX] Processing step-level set_ctx for task sequence {parent_step}: {list(parent_step_def.set_ctx.keys())}")
+                logger.debug(
+                    "[SET_CTX] Processing step-level set_ctx for task sequence %s: keys=%s",
+                    parent_step,
+                    list(parent_step_def.set_ctx.keys()),
+                )
                 for key, value_template in parent_step_def.set_ctx.items():
                     try:
                         if isinstance(value_template, str) and "{{" in value_template:
@@ -2109,7 +2274,7 @@ class ControlFlowEngine:
                         else:
                             rendered_value = value_template
                         state.variables[key] = rendered_value
-                        logger.info(f"[SET_CTX] Set {key} = {rendered_value}")
+                        logger.debug("[SET_CTX] Set %s (type=%s)", key, type(rendered_value).__name__)
                     except Exception as e:
                         logger.error(f"[SET_CTX] Failed to render {key}: {e}")
 
@@ -2126,21 +2291,41 @@ class ControlFlowEngine:
                     # Sync completed count to NATS K/V
                     try:
                         nats_cache = await get_nats_cache()
-                        loop_event_id = loop_state.get("event_id")
-                        if loop_event_id is None:
-                            loop_event_id = state.step_event_ids.get(parent_step)
-                        if loop_event_id is None:
-                            # Keep compatibility with loop init keying when state was reconstructed
-                            loop_event_id = f"exec_{state.execution_id}"
-                        loop_state["event_id"] = loop_event_id
-
-                        new_count = await nats_cache.increment_loop_completed(
-                            str(state.execution_id),
-                            parent_step,
-                            event_id=str(loop_event_id) if loop_event_id else None
+                        event_id_candidates = self._build_loop_event_id_candidates(
+                            state, parent_step, loop_state
                         )
-                        if new_count >= 0:
-                            logger.info(f"[TASK_SEQ-LOOP] Incremented loop count in NATS K/V for {parent_step}: {new_count}")
+                        resolved_loop_event_id = (
+                            event_id_candidates[0]
+                            if event_id_candidates
+                            else f"exec_{state.execution_id}"
+                        )
+
+                        new_count = -1
+                        for candidate_event_id in event_id_candidates:
+                            candidate_count = await nats_cache.increment_loop_completed(
+                                str(state.execution_id),
+                                parent_step,
+                                event_id=candidate_event_id,
+                            )
+                            if candidate_count >= 0:
+                                new_count = candidate_count
+                                resolved_loop_event_id = candidate_event_id
+                                break
+
+                        if new_count < 0:
+                            # Keep progress moving even if distributed cache key cannot be found.
+                            new_count = len(loop_state.get("results", []))
+                            logger.warning(
+                                f"[TASK_SEQ-LOOP] Could not increment NATS loop count for {parent_step}; "
+                                f"falling back to local count {new_count}"
+                            )
+                        else:
+                            logger.info(
+                                f"[TASK_SEQ-LOOP] Incremented loop count in NATS K/V for "
+                                f"{parent_step} via {resolved_loop_event_id}: {new_count}"
+                            )
+
+                        loop_state["event_id"] = resolved_loop_event_id
 
                         # Resolve collection size with distributed-safe fallback order:
                         # local cache -> NATS K/V metadata -> re-render loop expression.
@@ -2149,25 +2334,34 @@ class ControlFlowEngine:
 
                         nats_loop_state = None
                         if collection_size == 0:
-                            nats_loop_state = await nats_cache.get_loop_state(
-                                str(state.execution_id),
-                                parent_step,
-                                event_id=str(loop_event_id) if loop_event_id else None
-                            )
-                            if nats_loop_state:
-                                collection_size = nats_loop_state.get("collection_size", 0)
+                            lookup_event_ids = [resolved_loop_event_id] + [
+                                candidate
+                                for candidate in event_id_candidates
+                                if candidate != resolved_loop_event_id
+                            ]
+                            for candidate_event_id in lookup_event_ids:
+                                candidate_state = await nats_cache.get_loop_state(
+                                    str(state.execution_id),
+                                    parent_step,
+                                    event_id=candidate_event_id,
+                                )
+                                if candidate_state:
+                                    nats_loop_state = candidate_state
+                                    resolved_loop_event_id = candidate_event_id
+                                    loop_state["event_id"] = candidate_event_id
+                                    collection_size = int(candidate_state.get("collection_size", 0) or 0)
+                                    break
 
                         if collection_size == 0:
                             context = state.get_render_context(event)
                             rendered_collection = self._render_template(parent_step_def.loop.in_, context)
-                            if not isinstance(rendered_collection, list):
-                                rendered_collection = list(rendered_collection) if hasattr(rendered_collection, "__iter__") else [rendered_collection]
+                            rendered_collection = self._normalize_loop_collection(rendered_collection, parent_step)
                             loop_state["collection"] = rendered_collection
                             collection_size = len(rendered_collection)
                             logger.info(f"[TASK_SEQ-LOOP] Re-rendered collection for {parent_step}: {collection_size} items")
 
                             # Backfill NATS metadata if it was missing.
-                            if not nats_loop_state:
+                            if collection_size > 0 and not nats_loop_state:
                                 await nats_cache.set_loop_state(
                                     str(state.execution_id),
                                     parent_step,
@@ -2176,13 +2370,13 @@ class ControlFlowEngine:
                                         "completed_count": max(new_count, 0),
                                         "iterator": loop_state.get("iterator"),
                                         "mode": loop_state.get("mode"),
-                                        "event_id": loop_event_id
+                                        "event_id": resolved_loop_event_id
                                     },
-                                    event_id=str(loop_event_id) if loop_event_id else None
+                                    event_id=resolved_loop_event_id
                                 )
 
                         # Check if loop is done
-                        if new_count >= collection_size:
+                        if collection_size > 0 and new_count >= collection_size:
                             # Loop done - mark completed and create loop.done event
                             loop_state["completed"] = True
                             loop_state["aggregation_finalized"] = True
@@ -2208,6 +2402,11 @@ class ControlFlowEngine:
                             logger.info(f"[TASK_SEQ-LOOP] Generated {len(loop_done_commands)} commands from loop.done")
                         else:
                             # More iterations - create next command
+                            if collection_size == 0:
+                                logger.warning(
+                                    f"[TASK_SEQ-LOOP] Collection size unresolved for {parent_step}; "
+                                    f"continuing without completion check"
+                                )
                             logger.info(f"[TASK_SEQ-LOOP] Creating next iteration command for {parent_step}: {new_count}/{collection_size}")
                             next_cmd = await self._create_command_for_step(state, parent_step_def, {})
                             if next_cmd:
@@ -2238,7 +2437,7 @@ class ControlFlowEngine:
                 # Process remaining actions from task sequence result (next, etc.)
                 remaining_actions = response_data.get("remaining_actions", [])
                 if remaining_actions:
-                    logger.info(f"[TASK_SEQ] Processing remaining actions: {remaining_actions}")
+                    logger.debug("[TASK_SEQ] Processing remaining actions count=%s", len(remaining_actions))
                     seq_commands = await self._process_then_actions(
                         remaining_actions, state, event
                     )
@@ -2250,6 +2449,13 @@ class ControlFlowEngine:
                     commands.extend(next_commands)
                     logger.info(f"[TASK_SEQ] Generated {len(next_commands)} commands from next transitions")
 
+            return commands
+
+        # Task-sequence lifecycle is driven by call.done/call.error. The corresponding
+        # step.exit event is iteration-informative and should not trigger global
+        # completion checks or structural routing.
+        if event.step.endswith(":task_sequence") and event.name == "step.exit":
+            logger.debug(f"[TASK_SEQ] Ignoring step.exit for task sequence step {event.step}")
             return commands
 
         # Strip :task_sequence suffix when looking up step definition
@@ -2289,7 +2495,11 @@ class ControlFlowEngine:
         # Process step-level set_ctx BEFORE evaluating next transitions
         # This ensures variables set by set_ctx are available in routing conditions
         if event.name == "call.done" and step_def.set_ctx:
-            logger.info(f"[SET_CTX] Processing step-level set_ctx for {event.step}: {list(step_def.set_ctx.keys())}")
+            logger.debug(
+                "[SET_CTX] Processing step-level set_ctx for %s: keys=%s",
+                event.step,
+                list(step_def.set_ctx.keys()),
+            )
             for key, value_template in step_def.set_ctx.items():
                 try:
                     # Render the value template with current context (including step result)
@@ -2298,7 +2508,7 @@ class ControlFlowEngine:
                     else:
                         rendered_value = value_template
                     state.variables[key] = rendered_value
-                    logger.info(f"[SET_CTX] Set {key} = {rendered_value}")
+                    logger.debug("[SET_CTX] Set %s (type=%s)", key, type(rendered_value).__name__)
                 except Exception as e:
                     logger.error(f"[SET_CTX] Failed to render {key}: {e}")
             # Refresh context after set_ctx to include new variables
@@ -2330,13 +2540,23 @@ class ControlFlowEngine:
                 state.pagination_state[event.step]["pending_retry"] = False
 
         # Store step result if this is a step.exit event
-        logger.info(f"[LOOP_DEBUG] Checking step.exit: name={event.name}, has_result={'result' in event.payload}, payload_keys={list(event.payload.keys())}")
+        logger.debug(
+            "[LOOP_DEBUG] Checking step.exit: name=%s has_result=%s payload_keys=%s",
+            event.name,
+            "result" in event.payload,
+            list(event.payload.keys()),
+        )
         if event.name == "step.exit" and "result" in event.payload:
-            logger.info(f"[LOOP_DEBUG] step.exit with result for {event.step}, step_def.loop={step_def.loop}, in_loop_state={event.step in state.loop_state}")
+            logger.debug(
+                "[LOOP_DEBUG] step.exit with result for %s loop=%s in_loop_state=%s",
+                event.step,
+                bool(step_def.loop),
+                event.step in state.loop_state,
+            )
             
             # Use the is_retrying flag we just determined
             if is_retrying:
-                logger.info(f"[LOOP_DEBUG] Pagination retry active for {event.step}; skipping result aggregation and loop advance")
+                logger.debug(f"[LOOP_DEBUG] Pagination retry active for {event.step}; skipping aggregation and loop advance")
             
             # If pagination collected data for this step, merge it into the current result before aggregation
             # and reset pagination state for the next iteration/run when no retry is pending.
@@ -2385,7 +2605,12 @@ class ControlFlowEngine:
             if step_def.loop and event.step in state.loop_state and not is_retrying:
                 # Check if loop aggregation already finalized (loop_done happened)
                 loop_state = state.loop_state[event.step]
-                logger.info(f"[LOOP_DEBUG] Loop state: completed={loop_state.get('completed')}, finalized={loop_state.get('aggregation_finalized')}, results_count={len(loop_state.get('results', []))}")
+                logger.debug(
+                    "[LOOP_DEBUG] Loop state: completed=%s finalized=%s results_count=%s",
+                    loop_state.get("completed"),
+                    loop_state.get("aggregation_finalized"),
+                    len(loop_state.get("results", [])),
+                )
                 if not loop_state.get("aggregation_finalized", False):
                     failed = event.payload.get("status", "").upper() == "FAILED"
                     state.add_loop_result(event.step, event.payload["result"], failed=failed)
@@ -2437,7 +2662,11 @@ class ControlFlowEngine:
             # Worker sends "steps" for next actions, "config" for retry
             action_config = worker_eval_action.get("config") or worker_eval_action.get("steps", {})
 
-            logger.info(f"[ENGINE] Server matched no rules, but worker reported '{action_type}' action. Processing worker action. config={action_config}")
+            logger.info(
+                "[ENGINE] Server matched no rules, but worker reported '%s' action. config_keys=%s",
+                action_type,
+                _sample_keys(action_config),
+            )
 
             if action_type == "retry":
                 # Use _process_then_actions to handle the action correctly
@@ -2476,12 +2705,17 @@ class ControlFlowEngine:
         # Check if step has completed loop - emit loop.done event
         # Check on step.exit regardless of whether next transitions generated commands
         # (next may have matched call.done and generated transition commands)
-        logger.info(f"[LOOP-DEBUG] Checking step.exit: step={event.step}, event.name={event.name}, has_loop={step_def.loop is not None}")
+        logger.debug(
+            "[LOOP-DEBUG] Checking step.exit: step=%s event=%s has_loop=%s",
+            event.step,
+            event.name,
+            step_def.loop is not None,
+        )
         if step_def.loop and event.name == "step.exit":
-            logger.info(f"[LOOP-DEBUG] Entering loop completion check for {event.step}")
+            logger.debug(f"[LOOP-DEBUG] Entering loop completion check for {event.step}")
             pagination_retry_pending = state.pagination_state.get(event.step, {}).get("pending_retry", False)
             if pagination_retry_pending:
-                logger.info(f"[LOOP_DEBUG] Pagination retry pending for {event.step}; skipping loop completion/next iteration")
+                logger.debug(f"[LOOP_DEBUG] Pagination retry pending for {event.step}; skipping completion/next iteration")
             else:
                 # Get loop state from NATS K/V (distributed cache) or local fallback
                 nats_cache = await get_nats_cache()
@@ -2511,8 +2745,7 @@ class ControlFlowEngine:
                     if loop_state and not loop_state.get("collection"):
                         context = state.get_render_context(event)
                         collection = self._render_template(step_def.loop.in_, context)
-                        if not isinstance(collection, list):
-                            collection = list(collection) if hasattr(collection, '__iter__') else [collection]
+                        collection = self._normalize_loop_collection(collection, event.step)
                         loop_state["collection"] = collection
                         logger.info(f"[LOOP-SETUP] Rendered collection for {event.step}: {len(collection)} items")
                         
@@ -2535,7 +2768,13 @@ class ControlFlowEngine:
                     collection_size = len(loop_state["collection"]) if loop_state else (nats_loop_state.get("collection_size", 0) if nats_loop_state else 0)
                     logger.info(f"[LOOP-CHECK] Step {event.step}: {completed_count}/{collection_size} iterations completed")
                     
-                    if completed_count < collection_size:
+                    if collection_size == 0:
+                        logger.warning(
+                            f"[LOOP-CHECK] Step {event.step}: collection size unresolved; "
+                            "continuing loop without completion check"
+                        )
+
+                    if collection_size == 0 or completed_count < collection_size:
                         # More items to process - create next iteration command if not already created
                         if not any(cmd.step == event.step for cmd in commands):
                             logger.info(f"[LOOP] Creating next iteration command for {event.step}")
@@ -2611,7 +2850,11 @@ class ControlFlowEngine:
                     if isinstance(next_spec, dict) and "mode" in next_spec:
                         next_mode = next_spec.get("mode", "exclusive")
 
-                logger.info(f"[STRUCTURAL-NEXT] No next matched for step.exit, using structural next: {step_def.next}, mode={next_mode}")
+                logger.info(
+                    "[STRUCTURAL-NEXT] No next matched for step.exit, using structural next (mode=%s, next_count=%s)",
+                    next_mode,
+                    len(step_def.next) if isinstance(step_def.next, list) else 1,
+                )
                 # Handle structural next
                 next_items = step_def.next
                 if isinstance(next_items, str):
@@ -2692,7 +2935,15 @@ class ControlFlowEngine:
         # This handles explicit terminal steps (no next blocks) only
         # OR when a step fails with no error handler (no commands generated despite having routing)
         completion_events = []
-        logger.info(f"COMPLETION CHECK: event={event.name}, step={event.step}, commands={len(commands)}, completed={state.completed}, has_next={bool(step_def.next if step_def else False)}, has_error={bool(event.payload.get('error'))}")
+        logger.debug(
+            "COMPLETION CHECK: event=%s step=%s commands=%s completed=%s has_next=%s has_error=%s",
+            event.name,
+            event.step,
+            len(commands),
+            state.completed,
+            bool(step_def.next if step_def else False),
+            bool(event.payload.get("error")),
+        )
 
         # Check if step failed
         has_error = event.payload.get("error") is not None
@@ -2718,13 +2969,22 @@ class ControlFlowEngine:
         has_pending_commands = False
 
         # Debug: log current state before pending check
-        logger.info(f"[PENDING-CHECK] Execution {event.execution_id}: issued_steps={state.issued_steps if hasattr(state, 'issued_steps') else 'N/A'}, completed_steps={state.completed_steps}")
+        logger.debug(
+            "[PENDING-CHECK] execution=%s issued_steps=%s completed_steps=%s",
+            event.execution_id,
+            len(state.issued_steps) if hasattr(state, "issued_steps") else "N/A",
+            len(state.completed_steps),
+        )
 
         # First check in-memory: issued_steps that aren't in completed_steps
         issued_not_completed = state.issued_steps - state.completed_steps if hasattr(state, 'issued_steps') else set()
         if issued_not_completed:
             has_pending_commands = True
-            logger.info(f"[COMPLETION] Execution {event.execution_id} has {len(issued_not_completed)} pending commands in memory: {issued_not_completed}")
+            logger.debug(
+                "[COMPLETION] execution=%s pending_in_memory=%s",
+                event.execution_id,
+                len(issued_not_completed),
+            )
         elif not hasattr(state, 'issued_steps') or not state.issued_steps:
             # Only fall back to database query if in-memory state might be stale (e.g., after restart)
             # IMPORTANT: Use step.exit instead of command.completed because command.completed is emitted
@@ -2752,7 +3012,7 @@ class ControlFlowEngine:
                     pending_count = row["pending_count"] if row else 0
                     has_pending_commands = pending_count > 0
                     if has_pending_commands:
-                        logger.info(f"[COMPLETION] Execution {event.execution_id} has {pending_count} pending commands in DB")
+                        logger.debug(f"[COMPLETION] execution={event.execution_id} pending_in_db={pending_count}")
         # If in-memory state shows no pending AND issued_steps is populated, trust it
         # (DB check would cause false positives due to command.completed timing)
 
@@ -3096,7 +3356,11 @@ class ControlFlowEngine:
                 continue
             workload_snapshot[k] = v
 
-        logger.info(f"[PLAYBOOK-INIT] Workload snapshot keys: {list(workload_snapshot.keys())}, sample values: {list(workload_snapshot.items())[:5]}")
+        logger.info(
+            "[PLAYBOOK-INIT] Workload snapshot prepared: keys=%s count=%s",
+            _sample_keys(workload_snapshot),
+            len(workload_snapshot),
+        )
 
         from noetl.core.dsl.v2.models import LifecycleEventPayload
         playbook_init_event = Event(

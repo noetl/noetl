@@ -123,6 +123,7 @@ async def list_credentials(
 async def get_credential(
     identifier: str,
     include_data: bool = False,
+    catalog_id: Optional[int] = None,
     execution_id: Optional[int] = None,
     parent_execution_id: Optional[int] = None
 ) -> CredentialResponse:
@@ -179,6 +180,7 @@ async def get_credential(
         return await CredentialService.get_credential(
             identifier,
             include_data,
+            catalog_id=catalog_id,
             execution_id=execution_id,
             parent_execution_id=parent_execution_id
         )
@@ -276,5 +278,4 @@ async def get_gcp_token(request: GCPTokenRequest) -> GCPTokenResponse:
     except Exception as e:
         logger.exception(f"Error obtaining GCP token: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
 

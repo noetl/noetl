@@ -255,8 +255,7 @@ class TaskSequenceExecutor:
 
         # Parse task list (strict v10)
         parsed_tasks = self._parse_tasks(tasks)
-        task_names = [t["name"] for t in parsed_tasks]
-        logger.info(f"[TASK_SEQ] Executing {len(parsed_tasks)} tasks: {task_names}")
+        logger.info(f"[TASK_SEQ] Executing {len(parsed_tasks)} tasks")
 
         # Initialize context
         ctx = TaskSequenceContext()
@@ -297,9 +296,17 @@ class TaskSequenceExecutor:
                 "iter": merged_iter,  # Merged iteration vars
             }
 
-            # Debug: Log context keys for troubleshooting
-            logger.info(f"[TASK_SEQ] Task '{task_name}': base_context ctx keys={list(base_context.get('ctx', {}).keys())}, task_seq ctx keys={list(task_seq_dict.get('ctx', {}).keys())}, merged_ctx keys={list(merged_ctx.keys())}")
-            logger.info(f"[TASK_SEQ] Task '{task_name}': base_context iter keys={list(base_context.get('iter', {}).keys())}, task_seq iter keys={list(task_seq_dict.get('iter', {}).keys())}, merged_iter keys={list(merged_iter.keys())}")
+            # Keep context logging metadata-only to avoid leaking runtime values.
+            logger.debug(
+                "[TASK_SEQ] Task '%s': ctx_counts base=%s seq=%s merged=%s iter_counts base=%s seq=%s merged=%s",
+                task_name,
+                len(base_context.get("ctx", {})) if isinstance(base_context.get("ctx"), dict) else 0,
+                len(task_seq_dict.get("ctx", {})) if isinstance(task_seq_dict.get("ctx"), dict) else 0,
+                len(merged_ctx),
+                len(base_context.get("iter", {})) if isinstance(base_context.get("iter"), dict) else 0,
+                len(task_seq_dict.get("iter", {})) if isinstance(task_seq_dict.get("iter"), dict) else 0,
+                len(merged_iter),
+            )
 
             # Execute tool and build outcome
             start_time = time.monotonic()
@@ -308,10 +315,12 @@ class TaskSequenceExecutor:
                 config_to_render = {k: v for k, v in tool_config.items() if k not in ("kind", "spec", "output")}
                 rendered_config = self.render_dict(config_to_render, render_ctx)
 
-                # Debug: Log rendered command for postgres tasks
-                if tool_kind == "postgres" and "command" in rendered_config:
-                    logger.info(f"[TASK_SEQ] Task '{task_name}' rendered command: {rendered_config.get('command', '')[:200]}")
-                logger.info(f"[TASK_SEQ] Executing task '{task_name}' (kind={tool_kind}, attempt={ctx._attempt})")
+                logger.debug(
+                    "[TASK_SEQ] Executing task '%s' (kind=%s, attempt=%s)",
+                    task_name,
+                    tool_kind,
+                    ctx._attempt,
+                )
 
                 result = await self.tool_executor(tool_kind, rendered_config, render_ctx)
                 duration_ms = int((time.monotonic() - start_time) * 1000)
@@ -341,7 +350,7 @@ class TaskSequenceExecutor:
                         attempt=ctx._attempt,
                     )
                     ctx.update_success(task_name, result, outcome)
-                    logger.info(f"[TASK_SEQ] Task '{task_name}' completed successfully")
+                    logger.debug(f"[TASK_SEQ] Task '{task_name}' completed successfully")
 
             except Exception as e:
                 duration_ms = int((time.monotonic() - start_time) * 1000)
@@ -393,14 +402,20 @@ class TaskSequenceExecutor:
                     if isinstance(value, str) and "{{" in value:
                         try:
                             rendered_iter[key] = self.render_template(value, eval_ctx)
-                            logger.info(f"[TASK_SEQ] Rendered set_iter.{key}: {type(rendered_iter[key]).__name__}")
+                            logger.debug(
+                                f"[TASK_SEQ] Rendered set_iter.{key}: {type(rendered_iter[key]).__name__}"
+                            )
                         except Exception as e:
                             logger.warning(f"[TASK_SEQ] Error rendering set_iter.{key}: {e}")
                             rendered_iter[key] = value
                     else:
                         rendered_iter[key] = value
                 ctx.set_iter_vars(rendered_iter)
-                logger.info(f"[TASK_SEQ] Applied set_iter: {list(rendered_iter.keys())}, ctx.iter now has: {list(ctx.iter.keys())}")
+                logger.debug(
+                    "[TASK_SEQ] Applied set_iter keys=%s iter_key_count=%s",
+                    list(rendered_iter.keys()),
+                    len(ctx.iter.keys()),
+                )
 
             # Apply control action
             if action.action == "continue":
