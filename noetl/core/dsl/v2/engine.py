@@ -93,6 +93,21 @@ def _sample_keys(value: Any, max_items: int = 10) -> list[str]:
     return []
 
 
+def _pending_step_key(step_name: Optional[str]) -> str:
+    """
+    Normalize orchestration pending-step keys.
+
+    Task-sequence commands are emitted as `<parent_step>:task_sequence` but step completion
+    is tracked on the parent step name. Pending tracking must use the parent key to avoid
+    stale synthetic pending entries that block terminal lifecycle emission.
+    """
+    if not step_name:
+        return ""
+    if isinstance(step_name, str) and step_name.endswith(":task_sequence"):
+        return step_name.rsplit(":", 1)[0]
+    return str(step_name)
+
+
 # Type variable for generic BoundedCache
 T = TypeVar('T')
 
@@ -724,11 +739,15 @@ class StateStore:
 
                     # Track issued commands for pending detection (race condition fix)
                     if event_type == 'command.issued':
-                        state.issued_steps.add(node_name)
-                        logger.debug(f"[STATE-LOAD] Reconstructed issued_step: {node_name}")
+                        pending_key = _pending_step_key(node_name)
+                        if pending_key:
+                            state.issued_steps.add(pending_key)
+                            logger.debug(f"[STATE-LOAD] Reconstructed issued_step: {pending_key}")
                     elif event_type == 'command.completed':
-                        state.issued_steps.discard(node_name)
-                        logger.debug(f"[STATE-LOAD] Removed completed command from issued_steps: {node_name}")
+                        pending_key = _pending_step_key(node_name)
+                        if pending_key:
+                            state.issued_steps.discard(pending_key)
+                            logger.debug(f"[STATE-LOAD] Removed completed command from issued_steps: {pending_key}")
 
                     # Stored event.result values are wrapped as {"kind": "...", "data": {...}}.
                     # Replay should work against payload semantics, not the storage wrapper.
@@ -2191,8 +2210,13 @@ class ControlFlowEngine:
                     # CRITICAL: Add deferred command steps to issued_steps for pending tracking
                     # This is needed because we return early and bypass the normal issued_steps update
                     for cmd in deferred_commands:
-                        state.issued_steps.add(cmd.step)
-                        logger.info(f"[ISSUED] Added deferred {cmd.step} to issued_steps for execution {state.execution_id}")
+                        pending_key = _pending_step_key(cmd.step)
+                        if not pending_key:
+                            continue
+                        state.issued_steps.add(pending_key)
+                        logger.info(
+                            f"[ISSUED] Added deferred {pending_key} to issued_steps for execution {state.execution_id}"
+                        )
                     logger.info(f"[INLINE-TASK] Processed deferred next actions, generated {len(deferred_commands)} command(s)")
                     # Save state after processing deferred actions
                     await self.state_store.save_state(state)
@@ -2976,8 +3000,14 @@ class ControlFlowEngine:
             len(state.completed_steps),
         )
 
-        # First check in-memory: issued_steps that aren't in completed_steps
-        issued_not_completed = state.issued_steps - state.completed_steps if hasattr(state, 'issued_steps') else set()
+        # First check in-memory: issued_steps that aren't in completed_steps.
+        # Normalize synthetic task_sequence command keys back to their parent step names.
+        issued_not_completed = set()
+        if hasattr(state, "issued_steps"):
+            for issued_step in state.issued_steps:
+                pending_key = _pending_step_key(issued_step)
+                if pending_key and pending_key not in state.completed_steps:
+                    issued_not_completed.add(pending_key)
         if issued_not_completed:
             has_pending_commands = True
             logger.debug(
@@ -3089,9 +3119,50 @@ class ControlFlowEngine:
         # Check AFTER persisting and completion events so they're all stored
         # Only check if we haven't already generated completion events (avoid duplicate stopping logic)
         if not completion_events:
+            async def _emit_failed_terminal_events(final_step: str):
+                if state.completed:
+                    return
+
+                from noetl.core.dsl.v2.models import LifecycleEventPayload
+
+                state.completed = True
+                current_event_id = state.last_event_id
+
+                workflow_failed_event = Event(
+                    execution_id=event.execution_id,
+                    step="workflow",
+                    name="workflow.failed",
+                    payload=LifecycleEventPayload(
+                        status="failed",
+                        final_step=final_step,
+                        result=event.payload.get("result"),
+                        error=event.payload.get("error"),
+                    ).model_dump(),
+                    timestamp=datetime.now(timezone.utc),
+                    parent_event_id=current_event_id,
+                )
+                await self._persist_event(workflow_failed_event, state)
+
+                playbook_failed_event = Event(
+                    execution_id=event.execution_id,
+                    step=state.playbook.metadata.get("path", "playbook"),
+                    name="playbook.failed",
+                    payload=LifecycleEventPayload(
+                        status="failed",
+                        final_step=final_step,
+                        result=event.payload.get("result"),
+                        error=event.payload.get("error"),
+                    ).model_dump(),
+                    timestamp=datetime.now(timezone.utc),
+                    parent_event_id=state.last_event_id,
+                )
+                await self._persist_event(playbook_failed_event, state)
+                await self.state_store.save_state(state)
+
             if event.name == "command.failed":
                 state.failed = True  # Track failure for final status
                 logger.error(f"[FAILURE] Received command.failed event for step {event.step}, stopping execution")
+                await _emit_failed_terminal_events(event.step or "workflow")
                 return []  # Return empty commands list to stop workflow
 
             if event.name == "step.exit":
@@ -3099,12 +3170,19 @@ class ControlFlowEngine:
                 if step_status == "FAILED":
                     state.failed = True  # Track failure for final status
                     logger.error(f"[FAILURE] Step {event.step} failed, stopping execution")
+                    await _emit_failed_terminal_events(event.step or "workflow")
                     return []  # Return empty commands list to stop workflow
 
         # Track issued steps for pending commands detection
         for cmd in commands:
-            state.issued_steps.add(cmd.step)
-            logger.info(f"[ISSUED] Added {cmd.step} to issued_steps for execution {state.execution_id}, total issued={len(state.issued_steps)}")
+            pending_key = _pending_step_key(cmd.step)
+            if not pending_key:
+                continue
+            state.issued_steps.add(pending_key)
+            logger.info(
+                f"[ISSUED] Added {pending_key} to issued_steps for execution {state.execution_id}, "
+                f"total issued={len(state.issued_steps)}"
+            )
 
         return commands
     

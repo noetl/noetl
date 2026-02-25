@@ -359,3 +359,85 @@ async def test_state_replay_unwraps_step_exit_result_and_skips_task_sequence_com
     assert "load_items_for_execution" in state.step_results
     assert state.step_results["load_items_for_execution"]["command_0"]["rows"][0]["item_id"] == 1
     assert "run_direct_stress:task_sequence" not in state.completed_steps
+
+
+@pytest.mark.asyncio
+async def test_terminal_events_emit_when_pending_key_is_task_sequence_suffix(monkeypatch):
+    fixture = Path(
+        "tests/fixtures/playbooks/batch_execution/heavy_payload_pipeline_in_step/"
+        "heavy_payload_pipeline_in_step.yaml"
+    )
+    playbook = Playbook(**yaml.safe_load(fixture.read_text(encoding="utf-8")))
+    playbook_repo = PlaybookRepo()
+    state_store = StateStore(playbook_repo)
+    engine = ControlFlowEngine(playbook_repo, state_store)
+
+    execution_id = "9013"
+    state = ExecutionState(execution_id, playbook, payload={})
+    # Simulate legacy/stale pending tracking where issued task_sequence key
+    # survives after parent loop step completion.
+    state.issued_steps.add("run_direct_stress:task_sequence")
+    state.completed_steps.add("run_direct_stress")
+    await state_store.save_state(state)
+
+    persisted_events = []
+
+    async def fake_persist_event(event, state_obj):
+        persisted_events.append(event.name)
+        state_obj.last_event_id = (state_obj.last_event_id or 0) + 1
+
+    monkeypatch.setattr(engine, "_persist_event", fake_persist_event)
+
+    event = Event(
+        execution_id=execution_id,
+        step="end",
+        name="step.exit",
+        payload={"status": "COMPLETED", "result": {"status": "completed"}},
+    )
+
+    commands = await engine.handle_event(event, already_persisted=True)
+
+    assert commands == []
+    assert state.completed is True
+    assert persisted_events == ["workflow.completed", "playbook.completed"]
+
+
+@pytest.mark.asyncio
+async def test_command_failed_emits_terminal_failure_events(monkeypatch):
+    fixture = Path(
+        "tests/fixtures/playbooks/batch_execution/heavy_payload_pipeline_in_step/"
+        "heavy_payload_pipeline_in_step.yaml"
+    )
+    playbook = Playbook(**yaml.safe_load(fixture.read_text(encoding="utf-8")))
+    playbook_repo = PlaybookRepo()
+    state_store = StateStore(playbook_repo)
+    engine = ControlFlowEngine(playbook_repo, state_store)
+
+    execution_id = "9014"
+    state = ExecutionState(execution_id, playbook, payload={})
+    # Keep pending-check in-memory to avoid DB fallback in unit test.
+    state.issued_steps.add("run_direct_stress")
+    state.completed_steps.add("run_direct_stress")
+    await state_store.save_state(state)
+
+    persisted_events = []
+
+    async def fake_persist_event(event, state_obj):
+        persisted_events.append(event.name)
+        state_obj.last_event_id = (state_obj.last_event_id or 0) + 1
+
+    monkeypatch.setattr(engine, "_persist_event", fake_persist_event)
+
+    event = Event(
+        execution_id=execution_id,
+        step="run_direct_stress:task_sequence",
+        name="command.failed",
+        payload={"status": "FAILED", "error": {"message": "forced failure"}},
+    )
+
+    commands = await engine.handle_event(event, already_persisted=True)
+
+    assert commands == []
+    assert state.failed is True
+    assert state.completed is True
+    assert persisted_events == ["workflow.failed", "playbook.failed"]

@@ -468,13 +468,13 @@ async def handle_event(req: EventRequest) -> EventResponse:
     - step.exit: Step completed, evaluate case rules and generate next commands
     - call.done: Action completed, may trigger case rules
     - call.error: Action failed, may trigger error handling
+    - command.failed: Command-level failure, must emit terminal failure lifecycle if unhandled
     - loop.item/loop.done: Loop iteration events
     
     Skip engine for administrative events:
     - command.claimed: Just persist, don't process
     - command.started: Just persist, don't process
     - command.completed: Already processed by worker
-    - command.failed: Already handled
     - step.enter: Just marks step started
     """
     try:
@@ -483,8 +483,8 @@ async def handle_event(req: EventRequest) -> EventResponse:
         # Events that should NOT trigger engine processing
         # These are administrative events that just need to be persisted
         skip_engine_events = {
-            "command.claimed", "command.started", "command.completed", 
-            "command.failed", "step.enter"
+            "command.claimed", "command.started", "command.completed",
+            "step.enter"
         }
         
         # For command.claimed, use fully atomic claiming with advisory lock + insert in same transaction

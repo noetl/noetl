@@ -173,13 +173,30 @@ def build_outcome(
         outcome["error"] = error or {"kind": "unknown", "retryable": False, "message": "Unknown error"}
 
     # Add tool-specific helpers
-    if tool_kind == "http" and isinstance(result, dict):
-        outcome["http"] = {
-            "status": result.get("status_code") or result.get("status"),
-            "headers": result.get("headers", {}),
-        }
+    if tool_kind == "http":
+        def _normalize_http_status(value: Any) -> Any:
+            if isinstance(value, int):
+                return value
+            if isinstance(value, str):
+                if value.isdigit():
+                    return int(value)
+                if value.startswith("HTTP_"):
+                    suffix = value.split("_", 1)[1]
+                    if suffix.isdigit():
+                        return int(suffix)
+            return value
+
+        http_status = None
+        http_headers = {}
+        if isinstance(result, dict):
+            http_status = result.get("status_code") or result.get("status")
+            http_headers = result.get("headers", {})
         if error:
-            outcome["http"]["status"] = error.get("status_code") or error.get("code")
+            http_status = error.get("status_code") or error.get("code") or http_status
+        outcome["http"] = {
+            "status": _normalize_http_status(http_status),
+            "headers": http_headers,
+        }
     elif tool_kind == "postgres":
         outcome["pg"] = {}
         if error:
@@ -327,10 +344,36 @@ class TaskSequenceExecutor:
 
                 # Check for error in result
                 if isinstance(result, dict) and result.get("status") == "error":
+                    # Preserve HTTP metadata from tool/plugin error payloads so policy rules
+                    # can match outcome.http.status and outcome.error.retryable reliably.
+                    raw_status_code = result.get("status_code")
+                    if raw_status_code is None and isinstance(result.get("data"), dict):
+                        raw_status_code = (
+                            result["data"].get("status_code")
+                            or result["data"].get("status")
+                        )
+                    status_code: Optional[int] = None
+                    if isinstance(raw_status_code, int):
+                        status_code = raw_status_code
+                    elif isinstance(raw_status_code, str):
+                        try:
+                            status_code = int(raw_status_code)
+                        except ValueError:
+                            status_code = None
+
+                    error_code = result.get("code")
+                    if error_code is None and status_code is not None:
+                        error_code = f"HTTP_{status_code}"
+
+                    retryable_val = result.get("retryable")
+                    if retryable_val is None:
+                        retryable_val = status_code == 429 or (status_code is not None and status_code >= 500)
+
                     error_info = {
                         "kind": result.get("error_kind", "tool_error"),
-                        "retryable": result.get("retryable", False),
-                        "code": result.get("code"),
+                        "retryable": bool(retryable_val),
+                        "code": error_code,
+                        "status_code": status_code,
                         "message": result.get("error") or result.get("message", "Tool returned error status"),
                     }
                     outcome = build_outcome(
