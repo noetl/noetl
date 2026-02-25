@@ -358,6 +358,7 @@ class ExecutionState:
             "completed": False,
             "results": [],  # Track iteration results for aggregation
             "failed_count": 0,  # Track failed iterations
+            "scheduled_count": 0,  # Track issued iterations for max_in_flight gating
             "event_id": event_id  # Track which event initiated this loop instance
         }
         logger.debug(f"Initialized loop for step {step_name}: {len(collection)} items, mode={mode}, event_id={event_id}")
@@ -798,6 +799,7 @@ class StateStore:
                             "completed": False,
                             "results": loop_iteration_results.get(step_name, []),
                             "failed_count": 0,
+                            "scheduled_count": iteration_count,
                             "aggregation_finalized": False
                         }
                         logger.debug(f"[STATE-LOAD] Initialized loop_state for {step_name}: index={iteration_count}")
@@ -805,6 +807,10 @@ class StateStore:
                         # Restore collected results and update index
                         state.loop_state[step_name]["results"] = loop_iteration_results.get(step_name, [])
                         state.loop_state[step_name]["index"] = iteration_count
+                        state.loop_state[step_name]["scheduled_count"] = max(
+                            int(state.loop_state[step_name].get("scheduled_count", 0) or 0),
+                            iteration_count,
+                        )
                         logger.debug(f"[STATE-LOAD] Updated loop_state for {step_name}: index={iteration_count}")
                 
                 # Log reconstructed state for debugging
@@ -1043,6 +1049,38 @@ class ControlFlowEngine:
                 candidates.append(step_event_id_str)
 
         return candidates
+
+    def _get_loop_max_in_flight(self, step: Step) -> int:
+        """Resolve max in-flight limit for loop scheduling."""
+        if not step.loop:
+            return 1
+        if step.loop.mode != "parallel":
+            return 1
+        if step.loop.spec and step.loop.spec.max_in_flight:
+            return max(1, int(step.loop.spec.max_in_flight))
+        return 1
+
+    async def _issue_loop_commands(
+        self,
+        state: "ExecutionState",
+        step_def: Step,
+        args: dict[str, Any],
+    ) -> list[Command]:
+        """Issue one or more loop commands based on loop mode and max_in_flight."""
+        if not step_def.loop:
+            command = await self._create_command_for_step(state, step_def, args)
+            return [command] if command else []
+
+        issue_budget = self._get_loop_max_in_flight(step_def)
+        commands: list[Command] = []
+
+        for _ in range(issue_budget):
+            command = await self._create_command_for_step(state, step_def, args)
+            if not command:
+                break
+            commands.append(command)
+
+        return commands
     
     def _evaluate_condition(self, when_expr: str, context: dict[str, Any]) -> bool:
         """Evaluate when condition."""
@@ -1173,14 +1211,18 @@ class ControlFlowEngine:
                 from noetl.core.dsl.render import render_template as recursive_render
                 rendered_args = recursive_render(self.jinja_env, target_args, context)
 
-            # Create command for target step
-            command = await self._create_command_for_step(state, target_step_def, rendered_args)
-            if command:
-                commands.append(command)
+            # Create command(s) for target step. Loop steps may issue multiple commands
+            # immediately up to max_in_flight when parallel mode is configured.
+            issued_cmds = await self._issue_loop_commands(state, target_step_def, rendered_args)
+            if issued_cmds:
+                commands.extend(issued_cmds)
                 # CRITICAL: Mark step as issued immediately to prevent duplicate commands
                 # from parallel event processing
                 state.issued_steps.add(target_step)
-                logger.info(f"[NEXT-MATCH] Created command for step {target_step}, added to issued_steps")
+                logger.info(
+                    f"[NEXT-MATCH] Created {len(issued_cmds)} command(s) for step {target_step}, "
+                    "added to issued_steps"
+                )
 
             # In exclusive mode: first match wins
             if next_mode == "exclusive":
@@ -1401,11 +1443,11 @@ class ControlFlowEngine:
                         continue
                     
                     # Create command for target step
-                    command = await self._create_command_for_step(
+                    issued_cmds = await self._issue_loop_commands(
                         state, step_def, args
                     )
-                    if command:
-                        commands.append(command)
+                    if issued_cmds:
+                        commands.extend(issued_cmds)
             
             elif "set" in action:
                 # Set variables
@@ -1549,7 +1591,14 @@ class ControlFlowEngine:
                     )
 
                 # Create retry command with updated args (same step)
-                command = await self._create_command_for_step(state, step_def, updated_args)
+                retry_args_with_control = dict(updated_args)
+                if loop_state is not None:
+                    retry_args_with_control["__loop_retry"] = True
+                    retry_args_with_control["__loop_retry_index"] = max(
+                        int(loop_state.get("index", 0) or 0),
+                        0,
+                    )
+                command = await self._create_command_for_step(state, step_def, retry_args_with_control)
 
                 # If creation failed, restore index
                 if not command and rewind_applied and loop_state:
@@ -1775,10 +1824,12 @@ class ControlFlowEngine:
                     continue
 
                 # Create command for target step
-                command = await self._create_command_for_step(state, step_def, args)
-                if command:
-                    commands.append(command)
-                    logger.info(f"[DEFERRED-NEXT] Created command for step: {target_step}")
+                issued_cmds = await self._issue_loop_commands(state, step_def, args)
+                if issued_cmds:
+                    commands.extend(issued_cmds)
+                    logger.info(
+                        f"[DEFERRED-NEXT] Created {len(issued_cmds)} command(s) for step: {target_step}"
+                    )
 
         # Clean up pending actions for all inline tasks in this group
         for task in inline_tasks:
@@ -1921,6 +1972,16 @@ class ControlFlowEngine:
         args: dict[str, Any]
     ) -> Optional[Command]:
         """Create a command to execute a step."""
+        control_args = args if isinstance(args, dict) else {}
+        loop_retry_requested = bool(control_args.get("__loop_retry"))
+        loop_retry_index_raw = control_args.get("__loop_retry_index")
+        loop_retry_index: Optional[int] = None
+        if loop_retry_requested and loop_retry_index_raw is not None:
+            try:
+                loop_retry_index = int(loop_retry_index_raw)
+            except (TypeError, ValueError):
+                loop_retry_index = None
+
         # Check if step has loop configuration
         if step.loop:
             logger.debug(
@@ -1941,77 +2002,145 @@ class ControlFlowEngine:
             collection_expr = step.loop.in_
             collection = self._render_template(collection_expr, context)
             collection = self._normalize_loop_collection(collection, step.step)
-            
-            # Get completed count from NATS K/V (authoritative) or local fallback
-            # Use last event_id for this step as the loop instance identifier
-            # If no event_id yet (first time), use execution_id as fallback
-            loop_event_id = state.step_event_ids.get(step.step)
-            if loop_event_id is None:
-                # For new loops, use execution_id as identifier until first event is created
-                loop_event_id = f"exec_{state.execution_id}"
-                logger.debug(f"[LOOP-INIT] No event_id yet for {step.step}, using execution fallback: {loop_event_id}")
-            
-            nats_cache = await get_nats_cache()
-            nats_loop_state = await nats_cache.get_loop_state(
-                str(state.execution_id),
-                step.step,
-                event_id=str(loop_event_id)
-            )
-            
-            # Use NATS count if available (authoritative for distributed execution)
-            if nats_loop_state:
-                # Use completed_count field (not results array - results are stored in event table)
-                completed_count = nats_loop_state.get("completed_count", 0)
-                logger.debug(f"[LOOP-NATS] Got completed count from NATS K/V: {completed_count}")
+
+            # Initialize local loop state if needed and refresh collection snapshot.
+            existing_loop_state = state.loop_state.get(step.step)
+            if existing_loop_state is None:
+                state.init_loop(step.step, collection, step.loop.iterator, step.loop.mode)
+                existing_loop_state = state.loop_state[step.step]
             else:
-                # Initialize loop state if not present (first iteration)
-                if step.step not in state.loop_state:
-                    state.init_loop(step.step, collection, step.loop.iterator, step.loop.mode, event_id=loop_event_id)
-                    logger.info(f"Initialized loop for {step.step} with {len(collection)} items, event_id={loop_event_id}")
-                    
-                    # Store initial state in NATS K/V with event_id for instance uniqueness
-                    # NOTE: We store only metadata and completed_count, NOT results array
-                    # Results are stored in event table and fetched via aggregate service
-                    await nats_cache.set_loop_state(
+                existing_loop_state["collection"] = collection
+            loop_state = existing_loop_state
+
+            # Resolve distributed loop key candidates.
+            loop_event_id_candidates = self._build_loop_event_id_candidates(state, step.step, loop_state)
+            resolved_loop_event_id = (
+                loop_event_id_candidates[0]
+                if loop_event_id_candidates
+                else f"exec_{state.execution_id}"
+            )
+            loop_state["event_id"] = resolved_loop_event_id
+
+            nats_cache = await get_nats_cache()
+            nats_loop_state = None
+            for candidate_event_id in loop_event_id_candidates:
+                candidate_state = await nats_cache.get_loop_state(
+                    str(state.execution_id),
+                    step.step,
+                    event_id=candidate_event_id,
+                )
+                if candidate_state:
+                    nats_loop_state = candidate_state
+                    resolved_loop_event_id = candidate_event_id
+                    loop_state["event_id"] = candidate_event_id
+                    break
+
+            completed_count_local = len(loop_state.get("results", []))
+            completed_count = completed_count_local
+            if nats_loop_state:
+                completed_count = int(nats_loop_state.get("completed_count", completed_count_local) or completed_count_local)
+
+            max_in_flight = self._get_loop_max_in_flight(step)
+
+            # Ensure distributed loop metadata exists before claiming next slot.
+            if not nats_loop_state:
+                scheduled_seed = max(
+                    int(loop_state.get("scheduled_count", completed_count) or completed_count),
+                    completed_count,
+                )
+                await nats_cache.set_loop_state(
+                    str(state.execution_id),
+                    step.step,
+                    {
+                        "collection_size": len(collection),
+                        "completed_count": completed_count,
+                        "scheduled_count": scheduled_seed,
+                        "iterator": step.loop.iterator,
+                        "mode": step.loop.mode,
+                        "event_id": resolved_loop_event_id,
+                    },
+                    event_id=resolved_loop_event_id,
+                )
+                nats_loop_state = await nats_cache.get_loop_state(
+                    str(state.execution_id),
+                    step.step,
+                    event_id=resolved_loop_event_id,
+                )
+
+            claimed_index: Optional[int] = None
+            if loop_retry_requested and loop_retry_index is not None:
+                claimed_index = loop_retry_index
+                logger.info(
+                    "[LOOP] Reusing loop iteration %s for retry on step %s",
+                    claimed_index,
+                    step.step,
+                )
+            else:
+                if nats_loop_state:
+                    claimed_index = await nats_cache.claim_next_loop_index(
                         str(state.execution_id),
                         step.step,
-                        {
-                            "collection_size": len(collection),
-                            "completed_count": 0,  # Count only, not results array
-                            "iterator": step.loop.iterator,
-                            "mode": step.loop.mode,
-                            "event_id": loop_event_id
-                        },
-                        event_id=str(loop_event_id)
+                        collection_size=len(collection),
+                        max_in_flight=max_in_flight,
+                        event_id=resolved_loop_event_id,
                     )
-                
-                loop_state = state.loop_state[step.step]
-                completed_count = len(loop_state.get("results", []))
-                logger.debug(f"[LOOP-LOCAL] Got completed count from local cache: {completed_count}")
-            
-            logger.info(f"[LOOP] Step {step.step}: {completed_count}/{len(collection)} iterations completed")
-            
-            # Check if we have more items to process
-            if completed_count >= len(collection):
-                # Loop completed
-                logger.info(f"[LOOP] Loop completed for {step.step}: {completed_count}/{len(collection)} iterations")
-                return None  # No command, will generate loop.done event
-            
-            # Get next item by index (stateless - just use completed_count as index)
-            item = collection[completed_count]
+                else:
+                    # Local fallback when distributed cache is unavailable.
+                    completed_count = completed_count_local
+                    scheduled_count = max(
+                        int(loop_state.get("scheduled_count", completed_count) or completed_count),
+                        completed_count,
+                    )
+                    if scheduled_count < len(collection) and (scheduled_count - completed_count) < max_in_flight:
+                        claimed_index = scheduled_count
+                        loop_state["scheduled_count"] = scheduled_count + 1
+
+            if claimed_index is None:
+                scheduled_hint = int(
+                    (nats_loop_state or {}).get(
+                        "scheduled_count",
+                        loop_state.get("scheduled_count", completed_count),
+                    )
+                    or completed_count
+                )
+                in_flight = max(0, scheduled_hint - completed_count)
+                logger.info(
+                    "[LOOP] No available iteration slot for %s (completed=%s scheduled=%s size=%s in_flight=%s max_in_flight=%s)",
+                    step.step,
+                    completed_count,
+                    scheduled_hint,
+                    len(collection),
+                    in_flight,
+                    max_in_flight,
+                )
+                return None
+
+            if claimed_index >= len(collection):
+                logger.info(
+                    "[LOOP] Claimed index %s is out of range for %s (size=%s)",
+                    claimed_index,
+                    step.step,
+                    len(collection),
+                )
+                return None
+
+            item = collection[claimed_index]
+            loop_state["index"] = max(int(loop_state.get("index", 0) or 0), claimed_index + 1)
             logger.info(
-                "[LOOP] Creating command for loop iteration %s of step %s",
-                completed_count,
+                "[LOOP] Claimed loop iteration %s for step %s (mode=%s max_in_flight=%s)",
+                claimed_index,
                 step.step,
+                step.loop.mode,
+                max_in_flight,
             )
             
             # Add loop variables to state for Jinja2 template rendering
             state.variables[step.loop.iterator] = item
-            state.variables["loop_index"] = completed_count
+            state.variables["loop_index"] = claimed_index
             logger.debug(
                 "[LOOP] Updated loop state variables: iterator=%s loop_index=%s",
                 step.loop.iterator,
-                completed_count,
+                claimed_index,
             )
         
         # Get render context for Jinja2 templates
@@ -2051,7 +2180,11 @@ class ControlFlowEngine:
             step_args.update(step.args)
 
         # Merge transition args
-        step_args.update(args)
+        filtered_args = {
+            k: v for k, v in args.items()
+            if k not in {"__loop_retry", "__loop_retry_index"}
+        }
+        step_args.update(filtered_args)
 
         # Render Jinja2 templates in args
         rendered_args = recursive_render(self.jinja_env, step_args, context)
@@ -2392,6 +2525,7 @@ class ControlFlowEngine:
                                     {
                                         "collection_size": collection_size,
                                         "completed_count": max(new_count, 0),
+                                        "scheduled_count": max(new_count, 0),
                                         "iterator": loop_state.get("iterator"),
                                         "mode": loop_state.get("mode"),
                                         "event_id": resolved_loop_event_id
@@ -2431,10 +2565,12 @@ class ControlFlowEngine:
                                     f"[TASK_SEQ-LOOP] Collection size unresolved for {parent_step}; "
                                     f"continuing without completion check"
                                 )
-                            logger.info(f"[TASK_SEQ-LOOP] Creating next iteration command for {parent_step}: {new_count}/{collection_size}")
-                            next_cmd = await self._create_command_for_step(state, parent_step_def, {})
-                            if next_cmd:
-                                commands.append(next_cmd)
+                            logger.info(
+                                f"[TASK_SEQ-LOOP] Issuing iteration commands for {parent_step}: "
+                                f"{new_count}/{collection_size} (mode={parent_step_def.loop.mode})"
+                            )
+                            next_cmds = await self._issue_loop_commands(state, parent_step_def, {})
+                            commands.extend(next_cmds)
 
                     except Exception as e:
                         logger.error(f"[TASK_SEQ-LOOP] Error handling loop: {e}", exc_info=True)
@@ -2781,7 +2917,11 @@ class ControlFlowEngine:
                             event.step,
                             {
                                 "collection_size": len(collection),
-                                "completed_count": 0,  # Count only, not results array
+                                "completed_count": completed_count,
+                                "scheduled_count": max(
+                                    int(loop_state.get("scheduled_count", completed_count) or completed_count),
+                                    completed_count,
+                                ),
                                 "iterator": loop_state.get("iterator"),
                                 "mode": loop_state.get("mode"),
                                 "event_id": loop_event_id
@@ -2799,14 +2939,14 @@ class ControlFlowEngine:
                         )
 
                     if collection_size == 0 or completed_count < collection_size:
-                        # More items to process - create next iteration command if not already created
-                        if not any(cmd.step == event.step for cmd in commands):
-                            logger.info(f"[LOOP] Creating next iteration command for {event.step}")
-                            command = await self._create_command_for_step(state, step_def, {})
-                            if command:
-                                commands.append(command)
-                            else:
-                                logger.error(f"[LOOP] Failed to create command for next iteration of {event.step}")
+                        # More items to process - top up commands up to loop max_in_flight.
+                        logger.info(
+                            "[LOOP] Issuing iteration commands for %s (mode=%s)",
+                            event.step,
+                            step_def.loop.mode if step_def.loop else "sequential",
+                        )
+                        loop_commands = await self._issue_loop_commands(state, step_def, {})
+                        commands.extend(loop_commands)
                     else:
                         # Loop done - create aggregated result and store as step result
                         logger.info(f"[LOOP] Loop completed for step {event.step}, creating aggregated result")
@@ -2905,10 +3045,12 @@ class ControlFlowEngine:
 
                     next_step_def = state.get_step(target_step)
                     if next_step_def:
-                        command = await self._create_command_for_step(state, next_step_def, {})
-                        if command:
-                            commands.append(command)
-                            logger.info(f"[STRUCTURAL-NEXT] Created command for step {target_step}")
+                        issued_cmds = await self._issue_loop_commands(state, next_step_def, {})
+                        if issued_cmds:
+                            commands.extend(issued_cmds)
+                            logger.info(
+                                f"[STRUCTURAL-NEXT] Created {len(issued_cmds)} command(s) for step {target_step}"
+                            )
 
                             # In exclusive mode, stop after first match
                             if next_mode == "exclusive":
@@ -3470,9 +3612,7 @@ class ControlFlowEngine:
         
         await self._persist_event(workflow_init_event, state)
         
-        # Create initial command for start step
-        start_command = await self._create_command_for_step(state, start_step, payload)
-        
-        commands = [start_command] if start_command else []
+        # Create initial command(s) for start step.
+        commands = await self._issue_loop_commands(state, start_step, payload)
         
         return execution_id, commands
