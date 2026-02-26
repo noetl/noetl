@@ -9,16 +9,18 @@ Single source of truth: noetl.event table
 """
 
 import os
+import json
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, model_validator
 from typing import Any, Optional, Literal
 from datetime import datetime, timezone
 from psycopg.types.json import Json
 from psycopg.rows import dict_row
+from psycopg_pool import PoolTimeout
 
 from noetl.core.dsl.v2.models import Event
 from noetl.core.dsl.v2.engine import ControlFlowEngine, PlaybookRepo, StateStore
-from noetl.core.db.pool import get_pool_connection, get_snowflake_id
+from noetl.core.db.pool import get_pool_connection
 from noetl.core.messaging import NATSCommandPublisher
 
 from noetl.core.logger import setup_logger
@@ -31,6 +33,29 @@ _playbook_repo: Optional[PlaybookRepo] = None
 _state_store: Optional[StateStore] = None
 _engine: Optional[ControlFlowEngine] = None
 _nats_publisher: Optional[NATSCommandPublisher] = None
+_CLAIM_DB_ACQUIRE_TIMEOUT_SECONDS = float(
+    os.getenv("NOETL_CLAIM_DB_ACQUIRE_TIMEOUT_SECONDS", "0.25")
+)
+_CLAIM_LEASE_SECONDS = max(
+    1.0,
+    float(os.getenv("NOETL_COMMAND_CLAIM_LEASE_SECONDS", "120")),
+)
+_CLAIM_ACTIVE_RETRY_AFTER_SECONDS = max(
+    1,
+    int(os.getenv("NOETL_COMMAND_CLAIM_RETRY_AFTER_SECONDS", "2")),
+)
+_CLAIM_WORKER_HEARTBEAT_STALE_SECONDS = max(
+    5.0,
+    float(os.getenv("NOETL_COMMAND_WORKER_HEARTBEAT_STALE_SECONDS", "30")),
+)
+_STATUS_VALUE_MAX_BYTES = max(
+    256,
+    int(os.getenv("NOETL_STATUS_VALUE_MAX_BYTES", "16384")),
+)
+_STATUS_PREVIEW_ITEMS = max(
+    1,
+    int(os.getenv("NOETL_STATUS_PREVIEW_ITEMS", "5")),
+)
 
 
 def get_engine():
@@ -59,6 +84,81 @@ async def get_nats_publisher():
         logger.info(f"NATS publisher initialized: {settings.nats_url}")
     
     return _nats_publisher
+
+
+async def _next_snowflake_id(cur) -> int:
+    """Generate a snowflake ID using the current DB cursor/connection."""
+    await cur.execute("SELECT noetl.snowflake_id() AS snowflake_id")
+    row = await cur.fetchone()
+    if not row:
+        raise RuntimeError("Failed to generate snowflake ID from database")
+    value = row.get("snowflake_id") if isinstance(row, dict) else row[0]
+    return int(value)
+
+
+def _estimate_json_size(value: Any) -> int:
+    try:
+        return len(json.dumps(value, default=str, separators=(",", ":")).encode("utf-8"))
+    except Exception:
+        return len(str(value).encode("utf-8"))
+
+
+def _compact_status_value(value: Any, depth: int = 0) -> Any:
+    """Compact large nested values for execution status payloads."""
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+
+    if depth >= 3:
+        if isinstance(value, dict):
+            return f"dict({len(value)} keys)"
+        if isinstance(value, (list, tuple)):
+            return f"list({len(value)} items)"
+        return str(type(value).__name__)
+
+    if isinstance(value, dict):
+        items = list(value.items())
+        compacted: dict[str, Any] = {}
+        for key, item_value in items[:_STATUS_PREVIEW_ITEMS]:
+            compacted[key] = _compact_status_value(item_value, depth + 1)
+        if len(items) > _STATUS_PREVIEW_ITEMS:
+            compacted["_truncated_keys"] = len(items) - _STATUS_PREVIEW_ITEMS
+        if _estimate_json_size(compacted) > _STATUS_VALUE_MAX_BYTES:
+            return {
+                "_truncated": True,
+                "_type": "dict",
+                "_keys": len(items),
+            }
+        return compacted
+
+    if isinstance(value, (list, tuple)):
+        seq = list(value)
+        compacted_list = [_compact_status_value(v, depth + 1) for v in seq[:_STATUS_PREVIEW_ITEMS]]
+        if len(seq) > _STATUS_PREVIEW_ITEMS:
+            compacted_list.append(f"... {len(seq) - _STATUS_PREVIEW_ITEMS} more")
+        if _estimate_json_size(compacted_list) > _STATUS_VALUE_MAX_BYTES:
+            return {
+                "_truncated": True,
+                "_type": "list",
+                "_items": len(seq),
+            }
+        return compacted_list
+
+    return str(value)
+
+
+def _compact_status_variables(variables: dict[str, Any]) -> dict[str, Any]:
+    compacted: dict[str, Any] = {}
+    for key, value in variables.items():
+        size_bytes = _estimate_json_size(value)
+        if size_bytes <= _STATUS_VALUE_MAX_BYTES:
+            compacted[key] = value
+        else:
+            compacted[key] = {
+                "_truncated": True,
+                "_original_size_bytes": size_bytes,
+                "_preview": _compact_status_value(value),
+            }
+    return compacted
 
 
 # ============================================================================
@@ -193,8 +293,9 @@ async def execute(req: ExecuteRequest) -> ExecuteResponse:
         async with get_pool_connection() as conn:
             async with conn.cursor(row_factory=dict_row) as cur:
                 for cmd in commands:
-                    cmd_id = f"{execution_id}:{cmd.step}:{await get_snowflake_id()}"
-                    evt_id = await get_snowflake_id()
+                    cmd_suffix = await _next_snowflake_id(cur)
+                    cmd_id = f"{execution_id}:{cmd.step}:{cmd_suffix}"
+                    evt_id = await _next_snowflake_id(cur)
                     
                     # Build context for command execution (passes execution parameters, not results)
                     context = {
@@ -205,47 +306,49 @@ async def execute(req: ExecuteRequest) -> ExecuteResponse:
                         "pipeline": cmd.pipeline,  # Canonical v2: task pipeline
                         "spec": cmd.spec.model_dump() if cmd.spec else None,  # Step behavior (next_mode)
                     }
-                meta = {
-                    "command_id": cmd_id,
-                    "step": cmd.step,
-                    "tool_kind": cmd.tool.kind,
-                    "max_attempts": cmd.max_attempts or 3,
-                    "attempt": 1,
-                    "execution_id": str(execution_id),
-                    "catalog_id": str(catalog_id),
-                }
-                
-                # Store actionable flag in meta column (not separate column)
-                meta["actionable"] = True
-                
-                await cur.execute("""
-                    INSERT INTO noetl.event (
-                        event_id, execution_id, catalog_id, event_type,
-                        node_id, node_name, node_type, status,
-                        context, meta, parent_event_id, parent_execution_id,
-                        created_at
-                    ) VALUES (
-                        %(event_id)s, %(execution_id)s, %(catalog_id)s, %(event_type)s,
-                        %(node_id)s, %(node_name)s, %(node_type)s, %(status)s,
-                        %(context)s, %(meta)s, %(parent_event_id)s, %(parent_execution_id)s,
-                        %(created_at)s
-                    )
-                """, {
-                    "event_id": evt_id,
-                    "execution_id": int(execution_id),
-                    "catalog_id": catalog_id,
-                    "event_type": "command.issued",
-                    "node_id": cmd.step,
-                    "node_name": cmd.step,
-                    "node_type": cmd.tool.kind,
-                    "status": "PENDING",
-                    "context": Json(context),
-                    "meta": Json(meta),
-                    "parent_event_id": root_event_id,
-                    "parent_execution_id": req.parent_execution_id,
-                    "created_at": datetime.now(timezone.utc)
-                })
-                command_events.append((evt_id, cmd_id, cmd))
+                    meta = {
+                        "command_id": cmd_id,
+                        "step": cmd.step,
+                        "tool_kind": cmd.tool.kind,
+                        "max_attempts": cmd.max_attempts or 3,
+                        "attempt": 1,
+                        "execution_id": str(execution_id),
+                        "catalog_id": str(catalog_id),
+                    }
+                    if cmd.metadata:
+                        meta.update({k: v for k, v in cmd.metadata.items() if v is not None})
+
+                    # Store actionable flag in meta column (not separate column)
+                    meta["actionable"] = True
+
+                    await cur.execute("""
+                        INSERT INTO noetl.event (
+                            event_id, execution_id, catalog_id, event_type,
+                            node_id, node_name, node_type, status,
+                            context, meta, parent_event_id, parent_execution_id,
+                            created_at
+                        ) VALUES (
+                            %(event_id)s, %(execution_id)s, %(catalog_id)s, %(event_type)s,
+                            %(node_id)s, %(node_name)s, %(node_type)s, %(status)s,
+                            %(context)s, %(meta)s, %(parent_event_id)s, %(parent_execution_id)s,
+                            %(created_at)s
+                        )
+                    """, {
+                        "event_id": evt_id,
+                        "execution_id": int(execution_id),
+                        "catalog_id": catalog_id,
+                        "event_type": "command.issued",
+                        "node_id": cmd.step,
+                        "node_name": cmd.step,
+                        "node_type": cmd.tool.kind,
+                        "status": "PENDING",
+                        "context": Json(context),
+                        "meta": Json(meta),
+                        "parent_event_id": root_event_id,
+                        "parent_execution_id": req.parent_execution_id,
+                        "created_at": datetime.now(timezone.utc)
+                    })
+                    command_events.append((evt_id, cmd_id, cmd))
             
             await conn.commit()
         
@@ -348,7 +451,8 @@ async def claim_command(event_id: int, req: ClaimRequest):
     Returns 404 if command.issued event not found.
     """
     try:
-        async with get_pool_connection() as conn:
+        # Fail fast under DB saturation so workers can retry without long hangs.
+        async with get_pool_connection(timeout=_CLAIM_DB_ACQUIRE_TIMEOUT_SECONDS) as conn:
             async with conn.cursor(row_factory=dict_row) as cur:
                 # First, fetch command.issued event to get command details
                 await cur.execute("""
@@ -370,6 +474,27 @@ async def claim_command(event_id: int, req: ClaimRequest):
                 meta = cmd_row['meta'] or {}
                 command_id = meta.get('command_id', f"{execution_id}:{step}:{event_id}")
 
+                # If command is already terminal, no further claim attempts are needed.
+                await cur.execute("""
+                    SELECT event_type
+                    FROM noetl.event
+                    WHERE execution_id = %s
+                      AND event_type IN ('command.completed', 'command.failed')
+                      AND (meta->>'command_id' = %s OR (result->'data'->>'command_id' = %s))
+                    ORDER BY event_id DESC
+                    LIMIT 1
+                """, (execution_id, command_id, command_id))
+                terminal_row = await cur.fetchone()
+                if terminal_row:
+                    raise HTTPException(
+                        409,
+                        detail={
+                            "code": "already_terminal",
+                            "message": "Command already reached a terminal state",
+                            "event_type": terminal_row.get("event_type"),
+                        },
+                    )
+
                 # Check if execution is cancelled FIRST (before claiming)
                 await cur.execute("""
                     SELECT 1 FROM noetl.event
@@ -390,38 +515,155 @@ async def claim_command(event_id: int, req: ClaimRequest):
 
                 # Check if already claimed
                 await cur.execute("""
-                    SELECT worker_id, meta FROM noetl.event
+                    SELECT worker_id, meta, created_at FROM noetl.event
                     WHERE execution_id = %s
                       AND event_type = 'command.claimed'
                       AND (meta->>'command_id' = %s OR (result->'data'->>'command_id' = %s))
+                    ORDER BY event_id DESC
                     LIMIT 1
                 """, (execution_id, command_id, command_id))
                 existing = await cur.fetchone()
 
+                stale_reclaim = False
+                reclaimed_from_worker = None
+                reclaimed_reason = None
                 if existing:
                     existing_worker = existing.get('worker_id') or (existing.get('meta') or {}).get('worker_id')
+                    created_at = existing.get("created_at")
+                    claim_age_seconds = 0.0
+                    if isinstance(created_at, datetime):
+                        # noetl.event.created_at is TIMESTAMP (naive). Normalize to UTC
+                        # before age calculation so lease checks do not fail with tz mismatch.
+                        created_at_dt = created_at
+                        if created_at_dt.tzinfo is None:
+                            created_at_dt = created_at_dt.replace(tzinfo=timezone.utc)
+                        claim_age_seconds = max(
+                            0.0,
+                            (datetime.now(created_at_dt.tzinfo) - created_at_dt).total_seconds(),
+                        )
+
                     if existing_worker and existing_worker != req.worker_id:
-                        raise HTTPException(409, f"Command already claimed by {existing_worker}")
+                        worker_runtime_status = None
+                        worker_heartbeat_age = None
+                        try:
+                            await cur.execute(
+                                """
+                                SELECT status, heartbeat
+                                FROM noetl.runtime
+                                WHERE kind = 'worker_pool' AND name = %s
+                                ORDER BY updated_at DESC
+                                LIMIT 1
+                                """,
+                                (existing_worker,),
+                            )
+                            runtime_row = await cur.fetchone()
+                            if runtime_row:
+                                worker_runtime_status = (runtime_row.get("status") or "").lower()
+                                heartbeat_ts = runtime_row.get("heartbeat")
+                                if isinstance(heartbeat_ts, datetime):
+                                    heartbeat_dt = heartbeat_ts
+                                    if heartbeat_dt.tzinfo is None:
+                                        heartbeat_dt = heartbeat_dt.replace(tzinfo=timezone.utc)
+                                    worker_heartbeat_age = max(
+                                        0.0,
+                                        (datetime.now(heartbeat_dt.tzinfo) - heartbeat_dt).total_seconds(),
+                                    )
+                        except Exception:
+                            # Runtime table lookup is best-effort; fallback to lease-age semantics.
+                            logger.debug(
+                                "[CLAIM] Runtime status lookup failed for worker=%s",
+                                existing_worker,
+                                exc_info=True,
+                            )
+
+                        worker_inactive = (
+                            worker_runtime_status is not None
+                            and worker_runtime_status != "ready"
+                        )
+                        heartbeat_stale = (
+                            worker_heartbeat_age is not None
+                            and worker_heartbeat_age >= _CLAIM_WORKER_HEARTBEAT_STALE_SECONDS
+                        )
+
+                        if worker_inactive or heartbeat_stale:
+                            stale_reclaim = True
+                            reclaimed_from_worker = existing_worker
+                            reclaimed_reason = (
+                                "worker_inactive"
+                                if worker_inactive
+                                else "worker_heartbeat_stale"
+                            )
+                            logger.warning(
+                                "[CLAIM] Reclaiming command %s from inactive worker=%s "
+                                "(status=%s heartbeat_age=%.3fs threshold=%.3fs)",
+                                command_id,
+                                existing_worker,
+                                worker_runtime_status,
+                                worker_heartbeat_age or -1.0,
+                                _CLAIM_WORKER_HEARTBEAT_STALE_SECONDS,
+                            )
+                        elif claim_age_seconds < _CLAIM_LEASE_SECONDS:
+                            retry_after = max(
+                                1,
+                                min(
+                                    _CLAIM_ACTIVE_RETRY_AFTER_SECONDS,
+                                    int(max(1.0, _CLAIM_LEASE_SECONDS - claim_age_seconds)),
+                                ),
+                            )
+                            raise HTTPException(
+                                409,
+                                detail={
+                                    "code": "active_claim",
+                                    "message": f"Command already claimed by {existing_worker}",
+                                    "worker_id": existing_worker,
+                                    "age_seconds": round(claim_age_seconds, 3),
+                                    "lease_seconds": _CLAIM_LEASE_SECONDS,
+                                    "worker_status": worker_runtime_status,
+                                    "worker_heartbeat_age_seconds": (
+                                        round(worker_heartbeat_age, 3)
+                                        if worker_heartbeat_age is not None
+                                        else None
+                                    ),
+                                },
+                                headers={"Retry-After": str(retry_after)},
+                            )
+                        else:
+                            stale_reclaim = True
+                            reclaimed_from_worker = existing_worker
+                            reclaimed_reason = "lease_expired"
+                            logger.warning(
+                                "[CLAIM] Reclaiming stale command %s from worker=%s age=%.3fs (lease=%.3fs)",
+                                command_id,
+                                existing_worker,
+                                claim_age_seconds,
+                                _CLAIM_LEASE_SECONDS,
+                            )
                     # Already claimed by same worker - idempotent, return command details
-                    return ClaimResponse(
-                        status="ok",
-                        event_id=event_id,
-                        execution_id=execution_id,
-                        node_id=step,
-                        node_name=step,
-                        action=tool_kind,
-                        context=context,
-                        meta=meta
-                    )
+                    if not stale_reclaim:
+                        return ClaimResponse(
+                            status="ok",
+                            event_id=event_id,
+                            execution_id=execution_id,
+                            node_id=step,
+                            node_name=step,
+                            action=tool_kind,
+                            context=context,
+                            meta=meta
+                        )
 
                 # Not claimed yet - insert claim event
-                claim_evt_id = await get_snowflake_id()
+                claim_evt_id = await _next_snowflake_id(cur)
                 claim_meta = {
                     "command_id": command_id,
                     "worker_id": req.worker_id,
                     "actionable": False,
                     "informative": True,
                 }
+                if stale_reclaim:
+                    claim_meta["reclaimed"] = True
+                    claim_meta["reclaimed_from_worker"] = reclaimed_from_worker
+                    if reclaimed_reason:
+                        claim_meta["reclaimed_reason"] = reclaimed_reason
                 result_obj = {"kind": "data", "data": {"command_id": command_id}}
 
                 await cur.execute("""
@@ -451,6 +693,17 @@ async def claim_command(event_id: int, req: ClaimRequest):
 
     except HTTPException:
         raise
+    except PoolTimeout:
+        logger.warning(
+            "[CLAIM] DB pool saturated for event_id=%s (acquire_timeout=%.3fs)",
+            event_id,
+            _CLAIM_DB_ACQUIRE_TIMEOUT_SECONDS,
+        )
+        raise HTTPException(
+            status_code=503,
+            detail="Database temporarily overloaded; retry shortly",
+            headers={"Retry-After": "1"},
+        )
     except Exception as e:
         logger.error(f"claim_command failed: {e}", exc_info=True)
         raise HTTPException(500, str(e))
@@ -491,9 +744,9 @@ async def handle_event(req: EventRequest) -> EventResponse:
         if req.name == "command.claimed":
             command_id = req.payload.get("command_id") or (req.meta or {}).get("command_id")
             if command_id:
-                evt_id = await get_snowflake_id()
                 async with get_pool_connection() as conn:
                     async with conn.cursor(row_factory=dict_row) as cur:
+                        evt_id = await _next_snowflake_id(cur)
                         # Use advisory lock on command_id hash to prevent race conditions
                         # pg_try_advisory_xact_lock returns true if lock acquired, false if already locked
                         await cur.execute("""
@@ -580,9 +833,9 @@ async def handle_event(req: EventRequest) -> EventResponse:
             }
         
         # Persist worker event
-        evt_id = await get_snowflake_id()
         async with get_pool_connection() as conn:
             async with conn.cursor(row_factory=dict_row) as cur:
+                evt_id = await _next_snowflake_id(cur)
                 await cur.execute(
                     "SELECT catalog_id FROM noetl.event WHERE execution_id = %s LIMIT 1",
                     (int(req.execution_id),)
@@ -656,8 +909,9 @@ async def handle_event(req: EventRequest) -> EventResponse:
                     cat_id = row['catalog_id'] if row else catalog_id
                     parent_exec = row['parent_execution_id'] if row else None
                     
-                    cmd_id = f"{cmd.execution_id}:{cmd.step}:{await get_snowflake_id()}"
-                    new_evt_id = await get_snowflake_id()
+                    cmd_suffix = await _next_snowflake_id(cur)
+                    cmd_id = f"{cmd.execution_id}:{cmd.step}:{cmd_suffix}"
+                    new_evt_id = await _next_snowflake_id(cur)
                     
                     # Build context for retry command (command execution parameters)
                     context = {
@@ -676,6 +930,8 @@ async def handle_event(req: EventRequest) -> EventResponse:
                         "trigger_step": req.step,
                         "actionable": True,  # Store in meta, not separate column
                     }
+                    if cmd.metadata:
+                        meta.update({k: v for k, v in cmd.metadata.items() if v is not None})
                     
                     await cur.execute("""
                         INSERT INTO noetl.event (
@@ -747,13 +1003,20 @@ async def handle_event(req: EventRequest) -> EventResponse:
 
         return EventResponse(status="ok", event_id=evt_id, commands_generated=len(commands))
     
+    except PoolTimeout:
+        logger.warning("[EVENTS] DB pool saturated while persisting %s for step %s", req.name, req.step)
+        raise HTTPException(
+            status_code=503,
+            detail="Database temporarily overloaded; retry shortly",
+            headers={"Retry-After": "1"},
+        )
     except Exception as e:
         logger.error(f"handle_event failed: {e}", exc_info=True)
         raise HTTPException(500, str(e))
 
 
 @router.get("/executions/{execution_id}/status")
-async def get_execution_status(execution_id: str):
+async def get_execution_status(execution_id: str, full: bool = False):
     """Get execution status from engine state."""
     try:
         engine = get_engine()
@@ -811,7 +1074,7 @@ async def get_execution_status(execution_id: str):
             "failed": failed,
             "completed": completed,
             "completion_inferred": completion_inferred,
-            "variables": state.variables,
+            "variables": state.variables if full else _compact_status_variables(state.variables),
         }
     except HTTPException:
         raise

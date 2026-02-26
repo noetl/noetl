@@ -7,13 +7,13 @@ use async_graphql::http::playground_source;
 use async_graphql::{EmptySubscription, Schema};
 use async_graphql_axum::GraphQL;
 use axum::{
-    middleware,
-    Router,
     extract::State,
-    response::Html,
-    routing::{get, post, put, delete, patch, options},
     http::header::{AUTHORIZATION, CONTENT_TYPE},
     http::{HeaderName, Method},
+    middleware,
+    response::Html,
+    routing::{delete, get, options, patch, post, put},
+    Router,
 };
 use dotenvy::dotenv;
 use tower_http::cors::{AllowOrigin, CorsLayer};
@@ -65,7 +65,14 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("  NATS: {}", config.nats.url);
     tracing::info!("  Auth playbooks:");
     tracing::info!("    login: {}", config.auth_playbooks.login);
-    tracing::info!("    validate_session: {}", config.auth_playbooks.validate_session);
+    tracing::info!(
+        "    validate_session (legacy fallback): {}",
+        config.auth_playbooks.validate_session
+    );
+    tracing::info!(
+        "    session_db_credential: {}",
+        config.auth_playbooks.session_db_credential
+    );
     tracing::info!("    check_access: {}", config.auth_playbooks.check_access);
     tracing::info!("    timeout: {}s", config.auth_playbooks.timeout_secs);
 
@@ -85,10 +92,7 @@ async fn main() -> anyhow::Result<()> {
         config.nats.session_bucket.clone(),
         config.nats.session_cache_ttl_secs,
     ));
-    let cache_enabled = session_cache
-        .connect(&config.nats.url)
-        .await
-        .unwrap_or(false);
+    let cache_enabled = session_cache.connect(&config.nats.url).await.unwrap_or(false);
     if cache_enabled {
         tracing::info!(
             "Session cache enabled: bucket={}, ttl={}s",
@@ -97,7 +101,7 @@ async fn main() -> anyhow::Result<()> {
         );
     } else {
         tracing::warn!(
-            "Session cache disabled (NATS K/V unavailable) - all validations will use playbooks"
+            "Session cache disabled (NATS K/V unavailable) - all validations will query Postgres via NoETL API"
         );
     }
 
@@ -109,10 +113,7 @@ async fn main() -> anyhow::Result<()> {
         config.nats.request_bucket.clone(),
         config.nats.request_ttl_secs,
     ));
-    let request_store_enabled = request_store
-        .connect(&config.nats.url)
-        .await
-        .unwrap_or(false);
+    let request_store_enabled = request_store.connect(&config.nats.url).await.unwrap_or(false);
     if request_store_enabled {
         tracing::info!(
             "Request store enabled: bucket={}, ttl={}s",
@@ -120,9 +121,7 @@ async fn main() -> anyhow::Result<()> {
             config.nats.request_ttl_secs
         );
     } else {
-        tracing::warn!(
-            "Request store disabled (NATS K/V unavailable) - async callbacks will not work"
-        );
+        tracing::warn!("Request store disabled (NATS K/V unavailable) - async callbacks will not work");
     }
 
     // SSE state for real-time callbacks
@@ -156,7 +155,9 @@ async fn main() -> anyhow::Result<()> {
 
     // CORS configuration
     let cors_origins_str = config.cors_origins_string();
-    let allowed_origins: Vec<axum::http::HeaderValue> = config.cors.allowed_origins
+    let allowed_origins: Vec<axum::http::HeaderValue> = config
+        .cors
+        .allowed_origins
         .iter()
         .filter_map(|s| s.trim().parse().ok())
         .collect();
@@ -165,7 +166,14 @@ async fn main() -> anyhow::Result<()> {
 
     let cors = CorsLayer::new()
         .allow_origin(AllowOrigin::list(allowed_origins))
-        .allow_methods([Method::GET, Method::POST, Method::PUT, Method::DELETE, Method::PATCH, Method::OPTIONS])
+        .allow_methods([
+            Method::GET,
+            Method::POST,
+            Method::PUT,
+            Method::DELETE,
+            Method::PATCH,
+            Method::OPTIONS,
+        ])
         .allow_headers([
             CONTENT_TYPE,
             AUTHORIZATION,

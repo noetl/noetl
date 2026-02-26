@@ -14,9 +14,10 @@ import asyncio
 import logging
 import httpx
 import os
+import random
 import time
 from collections import OrderedDict
-from typing import Optional, Any
+from typing import Optional, Any, Literal
 from datetime import datetime, timezone
 
 
@@ -112,6 +113,15 @@ class _WorkerTemplateCache:
 
 
 _template_cache = _WorkerTemplateCache(max_size=500)
+
+
+class ClaimTerminalError(RuntimeError):
+    """Terminal claim error after retries are exhausted or command is invalid."""
+
+    def __init__(self, status_code: int, message: str, retryable: bool):
+        super().__init__(message)
+        self.status_code = status_code
+        self.retryable = retryable
 
 
 class V2Worker:
@@ -450,7 +460,7 @@ class V2Worker:
             logger.warning(f"[CANCEL] Could not check cancellation status for {execution_id}: {e}")
             return False
     
-    async def _handle_command_notification(self, notification: dict):
+    async def _handle_command_notification(self, notification: dict) -> Literal["ack", "nak", "term"]:
         """
         Handle command notification from NATS (Event-Driven).
 
@@ -476,13 +486,21 @@ class V2Worker:
 
                 # Single atomic call: claim + cancel check + fetch command details
                 t_claim_start = time.perf_counter()
-                command = await self._claim_and_fetch_command(server_url, event_id)
+                command, claim_decision = await self._claim_and_fetch_command(server_url, event_id)
                 t_claim_end = time.perf_counter()
                 logger.info(f"[PERF] claim_and_fetch took {(t_claim_end - t_claim_start)*1000:.1f}ms")
 
+                if claim_decision == "retry_later":
+                    logger.info(
+                        "[CLAIM] Deferring command %s (event_id=%s) back to queue for later retry",
+                        command_id,
+                        event_id,
+                    )
+                    return "nak"
+
                 if command is None:
-                    # Already claimed by another worker or cancelled - skip silently
-                    return
+                    # Terminally skipped (already completed/cancelled)
+                    return "ack"
 
                 logger.info(f"[EVENT] Worker {self.worker_id} claimed command {command_id}")
 
@@ -501,14 +519,37 @@ class V2Worker:
                 # Total time
                 t_total_end = time.perf_counter()
                 logger.info(f"[PERF] TOTAL command handling for {step} took {(t_total_end - t_total_start)*1000:.1f}ms")
+                return "ack"
 
+            except ClaimTerminalError as e:
+                logger.error(
+                    "[CLAIM] Terminal failure for event_id=%s command=%s step=%s status=%s retryable=%s: %s",
+                    notification.get("event_id"),
+                    notification.get("command_id"),
+                    notification.get("step"),
+                    e.status_code,
+                    e.retryable,
+                    e,
+                )
+                # Do not silently drop failed claims - mark command as failed for diagnostics.
+                await self._emit_command_failed(
+                    notification["server_url"],
+                    int(notification["execution_id"]),
+                    notification["command_id"],
+                    notification["step"],
+                    f"claim_failed status={e.status_code} retryable={str(e.retryable).lower()} message={e}",
+                )
+                return "ack"
             except Exception as e:
                 logger.exception(f"Error handling command notification: {e}")
+                return "nak"
             finally:
                 if db_slot_acquired:
                     self._db_command_semaphore.release()
     
-    async def _claim_and_fetch_command(self, server_url: str, event_id: int) -> Optional[dict]:
+    async def _claim_and_fetch_command(
+        self, server_url: str, event_id: int
+    ) -> tuple[Optional[dict], Literal["claimed", "skip_ack", "retry_later"]]:
         """
         Atomically claim a command and fetch its details in a single call.
 
@@ -519,39 +560,138 @@ class V2Worker:
         4. Inserts command.claimed event
         5. Returns command details
 
-        Returns command dict if claim successful, None if already claimed/cancelled.
+        Returns:
+            - (command, "claimed") on successful claim
+            - (None, "skip_ack") for terminal no-op outcomes (already completed/cancelled)
+            - (None, "retry_later") for transient overload/claim contention
         """
-        try:
-            response = await self._http_client.post(
-                f"{server_url.rstrip('/')}/api/commands/{event_id}/claim",
-                json={"worker_id": self.worker_id}
-            )
+        max_attempts = 5
+        delay_seconds = 0.25
+        max_delay_seconds = 2.0
+        retryable_statuses = {408, 425, 429, 500, 502, 503, 504}
 
-            if response.status_code == 200:
-                data = response.json()
-                logger.info(f"[CLAIM] Successfully claimed command for event_id={event_id}")
-                return {
-                    "execution_id": data["execution_id"],
-                    "node_id": data["node_id"],
-                    "node_name": data["node_name"],
-                    "action": data["action"],
-                    "context": data["context"],
-                    "meta": data["meta"]
-                }
-            elif response.status_code == 409:
-                # Already claimed or cancelled - expected in multi-worker setup
-                logger.info(f"[CLAIM] Command for event_id={event_id} already claimed or cancelled, skipping")
-                return None
-            elif response.status_code == 404:
-                logger.error(f"[CLAIM] Command not found for event_id={event_id}")
-                return None
-            else:
-                logger.warning(f"[CLAIM] Failed to claim command event_id={event_id}: {response.status_code} - {response.text}")
-                return None
+        def _claim_detail_code(response: httpx.Response) -> str:
+            try:
+                payload = response.json()
+            except Exception:
+                return ""
+            detail = payload.get("detail")
+            if isinstance(detail, dict):
+                code = detail.get("code")
+                return str(code) if code else ""
+            return ""
 
-        except Exception as e:
-            logger.error(f"[CLAIM] Error claiming command event_id={event_id}: {e}")
-            return None
+        for attempt in range(1, max_attempts + 1):
+            try:
+                response = await self._http_client.post(
+                    f"{server_url.rstrip('/')}/api/commands/{event_id}/claim",
+                    json={"worker_id": self.worker_id},
+                )
+
+                if response.status_code == 200:
+                    data = response.json()
+                    logger.info(f"[CLAIM] Successfully claimed command for event_id={event_id}")
+                    return ({
+                        "execution_id": data["execution_id"],
+                        "node_id": data["node_id"],
+                        "node_name": data["node_name"],
+                        "action": data["action"],
+                        "context": data["context"],
+                        "meta": data["meta"]
+                    }, "claimed")
+                if response.status_code == 409:
+                    code = _claim_detail_code(response)
+                    if code == "active_claim":
+                        retry_after = response.headers.get("Retry-After", "1")
+                        logger.info(
+                            "[CLAIM] Command for event_id=%s is actively claimed by another worker; deferring (retry-after=%s)",
+                            event_id,
+                            retry_after,
+                        )
+                        return None, "retry_later"
+                    logger.info(
+                        "[CLAIM] Command for event_id=%s already terminal/cancelled (code=%s), skipping",
+                        event_id,
+                        code or "unknown",
+                    )
+                    return None, "skip_ack"
+                if response.status_code == 404:
+                    raise ClaimTerminalError(
+                        status_code=404,
+                        message=f"Command not found for event_id={event_id}",
+                        retryable=False,
+                    )
+                if response.status_code in retryable_statuses and attempt < max_attempts:
+                    retry_after_header = response.headers.get("Retry-After")
+                    retry_after_seconds = 0.0
+                    if retry_after_header:
+                        try:
+                            retry_after_seconds = max(0.0, float(retry_after_header))
+                        except (TypeError, ValueError):
+                            retry_after_seconds = 0.0
+                    jitter_multiplier = 1.0 + random.uniform(-0.2, 0.2)
+                    computed_delay = min(delay_seconds * jitter_multiplier, max_delay_seconds)
+                    sleep_seconds = min(max(computed_delay, retry_after_seconds), max_delay_seconds)
+                    logger.warning(
+                        "[CLAIM] Transient claim failure for event_id=%s status=%s attempt=%s/%s; retrying in %.2fs",
+                        event_id,
+                        response.status_code,
+                        attempt,
+                        max_attempts,
+                        sleep_seconds,
+                    )
+                    await asyncio.sleep(sleep_seconds)
+                    delay_seconds = min(delay_seconds * 2, max_delay_seconds)
+                    continue
+                if response.status_code in retryable_statuses:
+                    logger.warning(
+                        "[CLAIM] Retryable claim status persisted for event_id=%s (status=%s attempts=%s); deferring to queue redelivery",
+                        event_id,
+                        response.status_code,
+                        attempt,
+                    )
+                    return None, "retry_later"
+
+                logger.warning(
+                    "[CLAIM] Failed to claim command event_id=%s status=%s attempt=%s/%s body=%s",
+                    event_id,
+                    response.status_code,
+                    attempt,
+                    max_attempts,
+                    response.text[:500],
+                )
+                raise ClaimTerminalError(
+                    status_code=response.status_code,
+                    message=f"claim endpoint failed with status={response.status_code}",
+                    retryable=response.status_code in retryable_statuses,
+                )
+
+            except ClaimTerminalError:
+                raise
+            except Exception as e:
+                if attempt < max_attempts:
+                    jitter_multiplier = 1.0 + random.uniform(-0.2, 0.2)
+                    sleep_seconds = min(delay_seconds * jitter_multiplier, max_delay_seconds)
+                    logger.warning(
+                        "[CLAIM] Error claiming command event_id=%s attempt=%s/%s: %s; retrying in %.2fs",
+                        event_id,
+                        attempt,
+                        max_attempts,
+                        e,
+                        sleep_seconds,
+                    )
+                    await asyncio.sleep(sleep_seconds)
+                    delay_seconds = min(delay_seconds * 2, max_delay_seconds)
+                    continue
+                logger.warning(
+                    "[CLAIM] Network/transport failures persisted for event_id=%s after %s attempts; deferring to queue redelivery: %s",
+                    event_id,
+                    attempt,
+                    e,
+                )
+                return None, "retry_later"
+
+        return None, "retry_later"
 
     async def _claim_command(self, server_url: str, execution_id: int, command_id: str) -> bool:
         """
@@ -1004,6 +1144,7 @@ class V2Worker:
         # Extract catalog_id from meta (where server stores it)
         meta = command.get("meta", {})
         catalog_id = meta.get("catalog_id")
+        loop_event_id = meta.get("loop_event_id")
 
         # Ensure execution_id and catalog_id are in render_context for keychain resolution
         if "execution_id" not in render_context:
@@ -1204,7 +1345,9 @@ class V2Worker:
                             {
                                 "error": tool_error,
                                 "response": error_event_response,
-                                "case_handled": True
+                                "case_handled": True,
+                                "command_id": command_id,
+                                "loop_event_id": loop_event_id,
                             },
                             actionable=True,  # Case evaluated - server may route/retry
                             informative=True
@@ -1215,7 +1358,12 @@ class V2Worker:
                             execution_id,
                             step,
                             "call.done",
-                            response,
+                            {
+                                "response": response_for_events,
+                                "case_handled": True,
+                                "command_id": command_id,
+                                "loop_event_id": loop_event_id,
+                            },
                             actionable=True,
                             informative=True
                         )
@@ -1228,7 +1376,8 @@ class V2Worker:
                         {
                             "status": "COMPLETED" if not tool_error else "CASE_HANDLED",
                             "result": eval_response,
-                            "case_action": case_action
+                            "case_action": case_action,
+                            "command_id": command_id,
                         },
                         actionable=True,  # Server should handle routing
                         informative=True
@@ -1282,7 +1431,8 @@ class V2Worker:
                     {
                         "status": "FAILED",  # Uppercase to match database status values
                         "error": tool_error,
-                        "result": error_event_response
+                        "result": error_event_response,
+                        "command_id": command_id,
                     },
                     actionable=True,  # Server may want to handle failure
                     informative=True
@@ -1334,7 +1484,11 @@ class V2Worker:
                     execution_id,
                     step,
                     "call.done",
-                    {"response": response_for_events},
+                    {
+                        "response": response_for_events,
+                        "command_id": command_id,
+                        "loop_event_id": loop_event_id,
+                    },
                     actionable=True,  # Server should evaluate next/case routing
                     informative=True
                 )
@@ -1346,7 +1500,11 @@ class V2Worker:
                     execution_id,
                     step,
                     "step.exit",
-                    {"result": response_for_events, "status": "completed"},
+                    {
+                        "result": response_for_events,
+                        "status": "completed",
+                        "command_id": command_id,
+                    },
                     actionable=True,  # Server evaluates routing
                     informative=True
                 )
@@ -1412,7 +1570,8 @@ class V2Worker:
                 {
                     "status": "failed",
                     "error": str(e),
-                    "error_type": type(e).__name__
+                    "error_type": type(e).__name__,
+                    "command_id": command_id,
                 }
             )
             

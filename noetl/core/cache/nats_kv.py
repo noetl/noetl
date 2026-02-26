@@ -15,6 +15,7 @@ event table and retrieved via the aggregate service when needed.
 
 import json
 import asyncio
+import random
 from typing import Any, Optional
 from datetime import datetime, timezone
 import nats
@@ -182,8 +183,10 @@ class NATSKVCache:
         key_suffix = f"loop:{step_name}:{event_id}" if event_id else f"loop:{step_name}"
         key = self._make_key(execution_id, key_suffix)
 
-        # Read-modify-write with retry logic (optimistic locking)
-        max_retries = 5
+        # Read-modify-write with retry logic (optimistic locking).
+        # High-concurrency parallel loops can generate dozens of concurrent increments;
+        # keep retry budget high to avoid dropping completion signals.
+        max_retries = 50
         for attempt in range(max_retries):
             try:
                 # Get current state
@@ -210,13 +213,25 @@ class NATSKVCache:
                 return state["completed_count"]
 
             except Exception as e:
-                if "wrong last sequence" in str(e).lower() and attempt < max_retries - 1:
-                    # Concurrent update, retry
-                    await asyncio.sleep(0.01 * (attempt + 1))  # Exponential backoff
+                err = str(e).lower()
+                if "wrong last sequence" in err and attempt < max_retries - 1:
+                    # Concurrent update, retry with jittered exponential backoff.
+                    base = min(0.002 * (2 ** min(attempt, 7)), 0.2)
+                    sleep_seconds = base * (0.5 + random.random())
+                    await asyncio.sleep(sleep_seconds)
                     continue
+                if "wrong last sequence" in err:
+                    logger.warning(
+                        "Failed to increment loop completed count after %s optimistic retries "
+                        "(execution=%s step=%s event_id=%s)",
+                        max_retries,
+                        execution_id,
+                        step_name,
+                        event_id,
+                    )
                 else:
                     logger.error(f"Failed to increment loop completed count: {e}")
-                    return -1
+                return -1
 
         return -1
 

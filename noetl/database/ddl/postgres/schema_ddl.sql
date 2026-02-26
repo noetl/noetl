@@ -93,6 +93,12 @@ CREATE INDEX IF NOT EXISTS idx_event_exec_id_event_id_desc ON noetl.event (execu
 -- Composite index for filtering by event_type within execution
 CREATE INDEX IF NOT EXISTS idx_event_exec_type ON noetl.event (execution_id, event_type, event_id DESC);
 
+-- Fast seed for /api/executions polling (latest started executions)
+CREATE INDEX IF NOT EXISTS idx_event_playbook_init_event_id_desc
+    ON noetl.event (event_id DESC)
+    INCLUDE (execution_id, catalog_id, parent_execution_id, created_at)
+    WHERE event_type = 'playbook.initialized';
+
 -- Legacy compatibility view for event_log
 CREATE OR REPLACE VIEW noetl.event_log AS SELECT * FROM noetl.event;
 

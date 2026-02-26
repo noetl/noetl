@@ -440,6 +440,7 @@ class WorkerSettings(BaseModel):
     nats_fetch_timeout_seconds: float = Field(30.0, alias="NOETL_WORKER_NATS_FETCH_TIMEOUT_SECONDS")
     nats_fetch_heartbeat_seconds: float = Field(5.0, alias="NOETL_WORKER_NATS_FETCH_HEARTBEAT_SECONDS")
     nats_max_ack_pending: int = Field(64, alias="NOETL_WORKER_NATS_MAX_ACK_PENDING")
+    nats_max_deliver: int = Field(1000, alias="NOETL_WORKER_NATS_MAX_DELIVER")
 
     # Keychain configuration
     keychain_refresh_threshold: int = Field(default=300, alias="NOETL_KEYCHAIN_REFRESH_THRESHOLD")
@@ -447,6 +448,7 @@ class WorkerSettings(BaseModel):
     # HTTP timeout configuration (seconds)
     http_client_timeout: float = Field(default=120.0, alias="NOETL_WORKER_HTTP_TIMEOUT")
     http_event_timeout: float = Field(default=60.0, alias="NOETL_WORKER_EVENT_TIMEOUT")
+    command_timeout_seconds: float = Field(default=180.0, alias="NOETL_WORKER_COMMAND_TIMEOUT_SECONDS")
     max_inflight_commands: int = Field(8, alias="NOETL_WORKER_MAX_INFLIGHT_COMMANDS")
     max_inflight_db_commands: int = Field(4, alias="NOETL_WORKER_MAX_INFLIGHT_DB_COMMANDS")
     throttle_poll_interval: float = Field(0.2, alias="NOETL_WORKER_THROTTLE_POLL_INTERVAL_SECONDS")
@@ -484,6 +486,7 @@ class WorkerSettings(BaseModel):
             'deregister_retries',
             'max_workers',
             'nats_max_ack_pending',
+            'nats_max_deliver',
             'max_inflight_commands',
             'max_inflight_db_commands',
             'postgres_pool_waiting_threshold',
@@ -506,6 +509,8 @@ class WorkerSettings(BaseModel):
     def validate_throttle_config(self):
         if self.nats_max_ack_pending < 1:
             raise ValueError("NOETL_WORKER_NATS_MAX_ACK_PENDING must be >= 1")
+        if self.nats_max_deliver < 1:
+            raise ValueError("NOETL_WORKER_NATS_MAX_DELIVER must be >= 1")
         if self.max_inflight_commands < 1:
             raise ValueError("NOETL_WORKER_MAX_INFLIGHT_COMMANDS must be >= 1")
         if self.max_inflight_db_commands < 1:
@@ -522,6 +527,8 @@ class WorkerSettings(BaseModel):
             raise ValueError("NOETL_WORKER_THROTTLE_POLL_INTERVAL_SECONDS must be > 0")
         if self.postgres_pool_waiting_threshold < 0:
             raise ValueError("NOETL_WORKER_POSTGRES_POOL_WAITING_THRESHOLD must be >= 0")
+        if self.command_timeout_seconds <= 0:
+            raise ValueError("NOETL_WORKER_COMMAND_TIMEOUT_SECONDS must be > 0")
         return self
 
     @property

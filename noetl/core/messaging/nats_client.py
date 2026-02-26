@@ -7,8 +7,8 @@ Architecture:
 - Workers execute and emit events back to server
 
 Performance tuning:
-- Ack IMMEDIATELY on message receipt (don't wait for processing)
 - Process messages in background tasks (don't block fetch loop)
+- Ack AFTER processing outcome is known (preserve redelivery on transient failures)
 - Database advisory locks handle exactly-once processing
 """
 
@@ -122,8 +122,8 @@ class NATSCommandSubscriber:
     Workers use this to receive command notifications from server.
 
     Performance optimizations:
-    - Ack immediately on receipt (don't wait for processing)
     - Process in background task (don't block fetch loop)
+    - Ack only after callback outcome to preserve queue-based backpressure/retry
     - Exactly-once handled by database advisory locks
     """
 
@@ -137,6 +137,7 @@ class NATSCommandSubscriber:
         max_ack_pending: Optional[int] = None,
         fetch_timeout: Optional[float] = None,
         fetch_heartbeat: Optional[float] = None,
+        callback_timeout_seconds: Optional[float] = None,
     ):
         from noetl.core.config import get_worker_settings
         ws = get_worker_settings()
@@ -148,6 +149,11 @@ class NATSCommandSubscriber:
         self.max_ack_pending = max(1, int(max_ack_pending or ws.nats_max_ack_pending))
         self.fetch_timeout = float(fetch_timeout if fetch_timeout is not None else ws.nats_fetch_timeout_seconds)
         self.fetch_heartbeat = float(fetch_heartbeat if fetch_heartbeat is not None else ws.nats_fetch_heartbeat_seconds)
+        self.callback_timeout_seconds = float(
+            callback_timeout_seconds
+            if callback_timeout_seconds is not None
+            else ws.command_timeout_seconds
+        )
         self._nc: Optional[NATSClient] = None
         self._js: Optional[JetStreamContext] = None
         self._subscription = None
@@ -167,10 +173,12 @@ class NATSCommandSubscriber:
         )
 
     def _consumer_config(self) -> ConsumerConfig:
+        from noetl.core.config import get_worker_settings
+        ws = get_worker_settings()
         return ConsumerConfig(
             durable_name=self.consumer_name,
             ack_policy="explicit",
-            max_deliver=3,
+            max_deliver=max(1, int(ws.nats_max_deliver)),
             ack_wait=30,
             deliver_policy="new",
             replay_policy="instant",
@@ -286,7 +294,7 @@ class NATSCommandSubscriber:
 
     async def subscribe(
         self,
-        callback: Callable[[dict], Awaitable[None]]
+        callback: Callable[[dict], Awaitable[Optional[str]]]
     ):
         """
         Subscribe to command notifications.
@@ -306,13 +314,47 @@ class NATSCommandSubscriber:
             task.add_done_callback(self._background_tasks.discard)
             return task
 
-        async def process_message(data: dict):
+        async def process_message(data: dict, msg):
             """Process message in background - don't block fetch loop."""
+            callback_action = "nak"
             try:
-                await callback(data)
+                action = await asyncio.wait_for(
+                    callback(data),
+                    timeout=self.callback_timeout_seconds,
+                )
+                if isinstance(action, str):
+                    normalized = action.strip().lower()
+                    if normalized in {"ack", "nak", "term"}:
+                        callback_action = normalized
+                    else:
+                        logger.warning(
+                            "Callback returned unsupported action '%s'; defaulting to NAK",
+                            action,
+                        )
+                else:
+                    logger.warning(
+                        "Callback returned non-string action (%s); defaulting to NAK",
+                        type(action).__name__,
+                    )
+            except asyncio.TimeoutError:
+                logger.error(
+                    "Command callback timed out after %.1fs; issuing NAK for redelivery",
+                    self.callback_timeout_seconds,
+                )
+            except asyncio.CancelledError:
+                logger.warning("Command callback task cancelled; issuing NAK for redelivery")
             except Exception as e:
                 logger.error(f"Error processing message: {e}", exc_info=True)
             finally:
+                try:
+                    if callback_action == "nak":
+                        await msg.nak()
+                    elif callback_action == "term":
+                        await msg.term()
+                    else:
+                        await msg.ack()
+                except Exception as ack_error:
+                    logger.warning("Failed to send %s for message: %s", callback_action, ack_error)
                 self._inflight_semaphore.release()
 
         try:
@@ -373,13 +415,8 @@ class NATSCommandSubscriber:
                         try:
                             import json
                             data = json.loads(msg.data.decode())
-
-                            # ACK IMMEDIATELY - don't wait for processing
-                            # Database advisory lock handles exactly-once
-                            await msg.ack()
-
-                            # Process in background - don't block fetch loop
-                            create_background_task(process_message(data))
+                            # Process in background and ack/nak based on callback result.
+                            create_background_task(process_message(data, msg))
 
                         except Exception as e:
                             self._inflight_semaphore.release()

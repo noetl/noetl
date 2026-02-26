@@ -14,6 +14,15 @@ pub struct NoetlClient {
     http: reqwest::Client,
 }
 
+#[derive(Debug, Clone)]
+pub struct ValidatedSession {
+    pub user_id: i32,
+    pub email: String,
+    pub display_name: String,
+    pub expires_at: String,
+    pub roles: Vec<String>,
+}
+
 impl NoetlClient {
     pub fn new(base_url: String) -> Self {
         Self {
@@ -35,7 +44,12 @@ impl NoetlClient {
         let url = format!("{}/api/execute", self.base_url.trim_end_matches('/'));
         let payload = serde_json::json!({ "path": path, "payload": args });
 
-        let res = self.http.post(&url).json(&payload).send().await
+        let res = self
+            .http
+            .post(&url)
+            .json(&payload)
+            .send()
+            .await
             .context("execute_playbook: send")?;
 
         let status = res.status();
@@ -44,8 +58,7 @@ impl NoetlClient {
             return Err(anyhow::anyhow!("Execute playbook failed: {} - {}", status, body));
         }
 
-        let parsed: ExecutionResponse = serde_json::from_str(&body)
-            .context("parse execution response")?;
+        let parsed: ExecutionResponse = serde_json::from_str(&body).context("parse execution response")?;
         Ok(parsed)
     }
 
@@ -58,8 +71,7 @@ impl NoetlClient {
             execution_id
         );
 
-        let res = self.http.get(&url).send().await
-            .context("get_playbook_status: send")?;
+        let res = self.http.get(&url).send().await.context("get_playbook_status: send")?;
 
         let status = res.status();
         let body = res.text().await.unwrap_or_default();
@@ -67,8 +79,7 @@ impl NoetlClient {
             return Err(anyhow::anyhow!("Get playbook status failed: {} - {}", status, body));
         }
 
-        let parsed: serde_json::Value = serde_json::from_str(&body)
-            .context("parse status json")?;
+        let parsed: serde_json::Value = serde_json::from_str(&body).context("parse status json")?;
         Ok(parsed)
     }
 
@@ -105,12 +116,87 @@ impl NoetlClient {
         }
 
         // Try to parse as JSON, fall back to wrapping string in JSON
-        serde_json::from_str(&body)
-            .or_else(|_| Ok(serde_json::json!({ "data": body })))
+        serde_json::from_str(&body).or_else(|_| Ok(serde_json::json!({ "data": body })))
+    }
+
+    /// Validate session token via dedicated NoETL auth API.
+    /// This is used as cache-miss fallback for gateway auth validation.
+    pub async fn validate_session_via_api(
+        &self,
+        session_token: &str,
+        credential: &str,
+    ) -> anyhow::Result<Option<ValidatedSession>> {
+        let url = format!("{}/api/auth/session/validate", self.base_url.trim_end_matches('/'));
+        let payload = serde_json::json!({
+            "session_token": session_token,
+            "credential": credential,
+        });
+
+        let res = self
+            .http
+            .post(&url)
+            .json(&payload)
+            .send()
+            .await
+            .context("validate_session_via_api: send")?;
+
+        let status = res.status();
+        let body = res.text().await.unwrap_or_default();
+        if !status.is_success() {
+            return Err(anyhow::anyhow!(
+                "Validate session API request failed: {} - {}",
+                status,
+                body
+            ));
+        }
+
+        let parsed: AuthSessionValidateResponse =
+            serde_json::from_str(&body).context("validate_session_via_api: parse response")?;
+
+        if parsed.status != "ok" {
+            let message = parsed
+                .error
+                .unwrap_or_else(|| "unknown auth session validation error".to_string());
+            return Err(anyhow::anyhow!("Validate session API error: {}", message));
+        }
+
+        if !parsed.valid {
+            return Ok(None);
+        }
+
+        let user = parsed
+            .user
+            .ok_or_else(|| anyhow::anyhow!("validate_session_via_api: missing user payload"))?;
+
+        Ok(Some(ValidatedSession {
+            user_id: user.user_id,
+            email: user.email,
+            display_name: user.display_name,
+            expires_at: parsed.expires_at.unwrap_or_default(),
+            roles: user.roles,
+        }))
     }
 }
 
 // Response types
+
+#[derive(Debug, Deserialize, Clone)]
+struct AuthSessionValidateResponse {
+    status: String,
+    valid: bool,
+    user: Option<AuthSessionValidateUser>,
+    expires_at: Option<String>,
+    error: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct AuthSessionValidateUser {
+    user_id: i32,
+    email: String,
+    display_name: String,
+    #[serde(default)]
+    roles: Vec<String>,
+}
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct ExecutionResponse {

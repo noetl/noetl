@@ -78,6 +78,54 @@ class PostgresExecuteResponse(BaseModel):
     )
 
 
+class AuthSessionValidateRequest(BaseModel):
+    """Request schema for validating auth session tokens."""
+
+    session_token: str = Field(
+        ...,
+        min_length=1,
+        description="NoETL session token to validate"
+    )
+    credential: Optional[str] = Field(
+        default="pg_auth",
+        description="Credential name from credential table to use for auth DB access"
+    )
+
+    @field_validator('session_token', mode='before')
+    @classmethod
+    def strip_session_token(cls, v):
+        """Normalize incoming session token."""
+        return str(v or "").strip()
+
+
+class AuthSessionUser(BaseModel):
+    """Validated auth session user payload."""
+
+    user_id: int = Field(..., description="User ID")
+    email: str = Field(..., description="User email")
+    display_name: str = Field(..., description="Display name")
+    roles: List[str] = Field(default_factory=list, description="User roles")
+
+
+class AuthSessionValidateResponse(BaseModel):
+    """Response schema for auth session validation."""
+
+    status: str = Field(..., description="Request status (ok or error)")
+    valid: bool = Field(..., description="Whether session is currently valid")
+    user: Optional[AuthSessionUser] = Field(
+        default=None,
+        description="Validated user information when valid is true"
+    )
+    expires_at: Optional[str] = Field(
+        default=None,
+        description="Session expiration timestamp (ISO text)"
+    )
+    error: Optional[str] = Field(
+        default=None,
+        description="Error message (if status is error)"
+    )
+
+
 class WeatherAlertSummaryRow(BaseModel):
     """Schema for a weather alert summary row."""
     

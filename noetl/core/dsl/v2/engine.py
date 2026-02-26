@@ -70,6 +70,7 @@ import logging
 import os
 import time
 import asyncio
+import json
 from collections import OrderedDict
 from typing import Any, Optional, TypeVar, Generic
 from datetime import datetime, timezone
@@ -84,6 +85,19 @@ from noetl.core.cache import get_nats_cache
 from noetl.core.logger import setup_logger
 logger = setup_logger(__name__, include_location=True)
 
+_LOOP_RESULT_MAX_BYTES = max(
+    0,
+    int(os.getenv("NOETL_LOOP_RESULT_MAX_BYTES", "65536")),
+)
+_LOOP_RESULT_PREVIEW_KEYS = max(
+    1,
+    int(os.getenv("NOETL_LOOP_RESULT_PREVIEW_KEYS", "8")),
+)
+_LOOP_RESULT_PREVIEW_ITEMS = max(
+    1,
+    int(os.getenv("NOETL_LOOP_RESULT_PREVIEW_ITEMS", "3")),
+)
+
 
 def _sample_keys(value: Any, max_items: int = 10) -> list[str]:
     if isinstance(value, dict):
@@ -91,6 +105,68 @@ def _sample_keys(value: Any, max_items: int = 10) -> list[str]:
     if isinstance(value, (list, tuple, set)):
         return [str(v) for v in list(value)[:max_items]]
     return []
+
+
+def _estimate_json_size(value: Any) -> int:
+    """Best-effort JSON byte size estimation for payload guards."""
+    try:
+        return len(json.dumps(value, default=str, separators=(",", ":")).encode("utf-8"))
+    except Exception:
+        return len(str(value).encode("utf-8"))
+
+
+def _preview_large_value(value: Any, depth: int = 0) -> Any:
+    """Build a compact preview for large loop iteration results."""
+    if depth >= 2:
+        if isinstance(value, dict):
+            return f"dict({len(value)} keys)"
+        if isinstance(value, (list, tuple)):
+            return f"list({len(value)} items)"
+        return value
+
+    if isinstance(value, dict):
+        items = list(value.items())
+        preview: dict[str, Any] = {
+            k: _preview_large_value(v, depth + 1)
+            for k, v in items[:_LOOP_RESULT_PREVIEW_KEYS]
+        }
+        if len(items) > _LOOP_RESULT_PREVIEW_KEYS:
+            preview["_truncated_keys"] = len(items) - _LOOP_RESULT_PREVIEW_KEYS
+        return preview
+
+    if isinstance(value, (list, tuple)):
+        seq = list(value)
+        preview_items = [_preview_large_value(v, depth + 1) for v in seq[:_LOOP_RESULT_PREVIEW_ITEMS]]
+        if len(seq) > _LOOP_RESULT_PREVIEW_ITEMS:
+            preview_items.append(f"... {len(seq) - _LOOP_RESULT_PREVIEW_ITEMS} more")
+        return preview_items
+
+    return value
+
+
+def _compact_loop_result(result: Any) -> Any:
+    """
+    Store only bounded loop iteration data in engine state.
+
+    This protects server memory/render context from large per-item payloads while
+    preserving basic diagnostics for loop aggregation.
+    """
+    if _LOOP_RESULT_MAX_BYTES <= 0:
+        return result
+
+    if not isinstance(result, (dict, list, tuple)):
+        return result
+
+    size_bytes = _estimate_json_size(result)
+    if size_bytes <= _LOOP_RESULT_MAX_BYTES:
+        return result
+
+    return {
+        "_truncated": True,
+        "_original_size_bytes": size_bytes,
+        "_type": type(result).__name__,
+        "_preview": _preview_large_value(result),
+    }
 
 
 def _pending_step_key(step_name: Optional[str]) -> str:
@@ -393,10 +469,17 @@ class ExecutionState:
         """Add iteration result to loop aggregation (local cache only)."""
         if step_name not in self.loop_state:
             return
-        
-        self.loop_state[step_name]["results"].append(result)
+
+        stored_result = _compact_loop_result(result)
+        self.loop_state[step_name]["results"].append(stored_result)
         if failed:
             self.loop_state[step_name]["failed_count"] += 1
+        if stored_result is not result:
+            logger.info(
+                "[LOOP] Compacted large iteration result for %s (max=%s bytes)",
+                step_name,
+                _LOOP_RESULT_MAX_BYTES,
+            )
         logger.debug(f"Added iteration result to loop {step_name}: {len(self.loop_state[step_name]['results'])} total")
         
         # Note: Distributed sync to NATS K/V happens in engine.handle_event()
@@ -717,7 +800,7 @@ class StateStore:
                 
                 # Replay events to rebuild state (event sourcing)
                 await cur.execute("""
-                    SELECT node_name, event_type, result
+                    SELECT node_name, event_type, result, meta
                     FROM noetl.event
                     WHERE execution_id = %s
                     ORDER BY event_id
@@ -727,16 +810,19 @@ class StateStore:
                 
                 # Track loop iteration results during event replay
                 loop_iteration_results = {}  # {step_name: [result1, result2, ...]}
+                loop_event_ids = {}  # {step_name: loop_event_id}
                 
                 for row in rows:
                     if isinstance(row, dict):
                         node_name = row.get("node_name")
                         event_type = row.get("event_type")
                         result_data = row.get("result")
+                        meta_data = row.get("meta")
                     else:
                         node_name = row[0]
                         event_type = row[1]
                         result_data = row[2]
+                        meta_data = row[3] if len(row) > 3 else None
 
                     # Track issued commands for pending detection (race condition fix)
                     if event_type == 'command.issued':
@@ -744,6 +830,15 @@ class StateStore:
                         if pending_key:
                             state.issued_steps.add(pending_key)
                             logger.debug(f"[STATE-LOAD] Reconstructed issued_step: {pending_key}")
+                        if isinstance(meta_data, dict):
+                            loop_event_id = meta_data.get("loop_event_id")
+                            if loop_event_id:
+                                loop_step = (
+                                    node_name.replace(":task_sequence", "")
+                                    if isinstance(node_name, str)
+                                    else node_name
+                                )
+                                loop_event_ids[loop_step] = str(loop_event_id)
                     elif event_type == 'command.completed':
                         pending_key = _pending_step_key(node_name)
                         if pending_key:
@@ -800,7 +895,8 @@ class StateStore:
                             "results": loop_iteration_results.get(step_name, []),
                             "failed_count": 0,
                             "scheduled_count": iteration_count,
-                            "aggregation_finalized": False
+                            "aggregation_finalized": False,
+                            "event_id": loop_event_ids.get(step_name),
                         }
                         logger.debug(f"[STATE-LOAD] Initialized loop_state for {step_name}: index={iteration_count}")
                     else:
@@ -811,6 +907,9 @@ class StateStore:
                             int(state.loop_state[step_name].get("scheduled_count", 0) or 0),
                             iteration_count,
                         )
+                        loop_event_id = loop_event_ids.get(step_name)
+                        if loop_event_id:
+                            state.loop_state[step_name]["event_id"] = loop_event_id
                         logger.debug(f"[STATE-LOAD] Updated loop_state for {step_name}: index={iteration_count}")
                 
                 # Log reconstructed state for debugging
@@ -1050,6 +1149,38 @@ class ControlFlowEngine:
 
         return candidates
 
+    async def _count_step_events(
+        self,
+        execution_id: str,
+        node_name: str,
+        event_type: str,
+    ) -> int:
+        """Count persisted events for a node/event pair (best-effort fallback path)."""
+        try:
+            async with get_pool_connection() as conn:
+                async with conn.cursor(row_factory=dict_row) as cur:
+                    await cur.execute(
+                        """
+                        SELECT COUNT(*) AS cnt
+                        FROM noetl.event
+                        WHERE execution_id = %s
+                          AND node_name = %s
+                          AND event_type = %s
+                        """,
+                        (int(execution_id), node_name, event_type),
+                    )
+                    row = await cur.fetchone()
+                    return int((row or {}).get("cnt", 0) or 0)
+        except Exception as exc:
+            logger.warning(
+                "[TASK_SEQ-LOOP] Failed to count %s events for %s/%s: %s",
+                event_type,
+                execution_id,
+                node_name,
+                exc,
+            )
+            return -1
+
     def _get_loop_max_in_flight(self, step: Step) -> int:
         """Resolve max in-flight limit for loop scheduling."""
         if not step.loop:
@@ -1216,6 +1347,9 @@ class ControlFlowEngine:
             issued_cmds = await self._issue_loop_commands(state, target_step_def, rendered_args)
             if issued_cmds:
                 commands.extend(issued_cmds)
+                # Steps can be revisited in loopback workflows; clear old completion marker
+                # so pending tracking reflects the new in-flight invocation.
+                state.completed_steps.discard(target_step)
                 # CRITICAL: Mark step as issued immediately to prevent duplicate commands
                 # from parallel event processing
                 state.issued_steps.add(target_step)
@@ -1975,7 +2109,10 @@ class ControlFlowEngine:
         control_args = args if isinstance(args, dict) else {}
         loop_retry_requested = bool(control_args.get("__loop_retry"))
         loop_retry_index_raw = control_args.get("__loop_retry_index")
+        loop_continue_requested = bool(control_args.get("__loop_continue"))
         loop_retry_index: Optional[int] = None
+        loop_event_id_for_metadata: Optional[str] = None
+        claimed_index: Optional[int] = None
         if loop_retry_requested and loop_retry_index_raw is not None:
             try:
                 loop_retry_index = int(loop_retry_index_raw)
@@ -2004,16 +2141,85 @@ class ControlFlowEngine:
             collection = self._normalize_loop_collection(collection, step.step)
 
             # Initialize local loop state if needed and refresh collection snapshot.
+            # IMPORTANT: A loop step can be re-entered multiple times in the same execution
+            # (e.g., load -> normalize -> process(loop) -> load). When the prior loop
+            # invocation is already finalized, reset counters/results and use a fresh
+            # distributed loop key so claim slots are not stuck at old scheduled/completed
+            # counts (e.g., 100/100 from the previous batch).
             existing_loop_state = state.loop_state.get(step.step)
+            force_new_loop_instance = False
             if existing_loop_state is None:
-                state.init_loop(step.step, collection, step.loop.iterator, step.loop.mode)
+                loop_event_id = f"loop_{state.last_event_id or get_snowflake_id()}"
+                state.init_loop(
+                    step.step,
+                    collection,
+                    step.loop.iterator,
+                    step.loop.mode,
+                    event_id=loop_event_id,
+                )
                 existing_loop_state = state.loop_state[step.step]
             else:
-                existing_loop_state["collection"] = collection
+                previous_collection = existing_loop_state.get("collection")
+                previous_size = len(previous_collection) if isinstance(previous_collection, list) else 0
+                previous_completed = len(existing_loop_state.get("results", []))
+                previous_scheduled = int(
+                    existing_loop_state.get("scheduled_count", previous_completed) or previous_completed
+                )
+                previous_finalized = bool(
+                    existing_loop_state.get("aggregation_finalized") or existing_loop_state.get("completed")
+                )
+                previous_exhausted = (
+                    previous_size > 0
+                    and previous_completed >= previous_size
+                    and previous_scheduled >= previous_size
+                )
+
+                should_reset_existing_loop = (
+                    not loop_continue_requested
+                    and not loop_retry_requested
+                    and (previous_finalized or previous_exhausted)
+                )
+
+                if should_reset_existing_loop:
+                    loop_event_id = f"loop_{state.last_event_id or get_snowflake_id()}"
+                    state.init_loop(
+                        step.step,
+                        collection,
+                        step.loop.iterator,
+                        step.loop.mode,
+                        event_id=loop_event_id,
+                    )
+                    existing_loop_state = state.loop_state[step.step]
+                    force_new_loop_instance = True
+
+                    # This step is active again; clear prior completion snapshot.
+                    state.completed_steps.discard(step.step)
+                    state.step_results.pop(step.step, None)
+                    state.variables.pop(step.step, None)
+
+                    logger.info(
+                        "[LOOP] Reset loop invocation for %s (prev_completed=%s prev_scheduled=%s prev_size=%s new_size=%s event_id=%s)",
+                        step.step,
+                        previous_completed,
+                        previous_scheduled,
+                        previous_size,
+                        len(collection),
+                        loop_event_id,
+                    )
+                else:
+                    existing_loop_state["collection"] = collection
             loop_state = existing_loop_state
+            loop_event_id_for_metadata = (
+                str(loop_state.get("event_id"))
+                if loop_state.get("event_id") is not None
+                else None
+            )
 
             # Resolve distributed loop key candidates.
-            loop_event_id_candidates = self._build_loop_event_id_candidates(state, step.step, loop_state)
+            if force_new_loop_instance:
+                loop_event_id_candidates = [str(loop_state.get("event_id"))]
+            else:
+                loop_event_id_candidates = self._build_loop_event_id_candidates(state, step.step, loop_state)
             resolved_loop_event_id = (
                 loop_event_id_candidates[0]
                 if loop_event_id_candidates
@@ -2034,6 +2240,48 @@ class ControlFlowEngine:
                     resolved_loop_event_id = candidate_event_id
                     loop_state["event_id"] = candidate_event_id
                     break
+
+            # If we're entering this loop from upstream routing (not loop continuation/retry)
+            # and the distributed counters are already fully saturated, treat that state as
+            # a completed previous invocation and start a fresh loop epoch.
+            if (
+                not loop_retry_requested
+                and not loop_continue_requested
+                and nats_loop_state
+            ):
+                nats_completed = int(nats_loop_state.get("completed_count", 0) or 0)
+                nats_scheduled = int(
+                    nats_loop_state.get("scheduled_count", nats_completed) or nats_completed
+                )
+                nats_size = int(nats_loop_state.get("collection_size", len(collection)) or len(collection))
+                if nats_size > 0 and nats_completed >= nats_size and nats_scheduled >= nats_size:
+                    loop_event_id = f"loop_{state.last_event_id or get_snowflake_id()}"
+                    state.init_loop(
+                        step.step,
+                        collection,
+                        step.loop.iterator,
+                        step.loop.mode,
+                        event_id=loop_event_id,
+                    )
+                    loop_state = state.loop_state[step.step]
+                    force_new_loop_instance = True
+                    loop_event_id_candidates = [loop_event_id]
+                    resolved_loop_event_id = loop_event_id
+                    nats_loop_state = None
+
+                    state.completed_steps.discard(step.step)
+                    state.step_results.pop(step.step, None)
+                    state.variables.pop(step.step, None)
+
+                    logger.info(
+                        "[LOOP] Reset stale distributed state for new invocation of %s "
+                        "(completed=%s scheduled=%s size=%s new_event_id=%s)",
+                        step.step,
+                        nats_completed,
+                        nats_scheduled,
+                        nats_size,
+                        loop_event_id,
+                    )
 
             completed_count_local = len(loop_state.get("results", []))
             completed_count = completed_count_local
@@ -2067,7 +2315,6 @@ class ControlFlowEngine:
                     event_id=resolved_loop_event_id,
                 )
 
-            claimed_index: Optional[int] = None
             if loop_retry_requested and loop_retry_index is not None:
                 claimed_index = loop_retry_index
                 logger.info(
@@ -2126,6 +2373,11 @@ class ControlFlowEngine:
 
             item = collection[claimed_index]
             loop_state["index"] = max(int(loop_state.get("index", 0) or 0), claimed_index + 1)
+            loop_event_id_for_metadata = (
+                str(loop_state.get("event_id"))
+                if loop_state.get("event_id") is not None
+                else loop_event_id_for_metadata
+            )
             logger.info(
                 "[LOOP] Claimed loop iteration %s for step %s (mode=%s max_in_flight=%s)",
                 claimed_index,
@@ -2182,7 +2434,7 @@ class ControlFlowEngine:
         # Merge transition args
         filtered_args = {
             k: v for k, v in args.items()
-            if k not in {"__loop_retry", "__loop_retry_index"}
+            if k not in {"__loop_retry", "__loop_retry_index", "__loop_continue"}
         }
         step_args.update(filtered_args)
 
@@ -2270,6 +2522,26 @@ class ControlFlowEngine:
         # This enables the engine to detect task sequence completion and sync ctx variables
         command_step = f"{step.step}:task_sequence" if pipeline else step.step
 
+        command_metadata: dict[str, Any] = {}
+        if pipeline:
+            command_metadata.update(
+                {
+                    "task_sequence": True,
+                    "parent_step": step.step,
+                }
+            )
+        if step.loop:
+            command_metadata.update(
+                {
+                    "loop_step": step.step,
+                    "loop_event_id": loop_event_id_for_metadata,
+                    "loop_iteration_index": claimed_index,
+                }
+            )
+            command_metadata = {
+                key: value for key, value in command_metadata.items() if value is not None
+            }
+
         command = Command(
             execution_id=state.execution_id,
             step=command_step,
@@ -2284,10 +2556,7 @@ class ControlFlowEngine:
             spec=command_spec,
             attempt=1,
             priority=0,
-            metadata={
-                "task_sequence": True,
-                "parent_step": step.step,
-            } if pipeline else {}
+            metadata=command_metadata,
         )
 
         return command
@@ -2402,6 +2671,13 @@ class ControlFlowEngine:
         if event.step.endswith(":task_sequence") and event.name == "call.done":
             parent_step = event.step.rsplit(":", 1)[0]
             response_data = event.payload.get("response", event.payload)
+            payload_loop_event_id = (
+                event.payload.get("loop_event_id")
+                if isinstance(event.payload, dict)
+                else None
+            )
+            if not payload_loop_event_id and isinstance(response_data, dict):
+                payload_loop_event_id = response_data.get("loop_event_id")
 
             # Extract ctx variables from task sequence result and merge into execution state
             # This syncs set_ctx mutations from task policy rules back to the server
@@ -2448,9 +2724,14 @@ class ControlFlowEngine:
                     # Sync completed count to NATS K/V
                     try:
                         nats_cache = await get_nats_cache()
-                        event_id_candidates = self._build_loop_event_id_candidates(
+                        event_id_candidates = []
+                        if payload_loop_event_id:
+                            event_id_candidates.append(str(payload_loop_event_id))
+                        for candidate in self._build_loop_event_id_candidates(
                             state, parent_step, loop_state
-                        )
+                        ):
+                            if candidate not in event_id_candidates:
+                                event_id_candidates.append(candidate)
                         resolved_loop_event_id = (
                             event_id_candidates[0]
                             if event_id_candidates
@@ -2470,11 +2751,19 @@ class ControlFlowEngine:
                                 break
 
                         if new_count < 0:
-                            # Keep progress moving even if distributed cache key cannot be found.
+                            # Keep progress moving even if distributed cache increments fail.
+                            # Prefer durable count from persisted call.done events over local in-memory counts.
                             new_count = len(loop_state.get("results", []))
+                            persisted_count = await self._count_step_events(
+                                state.execution_id,
+                                event.step,
+                                "call.done",
+                            )
+                            if persisted_count >= 0:
+                                new_count = max(new_count, persisted_count)
                             logger.warning(
                                 f"[TASK_SEQ-LOOP] Could not increment NATS loop count for {parent_step}; "
-                                f"falling back to local count {new_count}"
+                                f"falling back to persisted/local count {new_count}"
                             )
                         else:
                             logger.info(
@@ -2533,6 +2822,33 @@ class ControlFlowEngine:
                                     event_id=resolved_loop_event_id
                                 )
 
+                        # If we had to use fallback counting, ensure distributed counter catches up.
+                        if collection_size > 0 and new_count >= 0:
+                            if not nats_loop_state:
+                                nats_loop_state = await nats_cache.get_loop_state(
+                                    str(state.execution_id),
+                                    parent_step,
+                                    event_id=resolved_loop_event_id,
+                                )
+                            if nats_loop_state:
+                                current_completed = int(
+                                    nats_loop_state.get("completed_count", 0) or 0
+                                )
+                                if new_count > current_completed:
+                                    nats_loop_state["completed_count"] = new_count
+                                    scheduled_count = int(
+                                        nats_loop_state.get("scheduled_count", new_count) or new_count
+                                    )
+                                    if scheduled_count < new_count:
+                                        scheduled_count = new_count
+                                    nats_loop_state["scheduled_count"] = scheduled_count
+                                    await nats_cache.set_loop_state(
+                                        str(state.execution_id),
+                                        parent_step,
+                                        nats_loop_state,
+                                        event_id=resolved_loop_event_id,
+                                    )
+
                         # Check if loop is done
                         if collection_size > 0 and new_count >= collection_size:
                             # Loop done - mark completed and create loop.done event
@@ -2569,7 +2885,11 @@ class ControlFlowEngine:
                                 f"[TASK_SEQ-LOOP] Issuing iteration commands for {parent_step}: "
                                 f"{new_count}/{collection_size} (mode={parent_step_def.loop.mode})"
                             )
-                            next_cmds = await self._issue_loop_commands(state, parent_step_def, {})
+                            next_cmds = await self._issue_loop_commands(
+                                state,
+                                parent_step_def,
+                                {"__loop_continue": True},
+                            )
                             commands.extend(next_cmds)
 
                     except Exception as e:
@@ -3119,14 +3439,9 @@ class ControlFlowEngine:
         # 2. No commands generated
         # 3. EITHER: Step has NO next (true terminal step)
         #    OR: Step failed with no error handling (has error but no commands)
-        #    OR: Step has routing (next) but none matched/generated commands (effective terminal)
         # 4. Not already completed
         is_terminal_step = step_def and not step_def.next
         is_failed_with_no_handler = has_error and not commands
-
-        # EFFECTIVE TERMINAL: Step has routing but no commands were generated
-        # (e.g. all next[].when conditions failed, or structural next was skipped)
-        is_effective_terminal = step_def and not commands and not state.completed
 
         # Check for pending commands using multiple methods:
         # 1. In-memory state tracking (issued_steps vs completed_steps)
@@ -3188,7 +3503,7 @@ class ControlFlowEngine:
         # If in-memory state shows no pending AND issued_steps is populated, trust it
         # (DB check would cause false positives due to command.completed timing)
 
-        if event.name == "step.exit" and not commands and not has_pending_commands and (is_terminal_step or is_failed_with_no_handler or is_effective_terminal) and not state.completed:
+        if event.name == "step.exit" and not commands and not has_pending_commands and (is_terminal_step or is_failed_with_no_handler) and not state.completed:
             # No more commands to execute - workflow and playbook are complete (or failed)
             state.completed = True
             # Check if ANY step failed during execution (state.failed) OR if this final step has error

@@ -89,13 +89,13 @@ workload:
   pgbouncer_service_name: pgbouncer
   pgbouncer_replicas: 2
   pgbouncer_max_client_conn: 600
-  pgbouncer_default_pool_size: 12
-  pgbouncer_min_pool_size: 2
-  pgbouncer_reserve_pool_size: 4
+  pgbouncer_default_pool_size: 4
+  pgbouncer_min_pool_size: 1
+  pgbouncer_reserve_pool_size: 1
   pgbouncer_reserve_pool_timeout: "5"
-  pgbouncer_max_db_connections: 40
+  pgbouncer_max_db_connections: 8
   pgbouncer_server_lifetime: "21600"
-  pgbouncer_server_idle_timeout: "600"
+  pgbouncer_server_idle_timeout: "120"
   cloud_sql_proxy_gsa_name: noetl-cloudsql-proxy
   cloud_sql_proxy_ksa_name: cloudsql-proxy
   cloud_sql_proxy_image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.18.3

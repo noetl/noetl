@@ -97,10 +97,15 @@ def get_pool() -> AsyncConnectionPool[AsyncConnection[DictRow]]:
     return _pool
 
 @asynccontextmanager
-async def get_pool_connection():
+async def get_pool_connection(timeout: float | None = None):
     """Get a connection from the global pool as an async context manager."""
-    async with get_pool().connection() as conn:
-        yield conn
+    pool = get_pool()
+    if timeout is None:
+        async with pool.connection() as conn:
+            yield conn
+    else:
+        async with pool.connection(timeout=timeout) as conn:
+            yield conn
 
 
 async def get_snowflake_id() -> int:
