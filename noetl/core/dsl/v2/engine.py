@@ -3587,9 +3587,10 @@ class ControlFlowEngine:
                     logger.info(f"[PAGINATION] Finalized pagination for {event.step}: {len(flattened_items)} total items collected over {pagination_data['iteration_count']} pages")
         
         # Check for completion (only emit once) - prepare completion events but persist after current event
-        # Completion triggers when step.exit occurs with no commands generated AND step has no routing
-        # This handles explicit terminal steps (no next blocks) only
-        # OR when a step fails with no error handler (no commands generated despite having routing)
+        # Completion triggers on call.done/call.error with no commands generated AND step has no routing.
+        # IMPORTANT: step.exit is sent by workers as an informational (non-actionable) batch event,
+        # so it never reaches the engine. call.done is the actionable event that drives routing
+        # and is the correct trigger for workflow completion detection.
         completion_events = []
         logger.debug(
             "COMPLETION CHECK: event=%s step=%s commands=%s completed=%s has_next=%s has_error=%s",
@@ -3605,18 +3606,18 @@ class ControlFlowEngine:
         has_error = event.payload.get("error") is not None
 
         # Only trigger completion if:
-        # 1. step.exit event
-        # 2. No commands generated
+        # 1. call.done or call.error event (these are the actionable events that reach the engine)
+        # 2. No commands generated (no next transitions matched)
         # 3. EITHER: Step has NO next (true terminal step)
         #    OR: Step failed with no error handling (has error but no commands)
         # 4. Not already completed
         is_terminal_step = step_def and not step_def.next
         is_failed_with_no_handler = has_error and not commands
+        is_completion_trigger = event.name in ("call.done", "call.error")
 
         # Check for pending commands using multiple methods:
         # 1. In-memory state tracking (issued_steps vs completed_steps)
         # 2. Database query as backup (only if in-memory state is uncertain)
-        # This prevents premature completion when next transitions trigger on call.done but step.exit has no matching next
         has_pending_commands = False
 
         # Debug: log current state before pending check
@@ -3631,21 +3632,22 @@ class ControlFlowEngine:
         # Normalize synthetic task_sequence command keys back to their parent step names.
         issued_not_completed = set()
         if hasattr(state, "issued_steps"):
+            # Build normalized completed set for comparison (handles task_sequence suffix mismatch)
+            normalized_completed = {_pending_step_key(s) for s in state.completed_steps if s}
             for issued_step in state.issued_steps:
                 pending_key = _pending_step_key(issued_step)
-                if pending_key and pending_key not in state.completed_steps:
+                if pending_key and pending_key not in normalized_completed:
                     issued_not_completed.add(pending_key)
         if issued_not_completed:
             has_pending_commands = True
             logger.debug(
-                "[COMPLETION] execution=%s pending_in_memory=%s",
+                "[COMPLETION] execution=%s pending_in_memory=%s pending_steps=%s",
                 event.execution_id,
                 len(issued_not_completed),
+                issued_not_completed,
             )
         elif not hasattr(state, 'issued_steps') or not state.issued_steps:
             # Only fall back to database query if in-memory state might be stale (e.g., after restart)
-            # IMPORTANT: Use step.exit instead of command.completed because command.completed is emitted
-            # AFTER step.exit, so terminal step's command.completed won't exist when this check runs
             async with get_pool_connection() as conn:
                 async with conn.cursor(row_factory=dict_row) as cur:
                     await cur.execute(
@@ -3660,7 +3662,7 @@ class ControlFlowEngine:
                             SELECT node_name
                             FROM noetl.event
                             WHERE execution_id = %(execution_id)s
-                              AND event_type = 'step.exit'
+                              AND event_type = 'call.done'
                         ) AS pending
                         """,
                         {"execution_id": int(event.execution_id)},
@@ -3671,9 +3673,8 @@ class ControlFlowEngine:
                     if has_pending_commands:
                         logger.debug(f"[COMPLETION] execution={event.execution_id} pending_in_db={pending_count}")
         # If in-memory state shows no pending AND issued_steps is populated, trust it
-        # (DB check would cause false positives due to command.completed timing)
 
-        if event.name == "step.exit" and not commands and not has_pending_commands and (is_terminal_step or is_failed_with_no_handler) and not state.completed:
+        if is_completion_trigger and not commands and not has_pending_commands and (is_terminal_step or is_failed_with_no_handler) and not state.completed:
             # No more commands to execute - workflow and playbook are complete (or failed)
             state.completed = True
             # Check if ANY step failed during execution (state.failed) OR if this final step has error
@@ -3689,7 +3690,7 @@ class ControlFlowEngine:
                 await self._persist_event(event, state)
             
             # Now create completion events with current event as parent
-            # This ensures proper ordering: step.exit -> workflow_completion -> playbook_completion
+            # This ensures proper ordering: call.done -> workflow_completion -> playbook_completion
             current_event_id = state.last_event_id
             
             # First, prepare workflow completion event
