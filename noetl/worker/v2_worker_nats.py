@@ -38,7 +38,7 @@ def _safe_keys(value: Any, max_items: int = 10) -> list[str]:
 # These were previously imported inside _execute_tool() causing slow first execution
 from noetl.tools import http, postgres, duckdb, python
 from noetl.tools.http import execute_http_task
-from noetl.tools.postgres import execute_postgres_task
+from noetl.tools.postgres import execute_postgres_task, execute_postgres_task_async
 from noetl.tools.duckdb import execute_duckdb_task
 from noetl.tools.snowflake import execute_snowflake_task
 from noetl.tools.gcs import execute_gcs_task
@@ -1819,14 +1819,12 @@ class V2Worker:
                 return result
             
         elif tool_kind == "postgres":
-            # Use plugin's execute_postgres_task (sync function - run in executor)
-            # Pass full tool config as task_with to ensure auth is available
+            # Call async postgres executor directly on the worker's event loop.
+            # This lets the plugin pool reuse connections (same loop_id → same pool key).
+            # The old pattern (run_in_executor + asyncio.run) created a new event loop
+            # per call, causing a fresh pool each time and leaking connections.
             task_with = {**config, **args}  # Merge config (has auth) with args
-            loop = asyncio.get_running_loop()
-            result = await loop.run_in_executor(
-                None, 
-                lambda: execute_postgres_task(task_config, context, jinja_env, task_with)
-            )
+            result = await execute_postgres_task_async(task_config, context, jinja_env, task_with)
             # Check if plugin returned error status
             if isinstance(result, dict) and result.get('status') == 'error':
                 # Keep error response intact (worker needs status field to detect error)

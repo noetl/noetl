@@ -380,7 +380,7 @@ workflow:
       iterator: item_row
       spec:
         mode: parallel
-        max_in_flight: 100
+        max_in_flight: 10
     tool:
       - name: compute
         kind: python

@@ -3910,8 +3910,11 @@ class ControlFlowEngine:
         
         async with get_pool_connection() as conn:
             async with conn.cursor() as cur:
-                # Generate event_id
-                event_id = await get_snowflake_id()
+                # Generate event_id using the current cursor to avoid opening
+                # a second pool connection (get_snowflake_id opens its own).
+                await cur.execute("SELECT noetl.snowflake_id() AS snowflake_id")
+                _sf_row = await cur.fetchone()
+                event_id = int(_sf_row['snowflake_id'])
                 
                 # Store root_event_id on first event
                 if event.name == "playbook_initialized" and state.root_event_id is None:

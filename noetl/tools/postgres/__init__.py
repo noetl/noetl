@@ -26,6 +26,6 @@ Usage:
     )
 """
 
-from noetl.tools.postgres.executor import execute_postgres_task
+from noetl.tools.postgres.executor import execute_postgres_task, execute_postgres_task_async
 
-__all__ = ['execute_postgres_task']
+__all__ = ['execute_postgres_task', 'execute_postgres_task_async']

@@ -126,7 +126,20 @@ def execute_postgres_task(task_config: Dict, context: Dict, jinja_env: Environme
         'success'
     """
     # Execute directly (async) - use asyncio.run() to bridge sync/async boundary
+    # WARNING: This creates a new event loop per call, so plugin pools keyed by loop_id
+    # are never reused. Prefer execute_postgres_task_async() when already in an async context.
     return asyncio.run(_execute_postgres_task_async(task_config, context, jinja_env, task_with, log_event_callback))
+
+
+# Public async entry point - avoids asyncio.run() pool-leak when called from async worker
+async def execute_postgres_task_async(
+    task_config: Dict, context: Dict, jinja_env: Environment,
+    task_with: Dict, log_event_callback=None
+) -> Dict:
+    """Async version of execute_postgres_task (no new event loop, pools are reused)."""
+    return await _execute_postgres_task_async(
+        task_config, context, jinja_env, task_with, log_event_callback
+    )
 
 
 async def _execute_postgres_task_async(
