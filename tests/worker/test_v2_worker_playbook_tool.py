@@ -299,14 +299,17 @@ async def test_handle_command_notification_applies_db_semaphore_for_postgres(mon
             calls["release"] += 1
 
     async def fake_claim(_server_url, _event_id):
-        return {
-            "execution_id": 1,
-            "node_id": "store_rows",
-            "node_name": "store_rows",
-            "action": "postgres",
-            "context": {},
-            "meta": {},
-        }
+        return (
+            {
+                "execution_id": 1,
+                "node_id": "store_rows",
+                "node_name": "store_rows",
+                "action": "postgres",
+                "context": {},
+                "meta": {},
+            },
+            "claimed",
+        )
 
     async def fake_wait(*_args, **_kwargs):
         calls["wait_capacity"] += 1
@@ -350,14 +353,17 @@ async def test_handle_command_notification_skips_db_semaphore_for_non_db_tool(mo
             calls["release"] += 1
 
     async def fake_claim(_server_url, _event_id):
-        return {
-            "execution_id": 1,
-            "node_id": "process_batch_http",
-            "node_name": "process_batch_http",
-            "action": "http",
-            "context": {},
-            "meta": {},
-        }
+        return (
+            {
+                "execution_id": 1,
+                "node_id": "process_batch_http",
+                "node_name": "process_batch_http",
+                "action": "http",
+                "context": {},
+                "meta": {},
+            },
+            "claimed",
+        )
 
     async def fake_execute(*_args, **_kwargs):
         calls["execute"] += 1

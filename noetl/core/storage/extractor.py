@@ -189,11 +189,69 @@ def _truncate_value(value: Any, max_len: int) -> Any:
 
 
 def estimate_size(data: Any) -> int:
-    """Estimate JSON size of data in bytes."""
+    """Estimate JSON byte size without full serialization.
+
+    Uses recursive traversal with ``sys.getsizeof`` sampling for large
+    payloads to avoid the cost of ``json.dumps`` (which allocates and
+    immediately discards a full serialised string just to count bytes).
+    Small/simple values still fall through to ``json.dumps`` for accuracy.
+    """
+    return _estimate_size_fast(data)
+
+
+def _estimate_size_fast(data: Any, _depth: int = 0) -> int:
+    """Fast recursive size estimator (avoids json.dumps for large structures)."""
+    if data is None:
+        return 4  # null
+    if isinstance(data, bool):
+        return 5  # true/false
+    if isinstance(data, int):
+        return max(1, len(str(data)))
+    if isinstance(data, float):
+        return 20  # conservative
+    if isinstance(data, str):
+        # JSON string: content + quotes + rough escape overhead
+        return len(data) + 2 + data.count('"') + data.count('\\')
+    if isinstance(data, (bytes, bytearray)):
+        return len(data) + 2
+
+    # For deeply nested structures, cap recursion and use rough heuristic
+    if _depth > 6:
+        try:
+            import sys
+            return sys.getsizeof(data)
+        except Exception:
+            return 256
+
+    if isinstance(data, dict):
+        # braces + commas + colon per entry
+        size = 2 + max(0, len(data) - 1)  # {} + commas
+        for k, v in data.items():
+            size += _estimate_size_fast(k, _depth + 1) + 1  # key + colon
+            size += _estimate_size_fast(v, _depth + 1)
+        return size
+
+    if isinstance(data, (list, tuple)):
+        size = 2 + max(0, len(data) - 1)  # [] + commas
+        # For large collections, sample a few items and extrapolate
+        items = list(data) if not isinstance(data, list) else data
+        n = len(items)
+        if n <= 20 or _depth > 3:
+            for item in items:
+                size += _estimate_size_fast(item, _depth + 1)
+        else:
+            # Sample first, middle, last items
+            sample_indices = [0, n // 4, n // 2, 3 * n // 4, n - 1]
+            sample_total = sum(_estimate_size_fast(items[i], _depth + 1) for i in sample_indices)
+            avg_item_size = sample_total / len(sample_indices)
+            size += int(avg_item_size * n)
+        return size
+
+    # Fallback for unknown types
     try:
         return len(json.dumps(data, default=str).encode("utf-8"))
     except Exception:
-        return 0
+        return 256
 
 
 def should_externalize(

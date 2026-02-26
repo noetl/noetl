@@ -97,6 +97,10 @@ _LOOP_RESULT_PREVIEW_ITEMS = max(
     1,
     int(os.getenv("NOETL_LOOP_RESULT_PREVIEW_ITEMS", "3")),
 )
+_TASKSEQ_LOOP_REPAIR_THRESHOLD = max(
+    0,
+    int(os.getenv("NOETL_TASKSEQ_LOOP_REPAIR_THRESHOLD", "3")),
+)
 
 
 def _sample_keys(value: Any, max_items: int = 10) -> list[str]:
@@ -108,11 +112,12 @@ def _sample_keys(value: Any, max_items: int = 10) -> list[str]:
 
 
 def _estimate_json_size(value: Any) -> int:
-    """Best-effort JSON byte size estimation for payload guards."""
-    try:
-        return len(json.dumps(value, default=str, separators=(",", ":")).encode("utf-8"))
-    except Exception:
-        return len(str(value).encode("utf-8"))
+    """Best-effort JSON byte size estimation for payload guards.
+
+    Uses the fast estimator from storage to avoid full json.dumps overhead.
+    """
+    from noetl.core.storage.extractor import _estimate_size_fast
+    return _estimate_size_fast(value)
 
 
 def _preview_large_value(value: Any, depth: int = 0) -> Any:
@@ -1180,6 +1185,78 @@ class ControlFlowEngine:
                 exc,
             )
             return -1
+
+    async def _find_missing_loop_iteration_indices(
+        self,
+        execution_id: str,
+        node_name: str,
+        loop_event_id: Optional[str] = None,
+        limit: int = 10,
+    ) -> list[int]:
+        """Find loop iteration indexes that were issued but have no terminal command event."""
+        if limit <= 0:
+            return []
+
+        try:
+            loop_filter = ""
+            issued_params: list[Any] = [int(execution_id), node_name]
+            if loop_event_id:
+                loop_filter = "AND meta->>'loop_event_id' = %s"
+                issued_params.append(str(loop_event_id))
+
+            params: list[Any] = [
+                *issued_params,
+                int(execution_id),
+                node_name,
+                int(limit),
+            ]
+
+            async with get_pool_connection() as conn:
+                async with conn.cursor(row_factory=dict_row) as cur:
+                    await cur.execute(
+                        f"""
+                        WITH issued AS (
+                            SELECT
+                                meta->>'command_id' AS command_id,
+                                NULLIF(meta->>'loop_iteration_index', '')::int AS loop_iteration_index
+                            FROM noetl.event
+                            WHERE execution_id = %s
+                              AND node_name = %s
+                              AND event_type = 'command.issued'
+                              {loop_filter}
+                        ),
+                        terminal AS (
+                            SELECT DISTINCT result->'data'->>'command_id' AS command_id
+                            FROM noetl.event
+                            WHERE execution_id = %s
+                              AND node_name = %s
+                              AND event_type IN ('command.completed', 'command.failed')
+                        )
+                        SELECT i.loop_iteration_index
+                        FROM issued i
+                        LEFT JOIN terminal t ON t.command_id = i.command_id
+                        WHERE i.loop_iteration_index IS NOT NULL
+                          AND t.command_id IS NULL
+                        ORDER BY i.loop_iteration_index
+                        LIMIT %s
+                        """,
+                        tuple(params),
+                    )
+                    rows = await cur.fetchall()
+
+            return [
+                int(row.get("loop_iteration_index"))
+                for row in rows or []
+                if row.get("loop_iteration_index") is not None
+            ]
+        except Exception as exc:
+            logger.warning(
+                "[TASK_SEQ-LOOP] Failed to detect missing loop iterations for %s/%s: %s",
+                execution_id,
+                node_name,
+                exc,
+            )
+            return []
 
     def _get_loop_max_in_flight(self, step: Step) -> int:
         """Resolve max in-flight limit for loop scheduling."""
@@ -2395,13 +2472,40 @@ class ControlFlowEngine:
                 claimed_index,
             )
         
-        # Get render context for Jinja2 templates
-        context = state.get_render_context(Event(
-            execution_id=state.execution_id,
-            step=step.step,
-            name="command_creation",
-            payload={}
-        ))
+        # Get render context for Jinja2 templates.
+        # Reuse the context from loop collection rendering if available, patching in
+        # the newly-set loop variables to avoid a full context rebuild.
+        if step.loop and 'context' in dir() and context is not None:
+            # Patch loop variables into existing context instead of full rebuild
+            iterator_value = state.variables.get(step.loop.iterator)
+            context[step.loop.iterator] = iterator_value
+            context["loop_index"] = claimed_index
+            context["ctx"] = state.variables
+            context["workload"] = state.variables
+            # Update iter namespace so {{ iter.<iterator>.<field> }} works
+            if "iter" not in context or not isinstance(context.get("iter"), dict):
+                context["iter"] = {}
+            context["iter"][step.loop.iterator] = iterator_value
+            context["iter"]["_index"] = claimed_index
+            coll_len = len(collection) if 'collection' in dir() and collection else 0
+            context["iter"]["_first"] = claimed_index == 0
+            context["iter"]["_last"] = claimed_index >= coll_len - 1 if coll_len > 0 else True
+            # Update loop metadata
+            loop_s = state.loop_state.get(step.step)
+            if loop_s:
+                context["loop"] = {
+                    "index": loop_s["index"] - 1 if loop_s["index"] > 0 else 0,
+                    "first": loop_s["index"] == 1,
+                    "length": len(loop_s.get("collection", [])),
+                    "done": loop_s.get("completed", False),
+                }
+        else:
+            context = state.get_render_context(Event(
+                execution_id=state.execution_id,
+                step=step.step,
+                name="command_creation",
+                payload={}
+            ))
 
         # Import render utility
         from noetl.core.dsl.render import render_template as recursive_render
@@ -2850,6 +2954,72 @@ class ControlFlowEngine:
                                     )
 
                         # Check if loop is done
+                        scheduled_count = max(
+                            int((nats_loop_state or {}).get("scheduled_count", new_count) or new_count),
+                            new_count,
+                        )
+                        remaining_count = max(0, collection_size - new_count)
+
+                        # Tail-repair fallback:
+                        # If all loop slots were scheduled but a small number of iterations never reached
+                        # a terminal command event (started-only or dropped), reissue those exact indexes.
+                        # This keeps loop.done from hanging indefinitely on missing tail items.
+                        if (
+                            _TASKSEQ_LOOP_REPAIR_THRESHOLD > 0
+                            and collection_size > 0
+                            and remaining_count > 0
+                            and remaining_count <= _TASKSEQ_LOOP_REPAIR_THRESHOLD
+                            and scheduled_count >= collection_size
+                        ):
+                            missing_indexes = await self._find_missing_loop_iteration_indices(
+                                state.execution_id,
+                                event.step,
+                                loop_event_id=resolved_loop_event_id,
+                                limit=_TASKSEQ_LOOP_REPAIR_THRESHOLD,
+                            )
+                            if missing_indexes:
+                                issued_repairs_raw = loop_state.get("repair_issued_indexes", [])
+                                issued_repairs = {
+                                    int(idx)
+                                    for idx in issued_repairs_raw
+                                    if isinstance(idx, int) or (isinstance(idx, str) and idx.isdigit())
+                                }
+                                repaired_now: list[int] = []
+
+                                for missing_idx in missing_indexes:
+                                    if (
+                                        missing_idx in issued_repairs
+                                        or missing_idx < 0
+                                        or missing_idx >= collection_size
+                                    ):
+                                        continue
+
+                                    retry_command = await self._create_command_for_step(
+                                        state,
+                                        parent_step_def,
+                                        {
+                                            "__loop_continue": True,
+                                            "__loop_retry": True,
+                                            "__loop_retry_index": missing_idx,
+                                        },
+                                    )
+                                    if retry_command:
+                                        commands.append(retry_command)
+                                        issued_repairs.add(missing_idx)
+                                        repaired_now.append(missing_idx)
+
+                                if repaired_now:
+                                    loop_state["repair_issued_indexes"] = sorted(issued_repairs)
+                                    logger.warning(
+                                        "[TASK_SEQ-LOOP] Reissued missing tail iterations for %s: %s "
+                                        "(completed=%s scheduled=%s size=%s)",
+                                        parent_step,
+                                        repaired_now,
+                                        new_count,
+                                        scheduled_count,
+                                        collection_size,
+                                    )
+
                         if collection_size > 0 and new_count >= collection_size:
                             # Loop done - mark completed and create loop.done event
                             loop_state["completed"] = True
@@ -3681,7 +3851,18 @@ class ControlFlowEngine:
         duration_ms = 0
         event_timestamp = event.timestamp or datetime.now(timezone.utc)
         
-        if event.name == "step.exit" and event.step:
+        # Skip expensive duration DB query for loop iteration step.exit events
+        # (task_sequence suffix indicates a loop iteration - these are high-frequency)
+        is_loop_iteration_exit = (
+            event.name == "step.exit"
+            and event.step
+            and (
+                event.step.endswith(":task_sequence")
+                or (event.step in state.loop_state if hasattr(state, 'loop_state') else False)
+            )
+        )
+        
+        if event.name == "step.exit" and event.step and not is_loop_iteration_exit:
             # Query for the corresponding step.enter event
             async with get_pool_connection() as conn:
                 async with conn.cursor() as cur:

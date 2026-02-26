@@ -711,11 +711,18 @@ async def cancel_execution(execution_id: str, request: CancelExecutionRequest = 
             if not latest_event:
                 raise HTTPException(status_code=404, detail=f"Execution {execution_id} not found")
             
-            # Check if already completed or failed
-            terminal_statuses = {'COMPLETED', 'FAILED', 'CANCELLED'}
-            terminal_event_types = {'playbook.completed', 'playbook.failed', 'execution.cancelled'}
-            
-            if latest_event['status'] in terminal_statuses or latest_event['event_type'] in terminal_event_types:
+            # Only terminal lifecycle events should mark an execution terminal.
+            # command.completed/status=COMPLETED does not mean workflow completion.
+            terminal_event_types = {
+                'playbook.completed',
+                'workflow.completed',
+                'playbook.failed',
+                'workflow.failed',
+                'command.failed',
+                'execution.cancelled',
+            }
+
+            if latest_event['event_type'] in terminal_event_types:
                 return CancelExecutionResponse(
                     status="already_completed",
                     execution_id=execution_id,
@@ -830,17 +837,28 @@ async def get_execution_cancellation_status(execution_id: str):
             """, (int(execution_id),))
             cancelled = await cur.fetchone() is not None
             
-            terminal_statuses = {'COMPLETED', 'FAILED', 'CANCELLED'}
+            terminal_status_by_event = {
+                "execution.cancelled": "CANCELLED",
+                "playbook.completed": "COMPLETED",
+                "workflow.completed": "COMPLETED",
+                "playbook.failed": "FAILED",
+                "workflow.failed": "FAILED",
+                "command.failed": "FAILED",
+            }
             completed_events = {'playbook.completed', 'workflow.completed'}
             failed_events = {'playbook.failed', 'workflow.failed', 'command.failed'}
-            
+
+            derived_status = terminal_status_by_event.get(latest["event_type"])
+            if derived_status is None:
+                derived_status = "CANCELLED" if cancelled else "RUNNING"
+
             return {
                 "execution_id": execution_id,
-                "status": latest['status'],
+                "status": derived_status,
                 "event_type": latest['event_type'],
                 "cancelled": cancelled,
-                "completed": latest['event_type'] in completed_events or latest['status'] == 'COMPLETED',
-                "failed": latest['event_type'] in failed_events or latest['status'] == 'FAILED'
+                "completed": latest['event_type'] in completed_events,
+                "failed": latest['event_type'] in failed_events
             }
 
 
@@ -946,7 +964,7 @@ async def get_execution(
                 FROM noetl.event
                 WHERE execution_id = %(execution_id)s
                   AND event_type IN ('execution.cancelled', 'playbook.failed', 'workflow.failed',
-                                     'playbook.completed', 'workflow.completed')
+                                     'command.failed', 'playbook.completed', 'workflow.completed')
                 ORDER BY event_id DESC
                 LIMIT 1
             """, {"execution_id": execution_id})
@@ -1032,16 +1050,16 @@ async def get_execution(
         'execution.cancelled': 'CANCELLED',
         'playbook.failed': 'FAILED',
         'workflow.failed': 'FAILED',
+        'command.failed': 'FAILED',
         'playbook.completed': 'COMPLETED',
         'workflow.completed': 'COMPLETED',
     }
 
     if terminal_event:
         final_status = terminal_event_types.get(terminal_event["event_type"], terminal_event["status"])
-    elif latest_event:
-        final_status = latest_event["status"]
     else:
-        final_status = "UNKNOWN"
+        # Non-terminal command/step events can have COMPLETED status while execution is still running.
+        final_status = "RUNNING"
 
     return {
         "execution_id": execution_id,

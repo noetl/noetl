@@ -371,6 +371,7 @@ workflow:
         - step: process_batch
           when: '{{ (normalize_batch.has_rows | string | lower) == "true" }}'
         - step: verify_completion_counts
+          when: '{{ (normalize_batch.has_rows | string | lower) != "true" }}'
 
   - step: process_batch
     desc: Process each item in the batch (parallel loop, mirrors production fetch_mds_assessment_details)

@@ -570,16 +570,22 @@ class V2Worker:
         max_delay_seconds = 2.0
         retryable_statuses = {408, 425, 429, 500, 502, 503, 504}
 
-        def _claim_detail_code(response: httpx.Response) -> str:
+        def _claim_detail(response: httpx.Response) -> tuple[str, str]:
             try:
                 payload = response.json()
             except Exception:
-                return ""
+                return "", response.text.strip().lower()
             detail = payload.get("detail")
             if isinstance(detail, dict):
                 code = detail.get("code")
-                return str(code) if code else ""
-            return ""
+                message = detail.get("message")
+                return (
+                    str(code).strip().lower() if code else "",
+                    str(message).strip().lower() if message else "",
+                )
+            if isinstance(detail, str):
+                return "", detail.strip().lower()
+            return "", ""
 
         for attempt in range(1, max_attempts + 1):
             try:
@@ -600,21 +606,32 @@ class V2Worker:
                         "meta": data["meta"]
                     }, "claimed")
                 if response.status_code == 409:
-                    code = _claim_detail_code(response)
-                    if code == "active_claim":
+                    code, message = _claim_detail(response)
+                    if code == "active_claim" or "being claimed" in message or "another worker" in message:
                         retry_after = response.headers.get("Retry-After", "1")
                         logger.info(
-                            "[CLAIM] Command for event_id=%s is actively claimed by another worker; deferring (retry-after=%s)",
+                            "[CLAIM] Command for event_id=%s is actively claimed; deferring (retry-after=%s, code=%s)",
                             event_id,
                             retry_after,
+                            code or "unknown",
                         )
                         return None, "retry_later"
-                    logger.info(
-                        "[CLAIM] Command for event_id=%s already terminal/cancelled (code=%s), skipping",
+                    if code in {"already_terminal", "execution_cancelled"}:
+                        logger.info(
+                            "[CLAIM] Command for event_id=%s is terminal/cancelled (code=%s), skipping",
+                            event_id,
+                            code,
+                        )
+                        return None, "skip_ack"
+                    # Safety: unknown 409 conflicts are treated as transient to prevent
+                    # ACK-dropping commands that never reached terminal lifecycle.
+                    logger.warning(
+                        "[CLAIM] Ambiguous 409 for event_id=%s (code=%s, message=%s); treating as retry_later",
                         event_id,
                         code or "unknown",
+                        message[:160] if message else "",
                     )
-                    return None, "skip_ack"
+                    return None, "retry_later"
                 if response.status_code == 404:
                     raise ClaimTerminalError(
                         status_code=404,
@@ -1156,27 +1173,35 @@ class V2Worker:
         try:
             import time
 
-            # Emit command.started event (for event-driven tracking)
+            # Batch-emit command.started + step.enter in a single HTTP call.
             t_events_start = time.perf_counter()
+            initial_event_timeout = 5.0
+            initial_events = []
             if command_id:
-                await self._emit_event(
-                    server_url,
-                    execution_id,
-                    step,
-                    "command.started",
-                    {"command_id": command_id, "worker_id": self.worker_id}
-                )
-
-            # Emit step.enter event
-            await self._emit_event(
+                initial_events.append({
+                    "step": step,
+                    "name": "command.started",
+                    "payload": {"command_id": command_id, "worker_id": self.worker_id},
+                    "actionable": False,
+                    "informative": True,
+                })
+            initial_events.append({
+                "step": step,
+                "name": "step.enter",
+                "payload": {"status": "started"},
+                "actionable": False,
+                "informative": True,
+            })
+            await self._emit_batch_events(
                 server_url,
                 execution_id,
-                step,
-                "step.enter",
-                {"status": "started"}
+                initial_events,
+                timeout_seconds=initial_event_timeout,
+                max_retries=2,
+                raise_on_failure=False,
             )
             t_events_end = time.perf_counter()
-            logger.info(f"[PERF] emit_initial_events (command.started + step.enter) took {(t_events_end - t_events_start)*1000:.1f}ms")
+            logger.info(f"[PERF] emit_initial_events (batch) took {(t_events_end - t_events_start)*1000:.1f}ms")
 
             # Execute tool
             t_tool_start = time.perf_counter()
@@ -1493,37 +1518,39 @@ class V2Worker:
                     informative=True
                 )
 
-                # Emit step.exit event with processed result
-                # If result was externalized, this contains _ref + output_select fields
-                await self._emit_event(
-                    server_url,
-                    execution_id,
-                    step,
-                    "step.exit",
+                # Batch step.exit + command.completed in a single HTTP call
+                # (both are informational - call.done already handled routing)
+                terminal_events = [
                     {
-                        "result": response_for_events,
-                        "status": "completed",
-                        "command_id": command_id,
+                        "step": step,
+                        "name": "step.exit",
+                        "payload": {
+                            "result": response_for_events,
+                            "status": "completed",
+                            "command_id": command_id,
+                        },
+                        "actionable": False,
+                        "informative": True,
                     },
-                    actionable=True,  # Server evaluates routing
-                    informative=True
-                )
-
-                # Emit command.completed event (for event-driven tracking)
+                ]
                 if command_id:
-                    await self._emit_event(
-                        server_url,
-                        execution_id,
-                        step,
-                        "command.completed",
-                        {
+                    terminal_events.append({
+                        "step": step,
+                        "name": "command.completed",
+                        "payload": {
                             "command_id": command_id,
                             "worker_id": self.worker_id,
-                            "result": response_for_events
+                            "result": response_for_events,
                         },
-                        actionable=False,  # Informational only
-                        informative=True
-                    )
+                        "actionable": False,
+                        "informative": True,
+                    })
+                await self._emit_batch_events(
+                    server_url,
+                    execution_id,
+                    terminal_events,
+                    raise_on_failure=False,
+                )
                 
                 logger.info(f"[EVENT] Completed {step} for execution {execution_id}" + (f" command={command_id}" if command_id else ""))
                 
@@ -2349,6 +2376,116 @@ class V2Worker:
             "Example: tool: {kind: python, script: {uri: 'gs://bucket/script.py', source: {type: gcs, auth: credential}}}"
         )
     
+    async def _emit_batch_events(
+        self,
+        server_url: str,
+        execution_id: int,
+        events: list[dict],
+        timeout_seconds: Optional[float] = None,
+        max_retries: Optional[int] = None,
+        raise_on_failure: bool = True,
+    ):
+        """
+        Emit multiple events in a single HTTP call via /api/events/batch.
+
+        Falls back to individual _emit_event calls if the batch endpoint is
+        unavailable (404) or if events list has only one item.
+        """
+        if not events:
+            return True
+
+        # Single event: just use the regular endpoint
+        if len(events) == 1:
+            evt = events[0]
+            return await self._emit_event(
+                server_url,
+                execution_id,
+                evt["step"],
+                evt["name"],
+                evt.get("payload", {}),
+                actionable=evt.get("actionable", False),
+                informative=evt.get("informative", True),
+                timeout_seconds=timeout_seconds,
+                max_retries=max_retries,
+                raise_on_failure=raise_on_failure,
+            )
+
+        if not self._http_client:
+            raise RuntimeError("HTTP client not initialized")
+
+        batch_url = f"{server_url.rstrip('/')}/api/events/batch"
+        batch_data = {
+            "execution_id": str(execution_id),
+            "worker_id": self.worker_id,
+            "events": events,
+        }
+
+        import time
+        from noetl.core.config import get_worker_settings
+        worker_settings = get_worker_settings()
+
+        retry_count = max_retries if max_retries is not None else 3
+        request_timeout = (
+            float(timeout_seconds)
+            if timeout_seconds is not None
+            else float(worker_settings.http_event_timeout)
+        )
+        base_delay = 0.05
+
+        for attempt in range(retry_count):
+            try:
+                response = await self._http_client.post(
+                    batch_url,
+                    json=batch_data,
+                    timeout=request_timeout,
+                )
+                if response.status_code == 404:
+                    # Batch endpoint not available - fall back to individual calls
+                    logger.debug("[BATCH] /api/events/batch not found, falling back to individual calls")
+                    for evt in events:
+                        await self._emit_event(
+                            server_url,
+                            execution_id,
+                            evt["step"],
+                            evt["name"],
+                            evt.get("payload", {}),
+                            actionable=evt.get("actionable", False),
+                            informative=evt.get("informative", True),
+                            timeout_seconds=timeout_seconds,
+                            max_retries=1,
+                            raise_on_failure=raise_on_failure,
+                        )
+                    return True
+
+                response.raise_for_status()
+                logger.debug(
+                    "[BATCH] Emitted %s events for execution %s in single call",
+                    len(events),
+                    execution_id,
+                )
+                return True
+
+            except Exception as e:
+                is_last_attempt = attempt == retry_count - 1
+                if is_last_attempt:
+                    logger.error(
+                        "[BATCH] Failed to emit batch events after %s attempts: %s",
+                        retry_count,
+                        e,
+                    )
+                    if raise_on_failure:
+                        raise RuntimeError(f"Batch event emission failed: {e}") from e
+                    return False
+                delay = base_delay * (2 ** attempt)
+                logger.warning(
+                    "[BATCH] Batch event emission failed (attempt %s/%s): %s. Retrying in %sms",
+                    attempt + 1,
+                    retry_count,
+                    e,
+                    delay * 1000,
+                )
+                await asyncio.sleep(delay)
+
     async def _emit_event(
         self,
         server_url: str,
@@ -2359,7 +2496,10 @@ class V2Worker:
         actionable: bool = False,
         informative: bool = True,
         correlation: dict = None,
-        inputs: dict = None
+        inputs: dict = None,
+        timeout_seconds: Optional[float] = None,
+        max_retries: Optional[int] = None,
+        raise_on_failure: bool = True,
     ):
         """
         Emit an event to the server using the v2 API schema with retry logic.
@@ -2407,10 +2547,15 @@ class V2Worker:
         from noetl.core.config import get_worker_settings
         worker_settings = get_worker_settings()
 
-        max_retries = 3
+        retry_count = max_retries if max_retries is not None else 3
+        request_timeout = (
+            float(timeout_seconds)
+            if timeout_seconds is not None
+            else float(worker_settings.http_event_timeout)
+        )
         base_delay = 0.05  # Fast retry: 50ms instead of 500ms
 
-        for attempt in range(max_retries):
+        for attempt in range(retry_count):
             try:
                 t_http_start = time.perf_counter()
                 logger.debug(
@@ -2420,30 +2565,39 @@ class V2Worker:
                     step,
                     execution_id,
                     attempt + 1,
-                    max_retries,
+                    retry_count,
                 )
 
                 response = await self._http_client.post(
                     event_url,
                     json=event_data,
-                    timeout=worker_settings.http_event_timeout
+                    timeout=request_timeout,
                 )
                 response.raise_for_status()
 
                 t_http_end = time.perf_counter()
                 logger.debug(f"[PERF] emit_event({name}) HTTP took {(t_http_end - t_http_start)*1000:.1f}ms - status={response.status_code}")
-                return  # Success - exit retry loop
+                return True  # Success - exit retry loop
 
             except Exception as e:
-                is_last_attempt = (attempt == max_retries - 1)
+                is_last_attempt = (attempt == retry_count - 1)
 
                 if is_last_attempt:
                     t_emit_end = time.perf_counter()
-                    logger.error(f"[HTTP] Failed to emit event {name} after {max_retries} attempts ({(t_emit_end - t_emit_start)*1000:.1f}ms total): {e}", exc_info=True)
-                    raise RuntimeError(f"Event emission failed after {max_retries} retries: {e}") from e
+                    logger.error(
+                        f"[HTTP] Failed to emit event {name} after {retry_count} attempts "
+                        f"({(t_emit_end - t_emit_start)*1000:.1f}ms total): {e}",
+                        exc_info=True,
+                    )
+                    if raise_on_failure:
+                        raise RuntimeError(f"Event emission failed after {retry_count} retries: {e}") from e
+                    return False
                 else:
                     delay = base_delay * (2 ** attempt)  # Fast exponential backoff: 50ms, 100ms, 200ms
-                    logger.warning(f"[HTTP] Event {name} emission failed (attempt {attempt + 1}/{max_retries}): {e}. Retrying in {delay*1000:.0f}ms...")
+                    logger.warning(
+                        f"[HTTP] Event {name} emission failed "
+                        f"(attempt {attempt + 1}/{retry_count}): {e}. Retrying in {delay*1000:.0f}ms..."
+                    )
                     await asyncio.sleep(delay)
 
 

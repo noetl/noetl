@@ -218,6 +218,29 @@ class EventResponse(BaseModel):
     commands_generated: int
 
 
+class BatchEventItem(BaseModel):
+    """A single event within a batch."""
+    step: str
+    name: str
+    payload: dict[str, Any] = Field(default_factory=dict)
+    actionable: bool = False
+    informative: bool = True
+
+
+class BatchEventRequest(BaseModel):
+    """Batch of events for one execution - persisted in a single DB transaction."""
+    execution_id: str
+    events: list[BatchEventItem]
+    worker_id: Optional[str] = None
+
+
+class BatchEventResponse(BaseModel):
+    """Response for batch event submission."""
+    status: str
+    event_ids: list[int]
+    commands_generated: int
+
+
 # ============================================================================
 # Endpoints
 # ============================================================================
@@ -502,7 +525,13 @@ async def claim_command(event_id: int, req: ClaimRequest):
                     LIMIT 1
                 """, (execution_id,))
                 if await cur.fetchone():
-                    raise HTTPException(409, "Execution has been cancelled")
+                    raise HTTPException(
+                        409,
+                        detail={
+                            "code": "execution_cancelled",
+                            "message": "Execution has been cancelled",
+                        },
+                    )
 
                 # Acquire advisory lock on command_id hash
                 await cur.execute("""
@@ -511,7 +540,16 @@ async def claim_command(event_id: int, req: ClaimRequest):
                 lock_result = await cur.fetchone()
 
                 if not lock_result or not lock_result.get('lock_acquired'):
-                    raise HTTPException(409, "Command is being claimed by another worker")
+                    raise HTTPException(
+                        409,
+                        detail={
+                            "code": "active_claim",
+                            "message": "Command is being claimed by another worker",
+                        },
+                        headers={
+                            "Retry-After": str(max(1, _CLAIM_ACTIVE_RETRY_AFTER_SECONDS))
+                        },
+                    )
 
                 # Check if already claimed
                 await cur.execute("""
@@ -1012,6 +1050,200 @@ async def handle_event(req: EventRequest) -> EventResponse:
         )
     except Exception as e:
         logger.error(f"handle_event failed: {e}", exc_info=True)
+        raise HTTPException(500, str(e))
+
+
+@router.post("/events/batch", response_model=BatchEventResponse)
+async def handle_batch_events(req: BatchEventRequest) -> BatchEventResponse:
+    """
+    Persist multiple events for one execution in a single DB transaction.
+
+    Only the LAST actionable event in the batch is routed through the engine
+    to generate commands. Non-actionable events (command.started, step.enter,
+    command.completed, step.exit without routing) are persisted directly.
+
+    This reduces HTTP round-trips from 5 per loop iteration to 2 (batch + call.done).
+    """
+    try:
+        engine = get_engine()
+
+        skip_engine_events = {
+            "command.claimed", "command.started", "command.completed",
+            "step.enter",
+        }
+
+        event_ids: list[int] = []
+        last_actionable_event: Optional[Event] = None
+        last_actionable_evt_id: Optional[int] = None
+
+        # Persist all events in a single transaction
+        async with get_pool_connection() as conn:
+            async with conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute(
+                    "SELECT catalog_id FROM noetl.event WHERE execution_id = %s LIMIT 1",
+                    (int(req.execution_id),),
+                )
+                row = await cur.fetchone()
+                catalog_id = row["catalog_id"] if row else None
+
+                for item in req.events:
+                    evt_id = await _next_snowflake_id(cur)
+                    event_ids.append(evt_id)
+
+                    meta_obj: dict[str, Any] = {
+                        "actionable": item.actionable,
+                        "informative": item.informative,
+                    }
+                    if req.worker_id:
+                        meta_obj["worker_id"] = req.worker_id
+
+                    result_obj = {"kind": "data", "data": item.payload}
+
+                    if "error" in item.name or "failed" in item.name:
+                        status = "FAILED"
+                    elif "done" in item.name or "exit" in item.name or "completed" in item.name:
+                        status = "COMPLETED"
+                    else:
+                        status = "RUNNING"
+
+                    await cur.execute(
+                        """
+                        INSERT INTO noetl.event (
+                            event_id, execution_id, catalog_id, event_type,
+                            node_id, node_name, status, result, meta, worker_id, created_at
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        """,
+                        (
+                            evt_id,
+                            int(req.execution_id),
+                            catalog_id,
+                            item.name,
+                            item.step,
+                            item.step,
+                            status,
+                            Json(result_obj),
+                            Json(meta_obj),
+                            req.worker_id,
+                            datetime.now(timezone.utc),
+                        ),
+                    )
+
+                    # Track last actionable event for engine processing
+                    if item.actionable and item.name not in skip_engine_events:
+                        last_actionable_event = Event(
+                            execution_id=req.execution_id,
+                            step=item.step,
+                            name=item.name,
+                            payload=item.payload,
+                            meta=meta_obj,
+                            timestamp=datetime.now(timezone.utc),
+                            worker_id=req.worker_id,
+                        )
+                        last_actionable_evt_id = evt_id
+
+                await conn.commit()
+
+        # Process only the last actionable event through the engine
+        commands: list = []
+        if last_actionable_event:
+            commands = await engine.handle_event(last_actionable_event, already_persisted=True)
+
+        # Emit command.issued for generated commands
+        if commands:
+            nats_pub = await get_nats_publisher()
+            server_url = os.getenv(
+                "NOETL_SERVER_URL",
+                "http://noetl.noetl.svc.cluster.local:8082",
+            )
+            async with get_pool_connection() as conn:
+                async with conn.cursor(row_factory=dict_row) as cur:
+                    for cmd in commands:
+                        await cur.execute(
+                            "SELECT catalog_id, parent_execution_id FROM noetl.event WHERE execution_id = %s LIMIT 1",
+                            (int(cmd.execution_id),),
+                        )
+                        row = await cur.fetchone()
+                        cat_id = row["catalog_id"] if row else catalog_id
+                        parent_exec = row["parent_execution_id"] if row else None
+
+                        cmd_suffix = await _next_snowflake_id(cur)
+                        cmd_id = f"{cmd.execution_id}:{cmd.step}:{cmd_suffix}"
+                        new_evt_id = await _next_snowflake_id(cur)
+
+                        context = {
+                            "tool_config": cmd.tool.config,
+                            "args": cmd.args or {},
+                            "render_context": cmd.render_context,
+                            "next_targets": cmd.next_targets,
+                            "pipeline": cmd.pipeline,
+                            "spec": cmd.spec.model_dump() if cmd.spec else None,
+                        }
+                        meta = {
+                            "command_id": cmd_id,
+                            "step": cmd.step,
+                            "tool_kind": cmd.tool.kind,
+                            "triggered_by": last_actionable_event.name if last_actionable_event else "batch",
+                            "actionable": True,
+                        }
+                        if cmd.metadata:
+                            meta.update({k: v for k, v in cmd.metadata.items() if v is not None})
+
+                        await cur.execute(
+                            """
+                            INSERT INTO noetl.event (
+                                event_id, execution_id, catalog_id, event_type,
+                                node_id, node_name, node_type, status,
+                                context, meta, parent_event_id, parent_execution_id,
+                                created_at
+                            ) VALUES (
+                                %(event_id)s, %(execution_id)s, %(catalog_id)s, %(event_type)s,
+                                %(node_id)s, %(node_name)s, %(node_type)s, %(status)s,
+                                %(context)s, %(meta)s, %(parent_event_id)s, %(parent_execution_id)s,
+                                %(created_at)s
+                            )
+                            """,
+                            {
+                                "event_id": new_evt_id,
+                                "execution_id": int(cmd.execution_id),
+                                "catalog_id": cat_id,
+                                "event_type": "command.issued",
+                                "node_id": cmd.step,
+                                "node_name": cmd.step,
+                                "node_type": cmd.tool.kind,
+                                "status": "PENDING",
+                                "context": Json(context),
+                                "meta": Json(meta),
+                                "parent_event_id": last_actionable_evt_id,
+                                "parent_execution_id": parent_exec,
+                                "created_at": datetime.now(timezone.utc),
+                            },
+                        )
+
+                        await nats_pub.publish_command(
+                            execution_id=int(cmd.execution_id),
+                            event_id=new_evt_id,
+                            command_id=cmd_id,
+                            step=cmd.step,
+                            server_url=server_url,
+                        )
+
+                    await conn.commit()
+
+        return BatchEventResponse(
+            status="ok",
+            event_ids=event_ids,
+            commands_generated=len(commands),
+        )
+
+    except PoolTimeout:
+        logger.warning("[BATCH-EVENTS] DB pool saturated")
+        raise HTTPException(
+            status_code=503,
+            detail="Database temporarily overloaded; retry shortly",
+            headers={"Retry-After": "1"},
+        )
+    except Exception as e:
+        logger.error(f"handle_batch_events failed: {e}", exc_info=True)
         raise HTTPException(500, str(e))
 
 
