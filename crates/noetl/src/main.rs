@@ -888,7 +888,7 @@ enum ContextCommand {
     ///     noetl context add local --server-url=http://localhost:8082
     ///     noetl context add local-dev --server-url=http://localhost:8082 --runtime=local
     ///     noetl context add prod --server-url=https://noetl.example.com --runtime=distributed
-    ///     noetl context add gateway --server-url=https://gateway.example.com --auth0-domain=tenant.auth0.com
+    ///     noetl context add gateway --server-url=https://gateway.example.com --auth0-domain=tenant.auth0.com --auth0-client-id=abc123 --auth0-redirect-uri=https://app.example.com/login
     ///     noetl context add staging --server-url=http://staging:8082 --set-current
     #[command(verbatim_doc_comment)]
     Add {
@@ -903,6 +903,15 @@ enum ContextCommand {
         /// Default Auth0 domain to use for 'noetl auth login'
         #[arg(long)]
         auth0_domain: Option<String>,
+        /// Auth0 application client_id (used to build the browser authorization URL)
+        #[arg(long)]
+        auth0_client_id: Option<String>,
+        /// Auth0 redirect URI after browser login (e.g. https://app.example.com/login)
+        #[arg(long)]
+        auth0_redirect_uri: Option<String>,
+        /// Auth0 client_secret for password grant login (stored locally)
+        #[arg(long)]
+        auth0_client_secret: Option<String>,
         /// Set as current context
         #[arg(long)]
         set_current: bool,
@@ -954,11 +963,12 @@ enum AuthCommand {
     ///     noetl auth login --auth0-token <ID_TOKEN>
     ///     noetl auth login --auth0-callback-url 'https://app/login#id_token=...'
     ///     noetl auth login --auth0 user@example.com
+    ///     noetl auth login --auth0 user@example.com --password
     ///     noetl auth login --auth0-token <ID_TOKEN> --context gateway
     #[command(verbatim_doc_comment)]
     Login {
         /// Unified Auth0 input: email/login hint, raw token, or callback URL
-        /// If email is provided, CLI prompts once for callback URL/token.
+        /// If email is provided, CLI prompts for password (password grant) or callback URL/token.
         #[arg(long, value_name = "EMAIL|TOKEN|CALLBACK_URL", conflicts_with_all = ["auth0_token", "auth0_callback_url"])]
         auth0: Option<String>,
 
@@ -973,6 +983,10 @@ enum AuthCommand {
         /// Auth0 domain (defaults to context value, then gateway default)
         #[arg(long)]
         auth0_domain: Option<String>,
+
+        /// Use Auth0 password grant (prompts for password in terminal, no browser needed)
+        #[arg(long)]
+        password: bool,
 
         /// Session duration in hours
         #[arg(long, default_value_t = 8)]
@@ -1747,6 +1761,9 @@ fn handle_context_command(config: &mut Config, command: ContextCommand) -> Resul
             server_url,
             runtime,
             auth0_domain,
+            auth0_client_id,
+            auth0_redirect_uri,
+            auth0_client_secret,
             set_current,
         } => {
             // Validate runtime value
@@ -1760,6 +1777,9 @@ fn handle_context_command(config: &mut Config, command: ContextCommand) -> Resul
                 Context::new(server_url)
                     .with_runtime(runtime)
                     .with_gateway_auth0_domain(auth0_domain)
+                    .with_gateway_auth0_client_id(auth0_client_id)
+                    .with_gateway_auth0_redirect_uri(auth0_redirect_uri)
+                    .with_gateway_auth0_client_secret(auth0_client_secret)
             );
             if set_current || config.current_context.is_none() {
                 config.current_context = Some(name.clone());
@@ -1870,13 +1890,23 @@ fn handle_context_command(config: &mut Config, command: ContextCommand) -> Resul
 fn extract_token_from_callback_url(url: &str) -> Option<String> {
     for source in [url.split('#').nth(1), url.split('?').nth(1)] {
         let Some(source) = source else { continue };
+        let mut id_token: Option<String> = None;
+        let mut access_token: Option<String> = None;
         for pair in source.split('&') {
             let mut parts = pair.splitn(2, '=');
-            let key = parts.next()?.trim();
+            let key = match parts.next() { Some(k) => k.trim(), None => continue };
             let value = parts.next().unwrap_or("").trim();
-            if (key == "id_token" || key == "access_token") && !value.is_empty() {
-                return Some(value.to_string());
+            if !value.is_empty() {
+                match key {
+                    "id_token" => id_token = Some(value.to_string()),
+                    "access_token" => access_token = Some(value.to_string()),
+                    _ => {}
+                }
             }
+        }
+        // Always prefer id_token (JWT) over access_token (may be opaque)
+        if let Some(t) = id_token.or(access_token) {
+            return Some(t);
         }
     }
     None
@@ -1921,6 +1951,7 @@ async fn handle_auth_command(config: &mut Config, base_url: &str, command: AuthC
             auth0_token,
             auth0_callback_url,
             auth0_domain,
+            password: use_password_grant,
             session_duration_hours,
             context,
             no_save,
@@ -1936,18 +1967,103 @@ async fn handle_auth_command(config: &mut Config, base_url: &str, command: AuthC
                     } else if looks_like_jwt(&auth0_input) {
                         token = Some(auth0_input.trim().to_string());
                     } else if looks_like_email(&auth0_input) {
-                        if !json {
-                            println!(
-                                "Auth0 login hint: {}",
-                                auth0_input.trim()
-                            );
-                            println!(
-                                "Paste Auth0 callback URL (with #id_token=... or #access_token=...) or token:"
-                            );
+                        // Resolve context config
+                        let ctx_name_ref = context.as_deref()
+                            .or_else(|| config.current_context.as_deref());
+                        let ctx_ref = ctx_name_ref.and_then(|n| config.contexts.get(n));
+                        let early_domain = auth0_domain.as_deref()
+                            .or_else(|| ctx_ref.and_then(|c| c.gateway_auth0_domain.as_deref()));
+                        let early_client_id = ctx_ref.and_then(|c| c.gateway_auth0_client_id.as_deref());
+                        let early_client_secret = ctx_ref.and_then(|c| c.gateway_auth0_client_secret.as_deref());
+                        let early_redirect_uri = ctx_ref.and_then(|c| c.gateway_auth0_redirect_uri.as_deref());
+
+                        if use_password_grant || early_client_secret.is_some() {
+                            // Password grant: prompt for password, exchange with Auth0 directly
+                            let domain = early_domain.ok_or_else(|| anyhow::anyhow!(
+                                "Auth0 domain not set. Use 'noetl context add --auth0-domain <domain>' first."
+                            ))?;
+                            let client_id = early_client_id.ok_or_else(|| anyhow::anyhow!(
+                                "Auth0 client_id not set. Use 'noetl context add --auth0-client-id <id>' first."
+                            ))?;
+                            let client_secret = match early_client_secret {
+                                Some(s) => s.to_string(),
+                                None => {
+                                    if !json { eprint!("Auth0 client secret: "); }
+                                    rpassword::read_password().context("Failed to read client secret")?                                    
+                                }
+                            };
+                            if !json { eprint!("Password for {}: ", auth0_input.trim()); }
+                            let pwd = rpassword::read_password().context("Failed to read password")?;
+                            if pwd.is_empty() {
+                                anyhow::bail!("Password cannot be empty.");
+                            }
+                            // Audience is always https://{domain}/me/ for Auth0 user tokens
+                            let audience = format!("https://{}/me/", domain);
+                            let token_endpoint = format!("https://{}/oauth/token", domain);
+                            if !json { println!("Authenticating with Auth0..."); }
+                            let http_client = Client::new();
+                            let resp = http_client
+                                .post(&token_endpoint)
+                                .json(&serde_json::json!({
+                                    "grant_type": "password",
+                                    "client_id": client_id,
+                                    "client_secret": client_secret,
+                                    "username": auth0_input.trim(),
+                                    "password": pwd,
+                                    "scope": "openid profile email",
+                                    "audience": audience
+                                }))
+                                .send()
+                                .await
+                                .context("Failed to reach Auth0 token endpoint")?;
+                            if !resp.status().is_success() {
+                                let status = resp.status();
+                                let body: serde_json::Value = resp.json().await.unwrap_or_default();
+                                let desc = body.get("error_description")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("unknown error");
+                                anyhow::bail!("Auth0 password grant failed ({}): {}", status, desc);
+                            }
+                            let auth0_resp: serde_json::Value = resp.json().await
+                                .context("Failed to parse Auth0 token response")?;
+                            let id_token = auth0_resp.get("id_token")
+                                .and_then(|v| v.as_str())
+                                .ok_or_else(|| anyhow::anyhow!(
+                                    "Auth0 response missing id_token. The application may not be authorized for password + openid scope."
+                                ))?;
+                            token = Some(id_token.to_string());
+                        } else {
+                            // Browser flow: print authorization URL
+                            let early_redirect_uri = early_redirect_uri;
+                            if !json {
+                                println!("Auth0 login hint: {}", auth0_input.trim());
+                                if let (Some(domain), Some(client_id)) = (early_domain, early_client_id) {
+                                    let nonce = std::time::SystemTime::now()
+                                        .duration_since(std::time::UNIX_EPOCH)
+                                        .unwrap_or_default()
+                                        .as_millis()
+                                        .to_string();
+                                    let redirect = early_redirect_uri.unwrap_or("https://your-app/login");
+                                    let encoded_redirect = redirect
+                                        .replace(':', "%3A")
+                                        .replace('/', "%2F");
+                                    let encoded_hint = auth0_input.trim().replace('@', "%40");
+                                    println!("Open in browser to authenticate:");
+                                    println!(
+                                        "  https://{}/authorize?response_type=id_token%20token&client_id={}&redirect_uri={}&scope=openid%20profile%20email&nonce={}&login_hint={}",
+                                        domain, client_id, encoded_redirect, nonce, encoded_hint
+                                    );
+                                    println!("After login, copy the full redirect URL (contains #id_token=...) and paste below.");
+                                } else {
+                                    println!("Open your browser and log in via the gateway or Auth0 UI.");
+                                    println!("After login, copy the callback URL (contains #id_token=...) and paste below.");
+                                }
+                                println!("Paste callback URL or token:");
+                            }
+                            let provided = prompt_input("> ")?;
+                            token = extract_token_from_callback_url(&provided)
+                                .or_else(|| (!provided.is_empty()).then_some(provided));
                         }
-                        let provided = prompt_input("> ")?;
-                        token = extract_token_from_callback_url(&provided)
-                            .or_else(|| (!provided.is_empty()).then_some(provided));
                     } else if !auth0_input.trim().is_empty() {
                         token = Some(auth0_input.trim().to_string());
                     }
@@ -2547,8 +2663,9 @@ async fn list_resources(
     resource_type: &str,
     json_only: bool,
 ) -> Result<()> {
-    let url = api_url(base_url, &format!("catalog/list/{}", resource_type), use_gateway_proxy);
-    let response = client.get(&url).send().await.context("Failed to send list request")?;
+    let url = api_url(base_url, "catalog/list", use_gateway_proxy);
+    let body = serde_json::json!({"resource_type": resource_type});
+    let response = client.post(&url).json(&body).send().await.context("Failed to send list request")?;
 
     if response.status().is_success() {
         let result: serde_json::Value = response.json().await?;
@@ -2572,9 +2689,11 @@ async fn get_catalog_resource(
     use_gateway_proxy: bool,
     path: &str,
 ) -> Result<()> {
-    let url = api_url(base_url, &format!("catalog/get/{}", path), use_gateway_proxy);
+    let url = api_url(base_url, "catalog/resource", use_gateway_proxy);
+    let body = serde_json::json!({"path": path});
     let response = client
-        .get(&url)
+        .post(&url)
+        .json(&body)
         .send()
         .await
         .context("Failed to send get catalog request")?;
