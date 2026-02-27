@@ -20,7 +20,7 @@ from psycopg_pool import PoolTimeout
 
 from noetl.core.dsl.v2.models import Event
 from noetl.core.dsl.v2.engine import ControlFlowEngine, PlaybookRepo, StateStore
-from noetl.core.db.pool import get_pool_connection
+from noetl.core.db.pool import get_pool_connection, get_server_pool_stats
 from noetl.core.messaging import NATSCommandPublisher
 
 from noetl.core.logger import setup_logger
@@ -44,6 +44,58 @@ _CLAIM_ACTIVE_RETRY_AFTER_SECONDS = max(
     1,
     int(os.getenv("NOETL_COMMAND_CLAIM_RETRY_AFTER_SECONDS", "2")),
 )
+
+
+def _compute_retry_after(min_seconds: float = 1.0, max_seconds: float = 15.0) -> str:
+    """
+    Return Retry-After value (string seconds) based on actual server pool state.
+
+    If the pool has waiters, the client should wait at least long enough for
+    those to drain: roughly 0.5 s * (waiters + 1), capped at max_seconds.
+    Returns a plain integer string as required by the HTTP spec.
+    """
+    try:
+        stats = get_server_pool_stats()
+        waiting = int(stats.get("requests_waiting", 0) or 0)
+        available = int(stats.get("slots_available", 1) or 1)
+        # If nothing is waiting and slots are free, a short retry is fine
+        if waiting == 0 and available > 0:
+            return str(int(min_seconds))
+        # Each waiter adds ~0.5 s; extra penalty when no free slots at all
+        estimated = min_seconds + 0.5 * (waiting + 1) + (1.0 if available == 0 else 0.0)
+        return str(int(min(max(estimated, min_seconds), max_seconds)))
+    except Exception:
+        return str(int(min_seconds))
+
+
+@router.get("/pool/status")
+async def get_pool_status():
+    """
+    Return real-time server DB pool telemetry.
+
+    Workers use this endpoint to proactively throttle claim/event requests
+    before hitting 503, rather than discovering saturation reactively.
+
+    Response fields:
+      pool_min        - configured minimum connections
+      pool_max        - configured maximum connections
+      pool_size       - current live connections
+      pool_available  - idle (free) connections right now
+      requests_waiting- requests queued waiting for a connection
+      utilization     - fraction of max in active use (0.0–1.0)
+      slots_available - connections available for immediate use
+    """
+    stats = get_server_pool_stats()
+    if not stats:
+        return {
+            "pool_min": 0, "pool_max": 0, "pool_size": 0,
+            "pool_available": 0, "requests_waiting": 0,
+            "utilization": 0.0, "slots_available": 0,
+            "status": "unavailable",
+        }
+    return {**stats, "status": "ok"}
+
+
 _CLAIM_WORKER_HEARTBEAT_STALE_SECONDS = max(
     5.0,
     float(os.getenv("NOETL_COMMAND_WORKER_HEARTBEAT_STALE_SECONDS", "30")),
@@ -732,15 +784,17 @@ async def claim_command(event_id: int, req: ClaimRequest):
     except HTTPException:
         raise
     except PoolTimeout:
+        retry_after = _compute_retry_after()
         logger.warning(
-            "[CLAIM] DB pool saturated for event_id=%s (acquire_timeout=%.3fs)",
+            "[CLAIM] DB pool saturated for event_id=%s (acquire_timeout=%.3fs) retry_after=%ss",
             event_id,
             _CLAIM_DB_ACQUIRE_TIMEOUT_SECONDS,
+            retry_after,
         )
         raise HTTPException(
             status_code=503,
-            detail="Database temporarily overloaded; retry shortly",
-            headers={"Retry-After": "1"},
+            detail={"code": "pool_saturated", "message": "Database temporarily overloaded; retry shortly"},
+            headers={"Retry-After": retry_after},
         )
     except Exception as e:
         logger.error(f"claim_command failed: {e}", exc_info=True)
@@ -1042,11 +1096,12 @@ async def handle_event(req: EventRequest) -> EventResponse:
         return EventResponse(status="ok", event_id=evt_id, commands_generated=len(commands))
     
     except PoolTimeout:
-        logger.warning("[EVENTS] DB pool saturated while persisting %s for step %s", req.name, req.step)
+        retry_after = _compute_retry_after()
+        logger.warning("[EVENTS] DB pool saturated while persisting %s for step %s retry_after=%ss", req.name, req.step, retry_after)
         raise HTTPException(
             status_code=503,
-            detail="Database temporarily overloaded; retry shortly",
-            headers={"Retry-After": "1"},
+            detail={"code": "pool_saturated", "message": "Database temporarily overloaded; retry shortly"},
+            headers={"Retry-After": retry_after},
         )
     except Exception as e:
         logger.error(f"handle_event failed: {e}", exc_info=True)
@@ -1236,11 +1291,12 @@ async def handle_batch_events(req: BatchEventRequest) -> BatchEventResponse:
         )
 
     except PoolTimeout:
-        logger.warning("[BATCH-EVENTS] DB pool saturated")
+        retry_after = _compute_retry_after()
+        logger.warning("[BATCH-EVENTS] DB pool saturated retry_after=%ss", retry_after)
         raise HTTPException(
             status_code=503,
-            detail="Database temporarily overloaded; retry shortly",
-            headers={"Retry-After": "1"},
+            detail={"code": "pool_saturated", "message": "Database temporarily overloaded; retry shortly"},
+            headers={"Retry-After": retry_after},
         )
     except Exception as e:
         logger.error(f"handle_batch_events failed: {e}", exc_info=True)

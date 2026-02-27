@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 
 
 from noetl.core.messaging import NATSCommandSubscriber
+from noetl.worker.adaptive_concurrency import AdaptiveConcurrencyController
 from noetl.core.logging_context import LoggingContext
 from noetl.core.logger import setup_logger
 logger = setup_logger(__name__, include_location=True)
@@ -159,6 +160,14 @@ class V2Worker:
         self._postgres_pool_waiting_threshold = max(0, int(worker_settings.postgres_pool_waiting_threshold))
         self._db_command_semaphore = asyncio.Semaphore(self._max_inflight_db_commands)
         self._last_db_throttle_log_at = 0.0
+        # Adaptive AIMD concurrency controller: limits simultaneous claim/event
+        # requests from this worker process, backing off when the server pool
+        # is saturated (503) and recovering as it clears.
+        self._concurrency = AdaptiveConcurrencyController(
+            initial_limit=max(1.0, self._max_inflight_commands / 2.0),
+            min_limit=1.0,
+            max_limit=float(self._max_inflight_commands),
+        )
 
     @staticmethod
     def _is_db_heavy_tool(tool_kind: Optional[str]) -> bool:
@@ -270,23 +279,32 @@ class V2Worker:
     async def _heartbeat_loop(self, server_url: str):
         """Background task to send heartbeat updates to runtime table."""
         logger.info(f"Worker {self.worker_id} heartbeat loop started (interval: 15s)")
-        
+        _cycles = 0
         while self._running:
             try:
                 await asyncio.sleep(15)  # Heartbeat every 15 seconds
-                
+
                 if not self._running:
                     break
-                
+
+                _cycles += 1
+                # Log a liveness ping every 4 cycles (~60s) to detect silent workers
+                if _cycles % 4 == 0:
+                    logger.info(
+                        "[WORKER] Alive: %s | concurrency=%s",
+                        self.worker_id,
+                        self._concurrency.get_status(),
+                    )
+
                 # Re-register acts as heartbeat (upsert updates heartbeat timestamp)
                 await self._register_worker(server_url)
-                
+
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.warning(f"Heartbeat error: {e}")
                 await asyncio.sleep(5)  # Back off on error
-        
+
         logger.info(f"Worker {self.worker_id} heartbeat loop stopped")
     
     async def start(self):
@@ -327,14 +345,21 @@ class V2Worker:
             self._heartbeat_task = asyncio.create_task(self._heartbeat_loop(server_url))
         else:
             logger.warning("No server_url configured - worker registration skipped")
-        
+
+        # Start concurrency controller probe (monitors server DB pool proactively)
+        if server_url and self._http_client:
+            await self._concurrency.start(self._http_client, server_url)
+
         # Subscribe to command notifications (this should never return)
         await self._nats_subscriber.subscribe(self._handle_command_notification)
     
     async def cleanup(self):
         """Cleanup resources."""
         self._running = False
-        
+
+        # Stop adaptive concurrency controller probe
+        await self._concurrency.stop()
+
         # Cancel heartbeat task
         if self._heartbeat_task:
             self._heartbeat_task.cancel()
@@ -588,6 +613,10 @@ class V2Worker:
             return "", ""
 
         for attempt in range(1, max_attempts + 1):
+            # Wait for a concurrency slot; respects any global backoff set by
+            # previous 503 responses across all claim calls in this process.
+            await self._concurrency.acquire()
+            _released = False
             try:
                 response = await self._http_client.post(
                     f"{server_url.rstrip('/')}/api/commands/{event_id}/claim",
@@ -595,6 +624,8 @@ class V2Worker:
                 )
 
                 if response.status_code == 200:
+                    await self._concurrency.release_success()
+                    _released = True
                     data = response.json()
                     logger.info(f"[CLAIM] Successfully claimed command for event_id={event_id}")
                     return ({
@@ -606,6 +637,9 @@ class V2Worker:
                         "meta": data["meta"]
                     }, "claimed")
                 if response.status_code == 409:
+                    # 409 is not a pool overload — release as success (doesn't penalise limit)
+                    await self._concurrency.release_success()
+                    _released = True
                     code, message = _claim_detail(response)
                     if code == "active_claim" or "being claimed" in message or "another worker" in message:
                         retry_after = response.headers.get("Retry-After", "1")
@@ -633,6 +667,8 @@ class V2Worker:
                     )
                     return None, "retry_later"
                 if response.status_code == 404:
+                    await self._concurrency.release_error()
+                    _released = True
                     raise ClaimTerminalError(
                         status_code=404,
                         message=f"Command not found for event_id={event_id}",
@@ -640,27 +676,35 @@ class V2Worker:
                     )
                 if response.status_code in retryable_statuses and attempt < max_attempts:
                     retry_after_header = response.headers.get("Retry-After")
-                    retry_after_seconds = 0.0
+                    retry_after_seconds = 1.0
                     if retry_after_header:
                         try:
                             retry_after_seconds = max(0.0, float(retry_after_header))
                         except (TypeError, ValueError):
-                            retry_after_seconds = 0.0
+                            retry_after_seconds = 1.0
+                    # Notify controller: server pool saturated.
+                    # This applies a global backoff and reduces concurrency limit.
+                    # The next acquire() in the next iteration will wait it out.
+                    await self._concurrency.release_overload(retry_after_seconds)
+                    _released = True
                     jitter_multiplier = 1.0 + random.uniform(-0.2, 0.2)
                     computed_delay = min(delay_seconds * jitter_multiplier, max_delay_seconds)
                     sleep_seconds = min(max(computed_delay, retry_after_seconds), max_delay_seconds)
                     logger.warning(
-                        "[CLAIM] Transient claim failure for event_id=%s status=%s attempt=%s/%s; retrying in %.2fs",
+                        "[CLAIM] Transient claim failure for event_id=%s status=%s attempt=%s/%s; retrying in %.2fs %s",
                         event_id,
                         response.status_code,
                         attempt,
                         max_attempts,
                         sleep_seconds,
+                        self._concurrency.get_status(),
                     )
                     await asyncio.sleep(sleep_seconds)
                     delay_seconds = min(delay_seconds * 2, max_delay_seconds)
                     continue
                 if response.status_code in retryable_statuses:
+                    await self._concurrency.release_overload(1.0)
+                    _released = True
                     logger.warning(
                         "[CLAIM] Retryable claim status persisted for event_id=%s (status=%s attempts=%s); deferring to queue redelivery",
                         event_id,
@@ -669,6 +713,8 @@ class V2Worker:
                     )
                     return None, "retry_later"
 
+                await self._concurrency.release_error()
+                _released = True
                 logger.warning(
                     "[CLAIM] Failed to claim command event_id=%s status=%s attempt=%s/%s body=%s",
                     event_id,
@@ -684,8 +730,18 @@ class V2Worker:
                 )
 
             except ClaimTerminalError:
+                if not _released:
+                    await self._concurrency.release_error()
+                raise
+            except asyncio.CancelledError:
+                # Task cancelled — release slot before propagating
+                if not _released:
+                    await self._concurrency.release_error()
                 raise
             except Exception as e:
+                if not _released:
+                    await self._concurrency.release_error()
+                    _released = True
                 if attempt < max_attempts:
                     jitter_multiplier = 1.0 + random.uniform(-0.2, 0.2)
                     sleep_seconds = min(delay_seconds * jitter_multiplier, max_delay_seconds)
@@ -2431,6 +2487,8 @@ class V2Worker:
         base_delay = 0.05
 
         for attempt in range(retry_count):
+            await self._concurrency.acquire()
+            _released = False
             try:
                 response = await self._http_client.post(
                     batch_url,
@@ -2439,6 +2497,8 @@ class V2Worker:
                 )
                 if response.status_code == 404:
                     # Batch endpoint not available - fall back to individual calls
+                    await self._concurrency.release_success()
+                    _released = True
                     logger.debug("[BATCH] /api/events/batch not found, falling back to individual calls")
                     for evt in events:
                         await self._emit_event(
@@ -2455,7 +2515,31 @@ class V2Worker:
                         )
                     return True
 
+                if response.status_code == 503:
+                    retry_after = 1.0
+                    try:
+                        retry_after = max(0.0, float(response.headers.get("Retry-After", "1")))
+                    except (TypeError, ValueError):
+                        pass
+                    await self._concurrency.release_overload(retry_after)
+                    _released = True
+                    if attempt == retry_count - 1:
+                        logger.error(
+                            "[BATCH] 503 pool saturated after %s attempts for execution %s %s",
+                            retry_count, execution_id, self._concurrency.get_status(),
+                        )
+                        if raise_on_failure:
+                            raise RuntimeError("Batch event emission failed: server pool saturated")
+                        return False
+                    logger.warning(
+                        "[BATCH] 503 pool saturated attempt %s/%s; backoff applied %s",
+                        attempt + 1, retry_count, self._concurrency.get_status(),
+                    )
+                    continue  # next acquire() waits out the controller backoff
+
                 response.raise_for_status()
+                await self._concurrency.release_success()
+                _released = True
                 logger.debug(
                     "[BATCH] Emitted %s events for execution %s in single call",
                     len(events),
@@ -2463,7 +2547,14 @@ class V2Worker:
                 )
                 return True
 
+            except asyncio.CancelledError:
+                if not _released:
+                    await self._concurrency.release_error()
+                raise
             except Exception as e:
+                if not _released:
+                    await self._concurrency.release_error()
+                    _released = True
                 is_last_attempt = attempt == retry_count - 1
                 if is_last_attempt:
                     logger.error(
@@ -2554,6 +2645,8 @@ class V2Worker:
         base_delay = 0.05  # Fast retry: 50ms instead of 500ms
 
         for attempt in range(retry_count):
+            await self._concurrency.acquire()
+            _released = False
             try:
                 t_http_start = time.perf_counter()
                 logger.debug(
@@ -2571,13 +2664,47 @@ class V2Worker:
                     json=event_data,
                     timeout=request_timeout,
                 )
+
+                if response.status_code == 503:
+                    retry_after = 1.0
+                    try:
+                        retry_after = max(0.0, float(response.headers.get("Retry-After", "1")))
+                    except (TypeError, ValueError):
+                        pass
+                    await self._concurrency.release_overload(retry_after)
+                    _released = True
+                    if attempt == retry_count - 1:
+                        logger.error(
+                            "[HTTP] Event %s: 503 pool saturated after %s attempts %s",
+                            name, retry_count, self._concurrency.get_status(),
+                        )
+                        if raise_on_failure:
+                            raise RuntimeError(
+                                f"Event emission failed: server pool saturated after {retry_count} retries"
+                            )
+                        return False
+                    logger.warning(
+                        "[HTTP] Event %s: 503 attempt %s/%s; backoff applied %s",
+                        name, attempt + 1, retry_count, self._concurrency.get_status(),
+                    )
+                    continue  # next acquire() waits out the controller backoff
+
                 response.raise_for_status()
+                await self._concurrency.release_success()
+                _released = True
 
                 t_http_end = time.perf_counter()
                 logger.debug(f"[PERF] emit_event({name}) HTTP took {(t_http_end - t_http_start)*1000:.1f}ms - status={response.status_code}")
                 return True  # Success - exit retry loop
 
+            except asyncio.CancelledError:
+                if not _released:
+                    await self._concurrency.release_error()
+                raise
             except Exception as e:
+                if not _released:
+                    await self._concurrency.release_error()
+                    _released = True
                 is_last_attempt = (attempt == retry_count - 1)
 
                 if is_last_attempt:

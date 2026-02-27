@@ -374,30 +374,30 @@ workflow:
           when: '{{ (normalize_batch.has_rows | string | lower) != "true" }}'
 
   - step: process_batch
-    desc: Process each item in the batch (parallel loop, mirrors production fetch_mds_assessment_details)
-    loop:
-      in: '{{ normalize_batch.batch_rows }}'
-      iterator: item_row
-      spec:
-        mode: parallel
-        max_in_flight: 10
+    desc: |
+      Simulate per-item HTTP call + store for entire batch in one worker hop.
+      Python generates 100 independent 250KB "API responses" held simultaneously
+      in worker memory (OOM stress), then saves via kind: postgres using
+      jsonb_array_elements — no direct DB connection from Python code.
     tool:
       - name: compute
         kind: python
         args:
-          item_id: '{{ iter.item_row.item_id }}'
+          batch_rows: '{{ normalize_batch.batch_rows }}'
         code: |
-          # Simulate a large API response (~250KB JSON), matching MDS assessment payloads.
-          # This triggers _ref externalization (> 64KB threshold) and stresses worker
-          # memory during template rendering and result serialization — the same
-          # conditions that cause worker/server OOM in production.
-          import json
-          fields = {f"field_{j:03d}": f"value_{item_id}_{j}_" + "x" * 64 for j in range(600)}
-          result = {
-              "item_id": int(item_id),
-              "status": "ok",
-              "data": fields,
-          }
+          # Simulate HTTP call per item: generate ~250KB response for each row.
+          # All 100 responses held in memory together — this is the OOM stress
+          # scenario. Each item > 64KB triggers _ref externalization.
+          api_results = []
+          for row in (batch_rows or []):
+              item_id = row["item_id"]
+              fields = {f"field_{j:03d}": f"value_{item_id}_{j}_" + "x" * 64 for j in range(600)}
+              api_results.append({
+                  "item_id": int(item_id),
+                  "status": "ok",
+                  "data": fields,
+              })
+          result = {"api_results": api_results, "count": len(api_results)}
         spec:
           policy:
             rules:
@@ -407,33 +407,30 @@ workflow:
                   then:
                     do: continue
                     set_iter:
-                      item_result: '{{ outcome.result.data }}'
+                      api_results: '{{ outcome.result.api_results }}'
       - name: save
         kind: postgres
         auth: '{{ pg_auth }}'
+        # Access iter.api_results directly — no args, no string coercion.
+        # Store only item_id + a small status summary, NOT the full 600-field
+        # response body. The OOM stress already happened in the compute step
+        # (worker held 100x250KB in memory). The DB only needs to confirm each
+        # item was processed; storing full payloads would send ~4.5MB of JSONB
+        # to Cloud SQL f1-micro on every batch and crash it.
         command: |
           INSERT INTO public.stress_test_results (item_id, result_data)
-          VALUES (
-            {{ iter.item_row.item_id }},
-            '{{ iter.item_result | tojson | replace("'", "''") }}'::jsonb
-          )
+          VALUES
+          {% for item in iter.api_results %}
+          ({{ item.item_id }}, '{"status": "{{ item.status }}", "fields": {{ item.data | length }}}'::jsonb)
+          {%- if not loop.last %},{% endif %}
+          {% endfor %}
           ON CONFLICT (item_id) DO UPDATE SET
             result_data = EXCLUDED.result_data,
             processed_at = NOW();
-        spec:
-          policy:
-            rules:
-              - when: "{{ outcome.status == 'error' and (outcome.error.retryable | default(false)) }}"
-                then: { do: retry, attempts: 5, backoff: exponential, delay: 0.1 }
-              - when: "{{ outcome.status == 'error' }}"
-                then: { do: fail }
-              - else:
-                  then: { do: break }
     next:
       spec: { mode: exclusive }
       arcs:
         - step: load_batch
-          when: "{{ event.name == 'loop.done' }}"
 
   - step: verify_completion_counts
     desc: Verify whether all items are processed before finalizing

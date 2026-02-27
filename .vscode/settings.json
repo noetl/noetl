@@ -51,4 +51,5 @@
         "tests"
     ],
     "makefile.configureOnOpen": false,
+    "aws.telemetry": false,
 }

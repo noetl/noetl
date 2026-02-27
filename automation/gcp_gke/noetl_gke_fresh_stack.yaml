@@ -122,6 +122,31 @@ workload:
   noetl_enable_worker_pool: false
   noetl_data_persistence: false
   noetl_logs_persistence: false
+
+  # NoETL connection pool tuning for Cloud SQL f1-micro via PgBouncer
+  #
+  # Cloud SQL f1-micro: max_connections=25, 3 reserved for superuser => 22 usable.
+  # PgBouncer: pgbouncer_replicas=2, MAX_DB_CONNECTIONS=8 per pod per database.
+  # Server connects to `noetl` db; workers connect to `demo_noetl` db (separate pools).
+  #
+  # Connection budget per database:
+  #   noetl db    : server pool max=6  (1 server pod x 6)      <= pgbouncer 2x8=16 cap
+  #   demo_noetl  : worker pool max=6  (2 worker pods x 3 each) <= pgbouncer 2x8=16 cap
+  #   Cloud SQL total: 6 + 6 = 12 active connections, well within 22 usable limit.
+  #
+  # Inflight commands per worker: max_inflight_commands=4, max_inflight_db_commands=3
+  # These must satisfy: inflight_commands x worker_pool_max_size <= pgbouncer per-pod cap
+  # i.e. 4 x 3 = 12 potential concurrent DB ops per pod, but pool_max_size=3 caps actual connections.
+  noetl_server_postgres_pool_min_size: 2
+  noetl_server_postgres_pool_max_size: 6
+  noetl_server_postgres_pool_max_waiting: 50
+  noetl_server_postgres_pool_timeout_seconds: 30
+  noetl_worker_postgres_pool_min_size: 1
+  noetl_worker_postgres_pool_max_size: 3
+  noetl_worker_postgres_pool_max_waiting: 20
+  noetl_worker_postgres_pool_timeout_seconds: 60
+  noetl_worker_max_inflight_commands: 4
+  noetl_worker_max_inflight_db_commands: 3
   demo_can_read_noetl_schema: true
 
   # Gateway settings
@@ -1364,6 +1389,16 @@ workflow:
             --set config.server.NOETL_POSTGRES_DB=noetl \
             --set config.server.NATS_URL=nats://{{ workload.nats_user }}:{{ workload.nats_password }}@nats.nats.svc.cluster.local:4222 \
             --set config.worker.NATS_URL=nats://{{ workload.nats_user }}:{{ workload.nats_password }}@nats.nats.svc.cluster.local:4222 \
+            --set config.server.NOETL_POSTGRES_POOL_MIN_SIZE={{ workload.noetl_server_postgres_pool_min_size }} \
+            --set config.server.NOETL_POSTGRES_POOL_MAX_SIZE={{ workload.noetl_server_postgres_pool_max_size }} \
+            --set config.server.NOETL_POSTGRES_POOL_MAX_WAITING={{ workload.noetl_server_postgres_pool_max_waiting }} \
+            --set config.server.NOETL_POSTGRES_POOL_TIMEOUT_SECONDS={{ workload.noetl_server_postgres_pool_timeout_seconds }} \
+            --set config.worker.NOETL_POSTGRES_POOL_MIN_SIZE={{ workload.noetl_worker_postgres_pool_min_size }} \
+            --set config.worker.NOETL_POSTGRES_POOL_MAX_SIZE={{ workload.noetl_worker_postgres_pool_max_size }} \
+            --set config.worker.NOETL_POSTGRES_POOL_MAX_WAITING={{ workload.noetl_worker_postgres_pool_max_waiting }} \
+            --set config.worker.NOETL_POSTGRES_POOL_TIMEOUT_SECONDS={{ workload.noetl_worker_postgres_pool_timeout_seconds }} \
+            --set config.worker.NOETL_WORKER_MAX_INFLIGHT_COMMANDS={{ workload.noetl_worker_max_inflight_commands }} \
+            --set config.worker.NOETL_WORKER_MAX_INFLIGHT_DB_COMMANDS={{ workload.noetl_worker_max_inflight_db_commands }} \
             --set secrets.postgresPassword={{ workload.postgres_password }} \
             --set secrets.noetlPassword={{ workload.noetl_password }} \
             $INGRESS_ARGS

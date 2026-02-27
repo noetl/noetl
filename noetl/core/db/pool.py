@@ -127,6 +127,42 @@ async def get_snowflake_id() -> int:
             raise RuntimeError("Failed to generate snowflake ID from database")
 
 
+def get_server_pool_stats() -> dict:
+    """
+    Return real-time stats for the server's global connection pool.
+
+    Uses psycopg_pool's get_stats() which returns:
+      pool_min, pool_max, pool_size, pool_available,
+      requests_waiting, requests_made, usage_ms, ...
+
+    Returns an empty dict if the pool has not been initialized yet.
+    """
+    global _pool
+    if _pool is None:
+        return {}
+    try:
+        raw = _pool.get_stats()
+        pool_max = int(raw.get("pool_max") or _DEFAULT_POOL_MAX_SIZE)
+        pool_available = int(raw.get("pool_available") or 0)
+        pool_size = int(raw.get("pool_size") or 0)
+        requests_waiting = int(raw.get("requests_waiting") or 0)
+        utilization = round(
+            (pool_size - pool_available) / pool_max if pool_max > 0 else 0.0, 4
+        )
+        return {
+            "pool_min": int(raw.get("pool_min") or _DEFAULT_POOL_MIN_SIZE),
+            "pool_max": pool_max,
+            "pool_size": pool_size,
+            "pool_available": pool_available,
+            "requests_waiting": requests_waiting,
+            "utilization": utilization,
+            # Derived: how many more connections can be handed out right now
+            "slots_available": max(0, pool_available),
+        }
+    except Exception:
+        return {}
+
+
 async def close_pool():
     """Close and reset the global connection pool."""
     global _pool
