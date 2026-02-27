@@ -2794,6 +2794,25 @@ class ControlFlowEngine:
             # Get parent step definition for loop handling
             parent_step_def = state.get_step(parent_step)
 
+            # Promote the last tool's result to the top level of the stored step result.
+            # This ensures {{ step_name.field }} works for both single-tool AND multi-tool sequences.
+            # Without promotion, multi-tool results are nested: result["results"]["collect"]["has_more"]
+            # and routing conditions like {{ fetch_with_limit.has_more }} would resolve to None.
+            _results_dict = response_data.get("results", {})
+            if _results_dict:
+                _last_result = list(_results_dict.values())[-1]
+                _promoted_data = {**_last_result, **response_data} if isinstance(_last_result, dict) else response_data
+            else:
+                _promoted_data = response_data
+
+            # For non-loop steps: mark parent step completed BEFORE set_ctx processing.
+            # set_ctx templates like {{ fetch_with_limit.collected_data }} need the step result
+            # to already be in state.step_results when get_render_context() is called.
+            _is_loop_step = parent_step_def and parent_step_def.loop and parent_step in state.loop_state
+            if not _is_loop_step:
+                state.mark_step_completed(parent_step, _promoted_data)
+                logger.debug("[TASK_SEQ] Pre-marked parent step '%s' completed with promoted result (before set_ctx)", parent_step)
+
             # Process step-level set_ctx for task sequence steps
             # This must happen BEFORE next transitions are evaluated so updated variables are available
             if parent_step_def and parent_step_def.set_ctx:
@@ -3065,24 +3084,9 @@ class ControlFlowEngine:
                     except Exception as e:
                         logger.error(f"[TASK_SEQ-LOOP] Error handling loop: {e}", exc_info=True)
             else:
-                # Not in loop - store task sequence result under the parent step name
-                # For single-task sequences (e.g., single tool with policy rules), unwrap the result
-                # to maintain backward compatibility with templates like {{ step.data }}
-                results = response_data.get("results", {})
-                if len(results) == 1:
-                    # Single task - merge its result at top level for backward compatibility
-                    single_task_result = list(results.values())[0]
-                    if isinstance(single_task_result, dict):
-                        # Merge single task result at top level while preserving original structure
-                        unwrapped_data = {**single_task_result, **response_data}
-                        state.mark_step_completed(parent_step, unwrapped_data)
-                        logger.info(f"[TASK_SEQ] Stored unwrapped single-task result for parent step '{parent_step}'")
-                    else:
-                        state.mark_step_completed(parent_step, response_data)
-                        logger.info(f"[TASK_SEQ] Stored task sequence result for parent step '{parent_step}'")
-                else:
-                    state.mark_step_completed(parent_step, response_data)
-                    logger.info(f"[TASK_SEQ] Stored task sequence result for parent step '{parent_step}'")
+                # Not in loop - parent step was already marked completed above (before set_ctx)
+                # with the last tool's result promoted to the top level for flat template access.
+                logger.info(f"[TASK_SEQ] Parent step '{parent_step}' already marked completed with promoted result")
 
                 # Process remaining actions from task sequence result (next, etc.)
                 remaining_actions = response_data.get("remaining_actions", [])
